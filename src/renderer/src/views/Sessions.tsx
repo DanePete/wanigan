@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LaunchOptions, Project, ProviderId, ProviderInfo, Session } from '@shared/types';
 import TerminalPane, { feed, disposePane } from '../components/TerminalPane';
 import NewSessionDialog from '../components/NewSessionDialog';
+import CodePanel from '../components/CodePanel';
 
 const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)' };
 
@@ -12,6 +13,9 @@ export default function Sessions({ providers, projects, onAddProject, onError }:
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dialog, setDialog] = useState(false);
+  // Remembered per machine: whether the code pane is open is a working
+  // preference, not session state.
+  const [showCode, setShowCode] = useState(() => localStorage.getItem('foreman.code') === '1');
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeId;
 
@@ -59,6 +63,11 @@ export default function Sessions({ providers, projects, onAddProject, onError }:
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
       if (e.key === 't') { e.preventDefault(); setDialog(true); return; }
+      if (e.key === 'b') {
+        e.preventDefault();
+        setShowCode((v) => { localStorage.setItem('foreman.code', v ? '0' : '1'); return !v; });
+        return;
+      }
       if (e.key === 'w' && activeRef.current) {
         const s = sessions.find((x) => x.id === activeRef.current);
         if (s?.status === 'exited') { e.preventDefault(); void closeTab(s.id); }
@@ -147,6 +156,11 @@ export default function Sessions({ providers, projects, onAddProject, onError }:
             </button>
           ))}
           <button className="tab faint" onClick={() => setDialog(true)} title="New session (⌘T)">+</button>
+          <button className={`tab faint${showCode ? ' active' : ''}`} style={{ marginLeft: 'auto' }}
+                  title="Toggle code panel (⌘B)"
+                  onClick={() => setShowCode((v) => { localStorage.setItem('foreman.code', v ? '0' : '1'); return !v; })}>
+            {showCode ? '⟨ code' : 'code ⟩'}
+          </button>
         </div>
 
         {sessions.length === 0 ? (
@@ -170,7 +184,14 @@ export default function Sessions({ providers, projects, onAddProject, onError }:
             )}
           </div>
         ) : (
-          sessions.map((s) => <TerminalPane key={s.id} sessionId={s.id} visible={s.id === activeId} />)
+          <div className={showCode && active ? 'term-split' : 'term-full'}>
+            <div className="term-col">
+              {sessions.map((s) => <TerminalPane key={s.id} sessionId={s.id} visible={s.id === activeId} />)}
+            </div>
+            {showCode && active && (
+              <CodePanel key={active.projectId} projectPath={active.projectPath} projectName={active.projectName} />
+            )}
+          </div>
         )}
 
         <div className="statusbar">
@@ -185,7 +206,7 @@ export default function Sessions({ providers, projects, onAddProject, onError }:
                         onClick={() => window.foreman.sessions.kill(active.id)}>stop</button>
               )}
             </>
-          ) : <span>⌘T new session · ⌘1–9 switch · ⌘W close</span>}
+          ) : <span>⌘T new session · ⌘1–9 switch · ⌘W close · ⌘B code panel</span>}
         </div>
       </div>
 

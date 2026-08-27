@@ -27,6 +27,13 @@ const STRIPPED_ENV = [
   'ORIGINAL_XDG_CURRENT_DESKTOP',
   'GDK_PIXBUF_MODULE_FILE',
   'CHROME_DESKTOP',
+  // Foreman is often launched from inside a Claude Code session. Inheriting
+  // these makes every spawned agent believe it is a subprocess of that session,
+  // which silently disables transcript saving — no history, no --resume.
+  'CLAUDE_CODE_CHILD_SESSION',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CLAUDECODE',
 ];
 const STRIPPED_PREFIXES = ['VSCODE_', 'ELECTRON_IPC', 'npm_'];
 
@@ -39,6 +46,8 @@ function agentEnv(PATH: string): Record<string, string> {
     out[k] = v;
   }
   out.PATH = PATH;
+  // Belt and braces: the marker above disables persistence, this re-asserts it.
+  out.CLAUDE_CODE_FORCE_SESSION_PERSISTENCE = '1';
   out.TERM = 'xterm-256color';
   out.COLORTERM = 'truecolor';
   out.FORCE_COLOR = '1';

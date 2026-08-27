@@ -52,6 +52,18 @@ const api = {
     poll: () => call<any>('batch:poll'),
     exportTo: (id: string, format: 'jsonl' | 'csv') => call<string | null>('batch:export', id, format),
   },
+  code: {
+    editors: () => call<{ id: string; label: string; path: string }[]>('code:editors'),
+    open: (editorPath: string | null, target: string, line?: number) =>
+      call<{ opened: string }>('code:open', editorPath, target, line),
+    changes: (root: string) => call<{ isRepo: boolean; branch: string | null; files: {
+      path: string; index: string; work: string; staged: boolean; untracked: boolean }[] }>('code:changes', root),
+    diff: (root: string, file: string) => call<string>('code:diff', root, file),
+    list: (root: string, rel: string) =>
+      call<{ name: string; rel: string; dir: boolean; size: number }[]>('code:list', root, rel),
+    read: (root: string, rel: string) =>
+      call<{ text: string; truncated: boolean; size: number; binary: boolean }>('code:read', root, rel),
+  },
   settings: {
     get: () => call<{ spendCapUsd: number }>('settings:get'),
     setSpendCap: (v: number) => call<number>('settings:setSpendCap', v),

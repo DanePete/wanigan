@@ -7,6 +7,7 @@ import {
 } from './sessions';
 import { listProjects, addProject, removeProject, refreshBranches } from './store';
 import * as batch from './batch';
+import * as code from './code';
 import { getSetting, setSetting, spendCap } from './settings';
 import { hasKey, getKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailable, getWorkspaceId } from './keys';
 import type { LaunchOptions, RunConfig, SourceConfig } from '../shared/types';
@@ -192,6 +193,15 @@ function registerIpc() {
   });
   handle('key:verify', () => verifyKey());
   handle('settings:get', () => ({ spendCapUsd: spendCap() }));
+
+  // ── code panel ───────────────────────────────────────────────────────
+  handle('code:editors', () => code.detectEditors());
+  handle('code:open', (editorPath: string | null, target: string, line?: number) =>
+    code.openInEditor(editorPath, target, line));
+  handle('code:changes', (root: string) => code.gitChanges(root));
+  handle('code:diff', (root: string, file: string) => code.gitDiff(root, file));
+  handle('code:list', (root: string, rel: string) => code.listDir(root, rel));
+  handle('code:read', (root: string, rel: string) => code.readProjectFile(root, rel));
   handle('settings:setSpendCap', (v: number) => { setSetting('spend_cap_usd', String(v)); return spendCap(); });
   handle('key:clear', () => { clearKey(); return true; });
 
