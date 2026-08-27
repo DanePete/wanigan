@@ -342,3 +342,13 @@ table.grid tr.clickable:hover { background: var(--bg-sunk); }
   color: var(--text-faint); user-select: none;
 }
 .fl .lt { color: var(--text); padding-right: 12px; }
+
+.past-row { display: flex; align-items: stretch; gap: 2px; }
+.past-main {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+  padding: 4px 8px; border-radius: 6px; text-align: left;
+}
+.past-main:hover:not(:disabled) { background: var(--bg-sunk); }
+.past-main:disabled { opacity: .45; cursor: not-allowed; }
+.past-x { padding: 0 6px; border-radius: 6px; font-size: 14px; line-height: 1; }
+.past-x:hover { background: var(--bg-sunk); color: var(--bad); }

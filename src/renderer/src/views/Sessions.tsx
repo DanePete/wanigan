@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { LaunchOptions, Project, ProviderId, ProviderInfo, Session } from '@shared/types';
+import type { LaunchOptions, PastSession, Project, ProviderId, ProviderInfo, Session } from '@shared/types';
 import TerminalPane, { feed, disposePane } from '../components/TerminalPane';
 import NewSessionDialog from '../components/NewSessionDialog';
 import CodePanel from '../components/CodePanel';
 
 const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)' };
+
+function ago(ts: number): string {
+  const s = Math.round((Date.now() - ts) / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
 
 export default function Sessions({ providers, projects, onAddProject, onError, onSendToBatch }: {
   providers: ProviderInfo[]; projects: Project[];
@@ -17,11 +25,33 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
   // Remembered per machine: whether the code pane is open is a working
   // preference, not session state.
   const [showCode, setShowCode] = useState(() => localStorage.getItem('foreman.code') === '1');
+  const [past, setPast] = useState<PastSession[]>([]);
+  const [resuming, setResuming] = useState<string | null>(null);
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeId;
 
-  const refresh = useCallback(async () => setSessions(await window.foreman.sessions.list()), []);
+  const refresh = useCallback(async () => {
+    setSessions(await window.foreman.sessions.list());
+    setPast(await window.foreman.sessions.past());
+  }, []);
   useEffect(() => { void refresh(); }, [refresh]);
+
+  async function resume(p: PastSession) {
+    setResuming(p.id);
+    try {
+      const s = await window.foreman.sessions.create({
+        providerId: p.providerId,
+        projectId: p.projectId ?? '',
+        model: p.model ?? undefined,
+        effort: p.effort ?? undefined,
+        permissionMode: p.permissionMode ?? undefined,
+        resumeFrom: { sessionId: p.id, conversationId: p.conversationId },
+      });
+      await refresh();
+      select(s.id);
+    } catch (e) { onError(e instanceof Error ? e.message : String(e)); }
+    finally { setResuming(null); }
+  }
 
   useEffect(() => {
     const offData = window.foreman.on.data(({ sessionId, data }) => {
@@ -137,6 +167,45 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
               </div>
             );
           })}
+          {past.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div className="group-title">
+                <span className="label">Recent</span>
+                <span className="faint" style={{ fontSize: 10.5, marginLeft: 'auto' }}>resumable</span>
+              </div>
+              {past.slice(0, 8).map((p) => (
+                <div key={p.id} className="past-row">
+                  <button className="past-main" disabled={!p.live || resuming === p.id}
+                          title={p.live ? `Resume in ${p.projectPath}` : 'Project folder no longer exists'}
+                          onClick={() => resume(p)}>
+                    <span style={{ minWidth: 0, flex: 1 }}>
+                      <span style={{ display: 'block', fontSize: 12 }}>
+                        {p.projectName}
+                        {!p.live && <span className="faint"> · missing</span>}
+                      </span>
+                      <span className="faint mono" style={{ fontSize: 10 }}>
+                        {providers.find((x) => x.id === p.providerId)?.label ?? p.providerId}
+                        {p.model && ` · ${p.model}`}
+                        {p.effort && ` · ${p.effort}`}
+                        {' · '}{ago(p.startedAt)}
+                      </span>
+                    </span>
+                    <span className="faint" style={{ fontSize: 11 }}>
+                      {resuming === p.id ? '…' : '↻'}
+                    </span>
+                  </button>
+                  <button className="past-x faint" title="Forget"
+                          onClick={() => window.foreman.sessions.forget(p.id).then(setPast)}>×</button>
+                </div>
+              ))}
+              {past.some((p) => p.providerId === 'codex') && (
+                <p className="faint" style={{ padding: '4px 8px', fontSize: 10.5, lineHeight: 1.45 }}>
+                  Codex can only resume its most recent conversation, not a specific one.
+                </p>
+              )}
+            </div>
+          )}
+
           <button className="btn" style={{ width: '100%', justifyContent: 'center', marginTop: 14 }}
                   onClick={onAddProject}>+ Add project</button>
         </div>
@@ -173,9 +242,16 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                 as they do in your shell.
               </p>
             </div>
-            {projects.length === 0
-              ? <button className="btn btn-primary" onClick={onAddProject}>Add your first project</button>
-              : <button className="btn btn-primary" onClick={() => setDialog(true)}>New session ⌘T</button>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              {projects.length === 0
+                ? <button className="btn btn-primary" onClick={onAddProject}>Add your first project</button>
+                : <button className="btn btn-primary" onClick={() => setDialog(true)}>New session ⌘T</button>}
+              {past.filter((p) => p.live)[0] && (
+                <button className="btn" onClick={() => resume(past.filter((p) => p.live)[0])}>
+                  Resume {past.filter((p) => p.live)[0].projectName}
+                </button>
+              )}
+            </div>
             {!anyInstalled && providers.length > 0 && (
               <p className="faint" style={{ maxWidth: 470, lineHeight: 1.5 }}>
                 Neither <span className="mono">claude</span> nor <span className="mono">codex</span> was found.

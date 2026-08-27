@@ -3,6 +3,10 @@ import { BrowserWindow } from 'electron';
 import type { LaunchOptions, Session, ProviderId } from '../shared/types';
 import { providerById, shellPath, detectProviders } from './providers';
 import { projectById } from './store';
+import { db } from './db';
+import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import type { PastSession } from '../shared/types';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { Baseline } from '../shared/types';
@@ -117,11 +121,25 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
   const detected = (await detectProviders()).find((p) => p.id === opts.providerId);
   const resolvedBin = detected?.path ?? def.bin;
   const extra = (opts.extraArgs ?? '').trim().split(/\s+/).filter(Boolean);
-  const args = def.args(extra, {
+
+  // Claude accepts a conversation id we choose, which is what makes a specific
+  // session resumable later rather than just "the most recent one".
+  const resuming = opts.resumeFrom;
+  const conversationId = resuming
+    ? resuming.conversationId
+    : def.supports.resume && def.id === 'claude'
+      ? randomUUID()
+      : null;
+
+  const idArgs = resuming
+    ? def.resumeArgs(resuming.conversationId)
+    : conversationId ? ['--session-id', conversationId] : [];
+
+  const args = [...idArgs, ...def.args(extra, {
     model: opts.model || undefined,
     effort: def.supports.effort ? opts.effort || undefined : undefined,
     permissionMode: def.supports.permissionMode ? opts.permissionMode || undefined : undefined,
-  });
+  })];
   const baseline = await captureBaseline(project.path);
 
   const id = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -162,6 +180,15 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
   meta.pid = proc.pid;
   meta.status = 'running';
   meta.baseline = baseline;
+  meta.conversationId = conversationId;
+
+  db().prepare(`
+    INSERT INTO session_log (id, conversation_id, provider_id, project_id, project_path,
+                             project_name, model, effort, permission_mode, started_at, resumed_from)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+  `).run(id, conversationId, opts.providerId, project.id, project.path, project.name,
+         meta.model ?? null, meta.effort ?? null, meta.permissionMode ?? null,
+         meta.createdAt, resuming?.sessionId ?? null);
   const live: Live = { meta, proc, buffer: '' };
   sessions.set(id, live);
 
@@ -177,6 +204,10 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
     live.meta.status = 'exited';
     live.meta.exitCode = exitCode;
     live.meta.endedAt = Date.now();
+    try {
+      db().prepare('UPDATE session_log SET ended_at = ?, exit_code = ? WHERE id = ?')
+        .run(live.meta.endedAt, exitCode, id);
+    } catch { /* db closing during quit */ }
     broadcast('session:exit', { sessionId: id, exitCode });
     broadcast('session:list', listSessions());
   });
@@ -190,6 +221,39 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
 
   broadcast('session:list', listSessions());
   return meta;
+}
+
+/**
+ * Sessions from previous runs of the app. Anything still marked open was killed
+ * by a quit rather than exiting on its own, so it is closed out on read.
+ */
+export function pastSessions(limit = 40): PastSession[] {
+  const openIds = new Set(sessions.keys());
+  const rows = db().prepare(
+    'SELECT * FROM session_log ORDER BY started_at DESC LIMIT ?'
+  ).all(limit) as Record<string, string | number | null>[];
+
+  return rows
+    .filter((r) => !openIds.has(String(r.id)))
+    .map((r) => ({
+      id: String(r.id),
+      conversationId: r.conversation_id ? String(r.conversation_id) : null,
+      providerId: String(r.provider_id) as PastSession['providerId'],
+      projectId: r.project_id ? String(r.project_id) : null,
+      projectPath: String(r.project_path),
+      projectName: String(r.project_name),
+      model: r.model ? String(r.model) : null,
+      effort: r.effort ? String(r.effort) : null,
+      permissionMode: r.permission_mode ? String(r.permission_mode) : null,
+      startedAt: Number(r.started_at),
+      endedAt: r.ended_at ? Number(r.ended_at) : null,
+      exitCode: r.exit_code === null ? null : Number(r.exit_code),
+      live: fs.existsSync(String(r.project_path)),
+    }));
+}
+
+export function forgetPastSession(id: string) {
+  db().prepare('DELETE FROM session_log WHERE id = ?').run(id);
 }
 
 export function sessionBaseline(sessionId: string): Baseline | null {
@@ -246,7 +310,14 @@ export function bumpUnread(sessionId: string) {
 
 /** Kill everything on quit so no orphaned agent keeps running headless. */
 export function killAll() {
+  const now = Date.now();
   for (const s of sessions.values()) {
-    if (s.meta.status !== 'exited') { try { s.proc.kill(); } catch { /* noop */ } }
+    if (s.meta.status !== 'exited') {
+      try { s.proc.kill(); } catch { /* noop */ }
+      try {
+        db().prepare('UPDATE session_log SET ended_at = ?, exit_code = ? WHERE id = ? AND ended_at IS NULL')
+          .run(now, -1, s.meta.id);
+      } catch { /* db already closed */ }
+    }
   }
 }

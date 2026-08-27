@@ -4,6 +4,7 @@ import { detectProviders } from './providers';
 import {
   initSessions, listSessions, createSession, writeSession, resizeSession,
   killSession, closeSession, scrollback, markRead, killAll, sessionBaseline,
+  pastSessions, forgetPastSession,
 } from './sessions';
 import { listProjects, addProject, removeProject, refreshBranches } from './store';
 import * as batch from './batch';
@@ -131,6 +132,8 @@ function registerIpc() {
   handle('sessions:close', (id: string) => { closeSession(id); return true; });
   handle('sessions:markRead', (id: string) => { markRead(id); return true; });
   handle('sessions:reveal', (p: string) => { shell.openPath(p); return true; });
+  handle('sessions:past', () => pastSessions());
+  handle('sessions:forget', (id: string) => { forgetPastSession(id); return pastSessions(); });
 
   // ── batches ──────────────────────────────────────────────────────────
   handle('batch:presets', (projectId?: string) => batch.presetsFor(projectId));

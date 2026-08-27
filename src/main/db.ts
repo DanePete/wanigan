@@ -117,6 +117,27 @@ function migrate(d: Database.Database) {
       message TEXT NOT NULL
     );
 
+    -- Sessions are killed on quit (an orphaned agent burns tokens unseen), so
+    -- the record of them has to outlive the process to be resumable.
+    CREATE TABLE IF NOT EXISTS session_log (
+      id              TEXT PRIMARY KEY,
+      conversation_id TEXT,
+      provider_id     TEXT NOT NULL,
+      project_id      TEXT,
+      project_path    TEXT NOT NULL,
+      project_name    TEXT NOT NULL,
+      model           TEXT,
+      effort          TEXT,
+      permission_mode TEXT,
+      started_at      INTEGER NOT NULL,
+      ended_at        INTEGER,
+      exit_code       INTEGER,
+      resumed_from    TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_session_log_recent  ON session_log(started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_session_log_project ON session_log(project_id, started_at DESC);
+
     CREATE INDEX IF NOT EXISTS idx_requests_run_status ON requests(run_id, status);
     CREATE INDEX IF NOT EXISTS idx_batches_run  ON batches(run_id);
     CREATE INDEX IF NOT EXISTS idx_batches_open ON batches(processing_status)

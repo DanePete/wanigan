@@ -14,7 +14,12 @@ type ProviderDef = {
   /** Args to launch an interactive session in `cwd`. */
   args: (extra: string[], opts?: { model?: string; effort?: string; permissionMode?: string }) => string[];
   /** Which of the shared options this CLI actually accepts. */
-  supports: { model: boolean; effort: boolean; permissionMode: boolean };
+  supports: { model: boolean; effort: boolean; permissionMode: boolean; resume: boolean };
+  /**
+   * Args to resume. Claude can be handed a conversation id we chose at launch;
+   * Codex only offers "the last one", via a subcommand rather than a flag.
+   */
+  resumeArgs: (conversationId: string | null) => string[];
   versionArgs: string[];
   /**
    * Where to look when the CLI is not on PATH. Both Claude Code and Codex ship
@@ -73,7 +78,8 @@ export const PROVIDERS: ProviderDef[] = [
       ...(o?.permissionMode ? ['--permission-mode', o.permissionMode] : []),
       ...extra,
     ],
-    supports: { model: true, effort: true, permissionMode: true },
+    supports: { model: true, effort: true, permissionMode: true, resume: true },
+    resumeArgs: (id) => (id ? ['--resume', id] : ['--continue']),
     versionArgs: ['--version'],
     fallbacks: () => [
       ...editorExtensions('anthropic.claude-code-')
@@ -88,7 +94,10 @@ export const PROVIDERS: ProviderDef[] = [
     // Codex takes a model but not Claude's effort or permission-mode flags;
     // passing them would make it exit immediately on an unknown option.
     args: (extra, o) => [...(o?.model ? ['--model', o.model] : []), ...extra],
-    supports: { model: true, effort: false, permissionMode: false },
+    supports: { model: true, effort: false, permissionMode: false, resume: true },
+    // `codex resume --last` is a subcommand, not a flag, and cannot target a
+    // specific conversation the way Claude can.
+    resumeArgs: () => ['resume', '--last'],
     versionArgs: ['--version'],
     fallbacks: () => editorExtensions('openai.chatgpt-').flatMap((d) => {
       const binDir = path.join(d, 'bin');

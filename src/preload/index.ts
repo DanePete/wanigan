@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { LaunchOptions, Project, ProviderInfo, Session, RunConfig, SourceConfig } from '../shared/types';
+import type { LaunchOptions, PastSession, Project, ProviderInfo, Session, RunConfig, SourceConfig } from '../shared/types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -29,6 +29,8 @@ const api = {
     close: (id: string) => call<boolean>('sessions:close', id),
     markRead: (id: string) => call<boolean>('sessions:markRead', id),
     reveal: (p: string) => call<boolean>('sessions:reveal', p),
+    past: () => call<PastSession[]>('sessions:past'),
+    forget: (id: string) => call<PastSession[]>('sessions:forget', id),
     write: (id: string, data: string) => ipcRenderer.send('sessions:write', id, data),
     resize: (id: string, cols: number, rows: number) =>
       ipcRenderer.send('sessions:resize', id, cols, rows),

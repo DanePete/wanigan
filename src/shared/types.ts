@@ -7,7 +7,7 @@ export type ProviderInfo = {
   /** Resolved absolute path, or null when the CLI is not installed. */
   path: string | null;
   version: string | null;
-  supports: { model: boolean; effort: boolean; permissionMode: boolean };
+  supports: { model: boolean; effort: boolean; permissionMode: boolean; resume: boolean };
 };
 
 /** Effort levels the Claude Code CLI accepts. */
@@ -45,6 +45,8 @@ export type Session = {
   permissionMode?: string;
   /** Repo state at launch — lets the code panel show only this session's work. */
   baseline?: Baseline;
+  /** The agent's own conversation id, so this exact session can be resumed. */
+  conversationId?: string | null;
 };
 
 export type LaunchOptions = {
@@ -60,6 +62,26 @@ export type LaunchOptions = {
   extraArgs?: string;
   /** Initial prompt typed into the session once it is ready. */
   initialPrompt?: string;
+  /** Resume a previous conversation instead of starting a new one. */
+  resumeFrom?: { sessionId: string; conversationId: string | null };
+};
+
+/** A finished session, recoverable after a quit. */
+export type PastSession = {
+  id: string;
+  conversationId: string | null;
+  providerId: ProviderId;
+  projectId: string | null;
+  projectPath: string;
+  projectName: string;
+  model: string | null;
+  effort: string | null;
+  permissionMode: string | null;
+  startedAt: number;
+  endedAt: number | null;
+  exitCode: number | null;
+  /** True when the project directory still exists. */
+  live: boolean;
 };
 
 /** What the repo looked like when a session started, so its own work is separable. */
