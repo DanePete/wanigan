@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { getKey } from '../keys';
+import { getKey, getWorkspaceId } from '../keys';
 
 export function isMock(): boolean {
   return process.env.FOREMAN_MOCK === '1';
@@ -7,16 +7,24 @@ export function isMock(): boolean {
 
 let _client: Anthropic | null = null;
 let _forKey: string | null = null;
+let _forWorkspace: string | null = null;
 
 export function client(): Anthropic {
   const key = getKey();
   if (!key && !isMock()) {
     throw new Error('No API key. Add one in Settings — Foreman stores it in your OS keychain.');
   }
-  // Rebuild the client if the key changed under us.
-  if (_client && _forKey === key) return _client;
-  _client = new Anthropic({ apiKey: key || 'mock', maxRetries: 4 });
+  const workspaceId = getWorkspaceId();
+  // Rebuild the client if either credential changed under us.
+  if (_client && _forKey === key && _forWorkspace === workspaceId) return _client;
+  _client = new Anthropic({
+    apiKey: key || 'mock',
+    maxRetries: 4,
+    // Identity-linked keys require this on every request; plain keys ignore it.
+    ...(workspaceId ? { defaultHeaders: { 'anthropic-workspace-id': workspaceId } } : {}),
+  });
   _forKey = key;
+  _forWorkspace = workspaceId;
   return _client;
 }
 

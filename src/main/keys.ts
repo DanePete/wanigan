@@ -22,18 +22,47 @@ export function encryptionAvailable(): boolean {
   return safeStorage.isEncryptionAvailable();
 }
 
-export function getKey(): string | null {
-  // An explicit env var still wins, for CI and scripted runs.
-  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
+type Creds = { key: string; workspaceId?: string };
+
+function readCreds(): Creds | null {
   if (!hasKey()) return null;
   try {
-    return safeStorage.decryptString(fs.readFileSync(keyFile()));
+    const raw = safeStorage.decryptString(fs.readFileSync(keyFile()));
+    // Older installs stored the bare key string.
+    if (raw.startsWith('{')) return JSON.parse(raw) as Creds;
+    return { key: raw };
   } catch {
     return null;
   }
 }
 
-export function setKey(key: string) {
+export function getKey(): string | null {
+  // An explicit env var still wins, for CI and scripted runs.
+  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
+  return readCreds()?.key ?? null;
+}
+
+/**
+ * Identity-linked API keys must name the workspace they act in on every request,
+ * or the API returns 400 `anthropic-workspace-id is required`. Plain keys ignore
+ * the header, so it is safe to always send when set.
+ */
+export function getWorkspaceId(): string | null {
+  return process.env.ANTHROPIC_WORKSPACE_ID || readCreds()?.workspaceId || null;
+}
+
+/** The auth headers every call to the API must carry. */
+export function authHeaders(key?: string, workspaceId?: string): Record<string, string> {
+  const h: Record<string, string> = {
+    'x-api-key': (key ?? getKey() ?? '').trim(),
+    'anthropic-version': '2023-06-01',
+  };
+  const ws = (workspaceId ?? getWorkspaceId() ?? '').trim();
+  if (ws) h['anthropic-workspace-id'] = ws;
+  return h;
+}
+
+export function setKey(key: string, workspaceId?: string) {
   const trimmed = key.trim();
   if (!trimmed.startsWith('sk-ant-')) {
     throw new Error(
@@ -45,7 +74,10 @@ export function setKey(key: string) {
     throw new Error('OS encryption is unavailable, so the key cannot be stored safely. Set ANTHROPIC_API_KEY instead.');
   }
   fs.mkdirSync(path.dirname(keyFile()), { recursive: true });
-  fs.writeFileSync(keyFile(), safeStorage.encryptString(trimmed), { mode: 0o600 });
+  const creds: Creds = { key: trimmed };
+  const ws = workspaceId?.trim();
+  if (ws) creds.workspaceId = ws;
+  fs.writeFileSync(keyFile(), safeStorage.encryptString(JSON.stringify(creds)), { mode: 0o600 });
 }
 
 export function clearKey() {
@@ -59,25 +91,104 @@ export function keyFingerprint(): string | null {
   return `${k.slice(0, 14)}…${k.slice(-4)}`;
 }
 
-/** Verifies against the live API before we let the user believe it works. */
-export async function verifyKey(key?: string): Promise<{ ok: boolean; detail: string; batches: boolean }> {
-  const k = key ?? getKey();
+/** Reads the API's own error text. An HTTP status alone is not a diagnosis. */
+async function apiError(r: Response): Promise<string> {
+  let body = '';
+  try { body = await r.text(); } catch { /* nothing to read */ }
+  try {
+    const j = JSON.parse(body) as { error?: { type?: string; message?: string } };
+    if (j.error?.message) return `${j.error.type ?? 'error'}: ${j.error.message}`;
+  } catch { /* not JSON */ }
+  return body.slice(0, 300) || `HTTP ${r.status}`;
+}
+
+/**
+ * Verifies against the live API before we let the user believe it works.
+ *
+ * Tries /v1/models first for capabilities, but falls back to /v1/messages/batches
+ * when that 400s: some key types and workspace configurations reject the models
+ * endpoint while batches works fine, and failing the whole setup on that would be
+ * wrong.
+ */
+export async function verifyKey(
+  key?: string,
+  workspaceId?: string
+): Promise<{ ok: boolean; detail: string; batches: boolean; needsWorkspaceId?: boolean }> {
+  const k = (key ?? getKey())?.trim();
   if (!k) return { ok: false, detail: 'No key set.', batches: false };
-  const H = { 'x-api-key': k, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' };
+
+  if (k.startsWith('sk-ant-admin')) {
+    return {
+      ok: false, batches: false,
+      detail: 'That is an Admin API key. Admin keys manage org settings and cannot call the Messages or Batches API. Create a standard API key instead.',
+    };
+  }
+
+  // GET with no body: sending content-type here is meaningless and some proxies
+  // reject it.
+  const H = authHeaders(k, workspaceId);
+  const missingWorkspace = (t: string) => t.includes('anthropic-workspace-id');
+
+  let modelDetail = '';
+  let modelsOk = false;
   try {
     const r = await fetch('https://api.anthropic.com/v1/models?limit=1', { headers: H });
-    if (r.status === 401) return { ok: false, detail: 'Key rejected (401). Check it was copied whole.', batches: false };
-    if (r.status === 403) return { ok: false, detail: 'Key is valid but lacks permission (403).', batches: false };
-    if (!r.ok) return { ok: false, detail: `HTTP ${r.status} from /v1/models`, batches: false };
-    const models = (await r.json()) as { data?: { id: string }[] };
-
-    const b = await fetch('https://api.anthropic.com/v1/messages/batches?limit=1', { headers: H });
-    return {
-      ok: true,
-      detail: `Authenticated. Newest model: ${models.data?.[0]?.id ?? 'unknown'}`,
-      batches: b.ok,
-    };
+    if (r.ok) {
+      const models = (await r.json()) as { data?: { id: string }[] };
+      modelsOk = true;
+      modelDetail = `Newest model: ${models.data?.[0]?.id ?? 'unknown'}`;
+    } else if (r.status === 401) {
+      return { ok: false, batches: false, detail: `Key rejected (401). ${await apiError(r)}` };
+    } else if (r.status === 403) {
+      return { ok: false, batches: false, detail: `Key lacks permission (403). ${await apiError(r)}` };
+    } else {
+      const t = await apiError(r);
+      if (missingWorkspace(t)) {
+        return {
+          ok: false, batches: false, needsWorkspaceId: true,
+          detail: 'This is an identity-linked API key: it must name the workspace it acts in. Add the Workspace ID below — find it in the Console under Settings → Workspaces (it looks like wrkspc_…).',
+        };
+      }
+      modelDetail = `/v1/models returned ${r.status} — ${t}`;
+    }
   } catch (e) {
-    return { ok: false, detail: `Network error: ${e instanceof Error ? e.message : String(e)}`, batches: false };
+    return { ok: false, batches: false, detail: `Network error reaching the API: ${e instanceof Error ? e.message : String(e)}` };
   }
+
+  // The endpoint that actually matters for this app.
+  let batches = false;
+  let batchDetail = '';
+  try {
+    const b = await fetch('https://api.anthropic.com/v1/messages/batches?limit=1', { headers: H });
+    if (b.ok) { batches = true; }
+    else if (b.status === 401 || b.status === 403) {
+      return { ok: false, batches: false, detail: `Key rejected by the Batches API (${b.status}). ${await apiError(b)}` };
+    } else {
+      const t = await apiError(b);
+      if (missingWorkspace(t)) {
+        return {
+          ok: false, batches: false, needsWorkspaceId: true,
+          detail: 'This is an identity-linked API key: it must name the workspace it acts in. Add the Workspace ID below — find it in the Console under Settings → Workspaces (it looks like wrkspc_…).',
+        };
+      }
+      batchDetail = `Batches API returned ${b.status} — ${t}`;
+    }
+  } catch (e) {
+    batchDetail = `Could not reach the Batches API: ${e instanceof Error ? e.message : String(e)}`;
+  }
+
+  if (!modelsOk && !batches) {
+    return { ok: false, batches: false, detail: [modelDetail, batchDetail].filter(Boolean).join(' · ') };
+  }
+
+  // Batches working is the bar for this app; a models failure is a note, not a stop.
+  return {
+    ok: true,
+    batches,
+    detail: [
+      'Authenticated.',
+      modelsOk ? modelDetail : `Note: ${modelDetail} — the model catalog will fall back to the local table.`,
+      batches ? '' : batchDetail,
+    ].filter(Boolean).join(' '),
+  };
 }

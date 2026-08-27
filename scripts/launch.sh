@@ -15,5 +15,16 @@ fi
 unset ELECTRON_RUN_AS_NODE
 for v in $(env | grep -oE '^VSCODE_[A-Z_]+' || true); do unset "$v"; done
 
-[ -d out ] || npm run build
+# Always build. `[ -d out ] || npm run build` looks like a cache but is a trap:
+# after the first build it never rebuilds again, so every later launch silently
+# runs stale code and you debug a bug you already fixed.
+npm run build
+
+NEWEST_SRC=$(find src -name '*.ts' -o -name '*.tsx' | xargs stat -f '%m' | sort -n | tail -1)
+BUILT=$(stat -f '%m' out/main/index.js)
+if [ "$BUILT" -lt "$NEWEST_SRC" ]; then
+  echo "Refusing to launch: out/ is older than src/ after a build."
+  exit 1
+fi
+
 exec npx electron . "$@"

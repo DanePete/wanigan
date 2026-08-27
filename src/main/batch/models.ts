@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { getKey } from '../keys';
+import { getKey, authHeaders } from '../keys';
 import { isMock } from './anthropic';
 import { MODELS as FALLBACK } from './pricing';
 import type { ModelInfo } from '../../shared/types';
@@ -122,10 +122,17 @@ export async function refreshModels(): Promise<{ models: ModelInfo[]; fetchedAt:
     const url = new URL('https://api.anthropic.com/v1/models');
     url.searchParams.set('limit', '100');
     if (after) url.searchParams.set('after_id', after);
-    const r = await fetch(url, {
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-    });
-    if (!r.ok) throw new Error(`Models API returned HTTP ${r.status}`);
+    const r = await fetch(url, { headers: authHeaders() });
+    if (!r.ok) {
+      // A workspace that cannot read /v1/models can still run batches, so this
+      // degrades to the local table instead of failing the app.
+      let detail = `HTTP ${r.status}`;
+      try {
+        const j = JSON.parse(await r.text()) as { error?: { message?: string } };
+        if (j.error?.message) detail = j.error.message;
+      } catch { /* not JSON */ }
+      throw new Error(`Models API: ${detail}`);
+    }
     const body = (await r.json()) as { data: ApiModel[]; has_more: boolean; last_id: string | null };
     all.push(...body.data);
     if (!body.has_more || !body.last_id) break;

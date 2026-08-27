@@ -53,8 +53,9 @@ const api = {
     exportTo: (id: string, format: 'jsonl' | 'csv') => call<string | null>('batch:export', id, format),
   },
   key: {
-    status: () => call<{ present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean }>('key:status'),
-    set: (k: string) => call<{ detail: string; batches: boolean; fingerprint: string | null }>('key:set', k),
+    status: () => call<{ present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null }>('key:status'),
+    set: (k: string, workspaceId?: string) =>
+      call<{ detail: string; batches: boolean; fingerprint: string | null }>('key:set', k, workspaceId),
     verify: () => call<{ ok: boolean; detail: string; batches: boolean }>('key:verify'),
     clear: () => call<boolean>('key:clear'),
   },

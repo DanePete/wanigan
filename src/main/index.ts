@@ -7,7 +7,7 @@ import {
 } from './sessions';
 import { listProjects, addProject, removeProject, refreshBranches } from './store';
 import * as batch from './batch';
-import { hasKey, getKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailable } from './keys';
+import { hasKey, getKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailable, getWorkspaceId } from './keys';
 import type { LaunchOptions, RunConfig, SourceConfig } from '../shared/types';
 
 /**
@@ -132,7 +132,17 @@ function registerIpc() {
 
   // ── batches ──────────────────────────────────────────────────────────
   handle('batch:presets', (projectId?: string) => batch.presetsFor(projectId));
-  handle('batch:refreshModels', () => batch.refreshModels());
+  handle('batch:refreshModels', async () => {
+    try {
+      return await batch.refreshModels();
+    } catch (e) {
+      // Keep the local table in play; report why the live catalog is unavailable.
+      return {
+        models: [], fetchedAt: 0,
+        source: `unavailable — ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+  });
   handle('batch:insights', () => batch.insights());
   handle('batch:preview', (source: SourceConfig, userTemplate: string) => batch.previewSource(source, userTemplate));
   handle('batch:estimate', (config: RunConfig, observed?: number) => batch.estimateRun(config, observed));
@@ -167,11 +177,16 @@ function registerIpc() {
     fingerprint: keyFingerprint(),
     encryptionAvailable: encryptionAvailable(),
     fromEnv: Boolean(process.env.ANTHROPIC_API_KEY),
+    workspaceId: getWorkspaceId(),
   }));
-  handle('key:set', async (key: string) => {
-    const check = await verifyKey(key);
-    if (!check.ok) throw new Error(check.detail);
-    setKey(key);
+  handle('key:set', async (key: string, workspaceId?: string) => {
+    const check = await verifyKey(key, workspaceId);
+    if (!check.ok) {
+      const err = new Error(check.detail) as Error & { needsWorkspaceId?: boolean };
+      err.needsWorkspaceId = check.needsWorkspaceId;
+      throw err;
+    }
+    setKey(key, workspaceId);
     return { detail: check.detail, batches: check.batches, fingerprint: keyFingerprint() };
   });
   handle('key:verify', () => verifyKey());
