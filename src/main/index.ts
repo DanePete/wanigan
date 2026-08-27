@@ -7,6 +7,7 @@ import {
 } from './sessions';
 import { listProjects, addProject, removeProject, refreshBranches } from './store';
 import * as batch from './batch';
+import { getSetting, setSetting, spendCap } from './settings';
 import { hasKey, getKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailable, getWorkspaceId } from './keys';
 import type { LaunchOptions, RunConfig, SourceConfig } from '../shared/types';
 
@@ -190,6 +191,8 @@ function registerIpc() {
     return { detail: check.detail, batches: check.batches, fingerprint: keyFingerprint() };
   });
   handle('key:verify', () => verifyKey());
+  handle('settings:get', () => ({ spendCapUsd: spendCap() }));
+  handle('settings:setSpendCap', (v: number) => { setSetting('spend_cap_usd', String(v)); return spendCap(); });
   handle('key:clear', () => { clearKey(); return true; });
 
   // Hot-path traffic: fire-and-forget, no round trip.

@@ -43,3 +43,25 @@ export function stripForbidden(params: Record<string, unknown>): { params: Recor
   if (out.max_tokens === 0) { out.max_tokens = 1; stripped.push('max_tokens:0'); }
   return { params: out, stripped };
 }
+
+
+/**
+ * The API reports an exhausted balance as a 400, which reads like a malformed
+ * request. Name it for what it is.
+ */
+export function explainApiError(e: unknown): string {
+  const err = e as { status?: number; message?: string; error?: { error?: { type?: string; message?: string } } };
+  const msg = err.error?.error?.message ?? err.message ?? String(e);
+  const low = msg.toLowerCase();
+
+  if (low.includes('credit') || low.includes('insufficient') || low.includes('billing') || low.includes('quota')) {
+    return `${msg}\n\nThis is a billing limit, not a bad request — add funds in the Console under Billing.`;
+  }
+  if (low.includes('anthropic-workspace-id')) {
+    return 'This key is identity-linked and must name the workspace it acts in. Add the Workspace ID in Settings.';
+  }
+  if (err.status === 429) {
+    return `${msg}\n\nRate limited. Batch throughput is shared across your organisation; the batch will retry on its own.`;
+  }
+  return msg;
+}

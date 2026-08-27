@@ -4,6 +4,7 @@ import { buildRequests, type BuiltRequest } from './build';
 import { loadSource } from './sources';
 import type { RunConfig } from '../../shared/types';
 import { mockCreate } from './mock';
+import { spendCap } from '../settings';
 
 export type SubmitResult = { runId: string; batchIds: string[]; requests: number };
 
@@ -15,6 +16,15 @@ export async function createAndSubmitRun(
   const built = buildRequests(cfg, ds.rows, ds.columns);
   if (built.errors.length) throw new Error(built.errors.join(' '));
   if (!built.requests.length) throw new Error('Nothing to submit — the dataset produced zero requests.');
+
+  const cap = spendCap();
+  const projected = opts.estimate?.cost ?? 0;
+  if (cap > 0 && projected > cap) {
+    throw new Error(
+      `Estimated cost $${projected.toFixed(2)} exceeds your $${cap.toFixed(2)} per-run spend cap. ` +
+      `A batch cannot be un-submitted, so this is blocked here. Raise the cap in Settings if this is intended.`
+    );
+  }
 
   const runId = newRunId();
   const now = Date.now();

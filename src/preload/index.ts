@@ -52,6 +52,10 @@ const api = {
     poll: () => call<any>('batch:poll'),
     exportTo: (id: string, format: 'jsonl' | 'csv') => call<string | null>('batch:export', id, format),
   },
+  settings: {
+    get: () => call<{ spendCapUsd: number }>('settings:get'),
+    setSpendCap: (v: number) => call<number>('settings:setSpendCap', v),
+  },
   key: {
     status: () => call<{ present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null }>('key:status'),
     set: (k: string, workspaceId?: string) =>

@@ -17,12 +17,16 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
   const [showWorkspace, setShowWorkspace] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [cap, setCap] = useState('1.00');
 
   const load = () => window.foreman.key.status().then((st) => {
     setStatus(st);
     if (st.workspaceId) { setWorkspaceId(st.workspaceId); setShowWorkspace(true); }
   });
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    void load();
+    window.foreman.settings.get().then((s) => setCap(s.spendCapUsd.toFixed(2))).catch(() => {});
+  }, []);
 
   async function save() {
     setBusy(true); setMsg(null);
@@ -145,6 +149,24 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
             Azure or GitHub Actions. A local desktop app has nothing to federate from.
           </p>
         </div>
+      </Section>
+
+      <Section title="Spending"
+               hint="A batch cannot be un-submitted. The cap is checked against the estimate at submit time — the last moment anything is preventable.">
+        <label className="label">Maximum estimated cost per run (USD)</label>
+        <div style={{ display: 'flex', gap: 7, marginTop: 4, maxWidth: 320 }}>
+          <input className="field mono" type="number" min={0} step="0.25" value={cap}
+                 onChange={(e) => setCap(e.target.value)} />
+          <button className="btn" onClick={async () => {
+            const v = await window.foreman.settings.setSpendCap(Number(cap) || 0);
+            setCap(v.toFixed(2));
+            setMsg({ tone: 'ok', text: v > 0 ? `Runs estimated above $${v.toFixed(2)} will be blocked.` : 'Spend cap disabled.' });
+          }}>Save</button>
+        </div>
+        <p className="faint" style={{ fontSize: 11, marginTop: 5, lineHeight: 1.45 }}>
+          0 disables the cap. The estimate is a low-end figure that assumes caching engages, so
+          leave headroom — the builder shows the upper bound beside it.
+        </p>
       </Section>
 
       <Section title="Agents" hint="Resolved from your login shell's PATH, then from editor extension directories.">

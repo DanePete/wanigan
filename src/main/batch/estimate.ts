@@ -1,4 +1,4 @@
-import { client, isMock } from './anthropic';
+import { client, isMock, explainApiError } from './anthropic';
 import { costOf, modelFor } from './pricing';
 import type { RunConfig } from '../../shared/types';
 import type { BuiltRequest } from './build';
@@ -155,7 +155,7 @@ export async function dryRun(cfg: RunConfig, req: BuiltRequest) {
       ok: false as const,
       status: err.status ?? 0,
       type: err.error?.error?.type ?? 'unknown_error',
-      message: err.error?.error?.message ?? err.message ?? String(e),
+      message: explainApiError(e),
       customId: req.custom_id,
     };
   }
