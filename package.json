@@ -13,15 +13,19 @@
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "rebuild": "electron-rebuild -f -w node-pty",
-    "postinstall": "electron-rebuild -f -w node-pty",
+    "postinstall": "electron-rebuild -f -w node-pty,better-sqlite3",
     "dist:mac": "electron-vite build && electron-builder --mac --dir",
-    "app": "./scripts/launch.sh"
+    "app": "./scripts/launch.sh",
+    "smoke": "./scripts/smoke.sh"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
+    "better-sqlite3": "^11.10.0",
     "node-pty": "^1.0.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.1",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

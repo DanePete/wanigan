@@ -6,9 +6,11 @@ export default defineConfig({
   main: {
     build: {
       rollupOptions: {
-        // node-pty is a native addon — it must stay external and be loaded
-        // from node_modules at runtime, never bundled.
-        external: ['node-pty'],
+        // Native addons must stay external and be loaded from node_modules at
+        // runtime. Bundling one rewrites its dynamic require of the .node
+        // binary to a path that does not exist, and every call through it
+        // throws at runtime rather than at build time.
+        external: ['node-pty', 'better-sqlite3'],
       },
     },
   },
