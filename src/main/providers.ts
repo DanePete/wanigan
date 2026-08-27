@@ -12,7 +12,9 @@ type ProviderDef = {
   label: string;
   bin: string;
   /** Args to launch an interactive session in `cwd`. */
-  args: (extra: string[]) => string[];
+  args: (extra: string[], opts?: { model?: string; effort?: string; permissionMode?: string }) => string[];
+  /** Which of the shared options this CLI actually accepts. */
+  supports: { model: boolean; effort: boolean; permissionMode: boolean };
   versionArgs: string[];
   /**
    * Where to look when the CLI is not on PATH. Both Claude Code and Codex ship
@@ -65,7 +67,13 @@ export const PROVIDERS: ProviderDef[] = [
     id: 'claude',
     label: 'Claude Code',
     bin: 'claude',
-    args: (extra) => [...extra],
+    args: (extra, o) => [
+      ...(o?.model ? ['--model', o.model] : []),
+      ...(o?.effort ? ['--effort', o.effort] : []),
+      ...(o?.permissionMode ? ['--permission-mode', o.permissionMode] : []),
+      ...extra,
+    ],
+    supports: { model: true, effort: true, permissionMode: true },
     versionArgs: ['--version'],
     fallbacks: () => [
       ...editorExtensions('anthropic.claude-code-')
@@ -77,7 +85,10 @@ export const PROVIDERS: ProviderDef[] = [
     id: 'codex',
     label: 'Codex',
     bin: 'codex',
-    args: (extra) => [...extra],
+    // Codex takes a model but not Claude's effort or permission-mode flags;
+    // passing them would make it exit immediately on an unknown option.
+    args: (extra, o) => [...(o?.model ? ['--model', o.model] : []), ...extra],
+    supports: { model: true, effort: false, permissionMode: false },
     versionArgs: ['--version'],
     fallbacks: () => editorExtensions('openai.chatgpt-').flatMap((d) => {
       const binDir = path.join(d, 'bin');
@@ -150,7 +161,7 @@ export async function detectProviders(): Promise<ProviderInfo[]> {
           version = stdout.trim().split('\n')[0] || null;
         } catch { version = null; }
       }
-      return { id: def.id, label: def.label, bin: def.bin, path: resolved, version };
+      return { id: def.id, label: def.label, bin: def.bin, path: resolved, version, supports: def.supports };
     })
   );
 }

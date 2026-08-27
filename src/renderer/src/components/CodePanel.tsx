@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 type Editor = { id: string; label: string; path: string };
-type Changed = { path: string; index: string; work: string; staged: boolean; untracked: boolean };
+type Changed = { path: string; index: string; work: string; staged: boolean; untracked: boolean; preexisting?: boolean; committed?: boolean };
 type Entry = { name: string; rel: string; dir: boolean; size: number };
 
 /**
@@ -11,10 +11,17 @@ type Entry = { name: string; rel: string; dir: boolean; size: number };
  * writers on one file while an agent is mid-edit is a merge conflict waiting
  * to happen, so everything here is read-only.
  */
-export default function CodePanel({ projectPath, projectName }: { projectPath: string; projectName: string }) {
+export default function CodePanel({ projectPath, projectName, sessionId, onSendToBatch }: {
+  projectPath: string; projectName: string; sessionId?: string;
+  onSendToBatch?: (files: string[]) => void;
+}) {
   const [tab, setTab] = useState<'changes' | 'files'>('changes');
+  // Default to this session's work. "All" exists because pre-existing dirt is
+  // still worth seeing — it just isn't the agent's doing.
+  const [scope, setScope] = useState<'session' | 'all'>('session');
   const [editors, setEditors] = useState<Editor[]>([]);
-  const [changes, setChanges] = useState<{ isRepo: boolean; branch: string | null; files: Changed[] }>({ isRepo: false, branch: null, files: [] });
+  const [changes, setChanges] = useState<{ isRepo: boolean; branch: string | null; files: Changed[]; headMoved: boolean; commits: number }>(
+    { isRepo: false, branch: null, files: [], headMoved: false, commits: 0 });
   const [sel, setSel] = useState<string | null>(null);
   const [diff, setDiff] = useState<string>('');
   const [dir, setDir] = useState('');
@@ -25,8 +32,8 @@ export default function CodePanel({ projectPath, projectName }: { projectPath: s
   useEffect(() => { window.foreman.code.editors().then(setEditors).catch(() => {}); }, []);
 
   const loadChanges = useCallback(() => {
-    window.foreman.code.changes(projectPath).then(setChanges).catch(() => {});
-  }, [projectPath]);
+    window.foreman.code.changes(projectPath, sessionId).then(setChanges).catch(() => {});
+  }, [projectPath, sessionId]);
 
   // Poll while an agent is working — the whole point is watching edits land.
   useEffect(() => {
@@ -58,6 +65,12 @@ export default function CodePanel({ projectPath, projectName }: { projectPath: s
   const editor = editors[0] ?? null;
   const target = sel ?? file?.rel;
 
+  const visible = useMemo(
+    () => (scope === 'session' ? changes.files.filter((f) => !f.preexisting) : changes.files),
+    [changes.files, scope]
+  );
+  const preexistingCount = changes.files.filter((f) => f.preexisting).length;
+
   const crumbs = useMemo(() => {
     const parts = dir ? dir.split('/') : [];
     return [{ label: projectName, rel: '' }, ...parts.map((p, i) => ({ label: p, rel: parts.slice(0, i + 1).join('/') }))];
@@ -67,10 +80,26 @@ export default function CodePanel({ projectPath, projectName }: { projectPath: s
     <div className="code-panel">
       <div className="code-head">
         <button className={tab === 'changes' ? 'code-tab on' : 'code-tab'} onClick={() => setTab('changes')}>
-          Changes{changes.files.length ? ` (${changes.files.length})` : ''}
+          Changes{visible.length ? ` (${visible.length})` : ''}
         </button>
         <button className={tab === 'files' ? 'code-tab on' : 'code-tab'} onClick={() => setTab('files')}>Files</button>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+          {tab === 'changes' && sessionId && preexistingCount > 0 && (
+            <button className="pill" title={`${preexistingCount} file(s) were already modified when this session started`}
+                    onClick={() => setScope(scope === 'session' ? 'all' : 'session')}
+                    style={scope === 'session'
+                      ? { background: 'var(--accent-soft)', color: 'var(--accent)' }
+                      : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
+              {scope === 'session' ? 'this session' : `all (+${preexistingCount} pre-existing)`}
+            </button>
+          )}
+          {tab === 'changes' && visible.length > 0 && onSendToBatch && (
+            <button className="btn" style={{ padding: '3px 9px', fontSize: 11.5 }}
+                    title="Run one prompt across these files as a batch"
+                    onClick={() => onSendToBatch(visible.map((f) => f.path))}>
+              Send {visible.length} to batch
+            </button>
+          )}
           {changes.branch && <span className="faint mono" style={{ fontSize: 10.5 }}>{changes.branch}</span>}
           <button className="btn" style={{ padding: '3px 9px', fontSize: 11.5 }}
                   title={editor ? `Open in ${editor.label}` : 'No editor CLI found — opens in Finder'}
@@ -90,16 +119,29 @@ export default function CodePanel({ projectPath, projectName }: { projectPath: s
           <>
             <div className="code-list">
               {!changes.isRepo && <p className="faint" style={{ padding: 10, fontSize: 11.5 }}>Not a git repository.</p>}
-              {changes.isRepo && !changes.files.length && (
-                <p className="faint" style={{ padding: 10, fontSize: 11.5 }}>No changes yet. Edits appear here as the agent makes them.</p>
+              {changes.isRepo && !visible.length && (
+                <p className="faint" style={{ padding: 10, fontSize: 11.5 }}>
+                  {scope === 'session' && preexistingCount > 0
+                    ? `Nothing from this session yet — ${preexistingCount} file(s) were already modified before it started.`
+                    : 'No changes yet. Edits appear here as the agent makes them.'}
+                </p>
               )}
-              {changes.files.map((f) => (
+              {changes.headMoved && (
+                <p className="faint" style={{ padding: '6px 10px', fontSize: 11 }}>
+                  {changes.commits} commit{changes.commits === 1 ? '' : 's'} since this session started.
+                </p>
+              )}
+              {visible.map((f) => (
                 <button key={f.path} className={`code-file${sel === f.path ? ' on' : ''}`} onClick={() => openDiff(f.path)}>
-                  <span className="stat" title={f.untracked ? 'untracked' : f.staged ? 'staged' : 'modified'}
-                        style={{ color: f.untracked ? 'var(--warning)' : f.staged ? 'var(--good)' : 'var(--series-1)' }}>
-                    {f.untracked ? '?' : (f.index !== ' ' ? f.index : f.work)}
+                  <span className="stat"
+                        title={f.committed ? 'committed during this session'
+                          : f.untracked ? 'untracked' : f.staged ? 'staged' : 'modified'}
+                        style={{ color: f.committed ? 'var(--series-3)' : f.untracked ? 'var(--warning)'
+                          : f.staged ? 'var(--good)' : 'var(--series-1)' }}>
+                    {f.committed ? '●' : f.untracked ? '?' : (f.index !== ' ' ? f.index : f.work)}
                   </span>
-                  <span className="trunc" title={f.path}>{f.path}</span>
+                  <span className="trunc" title={f.path}
+                        style={f.preexisting ? { color: 'var(--text-faint)' } : undefined}>{f.path}</span>
                 </button>
               ))}
             </div>

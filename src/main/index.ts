@@ -3,7 +3,7 @@ import path from 'node:path';
 import { detectProviders } from './providers';
 import {
   initSessions, listSessions, createSession, writeSession, resizeSession,
-  killSession, closeSession, scrollback, markRead, killAll,
+  killSession, closeSession, scrollback, markRead, killAll, sessionBaseline,
 } from './sessions';
 import { listProjects, addProject, removeProject, refreshBranches } from './store';
 import * as batch from './batch';
@@ -198,7 +198,8 @@ function registerIpc() {
   handle('code:editors', () => code.detectEditors());
   handle('code:open', (editorPath: string | null, target: string, line?: number) =>
     code.openInEditor(editorPath, target, line));
-  handle('code:changes', (root: string) => code.gitChanges(root));
+  handle('code:changes', (root: string, sessionId?: string) =>
+    code.gitChanges(root, sessionId ? sessionBaseline(sessionId) : null));
   handle('code:diff', (root: string, file: string) => code.gitDiff(root, file));
   handle('code:list', (root: string, rel: string) => code.listDir(root, rel));
   handle('code:read', (root: string, rel: string) => code.readProjectFile(root, rel));

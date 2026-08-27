@@ -58,9 +58,18 @@ function confine(root: string, rel: string): string {
 
 /* ── git ─────────────────────────────────────────────────────────────── */
 
-export type ChangedFile = { path: string; index: string; work: string; staged: boolean; untracked: boolean };
+export type ChangedFile = {
+  path: string; index: string; work: string; staged: boolean; untracked: boolean;
+  /** Already dirty when the session launched — not this agent's work. */
+  preexisting?: boolean;
+  /** Committed since launch, so it no longer appears in git status. */
+  committed?: boolean;
+};
 
-export async function gitChanges(root: string): Promise<{ isRepo: boolean; branch: string | null; files: ChangedFile[] }> {
+export async function gitChanges(
+  root: string,
+  baseline?: { head: string | null; dirty: string[] } | null
+): Promise<{ isRepo: boolean; branch: string | null; files: ChangedFile[]; headMoved: boolean; commits: number }> {
   try {
     const { stdout: br } = await exec('git', ['-C', root, 'rev-parse', '--abbrev-ref', 'HEAD'], { timeout: 5000 });
     const { stdout } = await exec('git', ['-C', root, 'status', '--porcelain=v1', '-z'], {
@@ -79,11 +88,35 @@ export async function gitChanges(root: string): Promise<{ isRepo: boolean; branc
         path: file, index, work,
         staged: index !== ' ' && index !== '?',
         untracked: index === '?',
+        // Dirty before the session started, so not this session's doing.
+        preexisting: Boolean(baseline?.dirty?.includes(file)),
       });
     }
-    return { isRepo: true, branch: br.trim() || null, files };
+
+    // Commits made since launch also belong to the session, and no longer show
+    // up in `status` at all.
+    let headMoved = false;
+    let commits = 0;
+    if (baseline?.head) {
+      try {
+        const { stdout: nowHead } = await exec('git', ['-C', root, 'rev-parse', 'HEAD'], { timeout: 5000 });
+        headMoved = nowHead.trim() !== baseline.head;
+        if (headMoved) {
+          const { stdout: log } = await exec('git', ['-C', root, 'rev-list', '--count', `${baseline.head}..HEAD`], { timeout: 5000 });
+          commits = Number(log.trim()) || 0;
+          const { stdout: names } = await exec('git', ['-C', root, 'diff', '--name-only', '-z', `${baseline.head}..HEAD`], { timeout: 10_000, maxBuffer: 8 * 1024 * 1024 });
+          for (const f of names.split('\0').filter(Boolean)) {
+            if (!files.some((x) => x.path === f)) {
+              files.push({ path: f, index: 'C', work: ' ', staged: true, untracked: false, preexisting: false, committed: true });
+            }
+          }
+        }
+      } catch { /* shallow clone or detached head */ }
+    }
+
+    return { isRepo: true, branch: br.trim() || null, files, headMoved, commits };
   } catch {
-    return { isRepo: false, branch: null, files: [] };
+    return { isRepo: false, branch: null, files: [], headMoved: false, commits: 0 };
   }
 }
 

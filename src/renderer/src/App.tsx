@@ -15,6 +15,8 @@ export default function App() {
   const [running, setRunning] = useState(0);
   const [activeRuns, setActiveRuns] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // A session handing its changed files to a new batch run.
+  const [batchSeed, setBatchSeed] = useState<{ projectId: string; root: string; paths: string[] } | null>(null);
 
   const loadShell = useCallback(async () => {
     const [pv, pj, ks] = await Promise.all([
@@ -82,10 +84,12 @@ export default function App() {
       <div className="body">
         {tab === 'sessions' && (
           <Sessions providers={providers} projects={projects}
-                    onAddProject={addProject} onError={setError} />
+                    onAddProject={addProject} onError={setError}
+                    onSendToBatch={(seed) => { setBatchSeed(seed); setTab('batches'); }} />
         )}
         {tab === 'batches' && (
-          <Batches projects={projects} hasKey={hasKey} onNeedKey={() => setTab('settings')} />
+          <Batches projects={projects} hasKey={hasKey} onNeedKey={() => setTab('settings')}
+                   seed={batchSeed} onSeedConsumed={() => setBatchSeed(null)} />
         )}
         {tab === 'insights' && <InsightsView />}
         {tab === 'settings' && (

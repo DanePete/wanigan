@@ -6,9 +6,10 @@ import CodePanel from '../components/CodePanel';
 
 const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)' };
 
-export default function Sessions({ providers, projects, onAddProject, onError }: {
+export default function Sessions({ providers, projects, onAddProject, onError, onSendToBatch }: {
   providers: ProviderInfo[]; projects: Project[];
   onAddProject: () => Promise<void>; onError: (m: string) => void;
+  onSendToBatch: (seed: { projectId: string; root: string; paths: string[] }) => void;
 }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -189,7 +190,9 @@ export default function Sessions({ providers, projects, onAddProject, onError }:
               {sessions.map((s) => <TerminalPane key={s.id} sessionId={s.id} visible={s.id === activeId} />)}
             </div>
             {showCode && active && (
-              <CodePanel key={active.projectId} projectPath={active.projectPath} projectName={active.projectName} />
+              <CodePanel key={active.id} projectPath={active.projectPath} projectName={active.projectName}
+                         sessionId={active.id}
+                         onSendToBatch={(paths) => onSendToBatch({ projectId: active.projectId, root: active.projectPath, paths })} />
             )}
           </div>
         )}

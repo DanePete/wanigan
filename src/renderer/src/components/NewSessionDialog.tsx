@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { LaunchOptions, Project, ProviderId, ProviderInfo } from '@shared/types';
+import { EFFORT_LEVELS, PERMISSION_MODES } from '@shared/types';
 
 const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)' };
 
@@ -15,7 +16,11 @@ export default function NewSessionDialog({
 }) {
   const installed = providers.filter((p) => p.path);
   const [providerId, setProviderId] = useState<ProviderId>(installed[0]?.id ?? 'claude');
+  const provider = providers.find((p) => p.id === providerId);
   const [projectId, setProjectId] = useState(defaultProjectId ?? projects[0]?.id ?? '');
+  const [model, setModel] = useState('');
+  const [effort, setEffort] = useState('');
+  const [permissionMode, setPermissionMode] = useState('');
   const [extraArgs, setExtraArgs] = useState('');
   const [initialPrompt, setInitialPrompt] = useState('');
   const [busy, setBusy] = useState(false);
@@ -34,7 +39,7 @@ export default function NewSessionDialog({
     if (!projectId || busy) return;
     setBusy(true); setErr(null);
     try {
-      await onCreate({ providerId, projectId, extraArgs, initialPrompt });
+      await onCreate({ providerId, projectId, model, effort, permissionMode, extraArgs, initialPrompt });
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -91,6 +96,49 @@ export default function NewSessionDialog({
           <p className="faint" style={{ margin: '6px 0 14px' }}>
             No projects yet — add a folder to start a session in it.
           </p>
+        )}
+
+        <div className="label">Model <span style={{ textTransform: 'none' }}>— blank uses the CLI default</span></div>
+        <div style={{ display: 'flex', gap: 5, margin: '6px 0 14px', flexWrap: 'wrap' }}>
+          {['', 'opus', 'sonnet', 'haiku', 'fable'].map((m) => (
+            <button key={m || 'default'} className="pill" onClick={() => setModel(m)}
+                    style={model === m ? { background: 'var(--accent)', color: '#0c0e12' }
+                                       : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
+              {m || 'default'}
+            </button>
+          ))}
+        </div>
+
+        {provider?.supports.effort && (
+          <>
+            <div className="label">Effort <span style={{ textTransform: 'none' }}>— governs thinking depth, tool calls and length</span></div>
+            <div style={{ display: 'flex', gap: 5, margin: '6px 0 14px', flexWrap: 'wrap' }}>
+              {['', ...EFFORT_LEVELS].map((l) => (
+                <button key={l || 'default'} className="pill" onClick={() => setEffort(l)}
+                        style={effort === l ? { background: 'var(--accent)', color: '#0c0e12' }
+                                            : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
+                  {l || 'default'}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {provider?.supports.permissionMode && (
+          <>
+            <div className="label">Permission mode</div>
+            <select className="field" style={{ margin: '6px 0 14px' }} value={permissionMode}
+                    onChange={(e) => setPermissionMode(e.target.value)}>
+              <option value="">default</option>
+              {PERMISSION_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+            {(permissionMode === 'bypassPermissions' || permissionMode === 'dontAsk') && (
+              <p style={{ color: 'var(--warn)', fontSize: 11, marginTop: -8, marginBottom: 12, lineHeight: 1.45 }}>
+                This session will not ask before running commands or editing files. Only use it in a
+                repo you can throw away or fully revert.
+              </p>
+            )}
+          </>
         )}
 
         <div className="label">First message <span style={{ textTransform: 'none' }}>(optional)</span></div>

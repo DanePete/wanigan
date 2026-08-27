@@ -14,6 +14,7 @@ export async function loadSource(src: SourceConfig): Promise<Dataset> {
     case 'csv':     return fromCsv(src.text, src.delimiter ?? ',');
     case 'jsonl':   return fromJsonl(src.text);
     case 'glob':    return await fromGlob(src.root, src.pattern, src.maxBytes ?? 200_000);
+    case 'files':   return fromFileList(src.root, src.paths, src.maxBytes ?? 200_000);
     case 'command': return await fromCommand(src.cwd, src.command, src.format);
   }
 }
@@ -120,6 +121,41 @@ async function fromCommand(cwd: string, command: string, format: 'csv' | 'jsonl'
   });
   const ds = format === 'csv' ? fromCsv(stdout) : fromJsonl(stdout);
   return { ...ds, note: [ds.note, `${stdout.length.toLocaleString()} bytes from command`].filter(Boolean).join(' · ') };
+}
+
+/**
+ * One row per named file, same shape as the glob source. This is what a session
+ * hands to a batch: "run this prompt over exactly the files the agent touched".
+ * Deleted files are skipped rather than failing the whole run.
+ */
+function fromFileList(root: string, paths: string[], maxBytes: number): Dataset {
+  const abs = path.resolve(root);
+  const rows: Row[] = [];
+  let missing = 0, truncated = 0;
+
+  for (const rel of paths) {
+    const full = path.resolve(abs, rel);
+    if (full !== abs && !full.startsWith(abs + path.sep)) continue;
+    let size: number;
+    try { size = fs.statSync(full).size; } catch { missing++; continue; }
+    let content: string;
+    try { content = fs.readFileSync(full, 'utf8'); } catch { missing++; continue; }
+    if (content.length > maxBytes) {
+      content = content.slice(0, maxBytes) + `\n\n[... truncated at ${maxBytes} chars of ${size} bytes ...]`;
+      truncated++;
+    }
+    rows.push({ path: full, relpath: rel, ext: path.extname(full).slice(1), size, content });
+  }
+
+  const notes = [
+    missing ? `${missing} file(s) skipped (deleted or unreadable)` : '',
+    truncated ? `${truncated} truncated at ${maxBytes} chars` : '',
+  ].filter(Boolean);
+  return {
+    rows,
+    columns: ['path', 'relpath', 'ext', 'size', 'content'],
+    note: notes.length ? notes.join(' · ') : undefined,
+  };
 }
 
 /** Minimal glob: ** , * and ? . Enough for src/**\/*.php without a dependency. */

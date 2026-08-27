@@ -3,6 +3,38 @@ import { BrowserWindow } from 'electron';
 import type { LaunchOptions, Session, ProviderId } from '../shared/types';
 import { providerById, shellPath, detectProviders } from './providers';
 import { projectById } from './store';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import type { Baseline } from '../shared/types';
+
+const exec = promisify(execFile);
+
+/**
+ * A snapshot of the repo at launch. Without it the code panel can only show
+ * "changes in this repo", which is wrong the moment two sessions share one —
+ * or when you had uncommitted work before the agent started.
+ */
+async function captureBaseline(cwd: string): Promise<Baseline> {
+  const at = Date.now();
+  try {
+    const [{ stdout: head }, { stdout: st }] = await Promise.all([
+      exec('git', ['-C', cwd, 'rev-parse', 'HEAD'], { timeout: 5000 }),
+      exec('git', ['-C', cwd, 'status', '--porcelain=v1', '-z'], { timeout: 10_000, maxBuffer: 8 * 1024 * 1024 }),
+    ]);
+    const dirty: string[] = [];
+    const parts = st.split('\0').filter(Boolean);
+    for (let i = 0; i < parts.length; i++) {
+      const e = parts[i];
+      const idx = e[0] ?? ' ';
+      let f = e.slice(3);
+      if (idx === 'R' || idx === 'C') { i++; f = parts[i] ?? f; }
+      dirty.push(f);
+    }
+    return { head: head.trim(), dirty, at };
+  } catch {
+    return { head: null, dirty: [], at };
+  }
+}
 
 // Required at runtime rather than imported, so the bundler leaves the native
 // addon alone.
@@ -85,7 +117,12 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
   const detected = (await detectProviders()).find((p) => p.id === opts.providerId);
   const resolvedBin = detected?.path ?? def.bin;
   const extra = (opts.extraArgs ?? '').trim().split(/\s+/).filter(Boolean);
-  const args = def.args(extra);
+  const args = def.args(extra, {
+    model: opts.model || undefined,
+    effort: def.supports.effort ? opts.effort || undefined : undefined,
+    permissionMode: def.supports.permissionMode ? opts.permissionMode || undefined : undefined,
+  });
+  const baseline = await captureBaseline(project.path);
 
   const id = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const meta: Session = {
@@ -95,6 +132,9 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
     projectPath: project.path,
     projectName: project.name,
     title: `${def.label} · ${project.name}`,
+    model: opts.model || undefined,
+    effort: def.supports.effort ? (opts.effort || undefined) : undefined,
+    permissionMode: def.supports.permissionMode ? (opts.permissionMode || undefined) : undefined,
     status: 'starting',
     pid: null,
     exitCode: null,
@@ -121,6 +161,7 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
 
   meta.pid = proc.pid;
   meta.status = 'running';
+  meta.baseline = baseline;
   const live: Live = { meta, proc, buffer: '' };
   sessions.set(id, live);
 
@@ -149,6 +190,10 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
 
   broadcast('session:list', listSessions());
   return meta;
+}
+
+export function sessionBaseline(sessionId: string): Baseline | null {
+  return sessions.get(sessionId)?.meta.baseline ?? null;
 }
 
 /** Scrollback for a pane that is being mounted or re-mounted. */

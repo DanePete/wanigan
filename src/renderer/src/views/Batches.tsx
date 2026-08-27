@@ -16,12 +16,18 @@ type Run = {
   expires_at: number | null; parent_run_id: string | null; project_name: string | null;
 };
 
-export default function Batches({ projects, hasKey, onNeedKey }: {
+export default function Batches({ projects, hasKey, onNeedKey, seed, onSeedConsumed }: {
   projects: Project[]; hasKey: boolean; onNeedKey: () => void;
+  seed?: { projectId: string; root: string; paths: string[] } | null;
+  onSeedConsumed?: () => void;
 }) {
   const [view, setView] = useState<{ page: 'list' } | { page: 'new' } | { page: 'detail'; id: string }>({ page: 'list' });
+
+  // A session handing over its changed files opens the builder directly.
+  useEffect(() => { if (seed) setView({ page: 'new' }); }, [seed]);
   if (view.page === 'new') {
     return <NewRun projects={projects} hasKey={hasKey} onNeedKey={onNeedKey}
+                   seed={seed} onSeedConsumed={onSeedConsumed}
                    onDone={(id) => setView({ page: 'detail', id })} onCancel={() => setView({ page: 'list' })} />;
   }
   if (view.page === 'detail') {
@@ -123,8 +129,10 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
 
 /* ── builder ──────────────────────────────────────────────────────────── */
 
-function NewRun({ projects, hasKey, onNeedKey, onDone, onCancel }: {
+function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onCancel }: {
   projects: Project[]; hasKey: boolean; onNeedKey: () => void;
+  seed?: { projectId: string; root: string; paths: string[] } | null;
+  onSeedConsumed?: () => void;
   onDone: (id: string) => void; onCancel: () => void;
 }) {
   const [presets, setPresets] = useState<Preset[]>([]);
@@ -146,12 +154,31 @@ function NewRun({ projects, hasKey, onNeedKey, onDone, onCancel }: {
   const projectId = cfg?.projectId ?? projects[0]?.id;
 
   useEffect(() => {
-    window.foreman.batch.presets(projects[0]?.id).then((d) => {
+    const pid = seed?.projectId ?? projects[0]?.id;
+    window.foreman.batch.presets(pid).then((d) => {
       setPresets(d.presets); setModels(d.models);
       setCatalog({ fetchedAt: d.modelsFetchedAt, stale: d.modelsStale });
-      setCfg({ name: '', projectId: projects[0]?.id, ...d.presets[0].config });
+
+      if (seed) {
+        // Review-the-agent's-work is the obvious job for a handed-over file
+        // list, so start from the audit recipe rather than a blank one.
+        const audit = (d.presets as Preset[]).find((x) => x.id === 'repo-audit') ?? d.presets[0];
+        const project = projects.find((p) => p.id === seed.projectId);
+        setCfg({
+          ...audit.config,
+          name: `Review ${seed.paths.length} changed file${seed.paths.length === 1 ? '' : 's'}${project ? ` — ${project.name}` : ''}`,
+          projectId: seed.projectId,
+          source: { kind: 'files', root: seed.root, paths: seed.paths, maxBytes: 120_000 },
+        });
+        onSeedConsumed?.();
+      } else {
+        setCfg({ name: '', projectId: pid, ...d.presets[0].config });
+      }
     });
-  }, [projects]);
+    // Seeding is a one-shot handoff; re-running on every projects change would
+    // clobber edits the user has already made.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects, seed]);
 
   const model = useMemo(() => models.find((m) => m.id === cfg?.model), [models, cfg?.model]);
 
@@ -282,11 +309,11 @@ function NewRun({ projects, hasKey, onNeedKey, onDone, onCancel }: {
                  right={<button className="btn" onClick={loadPreview} disabled={loadingPreview}>
                    {loadingPreview ? 'Loading…' : preview ? 'Reload' : 'Load dataset'}</button>}>
           <div style={{ display: 'flex', gap: 6, marginBottom: 11, flexWrap: 'wrap' }}>
-            {(['csv', 'jsonl', 'glob', 'command'] as const).map((k) => (
+            {(cfg.source.kind === 'files' ? (['files'] as const) : (['csv', 'jsonl', 'glob', 'command'] as const)).map((k) => (
               <button key={k} className="pill" onClick={() => { patch({ source: defaultSource(k) }); setPreview(null); invalidate(); }}
                       style={cfg.source.kind === k ? { background: 'var(--accent)', color: '#0c0e12' }
                                                    : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
-                {({ csv: 'CSV', jsonl: 'JSONL', glob: 'Files', command: 'Command' } as const)[k]}
+                {({ csv: 'CSV', jsonl: 'JSONL', glob: 'Files', command: 'Command', files: 'From session' } as const)[k]}
               </button>
             ))}
           </div>
@@ -542,6 +569,7 @@ function defaultSource(kind: SourceConfig['kind']): SourceConfig {
     case 'jsonl':   return { kind: 'jsonl', text: '' };
     case 'glob':    return { kind: 'glob', root: '', pattern: '**/*.php', maxBytes: 120000 };
     case 'command': return { kind: 'command', cwd: '', command: '', format: 'jsonl' };
+    case 'files':   return { kind: 'files', root: '', paths: [], maxBytes: 120_000 };
   }
 }
 
@@ -558,6 +586,22 @@ function SourceEditor({ source, onChange }: { source: SourceConfig; onChange: (s
                  onChange={async (e) => { const f = e.target.files?.[0]; if (f) onChange({ ...source, text: await f.text() }); }} />
         </label>
       </>
+    );
+  }
+  if (source.kind === 'files') {
+    return (
+      <div>
+        <p className="dim" style={{ fontSize: 12, marginBottom: 7 }}>
+          {source.paths.length} file{source.paths.length === 1 ? '' : 's'} handed over from a session, in{' '}
+          <span className="mono">{source.root}</span>.
+        </p>
+        <div className="sunk mono scroll-y" style={{ maxHeight: 150, padding: 9, fontSize: 11.5, lineHeight: 1.6 }}>
+          {source.paths.map((f) => <div key={f}>{f}</div>)}
+        </div>
+        <p className="faint" style={{ fontSize: 11, marginTop: 5 }}>
+          Deleted files are skipped at load time rather than failing the run.
+        </p>
+      </div>
     );
   }
   if (source.kind === 'glob') {

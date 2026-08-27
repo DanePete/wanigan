@@ -7,7 +7,13 @@ export type ProviderInfo = {
   /** Resolved absolute path, or null when the CLI is not installed. */
   path: string | null;
   version: string | null;
+  supports: { model: boolean; effort: boolean; permissionMode: boolean };
 };
+
+/** Effort levels the Claude Code CLI accepts. */
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+/** Permission modes the Claude Code CLI accepts. */
+export const PERMISSION_MODES = ['manual', 'acceptEdits', 'auto', 'plan', 'dontAsk', 'bypassPermissions'] as const;
 
 export type Project = {
   id: string;
@@ -34,16 +40,30 @@ export type Session = {
   endedAt: number | null;
   /** Bumped on output while the session is not focused. */
   unread: number;
+  model?: string;
+  effort?: string;
+  permissionMode?: string;
+  /** Repo state at launch — lets the code panel show only this session's work. */
+  baseline?: Baseline;
 };
 
 export type LaunchOptions = {
   providerId: ProviderId;
   projectId: string;
+  /** Model alias ('opus', 'sonnet', 'fable') or a full id. Empty = the CLI default. */
+  model?: string;
+  /** low | medium | high | xhigh | max. Empty = the CLI default (high). */
+  effort?: string;
+  /** acceptEdits | auto | bypassPermissions | manual | dontAsk | plan */
+  permissionMode?: string;
   /** Extra CLI flags, split on whitespace. */
   extraArgs?: string;
   /** Initial prompt typed into the session once it is ready. */
   initialPrompt?: string;
 };
+
+/** What the repo looked like when a session started, so its own work is separable. */
+export type Baseline = { head: string | null; dirty: string[]; at: number };
 
 export type SessionOutput = { sessionId: string; data: string };
 export type CacheTtl = '5m' | '1h';
@@ -58,6 +78,8 @@ export type SourceConfig =
   | { kind: 'csv'; text: string; delimiter?: string }
   | { kind: 'jsonl'; text: string }
   | { kind: 'glob'; root: string; pattern: string; maxBytes?: number }
+  /** An explicit list of files — what a session hands over when it sends its changes. */
+  | { kind: 'files'; root: string; paths: string[]; maxBytes?: number }
   | { kind: 'command'; cwd: string; command: string; format: 'csv' | 'jsonl' };
 
 export type RunConfig = {

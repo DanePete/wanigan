@@ -56,8 +56,11 @@ const api = {
     editors: () => call<{ id: string; label: string; path: string }[]>('code:editors'),
     open: (editorPath: string | null, target: string, line?: number) =>
       call<{ opened: string }>('code:open', editorPath, target, line),
-    changes: (root: string) => call<{ isRepo: boolean; branch: string | null; files: {
-      path: string; index: string; work: string; staged: boolean; untracked: boolean }[] }>('code:changes', root),
+    changes: (root: string, sessionId?: string) => call<{
+      isRepo: boolean; branch: string | null; headMoved: boolean; commits: number;
+      files: { path: string; index: string; work: string; staged: boolean; untracked: boolean;
+               preexisting?: boolean; committed?: boolean }[];
+    }>('code:changes', root, sessionId),
     diff: (root: string, file: string) => call<string>('code:diff', root, file),
     list: (root: string, rel: string) =>
       call<{ name: string; rel: string; dir: boolean; size: number }[]>('code:list', root, rel),
