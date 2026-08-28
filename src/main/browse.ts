@@ -241,3 +241,76 @@ export function rememberDir(dir: string) {
   const next = [dir, ...recentDirs().filter((d) => d !== dir)].slice(0, RECENT_MAX);
   setSetting(RECENT_KEY, JSON.stringify(next));
 }
+
+
+/* ── finding a repo by name ──────────────────────────────────────────────
+   "Find the polaris project on my Mac" is a disk walk, and a disk walk with no
+   ceiling is how a helpful feature becomes a spinning beachball. This one is
+   bounded three ways — a fixed set of roots, a depth limit, and a hard cap on
+   directories visited — and reports when it stopped early rather than implying
+   it searched everywhere.
+   ──────────────────────────────────────────────────────────────────────── */
+
+export type FoundRepo = { name: string; path: string; depth: number; score: number };
+
+const REPO_ROOTS = ['Projects', 'Code', 'src', 'Developer', 'Sites', 'work', 'repos', 'git', 'Documents', 'Desktop'];
+const REPO_SKIP = new Set([
+  'node_modules', 'vendor', '.git', 'dist', 'build', 'out', 'target', 'Library',
+  '.Trash', '.cache', 'Applications', '.npm', '.nvm', 'venv', '.venv', '__pycache__',
+]);
+const MAX_VISIT = 20_000;
+
+function score(name: string, q: string): number {
+  const n = name.toLowerCase(), s = q.toLowerCase();
+  if (n === s) return 100;
+  if (n.startsWith(s)) return 80;
+  if (n.includes(s)) return 60;
+  // Subsequence, so "lgh" still finds "lighthouse".
+  let qi = 0;
+  for (let i = 0; i < n.length && qi < s.length; i++) if (n[i] === s[qi]) qi++;
+  return qi === s.length ? 30 : 0;
+}
+
+export function findRepos(
+  query: string,
+  opts: { roots?: string[]; limit?: number; maxDepth?: number } = {}
+): { repos: FoundRepo[]; visited: number; truncated: boolean; roots: string[] } {
+  const home = os.homedir();
+  const roots = opts.roots?.length
+    ? opts.roots.map((r) => path.resolve(r.replace(/^~/, home)))
+    : [home, ...REPO_ROOTS.map((r) => path.join(home, r))].filter(exists);
+  const limit = opts.limit ?? 20;
+  const maxDepth = opts.maxDepth ?? 4;
+
+  const found = new Map<string, FoundRepo>();
+  let visited = 0;
+  let truncated = false;
+
+  const walk = (dir: string, depth: number) => {
+    if (truncated || depth > maxDepth) return;
+    if (++visited > MAX_VISIT) { truncated = true; return; }
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+
+    // A directory containing .git is a repo; do not descend into it. Nested
+    // repos exist, but walking into one turns a search for a project into a
+    // search of its whole history of vendored dependencies.
+    if (entries.some((e) => e.name === '.git')) {
+      const name = path.basename(dir);
+      const sc = score(name, query);
+      if (sc > 0 && !found.has(dir)) found.set(dir, { name, path: dir, depth, score: sc });
+      return;
+    }
+    for (const e of entries) {
+      if (!e.isDirectory() || REPO_SKIP.has(e.name)) continue;
+      if (e.name.startsWith('.') && e.name !== '.config') continue;
+      walk(path.join(dir, e.name), depth + 1);
+    }
+  };
+
+  for (const r of roots) walk(r, 0);
+  const repos = [...found.values()]
+    .sort((a, b) => b.score - a.score || a.depth - b.depth || a.name.localeCompare(b.name))
+    .slice(0, limit);
+  return { repos, visited, truncated, roots };
+}

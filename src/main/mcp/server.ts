@@ -3,7 +3,11 @@ import type { Socket } from 'node:net';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { app } from 'electron';
 import * as batch from '../batch';
-import type { RunConfig, SourceConfig, SystemBlock } from '../../shared/types';
+import { addProject, listProjects, projectById } from '../store';
+import { createSession, listSessions } from '../sessions';
+import { findRepos } from '../browse';
+import { trustFor } from '../policy';
+import type { ProviderId, RunConfig, SourceConfig, SystemBlock } from '../../shared/types';
 
 /**
  * The outbound half of MCP: Foreman itself, as a server a running session can
@@ -253,6 +257,75 @@ const TOOLS: ToolDef[] = [
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
+
+  /* ── driving Foreman itself ─────────────────────────────────────────
+     Reading is free. Anything that adds state or starts an agent goes
+     through the same human confirmation as spending money, because an
+     agent that can spawn agents is a cost and a filesystem reach that
+     nobody approved. ─────────────────────────────────────────────── */
+  {
+    name: 'foreman_list_projects',
+    title: 'List projects',
+    description: 'The repositories Foreman knows about, with their current branch.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: 'foreman_find_repos',
+    title: 'Find a repository on this machine',
+    description:
+      'Search the usual project locations for a git repository whose folder name matches. ' +
+      'Bounded by depth and by a cap on directories visited, and it says when it stopped early. ' +
+      'Use this to turn "the polaris project" into a path before adding it.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['query'],
+      properties: {
+        query: { type: 'string', description: 'Part of the folder name, e.g. "polaris".' },
+        limit: { type: 'integer', description: 'Maximum matches to return. Default 20.' },
+        roots: { type: 'array', items: { type: 'string' }, description: 'Directories to search instead of the defaults.' },
+      },
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: 'foreman_add_project',
+    title: 'Add a project',
+    description:
+      'Add a directory to Foreman\'s project list so sessions, batches and Context can target it. ' +
+      'Requires a human to approve. Adding a project that already exists returns the existing one.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['path'],
+      properties: { path: { type: 'string', description: 'Absolute path to the directory.' } },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  },
+  {
+    name: 'foreman_list_sessions',
+    title: 'List sessions',
+    description: 'Agent sessions running right now, with provider, project, model and status.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: 'foreman_start_session',
+    title: 'Start an agent session',
+    description:
+      'Open a new agent session in a project. Requires a human to approve, because it spends tokens and ' +
+      'gives an agent access to that repository. The session runs under the project\'s trust level, which ' +
+      'this tool cannot raise.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['projectId'],
+      properties: {
+        projectId: { type: 'string', description: 'From foreman_list_projects or foreman_add_project.' },
+        provider: { type: 'string', enum: ['claude', 'codex', 'glm'], description: 'Default claude.' },
+        model: { type: 'string', description: 'Model alias, e.g. opus or sonnet. Omit for the CLI default.' },
+        effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max'] },
+        prompt: { type: 'string', description: 'Typed into the session once it is ready.' },
+        isolate: { type: 'boolean', description: 'Run in a dedicated git worktree.' },
+      },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  },
 ];
 
 const INSTRUCTIONS =
@@ -499,6 +572,88 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
           'custom_id', 'row_index', 'status', 'output_text', 'output_json', 'stop_reason',
           'error_type', 'error_message', 'in_tokens', 'out_tokens', 'cache_read', 'cache_write',
         ])),
+      });
+    }
+
+    case 'foreman_list_projects':
+      return ok({ projects: listProjects().map((p) => ({ id: p.id, name: p.name, path: p.path, branch: p.branch })) });
+
+    case 'foreman_find_repos': {
+      const q = str(args.query, 'query');
+      const limit = typeof args.limit === 'number' ? Math.min(50, Math.max(1, args.limit)) : 20;
+      const roots = Array.isArray(args.roots) ? args.roots.filter((r): r is string => typeof r === 'string') : undefined;
+      const r = findRepos(q, { limit, roots });
+      const known = new Set(listProjects().map((p) => p.path));
+      return ok({
+        repos: r.repos.map((x) => ({ name: x.name, path: x.path, alreadyAdded: known.has(x.path) })),
+        searched: r.roots,
+        directoriesVisited: r.visited,
+        // Say it plainly rather than letting an empty result imply the repo
+        // does not exist anywhere on the machine.
+        truncated: r.truncated,
+        note: r.truncated
+          ? 'The search stopped at its ceiling, so this list may be incomplete. Narrow it with "roots".'
+          : null,
+      });
+    }
+
+    case 'foreman_add_project': {
+      const dir = str(args.path, 'path');
+      const existing = listProjects().find((p) => p.path === dir);
+      if (existing) return ok({ project: existing, alreadyExisted: true });
+
+      const approved = await confirmSpend('foreman_add_project', `Add ${dir} to Foreman's projects.`, 0);
+      if (!approved) {
+        return toolError(
+          confirmHandler
+            ? `A human declined adding ${dir}. Nothing was changed.`
+            : 'Confirmation is unavailable: the Foreman window has to be open to approve this.'
+        );
+      }
+      return ok({ project: await addProject(dir), alreadyExisted: false });
+    }
+
+    case 'foreman_list_sessions':
+      return ok({
+        sessions: listSessions().map((x) => ({
+          id: x.id, provider: x.providerId, project: x.projectName, path: x.projectPath,
+          model: x.model ?? null, effort: x.effort ?? null, status: x.status,
+          trust: x.trust ?? null, worktree: x.worktree ?? null,
+        })),
+      });
+
+    case 'foreman_start_session': {
+      const projectId = str(args.projectId, 'projectId');
+      const project = projectById(projectId);
+      if (!project) return toolError(`No project ${projectId}. Call foreman_list_projects for the current list.`);
+
+      const provider = (typeof args.provider === 'string' ? args.provider : 'claude') as ProviderId;
+      const trust = trustFor(projectId);
+      const summary =
+        `Start a ${provider} session in ${project.name} (${project.path}) at ${trust} trust` +
+        `${typeof args.model === 'string' && args.model ? `, model ${args.model}` : ''}.`;
+
+      const approved = await confirmSpend('foreman_start_session', summary, 0);
+      if (!approved) {
+        return toolError(
+          confirmHandler
+            ? `A human declined starting that session. Nothing was launched. Do not retry it — ask what to change.`
+            : 'Confirmation is unavailable: the Foreman window has to be open to approve starting an agent.'
+        );
+      }
+
+      const s = await createSession({
+        providerId: provider,
+        projectId,
+        model: typeof args.model === 'string' ? args.model : undefined,
+        effort: typeof args.effort === 'string' ? args.effort : undefined,
+        initialPrompt: typeof args.prompt === 'string' ? args.prompt : undefined,
+        isolate: args.isolate === true,
+      });
+      return ok({
+        sessionId: s.id, project: s.projectName, provider: s.providerId,
+        trust: s.trust ?? null, worktree: s.worktree ?? null,
+        note: 'The session is open in Foreman. It runs under the project trust level, which this tool cannot raise.',
       });
     }
 

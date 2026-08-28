@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   LaunchOptions, PastSession, Project, ProviderId, ProviderInfo, Session, TrustLevel, WorktreeInfo,
 } from '@shared/types';
-import { TRUST_COPY, TRUST_LEVELS } from '@shared/types';
+import { EFFORT_LEVELS, TRUST_COPY, TRUST_LEVELS } from '@shared/types';
 import TerminalPane, { feed, disposePane } from '../components/TerminalPane';
 import NewSessionDialog from '../components/NewSessionDialog';
 import CodePanel from '../components/CodePanel';
@@ -361,7 +361,8 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
           </div>
 
           {active && (
-            <SessionHeader key={active.id} session={active} defaultTrust={defaultTrust} onRefresh={refresh} />
+            <SessionHeader key={active.id} session={active} defaultTrust={defaultTrust} onRefresh={refresh}
+                           provider={providers.find((p) => p.id === active.providerId)} />
           )}
 
           {!ready ? (
@@ -543,12 +544,15 @@ function writePanes(map: Record<string, 'code' | 'timeline'>, live: string[]) {
 
 /* ── P19 + P9 · the session header ────────────────────────────────────── */
 
-function SessionHeader({ session, defaultTrust, onRefresh }: {
+function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
   session: Session; defaultTrust: TrustLevel | null; onRefresh: () => Promise<void>;
+  provider?: ProviderInfo;
 }) {
   const trust = session.trust ?? null;
   const elevated = !!trust && !!defaultTrust && rank(trust) > rank(defaultTrust);
-  if (!elevated && !session.worktree) return null;
+  const tunable = session.status === 'running' &&
+    (provider?.supports.model === true || provider?.supports.effort === true);
+  if (!elevated && !session.worktree && !tunable) return null;
 
   return (
     <div style={{ borderBottom: '1px solid var(--line)', background: 'var(--bg-soft)' }}>
@@ -556,6 +560,96 @@ function SessionHeader({ session, defaultTrust, onRefresh }: {
         <TrustBanner level={trust} fallback={defaultTrust} running={session.status !== 'exited'} />
       )}
       {session.worktree && <WorktreeBar session={session} path={session.worktree} onRefresh={onRefresh} />}
+      {tunable && provider && <RunConfigBar session={session} provider={provider} />}
+    </div>
+  );
+}
+
+/* ── model and effort, on a session that is already running ──────────────
+   --model and --effort are argv, and you cannot change a running process's
+   arguments. What you CAN do is what you would do by hand: type the CLI's own
+   /model and /effort into the terminal. So these controls send exactly that,
+   which is why they work rather than merely looking like they do — and why
+   they are disabled the moment a session exits.
+   ─────────────────────────────────────────────────────────────────────── */
+
+const MODEL_CHOICES: Record<string, { value: string; label: string }[]> = {
+  claude: [
+    { value: 'opus', label: 'Opus' },
+    { value: 'sonnet', label: 'Sonnet' },
+    { value: 'haiku', label: 'Haiku' },
+    { value: 'fable', label: 'Fable' },
+  ],
+  glm: [
+    { value: 'glm-4.6', label: 'GLM 4.6' },
+    { value: 'glm-4.5-air', label: 'GLM 4.5 Air' },
+  ],
+  codex: [],
+};
+
+function RunConfigBar({ session, provider }: { session: Session; provider: ProviderInfo }) {
+  const models = MODEL_CHOICES[provider.id] ?? [];
+  const [model, setModel] = useState(session.model ?? '');
+  const [effortIdx, setEffortIdx] = useState(() => {
+    const i = EFFORT_LEVELS.indexOf((session.effort ?? '') as (typeof EFFORT_LEVELS)[number]);
+    return i >= 0 ? i : 2;
+  });
+  const [sent, setSent] = useState<string | null>(null);
+
+  function send(command: string) {
+    // No trailing newline anywhere else in this file types for the user, but a
+    // slash command is the whole action — there is nothing left to write.
+    window.foreman.sessions.write(session.id, command + '\r');
+    setSent(command);
+    window.setTimeout(() => setSent((c) => (c === command ? null : c)), 2600);
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+                  padding: '6px 12px', borderTop: '1px solid var(--line-soft)' }}>
+      {provider.supports.model && models.length > 0 && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <span className="label" style={{ margin: 0 }}>Model</span>
+          <select
+            className="field"
+            style={{ padding: '3px 7px', fontSize: 12 }}
+            value={model}
+            onChange={(e) => { setModel(e.target.value); if (e.target.value) send(`/model ${e.target.value}`); }}
+          >
+            <option value="">CLI default</option>
+            {models.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </select>
+        </label>
+      )}
+
+      {provider.supports.effort && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+          <span className="label" style={{ margin: 0 }}>Effort</span>
+          <input
+            type="range"
+            min={0}
+            max={EFFORT_LEVELS.length - 1}
+            step={1}
+            value={effortIdx}
+            aria-label="Effort level"
+            aria-valuetext={EFFORT_LEVELS[effortIdx]}
+            onChange={(e) => setEffortIdx(Number(e.target.value))}
+            onPointerUp={() => send(`/effort ${EFFORT_LEVELS[effortIdx]}`)}
+            onKeyUp={(e) => { if (e.key.startsWith('Arrow')) send(`/effort ${EFFORT_LEVELS[effortIdx]}`); }}
+            style={{ width: 128, accentColor: 'var(--accent)' }}
+          />
+          {/* The word, not just the notch — a slider position is not a value. */}
+          <span className="mono" style={{ fontSize: 11.5, color: 'var(--accent)', minWidth: 46 }}>
+            {EFFORT_LEVELS[effortIdx]}
+          </span>
+        </label>
+      )}
+
+      <span className="faint" style={{ fontSize: 11, marginLeft: 'auto', minWidth: 0 }}>
+        {sent
+          ? <><span className="mono" style={{ color: 'var(--ok)' }}>{sent}</span> sent to the session</>
+          : 'Typed into the session as a slash command. /model also sets your default for new sessions.'}
+      </span>
     </div>
   );
 }

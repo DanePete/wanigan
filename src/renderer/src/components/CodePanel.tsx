@@ -28,6 +28,17 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
   const [entries, setEntries] = useState<Entry[]>([]);
   const [file, setFile] = useState<{ rel: string; text: string; truncated: boolean; binary: boolean } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  /*
+   * Live follow. PostToolUse fires after every Write/Edit/MultiEdit/NotebookEdit
+   * and already carries the paths it touched, so watching an agent work costs
+   * nothing new — the events are being broadcast to this renderer already.
+   * Note "after": this is the change as it lands, not a preview of one the
+   * agent is about to make. The diff is what is on disk, which is the honest
+   * thing to show.
+   */
+  const [follow, setFollow] = useState(true);
+  const [touched, setTouched] = useState<Record<string, number>>({});
+  const [lastEdit, setLastEdit] = useState<{ path: string; at: number } | null>(null);
 
   useEffect(() => { window.foreman.code.editors().then(setEditors).catch(() => {}); }, []);
 
@@ -43,6 +54,46 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
   }, [loadChanges]);
 
   useEffect(() => { setSel(null); setDiff(''); setFile(null); setDir(''); }, [projectPath]);
+
+  // Absolute from the hook payload, repo-relative in the changes list.
+  const toRel = useCallback((abs: string) => {
+    const root = projectPath.endsWith('/') ? projectPath : projectPath + '/';
+    return abs.startsWith(root) ? abs.slice(root.length) : abs;
+  }, [projectPath]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    let timer: number | undefined;
+    const off = window.foreman.on.sessionEvent((e) => {
+      if (e.sessionId !== sessionId || !e.paths?.length) return;
+      const rels = e.paths.map(toRel);
+      const at = Date.now();
+      setTouched((t) => { const n = { ...t }; for (const r of rels) n[r] = at; return n; });
+      setLastEdit({ path: rels[rels.length - 1], at });
+      // A MultiEdit lands as several events in a burst; refresh once for the
+      // burst rather than firing a git status per file.
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        loadChanges();
+        if (follow && tab === 'changes') void openDiff(rels[rels.length - 1]);
+      }, 180);
+    });
+    return () => { off(); window.clearTimeout(timer); };
+  }, [sessionId, follow, tab, toRel, loadChanges]);
+
+  // Recency fades, so "just edited" means it. A marker that never expires is
+  // just a second selection colour.
+  useEffect(() => {
+    if (!Object.keys(touched).length) return;
+    const t = setInterval(() => {
+      const cut = Date.now() - 30_000;
+      setTouched((cur) => {
+        const next = Object.fromEntries(Object.entries(cur).filter(([, at]) => at > cut));
+        return Object.keys(next).length === Object.keys(cur).length ? cur : next;
+      });
+    }, 5000);
+    return () => clearInterval(t);
+  }, [touched]);
 
   useEffect(() => {
     if (tab !== 'files') return;
@@ -83,6 +134,21 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
           Changes{visible.length ? ` (${visible.length})` : ''}
         </button>
         <button className={tab === 'files' ? 'code-tab on' : 'code-tab'} onClick={() => setTab('files')}>Files</button>
+        {sessionId && (
+          <button
+            className="pill"
+            aria-pressed={follow}
+            title={follow
+              ? 'Following the agent: the diff jumps to each file as it is written'
+              : 'Not following: the list still updates, but the diff stays where you put it'}
+            onClick={() => setFollow((f) => !f)}
+            style={follow
+              ? { background: 'var(--accent-soft)', color: 'var(--accent)', marginLeft: 6 }
+              : { background: 'var(--bg-sunk)', color: 'var(--text-faint)', marginLeft: 6 }}
+          >
+            {follow ? '◉ following' : '○ follow'}
+          </button>
+        )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
           {tab === 'changes' && sessionId && preexistingCount > 0 && (
             <button className="pill" title={`${preexistingCount} file(s) were already modified when this session started`}
@@ -142,11 +208,24 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
                   </span>
                   <span className="trunc" title={f.path}
                         style={f.preexisting ? { color: 'var(--text-faint)' } : undefined}>{f.path}</span>
+                  {touched[f.path] && (
+                    // Word as well as colour: the dot alone would be one more
+                    // thing that means nothing to a colourblind reader.
+                    <span className="mono" style={{ marginLeft: 'auto', fontSize: 9.5, color: 'var(--accent)', flex: 'none' }}>
+                      ● just now
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
             <div className="code-view">
-              {sel ? <Diff text={diff} /> : <p className="faint code-hint">Select a changed file to see its diff.</p>}
+              {sel ? <Diff text={diff} /> : (
+                <p className="faint code-hint">
+                  {lastEdit
+                    ? <>The agent last wrote <span className="mono">{lastEdit.path}</span>. Select a file to see its diff.</>
+                    : 'Select a changed file to see its diff.'}
+                </p>
+              )}
             </div>
           </>
         ) : (

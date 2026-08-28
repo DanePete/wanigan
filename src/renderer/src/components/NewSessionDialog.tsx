@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { LaunchOptions, Project, ProviderId, ProviderInfo, TrustLevel } from '@shared/types';
 import { EFFORT_LEVELS, PERMISSION_MODES, TRUST_COPY, TRUST_LEVELS } from '@shared/types';
 
@@ -40,6 +40,15 @@ export default function NewSessionDialog({
   const [providerId, setProviderId] = useState<ProviderId>(installed[0]?.id ?? 'claude');
   const provider = providers.find((p) => p.id === providerId);
   const [projectId, setProjectId] = useState(defaultProjectId ?? projects[0]?.id ?? '');
+  /*
+   * A folder you have not added yet was unreachable from here: the select only
+   * offered projects that already existed, so starting an agent somewhere new
+   * meant leaving the dialog, adding the folder, and coming back. Browsing adds
+   * it and selects it in one step; `picked` holds it until the parent's list
+   * catches up, so the option is selectable on the very next frame.
+   */
+  const [picked, setPicked] = useState<Project[]>([]);
+  const [browsing, setBrowsing] = useState(false);
   const [model, setModel] = useState('');
   const [effort, setEffort] = useState('');
   const [permissionMode, setPermissionMode] = useState('');
@@ -52,7 +61,21 @@ export default function NewSessionDialog({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const project = projects.find((p) => p.id === projectId) ?? null;
+  const options = useMemo(() => {
+    const seen = new Set(projects.map((p) => p.id));
+    return [...projects, ...picked.filter((p) => !seen.has(p.id))];
+  }, [projects, picked]);
+
+  async function browseForFolder() {
+    setBrowsing(true);
+    try {
+      const p = await window.foreman.projects.pick();
+      if (p) { setPicked((x) => [...x, p]); setProjectId(p.id); }
+    } catch { /* the dialog was cancelled, or the folder vanished */ }
+    finally { setBrowsing(false); }
+  }
+
+  const project = options.find((p) => p.id === projectId) ?? null;
   const isRepo = !!project?.branch;
 
   useEffect(() => {
@@ -130,21 +153,33 @@ export default function NewSessionDialog({
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
           <span className="label">Project</span>
           <FocusBtn className="faint" style={{ fontSize: 11.5, marginLeft: 'auto', borderRadius: 5 }}
-                    onClick={onAddProject}>+ add a folder</FocusBtn>
+                    disabled={browsing} onClick={browseForFolder}>
+            {browsing ? 'choosing…' : '+ choose a folder…'}
+          </FocusBtn>
         </div>
-        {projects.length ? (
-          <select className="field" style={{ margin: '6px 0 14px' }}
-                  value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}{p.branch ? ` — ${p.branch}` : ''}
-              </option>
-            ))}
-          </select>
+        {options.length ? (
+          <div style={{ display: 'flex', gap: 6, margin: '6px 0 14px' }}>
+            <select className="field" style={{ flex: 1, minWidth: 0 }}
+                    value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+              {options.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}{p.branch ? ` — ${p.branch}` : ''}
+                </option>
+              ))}
+            </select>
+            <FocusBtn className="btn" style={{ flex: 'none' }} disabled={browsing}
+                      title="Start a session in a folder that is not on the list yet"
+                      onClick={browseForFolder}>Browse…</FocusBtn>
+          </div>
         ) : (
-          <p className="faint" style={{ margin: '6px 0 14px' }}>
-            No projects yet — add a folder to start a session in it.
-          </p>
+          <div style={{ margin: '6px 0 14px' }}>
+            <FocusBtn className="btn btn-primary" disabled={browsing} onClick={browseForFolder}>
+              {browsing ? 'Choosing…' : 'Choose a folder to work in'}
+            </FocusBtn>
+            <p className="faint" style={{ marginTop: 6 }}>
+              Any folder works. It is added to your projects so batches and Context can see it too.
+            </p>
+          </div>
         )}
 
         {/* ── P19 · what this project's agents are allowed to do ───────── */}

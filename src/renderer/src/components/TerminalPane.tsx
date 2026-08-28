@@ -8,11 +8,22 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
  * expensive to rebuild and the agent keeps streaming while you are elsewhere,
  * so panes are hidden rather than unmounted.
  */
-const pool = new Map<string, { term: Terminal; fit: FitAddon; primed: boolean }>();
+/*
+ * Each entry owns its own DOM node, and that is the whole trick.
+ *
+ * App.tsx renders views as `{tab === 'sessions' && <Sessions/>}`, so leaving
+ * the tab UNMOUNTS this component and destroys the host div React gave us.
+ * Calling term.open() again on the way back is not a recovery: xterm 5 does not
+ * support opening one Terminal twice, and the second call leaves the renderer
+ * detached from the screen buffer — which is exactly "come back and the pane is
+ * blank". So the terminal is opened once, into a container this module owns,
+ * and mounting only ever moves that container into whatever host is current.
+ */
+const pool = new Map<string, { term: Terminal; fit: FitAddon; container: HTMLDivElement; primed: boolean }>();
 
 export function disposePane(sessionId: string) {
   const p = pool.get(sessionId);
-  if (p) { p.term.dispose(); pool.delete(sessionId); }
+  if (p) { p.term.dispose(); p.container.remove(); pool.delete(sessionId); }
 }
 
 /** Feed output into a session's terminal even while its pane is not mounted. */
@@ -54,11 +65,17 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
       term.loadAddon(new WebLinksAddon());
       term.onData((d) => window.foreman.sessions.write(sessionId, d));
       term.onResize(({ cols, rows }) => window.foreman.sessions.resize(sessionId, cols, rows));
-      entry = { term, fit, primed: false };
+      const container = document.createElement('div');
+      container.style.width = '100%';
+      container.style.height = '100%';
+      entry = { term, fit, container, primed: false };
       pool.set(sessionId, entry);
+      // Opened exactly once, for the life of the session.
+      term.open(container);
     }
 
-    entry.term.open(host);
+    // Re-parent rather than re-open. Cheap, and the screen buffer survives.
+    if (entry.container.parentNode !== host) host.appendChild(entry.container);
 
     // Replay scrollback once, so re-attaching a pane shows history rather than
     // an empty screen mid-conversation.
@@ -70,6 +87,10 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
     }
 
     const doFit = () => {
+      // A hidden pane measures 0x0, and fitting to that collapses the terminal
+      // to a degenerate size that survives the pane becoming visible again.
+      // Refusing to fit while unmeasurable is what keeps the buffer intact.
+      if (!host.isConnected || host.clientWidth < 2 || host.clientHeight < 2) return;
       try {
         entry!.fit.fit();
         window.foreman.sessions.resize(sessionId, entry!.term.cols, entry!.term.rows);
@@ -85,16 +106,29 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
 
   useEffect(() => {
     if (!visible) return;
-    const t = setTimeout(() => {
-      const e = pool.get(sessionId);
-      if (!e) return;
-      try {
-        e.fit.fit();
-        window.foreman.sessions.resize(sessionId, e.term.cols, e.term.rows);
-        e.term.focus();
-      } catch { /* noop */ }
-    }, 20);
-    return () => clearTimeout(t);
+    const host = hostRef.current;
+    // Two frames: one for the browser to apply display:block, one for layout to
+    // settle. Fitting inside the same frame measures the pane while it is still
+    // zero-sized, which is the bug this is here to avoid.
+    const raf1 = requestAnimationFrame(() => {
+      const raf2 = requestAnimationFrame(() => {
+        const e = pool.get(sessionId);
+        if (!e || !host || host.clientWidth < 2 || host.clientHeight < 2) return;
+        try {
+          if (e.container.parentNode !== host) host.appendChild(e.container);
+          e.fit.fit();
+          window.foreman.sessions.resize(sessionId, e.term.cols, e.term.rows);
+          // Force a repaint of the visible rows. After the container has been
+          // detached and re-attached the renderer has no dirty region, so it
+          // draws nothing until the agent happens to emit its next byte.
+          e.term.refresh(0, e.term.rows - 1);
+          e.term.focus();
+        } catch { /* noop */ }
+      });
+      cleanup = () => cancelAnimationFrame(raf2);
+    });
+    let cleanup = () => cancelAnimationFrame(raf1);
+    return () => { cancelAnimationFrame(raf1); cleanup(); };
   }, [visible, sessionId]);
 
   return (
