@@ -352,6 +352,25 @@ export function resizeSession(sessionId: string, cols: number, rows: number) {
   }
 }
 
+/**
+ * Stop what the agent is doing without ending the session.
+ *
+ * Escape is what Claude Code itself listens for mid-turn, so this is the same
+ * key a person would press — not a signal aimed at the process. Killing is a
+ * different act with a different button, and conflating them loses the
+ * conversation along with the runaway turn.
+ */
+export function interruptSession(sessionId: string, force = false) {
+  const s = sessions.get(sessionId);
+  if (!s || s.meta.status === 'exited') return false;
+  try {
+    // Ctrl+C is the escalation, and only on request: in Claude Code a second
+    // one quits, so it is never what a single click should send.
+    s.proc.write(force ? '\x03' : '\x1b');
+    return true;
+  } catch { return false; }
+}
+
 export function killSession(sessionId: string) {
   const s = sessions.get(sessionId);
   if (!s) return;

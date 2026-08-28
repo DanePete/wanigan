@@ -235,6 +235,65 @@ function shortId(sessionId: string): string {
  * wrong one. Under dataDir() it is invisible to the repo and still on the same
  * filesystem, which `git worktree add` needs.
  */
+
+/* ── the thing a worktree silently loses ─────────────────────────────────
+   `git worktree add` checks out TRACKED files. Everything gitignored stays
+   behind — which on a Composer or npm project is the entire dependency tree,
+   the local env file, and often the config a hook needs. The agent then lands
+   in a checkout that cannot autoload, cannot run tests, and fails its
+   SessionStart hook on a path that plainly exists in the repo it came from.
+   That failure names the missing file, never the missing directory, so it
+   reads as a broken hook rather than a broken checkout.
+
+   So the ignored heavyweights are linked back to the source repo. Sharing them
+   is what people already do by hand with worktrees: they are generated or
+   machine-local, not the work under review, and a copy of 258 MB per session
+   is its own bug.
+   ──────────────────────────────────────────────────────────────────────── */
+
+const LINK_DIRS = [
+  'vendor', 'node_modules', 'bower_components', '.venv', 'venv', '.yarn',
+  'Pods', '.bundle', 'target', '.gradle', '.next/cache', 'vendor/bin',
+];
+const LINK_FILES = [
+  '.env', '.env.local', '.env.development', '.env.development.local',
+  'auth.json', '.npmrc', '.tool-versions',
+];
+
+export type LinkedPath = { path: string; kind: 'dir' | 'file'; bytes: number | null };
+
+/** Only link what git is actually ignoring — a tracked path is already there. */
+async function isIgnored(repoRoot: string, rel: string): Promise<boolean> {
+  const r = await git(repoRoot, ['check-ignore', '-q', rel], 5000);
+  return r.ok;
+}
+
+async function linkIgnoredDeps(repoRoot: string, worktree: string): Promise<LinkedPath[]> {
+  const linked: LinkedPath[] = [];
+  const consider = [
+    ...LINK_DIRS.map((p) => ({ rel: p, kind: 'dir' as const })),
+    ...LINK_FILES.map((p) => ({ rel: p, kind: 'file' as const })),
+  ];
+  for (const { rel, kind } of consider) {
+    const src = path.join(repoRoot, rel);
+    const dst = path.join(worktree, rel);
+    try {
+      const st = fs.statSync(src);
+      if (kind === 'dir' ? !st.isDirectory() : !st.isFile()) continue;
+    } catch { continue; }
+    if (fs.existsSync(dst)) continue;
+    if (!(await isIgnored(repoRoot, rel))) continue;
+    try {
+      fs.mkdirSync(path.dirname(dst), { recursive: true });
+      fs.symlinkSync(src, dst, kind === 'dir' ? 'dir' : 'file');
+      let bytes: number | null = null;
+      try { bytes = kind === 'file' ? fs.statSync(src).size : null; } catch { /* size is a nicety */ }
+      linked.push({ path: rel, kind, bytes });
+    } catch { /* a link we cannot make is not worth failing the worktree over */ }
+  }
+  return linked;
+}
+
 export async function createWorktree(repoRoot: string, label: string, sessionId: string): Promise<WorktreeInfo> {
   const root = await repoRootFor(repoRoot);
   if (!root) {
@@ -303,7 +362,27 @@ export async function createWorktree(repoRoot: string, label: string, sessionId:
       session_id = excluded.session_id, created_at = excluded.created_at, removed_at = NULL
   `).run(abs, root, branch, sessionId, now);
 
-  return { path: abs, branch, head, repoRoot: root, sessionId, dirty: 0, ahead: 0 };
+  // Link before the caller launches an agent into it: a session that starts
+  // without vendor/ fails its first hook and cannot autoload, and the error it
+  // prints names a file rather than the directory that is really missing.
+  const linked = await linkIgnoredDeps(root, abs);
+  if (linked.length) {
+    db().prepare('UPDATE worktrees SET linked_json = ? WHERE path = ?')
+      .run(JSON.stringify(linked.map((l) => l.path)), abs);
+  }
+
+  return { path: abs, branch, head, repoRoot: root, sessionId, dirty: 0, ahead: 0, linked };
+}
+
+/**
+ * Repair a worktree made before linking existed, or one whose links were
+ * removed. Safe to run repeatedly: an existing path is never replaced.
+ */
+export async function relinkWorktree(worktreePath: string): Promise<LinkedPath[]> {
+  const row = db().prepare('SELECT repo_root FROM worktrees WHERE path = ?').get(canon(worktreePath)) as
+    { repo_root: string } | undefined;
+  if (!row) throw new Error(`Foreman has no record of a worktree at ${worktreePath}.`);
+  return linkIgnoredDeps(row.repo_root, canon(worktreePath));
 }
 
 /* ── inspect ─────────────────────────────────────────────────────────── */

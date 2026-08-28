@@ -31,6 +31,7 @@ const api = {
     list: () => call<Session[]>('sessions:list'),
     create: (opts: LaunchOptions) => call<Session>('sessions:create', opts),
     scrollback: (id: string) => call<string>('sessions:scrollback', id),
+    interrupt: (id: string, force?: boolean) => call<boolean>('sessions:interrupt', id, force),
     kill: (id: string) => call<boolean>('sessions:kill', id),
     close: (id: string) => call<boolean>('sessions:close', id),
     markRead: (id: string) => call<boolean>('sessions:markRead', id),
@@ -89,6 +90,8 @@ const api = {
     setProvider: (id: string, key: string) =>
       call<{ present: boolean; fingerprint: string | null }>('key:setProvider', id, key),
     clearProvider: (id: string) => call<boolean>('key:clearProvider', id),
+    glmModels: (force?: boolean) =>
+      call<{ models: { id: string; label: string; source: string }[]; note: string | null; fetchedAt: number | null }>('glm:models', force),
     clear: () => call<boolean>('key:clear'),
   },
 
@@ -122,6 +125,7 @@ const api = {
     status: (p: string) => call<WorktreeInfo | null>('worktrees:status', p),
     remove: (p: string, force: boolean) => call<{ removed: boolean; detail: string }>('worktrees:remove', p, force),
     orphans: () => call<WorktreeInfo[]>('worktrees:orphans'),
+    relink: (p: string) => call<{ path: string; kind: string; bytes: number | null }[]>('worktrees:relink', p),
     forSession: (id: string) => call<string | null>('worktrees:forSession', id),
   },
   // ── phase 10 · headless fan-out ──────────────────────────────────────
@@ -188,6 +192,32 @@ const api = {
     refresh: () => call<boolean>('skills:refresh'),
     body: (p: string) => call<{ text: string; truncated: boolean; bytes: number }>('skills:body', p),
     send: (sessionId: string, invoke: string) => call<boolean>('skills:send', sessionId, invoke),
+  },
+  demo: {
+    state: () => call<{ on: boolean; map: { real: string; fake: string }[] }>('demo:state'),
+    set: (on: boolean) => call<{ on: boolean; map: { real: string; fake: string }[] }>('demo:set', on),
+  },
+  // ── phase 28 · git ───────────────────────────────────────────────────
+  git: {
+    status: (root: string) => call<any>('git:status', root),
+    log: (root: string, opts?: { limit?: number; all?: boolean }) => call<any[]>('git:log', root, opts),
+    branches: (root: string) => call<any[]>('git:branches', root),
+    stashes: (root: string) => call<any[]>('git:stashes', root),
+    commitDiff: (root: string, hash: string) => call<any>('git:commitDiff', root, hash),
+    fileDiff: (root: string, file: string, staged: boolean) => call<string>('git:fileDiff', root, file, staged),
+    stage: (root: string, files: string[]) => call<boolean>('git:stage', root, files),
+    unstage: (root: string, files: string[]) => call<boolean>('git:unstage', root, files),
+    discard: (root: string, tracked: string[], untracked: string[]) => call<boolean>('git:discard', root, tracked, untracked),
+    commit: (root: string, msg: string, opts?: { amend?: boolean; all?: boolean }) => call<string>('git:commit', root, msg, opts),
+    checkout: (root: string, ref: string, create?: boolean) => call<boolean>('git:checkout', root, ref, create),
+    deleteBranch: (root: string, name: string, force?: boolean) => call<boolean>('git:deleteBranch', root, name, force),
+    merge: (root: string, ref: string) => call<string>('git:merge', root, ref),
+    fetch: (root: string) => call<string>('git:fetch', root),
+    pull: (root: string) => call<string>('git:pull', root),
+    push: (root: string, opts?: { setUpstream?: boolean; branch?: string }) => call<string>('git:push', root, opts),
+    stashSave: (root: string, msg: string) => call<string>('git:stashSave', root, msg),
+    stashApply: (root: string, i: number, drop: boolean) => call<string>('git:stashApply', root, i, drop),
+    stashDrop: (root: string, i: number) => call<boolean>('git:stashDrop', root, i),
   },
   // ── phase 25 · durable schedules ─────────────────────────────────────
   schedule: {

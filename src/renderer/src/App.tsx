@@ -8,6 +8,7 @@ import InsightsView from './views/Insights';
 import Skills from './views/Skills';
 import Plugins from './views/Plugins';
 import Schedules from './views/Schedules';
+import Git from './views/Git';
 import Context from './views/Context';
 import SettingsView from './views/Settings';
 import { num } from './components/bits';
@@ -35,6 +36,7 @@ const TABS = [
   { id: 'skills',   label: 'Skills' },
   { id: 'plugins',  label: 'Plugins' },
   { id: 'schedules', label: 'Schedules' },
+  { id: 'git',      label: 'Git' },
   { id: 'context',  label: 'Context' },
   { id: 'settings', label: 'Settings' },
 ] as const;
@@ -333,6 +335,21 @@ export default function App() {
 
   const mark = needs.worst ? NEED_MARK[needs.worst] : null;
 
+  // ⌘⇧D from anywhere: a demo toggle you have to go and find is one you forget
+  // to turn on until after the screenshot.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || !e.shiftKey) return;
+      if (e.key.toLowerCase() !== 'd') return;
+      e.preventDefault();
+      void window.foreman.demo.state()
+        .then((s) => window.foreman.demo.set(!s.on))
+        .then(() => window.location.reload());
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+
   return (
     <div className="shell">
       <nav className="nav">
@@ -370,8 +387,9 @@ export default function App() {
           <NavTab id="skills"   n={5} tab={tab} go={go} label="Skills" />
           <NavTab id="plugins"  n={6} tab={tab} go={go} label="Plugins" />
           <NavTab id="schedules" n={7} tab={tab} go={go} label="Schedules" />
-          <NavTab id="context"  n={8} tab={tab} go={go} label="Context" />
-          <NavTab id="settings" n={9} tab={tab} go={go} label="Settings">
+          <NavTab id="git"      n={8} tab={tab} go={go} label="Git" />
+          <NavTab id="context"  n={9} tab={tab} go={go} label="Context" />
+          <NavTab id="settings" n={10} tab={tab} go={go} label="Settings">
             {!hasKey && (
               <span className="nav-mark tone-warn" title="No API key set — add one in Settings before submitting a batch">
                 <span aria-hidden="true">!</span>no key
@@ -407,6 +425,7 @@ export default function App() {
         {tab === 'skills' && <Skills projectId={projectId} activeSessionId={activeSessionId} />}
         {tab === 'plugins' && <Plugins />}
         {tab === 'schedules' && <Schedules projects={projects} />}
+        {tab === 'git' && <Git projects={projects} />}
         {tab === 'context' && <Context projectId={projectId} projects={projects} />}
         {tab === 'settings' && (
           <SettingsView providers={providers} projects={projects}

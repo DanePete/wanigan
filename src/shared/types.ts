@@ -366,6 +366,8 @@ export type WorktreeInfo = {
   /** Uncommitted files, so "discard" can warn before destroying work. */
   dirty: number;
   ahead: number;
+  /** Gitignored paths linked back to the main checkout — vendor, node_modules, .env. */
+  linked?: { path: string; kind: 'dir' | 'file'; bytes: number | null }[];
 };
 
 /* ── P10 · headless runs ────────────────────────────────────────────── */

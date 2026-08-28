@@ -77,6 +77,15 @@ function firstExecutable(candidates: string[]): string | null {
  * Adding a provider is this object and nothing else — the session manager and
  * the UI both read from here.
  */
+/*
+ * Z.ai ships new GLM models faster than a hardcoded default survives — this
+ * file said glm-4.6 while the coding plan had moved to 5.3. So these are only
+ * the fallback for when the catalog cannot be fetched, and both are
+ * overridable from the environment.
+ */
+export const GLM_DEFAULT = 'glm-5.3';
+export const GLM_SMALL = 'glm-5.3-flash';
+
 export const PROVIDERS: ProviderDef[] = [
   {
     id: 'claude',
@@ -150,9 +159,9 @@ export const PROVIDERS: ProviderDef[] = [
         // The CLI asks for a tier by name; the endpoint maps the tier to a
         // GLM model. Without these every request asks for a Claude model the
         // proxy has never heard of.
-        ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.FOREMAN_GLM_MODEL || 'glm-4.6',
-        ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.FOREMAN_GLM_MODEL || 'glm-4.6',
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.FOREMAN_GLM_SMALL_MODEL || 'glm-4.5-air',
+        ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.FOREMAN_GLM_MODEL || GLM_DEFAULT,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.FOREMAN_GLM_MODEL || GLM_DEFAULT,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.FOREMAN_GLM_SMALL_MODEL || GLM_SMALL,
       };
     },
   },

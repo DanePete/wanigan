@@ -283,6 +283,8 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
 
       <div className="pane-head"><div><h1>Settings</h1></div></div>
 
+      <DemoPanel />
+
       <Section title="Claude Platform API key"
                hint="Needed for Batches — estimating, dry runs, and submitting. Agent sessions do not use it; they authenticate through their own CLI.">
         {status?.fromEnv && (
@@ -1689,3 +1691,79 @@ const SHEET = `
 .set-mini:hover { background: var(--bg-sunk); color: var(--text); }
 .set-mini.danger:hover { background: var(--critical-soft); color: var(--critical); }
 `;
+
+
+/* ── demo mode ────────────────────────────────────────────────────────────
+   For screenshots. Masking happens in the main process at the IPC boundary,
+   so this panel only turns it on and shows what it is doing — a mapping you
+   cannot inspect is one you cannot trust before you publish a screenshot.
+   ──────────────────────────────────────────────────────────────────────── */
+
+function DemoPanel() {
+  const [state, setState] = useState<{ on: boolean; map: { real: string; fake: string }[] }>({ on: false, map: [] });
+  const [blur, setBlur] = useState(() => {
+    try { return localStorage.getItem('foreman.demo.blurTerminal') === '1'; } catch { return false; }
+  });
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { window.foreman.demo.state().then(setState).catch(() => {}); }, []);
+  useEffect(() => {
+    document.documentElement.toggleAttribute('data-demo-blur', blur && state.on);
+    try { localStorage.setItem('foreman.demo.blurTerminal', blur ? '1' : '0'); } catch { /* blocked */ }
+  }, [blur, state.on]);
+
+  async function toggle() {
+    setBusy(true);
+    try {
+      await window.foreman.demo.set(!state.on);
+      // Reload rather than just flipping the flag. Views hold data fetched
+      // before the toggle, so without this the rail keeps showing real project
+      // names while this panel shows masked ones — half-masked is the one
+      // outcome worse than not masking at all, because it looks done.
+      window.location.reload();
+    } catch { setBusy(false); }
+  }
+
+  return (
+    <Section title="Demo mode"
+             hint="Replaces your project names, paths, usernames and git authors with plausible fakes everywhere in the app, so a screenshot shows the tool rather than your work.">
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button className={state.on ? 'btn btn-primary' : 'btn'} disabled={busy} onClick={() => void toggle()}>
+          {busy ? '…' : state.on ? 'Demo mode is on' : 'Turn on demo mode'}
+        </button>
+        <span className="faint" style={{ fontSize: 11.5 }}>⌘⇧D toggles it without touching the mouse.</span>
+      </div>
+
+      {state.on && (
+        <>
+          <div style={{ marginTop: 10 }}>
+            <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', fontSize: 12.5 }}>
+              <input type="checkbox" checked={blur} onChange={(e) => setBlur(e.target.checked)} style={{ marginTop: 3 }} />
+              <span>
+                <strong>Blur terminals too.</strong> A live terminal draws raw bytes from the agent, so nothing in the
+                app can rewrite what it already printed. Masking cannot reach it — blurring can.
+              </span>
+            </label>
+          </div>
+
+          <div style={{ marginTop: 10 }}>
+            <div className="label">What your projects look like right now</div>
+            <table className="viz-table">
+              <tbody>
+                {state.map.slice(0, 12).map((m) => (
+                  <tr key={m.real}>
+                    <td className="mono" style={{ fontSize: 11, color: 'var(--text-faint)' }}>{m.fake}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="faint" style={{ fontSize: 11.5, marginTop: 6, lineHeight: 1.5 }}>
+              Only the masked side is listed — printing the real paths beside them would put the thing you are
+              hiding on the screen you are about to photograph.
+            </p>
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}

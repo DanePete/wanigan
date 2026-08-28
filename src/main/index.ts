@@ -3,7 +3,7 @@ import path from 'node:path';
 import { detectProviders } from './providers';
 import {
   initSessions, listSessions, createSession, writeSession, resizeSession,
-  killSession, closeSession, scrollback, markRead, killAll, sessionBaseline,
+  killSession, closeSession, scrollback, markRead, killAll, sessionBaseline, interruptSession,
   pastSessions, forgetPastSession,
 } from './sessions';
 import { listProjects, addProject, removeProject, refreshBranches, projectById } from './store';
@@ -30,6 +30,9 @@ import * as spend from './spend';
 import * as notify from './notify';
 import * as skills from './skills';
 import * as plugins from './plugins';
+import { glmModels } from './glm';
+import * as gitOps from './git';
+import { demoOn, setDemo, demoMap, maskOut, unmaskIn, noteAuthors } from './demo';
 import * as schedule from './schedule';
 import * as teams from './teams';
 import * as revert from './revert';
@@ -241,12 +244,21 @@ function registerIpc() {
   const handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => {
     ipcMain.handle(channel, async (_e, ...args) => {
       try {
-        return { ok: true, data: await fn(...(args as never[])) };
+        // Demo mode is bidirectional on purpose: a masked path handed back to
+        // git has to become real again, or every action fails while the demo
+        // is running — which is exactly when nobody can debug it.
+        const real = unmaskIn(args) as never[];
+        const data = await fn(...real);
+        return { ok: true, data: maskOut(data) };
       } catch (e) {
-        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        const msg = e instanceof Error ? e.message : String(e);
+        return { ok: false, error: maskOut(msg) };
       }
     });
   };
+
+  handle('demo:state', () => ({ on: demoOn(), map: demoMap() }));
+  handle('demo:set', (on: boolean) => { setDemo(on); return { on: demoOn(), map: demoMap() }; });
 
   handle('providers:list', () => detectProviders());
 
@@ -268,6 +280,7 @@ function registerIpc() {
   handle('sessions:list', () => listSessions());
   handle('sessions:create', (opts: LaunchOptions) => createSession(opts));
   handle('sessions:scrollback', (id: string) => scrollback(id));
+  handle('sessions:interrupt', (id: string, force?: boolean) => interruptSession(id, force === true));
   handle('sessions:kill', (id: string) => { killSession(id); return true; });
   handle('sessions:close', (id: string) => { closeSession(id); return true; });
   handle('sessions:markRead', (id: string) => { markRead(id); return true; });
@@ -349,6 +362,7 @@ function registerIpc() {
     return { present: true, fingerprint: providerKeyFingerprint(id) };
   });
   handle('key:clearProvider', (id: string) => { clearProviderKey(id); return true; });
+  handle('glm:models', (force?: boolean) => glmModels(force === true));
   handle('settings:get', () => ({ spendCapUsd: spendCap() }));
 
   // ── code panel ───────────────────────────────────────────────────────
@@ -388,6 +402,7 @@ function registerIpc() {
   handle('worktrees:status', (p: string) => worktrees.worktreeStatus(p));
   handle('worktrees:remove', (p: string, force: boolean) => worktrees.removeWorktree(p, force));
   handle('worktrees:orphans', () => worktrees.reconcileWorktrees());
+  handle('worktrees:relink', (p: string) => worktrees.relinkWorktree(p));
   handle('worktrees:forSession', (id: string) => worktrees.worktreeForSession(id));
 
   // ══ phase 10 · headless fan-out ═════════════════════════════════════
@@ -460,6 +475,31 @@ function registerIpc() {
   handle('skills:body', (p: string) => skills.skillBody(p));
   // A catalogue you can fire into a running agent, rather than one you read.
   handle('skills:send', (sessionId: string, invoke: string) => { writeSession(sessionId, invoke + ' '); return true; });
+
+  // ══ phase 28 · git ══════════════════════════════════════════════════
+  handle('git:status', (root: string) => gitOps.status(root));
+  handle('git:log', async (root: string, opts?: { limit?: number; all?: boolean }) => {
+    const cs = await gitOps.log(root, opts);
+    noteAuthors(cs.map((c) => c.author));
+    return cs;
+  });
+  handle('git:branches', (root: string) => gitOps.branches(root));
+  handle('git:stashes', (root: string) => gitOps.stashes(root));
+  handle('git:commitDiff', (root: string, hash: string) => gitOps.commitDiff(root, hash));
+  handle('git:fileDiff', (root: string, file: string, staged: boolean) => gitOps.fileDiff(root, file, staged));
+  handle('git:stage', (root: string, files: string[]) => gitOps.stage(root, files));
+  handle('git:unstage', (root: string, files: string[]) => gitOps.unstage(root, files));
+  handle('git:discard', (root: string, tracked: string[], untracked: string[]) => gitOps.discard(root, tracked, untracked));
+  handle('git:commit', (root: string, msg: string, opts?: { amend?: boolean; all?: boolean }) => gitOps.commit(root, msg, opts));
+  handle('git:checkout', (root: string, ref: string, create?: boolean) => gitOps.checkout(root, ref, create === true));
+  handle('git:deleteBranch', (root: string, name: string, force?: boolean) => gitOps.deleteBranch(root, name, force === true));
+  handle('git:merge', (root: string, ref: string) => gitOps.merge(root, ref));
+  handle('git:fetch', (root: string) => gitOps.fetchAll(root));
+  handle('git:pull', (root: string) => gitOps.pull(root));
+  handle('git:push', (root: string, opts?: { setUpstream?: boolean; branch?: string }) => gitOps.push(root, opts));
+  handle('git:stashSave', (root: string, msg: string) => gitOps.stashSave(root, msg));
+  handle('git:stashApply', (root: string, i: number, drop: boolean) => gitOps.stashApply(root, i, drop));
+  handle('git:stashDrop', (root: string, i: number) => gitOps.stashDrop(root, i));
 
   // ══ phase 25 · schedules ════════════════════════════════════════════
   handle('schedule:list', () => schedule.listSchedules());

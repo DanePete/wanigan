@@ -8,6 +8,7 @@ import NewSessionDialog from '../components/NewSessionDialog';
 import CodePanel from '../components/CodePanel';
 import AttentionQueue from '../components/AttentionQueue';
 import Timeline from '../components/Timeline';
+import Pet from '../components/Pet';
 import { Note, ago, num, usd } from '../components/bits';
 
 const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)', glm: 'var(--glm)' };
@@ -232,6 +233,22 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
   }, [sessions]);
 
   const active = sessions.find((s) => s.id === activeId) ?? null;
+
+  /*
+   * ⌘. is the macOS stop convention and the terminal has no use for it, so it
+   * can be taken safely even while the PTY has focus — which is exactly when
+   * you want it, because that is where you are watching the agent run away.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key !== '.') return;
+      if (!active || active.status !== 'running') return;
+      e.preventDefault();
+      void window.foreman.sessions.interrupt(active.id);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [active]);
   const anyInstalled = providers.some((p) => p.path);
   const pane = (active && railPane[active.id]) || 'code';
 
@@ -336,6 +353,11 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
             <FocusBtn className="btn" style={{ width: '100%', justifyContent: 'center', marginTop: 14 }}
                       onClick={onAddProject}>+ Add project</FocusBtn>
           </div>
+
+          {/* Lives below the fold of the rail rather than in the terminal
+              column: motion next to a repainting PTY is the one place this
+              app refuses to animate. */}
+          <Pet />
         </aside>
 
         <div className="session-main">
@@ -490,8 +512,16 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                   open folder
                 </FocusBtn>
                 {active.status === 'running' && (
+                  <FocusBtn className="faint" style={{ fontSize: 11.5, color: 'var(--warning)', borderRadius: 5 }}
+                            title="Stop the current turn. The session stays open — this is the Escape key Claude Code listens for. ⌘."
+                            onClick={() => void window.foreman.sessions.interrupt(active.id)}>
+                    ⎋ interrupt
+                  </FocusBtn>
+                )}
+                {active.status === 'running' && (
                   <FocusBtn className="faint" style={{ fontSize: 11.5, color: 'var(--bad)', borderRadius: 5 }}
-                            onClick={() => window.foreman.sessions.kill(active.id)}>stop</FocusBtn>
+                            title="End the session entirely. The conversation goes with it."
+                            onClick={() => window.foreman.sessions.kill(active.id)}>end session</FocusBtn>
                 )}
               </>
             ) : <span>⌘T new session · ⌘1–9 switch · ⌘W close · ⌘B side panel</span>}
@@ -580,15 +610,33 @@ const MODEL_CHOICES: Record<string, { value: string; label: string }[]> = {
     { value: 'haiku', label: 'Haiku' },
     { value: 'fable', label: 'Fable' },
   ],
+  // Filled from Z.ai's live catalog; this is only what shows before it answers.
   glm: [
-    { value: 'glm-4.6', label: 'GLM 4.6' },
-    { value: 'glm-4.5-air', label: 'GLM 4.5 Air' },
+    { value: 'glm-5.3', label: 'GLM 5.3' },
+    { value: 'glm-5.3-flash', label: 'GLM 5.3 Flash' },
   ],
   codex: [],
 };
 
 function RunConfigBar({ session, provider }: { session: Session; provider: ProviderInfo }) {
-  const models = MODEL_CHOICES[provider.id] ?? [];
+  const [models, setModels] = useState<{ value: string; label: string }[]>(MODEL_CHOICES[provider.id] ?? []);
+  const [modelNote, setModelNote] = useState<string | null>(null);
+
+  // Z.ai ships models faster than a constant survives, so ask it. Anthropic's
+  // catalog is already fetched the same way in the Batches view.
+  useEffect(() => {
+    if (provider.id !== 'glm') { setModels(MODEL_CHOICES[provider.id] ?? []); setModelNote(null); return; }
+    let live = true;
+    window.foreman.key.glmModels()
+      .then((r) => {
+        if (!live) return;
+        if (r.models.length) setModels(r.models.map((m) => ({ value: m.id, label: m.label })));
+        setModelNote(r.note);
+      })
+      .catch(() => { /* the fallback list is already showing */ });
+    return () => { live = false; };
+  }, [provider.id]);
+
   const [model, setModel] = useState(session.model ?? '');
   const [effortIdx, setEffortIdx] = useState(() => {
     const i = EFFORT_LEVELS.indexOf((session.effort ?? '') as (typeof EFFORT_LEVELS)[number]);
@@ -648,7 +696,9 @@ function RunConfigBar({ session, provider }: { session: Session; provider: Provi
       <span className="faint" style={{ fontSize: 11, marginLeft: 'auto', minWidth: 0 }}>
         {sent
           ? <><span className="mono" style={{ color: 'var(--ok)' }}>{sent}</span> sent to the session</>
-          : 'Typed into the session as a slash command. /model also sets your default for new sessions.'}
+          : modelNote
+            ? modelNote
+            : 'Typed into the session as a slash command. /model also sets your default for new sessions.'}
       </span>
     </div>
   );

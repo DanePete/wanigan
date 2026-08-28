@@ -12,6 +12,7 @@ import * as cachediag from './batch/cachediag';
 import * as mcpRegistry from './mcp/registry';
 import * as ctxConfig from './context/config';
 import * as schedule from './schedule';
+import * as demo from './demo';
 import type { RunConfig } from '../shared/types';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
@@ -108,7 +109,12 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     crypto.createHmac('sha256', keyBytes).update(`${id}.${t}.${body}`).digest('hex');
   const sig = signWith(wid, ts);
   check(notify.verifyWebhookSignature(secret, wid, ts, body, sig), 'a correct webhook signature verifies');
-  check(!notify.verifyWebhookSignature(secret, wid, ts, body, sig.replace(/.$/, '0')),
+  // Flip to a character it definitely is not: replacing the last hex digit
+  // with '0' leaves the signature untouched one time in sixteen, and a test
+  // that passes 15/16 is worse than no test — it teaches you to shrug at red.
+  const tampered = sig.slice(0, -1) + (sig.endsWith('0') ? '1' : '0');
+  check(tampered !== sig, 'the tampered signature really differs');
+  check(!notify.verifyWebhookSignature(secret, wid, ts, body, tampered),
     'a tampered signature is rejected');
   check(!notify.verifyWebhookSignature(secret, 'msg_01Different', ts, body, sig),
     'a signature bound to a different webhook id is rejected');
@@ -227,6 +233,35 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(rejected, 'a schedule that can never fire is refused at creation');
 
   check(schedule.deleteSchedule(sch.id), 'it can be deleted');
+
+  /* -- demo mode: partial masking is the failure ---------------------- */
+  say('-- demo mode');
+  const wasOn = demo.demoOn();
+  demo.setDemo(true);
+
+  const home = os.homedir();
+  const user = home.split('/').filter(Boolean).pop() ?? 'user';
+  const sample = {
+    name: 'foreman',
+    path: home + '/Projects/drupal/foreman',
+    nested: [{ msg: `failed to read ${home}/Projects/drupal/foreman/src/main/git.ts` }],
+    email: 'alex@example.com',
+  };
+  const masked = demo.maskOut(sample) as typeof sample;
+
+  check(!JSON.stringify(masked).includes(home), 'the home directory is gone from a masked response');
+  check(!JSON.stringify(masked).includes('@gmail.com'), 'a real email address is gone');
+  check(masked.nested[0].msg.includes('/Users/demo'), 'masking reaches nested values, not just top-level fields',
+    masked.nested[0].msg);
+  // The round trip is what keeps the app working while a demo is running.
+  const back = demo.unmaskIn(masked) as typeof sample;
+  check(back.path === sample.path, 'a masked path unmasks back to the real one', back.path);
+
+  demo.setDemo(false);
+  const passthrough = demo.maskOut(sample) as typeof sample;
+  check(passthrough.path === sample.path, 'nothing is masked when demo mode is off');
+  check(demo.maskOut('/plain/string') === '/plain/string', 'strings pass through untouched when off');
+  demo.setDemo(wasOn);
 
   fs.rmSync(tmp, { recursive: true, force: true });
 }

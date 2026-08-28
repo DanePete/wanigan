@@ -397,6 +397,7 @@ function migratePhases(d: Database.Database) {
   addColumn(d, 'runs', 'kind', "TEXT NOT NULL DEFAULT 'batch'");
   addColumn(d, 'runs', 'eval_pair_id', 'TEXT');
   // A session can run in its own worktree; the code panel scopes to it.
+  addColumn(d, 'worktrees', 'linked_json', 'TEXT');
   addColumn(d, 'session_log', 'worktree', 'TEXT');
   addColumn(d, 'session_log', 'trust', 'TEXT');
   d.exec("CREATE INDEX IF NOT EXISTS idx_runs_kind ON runs(kind, created_at DESC)");

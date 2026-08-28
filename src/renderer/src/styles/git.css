@@ -1,0 +1,60 @@
+/* git — tokens come from index.css; no colour declared here. */
+
+.gt { display: grid; grid-template-columns: minmax(0,1fr) minmax(320px, 38%);
+      width: 100%; min-height: 0; }
+.gt-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.gt-col + .gt-col { border-left: 1px solid var(--line); }
+
+.gt-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+          border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.gt-branch { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; font-weight: 600; }
+.gt-track { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.gt-track .a { color: var(--good); }
+.gt-track .b { color: var(--warning); }
+.gt-op { font-size: 11px; color: var(--warning); }
+
+.gt-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+
+.gt-row { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
+          padding: 0 12px 0 0; height: 34px; cursor: pointer; border-bottom: 1px solid var(--line-soft); }
+.gt-row:hover { background: var(--bg-sunk); }
+.gt-row.on { background: var(--accent-soft); }
+.gt-graph { width: 92px; height: 34px; flex: none; display: block; }
+.gt-msg { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.gt-who { font-size: 11px; color: var(--text-faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.gt-ref { font-size: 9.5px; padding: 1px 5px; border-radius: 3px; margin-right: 5px;
+          background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+.gt-ref.head { background: var(--good-soft); color: var(--good); }
+.gt-ref.remote { background: var(--bg-sunk); color: var(--text-faint); }
+
+.gt-sec { border-bottom: 1px solid var(--line); }
+.gt-sec-h { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--bg-sunk); }
+.gt-sec-h .t { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-dim); font-weight: 600; }
+.gt-sec-h .c { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--text-faint); }
+.gt-sec-h .sp { margin-left: auto; display: flex; gap: 4px; }
+
+.gt-file { display: flex; align-items: center; gap: 8px; padding: 4px 12px; font-size: 12.5px;
+           cursor: pointer; background: none; border: none; color: inherit; width: 100%; text-align: left; }
+.gt-file:hover { background: var(--bg-sunk); }
+.gt-file.on { background: var(--accent-soft); }
+.gt-file .st { width: 12px; flex: none; font-weight: 700; text-align: center; font-family: ui-monospace, monospace; font-size: 11px; }
+.gt-file .p { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gt-file .go { margin-left: auto; font-size: 10.5px; color: var(--text-faint); flex: none; }
+
+.gt-commit { padding: 10px 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 7px; }
+.gt-commit textarea { width: 100%; min-height: 58px; resize: vertical; background: var(--bg-sunk);
+                      border: 1px solid var(--line); border-radius: 6px; color: var(--text);
+                      font: inherit; font-size: 12.5px; padding: 7px 9px; }
+.gt-commit textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.gt-diff { flex: 1; min-height: 0; overflow: auto; font-family: ui-monospace, Menlo, monospace;
+           font-size: 11.5px; line-height: 1.5; white-space: pre; padding: 8px 10px; }
+.gt-diff .add { color: var(--good); }
+.gt-diff .del { color: var(--bad); }
+.gt-diff .hunk { color: var(--accent); }
+.gt-diff .meta { color: var(--text-faint); }
+
+.gt-chip { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line);
+           background: var(--bg-soft); color: var(--text-dim); cursor: pointer; white-space: nowrap; }
+.gt-chip:hover { border-color: var(--accent); color: var(--accent); }
+.gt-chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }

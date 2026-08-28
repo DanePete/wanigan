@@ -1,0 +1,45 @@
+/* pet — the site mascot. Tokens come from index.css; no colour declared here. */
+
+.pet { border-top: 1px solid var(--line); padding: 8px 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.pet-screen { position: relative; border: 1px solid var(--line); border-radius: 8px;
+              background: var(--bg-sunk); overflow: hidden; }
+.pet-screen.dark { filter: brightness(.45) saturate(.6); }
+.pet-canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+
+.pet-name { display: flex; align-items: baseline; gap: 6px; }
+.pet-name .n { font-size: 12px; font-weight: 600; }
+.pet-name .age { font-size: 10px; color: var(--text-faint); font-variant-numeric: tabular-nums; margin-left: auto; }
+.pet-name input { background: var(--bg-sunk); border: 1px solid var(--line); border-radius: 5px;
+                  color: var(--text); font: inherit; font-size: 12px; padding: 1px 5px; width: 100%; }
+
+.pet-bars { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 8px; }
+.pet-bar { display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: var(--text-faint); }
+.pet-bar .k { width: 26px; flex: none; letter-spacing: .04em; text-transform: uppercase; }
+.pet-bar .t { flex: 1; height: 4px; border-radius: 999px; background: var(--bg-sunk); overflow: hidden; }
+.pet-bar .f { height: 100%; border-radius: 999px; }
+
+.pet-acts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.pet-btn { font-size: 10.5px; padding: 4px 2px; border: 1px solid var(--line); border-radius: 6px;
+           background: var(--bg-soft); color: var(--text-dim); cursor: pointer; display: flex;
+           flex-direction: column; align-items: center; gap: 1px; line-height: 1.2; }
+.pet-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.pet-btn:disabled { opacity: .35; cursor: not-allowed; }
+.pet-btn .ic { font-size: 13px; }
+.pet-btn.urgent { border-color: var(--warning); color: var(--warning); }
+.pet-btn.sick { border-color: var(--bad); color: var(--bad); }
+
+.pet-say { font-size: 10.5px; color: var(--text-dim); min-height: 13px; line-height: 1.3; }
+.pet-say b { color: var(--accent); font-weight: 600; }
+.pet-play { display: flex; gap: 4px; }
+.pet-play .btn { flex: 1; font-size: 11px; padding: 3px 4px; }
+
+/* Collapsing. The body is hidden outright rather than animated to zero height:
+   a rail that reflows while a terminal is repainting beside it is the one
+   motion this app refuses. The chevron turning is the whole animation. */
+.pet.shut { padding-bottom: 8px; }
+.pet-toggle { background: none; border: none; color: var(--text-faint); cursor: pointer;
+              padding: 0 3px 0 0; font-size: 10px; line-height: 1; }
+.pet-toggle:hover { color: var(--text); }
+.pet-toggle span { display: inline-block; transition: transform .15s ease; }
+.pet-alert { margin-left: auto; font-size: 9.5px; color: var(--warning); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .pet-toggle span { transition: none; } }
