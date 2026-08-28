@@ -60,13 +60,13 @@ export default function Git({ projects }: { projects: Project[] }) {
   const load = useCallback(async () => {
     if (!root) return;
     try {
-      const s = await window.foreman.git.status(root);
+      const s = await window.wanigan.git.status(root);
       setSt(s);
       if (!s.isRepo) { setCommits([]); setBrs([]); setStash([]); return; }
       const [l, b, sh] = await Promise.all([
-        window.foreman.git.log(s.root, { limit: 150, all: showAll }),
-        window.foreman.git.branches(s.root),
-        window.foreman.git.stashes(s.root),
+        window.wanigan.git.log(s.root, { limit: 150, all: showAll }),
+        window.wanigan.git.branches(s.root),
+        window.wanigan.git.stashes(s.root),
       ]);
       setCommits(l as Commit[]); setBrs(b as Branch[]); setStash(sh as Stash[]);
       setErr(null);
@@ -88,7 +88,7 @@ export default function Git({ projects }: { projects: Project[] }) {
   async function openCommit(c: Commit) {
     setSel({ kind: 'commit', hash: c.hash });
     try {
-      const d = await window.foreman.git.commitDiff(st!.root, c.hash);
+      const d = await window.wanigan.git.commitDiff(st!.root, c.hash);
       setDetail({ title: `${c.short} · ${c.subject}`, patch: d.patch });
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }
@@ -97,7 +97,7 @@ export default function Git({ projects }: { projects: Project[] }) {
     setSel({ kind: 'file', path: f.path, staged });
     if (f.untracked) { setDetail({ title: f.path, patch: 'Untracked — this file is not in git yet, so there is nothing to diff against.' }); return; }
     try {
-      const d = await window.foreman.git.fileDiff(st!.root, f.path, staged);
+      const d = await window.wanigan.git.fileDiff(st!.root, f.path, staged);
       setDetail({ title: f.path, patch: d || 'No textual diff (binary, or a mode change only).' });
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }
@@ -121,12 +121,12 @@ export default function Git({ projects }: { projects: Project[] }) {
           </span>
           {st.operation && <span className="gt-op">⚠ {st.operation} in progress</span>}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-            <button className="btn" disabled={!!busy} onClick={() => void act('Fetch', () => window.foreman.git.fetch(st.root))}>
+            <button className="btn" disabled={!!busy} onClick={() => void act('Fetch', () => window.wanigan.git.fetch(st.root))}>
               {busy === 'Fetch' ? '…' : 'Fetch'}
             </button>
             <button className="btn" disabled={!!busy || st.behind === 0}
                     title={st.behind ? `Fast-forward ${st.behind} commit${st.behind > 1 ? 's' : ''}` : 'Nothing to pull'}
-                    onClick={() => void act('Pull', () => window.foreman.git.pull(st.root))}>
+                    onClick={() => void act('Pull', () => window.wanigan.git.pull(st.root))}>
               Pull{st.behind ? ` ${st.behind}` : ''}
             </button>
             <button className="btn btn-primary" disabled={!!busy || (st.ahead === 0 && !!st.upstream)}
@@ -134,7 +134,7 @@ export default function Git({ projects }: { projects: Project[] }) {
                       what: st.upstream
                         ? `Push ${st.ahead} commit${st.ahead > 1 ? 's' : ''} to ${st.upstream}. This leaves your machine.`
                         : `Push ${st.branch} and set origin as its upstream. This leaves your machine.`,
-                      run: () => act('Push', () => window.foreman.git.push(st.root,
+                      run: () => act('Push', () => window.wanigan.git.push(st.root,
                         st.upstream ? {} : { setUpstream: true, branch: st.branch ?? undefined })),
                     })}>
               Push{st.ahead ? ` ${st.ahead}` : ''}
@@ -152,7 +152,7 @@ export default function Git({ projects }: { projects: Project[] }) {
         <div className="empty"><div>
           <h1 style={{ fontSize: 18, fontWeight: 600 }}>Not a git repository</h1>
           <p className="dim" style={{ marginTop: 6, maxWidth: '52ch', lineHeight: 1.55 }}>
-            {project?.path} has no <span className="mono">.git</span>. Foreman reads and writes git for projects that
+            {project?.path} has no <span className="mono">.git</span>. Wanigan reads and writes git for projects that
             are repositories; everything else in the app works either way.
           </p>
         </div></div>
@@ -258,7 +258,7 @@ export default function Git({ projects }: { projects: Project[] }) {
                   <span className="t">Staged</span><span className="c">{st.staged.length}</span>
                   <div className="sp">
                     <button className="gt-chip" disabled={!st.staged.length}
-                            onClick={() => void act('Unstage', () => window.foreman.git.unstage(st.root, st.staged.map((f) => f.path)))}>
+                            onClick={() => void act('Unstage', () => window.wanigan.git.unstage(st.root, st.staged.map((f) => f.path)))}>
                       unstage all
                     </button>
                   </div>
@@ -268,7 +268,7 @@ export default function Git({ projects }: { projects: Project[] }) {
                           onClick={() => void openFile(f, true)}>
                     <span className="st" style={{ color: STAT_TONE[f.index] ?? 'var(--text-dim)' }}>{f.index}</span>
                     <span className="p">{f.path}</span>
-                    <span className="go" onClick={(e) => { e.stopPropagation(); void act('Unstage', () => window.foreman.git.unstage(st.root, [f.path])); }}>−</span>
+                    <span className="go" onClick={(e) => { e.stopPropagation(); void act('Unstage', () => window.wanigan.git.unstage(st.root, [f.path])); }}>−</span>
                   </button>
                 ))}
                 {!st.staged.length && <p className="faint" style={{ padding: '4px 12px', fontSize: 11.5 }}>Nothing staged.</p>}
@@ -279,14 +279,14 @@ export default function Git({ projects }: { projects: Project[] }) {
                   <span className="t">Changed</span><span className="c">{st.unstaged.length + st.untracked.length}</span>
                   <div className="sp">
                     <button className="gt-chip" disabled={!st.unstaged.length && !st.untracked.length}
-                            onClick={() => void act('Stage', () => window.foreman.git.stage(st.root,
+                            onClick={() => void act('Stage', () => window.wanigan.git.stage(st.root,
                               [...st.unstaged, ...st.untracked].map((f) => f.path)))}>stage all</button>
                     <button className="gt-chip" disabled={!st.unstaged.length && !st.untracked.length}
                             onClick={() => setConfirm({
                               what: `Discard changes to ${st.unstaged.length} file${st.unstaged.length === 1 ? '' : 's'}` +
                                     (st.untracked.length ? ` and delete ${st.untracked.length} untracked file${st.untracked.length === 1 ? '' : 's'}` : '') +
                                     '. Untracked files cannot be recovered.',
-                              run: () => act('Discard', () => window.foreman.git.discard(st.root,
+                              run: () => act('Discard', () => window.wanigan.git.discard(st.root,
                                 st.unstaged.map((f) => f.path), st.untracked.map((f) => f.path))),
                             })}>discard all</button>
                   </div>
@@ -299,7 +299,7 @@ export default function Git({ projects }: { projects: Project[] }) {
                       {f.untracked ? '?' : f.work}
                     </span>
                     <span className="p">{f.path}</span>
-                    <span className="go" onClick={(e) => { e.stopPropagation(); void act('Stage', () => window.foreman.git.stage(st.root, [f.path])); }}>+</span>
+                    <span className="go" onClick={(e) => { e.stopPropagation(); void act('Stage', () => window.wanigan.git.stage(st.root, [f.path])); }}>+</span>
                   </button>
                 ))}
                 {st.clean && <p className="faint" style={{ padding: '4px 12px', fontSize: 11.5 }}>Working tree clean.</p>}
@@ -310,7 +310,7 @@ export default function Git({ projects }: { projects: Project[] }) {
                 <div style={{ display: 'flex', gap: 6 }}>
                   <button className="btn btn-primary" disabled={!!busy || !msg.trim() || !st.staged.length}
                           onClick={() => void act('Commit', async () => {
-                            const r = await window.foreman.git.commit(st.root, msg);
+                            const r = await window.wanigan.git.commit(st.root, msg);
                             setMsg(''); return r;
                           })}>
                     Commit {st.staged.length ? `${st.staged.length} file${st.staged.length > 1 ? 's' : ''}` : ''}
@@ -318,7 +318,7 @@ export default function Git({ projects }: { projects: Project[] }) {
                   <button className="btn" disabled={!!busy || !st.unstaged.length}
                           title="Stage every tracked change and commit in one step"
                           onClick={() => void act('Commit', async () => {
-                            const r = await window.foreman.git.commit(st.root, msg, { all: true });
+                            const r = await window.wanigan.git.commit(st.root, msg, { all: true });
                             setMsg(''); return r;
                           })}>Stage all &amp; commit</button>
                 </div>
@@ -343,7 +343,7 @@ export default function Git({ projects }: { projects: Project[] }) {
                   <span className="go" style={{ display: 'flex', gap: 5 }}>
                     {!b.current && (
                       <button className="gt-chip" disabled={!!busy}
-                              onClick={() => void act('Checkout', () => window.foreman.git.checkout(st.root, b.name.replace(/^origin\//, '')))}>
+                              onClick={() => void act('Checkout', () => window.wanigan.git.checkout(st.root, b.name.replace(/^origin\//, '')))}>
                         checkout
                       </button>
                     )}
@@ -351,17 +351,17 @@ export default function Git({ projects }: { projects: Project[] }) {
                       <>
                         <button className="gt-chip" disabled={!!busy}
                                 onClick={() => setConfirm({ what: `Merge ${b.name} into ${st.branch}.`,
-                                  run: () => act('Merge', () => window.foreman.git.merge(st.root, b.name)) })}>merge</button>
+                                  run: () => act('Merge', () => window.wanigan.git.merge(st.root, b.name)) })}>merge</button>
                         <button className="gt-chip" disabled={!!busy}
                                 onClick={() => setConfirm({ what: `Delete branch ${b.name}. Unmerged work on it would be lost.`,
-                                  run: () => act('Delete', () => window.foreman.git.deleteBranch(st.root, b.name, true)) })}>delete</button>
+                                  run: () => act('Delete', () => window.wanigan.git.deleteBranch(st.root, b.name, true)) })}>delete</button>
                       </>
                     )}
                   </span>
                 </div>
               ))}
               <div className="gt-commit">
-                <NewBranch busy={!!busy} onCreate={(name) => void act('Branch', () => window.foreman.git.checkout(st.root, name, true))} />
+                <NewBranch busy={!!busy} onCreate={(name) => void act('Branch', () => window.wanigan.git.checkout(st.root, name, true))} />
               </div>
             </div>
           )}
@@ -373,17 +373,17 @@ export default function Git({ projects }: { projects: Project[] }) {
                   <span className="st">≡</span>
                   <span className="p" title={s.subject}>{s.subject}</span>
                   <span className="go" style={{ display: 'flex', gap: 5 }}>
-                    <button className="gt-chip" onClick={() => void act('Apply', () => window.foreman.git.stashApply(st.root, s.index, false))}>apply</button>
-                    <button className="gt-chip" onClick={() => void act('Pop', () => window.foreman.git.stashApply(st.root, s.index, true))}>pop</button>
+                    <button className="gt-chip" onClick={() => void act('Apply', () => window.wanigan.git.stashApply(st.root, s.index, false))}>apply</button>
+                    <button className="gt-chip" onClick={() => void act('Pop', () => window.wanigan.git.stashApply(st.root, s.index, true))}>pop</button>
                     <button className="gt-chip" onClick={() => setConfirm({ what: `Drop ${s.label}. It cannot be recovered.`,
-                      run: () => act('Drop', () => window.foreman.git.stashDrop(st.root, s.index)) })}>drop</button>
+                      run: () => act('Drop', () => window.wanigan.git.stashDrop(st.root, s.index)) })}>drop</button>
                   </span>
                 </div>
               ))}
               {!stash.length && <p className="faint" style={{ padding: 12, fontSize: 12 }}>No stashes.</p>}
               <div className="gt-commit">
                 <button className="btn" disabled={!!busy || st.clean}
-                        onClick={() => void act('Stash', () => window.foreman.git.stashSave(st.root, msg))}>
+                        onClick={() => void act('Stash', () => window.wanigan.git.stashSave(st.root, msg))}>
                   Stash everything{msg.trim() ? ' with that message' : ''}
                 </button>
               </div>

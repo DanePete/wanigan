@@ -275,7 +275,7 @@ export function pluginFile(p: string): { text: string; truncated: boolean; bytes
   const abs = path.resolve(p);
   // Confined to the plugins tree: this path arrives from the renderer.
   if (!abs.startsWith(ROOT + path.sep)) {
-    throw new Error(`${abs} is not inside the plugins directory, so Foreman will not open it.`);
+    throw new Error(`${abs} is not inside the plugins directory, so Wanigan will not open it.`);
   }
   const st = fs.statSync(abs);
   const MAX = 200 * 1024;
@@ -310,8 +310,8 @@ async function runPlugin(args: string[], timeoutMs = 120_000): Promise<PluginAct
   if (!bin) {
     return {
       ok: false, output: '',
-      error: 'Claude Code was not found. Foreman resolves your login shell PATH and scans editor ' +
-             'extension directories — if `claude` runs in your terminal, restart Foreman.',
+      error: 'Claude Code was not found. Wanigan resolves your login shell PATH and scans editor ' +
+             'extension directories — if `claude` runs in your terminal, restart Wanigan.',
     };
   }
   try {
@@ -387,7 +387,7 @@ export async function details(name: string): Promise<{ text: string; alwaysOnTok
 /**
  * Installing runs code on this machine: a plugin may ship hooks, an MCP server
  * or an LSP, and the CLI's `-y` accepts a marketplace-declared install command
- * without its confirmation prompt. Foreman passes -y because it has no TTY, so
+ * without its confirmation prompt. Wanigan passes -y because it has no TTY, so
  * the UI has to be the place that asks — and it says exactly this before it does.
  */
 export async function install(id: string, scope: 'user' | 'project' | 'local' = 'user'): Promise<PluginAction> {

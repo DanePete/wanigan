@@ -14,7 +14,7 @@ import type { ModelInfo, RunConfig } from '../../shared/types';
  *
  * `fallbacks` — the server-side parameter that re-runs a refused request on a
  * second model — is rejected by the Batches API, so a batch that trips a safety
- * classifier just ends with rows nobody answered. Foreman already gives those
+ * classifier just ends with rows nobody answered. Wanigan already gives those
  * rows their own outcome (results.ts turns stop_reason "refusal" into status
  * 'refused' rather than an empty success), which makes it the only component
  * that can do the rescue itself: pull exactly the refused rows out, re-run them
@@ -317,7 +317,7 @@ async function planRescue(runId: string, fallbackModel: string): Promise<Plan> {
  * invalid max_tokens 24 hours later, which is the failure this function exists to
  * prevent, only slower. The catalog from /v1/models is asked first because it
  * carries the real max_tokens; when neither table knows the id, the clamp goes to
- * the most conservative ceiling Foreman knows and says out loud that it guessed.
+ * the most conservative ceiling Wanigan knows and says out loud that it guessed.
  */
 function ceilingsFor(
   cfg: RunConfig,
@@ -349,7 +349,7 @@ function ceilingsFor(
 
   if (!info && !priced) {
     notes.push(
-      `Foreman has no output ceiling for ${fallbackModel} — neither the model catalog nor the local pricing table ` +
+      `Wanigan has no output ceiling for ${fallbackModel} — neither the model catalog nor the local pricing table ` +
       `lists it — so max_tokens is held at ${ceiling.toLocaleString()}, the most conservative ceiling it knows. ` +
       `Raise it only if you know that model's real limit; guessing high means the rescue errors on every row a day from now.`
     );

@@ -9,7 +9,7 @@ import type { HookInput, LedgerEntry, PolicyDecision, TrustLevel } from '../shar
 /**
  * Trust levels and the ledger.
  *
- * Foreman launches agents at permission modes up to bypassPermissions and runs
+ * Wanigan launches agents at permission modes up to bypassPermissions and runs
  * shell commands as a batch data source. Both are things an operator can
  * legitimately want; neither should happen without a row somewhere saying it
  * did. This module answers one question — "may this tool call proceed?" — and
@@ -195,7 +195,7 @@ function absolutise(root: string | null, target: string): string {
 /**
  * Home-anchored only. A project's own .claude/ directory is ordinary work and
  * agents edit it constantly; ~/.claude holds the credentials for every session
- * Foreman will ever run, and the two must not be confused.
+ * Wanigan will ever run, and the two must not be confused.
  */
 const CREDENTIAL_PATHS = ['.ssh', '.aws', '.claude', '.gnupg', '.docker', '.kube', '.npmrc', '.netrc', path.join('.config', 'gh')];
 
@@ -253,7 +253,7 @@ function credentialTarget(input: HookInput, root: string | null): string | null 
  * What these rules buy is a pause and a ledger row on the shapes a human would
  * recognise on sight. Real containment is the OS sandbox, a container, or a
  * machine you are willing to rebuild. This comment exists so that nobody later
- * reads the list below, concludes Foreman blocks bad commands, and ships
+ * reads the list below, concludes Wanigan blocks bad commands, and ships
  * something genuinely dangerous behind it.
  *
  * Known and deliberate holes, so the shape of the gap is on the record: no
@@ -399,9 +399,9 @@ export function decideFor(ctx: PolicyContext, input: HookInput): PolicyDecision 
   if (!tool) return allow('Not a tool call.', 'no-tool');
 
   // Checked before anything else so that TRUST_COPY.trusted — "Nothing is
-  // denied by Foreman" — stays literally true.
+  // denied by Wanigan" — stays literally true.
   if (ctx.trust === 'trusted') {
-    return allow(`${TRUST_COPY.trusted.label}: Foreman denies nothing here.`, 'trusted.allow');
+    return allow(`${TRUST_COPY.trusted.label}: Wanigan denies nothing here.`, 'trusted.allow');
   }
 
   const cred = credentialTarget(input, ctx.projectPath);
@@ -441,7 +441,7 @@ function readonlyDecision(tool: string, input: HookInput): PolicyDecision {
   // Unknown tool at the strictest level: denying blocks harmless things and
   // allowing defeats the level, so hand it to the person who can tell.
   return ask(
-    `Foreman does not know what ${tool} does, and ${TRUST_COPY.readonly.label} allows only known reads. Approve it if it only reads.`,
+    `Wanigan does not know what ${tool} does, and ${TRUST_COPY.readonly.label} allows only known reads. Approve it if it only reads.`,
     'readonly.unknown'
   );
 }
@@ -455,21 +455,21 @@ function projectDecision(ctx: PolicyContext, tool: string, input: HookInput): Po
     if (found) return deny(found.reason, found.rule);
     if (!root) {
       return ask(
-        `Foreman does not know this session's project directory, so it cannot tell whether this command stays inside it. Approve it if you know where it runs.`,
+        `Wanigan does not know this session's project directory, so it cannot tell whether this command stays inside it. Approve it if you know where it runs.`,
         'project.no-root'
       );
     }
-    return allow('Command shows none of the escapes Foreman checks for.', 'project.command');
+    return allow('Command shows none of the escapes Wanigan checks for.', 'project.command');
   }
 
   if (WRITE_TOOLS.has(tool)) {
     const target = targetPath(input);
     if (!target) {
-      return ask(`Foreman could not tell which file ${tool} would change. Approve it if the path is inside the project.`, 'project.unknown-target');
+      return ask(`Wanigan could not tell which file ${tool} would change. Approve it if the path is inside the project.`, 'project.unknown-target');
     }
     if (!root) {
       return ask(
-        `Foreman does not know this session's project directory, so it cannot tell whether ${absolutise(null, target)} is inside it. Approve it if it is.`,
+        `Wanigan does not know this session's project directory, so it cannot tell whether ${absolutise(null, target)} is inside it. Approve it if it is.`,
         'project.no-root'
       );
     }
@@ -536,7 +536,7 @@ function notableAllow(ctx: PolicyContext, tool: string, input: HookInput): boole
 
 /**
  * policy_ledger is append-only on purpose: a record you can edit is not a
- * record. Nothing in Foreman updates or deletes a row here, and nothing should
+ * record. Nothing in Wanigan updates or deletes a row here, and nothing should
  * be added that does — the value of the table is that its contents cannot be
  * tidied up after the thing you would want to tidy up has happened.
  */

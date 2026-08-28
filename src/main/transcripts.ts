@@ -42,7 +42,7 @@ function claudeProjectDir(projectPath: string): string {
   return path.join(root, 'projects', path.resolve(projectPath).replace(/[^a-zA-Z0-9]/g, '-'));
 }
 
-/** Foreman's own copy of every archived transcript. */
+/** Wanigan's own copy of every archived transcript. */
 export function transcriptsDir(): string {
   return path.join(dataDir(), 'transcripts');
 }
@@ -278,12 +278,12 @@ function locate(sessionId: string, projectPath: string, conversationId: string |
 
 /**
  * Sessions are killed on quit by design, and Claude Code's transcript lives
- * outside Foreman's data directory where an upgrade or a cleanup can remove it.
+ * outside Wanigan's data directory where an upgrade or a cleanup can remove it.
  * Archiving is what lets a finished session still be read.
  *
  * The order of the three steps is the whole point of this function:
  *
- *   1. Copy the raw .jsonl verbatim into Foreman's own transcripts directory
+ *   1. Copy the raw .jsonl verbatim into Wanigan's own transcripts directory
  *      and record it. The copy is the record of truth — this format is internal
  *      to Claude Code and documented as changing between releases, so the bytes
  *      are the only part guaranteed to still mean something after an upgrade.
@@ -485,7 +485,7 @@ export function transcriptFor(sessionId: string): { turns: TranscriptTurn[]; not
   if (!isFile(row.stored_path)) {
     return {
       turns: [], bytes: 0,
-      note: `The archived copy is missing from ${path.dirname(row.stored_path)} — it was moved or deleted outside Foreman.`,
+      note: `The archived copy is missing from ${path.dirname(row.stored_path)} — it was moved or deleted outside Wanigan.`,
     };
   }
 

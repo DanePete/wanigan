@@ -138,13 +138,13 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    try { setRuns((await window.foreman.batch.runs()) as Run[]); } catch { /* db not ready */ }
+    try { setRuns((await window.wanigan.batch.runs()) as Run[]); } catch { /* db not ready */ }
     setLoading(false);
   }, []);
 
   useEffect(() => {
     void load();
-    const off = window.foreman.on.batchChanged(() => void load());
+    const off = window.wanigan.on.batchChanged(() => void load());
     const t = setInterval(load, 8000);
     return () => { off(); clearInterval(t); };
   }, [load]);
@@ -249,7 +249,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
 
   useEffect(() => {
     const pid = seed?.projectId ?? projects[0]?.id;
-    window.foreman.batch.presets(pid).then((d) => {
+    window.wanigan.batch.presets(pid).then((d) => {
       setPresets(d.presets); setModels(d.models);
       setCatalog({ fetchedAt: d.modelsFetchedAt, stale: d.modelsStale });
 
@@ -279,8 +279,8 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   async function refreshCatalog() {
     setRefreshingModels(true);
     try {
-      const r = await window.foreman.batch.refreshModels();
-      const d = await window.foreman.batch.presets(projectId);
+      const r = await window.wanigan.batch.refreshModels();
+      const d = await window.wanigan.batch.presets(projectId);
       setModels(d.models); setCatalog({ fetchedAt: d.modelsFetchedAt, stale: d.modelsStale });
     } catch (e) { /* surfaced by the estimate path */ }
     finally { setRefreshingModels(false); }
@@ -289,7 +289,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   const invalidate = () => { setEst(null); setDry(null); };
 
   async function applyPreset(id: string) {
-    const d = await window.foreman.batch.presets(projectId);
+    const d = await window.wanigan.batch.presets(projectId);
     const p = (d.presets as Preset[]).find((x) => x.id === id);
     if (!p) return;
     setCfg({ name: cfg?.name || '', projectId, ...p.config });
@@ -298,7 +298,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
 
   async function changeProject(id: string) {
     // Re-resolve presets so their example paths point at the new project.
-    const d = await window.foreman.batch.presets(id);
+    const d = await window.wanigan.batch.presets(id);
     setPresets(d.presets);
     const p = (d.presets as Preset[]).find((x) => x.id === cfg?.preset);
     setCfg((c) => (c ? { ...c, projectId: id, ...(p ? { source: p.config.source } : {}) } : c));
@@ -308,7 +308,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   async function loadPreview() {
     if (!cfg) return;
     setLoadingPreview(true); setPreviewErr(null); invalidate();
-    try { setPreview(await window.foreman.batch.preview(cfg.source, cfg.userTemplate)); }
+    try { setPreview(await window.wanigan.batch.preview(cfg.source, cfg.userTemplate)); }
     catch (e) { setPreviewErr(e instanceof Error ? e.message : String(e)); setPreview(null); }
     finally { setLoadingPreview(false); }
   }
@@ -318,7 +318,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
     if (!hasKey) { onNeedKey(); return; }
     setEstimating(true);
     try {
-      const d = await window.foreman.batch.estimate(cfg, observed);
+      const d = await window.wanigan.batch.estimate(cfg, observed);
       setEst(d.estimate); setEstMeta({ warnings: d.warnings ?? [], errors: d.errors ?? [] });
     } catch (e) {
       setEstMeta({ warnings: [], errors: [e instanceof Error ? e.message : String(e)] }); setEst(null);
@@ -330,7 +330,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
     if (!hasKey) { onNeedKey(); return; }
     setDrying(true); setDry(null);
     try {
-      const d = await window.foreman.batch.dryRun(cfg, 0);
+      const d = await window.wanigan.batch.dryRun(cfg, 0);
       setDry(d);
       if (d.result?.ok && d.result.usage?.output_tokens) await runEstimate(d.result.usage.output_tokens);
     } catch (e) {
@@ -342,7 +342,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
     if (!cfg || !est) return;
     setSubmitting(true); setSubmitErr(null);
     try {
-      const r = await window.foreman.batch.submit(cfg, {
+      const r = await window.wanigan.batch.submit(cfg, {
         input: est.totalInputTokens, output: est.worstCaseOutputTokens, cost: est.costLowUsd,
       });
       onDone(r.runId);
@@ -760,13 +760,13 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
   const [busy, setBusy] = useState<string | null>(null);
 
   const loadDetail = useCallback(async () => {
-    try { setD(await window.foreman.batch.run(id)); } catch { /* deleted */ }
+    try { setD(await window.wanigan.batch.run(id)); } catch { /* deleted */ }
     // Rescue runs are their own runs, so a merged rescue stays worth showing
     // after the parent's refused count has fallen back to zero.
-    try { setRescues(await window.foreman.refusal.children(id)); } catch { /* pre-P15 database */ }
+    try { setRescues(await window.wanigan.refusal.children(id)); } catch { /* pre-P15 database */ }
   }, [id]);
   const loadRows = useCallback(async () => {
-    const r = await window.foreman.batch.results(id, filter, q, offset);
+    const r = await window.wanigan.batch.results(id, filter, q, offset);
     setRows(r.rows); setTotal(r.total);
   }, [id, filter, q, offset]);
 
@@ -828,13 +828,13 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
         </div>
         <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
           {live && <button className="btn btn-danger" disabled={busy === 'cancel'}
-                           onClick={() => act(() => window.foreman.batch.cancel(id), 'cancel')}>
+                           onClick={() => act(() => window.wanigan.batch.cancel(id), 'cancel')}>
             {busy === 'cancel' ? 'Canceling…' : 'Cancel run'}</button>}
           {!live && failed > 0 && <button className="btn" disabled={busy === 'retry'}
-                           onClick={() => act(() => window.foreman.batch.retry(id), 'retry')}>
+                           onClick={() => act(() => window.wanigan.batch.retry(id), 'retry')}>
             {busy === 'retry' ? 'Resubmitting…' : `Retry ${num(failed)} failed`}</button>}
-          <button className="btn" onClick={() => window.foreman.batch.exportTo(id, 'jsonl')}>Export JSONL</button>
-          <button className="btn" onClick={() => window.foreman.batch.exportTo(id, 'csv')}>Export CSV</button>
+          <button className="btn" onClick={() => window.wanigan.batch.exportTo(id, 'jsonl')}>Export JSONL</button>
+          <button className="btn" onClick={() => window.wanigan.batch.exportTo(id, 'csv')}>Export CSV</button>
         </div>
       </div>
 
@@ -1030,7 +1030,7 @@ function UploadToggle({ source, onChange }: {
           run with the same bytes reuses it for free. Rows then carry a <span className="mono">fileRef</span>{' '}
           column and an empty <span className="mono">content</span> one — the file travels as its own content
           block — so write the template as an instruction and drop{' '}
-          <span className="mono">{'{{content}}'}</span>. Anything Foreman cannot classify as a document or an
+          <span className="mono">{'{{content}}'}</span>. Anything Wanigan cannot classify as a document or an
           image is inlined as before, and the batch is created with the files beta; without it every uploaded
           row fails.
         </Note>
@@ -1053,7 +1053,7 @@ function UploadCache() {
   const [pruneNote, setPruneNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    try { setFiles(await window.foreman.uploads.list()); setErr(null); }
+    try { setFiles(await window.wanigan.uploads.list()); setErr(null); }
     catch (e) { setErr(msg(e)); }
   }, []);
   useEffect(() => { void load(); }, [load]);
@@ -1061,7 +1061,7 @@ function UploadCache() {
   async function prune() {
     setBusy('prune'); setPruneNote(null); setErr(null);
     try {
-      const n = await window.foreman.uploads.prune();
+      const n = await window.wanigan.uploads.prune();
       setPruneNote(n
         ? `${num(n)} stale entr${n === 1 ? 'y' : 'ies'} dropped — those files no longer exist on the API, and a run reusing one would have failed every row that carried it.`
         : 'Every cached upload still exists on the API. Nothing dropped.');
@@ -1072,7 +1072,7 @@ function UploadCache() {
 
   async function remove(f: UploadedFile) {
     setBusy(f.hash); setPruneNote(null); setErr(null);
-    try { await window.foreman.uploads.remove(f.hash); await load(); }
+    try { await window.wanigan.uploads.remove(f.hash); await load(); }
     catch (e) { setErr(msg(e)); }
     finally { setBusy(null); }
   }
@@ -1148,7 +1148,7 @@ function UploadCache() {
 
       <p className="faint" style={{ fontSize: 11, lineHeight: 1.5 }}>
         Pruning only drops local rows whose remote file is definitely gone. It never deletes a remote file
-        Foreman cannot prove it uploaded — the Files API is organisation-wide, and another tool's files live there too.
+        Wanigan cannot prove it uploaded — the Files API is organisation-wide, and another tool's files live there too.
       </p>
     </div>
   );
@@ -1184,7 +1184,7 @@ function CachePreflight({ cfg, requests, prefixTokens, onUseTtl }: {
 
   useEffect(() => {
     let live = true;
-    Promise.all([window.foreman.cache.minimum(cfg.model), window.foreman.cache.ttl(cfg, requests)])
+    Promise.all([window.wanigan.cache.minimum(cfg.model), window.wanigan.cache.ttl(cfg, requests)])
       .then(([m, a]) => { if (live) { setMinimum(m); setAdvice(a); setErr(null); } })
       .catch((e) => { if (live) setErr(msg(e)); });
     return () => { live = false; };
@@ -1264,10 +1264,10 @@ function CacheObserved({ runId, run, config }: { runId: string; run: any; config
 
   useEffect(() => {
     let live = true;
-    window.foreman.cache.hitRate(runId)
+    window.wanigan.cache.hitRate(runId)
       .then((r) => { if (live) { setRate(r); setErr(null); } })
       .catch((e) => { if (live) { setErr(msg(e)); setRate(null); } });
-    window.foreman.cache.minimum(run.model).then((m) => { if (live) setMinimum(m); }).catch(() => {});
+    window.wanigan.cache.minimum(run.model).then((m) => { if (live) setMinimum(m); }).catch(() => {});
     return () => { live = false; };
   }, [runId, run.model, run.status, run.cache_read, run.in_tokens]);
 
@@ -1352,7 +1352,7 @@ function CacheObserved({ runId, run, config }: { runId: string; run: any; config
 /**
  * `fallbacks` — the server-side parameter that re-runs a refused request on a
  * second model — is rejected by the Batches API, so a batch that trips a safety
- * classifier just ends with rows nobody answered. Foreman gives those rows their
+ * classifier just ends with rows nobody answered. Wanigan gives those rows their
  * own outcome, which makes it the only thing that can do the rescue itself.
  */
 function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
@@ -1370,13 +1370,13 @@ function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
 
   useEffect(() => {
     let alive = true;
-    window.foreman.refusal.summary(runId)
+    window.wanigan.refusal.summary(runId)
       .then((s) => { if (alive) { setSummary(s); setLoadErr(null); } })
       .catch((e) => { if (alive) setLoadErr(msg(e)); });
     // One example explanation per category: a category name says what tripped,
     // the model's own sentence says why, and that is what tells you whether a
     // different model will answer or refuse in the same place.
-    window.foreman.refusal.rows(runId).then((rows) => {
+    window.wanigan.refusal.rows(runId).then((rows) => {
       if (!alive) return;
       const first: Record<string, string> = {};
       for (const r of rows) {
@@ -1385,7 +1385,7 @@ function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
       }
       setExamples(first);
     }).catch(() => {});
-    window.foreman.batch.presets(config?.projectId).then((d) => {
+    window.wanigan.batch.presets(config?.projectId).then((d) => {
       if (!alive) return;
       const list = d.models as Model[];
       setModels(list);
@@ -1398,7 +1398,7 @@ function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
     if (!pick) return;
     setBusy('rescue'); setErr(null); setOk(null);
     try {
-      const r = await window.foreman.refusal.rescue(runId, pick);
+      const r = await window.wanigan.refusal.rescue(runId, pick);
       onOpen(r.runId);
     } catch (e) { setErr(msg(e)); setBusy(null); }
   }
@@ -1406,7 +1406,7 @@ function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
   async function merge(child: RescueChild) {
     setBusy(child.id); setErr(null); setOk(null);
     try {
-      const r = await window.foreman.refusal.merge(child.id);
+      const r = await window.wanigan.refusal.merge(child.id);
       setOk(`${num(r.merged)} rescued row${r.merged === 1 ? '' : 's'} folded back into this run. The rescue’s spend stays on ${child.id} — this run’s totals are unchanged, because the parent was billed for the refusal and the child for the answer.`);
       await onChanged();
     } catch (e) { setErr(msg(e)); }
@@ -1624,7 +1624,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
 
   const loadPairs = useCallback(async () => {
     try {
-      const all = await window.foreman.evals.pairs();
+      const all = await window.wanigan.evals.pairs();
       const mine = all.filter((p) => p.runAId === runId || p.runBId === runId);
       setPairs(mine);
       setSel((cur) => (cur && mine.some((p) => p.id === cur) ? cur : mine[0]?.id ?? null));
@@ -1632,17 +1632,17 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
   }, [runId]);
 
   const loadGolden = useCallback(async () => {
-    try { setGolden(await window.foreman.evals.golden()); } catch { setGolden([]); }
+    try { setGolden(await window.wanigan.evals.golden()); } catch { setGolden([]); }
   }, []);
 
   useEffect(() => { void loadPairs(); }, [loadPairs]);
   useEffect(() => { void loadGolden(); }, [loadGolden]);
-  useEffect(() => { window.foreman.batch.runs().then((r) => setRuns(r as Run[])).catch(() => {}); }, []);
+  useEffect(() => { window.wanigan.batch.runs().then((r) => setRuns(r as Run[])).catch(() => {}); }, []);
 
   const loadDiff = useCallback(async (pairId: string) => {
     setDiffErr(null);
     try {
-      const [d, s] = await Promise.all([window.foreman.evals.diff(pairId), window.foreman.evals.summary(pairId)]);
+      const [d, s] = await Promise.all([window.wanigan.evals.diff(pairId), window.wanigan.evals.summary(pairId)]);
       setDiff(d); setVerdict(s);
     } catch (e) { setDiffErr(msg(e)); setDiff(null); setVerdict(null); }
   }, []);
@@ -1658,7 +1658,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
     setCreating(true); setPairErr(null);
     try {
       const bName = runs.find((r) => r.id === other)?.name ?? other;
-      const p = await window.foreman.evals.createPair(name.trim() || `${run.name} vs ${bName}`, runId, other);
+      const p = await window.wanigan.evals.createPair(name.trim() || `${run.name} vs ${bName}`, runId, other);
       setName('');
       await loadPairs();
       setSel(p.id);
@@ -1670,7 +1670,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
     if (!judgeRun.trim()) return;
     setJudgeErr(null); setJudgeNote(null);
     try {
-      const r = await window.foreman.evals.ingest(judgeRun.trim());
+      const r = await window.wanigan.evals.ingest(judgeRun.trim());
       setJudgeNote(`${num(r.scored)} row${r.scored === 1 ? '' : 's'} scored. Presentation order was randomised per row and un-swapped on the way in, so the verdict is not a position bias.`);
       setJudgeRun('');
       if (sel) await loadDiff(sel);
@@ -1680,7 +1680,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
   async function saveGolden() {
     setGBusy(true); setGErr(null); setGOk(null);
     try {
-      const g = await window.foreman.evals.saveGolden(gName.trim() || `${run.name} — snapshot`, runId);
+      const g = await window.wanigan.evals.saveGolden(gName.trim() || `${run.name} — snapshot`, runId);
       setGOk(`Pinned ${num(g.rows)} row${g.rows === 1 ? '' : 's'} as “${g.name}”. A comparison against it next month measures the config, not the tree.`);
       setGName('');
       await loadGolden();
@@ -1779,7 +1779,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
         <div className="card bx-state">
           <h4>No comparison yet</h4>
           <p>
-            Pick a second run above to pair it with this one. Foreman refuses the pair unless exactly one field
+            Pick a second run above to pair it with this one. Wanigan refuses the pair unless exactly one field
             differs, so whatever the diff shows can be attributed to that field and nothing else.
           </p>
         </div>

@@ -21,7 +21,7 @@ type Git = { ok: boolean; stdout: string; stderr: string };
 
 /**
  * Always argv, never a shell string: a branch label is user text, and
- * `foreman/fix; rm -rf ~` is not a bug you want to find in production. It also
+ * `wanigan/fix; rm -rf ~` is not a bug you want to find in production. It also
  * means a label with a space stays one argument.
  *
  * Exit status is returned rather than thrown because half of what this module
@@ -126,13 +126,13 @@ async function branchExists(repoRoot: string, branch: string): Promise<boolean> 
  */
 async function recordedBase(repoRoot: string, branch: string | null): Promise<string | null> {
   if (!branch) return null;
-  const r = await git(repoRoot, ['config', '--get', `branch.${branch}.foremanbase`], 8000);
+  const r = await git(repoRoot, ['config', '--get', `branch.${branch}.waniganbase`], 8000);
   const v = r.ok ? r.stdout.trim() : '';
   return v || null;
 }
 
 /**
- * For the ahead count only. A worktree Foreman did not create has no recorded
+ * For the ahead count only. A worktree Wanigan did not create has no recorded
  * base, and "ahead of the branch the repo itself is on" is a useful number even
  * though it is a guess — which is exactly why merge refuses to use it.
  */
@@ -317,7 +317,7 @@ export async function createWorktree(repoRoot: string, label: string, sessionId:
   const slug = slugify(label);
   const stem = `${path.basename(root)}-${short}`;
   let dir = path.join(parent, stem);
-  let branch = `foreman/${slug}-${short}`;
+  let branch = `wanigan/${slug}-${short}`;
   // A re-run of the same session, or two labels colliding on one short id, must
   // not land on an existing branch — git would refuse, and forcing it would
   // reset someone else's work.
@@ -326,7 +326,7 @@ export async function createWorktree(repoRoot: string, label: string, sessionId:
       throw new Error(`Could not find a free worktree name for ${path.basename(root)} — 50 of them already exist under ${parent}. Remove the ones you are done with first.`);
     }
     dir = path.join(parent, `${stem}-${n}`);
-    branch = `foreman/${slug}-${short}-${n}`;
+    branch = `wanigan/${slug}-${short}-${n}`;
   }
 
   // A worktree add is a full checkout; on a big repo that is minutes, and the
@@ -342,14 +342,14 @@ export async function createWorktree(repoRoot: string, label: string, sessionId:
   // UI, blamed on a "missing record" rather than on the write that failed.
   // Two sessions launched at once contend for .git/config's lockfile and git
   // does not retry, so a lost race is the common case — retry once, briefly.
-  const writeBase = () => git(root, ['config', `branch.${branch}.foremanbase`, startPoint], 8000);
+  const writeBase = () => git(root, ['config', `branch.${branch}.waniganbase`, startPoint], 8000);
   let cfg = await writeBase();
   if (!cfg.ok) {
     await new Promise((r) => setTimeout(r, 150));
     cfg = await writeBase();
   }
   if (!cfg.ok) {
-    throw new Error(`The worktree at ${dir} was created, but Foreman could not record which branch it came from (${gitSaid(cfg)}), so merging it from Foreman would not work. Record it by hand and reconcile: git -C ${root} config branch.${branch}.foremanbase ${startPoint}`);
+    throw new Error(`The worktree at ${dir} was created, but Wanigan could not record which branch it came from (${gitSaid(cfg)}), so merging it from Wanigan would not work. Record it by hand and reconcile: git -C ${root} config branch.${branch}.waniganbase ${startPoint}`);
   }
 
   const abs = canon(dir);
@@ -381,7 +381,7 @@ export async function createWorktree(repoRoot: string, label: string, sessionId:
 export async function relinkWorktree(worktreePath: string): Promise<LinkedPath[]> {
   const row = db().prepare('SELECT repo_root FROM worktrees WHERE path = ?').get(canon(worktreePath)) as
     { repo_root: string } | undefined;
-  if (!row) throw new Error(`Foreman has no record of a worktree at ${worktreePath}.`);
+  if (!row) throw new Error(`Wanigan has no record of a worktree at ${worktreePath}.`);
   return linkIgnoredDeps(row.repo_root, canon(worktreePath));
 }
 
@@ -498,7 +498,7 @@ export async function mergeWorktree(
 
   const base = await recordedBase(info.repoRoot, info.branch);
   if (!base) {
-    return { merged: false, detail: `Foreman has no record of which branch ${info.branch} was created from, so it will not guess a merge target. Merge it by hand: git switch <target> && git merge ${info.branch}.` };
+    return { merged: false, detail: `Wanigan has no record of which branch ${info.branch} was created from, so it will not guess a merge target. Merge it by hand: git switch <target> && git merge ${info.branch}.` };
   }
   if (!(await branchExists(info.repoRoot, base))) {
     return { merged: false, detail: `${info.branch} was created from ${base}, which is no longer a branch in ${info.repoRoot} (it was a detached HEAD, or the branch has since been deleted). Pick a target and merge it by hand.` };
@@ -529,7 +529,7 @@ export async function mergeWorktree(
   const changed = await git(info.repoRoot, ['diff', '--name-only', '-z', `${base}...${info.branch}`], 30_000);
   const files = changed.ok ? changed.stdout.split('\0').filter(Boolean).length : 0;
   const squash = opts?.squash === true;
-  const message = opts?.message?.trim() || `foreman: ${squash ? 'squash' : 'merge'} ${info.branch} into ${base}`;
+  const message = opts?.message?.trim() || `wanigan: ${squash ? 'squash' : 'merge'} ${info.branch} into ${base}`;
 
   const merge = squash
     ? await git(target.path, ['merge', '--squash', info.branch], 5 * 60_000)
@@ -581,12 +581,12 @@ export async function removeWorktree(p: string, force: boolean): Promise<{ remov
     markRemoved(abs);
     const root = row?.repo_root ?? null;
     if (root && fs.existsSync(root)) await git(root, ['worktree', 'prune'], 30_000);
-    return { removed: true, detail: `Nothing on disk at ${abs}. Foreman's record was cleared and git's worktree list pruned.` };
+    return { removed: true, detail: `Nothing on disk at ${abs}. Wanigan's record was cleared and git's worktree list pruned.` };
   }
 
   const found = await inspect(abs);
   if (!found) {
-    throw new Error(`${abs} is not a git worktree. Refusing to delete it — Foreman only removes directories git says it created.`);
+    throw new Error(`${abs} is not a git worktree. Refusing to delete it — Wanigan only removes directories git says it created.`);
   }
   const { info, dirty } = found;
   // Same reason as the merge guard, with the stakes reversed: here the refusal
@@ -672,7 +672,7 @@ export async function reconcileWorktrees(): Promise<WorktreeInfo[]> {
       const row = rowFor(abs);
       // Never report a worktree a human made for themselves. Offering to delete
       // someone's hand-rolled checkout is how a tool loses trust permanently.
-      const ours = Boolean(row) || (rec.branch?.startsWith('foreman/') ?? false);
+      const ours = Boolean(row) || (rec.branch?.startsWith('wanigan/') ?? false);
       if (!ours) continue;
       if (row?.session_id && live.has(row.session_id)) continue;
 
@@ -694,7 +694,7 @@ export async function reconcileWorktrees(): Promise<WorktreeInfo[]> {
   }
 
   // The directory is gone but the row survives, so the row is closed out rather
-  // than deleted: the history of what Foreman created is worth keeping.
+  // than deleted: the history of what Wanigan created is worth keeping.
   for (const r of rows) {
     if (!fs.existsSync(r.path)) markRemoved(r.path);
   }

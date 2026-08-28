@@ -191,8 +191,8 @@ export default function Skills({ projectId, activeSessionId }: {
   const load = useCallback(async (rescan?: boolean) => {
     setScanning(true);
     try {
-      if (rescan) await window.foreman.skills.refresh();
-      setCat((await window.foreman.skills.list(projectId)) as Catalogue);
+      if (rescan) await window.wanigan.skills.refresh();
+      setCat((await window.wanigan.skills.list(projectId)) as Catalogue);
       setLoadErr(null);
     } catch (e) {
       setLoadErr(msg(e));
@@ -302,7 +302,7 @@ export default function Skills({ projectId, activeSessionId }: {
   async function send(s: SkillInfo) {
     if (!activeSessionId) return;
     try {
-      await window.foreman.skills.send(activeSessionId, s.invoke);
+      await window.wanigan.skills.send(activeSessionId, s.invoke);
       setFlash({ name: s.name, tone: 'ok',
                  text: `✓ Typed ${s.invoke} into the live session. It is not submitted — switch to Sessions and press Enter to run it.` });
     } catch (e) {
@@ -331,7 +331,7 @@ export default function Skills({ projectId, activeSessionId }: {
           <div className="card skills-state">
             <h2>The skill scan did not finish</h2>
             <p>
-              Foreman could not read the skill directories: <span className="mono">{loadErr}</span>.
+              Wanigan could not read the skill directories: <span className="mono">{loadErr}</span>.
               The catalogue is read straight off disk, so this is usually a permissions problem on
               <span className="mono"> ~/.claude/skills</span>. Fix that, then scan again.
             </p>
@@ -400,7 +400,7 @@ export default function Skills({ projectId, activeSessionId }: {
 
         {!activeSessionId && (
           <Note tone="info">
-            <strong>○ No live session, so sending is off.</strong> Foreman types an invocation
+            <strong>○ No live session, so sending is off.</strong> Wanigan types an invocation
             straight into a running agent's terminal, so there has to be a terminal — open one in
             Sessions and come back. Search, reading and copying all work without one.
           </Note>
@@ -772,7 +772,7 @@ function Roots({ cat }: { cat: Catalogue }) {
                   <td>
                     {r.exists && r.path !== '—' && (
                       <button className="link" style={{ fontSize: 11 }}
-                              onClick={() => { window.foreman.browse.reveal(r.path).catch(() => {}); }}>
+                              onClick={() => { window.wanigan.browse.reveal(r.path).catch(() => {}); }}>
                         reveal
                       </button>
                     )}
@@ -803,7 +803,7 @@ function Reader({ skill, onClose }: { skill: SkillInfo; onClose: () => void }) {
     let live = true;
     setBody(null);
     setErr(null);
-    window.foreman.skills.body(skill.path)
+    window.wanigan.skills.body(skill.path)
       .then((b) => { if (live) setBody(b); })
       .catch((e) => { if (live) setErr(msg(e)); });
     return () => { live = false; };
@@ -828,7 +828,7 @@ function Reader({ skill, onClose }: { skill: SkillInfo; onClose: () => void }) {
           <span>{fileSize(skill.bytes)}</span>
           <span>edited {ago(skill.modified)}</span>
           <button className="link" style={{ fontSize: 11 }}
-                  onClick={() => { window.foreman.browse.reveal(skill.dir).catch(() => {}); }}>
+                  onClick={() => { window.wanigan.browse.reveal(skill.dir).catch(() => {}); }}>
             reveal folder
           </button>
         </div>

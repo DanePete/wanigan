@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
-  ForemanSettings, LedgerEntry, McpServerConfig, McpServerStatus, MotionSetting,
+  WaniganSettings, LedgerEntry, McpServerConfig, McpServerStatus, MotionSetting,
   Project, ProviderInfo, QueueItem, QueueSlots, QueueState, TrustLevel, UploadedFile, WorktreeInfo,
 } from '@shared/types';
 import { TRUST_COPY, TRUST_LEVELS } from '@shared/types';
@@ -120,12 +120,12 @@ function useLoad<T>(load: () => Promise<T>, deps: unknown[] = []): { v: Load<T>;
 
 function PanelError({ what, detail, onRetry }: { what: string; detail: string; onRetry: () => void }) {
   return (
-    <Callout level="critical" title={`Foreman could not read ${what}.`}>
+    <Callout level="critical" title={`Wanigan could not read ${what}.`}>
       <p className="mono" style={{ fontSize: 11.5, wordBreak: 'break-word' }}>{detail}</p>
       <p style={{ marginTop: 6 }}>
         If the message names a missing handler, the main process has not registered that channel and
         nothing on this panel will work until it does. Otherwise the read was transient: try again,
-        and if it repeats, restart Foreman.
+        and if it repeats, restart Wanigan.
       </p>
       <button className="btn" style={{ marginTop: 8 }} onClick={onRetry}>Try again</button>
     </Callout>
@@ -211,19 +211,19 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
   const [msgState, setMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [cap, setCap] = useState('1.00');
 
-  const load = () => window.foreman.key.status().then((st) => {
+  const load = () => window.wanigan.key.status().then((st) => {
     setStatus(st);
     if (st.workspaceId) { setWorkspaceId(st.workspaceId); setShowWorkspace(true); }
   });
   useEffect(() => {
     void load();
-    window.foreman.settings.get().then((s) => setCap(s.spendCapUsd.toFixed(2))).catch(() => {});
+    window.wanigan.settings.get().then((s) => setCap(s.spendCapUsd.toFixed(2))).catch(() => {});
   }, []);
 
   async function save() {
     setBusy(true); setMsg(null);
     try {
-      const r = await window.foreman.key.set(input.trim(), workspaceId.trim() || undefined);
+      const r = await window.wanigan.key.set(input.trim(), workspaceId.trim() || undefined);
       setInput('');
       setMsg({ tone: 'ok', text: `${r.detail}${r.batches ? ' · Batches API reachable.' : ' · Batches API NOT reachable for this workspace.'}` });
       await load(); onKeyChange();
@@ -238,24 +238,24 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
 
   async function verify() {
     setBusy(true); setMsg(null);
-    const r = await window.foreman.key.verify();
+    const r = await window.wanigan.key.verify();
     setMsg({ tone: r.ok ? 'ok' : 'error', text: r.detail + (r.ok && !r.batches ? ' · Batches API NOT reachable.' : '') });
     setBusy(false);
   }
 
   async function clear() {
-    await window.foreman.key.clear();
+    await window.wanigan.key.clear();
     setMsg(null); await load(); onKeyChange();
   }
 
   /* ── shared preferences ────────────────────────────────────────────── */
 
-  const [prefs, setPrefs] = useState<ForemanSettings | null>(null);
+  const [prefs, setPrefs] = useState<WaniganSettings | null>(null);
   const [prefsErr, setPrefsErr] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
 
   const loadPrefs = useCallback(() => {
-    window.foreman.prefs.all()
+    window.wanigan.prefs.all()
       .then((p) => { setPrefs(p); setPrefsErr(null); })
       .catch((e) => setPrefsErr(msg(e)));
   }, []);
@@ -264,7 +264,7 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
   const setPref = useCallback(async (k: string, v: string) => {
     setPending(k); setPrefsErr(null);
     try {
-      setPrefs(await window.foreman.prefs.set(k, v));
+      setPrefs(await window.wanigan.prefs.set(k, v));
     } catch (e) {
       setPrefsErr(`“${k}” was not saved: ${msg(e)} — the value on screen is the one you typed, not the one on disk.`);
     } finally { setPending(null); }
@@ -273,7 +273,7 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
   const setFlag = useCallback(async (k: string, on: boolean) => {
     // notify keeps its own in-process copy of this flag; writing the setting
     // alone would leave the running poller using the previous answer.
-    if (k === 'notifications') await window.foreman.notify.setEnabled(on).catch(() => {});
+    if (k === 'notifications') await window.wanigan.notify.setEnabled(on).catch(() => {});
     await setPref(k, on ? '1' : '0');
   }, [setPref]);
 
@@ -367,7 +367,7 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
           <p className="dim" style={{ marginTop: 8 }}>
             <strong>Identity-linked keys need a Workspace ID.</strong> If your organisation issues keys
             tied to an identity, the API returns a 400 until every request names the workspace it acts in.
-            Foreman sends it as the <span className="mono">anthropic-workspace-id</span> header.
+            Wanigan sends it as the <span className="mono">anthropic-workspace-id</span> header.
             <br /><br />
             <strong>Workload identity federation is a different thing</strong> and does not apply here: it
             exchanges a short-lived JWT from a cloud or CI identity provider, so it only works on GCP, AWS,
@@ -383,7 +383,7 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
           <input className="field mono" type="number" min={0} step="0.25" value={cap}
                  onChange={(e) => setCap(e.target.value)} />
           <button className="btn" onClick={async () => {
-            const v = await window.foreman.settings.setSpendCap(Number(cap) || 0);
+            const v = await window.wanigan.settings.setSpendCap(Number(cap) || 0);
             setCap(v.toFixed(2));
             setMsg({ tone: 'ok', text: v > 0 ? `Runs estimated above $${v.toFixed(2)} will be blocked.` : 'Spend cap disabled.' });
           }}>Save</button>
@@ -443,25 +443,25 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
    ════════════════════════════════════════════════════════════════════════ */
 
 function Observation({ prefs, pending, setFlag }: {
-  prefs: ForemanSettings | null; pending: string | null; setFlag: (k: string, on: boolean) => Promise<void>;
+  prefs: WaniganSettings | null; pending: string | null; setFlag: (k: string, on: boolean) => Promise<void>;
 }) {
   const listeners = useLoad(async () => {
     const [collector, server] = await Promise.all([
-      window.foreman.usage.collector(),
-      window.foreman.mcp.server(),
+      window.wanigan.usage.collector(),
+      window.wanigan.mcp.server(),
     ]);
     return { collector, server };
   });
 
   return (
     <Section title="Observation"
-             hint="How Foreman knows anything at all about a running agent. Telemetry and the hook bus default on: without them a session is a black rectangle that spends money.">
+             hint="How Wanigan knows anything at all about a running agent. Telemetry and the hook bus default on: without them a session is a black rectangle that spends money.">
       <Note tone="info">
         <strong>Prompt and response content is never collected by these.</strong> Telemetry carries
         counts — tokens, cost, duration, model id. The hook bus carries tool names and one-line
         summaries such as the command run or the file touched. The only switch here that stores
         conversation text is <em>Archive transcripts</em>, and it says so on its own row.
-        {' '}Foreman pins the CLI's four content-logging variables —{' '}
+        {' '}Wanigan pins the CLI's four content-logging variables —{' '}
         <span className="mono">OTEL_LOG_USER_PROMPTS</span> and its three siblings — to{' '}
         <span className="mono">false</span> on every launch rather than leaving them unset, so one of
         them switched on in your own shell cannot flow through into the database.
@@ -474,7 +474,7 @@ function Observation({ prefs, pending, setFlag }: {
           <Toggle title="Telemetry" on={prefs.telemetry} busy={pending === 'telemetry'}
                   onChange={(v) => void setFlag('telemetry', v)}>
             The CLI reports its own token counts, cost and request durations over OTLP to a receiver
-            Foreman opens on loopback. Every figure in Insights, the fleet and the budgets starts here.
+            Wanigan opens on loopback. Every figure in Insights, the fleet and the budgets starts here.
             Turn it off and new sessions report nothing — the surfaces show no numbers rather than wrong ones.
           </Toggle>
 
@@ -487,7 +487,7 @@ function Observation({ prefs, pending, setFlag }: {
 
           <Toggle title="Archive transcripts" on={prefs.archiveTranscripts} busy={pending === 'archive_transcripts'}
                   onChange={(v) => void setFlag('archive_transcripts', v)}>
-            Copies each conversation into Foreman's local database so it can be searched after the
+            Copies each conversation into Wanigan's local database so it can be searched after the
             session is gone. This is the one setting on this page that keeps prompt and response
             text. It is written to disk on this machine and sent nowhere; Storage below shows what
             it has accumulated and lets you delete any of it.
@@ -496,7 +496,7 @@ function Observation({ prefs, pending, setFlag }: {
           <Toggle title="Desktop notifications" on={prefs.notifications} busy={pending === 'notifications'}
                   onChange={(v) => void setFlag('notifications', v)}>
             Raises an OS notification when a batch is close to expiring, when results are about to be
-            deleted, or when a session needs you. Foreman hands the text to macOS and nothing leaves
+            deleted, or when a session needs you. Wanigan hands the text to macOS and nothing leaves
             the machine.
           </Toggle>
         </div>
@@ -529,10 +529,10 @@ function Observation({ prefs, pending, setFlag }: {
                       </td>
                       <td className="dim">
                         {d.collector.port !== null
-                          ? 'Metric counts from agents Foreman launched.'
+                          ? 'Metric counts from agents Wanigan launched.'
                           : prefs && !prefs.telemetry
                             ? 'Telemetry is off, so the receiver was never opened.'
-                            : 'Telemetry is on now, but no port is bound — it was off when Foreman started, or the socket failed. Restart to open it.'}
+                            : 'Telemetry is on now, but no port is bound — it was off when Wanigan started, or the socket failed. Restart to open it.'}
                       </td>
                     </tr>
                     <tr>
@@ -540,12 +540,12 @@ function Observation({ prefs, pending, setFlag }: {
                       <td><Mark {...(prefs?.hooks ? { glyph: '✓', word: 'enabled', color: 'var(--good)' } : OFF)} /></td>
                       <td className="set-path dim">127.0.0.1, port assigned at launch</td>
                       <td className="dim">
-                        Tool events, from a per-session config Foreman writes at launch and deletes
+                        Tool events, from a per-session config Wanigan writes at launch and deletes
                         when the session ends.
                       </td>
                     </tr>
                     <tr>
-                      <td style={{ fontWeight: 600 }}>Foreman MCP server</td>
+                      <td style={{ fontWeight: 600 }}>Wanigan MCP server</td>
                       <td><Mark {...(d.server ? { glyph: '✓', word: 'listening', color: 'var(--good)' } : OFF)} /></td>
                       <td className="set-path">{d.server ? d.server.url : '—'}</td>
                       <td className="dim">
@@ -567,7 +567,7 @@ function Observation({ prefs, pending, setFlag }: {
               <p className="faint" style={{ fontSize: 11, lineHeight: 1.55, marginTop: 6 }}>
                 A switch above applies to the next session you launch — an agent already running keeps
                 the configuration it started with. The sockets themselves are opened once, when
-                Foreman starts: switching telemetry or the hook bus off stops new sessions reporting
+                Wanigan starts: switching telemetry or the hook bus off stops new sessions reporting
                 straight away, but the listener stays bound until you restart.
               </p>
               <button className="btn" style={{ marginTop: 9 }} onClick={listeners.reload}>Re-check listeners</button>
@@ -590,14 +590,14 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
 
   const trust = useLoad(async () => {
     const [dflt, perProject] = await Promise.all([
-      window.foreman.policy.defaultTrust(),
-      Promise.all(projects.map(async (p) => ({ id: p.id, level: await window.foreman.policy.trust(p.id) }))),
+      window.wanigan.policy.defaultTrust(),
+      Promise.all(projects.map(async (p) => ({ id: p.id, level: await window.wanigan.policy.trust(p.id) }))),
     ]);
     return { dflt, perProject: new Map(perProject.map((r) => [r.id, r.level])) };
   }, [projects.length]);
 
-  const summary = useLoad(() => window.foreman.policy.summary());
-  const ledger = useLoad(() => window.foreman.policy.ledger(200, deniedOnly), [deniedOnly]);
+  const summary = useLoad(() => window.wanigan.policy.summary());
+  const ledger = useLoad(() => window.wanigan.policy.ledger(200, deniedOnly), [deniedOnly]);
 
   const pick = async (fn: () => Promise<unknown>, text: string) => {
     setSaved(null);
@@ -608,7 +608,7 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
   async function exportLedger() {
     setExporting(true); setSaved(null);
     try {
-      const r = await window.foreman.policy.exportTo();
+      const r = await window.wanigan.policy.exportTo();
       setSaved(r
         ? { tone: 'ok', text: `Wrote ${plural(r.rows, 'decision')} to ${r.path}.` }
         : { tone: 'ok', text: 'Export canceled. Nothing was written.' });
@@ -619,9 +619,9 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
 
   return (
     <Section title="Trust and the policy ledger"
-             hint="What an agent in a project is allowed to reach for, and a written record of every decision Foreman made about it.">
+             hint="What an agent in a project is allowed to reach for, and a written record of every decision Wanigan made about it.">
       <Callout level="warning" title="This is defence in depth. It is not containment, and it is not a security boundary.">
-        Foreman checks each tool call against the level below and writes the answer down. It does not
+        Wanigan checks each tool call against the level below and writes the answer down. It does not
         sandbox the agent, it cannot see inside a command it allowed, and it cannot stop a process
         that is already running. The 2026 Claude Code CVEs went <em>through allowlisted commands</em> —
         a permitted tool doing an unexpected thing is exactly the case a policy layer is blind to.
@@ -638,7 +638,7 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
               value={d.dflt}
               options={TRUST_LEVELS.map((lv) => ({ id: lv, word: TRUST_COPY[lv].label, detail: TRUST_COPY[lv].detail }))}
               onPick={(lv) => void pick(
-                () => window.foreman.policy.setDefaultTrust(lv),
+                () => window.wanigan.policy.setDefaultTrust(lv),
                 `New projects now start at ${TRUST_COPY[lv].label}. Projects with their own level below are unchanged.`,
               )}
             />
@@ -670,7 +670,7 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
                                     onChange={(e) => {
                                       const next = e.target.value as TrustLevel;
                                       void pick(
-                                        () => window.foreman.policy.setTrust(p.id, next),
+                                        () => window.wanigan.policy.setTrust(p.id, next),
                                         `${p.name} is now ${TRUST_COPY[next].label}. It no longer follows the default.`,
                                       );
                                     }}>
@@ -705,7 +705,7 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
           if (!total) {
             return (
               <div className="sunk set-empty">
-                The ledger is empty — no agent has called a tool through a Foreman session yet.
+                The ledger is empty — no agent has called a tool through a Wanigan session yet.
                 <div className="faint" style={{ marginTop: 6, fontSize: 11.5 }}>
                   It fills on its own once the hook bus is on and a session runs. Nothing to configure.
                 </div>
@@ -819,13 +819,13 @@ function Dispatcher() {
   const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [tick, setTick] = useState(0);
 
-  const slots = useLoad(() => window.foreman.queue.slots());
-  const queue = useLoad(() => window.foreman.queue.list(60), [tick]);
+  const slots = useLoad(() => window.wanigan.queue.slots());
+  const queue = useLoad(() => window.wanigan.queue.list(60), [tick]);
 
   // The queue moves on its own, so the table follows it rather than waiting for
   // the user to come back and reopen the page.
   useEffect(() => {
-    const off = window.foreman.on.queueChanged(() => setTick((t) => t + 1));
+    const off = window.wanigan.on.queueChanged(() => setTick((t) => t + 1));
     const timer = setInterval(() => setTick((t) => t + 1), 5000);
     return () => { off(); clearInterval(timer); };
   }, []);
@@ -839,17 +839,17 @@ function Dispatcher() {
   async function saveSlots(next: QueueSlots) {
     setSaved(null);
     try {
-      const applied = await window.foreman.queue.setSlots(next);
+      const applied = await window.wanigan.queue.setSlots(next);
       setDraft(applied);
       slots.reload();
-      setSaved({ tone: 'ok', text: `Foreman will now start at most ${applied.session} sessions, ${applied.headless} headless runs and ${applied.batch} batch submissions at a time.` });
+      setSaved({ tone: 'ok', text: `Wanigan will now start at most ${applied.session} sessions, ${applied.headless} headless runs and ${applied.batch} batch submissions at a time.` });
     } catch (e) { setSaved({ tone: 'error', text: `Slots were not saved: ${msg(e)}` }); }
   }
 
   async function cancel(item: QueueItem) {
     setSaved(null);
     try {
-      const ok = await window.foreman.queue.cancel(item.id);
+      const ok = await window.wanigan.queue.cancel(item.id);
       setSaved(ok
         ? { tone: 'ok', text: `Canceled “${item.label}”. It never started, so nothing was spent.` }
         : { tone: 'error', text: `“${item.label}” had already left the waiting state, so there was nothing to cancel. Stop the ${item.kind} itself instead.` });
@@ -859,7 +859,7 @@ function Dispatcher() {
 
   return (
     <Section title="Dispatcher"
-             hint="How much Foreman starts at once, and what is holding. Work above the limit waits in the queue instead of all launching together and starving the machine.">
+             hint="How much Wanigan starts at once, and what is holding. Work above the limit waits in the queue instead of all launching together and starving the machine.">
       <Frame v={slots.v} what="the slot limits" onRetry={slots.reload}>
         {(loaded) => {
           const d = draft ?? loaded;
@@ -990,21 +990,21 @@ type Draft = {
 const BLANK: Draft = { name: '', projectId: '', transport: 'stdio', command: '', args: '', url: '', enabled: true };
 
 function Mcp({ projects, prefs, pending, setFlag }: {
-  projects: Project[]; prefs: ForemanSettings | null; pending: string | null;
+  projects: Project[]; prefs: WaniganSettings | null; pending: string | null;
   setFlag: (k: string, on: boolean) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [tick, setTick] = useState(0);
 
-  const own = useLoad(() => window.foreman.mcp.server(), [prefs?.mcpServerEnabled]);
+  const own = useLoad(() => window.wanigan.mcp.server(), [prefs?.mcpServerEnabled]);
   const servers = useLoad(async () => {
-    const [list, status] = await Promise.all([window.foreman.mcp.servers(), window.foreman.mcp.status()]);
+    const [list, status] = await Promise.all([window.wanigan.mcp.servers(), window.wanigan.mcp.status()]);
     return { list, status };
   }, [tick]);
 
   const projectName = (id: string | null) =>
-    id === null ? 'every project' : projects.find((p) => p.id === id)?.name ?? 'a project Foreman no longer has';
+    id === null ? 'every project' : projects.find((p) => p.id === id)?.name ?? 'a project Wanigan no longer has';
 
   async function submit() {
     if (!draft) return;
@@ -1020,7 +1020,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
         url: draft.transport === 'http' ? draft.url.trim() : undefined,
         enabled: draft.enabled,
       };
-      const r = await window.foreman.mcp.upsert(cfg);
+      const r = await window.wanigan.mcp.upsert(cfg);
       setDraft(null);
       setTick((t) => t + 1);
       setSaved({ tone: 'ok', text: `“${r.name}” saved for ${projectName(r.projectId)}. New sessions there get it; sessions already running keep the config they launched with.` });
@@ -1030,7 +1030,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
   async function toggleServer(s: McpServerConfig, on: boolean) {
     setSaved(null);
     try {
-      await window.foreman.mcp.upsert({ ...s, enabled: on });
+      await window.wanigan.mcp.upsert({ ...s, enabled: on });
       setTick((t) => t + 1);
       setSaved({ tone: 'ok', text: `“${s.name}” is ${on ? 'enabled' : 'disabled'} for new sessions.` });
     } catch (e) { setSaved({ tone: 'error', text: msg(e) }); }
@@ -1039,7 +1039,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
   async function remove(s: McpServerConfig) {
     setSaved(null);
     try {
-      await window.foreman.mcp.remove(s.id);
+      await window.wanigan.mcp.remove(s.id);
       setTick((t) => t + 1);
       setSaved({ tone: 'ok', text: `“${s.name}” removed. It stays in any session already running until that session ends.` });
     } catch (e) { setSaved({ tone: 'error', text: msg(e) }); }
@@ -1047,31 +1047,31 @@ function Mcp({ projects, prefs, pending, setFlag }: {
 
   return (
     <Section title="MCP servers"
-             hint="Tool servers an agent can call, and Foreman's own server, which lets an agent call Foreman back."
+             hint="Tool servers an agent can call, and Wanigan's own server, which lets an agent call Wanigan back."
              right={!draft && <button className="btn" onClick={() => setDraft(BLANK)}>+ Add server</button>}>
 
-      <div className="set-sub">Foreman's own MCP server</div>
+      <div className="set-sub">Wanigan's own MCP server</div>
       <Callout level="warning" title="Turning this on lets a session dispatch batch work that costs real money.">
         An agent connected to this server can build and queue a batch run against your Claude Platform
-        key. <strong>Submission always stops for a human.</strong> Foreman raises a system dialog
+        key. <strong>Submission always stops for a human.</strong> Wanigan raises a system dialog
         naming the run and its estimated cost, and nothing reaches the API until you press Submit —
         a model asking is never enough, and a batch cannot be un-submitted. The server binds to
-        loopback with a bearer token minted at launch, so only a process on this machine that Foreman
+        loopback with a bearer token minted at launch, so only a process on this machine that Wanigan
         handed the token to can reach it.
       </Callout>
 
       {prefs && (
         <div style={{ marginTop: 4 }}>
-          <Toggle title="Enable Foreman's MCP server" on={prefs.mcpServerEnabled} busy={pending === 'mcp_server'}
+          <Toggle title="Enable Wanigan's MCP server" on={prefs.mcpServerEnabled} busy={pending === 'mcp_server'}
                   onChange={(v) => void setFlag('mcp_server', v)}>
-            Off by default. The port is bound once, when Foreman starts, so switching this on takes
+            Off by default. The port is bound once, when Wanigan starts, so switching this on takes
             effect at the next launch. After that, point a session at the URL below and it can read
             your runs and prepare a submission for you to approve.
           </Toggle>
         </div>
       )}
 
-      <Frame v={own.v} what="Foreman's MCP server" onRetry={own.reload}>
+      <Frame v={own.v} what="Wanigan's MCP server" onRetry={own.reload}>
         {(info) => info ? (
           <div className="sunk" style={{ padding: '10px 12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
@@ -1084,15 +1084,15 @@ function Mcp({ projects, prefs, pending, setFlag }: {
             </div>
             <p className="faint" style={{ fontSize: 11, marginTop: 7, lineHeight: 1.55 }}>
               Streamable HTTP. The port changes every launch, so re-copy it after a restart. The bearer
-              token is deliberately not displayed in this window — Foreman passes it to sessions it
+              token is deliberately not displayed in this window — Wanigan passes it to sessions it
               launches itself.
             </p>
           </div>
         ) : (
           <div className="sunk set-empty">
             {prefs?.mcpServerEnabled
-              ? 'Enabled, but nothing is bound yet — the port opens when Foreman starts. Restart to bring it up; if it still fails, something else holds the port named in FOREMAN_MCP_PORT.'
-              : 'Not running. Nothing is bound and no agent can reach Foreman.'}
+              ? 'Enabled, but nothing is bound yet — the port opens when Wanigan starts. Restart to bring it up; if it still fails, something else holds the port named in WANIGAN_MCP_PORT.'
+              : 'Not running. Nothing is bound and no agent can reach Wanigan.'}
           </div>
         )}
       </Frame>
@@ -1185,7 +1185,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
               <div className="sunk set-empty">
                 No MCP servers configured, so agents get only their built-in tools.
                 <div className="faint" style={{ marginTop: 6, fontSize: 11.5 }}>
-                  Add one and Foreman writes it into the config of every session it launches for that scope.
+                  Add one and Wanigan writes it into the config of every session it launches for that scope.
                 </div>
                 <div style={{ marginTop: 9 }}>
                   <button className="btn" onClick={() => setDraft(BLANK)}>+ Add server</button>
@@ -1270,12 +1270,12 @@ function Worktrees() {
   const [confirm, setConfirm] = useState<string | null>(null);
   const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [tick, setTick] = useState(0);
-  const orphans = useLoad(() => window.foreman.worktrees.orphans(), [tick]);
+  const orphans = useLoad(() => window.wanigan.worktrees.orphans(), [tick]);
 
   async function remove(w: WorktreeInfo, force: boolean) {
     setSaved(null); setConfirm(null);
     try {
-      const r = await window.foreman.worktrees.remove(w.path, force);
+      const r = await window.wanigan.worktrees.remove(w.path, force);
       setSaved({ tone: r.removed ? 'ok' : 'error', text: r.detail });
       setTick((t) => t + 1);
     } catch (e) { setSaved({ tone: 'error', text: msg(e) }); }
@@ -1283,7 +1283,7 @@ function Worktrees() {
 
   return (
     <Section title="Worktrees"
-             hint="Isolated checkouts Foreman made so parallel agents stop overwriting each other. One that outlives its session is listed here rather than hidden."
+             hint="Isolated checkouts Wanigan made so parallel agents stop overwriting each other. One that outlives its session is listed here rather than hidden."
              right={<button className="btn" onClick={() => setTick((t) => t + 1)}>Re-scan</button>}>
       <Frame v={orphans.v} what="the worktree list" onRetry={orphans.reload}>
         {(list) => {
@@ -1291,7 +1291,7 @@ function Worktrees() {
             return (
               <Note tone="ok">
                 <strong>✓ No orphaned worktrees.</strong> Every worktree on disk belongs to a session
-                Foreman knows about.
+                Wanigan knows about.
               </Note>
             );
           }
@@ -1377,7 +1377,7 @@ function Worktrees() {
    ════════════════════════════════════════════════════════════════════════ */
 
 function Motion({ prefs, pending, setPref }: {
-  prefs: ForemanSettings | null; pending: string | null; setPref: (k: string, v: string) => Promise<void>;
+  prefs: WaniganSettings | null; pending: string | null; setPref: (k: string, v: string) => Promise<void>;
 }) {
   return (
     <Section title="Motion"
@@ -1400,7 +1400,7 @@ function Motion({ prefs, pending, setPref }: {
           </fieldset>
           <p className="faint" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>
             This page honours the setting as soon as you pick it — the switches above stop sliding.
-            Motion never carries meaning anywhere in Foreman, so turning it off costs you nothing but
+            Motion never carries meaning anywhere in Wanigan, so turning it off costs you nothing but
             the movement.
           </p>
         </>
@@ -1414,7 +1414,7 @@ function Motion({ prefs, pending, setPref }: {
    ════════════════════════════════════════════════════════════════════════ */
 
 function Storage({ prefs, pending, setPref }: {
-  prefs: ForemanSettings | null; pending: string | null; setPref: (k: string, v: string) => Promise<void>;
+  prefs: WaniganSettings | null; pending: string | null; setPref: (k: string, v: string) => Promise<void>;
 }) {
   const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [tick, setTick] = useState(0);
@@ -1423,8 +1423,8 @@ function Storage({ prefs, pending, setPref }: {
 
   const store = useLoad(async () => {
     const [transcripts, uploads] = await Promise.all([
-      window.foreman.transcripts.list(),
-      window.foreman.uploads.list(),
+      window.wanigan.transcripts.list(),
+      window.wanigan.uploads.list(),
     ]);
     return { transcripts, uploads };
   }, [tick]);
@@ -1434,7 +1434,7 @@ function Storage({ prefs, pending, setPref }: {
   async function forget(sessionId: string, size: number) {
     setSaved(null);
     try {
-      await window.foreman.transcripts.forget(sessionId);
+      await window.wanigan.transcripts.forget(sessionId);
       setTick((t) => t + 1);
       setSaved({ tone: 'ok', text: `Transcript deleted — ${bytes(size)} reclaimed. The session's costs and events are untouched; only the conversation text is gone.` });
     } catch (e) { setSaved({ tone: 'error', text: msg(e) }); }
@@ -1443,7 +1443,7 @@ function Storage({ prefs, pending, setPref }: {
   async function dropUpload(f: UploadedFile) {
     setSaved(null);
     try {
-      await window.foreman.uploads.remove(f.hash);
+      await window.wanigan.uploads.remove(f.hash);
       setTick((t) => t + 1);
       setSaved({ tone: 'ok', text: `${fileName(f.path)} removed — ${bytes(f.bytes)} reclaimed.` });
     } catch (e) { setSaved({ tone: 'error', text: msg(e) }); }
@@ -1452,7 +1452,7 @@ function Storage({ prefs, pending, setPref }: {
   async function prune() {
     setSaved(null);
     try {
-      const n = await window.foreman.uploads.prune();
+      const n = await window.wanigan.uploads.prune();
       setTick((t) => t + 1);
       setSaved({
         tone: 'ok',
@@ -1465,7 +1465,7 @@ function Storage({ prefs, pending, setPref }: {
 
   return (
     <Section title="Storage"
-             hint="What Foreman has kept on this machine, and what it takes to get rid of it."
+             hint="What Wanigan has kept on this machine, and what it takes to get rid of it."
              right={<button className="btn" onClick={() => setTick((t) => t + 1)}>Re-measure</button>}>
       <Frame v={store.v} what="what is on disk" onRetry={store.reload}>
         {({ transcripts, uploads }) => {
@@ -1577,7 +1577,7 @@ function Storage({ prefs, pending, setPref }: {
         <div className="txt">
           <h4>How long hook events are kept</h4>
           <p>
-            A busy session writes thousands of tool events. This is the window Foreman keeps them for;
+            A busy session writes thousands of tool events. This is the window Wanigan keeps them for;
             the timeline and the tool statistics read no further back than this. It does not touch
             transcripts, costs or the policy ledger — those have their own controls.
           </p>
@@ -1702,20 +1702,20 @@ const SHEET = `
 function DemoPanel() {
   const [state, setState] = useState<{ on: boolean; map: { real: string; fake: string }[] }>({ on: false, map: [] });
   const [blur, setBlur] = useState(() => {
-    try { return localStorage.getItem('foreman.demo.blurTerminal') === '1'; } catch { return false; }
+    try { return localStorage.getItem('wanigan.demo.blurTerminal') === '1'; } catch { return false; }
   });
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => { window.foreman.demo.state().then(setState).catch(() => {}); }, []);
+  useEffect(() => { window.wanigan.demo.state().then(setState).catch(() => {}); }, []);
   useEffect(() => {
     document.documentElement.toggleAttribute('data-demo-blur', blur && state.on);
-    try { localStorage.setItem('foreman.demo.blurTerminal', blur ? '1' : '0'); } catch { /* blocked */ }
+    try { localStorage.setItem('wanigan.demo.blurTerminal', blur ? '1' : '0'); } catch { /* blocked */ }
   }, [blur, state.on]);
 
   async function toggle() {
     setBusy(true);
     try {
-      await window.foreman.demo.set(!state.on);
+      await window.wanigan.demo.set(!state.on);
       // Reload rather than just flipping the flag. Views hold data fetched
       // before the toggle, so without this the rail keeps showing real project
       // names while this panel shows masked ones — half-masked is the one

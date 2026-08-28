@@ -7,7 +7,7 @@ import os from 'node:os';
  *
  * A team's coordination state is not hidden behind a protocol: the shared task
  * list is a directory of JSON under ~/.claude/tasks/, and every agent's inbox
- * is a JSON file under ~/.claude/teams/. Foreman can watch a team form and
+ * is a JSON file under ~/.claude/teams/. Wanigan can watch a team form and
  * work without asking anyone's permission and without running anything.
  *
  * That is the whole opportunity. Inside a terminal you see one agent's view;

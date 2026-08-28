@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Launch Foreman.
+# Launch Wanigan.
 #
 # ELECTRON_RUN_AS_NODE is unset deliberately: VS Code sets it for its extension
-# host, so a Foreman started from a VS Code terminal would inherit it and die
+# host, so a Wanigan started from a VS Code terminal would inherit it and die
 # with "Cannot read properties of undefined (reading 'whenReady')".
 set -euo pipefail
 cd "$(dirname "$0")/.."

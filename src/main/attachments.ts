@@ -9,9 +9,9 @@ import { modelFor, DEFAULT_MODEL } from './batch/pricing';
  *
  * Two destinations that look alike and are not. A LIVE SESSION never touches
  * the API from here: Claude Code opens the file with its own Read tool, so
- * Foreman's whole job is to put the bytes somewhere the agent is allowed to
+ * Wanigan's whole job is to put the bytes somewhere the agent is allowed to
  * read and then name that place in the prompt. A BATCH RUN is the opposite —
- * Foreman is the one calling the API, so the file goes through the Files API
+ * Wanigan is the one calling the API, so the file goes through the Files API
  * and travels as a file_id. Uploading is not reimplemented here; batch/files.ts
  * already owns the upload, the content-hash cache and the content-block
  * mapping, and a second implementation would drift from it.
@@ -20,7 +20,7 @@ import { modelFor, DEFAULT_MODEL } from './batch/pricing';
 /* ── what the API actually accepts ───────────────────────────────────── */
 
 /*
- * Every constant in this block is a Claude API limit, not a Foreman
+ * Every constant in this block is a Claude API limit, not a Wanigan
  * preference. They are encoded here so a file that breaks one is refused with
  * a sentence naming the limit, instead of surfacing as an opaque API error
  * three steps later — after the file was staged, or after it was paid for and
@@ -70,7 +70,7 @@ const MANY_IMAGES_MAX_EDGE_PX = 2000;
 /** The high-resolution vision tier arrived with Claude 4.7. */
 const HIGH_RES_SINCE = 407; // major * 100 + minor
 
-/* ── Foreman's own thresholds ────────────────────────────────────────── */
+/* ── Wanigan's own thresholds ────────────────────────────────────────── */
 
 /**
  * Enough of a file to identify it and read its dimensions. A JPEG can carry a
@@ -79,7 +79,7 @@ const HIGH_RES_SINCE = 407; // major * 100 + minor
  */
 const HEADER_BYTES = 512 * 1024;
 
-/** Foreman does not parse PDFs, so it warns about the page ceiling by size. */
+/** Wanigan does not parse PDFs, so it warns about the page ceiling by size. */
 const PDF_PAGE_WARN_BYTES = 2 * 1024 * 1024;
 
 /** Roughly 64k tokens of prose. Worth saying out loud before it eats a context window. */
@@ -218,15 +218,15 @@ function attachmentsRoot(): string {
 }
 
 /**
- * Staged attachments live under Foreman's own data directory, one directory per
+ * Staged attachments live under Wanigan's own data directory, one directory per
  * session.
  *
- * Foreman stages a COPY rather than pointing the agent at the original, for two
+ * Wanigan stages a COPY rather than pointing the agent at the original, for two
  * reasons. The original may be on a volume that disappears mid-session — an
  * ejected card, an unmounted network share — or in a folder the agent has no
  * business reading at all. And a screenshot on the Desktop sits outside the
  * project root, where phase 19's 'project' trust level would correctly deny
- * reading it. Staging into a directory Foreman controls and passes to the agent
+ * reading it. Staging into a directory Wanigan controls and passes to the agent
  * with --add-dir is what makes an attachment legible to the policy gate
  * (isAttachmentPath below) instead of a hole punched through it.
  */
@@ -236,7 +236,7 @@ export function attachmentsDir(sessionId: string): string {
   // trusted: a crafted id must not be able to write outside the root.
   if (!id || id !== path.basename(id) || id === '.' || id === '..' || /[/\\]/.test(id)) {
     throw new Error(
-      `"${sessionId}" is not a usable session id, so Foreman cannot pick a directory to stage attachments in.`
+      `"${sessionId}" is not a usable session id, so Wanigan cannot pick a directory to stage attachments in.`
     );
   }
   return path.join(attachmentsRoot(), id);
@@ -273,7 +273,7 @@ function realish(p: string): string {
  *
  * The comparison is separator-aware on purpose: a plain startsWith would let
  * /Users/x/attachments-evil pass as /Users/x/attachments, which turns an
- * allowance for Foreman's own directory into an allowance for any sibling an
+ * allowance for Wanigan's own directory into an allowance for any sibling an
  * agent can create next to it.
  */
 export function isAttachmentPath(p: string): boolean {
@@ -388,7 +388,7 @@ type Size = { width: number; height: number };
 
 /**
  * Header parsers for the four supported formats. Each returns null rather than
- * throwing on a truncated or malformed header: a picture Foreman cannot measure
+ * throwing on a truncated or malformed header: a picture Wanigan cannot measure
  * is still a picture Claude can read, so an unreadable size is a warning, not a
  * refusal.
  */
@@ -565,7 +565,7 @@ export function inspect(absPath: string): AttachmentCheck {
   } catch {
     return bad(
       'unsupported', 'application/octet-stream', 0,
-      `Foreman cannot read ${abs}. Check that the file still exists and that you have permission to open it.`
+      `Wanigan cannot read ${abs}. Check that the file still exists and that you have permission to open it.`
     );
   }
   if (stat.isDirectory()) {
@@ -577,7 +577,7 @@ export function inspect(absPath: string): AttachmentCheck {
   if (!stat.isFile()) {
     return bad(
       'unsupported', 'application/octet-stream', 0,
-      `${abs} is not a regular file, so Foreman cannot attach it.`
+      `${abs} is not a regular file, so Wanigan cannot attach it.`
     );
   }
   if (stat.size === 0) {
@@ -594,7 +594,7 @@ export function inspect(absPath: string): AttachmentCheck {
     const msg = e instanceof Error ? e.message : String(e);
     return bad(
       'unsupported', 'application/octet-stream', stat.size,
-      `Foreman could not read the start of ${path.basename(abs)} (${msg}). Check the file's permissions.`
+      `Wanigan could not read the start of ${path.basename(abs)} (${msg}). Check the file's permissions.`
     );
   }
   return evaluate(header, path.basename(abs), stat.size);
@@ -663,7 +663,7 @@ function evaluate(header: Buffer, name: string, bytes: number): AttachmentCheck 
   }
   if (d.mediaType === 'text/plain' && !path.extname(name)) {
     warnings.push(
-      `Foreman could not identify ${name} from its header and is treating it as plain text, because it contains no binary bytes.`
+      `Wanigan could not identify ${name} from its header and is treating it as plain text, because it contains no binary bytes.`
     );
   }
   return okCheck(d.kind, d.mediaType, bytes, null, warnings);
@@ -689,9 +689,9 @@ function imageCheck(
 
   const size = dimensions(header, d.mediaType);
   if (!size || size.width <= 0 || size.height <= 0) {
-    // Not fatal. Claude will still read the image; Foreman just cannot price it.
+    // Not fatal. Claude will still read the image; Wanigan just cannot price it.
     warnings.push(
-      `Foreman could not read the dimensions of ${name}, so it cannot estimate what viewing it will cost.`
+      `Wanigan could not read the dimensions of ${name}, so it cannot estimate what viewing it will cost.`
     );
     return okCheck('image', d.mediaType, bytes, null, warnings);
   }
@@ -783,12 +783,12 @@ function defaultScreenshotName(): string {
 /**
  * Never trust the incoming name for a path. It arrives from a drag-and-drop, a
  * clipboard payload or an IPC message, and a name like "../../.claude/settings"
- * would otherwise decide where Foreman writes.
+ * would otherwise decide where Wanigan writes.
  */
 function safeName(raw: string, check: AttachmentCheck): string {
   let base = path.basename(String(raw ?? '').replace(/\\/g, '/'));
   // Control characters first: a newline inside a filename would make the
-  // prompt Foreman types into the PTY look like two lines, and the agent
+  // prompt Wanigan types into the PTY look like two lines, and the agent
   // would receive half a sentence.
   base = base.replace(/[\u0000-\u001f\u007f]/g, '');
   base = base.replace(/[:*?"<>|]/g, '-');
@@ -839,7 +839,7 @@ function stage(
   check: AttachmentCheck,
   write: (dest: string) => void
 ): Attachment {
-  if (!check.ok) throw new Error(check.error ?? `Foreman cannot attach ${name}.`);
+  if (!check.ok) throw new Error(check.error ?? `Wanigan cannot attach ${name}.`);
 
   const dir = attachmentsDir(sessionId);
   fs.mkdirSync(dir, { recursive: true });
@@ -851,7 +851,7 @@ function stage(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(
-      `Foreman could not stage ${name} into ${dir} (${msg}). Check that the disk is writable and not full.`
+      `Wanigan could not stage ${name} into ${dir} (${msg}). Check that the disk is writable and not full.`
     );
   }
 
@@ -900,7 +900,7 @@ export function sessionAttachments(sessionId: string): Attachment[] {
  * Removing an attachment deletes the staged copy, never the original. A batch
  * attachment's stored_path is the user's own file, still sitting wherever they
  * keep it; unlinking that would turn "remove this from the run" into "delete my
- * document", so the path is checked against Foreman's own directory first.
+ * document", so the path is checked against Wanigan's own directory first.
  */
 export function removeAttachment(id: string): boolean {
   const d = store();
@@ -943,7 +943,7 @@ export function cleanupSessionAttachments(sessionId: string): number {
 }
 
 /**
- * The text Foreman types into the PTY.
+ * The text Wanigan types into the PTY.
  *
  * Deliberately ends WITHOUT a trailing newline. The integrator decides when to
  * submit, because typing Enter on someone's behalf is how a half-written prompt
@@ -1028,7 +1028,7 @@ export async function uploadForBatch(
     const abs = path.resolve(p);
     const check = inspect(abs);
     if (!check.ok) {
-      failed.push({ path: abs, error: check.error ?? `Foreman cannot attach ${path.basename(abs)}.` });
+      failed.push({ path: abs, error: check.error ?? `Wanigan cannot attach ${path.basename(abs)}.` });
       continue;
     }
 

@@ -23,11 +23,11 @@ import { Note, Stat, num, usd } from '../components/bits';
  * THE HONESTY RULE. Two meters feed this page and they will not agree to the
  * cent:
  *  - Interactive sessions and headless runs report their own cost. The Claude
- *    Code CLI computes it; Foreman banks the number it is handed.
- *  - Batch runs are priced by Foreman, multiplying the token counts the Batches
+ *    Code CLI computes it; Wanigan banks the number it is handed.
+ *  - Batch runs are priced by Wanigan, multiplying the token counts the Batches
  *    API returned against the local pricing table.
  * A model newer than that table falls back to a default rate, and the CLI's
- * figure covers turns Foreman never sees a token count for. So every chart that
+ * figure covers turns Wanigan never sees a token count for. So every chart that
  * mixes them names both sources underneath. A chart implying one authority over
  * two different instruments is a chart that lies quietly, and the lie is only
  * found months later, against an invoice.
@@ -41,7 +41,7 @@ const SERIES = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--
 
 /* ── meters ───────────────────────────────────────────────────────────── */
 
-type MeterKey = 'cli' | 'foreman';
+type MeterKey = 'cli' | 'wanigan';
 
 const METER: Record<MeterKey, { glyph: string; word: string; detail: string }> = {
   cli: {
@@ -49,10 +49,10 @@ const METER: Record<MeterKey, { glyph: string; word: string; detail: string }> =
     word: 'CLI meter',
     detail: "the agent's own accounting, banked as the Claude Code CLI reported it",
   },
-  foreman: {
+  wanigan: {
     glyph: '◑',
-    word: 'Foreman meter',
-    detail: "Foreman's arithmetic over its local batch pricing table",
+    word: 'Wanigan meter',
+    detail: "Wanigan's arithmetic over its local batch pricing table",
   },
 };
 
@@ -77,7 +77,7 @@ type SurfaceKey = 'session' | 'batch' | 'headless';
 
 const SURFACES: { key: SurfaceKey; label: string; color: string; meter: MeterKey }[] = [
   { key: 'session',  label: 'Sessions', color: SERIES[0], meter: 'cli' },
-  { key: 'batch',    label: 'Batches',  color: SERIES[1], meter: 'foreman' },
+  { key: 'batch',    label: 'Batches',  color: SERIES[1], meter: 'wanigan' },
   { key: 'headless', label: 'Headless', color: SERIES[2], meter: 'cli' },
 ];
 
@@ -219,17 +219,17 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
     await Promise.all([
       (async () => {
         try {
-          const r = await window.foreman.batch.insights();
+          const r = await window.wanigan.batch.insights();
           if (alive.current) setBatch(r as BatchInsights);
         } catch (e) { next.batch = msg(e); }
       })(),
       (async () => {
         try {
           const [bd, sy, ef, ca] = await Promise.all([
-            window.foreman.spend.byDay(d),
-            window.foreman.spend.sync(d),
-            window.foreman.spend.effort(),
-            window.foreman.spend.cache(),
+            window.wanigan.spend.byDay(d),
+            window.wanigan.spend.sync(d),
+            window.wanigan.spend.effort(),
+            window.wanigan.spend.cache(),
           ]);
           if (!alive.current) return;
           setByDay(bd); setSync(sy); setEffort(ef); setCache(ca);
@@ -238,10 +238,10 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
       (async () => {
         try {
           const [ls, br, ac, pr] = await Promise.all([
-            window.foreman.budgets.list(),
-            window.foreman.budgets.breached(),
-            window.foreman.budgets.accuracy(),
-            window.foreman.projects.list(),
+            window.wanigan.budgets.list(),
+            window.wanigan.budgets.breached(),
+            window.wanigan.budgets.accuracy(),
+            window.wanigan.projects.list(),
           ]);
           if (!alive.current) return;
           setBuds(ls); setBreached(br); setAcc(ac); setProjects(pr);
@@ -259,7 +259,7 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
 
   useEffect(() => {
     const tick = () => void load(daysRef.current, true);
-    const off = window.foreman.on.batchChanged(tick);
+    const off = window.wanigan.on.batchChanged(tick);
     const t = setInterval(tick, 15_000);
     return () => { off(); clearInterval(t); };
   }, [load]);
@@ -282,7 +282,7 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
     effort.some((e) => e.costUsd > 0 || e.requests > 0) ||
     buds.some((b) => b.spentUsd > 0);
 
-  const styles = <style precedence="default" href="foreman-insights">{CSS}</style>;
+  const styles = <style precedence="default" href="wanigan-insights">{CSS}</style>;
 
   const head = (
     <div className="pane-head">
@@ -306,7 +306,7 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
         <div className="card chart-empty">
           <p>Reading the ledger…</p>
           <p className="faint" style={{ marginTop: 6 }}>
-            Session and headless spend from the agent's own accounting, batch spend from Foreman's
+            Session and headless spend from the agent's own accounting, batch spend from Wanigan's
             pricing table, budgets from disk.
           </p>
         </div>
@@ -323,7 +323,7 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
         <Note tone="error">
           <strong>Could not read any spend data.</strong> {errs.spend}
           <div style={{ marginTop: 6 }}>
-            Every figure here is read by the main process out of the local database. If Foreman is
+            Every figure here is read by the main process out of the local database. If Wanigan is
             still starting, that database is not open yet — retry, and if it keeps failing reopen
             the window.
           </div>
@@ -399,9 +399,9 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
 
       <Note tone="info">
         <strong>Two meters, not one.</strong> Session and headless costs are the CLI's own
-        accounting; batch costs are Foreman's arithmetic over its local pricing table. They measure
+        accounting; batch costs are Wanigan's arithmetic over its local pricing table. They measure
         different things and will not agree to the cent — a model newer than the table falls back to
-        a default rate, and the CLI's figure covers turns Foreman never sees token counts for. Every
+        a default rate, and the CLI's figure covers turns Wanigan never sees token counts for. Every
         chart that mixes them names both sources underneath.
       </Note>
 
@@ -429,7 +429,7 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
 
       <Budgets buds={buds} projects={projects} onSaved={(next) => {
         setBuds(next);
-        window.foreman.budgets.breached().then((b) => { if (alive.current) setBreached(b); }).catch(() => {});
+        window.wanigan.budgets.breached().then((b) => { if (alive.current) setBreached(b); }).catch(() => {});
       }} />
 
       <EffortDistribution rows={effort} />
@@ -437,9 +437,9 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
       <UnifiedCache rows={cache} />
 
       <div className="ins-divider">
-        <span className="label">Batch runs · Foreman meter</span>
+        <span className="label">Batch runs · Wanigan meter</span>
         <span className="faint">
-          {METER.foreman.glyph} Priced locally from returned token counts. The reconciliation card
+          {METER.wanigan.glyph} Priced locally from returned token counts. The reconciliation card
           at the foot of this page is what tests those figures against the bill.
         </span>
       </div>
@@ -554,7 +554,7 @@ function TwoSpeeds({ win, days }: {
       <Stat
         label={`Bulk · ${days}d`}
         value={usd(win.batch)}
-        sub={<>{METER.foreman.glyph} Foreman meter · billed at half of list</>}
+        sub={<>{METER.wanigan.glyph} Wanigan meter · billed at half of list</>}
       />
       <Stat
         label={`Everything · ${days}d`}
@@ -754,7 +754,7 @@ function SurfaceOverTime({ rows, days, onWiden }: {
         </>
       )}
 
-      <Meters of={['cli', 'foreman']} />
+      <Meters of={['cli', 'wanigan']} />
     </div>
   );
 }
@@ -818,7 +818,7 @@ function SyncComparison({ rows, days, totals, onWiden }: {
       <p className="sub">
         Batch rates are exactly half of list, so a batch run's synchronous figure is 2×. Session and
         headless spend is <strong>already</strong> at list price and crosses over at 1× — doubling
-        it too would invent a saving Foreman never made, and it would grow with exactly the surface
+        it too would invent a saving Wanigan never made, and it would grow with exactly the surface
         you spend most of your day in, so the invented number would end up the largest one here.
       </p>
 
@@ -973,7 +973,7 @@ function SyncComparison({ rows, days, totals, onWiden }: {
         </>
       )}
 
-      <Meters of={['cli', 'foreman']} />
+      <Meters of={['cli', 'wanigan']} />
     </div>
   );
 }
@@ -1077,7 +1077,7 @@ function EffortDistribution({ rows }: { rows: EffortRow[] }) {
       <Meters of={['cli']} extra={
         <span>
           Sessions only — a batch run carries its effort in its config, not in this stream, so
-          nothing here is mixed with Foreman-priced spend.
+          nothing here is mixed with Wanigan-priced spend.
         </span>
       } />
     </div>
@@ -1088,7 +1088,7 @@ function EffortDistribution({ rows }: { rows: EffortRow[] }) {
 
 const CACHE_LABEL: Record<string, { label: string; color: string; meter: MeterKey }> = {
   sessions: { label: 'Sessions', color: SERIES[0], meter: 'cli' },
-  batches:  { label: 'Batches',  color: SERIES[1], meter: 'foreman' },
+  batches:  { label: 'Batches',  color: SERIES[1], meter: 'wanigan' },
   headless: { label: 'Headless', color: SERIES[2], meter: 'cli' },
 };
 
@@ -1210,7 +1210,7 @@ function UnifiedCache({ rows }: { rows: CacheRow[] }) {
         </p>
       ))}
 
-      <Meters of={['cli', 'foreman']} />
+      <Meters of={['cli', 'wanigan']} />
     </div>
   );
 }
@@ -1232,7 +1232,7 @@ function Budgets({ buds, projects, onSaved }: {
             part already spent. The projection is spend ÷ days elapsed × days in month, with today
             counted as a whole day — a run rate, not a forecast, and noisy in the first days of a
             month. Each meter is split by instrument: the session half is the CLI's number, the
-            batch half is Foreman's arithmetic.
+            batch half is Wanigan's arithmetic.
           </p>
         </div>
         <button className="btn ins-btn" onClick={() => setEditing((v) => (v === undefined ? null : undefined))}>
@@ -1250,7 +1250,7 @@ function Budgets({ buds, projects, onSaved }: {
         <div className="chart-empty">
           <p>No budgets set yet.</p>
           <p className="ins-zero-sub">
-            A budget is one number per scope: a monthly ceiling, and the share of it at which Foreman
+            A budget is one number per scope: a monthly ceiling, and the share of it at which Wanigan
             starts saying something. Press <strong>Set a budget</strong> above, pick{' '}
             <em>All projects</em> for a single ceiling over everything, or one repo to cap it on its
             own.
@@ -1271,7 +1271,7 @@ function Budgets({ buds, projects, onSaved }: {
                   <th>Scope</th>
                   <th className="ins-th-r">Cap</th>
                   <th className="ins-th-r">Sessions {METER.cli.glyph}</th>
-                  <th className="ins-th-r">Batches {METER.foreman.glyph}</th>
+                  <th className="ins-th-r">Batches {METER.wanigan.glyph}</th>
                   <th className="ins-th-r">Spent</th>
                   <th className="ins-th-r">Used</th>
                   <th className="ins-th-r">Projected</th>
@@ -1311,7 +1311,7 @@ function Budgets({ buds, projects, onSaved }: {
         </>
       )}
 
-      <Meters of={['cli', 'foreman']} extra={
+      <Meters of={['cli', 'wanigan']} extra={
         <span>Headless spend sits with sessions: both figures come from the CLI's own accounting.</span>
       } />
     </div>
@@ -1352,7 +1352,7 @@ function BudgetMeter({ b, onEdit }: { b: BudgetState; onEdit: () => void }) {
               {batchW > 0 && (
                 <div className="ins-meter-seg"
                      style={{ width: `${batchW}%`, background: SERIES[1] }}
-                     title={`Batches ${cents(b.batchUsd)} — Foreman meter`} />
+                     title={`Batches ${cents(b.batchUsd)} — Wanigan meter`} />
               )}
             </div>
             <div className="ins-meter-warn" style={{ left: `${Math.min(100, b.warnAt * 100)}%` }}
@@ -1441,7 +1441,7 @@ function BudgetEditor({ projects, buds, scope, onSaved, onCancel }: {
           'Enter 80 to be warned at 80% of the cap.',
         );
       }
-      const next = await window.foreman.budgets.set(scopeId === '' ? null : scopeId, amount, w / 100);
+      const next = await window.wanigan.budgets.set(scopeId === '' ? null : scopeId, amount, w / 100);
       onSaved(next);
     } catch (e) {
       setErr(msg(e));
@@ -1534,7 +1534,7 @@ function Reconcile() {
       // out of a window a person believes includes today.
       const [y, m, d] = to.split('-').map(Number);
       const endExclusive = y && m && d ? isoDate(new Date(y, m - 1, d + 1)) : to;
-      setRes(await window.foreman.budgets.reconcile(from, endExclusive));
+      setRes(await window.wanigan.budgets.reconcile(from, endExclusive));
     } catch (e) {
       setErr(msg(e));
       setRes(null);
@@ -1558,7 +1558,7 @@ function Reconcile() {
         <div>
           <h3>Reconciliation</h3>
           <p className="sub">
-            Foreman's own batch arithmetic against what the organisation was actually billed, for one
+            Wanigan's own batch arithmetic against what the organisation was actually billed, for one
             window. Only batch runs are compared: session and headless costs come from the CLI and
             are already the biller's number, so reconciling those would be comparing a figure to
             itself and calling the agreement a result. The window is handled in UTC, because the
@@ -1593,7 +1593,7 @@ function Reconcile() {
             Check the dates read as a window (the end must be after the start), then try again. If
             the call reached the Admin API and was refused, the key in{' '}
             <code>ANTHROPIC_ADMIN_KEY</code> is the thing to check — it is a different credential
-            from the one Foreman sends batches with.
+            from the one Wanigan sends batches with.
           </div>
         </Note>
       )}
@@ -1602,9 +1602,9 @@ function Reconcile() {
         <div className="chart-empty">
           <p>Not run for this window yet.</p>
           <p className="ins-zero-sub">
-            Press <strong>Reconcile</strong> to compare Foreman's batch figures with the
+            Press <strong>Reconcile</strong> to compare Wanigan's batch figures with the
             organisation's actual charges. Without an Admin API key it still runs and shows
-            Foreman's own side — that is a normal result, not a failure.
+            Wanigan's own side — that is a normal result, not a failure.
           </p>
         </div>
       )}
@@ -1612,12 +1612,12 @@ function Reconcile() {
       {res && (
         <>
           <div className="stat-grid">
-            <Stat label={`Foreman ${METER.foreman.glyph}`} value={cents(res.localUsd)}
+            <Stat label={`Wanigan ${METER.wanigan.glyph}`} value={cents(res.localUsd)}
                   sub="computed from the local batch pricing table" />
             <Stat label="Reported by the API" value={reconciled ? cents(res.reportedUsd) : '—'}
                   sub={reconciled ? "the organisation's actual charges" : 'no admin key — nothing reported'} />
             <Stat label="Delta" value={reconciled ? cents(res.deltaUsd) : '—'}
-                  sub={reconciled ? 'Foreman minus reported' : 'needs both sides to mean anything'} />
+                  sub={reconciled ? 'Wanigan minus reported' : 'needs both sides to mean anything'} />
             <Stat label="Agreement" value={reconciled ? pct(res.accuracy, 1) : '—'}
                   sub={`window ${res.from.slice(0, 10)} → ${res.to.slice(0, 10)}, end exclusive`} />
           </div>
@@ -1649,7 +1649,7 @@ function Reconcile() {
                       </span>
                     </div>
                     <div className="ins-pair">
-                      <div className="ins-track" title={`Foreman: ${cents(r.localUsd)}`}>
+                      <div className="ins-track" title={`Wanigan: ${cents(r.localUsd)}`}>
                         <div className="ins-fill"
                              style={{ width: `${max > 0 ? Math.max(1, (r.localUsd / max) * 100) : 1}%`,
                                       background: SERIES[0] }} />
@@ -1669,7 +1669,7 @@ function Reconcile() {
               <div className="legend">
                 <span className="legend-item">
                   <span className="legend-swatch" style={{ background: SERIES[0] }} />
-                  Foreman {METER.foreman.glyph}
+                  Wanigan {METER.wanigan.glyph}
                 </span>
                 {reconciled && (
                   <span className="legend-item">
@@ -1684,7 +1684,7 @@ function Reconcile() {
                   <thead>
                     <tr>
                       <th>Model</th>
-                      <th className="ins-th-r">Foreman {METER.foreman.glyph}</th>
+                      <th className="ins-th-r">Wanigan {METER.wanigan.glyph}</th>
                       <th className="ins-th-r">Reported</th>
                       <th className="ins-th-r">Delta</th>
                     </tr>
@@ -1712,10 +1712,10 @@ function Reconcile() {
         </>
       )}
 
-      <Meters of={['foreman']} extra={
+      <Meters of={['wanigan']} extra={
         <span>
           The reported column is the organisation's whole bill for the window, including work
-          Foreman never ran — a delta is not by itself an error in Foreman.
+          Wanigan never ran — a delta is not by itself an error in Wanigan.
         </span>
       } />
     </div>
@@ -1743,7 +1743,7 @@ function EstimateAccuracy({ rows }: { rows: AccuracyRow[] }) {
         come out of the <strong>same</strong> local pricing table, so this measures the token
         guess — the sampled input lengths and the assumption about output length — and says nothing
         about whether the rates themselves are right. A ratio of 1.00 here is not evidence that
-        Foreman's dollar figures are correct; the reconciliation card above is the only thing that
+        Wanigan's dollar figures are correct; the reconciliation card above is the only thing that
         tests that. Ratio is actual ÷ estimated, so above 1 means the run cost more than it promised.
       </p>
 
@@ -1837,8 +1837,8 @@ function EstimateAccuracy({ rows }: { rows: AccuracyRow[] }) {
         </>
       )}
 
-      <Meters of={['foreman']} extra={
-        <span>Both columns are Foreman's arithmetic; neither has been near a bill.</span>
+      <Meters of={['wanigan']} extra={
+        <span>Both columns are Wanigan's arithmetic; neither has been near a bill.</span>
       } />
     </div>
   );
@@ -1982,7 +1982,7 @@ function TokenFlow({ totals }: { totals: Record<string, number> }) {
           </tr>
         </tbody>
       </table>
-      <Meters of={['foreman']} />
+      <Meters of={['wanigan']} />
     </div>
   );
 }
@@ -2042,7 +2042,7 @@ function SpendByModel({ rows }: { rows: Record<string, number | string>[] }) {
           ))}
         </tbody>
       </table>
-      <Meters of={['foreman']} />
+      <Meters of={['wanigan']} />
     </div>
   );
 }
@@ -2195,7 +2195,7 @@ function SpendOverTime({ runs, onOpenRun }: {
           </tbody>
         </table>
       </div>
-      <Meters of={['foreman']} />
+      <Meters of={['wanigan']} />
     </div>
   );
 }

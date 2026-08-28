@@ -1,5 +1,5 @@
 {
-  "name": "foreman",
+  "name": "wanigan",
   "version": "0.1.0",
   "private": true,
   "description": "Desktop control surface for local coding agents. Run a crew of Claude Code and Codex sessions across every repo from one window.",

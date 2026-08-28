@@ -212,7 +212,7 @@ export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 /* ── P1 · telemetry ─────────────────────────────────────────────────── */
 
 /**
- * What a Claude Code process reports about itself over OTLP. Foreman spawns
+ * What a Claude Code process reports about itself over OTLP. Wanigan spawns
  * the CLI, so it sets the exporter env and receives this on loopback — no
  * wrapper, no proxy, no transcript parsing.
  */
@@ -269,7 +269,7 @@ export const HOOK_EVENTS = [
 ] as const;
 export type HookEventName = (typeof HOOK_EVENTS)[number];
 
-/** The JSON a hook handler posts to Foreman's loopback listener. */
+/** The JSON a hook handler posts to Wanigan's loopback listener. */
 export type HookInput = {
   session_id?: string;
   transcript_path?: string;
@@ -284,8 +284,8 @@ export type HookInput = {
   agent_id?: string;
   agent_type?: string;
   message?: string;
-  /** Foreman's own session id, carried through the generated hook config. */
-  foreman_session_id?: string;
+  /** Wanigan's own session id, carried through the generated hook config. */
+  wanigan_session_id?: string;
 };
 
 /** A hook event as stored — the durable record behind the timeline. */
@@ -361,7 +361,7 @@ export type WorktreeInfo = {
   head: string | null;
   /** The repo this worktree belongs to. */
   repoRoot: string;
-  /** Null when Foreman has no session for it — an orphan from a crash. */
+  /** Null when Wanigan has no session for it — an orphan from a crash. */
   sessionId: string | null;
   /** Uncommitted files, so "discard" can warn before destroying work. */
   dirty: number;
@@ -538,7 +538,7 @@ export type BudgetState = {
 };
 
 export type Reconciliation = {
-  /** What Foreman computed from its own pricing table. */
+  /** What Wanigan computed from its own pricing table. */
   localUsd: number;
   /** What the organisation was actually billed, per the Admin API. */
   reportedUsd: number;
@@ -570,7 +570,7 @@ export const TRUST_COPY: Record<TrustLevel, { label: string; detail: string }> =
   },
   trusted: {
     label: 'Trusted',
-    detail: 'Nothing is denied by Foreman. The OS sandbox and the agent’s own permission prompts are the only limits.',
+    detail: 'Nothing is denied by Wanigan. The OS sandbox and the agent’s own permission prompts are the only limits.',
   },
 };
 
@@ -602,7 +602,7 @@ export type MotionSetting = 'auto' | 'full' | 'off';
 
 /* ── shell settings ─────────────────────────────────────────────────── */
 
-export type ForemanSettings = {
+export type WaniganSettings = {
   spendCapUsd: number;
   motion: MotionSetting;
   telemetry: boolean;

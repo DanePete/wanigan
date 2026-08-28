@@ -12,7 +12,7 @@ import { getSetting, setSetting } from './settings';
  *
  * The Batches API can call a completion webhook — HMAC-signed, retried for a
  * day — and it is genuinely better than polling for anything with a public
- * URL. Foreman does not have one. A desktop app can only receive a webhook if
+ * URL. Wanigan does not have one. A desktop app can only receive a webhook if
  * the user first stands up a tunnel and keeps it up, which is a second daemon
  * to babysit in exchange for removing a request every ten seconds. So polling
  * stayed, and startWebhookReceiver below is opt-in for the minority who
@@ -21,7 +21,7 @@ import { getSetting, setSetting } from './settings';
  * The reason that trade is safe is worth writing down, because it is the
  * opposite of the usual one: the failure mode that loses batches here is not a
  * missed webhook, it is a CLOSED APP. Batches advance on a timer inside the
- * main process, so quitting Foreman stops the clock — while the API's 24-hour
+ * main process, so quitting Wanigan stops the clock — while the API's 24-hour
  * processing expiry keeps running, and the 29-day results window keeps running
  * after that. A webhook fired at a laptop that is asleep is discarded just as
  * completely as a poll that was never made. What actually protects the work is
@@ -132,7 +132,7 @@ export function notify(opts: { title: string; body: string; urgent?: boolean; on
     const n = new Notification({
       title: opts.title,
       body: opts.body,
-      // Only urgent things make a noise. Foreman has a lot to say across a long
+      // Only urgent things make a noise. Wanigan has a lot to say across a long
       // day, and an app that pings for every finished batch is an app whose
       // notifications get switched off wholesale — which costs the user the one
       // alert that actually mattered.
@@ -163,7 +163,7 @@ export function notify(opts: { title: string; body: string; urgent?: boolean; on
 }
 
 /** A notification you can click that does nothing is a dead end. */
-function focusForeman(): void {
+function focusWanigan(): void {
   try {
     const w = BrowserWindow.getAllWindows().find((x) => !x.isDestroyed());
     if (!w) return;
@@ -329,7 +329,7 @@ function claim(key: string, windowMs: number): boolean {
   const last = said.get(key);
   if (last !== undefined && now - last < windowMs) return false;
   if (said.size > MAX_DEDUPE_KEYS) {
-    // Foreman stays open for weeks. Drop keys nothing could still be
+    // Wanigan stays open for weeks. Drop keys nothing could still be
     // deduplicating against rather than growing for the life of the process.
     for (const [k, at] of said) if (now - at > RUN_ENDED_DEDUPE_MS) said.delete(k);
   }
@@ -379,7 +379,7 @@ export function announceRunEnded(runId: string): void {
     title: `${run.name} finished`,
     body: `${parts.join(', ') || 'No results'} · ${usd(run.cost_usd)}`,
     urgent: bad > 0,
-    onClick: focusForeman,
+    onClick: focusWanigan,
   });
 }
 
@@ -395,7 +395,7 @@ export function announceSpendCapTrip(runId: string, projected: number, cap: numb
     title: 'Stopped at the spend cap',
     body: `${name} is estimated at ${usd(projected)}, above your ${usd(cap)} cap. Nothing was submitted — raise the cap in Settings or cut the dataset down.`,
     urgent: true,
-    onClick: focusForeman,
+    onClick: focusWanigan,
   });
 }
 
@@ -422,7 +422,7 @@ export function announceAttention(sessionId: string, label: string, detail: stri
     title: where ? `${label} — ${where}` : label,
     body: detail,
     urgent: URGENT_LABELS.has(label),
-    onClick: focusForeman,
+    onClick: focusWanigan,
   });
 }
 
@@ -522,7 +522,7 @@ export async function startWebhookReceiver(port: number, secret: string): Promis
         ? `port ${port} is already in use — pick another, or use 0 to let the OS choose`
         : e.message;
       reject(new Error(
-        `Foreman could not open the webhook receiver: ${why}. Batches still advance on polling.`
+        `Wanigan could not open the webhook receiver: ${why}. Batches still advance on polling.`
       ));
     };
     srv.once('error', fail);
@@ -559,7 +559,7 @@ export function stopWebhookReceiver(): void {
  * Signed content is `webhookId + '.' + timestamp + '.' + rawBody`, which is the
  * Standard Webhooks wire format Anthropic signs with. Leaving the id out is not
  * a laxer check, it is a different digest: every genuine delivery then fails
- * verification, Foreman answers 401, and the sender retries for 24 hours while
+ * verification, Wanigan answers 401, and the sender retries for 24 hours while
  * the Console's delivery log makes it look like the signing secret is wrong.
  *
  * Over the RAW body: re-encoding the parsed JSON changes key order and

@@ -10,7 +10,7 @@ import { trustFor } from '../policy';
 import type { ProviderId, RunConfig, SourceConfig, SystemBlock } from '../../shared/types';
 
 /**
- * The outbound half of MCP: Foreman itself, as a server a running session can
+ * The outbound half of MCP: Wanigan itself, as a server a running session can
  * call. The reason it exists is arithmetic — a session handed ten thousand rows
  * grinds through them one turn at a time at full sync price, when the same work
  * belongs in a batch at half. This gives the agent a way to hand the job over.
@@ -98,7 +98,7 @@ const SYSTEM_BLOCK_SCHEMA = {
 } as const;
 
 /**
- * The `command` source is missing on purpose: it shells out from Foreman's own
+ * The `command` source is missing on purpose: it shells out from Wanigan's own
  * process, which is outside the permission mode and trust level the session was
  * launched under. An agent that wants a command's output can run the command
  * itself and pass the result as csv or jsonl.
@@ -149,7 +149,7 @@ const RUN_CONFIG_SCHEMA = {
   properties: {
     name: { type: 'string', description: 'Human label for the run.' },
     preset: { type: 'string' },
-    projectId: { type: 'string', description: 'Foreman project this run belongs to.' },
+    projectId: { type: 'string', description: 'Wanigan project this run belongs to.' },
     model: { type: 'string', description: 'Model id, e.g. "claude-opus-5".' },
     maxTokens: { type: 'integer', minimum: 1, description: 'Per-request output ceiling.' },
     temperature: { type: 'number' },
@@ -179,7 +179,7 @@ type ToolDef = {
 
 const TOOLS: ToolDef[] = [
   {
-    name: 'foreman_estimate_run',
+    name: 'wanigan_estimate_run',
     title: 'Estimate a batch run',
     description:
       'Price a batch before anything is spent. Counts tokens on a real sample of the dataset and returns a low/high ' +
@@ -194,7 +194,7 @@ const TOOLS: ToolDef[] = [
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
   {
-    name: 'foreman_dry_run',
+    name: 'wanigan_dry_run',
     title: 'Dry run one row',
     description:
       'Send exactly one row synchronously and return the response and its usage. Batch validation is asynchronous, so ' +
@@ -210,11 +210,11 @@ const TOOLS: ToolDef[] = [
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   {
-    name: 'foreman_submit_run',
+    name: 'wanigan_submit_run',
     title: 'Submit a batch run (spends money)',
     description:
       'Submit the whole dataset to the Message Batches API. This spends real money and a batch cannot be un-submitted. ' +
-      'Foreman estimates the cost, asks a human to approve that number, and only submits on an affirmative answer — ' +
+      'Wanigan estimates the cost, asks a human to approve that number, and only submits on an affirmative answer — ' +
       'expect this call to block while somebody decides, and to be refused.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['config'],
@@ -223,7 +223,7 @@ const TOOLS: ToolDef[] = [
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   },
   {
-    name: 'foreman_run_status',
+    name: 'wanigan_run_status',
     title: 'Run status',
     description: 'Progress, per-status counts, batch state and spend for one run. Prompts and config are not returned.',
     inputSchema: {
@@ -233,7 +233,7 @@ const TOOLS: ToolDef[] = [
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
-    name: 'foreman_fetch_results',
+    name: 'wanigan_fetch_results',
     title: 'Fetch results',
     description:
       'A page of finished rows: custom_id, status, output text and usage. Results come back unordered, so key on ' +
@@ -251,27 +251,27 @@ const TOOLS: ToolDef[] = [
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
-    name: 'foreman_list_runs',
+    name: 'wanigan_list_runs',
     title: 'List runs',
-    description: 'Every run Foreman knows about, newest first, with status and spend.',
+    description: 'Every run Wanigan knows about, newest first, with status and spend.',
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
 
-  /* ── driving Foreman itself ─────────────────────────────────────────
+  /* ── driving Wanigan itself ─────────────────────────────────────────
      Reading is free. Anything that adds state or starts an agent goes
      through the same human confirmation as spending money, because an
      agent that can spawn agents is a cost and a filesystem reach that
      nobody approved. ─────────────────────────────────────────────── */
   {
-    name: 'foreman_list_projects',
+    name: 'wanigan_list_projects',
     title: 'List projects',
-    description: 'The repositories Foreman knows about, with their current branch.',
+    description: 'The repositories Wanigan knows about, with their current branch.',
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
-    name: 'foreman_find_repos',
+    name: 'wanigan_find_repos',
     title: 'Find a repository on this machine',
     description:
       'Search the usual project locations for a git repository whose folder name matches. ' +
@@ -288,10 +288,10 @@ const TOOLS: ToolDef[] = [
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
-    name: 'foreman_add_project',
+    name: 'wanigan_add_project',
     title: 'Add a project',
     description:
-      'Add a directory to Foreman\'s project list so sessions, batches and Context can target it. ' +
+      'Add a directory to Wanigan\'s project list so sessions, batches and Context can target it. ' +
       'Requires a human to approve. Adding a project that already exists returns the existing one.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['path'],
@@ -300,14 +300,14 @@ const TOOLS: ToolDef[] = [
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   },
   {
-    name: 'foreman_list_sessions',
+    name: 'wanigan_list_sessions',
     title: 'List sessions',
     description: 'Agent sessions running right now, with provider, project, model and status.',
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
-    name: 'foreman_start_session',
+    name: 'wanigan_start_session',
     title: 'Start an agent session',
     description:
       'Open a new agent session in a project. Requires a human to approve, because it spends tokens and ' +
@@ -316,7 +316,7 @@ const TOOLS: ToolDef[] = [
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['projectId'],
       properties: {
-        projectId: { type: 'string', description: 'From foreman_list_projects or foreman_add_project.' },
+        projectId: { type: 'string', description: 'From wanigan_list_projects or wanigan_add_project.' },
         provider: { type: 'string', enum: ['claude', 'codex', 'glm'], description: 'Default claude.' },
         model: { type: 'string', description: 'Model alias, e.g. opus or sonnet. Omit for the CLI default.' },
         effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max'] },
@@ -329,10 +329,10 @@ const TOOLS: ToolDef[] = [
 ];
 
 const INSTRUCTIONS =
-  'Foreman runs Message Batches over datasets at half the synchronous price. When you are facing more rows than you ' +
-  'want to work through a turn at a time, hand them over instead: foreman_estimate_run to price it, foreman_dry_run ' +
-  'to prove one row works, then foreman_submit_run. Submitting spends real money and requires a human to approve the ' +
-  'estimate — it will block, and it may be declined. Poll foreman_run_status and collect with foreman_fetch_results.';
+  'Wanigan runs Message Batches over datasets at half the synchronous price. When you are facing more rows than you ' +
+  'want to work through a turn at a time, hand them over instead: wanigan_estimate_run to price it, wanigan_dry_run ' +
+  'to prove one row works, then wanigan_submit_run. Submitting spends real money and requires a human to approve the ' +
+  'estimate — it will block, and it may be declined. Poll wanigan_run_status and collect with wanigan_fetch_results.';
 
 /* ── argument narrowing ──────────────────────────────────────────────── */
 
@@ -391,7 +391,7 @@ function sourceFrom(v: unknown): SourceConfig {
   }
   if (kind === 'command') {
     // Refused, not unimplemented: this would run a shell command out of
-    // Foreman's process, which is not the process the session's permission mode
+    // Wanigan's process, which is not the process the session's permission mode
     // and trust level apply to. Say so, rather than letting it read as a bug.
     throw new Error(
       'The "command" source is not available over MCP — it would run a shell command outside the permission mode this ' +
@@ -487,7 +487,7 @@ function toolError(message: string): ToolResult {
 
 async function callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
   switch (name) {
-    case 'foreman_estimate_run': {
+    case 'wanigan_estimate_run': {
       const cfg = runConfigFrom(args);
       const observed = optNum(args.observedOutputTokens, 'observedOutputTokens');
       const r = await batch.estimateRun(cfg, observed);
@@ -495,7 +495,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
       return ok({ estimate: r.estimate, warnings: r.warnings, errors: r.errors, chunks: r.chunks ?? 1 });
     }
 
-    case 'foreman_dry_run': {
+    case 'wanigan_dry_run': {
       const cfg = runConfigFrom(args);
       const rowIndex = optNum(args.rowIndex, 'rowIndex');
       const r = await batch.dryRunOne(cfg, rowIndex);
@@ -505,7 +505,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
       return ok({ rowIndex: r.rowIndex, result: r.result, errors: r.errors });
     }
 
-    case 'foreman_submit_run': {
+    case 'wanigan_submit_run': {
       const cfg = runConfigFrom(args);
 
       // createAndSubmitRun only enforces the spend cap against an estimate it is
@@ -519,14 +519,14 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
         `${cfg.name}: ${e.requests.toLocaleString()} requests to ${cfg.model}, ` +
         `$${e.costLowUsd.toFixed(2)}–$${e.costHighUsd.toFixed(2)}. A batch cannot be un-submitted.`;
 
-      const approved = await confirmSpend('foreman_submit_run', summary, e.costHighUsd);
+      const approved = await confirmSpend('wanigan_submit_run', summary, e.costHighUsd);
       if (!approved) {
         return toolError(
           confirmHandler
             ? `A human declined this submission (${summary}). Nothing was submitted and nothing was spent. ` +
               'Do not retry it — ask in the session for what to change.'
             : 'Confirmation is unavailable: no human can be asked to approve this spend right now, so nothing was ' +
-              'submitted. The Foreman window has to be open to approve a batch.'
+              'submitted. The Wanigan window has to be open to approve a batch.'
         );
       }
 
@@ -539,7 +539,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
       return ok({ runId: sub.runId, batchIds: sub.batchIds, requests: sub.requests, approvedCostUsd: e.costHighUsd });
     }
 
-    case 'foreman_run_status': {
+    case 'wanigan_run_status': {
       const runId = str(args.runId, 'runId');
       const d = batch.runDetail(runId);
       // config and config_json carry the system prompt and the whole dataset
@@ -555,7 +555,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
       });
     }
 
-    case 'foreman_fetch_results': {
+    case 'wanigan_fetch_results': {
       const runId = str(args.runId, 'runId');
       const status = optStr(args.status, 'status') ?? 'all';
       const q = optStr(args.q, 'q') ?? '';
@@ -575,10 +575,10 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
       });
     }
 
-    case 'foreman_list_projects':
+    case 'wanigan_list_projects':
       return ok({ projects: listProjects().map((p) => ({ id: p.id, name: p.name, path: p.path, branch: p.branch })) });
 
-    case 'foreman_find_repos': {
+    case 'wanigan_find_repos': {
       const q = str(args.query, 'query');
       const limit = typeof args.limit === 'number' ? Math.min(50, Math.max(1, args.limit)) : 20;
       const roots = Array.isArray(args.roots) ? args.roots.filter((r): r is string => typeof r === 'string') : undefined;
@@ -597,23 +597,23 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
       });
     }
 
-    case 'foreman_add_project': {
+    case 'wanigan_add_project': {
       const dir = str(args.path, 'path');
       const existing = listProjects().find((p) => p.path === dir);
       if (existing) return ok({ project: existing, alreadyExisted: true });
 
-      const approved = await confirmSpend('foreman_add_project', `Add ${dir} to Foreman's projects.`, 0);
+      const approved = await confirmSpend('wanigan_add_project', `Add ${dir} to Wanigan's projects.`, 0);
       if (!approved) {
         return toolError(
           confirmHandler
             ? `A human declined adding ${dir}. Nothing was changed.`
-            : 'Confirmation is unavailable: the Foreman window has to be open to approve this.'
+            : 'Confirmation is unavailable: the Wanigan window has to be open to approve this.'
         );
       }
       return ok({ project: await addProject(dir), alreadyExisted: false });
     }
 
-    case 'foreman_list_sessions':
+    case 'wanigan_list_sessions':
       return ok({
         sessions: listSessions().map((x) => ({
           id: x.id, provider: x.providerId, project: x.projectName, path: x.projectPath,
@@ -622,10 +622,10 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
         })),
       });
 
-    case 'foreman_start_session': {
+    case 'wanigan_start_session': {
       const projectId = str(args.projectId, 'projectId');
       const project = projectById(projectId);
-      if (!project) return toolError(`No project ${projectId}. Call foreman_list_projects for the current list.`);
+      if (!project) return toolError(`No project ${projectId}. Call wanigan_list_projects for the current list.`);
 
       const provider = (typeof args.provider === 'string' ? args.provider : 'claude') as ProviderId;
       const trust = trustFor(projectId);
@@ -633,12 +633,12 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
         `Start a ${provider} session in ${project.name} (${project.path}) at ${trust} trust` +
         `${typeof args.model === 'string' && args.model ? `, model ${args.model}` : ''}.`;
 
-      const approved = await confirmSpend('foreman_start_session', summary, 0);
+      const approved = await confirmSpend('wanigan_start_session', summary, 0);
       if (!approved) {
         return toolError(
           confirmHandler
             ? `A human declined starting that session. Nothing was launched. Do not retry it — ask what to change.`
-            : 'Confirmation is unavailable: the Foreman window has to be open to approve starting an agent.'
+            : 'Confirmation is unavailable: the Wanigan window has to be open to approve starting an agent.'
         );
       }
 
@@ -653,11 +653,11 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
       return ok({
         sessionId: s.id, project: s.projectName, provider: s.providerId,
         trust: s.trust ?? null, worktree: s.worktree ?? null,
-        note: 'The session is open in Foreman. It runs under the project trust level, which this tool cannot raise.',
+        note: 'The session is open in Wanigan. It runs under the project trust level, which this tool cannot raise.',
       });
     }
 
-    case 'foreman_list_runs': {
+    case 'wanigan_list_runs': {
       const runs = batch.listRuns().map((r) => pick(r, [
         'id', 'name', 'model', 'status', 'total_requests', 'succeeded', 'failed', 'pending',
         'cost_usd', 'est_cost_usd', 'project_name', 'created_at', 'submitted_at', 'ended_at',
@@ -685,7 +685,7 @@ async function dispatch(msg: JsonRpcMessage): Promise<JsonRpcResponse | null> {
       return result(id, {
         protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'foreman', title: 'Foreman', version: app.getVersion() },
+        serverInfo: { name: 'wanigan', title: 'Wanigan', version: app.getVersion() },
         instructions: INSTRUCTIONS,
       });
 
@@ -807,8 +807,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   }
 
   if (!authorized(req)) {
-    send(res, 401, failure(null, INVALID_REQUEST, 'Missing or invalid bearer token. Foreman writes the token into the MCP config it generates for a session.'),
-      { 'www-authenticate': 'Bearer realm="foreman"' });
+    send(res, 401, failure(null, INVALID_REQUEST, 'Missing or invalid bearer token. Wanigan writes the token into the MCP config it generates for a session.'),
+      { 'www-authenticate': 'Bearer realm="wanigan"' });
     return;
   }
 
@@ -881,7 +881,7 @@ export async function startMcpServer(): Promise<ServerInfo> {
     void handle(req, res).catch(() => {
       // Nothing about a failed request is worth crashing the app for, and the
       // body may hold prompt text, so it is never logged.
-      try { send(res, 500, failure(null, INTERNAL_ERROR, 'Foreman failed to handle that request.')); } catch { /* socket gone */ }
+      try { send(res, 500, failure(null, INTERNAL_ERROR, 'Wanigan failed to handle that request.')); } catch { /* socket gone */ }
     });
   });
   s.on('connection', (sock: Socket) => {
@@ -889,17 +889,17 @@ export async function startMcpServer(): Promise<ServerInfo> {
     sock.on('close', () => sockets.delete(sock));
   });
 
-  // A fixed port would collide with a second Foreman window or a leftover
+  // A fixed port would collide with a second Wanigan window or a leftover
   // process; the generated config is rewritten at session launch anyway, so an
   // ephemeral port costs nothing.
-  const wanted = Number(process.env.FOREMAN_MCP_PORT) || 0;
+  const wanted = Number(process.env.WANIGAN_MCP_PORT) || 0;
 
   await new Promise<void>((resolve, reject) => {
     const onError = (e: NodeJS.ErrnoException) => {
       reject(new Error(
         e.code === 'EADDRINUSE'
-          ? `Port ${wanted} is already in use, so Foreman's MCP server could not start. Free the port or unset FOREMAN_MCP_PORT to let the OS pick one.`
-          : `Foreman's MCP server could not start: ${e.message}`
+          ? `Port ${wanted} is already in use, so Wanigan's MCP server could not start. Free the port or unset WANIGAN_MCP_PORT to let the OS pick one.`
+          : `Wanigan's MCP server could not start: ${e.message}`
       ));
     };
     s.once('error', onError);
@@ -909,18 +909,18 @@ export async function startMcpServer(): Promise<ServerInfo> {
   const addr = s.address();
   if (!addr || typeof addr === 'string') {
     s.close();
-    throw new Error('Foreman\'s MCP server started without a usable address. Restart Foreman.');
+    throw new Error('Wanigan\'s MCP server started without a usable address. Restart Wanigan.');
   }
 
   // Post-startup socket noise — an EMFILE on accept when the app is running a
   // dozen PTYs, an agent killed mid-post — is not a reason to tear the server
   // down. It used to call stopMcpServer(), and nothing ever restarts it:
   // startMcpServer runs once at boot, so one transient accept error left every
-  // running session's foreman_* tools failing and every later session with no
+  // running session's wanigan_* tools failing and every later session with no
   // MCP config at all, until the app was quit. Bind errors are still surfaced,
   // by the `once('error')` above, before this handler is installed. Matches
   // hooks.ts and notify.ts, which both swallow post-listen errors deliberately.
-  s.on('error', (e) => { console.warn('[foreman] MCP server socket error (ignored):', e); });
+  s.on('error', (e) => { console.warn('[wanigan] MCP server socket error (ignored):', e); });
 
   server = s;
   info = { port: addr.port, token, url: `http://127.0.0.1:${addr.port}/mcp` };

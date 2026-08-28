@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { getKey, getWorkspaceId } from '../keys';
 
 export function isMock(): boolean {
-  return process.env.FOREMAN_MOCK === '1';
+  return process.env.WANIGAN_MOCK === '1';
 }
 
 let _client: Anthropic | null = null;
@@ -12,7 +12,7 @@ let _forWorkspace: string | null = null;
 export function client(): Anthropic {
   const key = getKey();
   if (!key && !isMock()) {
-    throw new Error('No API key. Add one in Settings — Foreman stores it in your OS keychain.');
+    throw new Error('No API key. Add one in Settings — Wanigan stores it in your OS keychain.');
   }
   const workspaceId = getWorkspaceId();
   // Rebuild the client if either credential changed under us.

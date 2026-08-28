@@ -5,7 +5,7 @@ import { liveState, sessionEvents } from './hooks';
 /**
  * Which of nine running agents needs a human, and which has needed one longest.
  *
- * Foreman's previous answer was the unread byte counter, which measures how much
+ * Wanigan's previous answer was the unread byte counter, which measures how much
  * an agent has said rather than whether it is stuck: a session streaming a long
  * file read outranks one that has sat on a permission prompt for four minutes.
  * Every classification here is a statement about the session's state, and every

@@ -55,7 +55,7 @@ function gateFor(trust: TrustLevel, def: ProviderDef): Gate {
 
   // Codex takes neither a permission mode nor a tool list (providers.ts: an
   // unknown flag makes it exit immediately). Below 'trusted' there is no flag
-  // Foreman can hand it that would keep it inside the trust level, and running
+  // Wanigan can hand it that would keep it inside the trust level, and running
   // an unattended agent on the promise that it will behave is exactly what this
   // gate exists to prevent.
   if (!def.supports.permissionMode) {
@@ -63,7 +63,7 @@ function gateFor(trust: TrustLevel, def: ProviderDef): Gate {
       ok: false,
       reason:
         `${def.label} cannot be held to the "${trust}" trust level — it accepts no permission ` +
-        `mode and no tool restrictions, so Foreman has no way to stop it writing. Run this ` +
+        `mode and no tool restrictions, so Wanigan has no way to stop it writing. Run this ` +
         `fan-out with Claude Code, or set this project to Trusted if that is intended.`,
     };
   }
@@ -80,7 +80,7 @@ function gateFor(trust: TrustLevel, def: ProviderDef): Gate {
         '--allowedTools', READ_ONLY_TOOLS.join(','),
         '--disallowedTools', DENIED_AT_READONLY.join(','),
         // MCP tools are named mcp__<server>__<tool>, so no denial list written
-        // here can name servers the user configured and Foreman has never heard
+        // here can name servers the user configured and Wanigan has never heard
         // of. --strict-mcp-config with no --mcp-config beside it leaves the child
         // exactly zero servers. Without it a "no writes, no network" fan-out can
         // still call mcp__github__create_issue: the interactive path denies MCP
@@ -95,16 +95,16 @@ function gateFor(trust: TrustLevel, def: ProviderDef): Gate {
     // acceptEdits auto-approves edits under the working directory and prompts
     // for anything outside it — and an unattended prompt is a denial. That is
     // exactly "inside the project directory, nothing beyond it", enforced by the
-    // agent rather than promised by Foreman.
+    // agent rather than promised by Wanigan.
     return { ok: true, mode: 'acceptEdits', clampArgs: [] };
   }
 
-  // Fail closed: a trust value Foreman cannot interpret must never be read as
+  // Fail closed: a trust value Wanigan cannot interpret must never be read as
   // permission merely because it is not one of the levels it recognises.
   return {
     ok: false,
     reason:
-      `This project's trust level is "${String(trust)}", which Foreman does not recognise. ` +
+      `This project's trust level is "${String(trust)}", which Wanigan does not recognise. ` +
       `Set it to Read only, Project or Trusted before running an unattended agent here.`,
   };
 }
@@ -117,7 +117,7 @@ function gateFor(trust: TrustLevel, def: ProviderDef): Gate {
  * that inherits it sees require('electron') return a path string and dies on
  * startup. The VSCODE_* family is the same class of editor plumbing, and the
  * CLAUDE_CODE_* markers make a spawned agent believe it is a subprocess of the
- * session Foreman was launched from, which silently disables its transcript.
+ * session Wanigan was launched from, which silently disables its transcript.
  *
  * The list is duplicated rather than shared with sessions.ts because only the
  * denials are common to both launch paths: that one goes on to force TERM,
@@ -180,7 +180,7 @@ async function resolveBin(def: ProviderDef): Promise<string> {
   }
   throw new Error(
     `Could not find the ${def.label} CLI ("${def.bin}"). Install it, or open one interactive ` +
-    `session with it so Foreman can locate it, then start this fan-out again.`
+    `session with it so Wanigan can locate it, then start this fan-out again.`
   );
 }
 
@@ -212,7 +212,7 @@ function headlessArgs(
     '-p', cfg.prompt,
     '--output-format', 'json',
     ...shared,
-    // The CLI's own ceiling. Foreman does not wrap it, so a run that hits the
+    // The CLI's own ceiling. Wanigan does not wrap it, so a run that hits the
     // budget stops on the CLI's terms and still reports what it spent.
     ...(cfg.maxBudgetUsd > 0 ? ['--max-budget-usd', String(cfg.maxBudgetUsd)] : []),
   ];
@@ -394,10 +394,10 @@ function sweepInterruptedRows(): void {
   const touched = new Set<string>();
   for (const r of rows) {
     stmt.run(
-      'Foreman stopped while this repo was mid-run, so its agent went with it. Nothing was resumed — start the fan-out again for this repository.',
+      'Wanigan stopped while this repo was mid-run, so its agent went with it. Nothing was resumed — start the fan-out again for this repository.',
       Date.now(), r.run_id, r.project_id
     );
-    logEvent(r.run_id, 'warn', `${r.project_name}: interrupted by a Foreman restart and not resumed.`);
+    logEvent(r.run_id, 'warn', `${r.project_name}: interrupted by a Wanigan restart and not resumed.`);
     touched.add(r.run_id);
   }
   for (const id of touched) finalize(id);
@@ -457,7 +457,7 @@ export async function startHeadlessRun(cfg: HeadlessConfig): Promise<{ runId: st
     id: runId,
     name: cfg.name,
     // runs.model feeds Insights and the budget roll-up. When the run names no
-    // model the provider is the honest answer: the CLI chose, not Foreman.
+    // model the provider is the honest answer: the CLI chose, not Wanigan.
     model: cfg.model?.trim() || cfg.providerId,
     config: JSON.stringify(cfg),
     total: picked.length,

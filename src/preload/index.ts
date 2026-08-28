@@ -4,7 +4,7 @@ import type {
   SessionUsage, ApiEvent, SessionEvent, Attention, TranscriptHit, TranscriptTurn,
   WorktreeInfo, HeadlessConfig, HeadlessRow, QueueItem, QueueKind, QueueSlots, QueueState,
   McpServerConfig, McpServerStatus, BudgetState, Reconciliation, TrustLevel, LedgerEntry,
-  ForemanSettings, UploadedFile, EvalPair, GoldenSet,
+  WaniganSettings, UploadedFile, EvalPair, GoldenSet,
 } from '../shared/types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -316,8 +316,8 @@ const api = {
     refresh: (projectPath: string) => call<any>('context:refresh', projectPath),
   },
   prefs: {
-    all: () => call<ForemanSettings>('settings:all'),
-    set: (k: string, v: string) => call<ForemanSettings>('settings:set', k, v),
+    all: () => call<WaniganSettings>('settings:all'),
+    set: (k: string, v: string) => call<WaniganSettings>('settings:set', k, v),
   },
   on: {
     batchChanged: (cb: () => void) => {
@@ -353,5 +353,5 @@ const api = {
   },
 };
 
-contextBridge.exposeInMainWorld('foreman', api);
-export type ForemanApi = typeof api;
+contextBridge.exposeInMainWorld('wanigan', api);
+export type WaniganApi = typeof api;

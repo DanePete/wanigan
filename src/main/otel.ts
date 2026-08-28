@@ -6,7 +6,7 @@ import { db } from './db';
 import { EMPTY_USAGE, type ApiEvent, type SessionUsage } from '../shared/types';
 
 /**
- * Claude Code exports OpenTelemetry natively. Foreman spawns the CLI, so it
+ * Claude Code exports OpenTelemetry natively. Wanigan spawns the CLI, so it
  * owns the environment and can aim the exporter at itself — which turns cost
  * from a number we would have to estimate from a pricing table into a number
  * the agent reports about itself.
@@ -17,7 +17,7 @@ import { EMPTY_USAGE, type ApiEvent, type SessionUsage } from '../shared/types';
  * making inside an Electron main process.
  */
 
-/** Datapoints arriving from a process that never got Foreman's resource attribute. */
+/** Datapoints arriving from a process that never got Wanigan's resource attribute. */
 const UNATTRIBUTED = 'unattributed';
 
 /**
@@ -83,8 +83,8 @@ export async function startCollector(): Promise<number> {
       if (bound) return; // post-bind socket noise; the collector keeps serving
       starting = null;
       reject(new Error(
-        `Foreman could not open its telemetry receiver on 127.0.0.1 (${e.message}). ` +
-        'Sessions still run, but their cost and token counts will read as zero until Foreman is restarted.'
+        `Wanigan could not open its telemetry receiver on 127.0.0.1 (${e.message}). ` +
+        'Sessions still run, but their cost and token counts will read as zero until Wanigan is restarted.'
       ));
     });
 
@@ -95,7 +95,7 @@ export async function startCollector(): Promise<number> {
       const addr = srv.address() as AddressInfo | null;
       if (!addr || typeof addr.port !== 'number') {
         starting = null;
-        reject(new Error('Foreman bound its telemetry receiver but the OS reported no port. Restart Foreman.'));
+        reject(new Error('Wanigan bound its telemetry receiver but the OS reported no port. Restart Wanigan.'));
         return;
       }
       server = srv;
@@ -173,12 +173,12 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse): void {
   // add $9999 into session_metrics under 'unattributed', permanently and
   // indistinguishably from a real export. Demanding a custom header also costs a
   // browser its simple-request exemption: the preflight gets a bare 404.
-  if (!authOk(req.headers['x-foreman-token'], token)) {
+  if (!authOk(req.headers['x-wanigan-token'], token)) {
     if (!warnedUnauthorized) {
       warnedUnauthorized = true;
       // Named rather than silent: if the agent's exporter ever stops sending the
       // header, the only other symptom is a cost that reads zero forever.
-      console.warn('[foreman] telemetry export refused: missing or wrong x-foreman-token');
+      console.warn('[wanigan] telemetry export refused: missing or wrong x-wanigan-token');
     }
     res.writeHead(401, { ...JSON_HEADERS, connection: 'close' }).end('{}');
     return;
@@ -222,7 +222,7 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse): void {
       // Logged, though, rather than swallowed whole: a refused zip bomb and an
       // unparseable body are both answered 200, so without this line the only
       // symptom of either is usage that reads zero with nothing saying why.
-      console.warn('[foreman] telemetry export dropped:', e);
+      console.warn('[wanigan] telemetry export dropped:', e);
     }
     res.writeHead(200, JSON_HEADERS).end('{}');
   });
@@ -232,7 +232,7 @@ function ingest(path: string, raw: Buffer, encoding: string | string[] | undefin
   if (!raw.length) return;
   let body = raw;
   const enc = Array.isArray(encoding) ? encoding[0] : encoding;
-  // Foreman never asks for compression, but the agent inherits Foreman's
+  // Wanigan never asks for compression, but the agent inherits Wanigan's
   // environment: an OTEL_EXPORTER_OTLP_COMPRESSION=gzip left in the user's
   // shell arrives here anyway, and without this every export is silently junk.
   // maxOutputLength, or MAX_BODY_BYTES only ever caps the compressed bytes:
@@ -257,12 +257,12 @@ function ingest(path: string, raw: Buffer, encoding: string | string[] | undefin
  * Content logging stays off, deliberately. OTEL_LOG_USER_PROMPTS,
  * OTEL_LOG_ASSISTANT_RESPONSES, OTEL_LOG_TOOL_CONTENT and
  * OTEL_LOG_RAW_API_BODIES would put prompt and response text into this
- * process and into SQLite. Foreman measures what a session costs, not what it
+ * process and into SQLite. Wanigan measures what a session costs, not what it
  * said. They are pinned to false rather than merely left unset because the
- * agent inherits Foreman's own environment, so one of these switched on in the
+ * agent inherits Wanigan's own environment, so one of these switched on in the
  * user's shell would otherwise flow straight through into the database.
  */
-export function otelEnv(foremanSessionId: string): Record<string, string> {
+export function otelEnv(waniganSessionId: string): Record<string, string> {
   const p = collectorPort();
   const t = collectorToken();
   // No receiver, no telemetry. A session must never fail to launch because the
@@ -281,7 +281,7 @@ export function otelEnv(foremanSessionId: string): Record<string, string> {
     // Deltas, not cumulative totals: the collector adds each datapoint into a
     // running row, and a cumulative counter added that way squares itself.
     OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: 'delta',
-    OTEL_RESOURCE_ATTRIBUTES: `foreman.session.id=${attrSafe(foremanSessionId)}`,
+    OTEL_RESOURCE_ATTRIBUTES: `wanigan.session.id=${attrSafe(waniganSessionId)}`,
     // The receiver refuses anything without this header. A bare hex value in a
     // custom header, not `Authorization: Bearer …`: OTEL_EXPORTER_OTLP_HEADERS
     // is parsed as a baggage-style list, and SDK versions disagree about
@@ -289,9 +289,9 @@ export function otelEnv(foremanSessionId: string): Record<string, string> {
     // signal-specific names are pinned alongside the generic one because they
     // win over it — an OTEL_EXPORTER_OTLP_METRICS_HEADERS left in the user's
     // shell would otherwise strip the token and every export would 401.
-    OTEL_EXPORTER_OTLP_HEADERS: `x-foreman-token=${t}`,
-    OTEL_EXPORTER_OTLP_METRICS_HEADERS: `x-foreman-token=${t}`,
-    OTEL_EXPORTER_OTLP_LOGS_HEADERS: `x-foreman-token=${t}`,
+    OTEL_EXPORTER_OTLP_HEADERS: `x-wanigan-token=${t}`,
+    OTEL_EXPORTER_OTLP_METRICS_HEADERS: `x-wanigan-token=${t}`,
+    OTEL_EXPORTER_OTLP_LOGS_HEADERS: `x-wanigan-token=${t}`,
     OTEL_LOG_USER_PROMPTS: 'false',
     OTEL_LOG_ASSISTANT_RESPONSES: 'false',
     OTEL_LOG_TOOL_CONTENT: 'false',
@@ -303,7 +303,7 @@ export function otelEnv(foremanSessionId: string): Record<string, string> {
  * OTEL_RESOURCE_ATTRIBUTES is a comma-separated key=value list. A comma or an
  * equals sign inside the id would split the attribute in transit and every
  * datapoint for that session would land in 'unattributed' — a silent zero with
- * nothing logged anywhere. Foreman's own ids are already safe, so this is a
+ * nothing logged anywhere. Wanigan's own ids are already safe, so this is a
  * no-op today and a guard if the id format ever changes.
  */
 function attrSafe(id: string): string {
@@ -375,12 +375,12 @@ function millisOf(nano: unknown): number | null {
 /**
  * Claude Code sets its own `session.id` on every export. That is a different
  * identifier for a different thing, and keying on it would attribute spend to a
- * row Foreman has never heard of. A payload with no `foreman.session.id` is
+ * row Wanigan has never heard of. A payload with no `wanigan.session.id` is
  * still real money, so it is banked under 'unattributed' rather than dropped.
  */
 function sessionIdOf(resource: unknown): string {
   const attrs = attrsToObject(isRecord(resource) ? resource.attributes : null);
-  const id = (attrs['foreman.session.id'] ?? '').trim();
+  const id = (attrs['wanigan.session.id'] ?? '').trim();
   return id ? attrSafe(id) : UNATTRIBUTED;
 }
 
@@ -418,7 +418,7 @@ function parseMetrics(payload: unknown): MetricDelta[] {
         const keys = TRACKED_METRICS[name];
         if (!keys) continue;
 
-        // Sums only. Every metric Foreman tracks is a delta counter; a gauge
+        // Sums only. Every metric Wanigan tracks is a delta counter; a gauge
         // reports a level, and adding a level into the running total on each
         // 10s export would multiply it by the number of exports.
         if (!isRecord(m.sum)) continue;

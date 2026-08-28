@@ -39,7 +39,7 @@ export function mockCreate(requests: { custom_id: string; params: Record<string,
     ended_at: null, cancel_initiated_at: null, results_url: null,
     request_counts: { processing: requests.length, succeeded: 0, errored: 0, canceled: 0, expired: 0 },
     _requests: requests,
-    _readyAt: now + Number(process.env.FOREMAN_MOCK_DELAY_MS || 20_000), // so the monitor UI has something to show
+    _readyAt: now + Number(process.env.WANIGAN_MOCK_DELAY_MS || 20_000), // so the monitor UI has something to show
   };
   save(b);
   return b;

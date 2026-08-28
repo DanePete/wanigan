@@ -52,7 +52,7 @@ export type BrowseEntry = {
   dir: boolean;
   size: number;
   modified: number;
-  /** Null for directories and for anything Foreman has no opinion about. */
+  /** Null for directories and for anything Wanigan has no opinion about. */
   kind: 'image' | 'pdf' | 'text' | 'notebook' | 'unsupported' | null;
   /** Why this one cannot be attached, when it cannot. */
   note: string | null;
@@ -166,7 +166,7 @@ export function browse(dir: string, opts: { showHidden?: boolean } = {}): Browse
     return {
       dir: abs, parent, entries: [],
       error: code === 'EACCES'
-        ? `macOS is not granting Foreman access to ${path.basename(abs)}. Give it Files and Folders permission in System Settings → Privacy & Security.`
+        ? `macOS is not granting Wanigan access to ${path.basename(abs)}. Give it Files and Folders permission in System Settings → Privacy & Security.`
         : code === 'ENOENT'
           ? `${abs} no longer exists.`
           : `Could not read ${abs}: ${e instanceof Error ? e.message : String(e)}`,

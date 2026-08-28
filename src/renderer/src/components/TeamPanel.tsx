@@ -22,7 +22,7 @@ export default function TeamPanel() {
   const [open, setOpen] = useState(false);
 
   const load = useCallback(async () => {
-    try { setState(await window.foreman.teams.read()); } catch { /* absent is the normal case */ }
+    try { setState(await window.wanigan.teams.read()); } catch { /* absent is the normal case */ }
   }, []);
   useEffect(() => { void load(); const t = setInterval(load, 6000); return () => clearInterval(t); }, [load]);
 

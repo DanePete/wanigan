@@ -18,9 +18,9 @@ let pass = 0, fail = 0;
 /**
  * A macOS .app bundle's stdout is not connected to the launching shell, so
  * console.log from Electron main vanishes when piped. Everything is mirrored to
- * FOREMAN_SMOKE_LOG, which the shell script prints once the process exits.
+ * WANIGAN_SMOKE_LOG, which the shell script prints once the process exits.
  */
-const LOG = process.env.FOREMAN_SMOKE_LOG;
+const LOG = process.env.WANIGAN_SMOKE_LOG;
 function say(line: string) {
   console.log(line);
   if (LOG) { try { fs.appendFileSync(LOG, line + '\n'); } catch { /* best effort */ } }
@@ -61,16 +61,16 @@ async function expectThrow(fn: () => Promise<unknown>, needle: string, label: st
 }
 
 export async function runSmoke(): Promise<void> {
-  say('\nForeman — batch lifecycle smoke (mock runner, no API calls)\n');
+  say('\nWanigan — batch lifecycle smoke (mock runner, no API calls)\n');
 
   say('── environment');
-  check(process.env.FOREMAN_MOCK === '1', 'mock mode active');
+  check(process.env.WANIGAN_MOCK === '1', 'mock mode active');
   const p = batch.presetsFor();
   check(p.presets.length >= 3, 'presets served', p.presets.length);
   check(p.models.length >= 5, 'model table served', p.models.length);
 
   say('── shared project list');
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-smoke-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-smoke-'));
   const proj = await addProject(tmp);
   check(listProjects().some((x) => x.id === proj.id), 'project added to the shared list');
   const resolved = batch.presetsFor(proj.id);

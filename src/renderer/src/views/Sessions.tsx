@@ -104,12 +104,12 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dialog, setDialog] = useState(false);
   // Loading is not empty. Until the first list() answers, "no sessions running"
-  // would be a claim Foreman has not checked.
+  // would be a claim Wanigan has not checked.
   const [ready, setReady] = useState(false);
   const [listErr, setListErr] = useState<string | null>(null);
   // Remembered per machine: whether the side rail is open is a working
   // preference, not session state.
-  const [showRail, setShowRail] = useState(() => localStorage.getItem('foreman.code') === '1');
+  const [showRail, setShowRail] = useState(() => localStorage.getItem('wanigan.code') === '1');
   const [railPane, setRailPane] = useState<Record<string, 'code' | 'timeline'>>(readPanes);
   const [defaultTrust, setDefaultTrust] = useState<TrustLevel | null>(null);
   const [past, setPast] = useState<PastSession[]>([]);
@@ -119,8 +119,8 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
 
   const refresh = useCallback(async () => {
     try {
-      setSessions(await window.foreman.sessions.list());
-      setPast(await window.foreman.sessions.past());
+      setSessions(await window.wanigan.sessions.list());
+      setPast(await window.wanigan.sessions.past());
       setListErr(null);
     } catch (e) {
       setListErr(msg(e));
@@ -133,13 +133,13 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
   // The banner compares against the default, so the default is read once and
   // kept; a session above it is the exception worth shouting about.
   useEffect(() => {
-    window.foreman.policy.defaultTrust().then(setDefaultTrust).catch(() => setDefaultTrust(null));
+    window.wanigan.policy.defaultTrust().then(setDefaultTrust).catch(() => setDefaultTrust(null));
   }, []);
 
   async function resume(p: PastSession) {
     setResuming(p.id);
     try {
-      const s = await window.foreman.sessions.create({
+      const s = await window.wanigan.sessions.create({
         providerId: p.providerId,
         projectId: p.projectId ?? '',
         model: p.model ?? undefined,
@@ -154,19 +154,19 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
   }
 
   useEffect(() => {
-    const offData = window.foreman.on.data(({ sessionId, data }) => {
+    const offData = window.wanigan.on.data(({ sessionId, data }) => {
       feed(sessionId, data);
       if (sessionId !== activeRef.current) {
         setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, unread: s.unread + 1 } : s)));
       }
     });
-    const offList = window.foreman.on.sessions((list) => {
+    const offList = window.wanigan.on.sessions((list) => {
       setSessions((prev) => {
         const unread = new Map(prev.map((s) => [s.id, s.unread]));
         return list.map((s) => ({ ...s, unread: s.id === activeRef.current ? 0 : (unread.get(s.id) ?? 0) }));
       });
     });
-    const offExit = window.foreman.on.exit(({ sessionId, exitCode }) => {
+    const offExit = window.wanigan.on.exit(({ sessionId, exitCode }) => {
       feed(sessionId, `\r\n\x1b[38;5;244m── session exited (code ${exitCode}) ──\x1b[0m\r\n`);
     });
     return () => { offData(); offList(); offExit(); };
@@ -175,12 +175,12 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
   const select = useCallback((id: string) => {
     setActiveId(id);
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, unread: 0 } : s)));
-    window.foreman.sessions.markRead(id).catch(() => {});
+    window.wanigan.sessions.markRead(id).catch(() => {});
   }, []);
 
   const closeTab = useCallback(async (id: string) => {
     try {
-      await window.foreman.sessions.close(id);
+      await window.wanigan.sessions.close(id);
       disposePane(id);
       setSessions((prev) => {
         const next = prev.filter((s) => s.id !== id);
@@ -196,7 +196,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
       if (e.key === 't') { e.preventDefault(); setDialog(true); return; }
       if (e.key === 'b') {
         e.preventDefault();
-        setShowRail((v) => { localStorage.setItem('foreman.code', v ? '0' : '1'); return !v; });
+        setShowRail((v) => { localStorage.setItem('wanigan.code', v ? '0' : '1'); return !v; });
         return;
       }
       if (e.key === 'w' && activeRef.current) {
@@ -221,7 +221,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
   }, []);
 
   async function createSession(opts: LaunchOptions) {
-    const s = await window.foreman.sessions.create(opts);
+    const s = await window.wanigan.sessions.create(opts);
     await refresh();
     select(s.id);
   }
@@ -244,7 +244,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
       if (!(e.metaKey || e.ctrlKey) || e.key !== '.') return;
       if (!active || active.status !== 'running') return;
       e.preventDefault();
-      void window.foreman.sessions.interrupt(active.id);
+      void window.wanigan.sessions.interrupt(active.id);
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
@@ -337,7 +337,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                       </span>
                     </FocusBtn>
                     <FocusBtn className="past-x faint" title={`Forget ${p.projectName}`}
-                              onClick={() => window.foreman.sessions.forget(p.id).then(setPast).catch((e) => onError(msg(e)))}>
+                              onClick={() => window.wanigan.sessions.forget(p.id).then(setPast).catch((e) => onError(msg(e)))}>
                       ×
                     </FocusBtn>
                   </div>
@@ -377,7 +377,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
             <FocusBtn className="tab faint" onClick={() => setDialog(true)} title="New session (⌘T)">+</FocusBtn>
             <FocusBtn className={`tab faint${showRail ? ' active' : ''}`} style={{ marginLeft: 'auto' }}
                       title="Toggle the side panel (⌘B)"
-                      onClick={() => setShowRail((v) => { localStorage.setItem('foreman.code', v ? '0' : '1'); return !v; })}>
+                      onClick={() => setShowRail((v) => { localStorage.setItem('wanigan.code', v ? '0' : '1'); return !v; })}>
               {showRail ? '⟨ hide' : `${pane} ⟩`}
             </FocusBtn>
           </div>
@@ -397,8 +397,8 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                 <h1 style={{ fontSize: 17, fontWeight: 600 }}>The session list did not load</h1>
                 <p className="dim" style={{ marginTop: 6, lineHeight: 1.55 }}>{listErr}</p>
                 <p className="faint" style={{ marginTop: 6, lineHeight: 1.5 }}>
-                  Running sessions are unaffected — this is Foreman's own record of them. Retry below;
-                  if it keeps failing, quit and reopen Foreman to rebuild the connection to its database.
+                  Running sessions are unaffected — this is Wanigan's own record of them. Retry below;
+                  if it keeps failing, quit and reopen Wanigan to rebuild the connection to its database.
                 </p>
               </div>
               <FocusBtn className="btn btn-primary" onClick={() => void refresh()}>Retry</FocusBtn>
@@ -425,8 +425,8 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
               {!anyInstalled && providers.length > 0 && (
                 <p className="faint" style={{ maxWidth: 470, lineHeight: 1.5 }}>
                   Neither <span className="mono">claude</span> nor <span className="mono">codex</span> was found.
-                  Foreman resolves your login shell's PATH and scans editor extension directories — if they run
-                  in your terminal, restart Foreman and it will find them.
+                  Wanigan resolves your login shell's PATH and scans editor extension directories — if they run
+                  in your terminal, restart Wanigan and it will find them.
                 </p>
               )}
             </div>
@@ -489,7 +489,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                                  })} />
                     ) : (
                       <Timeline key={`tl-${active.id}`} sessionId={active.id}
-                                onOpenFile={(p) => { window.foreman.code.open(null, p).catch((e) => onError(msg(e))); }} />
+                                onOpenFile={(p) => { window.wanigan.code.open(null, p).catch((e) => onError(msg(e))); }} />
                     )}
                   </div>
                 </div>
@@ -505,7 +505,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                   {active.status === 'running' ? `pid ${active.pid}` : `exited ${active.exitCode}`}
                 </span>
                 <FocusBtn className="faint" style={{ marginLeft: 'auto', fontSize: 11.5, borderRadius: 5 }}
-                          onClick={() => window.foreman.sessions.reveal(active.worktree ?? active.projectPath)}
+                          onClick={() => window.wanigan.sessions.reveal(active.worktree ?? active.projectPath)}
                           title={active.worktree
                             ? `Open the worktree this session runs in: ${active.worktree}`
                             : `Open ${active.projectPath}`}>
@@ -514,14 +514,14 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                 {active.status === 'running' && (
                   <FocusBtn className="faint" style={{ fontSize: 11.5, color: 'var(--warning)', borderRadius: 5 }}
                             title="Stop the current turn. The session stays open — this is the Escape key Claude Code listens for. ⌘."
-                            onClick={() => void window.foreman.sessions.interrupt(active.id)}>
+                            onClick={() => void window.wanigan.sessions.interrupt(active.id)}>
                     ⎋ interrupt
                   </FocusBtn>
                 )}
                 {active.status === 'running' && (
                   <FocusBtn className="faint" style={{ fontSize: 11.5, color: 'var(--bad)', borderRadius: 5 }}
                             title="End the session entirely. The conversation goes with it."
-                            onClick={() => window.foreman.sessions.kill(active.id)}>end session</FocusBtn>
+                            onClick={() => window.wanigan.sessions.kill(active.id)}>end session</FocusBtn>
                 )}
               </>
             ) : <span>⌘T new session · ⌘1–9 switch · ⌘W close · ⌘B side panel</span>}
@@ -550,7 +550,7 @@ function Seg({ on, onClick, title, children }: {
   );
 }
 
-const PANE_KEY = 'foreman.rail.pane';
+const PANE_KEY = 'wanigan.rail.pane';
 
 function readPanes(): Record<string, 'code' | 'timeline'> {
   try {
@@ -627,7 +627,7 @@ function RunConfigBar({ session, provider }: { session: Session; provider: Provi
   useEffect(() => {
     if (provider.id !== 'glm') { setModels(MODEL_CHOICES[provider.id] ?? []); setModelNote(null); return; }
     let live = true;
-    window.foreman.key.glmModels()
+    window.wanigan.key.glmModels()
       .then((r) => {
         if (!live) return;
         if (r.models.length) setModels(r.models.map((m) => ({ value: m.id, label: m.label })));
@@ -647,7 +647,7 @@ function RunConfigBar({ session, provider }: { session: Session; provider: Provi
   function send(command: string) {
     // No trailing newline anywhere else in this file types for the user, but a
     // slash command is the whole action — there is nothing left to write.
-    window.foreman.sessions.write(session.id, command + '\r');
+    window.wanigan.sessions.write(session.id, command + '\r');
     setSent(command);
     window.setTimeout(() => setSent((c) => (c === command ? null : c)), 2600);
   }
@@ -749,7 +749,7 @@ function WorktreeBar({ session, path, onRefresh }: {
 
   const load = useCallback(async () => {
     try {
-      setInfo(await window.foreman.worktrees.status(path));
+      setInfo(await window.wanigan.worktrees.status(path));
       setErr(null);
     } catch (e) { setErr(msg(e)); }
   }, [path]);
@@ -768,7 +768,7 @@ function WorktreeBar({ session, path, onRefresh }: {
         const branch = info?.branch ?? '<branch>';
         setResult({
           ok: false,
-          text: `Foreman cannot merge from this window yet. In ${info?.repoRoot ?? session.projectPath}, `
+          text: `Wanigan cannot merge from this window yet. In ${info?.repoRoot ?? session.projectPath}, `
               + `run: git merge --no-ff ${branch}`,
         });
         return;
@@ -785,7 +785,7 @@ function WorktreeBar({ session, path, onRefresh }: {
   async function askDiscard() {
     setBusy('check'); setResult(null);
     try {
-      const fresh = await window.foreman.worktrees.status(path);
+      const fresh = await window.wanigan.worktrees.status(path);
       setInfo(fresh);
       if (!fresh) {
         setResult({ ok: true, text: `Nothing to discard — there is no worktree at ${path} any more.` });
@@ -800,7 +800,7 @@ function WorktreeBar({ session, path, onRefresh }: {
   async function discard(target: WorktreeInfo) {
     setBusy('discard');
     try {
-      const r = await window.foreman.worktrees.remove(target.path, target.dirty > 0);
+      const r = await window.wanigan.worktrees.remove(target.path, target.dirty > 0);
       setResult({ ok: r.removed, text: r.detail });
       setConfirm(null);
       await load();
@@ -823,7 +823,7 @@ function WorktreeBar({ session, path, onRefresh }: {
           <span className="faint" style={{ fontSize: 12 }}>Reading git…</span>
         ) : info === null ? (
           <span className="dim" style={{ fontSize: 12, lineHeight: 1.45 }}>
-            Gone from disk. Foreman removes an isolated worktree once the session ends and nothing is
+            Gone from disk. Wanigan removes an isolated worktree once the session ends and nothing is
             uncommitted in it — the branch it used is kept.
           </span>
         ) : (
@@ -898,7 +898,7 @@ function WorktreeBar({ session, path, onRefresh }: {
       {err && (
         <Note tone="error">
           <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>✕</span>
-          Could not read the worktree: {err} — Foreman runs git in {path}; check the folder still exists.
+          Could not read the worktree: {err} — Wanigan runs git in {path}; check the folder still exists.
         </Note>
       )}
     </div>
@@ -914,7 +914,7 @@ type MergeFn = (p: string, opts?: { squash?: boolean; message?: string })
   => Promise<{ merged: boolean; detail: string }>;
 
 function mergeFn(): MergeFn | null {
-  const wt = window.foreman.worktrees as unknown as { merge?: MergeFn };
+  const wt = window.wanigan.worktrees as unknown as { merge?: MergeFn };
   return typeof wt.merge === 'function' ? wt.merge.bind(wt) : null;
 }
 
@@ -940,7 +940,7 @@ function useAttachments(sessionId: string | null) {
     // Switching tabs mid-read must not paint the previous session's files.
     const mine = ++run.current;
     try {
-      const list = (await window.foreman.attach.list(sessionId)) as Attachment[];
+      const list = (await window.wanigan.attach.list(sessionId)) as Attachment[];
       if (mine !== run.current) return;
       setItems(list);
       setPhase('ready');
@@ -949,7 +949,7 @@ function useAttachments(sessionId: string | null) {
       // per image, rather than a rate re-derived in the renderer.
       const priced = await Promise.all(list.filter((a) => a.kind === 'image').map(async (a) => {
         try {
-          const c = (await window.foreman.attach.inspect(a.storedPath)) as AttachCheck;
+          const c = (await window.wanigan.attach.inspect(a.storedPath)) as AttachCheck;
           return [a.id, c.estimatedUsd] as const;
         } catch { return [a.id, null] as const; }
       }));
@@ -979,8 +979,8 @@ function useAttachments(sessionId: string | null) {
         // Electron 32 removed File.path; the bytes are the portable route, and
         // the main process runs the same checks on either.
         const p = (f as File & { path?: string }).path;
-        if (p) await window.foreman.attach.add(sessionId, p);
-        else await window.foreman.attach.paste(sessionId, await f.arrayBuffer(), f.name);
+        if (p) await window.wanigan.attach.add(sessionId, p);
+        else await window.wanigan.attach.paste(sessionId, await f.arrayBuffer(), f.name);
       } catch (e) { reject(msg(e)); }
     }
     setBusy(false);
@@ -991,7 +991,7 @@ function useAttachments(sessionId: string | null) {
     if (!sessionId || paths.length === 0) return;
     setBusy(true); setHint(null);
     for (const p of paths) {
-      try { await window.foreman.attach.add(sessionId, p); }
+      try { await window.wanigan.attach.add(sessionId, p); }
       catch (e) { reject(msg(e)); }
     }
     setBusy(false);
@@ -1000,13 +1000,13 @@ function useAttachments(sessionId: string | null) {
 
   const browse = useCallback(async () => {
     try {
-      const picked = await window.foreman.browse.pick(true);
+      const picked = await window.wanigan.browse.pick(true);
       await addPaths(picked);
     } catch (e) { reject(msg(e)); }
   }, [addPaths, reject]);
 
   const remove = useCallback(async (id: string) => {
-    try { await window.foreman.attach.remove(id); }
+    try { await window.wanigan.attach.remove(id); }
     catch (e) { reject(msg(e)); }
     await load();
   }, [load, reject]);
@@ -1014,7 +1014,7 @@ function useAttachments(sessionId: string | null) {
   const typeReference = useCallback(async () => {
     if (!sessionId) return;
     try {
-      const ok = await window.foreman.attach.type(sessionId);
+      const ok = await window.wanigan.attach.type(sessionId);
       setHint(ok
         ? 'Typed into the session, not sent. Write what you want done with it, then press Enter.'
         : 'Nothing to reference yet — attach a file first.');
@@ -1154,7 +1154,7 @@ function AttachStrip({ session, att }: { session: Session; att: AttachState }) {
       ) : att.items.length === 0 ? (
         <p className="faint" style={{ fontSize: 11.5, lineHeight: 1.45 }}>
           Nothing staged yet. Drop a file on the terminal, paste a screenshot with ⌘V, or add one —
-          Foreman copies it where {session.projectName}'s agent can read it and names the path in your prompt.
+          Wanigan copies it where {session.projectName}'s agent can read it and names the path in your prompt.
         </p>
       ) : (
         // Its own scroller: a dozen chips are wider than the pane, and the view

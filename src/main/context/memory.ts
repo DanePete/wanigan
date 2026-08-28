@@ -99,9 +99,9 @@ export type MemoryState = {
 
 /**
  * Claude Code's own settings, lowest precedence first. Managed policy wins over
- * everything, which is why it is read last. Foreman's SQLite settings are a
+ * everything, which is why it is read last. Wanigan's SQLite settings are a
  * different thing entirely and deliberately not consulted: the question here is
- * what the *CLI* will do, not what Foreman would like it to do.
+ * what the *CLI* will do, not what Wanigan would like it to do.
  */
 function settingsLayers(projectPath: string): { layer: string; file: string }[] {
   const managed = process.platform === 'darwin'
@@ -158,7 +158,7 @@ function settingValue(
 
 /**
  * autoMemoryDirectory is documented as absolute or ~/-prefixed. A relative value
- * is resolved against the project rather than the process cwd: Foreman's cwd is
+ * is resolved against the project rather than the process cwd: Wanigan's cwd is
  * wherever the app bundle launched from, which would send the panel somewhere
  * the user could not explain.
  */
@@ -603,9 +603,9 @@ export function readMemory(projectPath: string): MemoryState {
     // telling the user nothing has been remembered when plenty has.
     if (lookup?.unavailable) {
       notes.push(
-        `Foreman could not run git in ${abs} (${lookup.unavailable}), so it cannot tell whether this is inside a ` +
+        `Wanigan could not run git in ${abs} (${lookup.unavailable}), so it cannot tell whether this is inside a ` +
         `repository. Memory is keyed off the repository root, so if it is, the memories are filed under that root's ` +
-        `slug and this panel will look empty. Make sure git is on the PATH Foreman inherits, then reopen the project.`,
+        `slug and this panel will look empty. Make sure git is on the PATH Wanigan inherits, then reopen the project.`,
       );
     } else {
       notes.push(`${abs} is not inside a git repository, so the project directory itself keys the memory directory.`);
@@ -775,7 +775,7 @@ function autoMemoryEnabled(projectPath: string, bad?: string[]): { enabled: bool
   if (process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY === '1') {
     return {
       enabled: false,
-      why: 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 is set in Foreman’s environment, which every session it launches inherits. No memory is loaded.',
+      why: 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 is set in Wanigan’s environment, which every session it launches inherits. No memory is loaded.',
     };
   }
   const s = settingValue(projectPath, 'autoMemoryEnabled', bad);
@@ -797,7 +797,7 @@ function realOrSelf(p: string): string {
 
 /**
  * The file itself. The path arrives from the renderer, so it is confined to a
- * memory directory Foreman has actually resolved: without that, this IPC is a
+ * memory directory Wanigan has actually resolved: without that, this IPC is a
  * read-any-file-on-disk hole with a friendly name.
  */
 export function memoryBody(p: string): { text: string; truncated: boolean; bytes: number } {
@@ -816,7 +816,7 @@ export function memoryBody(p: string): { text: string; truncated: boolean; bytes
    */
   if (!/\.md$/i.test(path.basename(full))) {
     throw new Error(
-      `${full} is not a .md file, so it is not a memory. Foreman only opens markdown from a memory directory.`,
+      `${full} is not a .md file, so it is not a memory. Wanigan only opens markdown from a memory directory.`,
     );
   }
   if (!knownDirs.has(dir) && !inDefaultRoot) {
@@ -843,7 +843,7 @@ export function memoryBody(p: string): { text: string; truncated: boolean; bytes
     // sentence-shaped errors every other failure on this path produces.
     const why = e instanceof Error ? e.message : String(e);
     throw new Error(
-      `Cannot open ${full} (${why}). Check the file's permissions — Foreman only ever reads memories, never writes them.`,
+      `Cannot open ${full} (${why}). Check the file's permissions — Wanigan only ever reads memories, never writes them.`,
     );
   }
   return { text: head.text, truncated: !head.complete, bytes: st.size };

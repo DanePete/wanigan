@@ -5,8 +5,8 @@
 # a notarised .app without a human dragging anything, so it is what an update
 # feed or a scripted install consumes.
 
-appId: com.danepetersen.foreman
-productName: Foreman
+appId: io.deadnorth.wanigan
+productName: Wanigan
 copyright: Copyright © 2026 Dane Petersen
 
 directories:
@@ -85,18 +85,18 @@ mac:
   notarize: true
 
   extendInfo:
-    # Foreman spawns agent CLIs that read whatever repo you point them at.
+    # Wanigan spawns agent CLIs that read whatever repo you point them at.
     # macOS attributes a child process's file access to the app that started
-    # it, so these prompts say "Foreman"; with no usage string the access is
+    # it, so these prompts say "Wanigan"; with no usage string the access is
     # denied outright instead of asked about, and the agent reports a file that
     # plainly exists as unreadable.
-    NSDocumentsFolderUsageDescription: Foreman runs coding agents in the repositories you add.
-    NSDesktopFolderUsageDescription: Foreman runs coding agents in the repositories you add.
-    NSDownloadsFolderUsageDescription: Foreman runs coding agents in the repositories you add.
+    NSDocumentsFolderUsageDescription: Wanigan runs coding agents in the repositories you add.
+    NSDesktopFolderUsageDescription: Wanigan runs coding agents in the repositories you add.
+    NSDownloadsFolderUsageDescription: Wanigan runs coding agents in the repositories you add.
 
 dmg:
   # The Applications alias is the install instruction. Without it people run
-  # Foreman straight from the mounted image, where the database lives on a
+  # Wanigan straight from the mounted image, where the database lives on a
   # read-only volume and everything they did disappears when they eject it.
   contents:
     - x: 140

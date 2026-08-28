@@ -1,6 +1,6 @@
-import type { ForemanApi } from '../../preload/index';
+import type { WaniganApi } from '../../preload/index';
 
 declare global {
-  interface Window { foreman: ForemanApi }
+  interface Window { wanigan: WaniganApi }
 }
 export {};

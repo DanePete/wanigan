@@ -87,7 +87,7 @@ export default function App() {
   // Which session the keyboard-less surfaces (Skills) should talk to.
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   // The project the user last chose or last worked in, remembered per machine.
-  const [picked, setPicked] = useState<string | null>(() => localStorage.getItem('foreman.project'));
+  const [picked, setPicked] = useState<string | null>(() => localStorage.getItem('wanigan.project'));
 
   const tabRef = useRef<Tab>(tab); tabRef.current = tab;
   const sessionsRef = useRef<Session[]>(sessions); sessionsRef.current = sessions;
@@ -96,9 +96,9 @@ export default function App() {
 
   const loadShell = useCallback(async () => {
     const [pv, pj, ks] = await Promise.all([
-      window.foreman.providers.list(),
-      window.foreman.projects.list(),
-      window.foreman.key.status(),
+      window.wanigan.providers.list(),
+      window.wanigan.projects.list(),
+      window.wanigan.key.status(),
     ]);
     setProviders(pv); setProjects(pj); setHasKey(ks.present);
   }, []);
@@ -109,7 +109,7 @@ export default function App() {
   // Published on the root element so CSS can answer without asking React.
   const loadMotion = useCallback(async () => {
     let m: MotionSetting = 'auto';
-    try { m = (await window.foreman.prefs.all()).motion ?? 'auto'; } catch { /* db not ready */ }
+    try { m = (await window.wanigan.prefs.all()).motion ?? 'auto'; } catch { /* db not ready */ }
     document.documentElement.dataset.motion = m;
   }, []);
 
@@ -118,10 +118,10 @@ export default function App() {
   useEffect(() => {
     const again = () => void loadMotion();
     window.addEventListener('focus', again);
-    window.addEventListener('foreman:prefs-changed', again);
+    window.addEventListener('wanigan:prefs-changed', again);
     return () => {
       window.removeEventListener('focus', again);
-      window.removeEventListener('foreman:prefs-changed', again);
+      window.removeEventListener('wanigan:prefs-changed', again);
     };
   }, [loadMotion]);
 
@@ -131,9 +131,9 @@ export default function App() {
   // its own badge rather than blanking the others.
   const tick = useCallback(async () => {
     const [ss, runs, att] = await Promise.all([
-      window.foreman.sessions.list().catch(() => [] as Session[]),
-      window.foreman.batch.runs().catch(() => [] as { status: string }[]),
-      window.foreman.attention.list().catch(() => [] as Attention[]),
+      window.wanigan.sessions.list().catch(() => [] as Session[]),
+      window.wanigan.batch.runs().catch(() => [] as { status: string }[]),
+      window.wanigan.attention.list().catch(() => [] as Attention[]),
     ]);
     // Poll results are only allowed to re-render the app when they actually
     // differ — a new array every six seconds would re-render the view holding
@@ -177,8 +177,8 @@ export default function App() {
   useEffect(() => {
     void tick();
     const t = setInterval(tick, 6000);
-    const offBatch = window.foreman.on.batchChanged(() => void tick());
-    const offList = window.foreman.on.sessions((list) =>
+    const offBatch = window.wanigan.on.batchChanged(() => void tick());
+    const offList = window.wanigan.on.sessions((list) =>
       setSessions((prev) => (shape(prev) === shape(list) ? prev : list)));
     return () => { clearInterval(t); offBatch(); offList(); };
   }, [tick]);
@@ -186,7 +186,7 @@ export default function App() {
   // Branches move constantly; keep the shared project list honest.
   useEffect(() => {
     const t = setInterval(() => {
-      window.foreman.projects.refresh().then(setProjects).catch(() => {});
+      window.wanigan.projects.refresh().then(setProjects).catch(() => {});
     }, 30_000);
     return () => clearInterval(t);
   }, []);
@@ -204,7 +204,7 @@ export default function App() {
 
   const choose = useCallback((id: string) => {
     setPicked(id);
-    localStorage.setItem('foreman.project', id);
+    localStorage.setItem('wanigan.project', id);
   }, []);
 
   const activeSession = useMemo(
@@ -233,7 +233,7 @@ export default function App() {
     if (s) choose(s.projectId);
     go('sessions');
     // Sessions owns its own tab selection; this is the request to focus one.
-    window.dispatchEvent(new CustomEvent('foreman:open-session', { detail: { sessionId: id } }));
+    window.dispatchEvent(new CustomEvent('wanigan:open-session', { detail: { sessionId: id } }));
   }, [choose, go]);
 
   useEffect(() => {
@@ -241,8 +241,8 @@ export default function App() {
       const id = (e as CustomEvent<{ sessionId?: string }>).detail?.sessionId;
       if (id) setActiveSessionId(id);
     };
-    window.addEventListener('foreman:session-focused', onFocused);
-    return () => window.removeEventListener('foreman:session-focused', onFocused);
+    window.addEventListener('wanigan:session-focused', onFocused);
+    return () => window.removeEventListener('wanigan:session-focused', onFocused);
   }, []);
 
   // ⌘1–9. Capture phase, because Sessions binds ⌘1–9 to its own tabs and only
@@ -266,13 +266,13 @@ export default function App() {
 
   const addProject = useCallback(async () => {
     try {
-      const p = await window.foreman.projects.pick();
-      if (p) { setProjects(await window.foreman.projects.list()); choose(p.id); }
+      const p = await window.wanigan.projects.pick();
+      if (p) { setProjects(await window.wanigan.projects.list()); choose(p.id); }
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }, [choose]);
 
   const removeProject = useCallback(async (id: string) => {
-    setProjects(await window.foreman.projects.remove(id));
+    setProjects(await window.wanigan.projects.remove(id));
   }, []);
 
   // ── nav chrome ─────────────────────────────────────────────────────
@@ -309,7 +309,7 @@ export default function App() {
   // bytes per second, never a spinner that implies work nobody is doing.
   useEffect(() => {
     let bytes = 0;
-    const off = window.foreman.on.data(({ data }) => { bytes += data.length; });
+    const off = window.wanigan.on.data(({ data }) => { bytes += data.length; });
     const t = setInterval(() => {
       const el = runBadge.current;
       const seen = bytes; bytes = 0;
@@ -342,8 +342,8 @@ export default function App() {
       if (!(e.metaKey || e.ctrlKey) || !e.shiftKey) return;
       if (e.key.toLowerCase() !== 'd') return;
       e.preventDefault();
-      void window.foreman.demo.state()
-        .then((s) => window.foreman.demo.set(!s.on))
+      void window.wanigan.demo.state()
+        .then((s) => window.wanigan.demo.set(!s.on))
         .then(() => window.location.reload());
     };
     window.addEventListener('keydown', onKey, true);
@@ -353,7 +353,7 @@ export default function App() {
   return (
     <div className="shell">
       <nav className="nav">
-        <span className="brand">Foreman</span>
+        <span className="brand">Wanigan</span>
         <div className="nav-tabs" ref={tabsRef}>
           <NavTab id="sessions" n={1} tab={tab} go={go} label="Sessions">
             {running > 0 && (

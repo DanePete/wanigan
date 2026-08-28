@@ -9,10 +9,10 @@ import type { McpServerConfig, McpServerStatus } from '../../shared/types';
  * The inbound half of MCP: which servers a project's agents get, and whether
  * they are actually connecting.
  *
- * Foreman never writes into the user's repo. A generated `.mcp.json` dropped
+ * Wanigan never writes into the user's repo. A generated `.mcp.json` dropped
  * next to their code would land in `git status`, get committed by an agent
  * doing "commit everything", and fight whatever `.mcp.json` they already keep
- * under version control. The generated file lives in Foreman's userData and is
+ * under version control. The generated file lives in Wanigan's userData and is
  * handed to the CLI by path instead.
  */
 
@@ -165,7 +165,7 @@ export function serverStatuses(): McpServerStatus[] {
     });
   }
 
-  // A server the user configured outside Foreman still reports connections.
+  // A server the user configured outside Wanigan still reports connections.
   // Dropping those rows would make a failing server look like it does not
   // exist, which is the least useful thing a status list can do.
   for (const st of statuses.values()) {
@@ -180,7 +180,7 @@ export function serverStatuses(): McpServerStatus[] {
 
 /**
  * Fed by the telemetry/hook side, which reports `mcp_server_connection` events.
- * Those name the server and nothing else — the agent has no idea Foreman has a
+ * Those name the server and nothing else — the agent has no idea Wanigan has a
  * row id for it — so status is keyed by name, and one name may cover the same
  * server configured in several projects.
  */
@@ -247,16 +247,16 @@ export function writeMcpConfig(projectId: string | null, projectPath: string): s
     }
   }
 
-  // Foreman's own server, when it is running. This is the point of the whole
+  // Wanigan's own server, when it is running. This is the point of the whole
   // phase: a session that finds itself facing ten thousand rows can hand them
   // to the batch engine instead of grinding through them at full price.
   const self = mcpServerInfo();
   if (self) {
-    entries.foreman = { type: 'http', url: self.url, headers: { Authorization: `Bearer ${self.token}` } };
+    entries.wanigan = { type: 'http', url: self.url, headers: { Authorization: `Bearer ${self.token}` } };
   }
 
   const dir = path.join(dataDir(), 'mcp');
-  // The id is Foreman's own, but a filename built from an id is a path
+  // The id is Wanigan's own, but a filename built from an id is a path
   // traversal waiting for the one caller that passes something else.
   const safe = (projectId ?? 'global').replace(/[^A-Za-z0-9_-]/g, '_');
   const file = path.join(dir, `${safe}.mcp.json`);
@@ -268,7 +268,7 @@ export function writeMcpConfig(projectId: string | null, projectPath: string): s
   }
 
   fs.mkdirSync(dir, { recursive: true });
-  // 0600: the file carries the loopback bearer token for Foreman's own server.
+  // 0600: the file carries the loopback bearer token for Wanigan's own server.
   // That token is not the API key and buys nothing off this machine, but it
   // does let anything that reads it submit batches, so it is not world-readable.
   fs.writeFileSync(file, `${JSON.stringify({ mcpServers: entries }, null, 2)}\n`, { mode: 0o600 });

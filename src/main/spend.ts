@@ -5,12 +5,12 @@ import type { BudgetState, Reconciliation } from '../shared/types';
  * One spend model over three surfaces — and two meters.
  *
  * Interactive sessions and headless runs report their own cost: the Claude Code
- * CLI computes it and Foreman banks the number it is handed. Batch runs are
- * priced here in Foreman, by multiplying the token counts the Batches API
+ * CLI computes it and Wanigan banks the number it is handed. Batch runs are
+ * priced here in Wanigan, by multiplying the token counts the Batches API
  * returned against the local table in batch/pricing.ts. Those are different
  * instruments measuring different things and they will not agree to the cent —
  * a model newer than the pricing table falls back to a default rate, and the
- * CLI's own figure covers turns Foreman never sees a token count for.
+ * CLI's own figure covers turns Wanigan never sees a token count for.
  *
  * So every function here that mixes them keeps the split visible in its return
  * shape rather than handing back a single total and calling it the bill. A
@@ -20,10 +20,10 @@ import type { BudgetState, Reconciliation } from '../shared/types';
  * Two different splits appear below, on purpose:
  *   - by SURFACE (sessions / batches / headless) — unifiedSpend, spendBySurface,
  *     effortDistribution, unifiedCacheRate. This is "where the work happened".
- *   - by METER (CLI-reported / Foreman-priced) — spendByProject, BudgetState.
+ *   - by METER (CLI-reported / Wanigan-priced) — spendByProject, BudgetState.
  *     Headless sits with sessions there, because both of those numbers come
  *     from the CLI's own accounting and only the batch column is arithmetic
- *     Foreman did itself.
+ *     Wanigan did itself.
  *
  * Nothing here imports otel.ts. The telemetry collector may never have started
  * — it is a setting the user can switch off — but the tables it writes are
@@ -118,7 +118,7 @@ function headlessUsdByDay(sinceMs: number): Map<string, number> {
  * batch runs and headless fan-outs as three separate series.
  *
  * They stay three series and are never pre-summed here. sessionUsd and
- * headlessUsd are the CLI's own numbers; batchUsd is Foreman's arithmetic over
+ * headlessUsd are the CLI's own numbers; batchUsd is Wanigan's arithmetic over
  * the local pricing table. A caller is free to stack them into one total, but
  * it does so knowing it has added two meters together.
  */
@@ -154,13 +154,13 @@ export type ProjectSpend = {
  *
  * Split by meter, not by surface: `sessionUsd` is everything the CLI billed for
  * itself in this project — interactive sessions AND headless runs — and
- * `batchUsd` is what Foreman priced from token counts. `total` is exactly their
- * sum, so the column Foreman computed stays separable from the column it was
+ * `batchUsd` is what Wanigan priced from token counts. `total` is exactly their
+ * sum, so the column Wanigan computed stays separable from the column it was
  * handed.
  *
  * Spend that cannot be attributed to a project lands under a null id rather
  * than being dropped. A session started before its repo was added to the
- * project list, or telemetry that arrived without Foreman's resource
+ * project list, or telemetry that arrived without Wanigan's resource
  * attribute, is still money.
  */
 export function spendByProject(days?: number): ProjectSpend[] {
@@ -348,7 +348,7 @@ export function effortDistribution(
 
 const CACHE_NOTE_CLI =
   'Counted by the Claude Code CLI itself and reported over OTLP — the agent’s own token ' +
-  'counters, not Foreman’s arithmetic.';
+  'counters, not Wanigan’s arithmetic.';
 
 /**
  * Named in the returned data, not buried in a source comment, because it is the
@@ -455,7 +455,7 @@ function tokenTypeOf(attrs: string): string {
  * — the CLI calls the Messages API — so it crosses over at 1x.
  *
  * Doubling the session line too would be the flattering mistake: it would
- * invent a saving Foreman never made, and it would grow with exactly the
+ * invent a saving Wanigan never made, and it would grow with exactly the
  * surface a user spends most of their day in, so the invented number would end
  * up the largest one on the chart.
  */
@@ -648,7 +648,7 @@ export function budgetBreached(): BudgetState[] {
 
 /**
  * The Admin API's cost report is raw HTTP — it is not in the SDK — and it needs
- * a different credential from everything else Foreman does.
+ * a different credential from everything else Wanigan does.
  *
  * That credential is read from ANTHROPIC_ADMIN_KEY and from nowhere else. It is
  * deliberately not the run key, and this module does not import getKey() at all
@@ -724,10 +724,10 @@ function isoOrThrow(value: string, edge: string): string {
 }
 
 /**
- * Foreman's own batch arithmetic against what the organisation was actually
+ * Wanigan's own batch arithmetic against what the organisation was actually
  * billed, for one window.
  *
- * Only batch runs are compared, because they are the only spend Foreman prices
+ * Only batch runs are compared, because they are the only spend Wanigan prices
  * itself. Session and headless costs come from the CLI and are already the
  * biller's own number, so reconciling those against the bill would be comparing
  * a figure to itself and calling the agreement a result.
@@ -758,7 +758,7 @@ export async function reconcile(from: string, to: string): Promise<Reconciliatio
   const localByModel = new Map(local.map((r) => [r.model, r.usd]));
   const localUsd = local.reduce((a, r) => a + r.usd, 0);
 
-  /** Foreman's side only. Reported stays 0 so nothing reads as agreement. */
+  /** Wanigan's side only. Reported stays 0 so nothing reads as agreement. */
   const unreconciled = (note: string): Reconciliation => ({
     localUsd,
     reportedUsd: 0,
@@ -774,10 +774,10 @@ export async function reconcile(from: string, to: string): Promise<Reconciliatio
   if (!key) {
     return unreconciled(
       'No Admin API key is set, so there is nothing to reconcile against — the figures below are ' +
-      'Foreman’s own arithmetic only. Set ANTHROPIC_ADMIN_KEY in the environment before launching ' +
-      'Foreman to enable this. Foreman will not reuse the key it sends batches with: an admin key ' +
+      'Wanigan’s own arithmetic only. Set ANTHROPIC_ADMIN_KEY in the environment before launching ' +
+      'Wanigan to enable this. Wanigan will not reuse the key it sends batches with: an admin key ' +
       'can read organisation membership, workspaces and API keys, so granting one is a separate ' +
-      'decision from letting Foreman run batches.'
+      'decision from letting Wanigan run batches.'
     );
   }
 
@@ -814,7 +814,7 @@ export async function reconcile(from: string, to: string): Promise<Reconciliatio
         }
         return unreconciled(
           `The Admin API returned ${r.status}${detail}, so this window could not be reconciled. The ` +
-          'figures below are Foreman’s own arithmetic only. Cost data can lag a request by a few ' +
+          'figures below are Wanigan’s own arithmetic only. Cost data can lag a request by a few ' +
           'minutes; try again shortly.'
         );
       }
@@ -822,7 +822,7 @@ export async function reconcile(from: string, to: string): Promise<Reconciliatio
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return unreconciled(
-        `Could not reach the Admin API (${msg}). The figures below are Foreman’s own arithmetic ` +
+        `Could not reach the Admin API (${msg}). The figures below are Wanigan’s own arithmetic ` +
         'only — nothing has been compared against the bill.'
       );
     }
@@ -841,21 +841,21 @@ export async function reconcile(from: string, to: string): Promise<Reconciliatio
 
   if (unknownShape) {
     return unreconciled(
-      'The cost report came back in a shape Foreman does not recognise, so nothing was compared. ' +
-      'That usually means the endpoint has changed; the figures below are Foreman’s own arithmetic only.'
+      'The cost report came back in a shape Wanigan does not recognise, so nothing was compared. ' +
+      'That usually means the endpoint has changed; the figures below are Wanigan’s own arithmetic only.'
     );
   }
   if (page) {
     // Left the loop still holding a cursor. A partial reported total against a
-    // full local total would read as a pricing win Foreman did not make.
+    // full local total would read as a pricing win Wanigan did not make.
     return unreconciled(
       `The cost report did not finish paginating within ${REPORT_MAX_PAGES} pages, so the comparison ` +
       'would have been against a partial bill. Reconcile a shorter window; the figures below are ' +
-      'Foreman’s own arithmetic only.'
+      'Wanigan’s own arithmetic only.'
     );
   }
 
-  // Foreman prices batch traffic, so batch is what it can be held to. When the
+  // Wanigan prices batch traffic, so batch is what it can be held to. When the
   // report carries a service tier, compare like with like. When it carries
   // none, fall back to the whole bill and say so — that total includes every
   // other thing the organisation did with the API.
@@ -866,16 +866,16 @@ export async function reconcile(from: string, to: string): Promise<Reconciliatio
   // and a window whose batch charges have not landed yet — or landed on the
   // neighbouring UTC day — leaves this filter empty. Falling through would
   // report reportedUsd 0, a delta equal to the entire local total and 0%
-  // accuracy, which reads exactly like Foreman overcharging by 100%.
+  // accuracy, which reads exactly like Wanigan overcharging by 100%.
   if (relevant.length === 0) {
     return unreconciled(
       tiered
         ? 'The cost report carried no batch-tier charges for this window, so there was nothing to ' +
-          'compare against — the figures below are Foreman’s own arithmetic only. Cost data can lag ' +
+          'compare against — the figures below are Wanigan’s own arithmetic only. Cost data can lag ' +
           'a request by minutes to hours, and a batch that finished near midnight UTC may be billed ' +
           'on the next day; try a wider window, or again shortly.'
         : 'The cost report carried no charges at all for this window, so there was nothing to ' +
-          'compare against — the figures below are Foreman’s own arithmetic only. Cost data can lag ' +
+          'compare against — the figures below are Wanigan’s own arithmetic only. Cost data can lag ' +
           'a request by minutes to hours; try a wider window, or again shortly.'
     );
   }
@@ -913,9 +913,9 @@ export async function reconcile(from: string, to: string): Promise<Reconciliatio
     from: startIso,
     to: endIso,
     note:
-      `${scope} The local figures are Foreman’s own, computed from the batch pricing table. The ` +
+      `${scope} The local figures are Wanigan’s own, computed from the batch pricing table. The ` +
       'reported figures are the organisation’s actual charges and cover everything billed to this ' +
-      'account, including work Foreman never ran — so a delta is not by itself an error in Foreman.',
+      'account, including work Wanigan never ran — so a delta is not by itself an error in Wanigan.',
   };
 }
 
@@ -945,7 +945,7 @@ async function errorType(r: Response): Promise<string> {
  * the *token* guess — the sampled input lengths and the assumption about output
  * length — and says nothing about whether the rates themselves are right. Rates
  * are what reconcile() tests, against the bill. A ratio of 1.00 on this list is
- * not evidence that Foreman's dollar figures are correct.
+ * not evidence that Wanigan's dollar figures are correct.
  *
  * ratio is actual / estimated, so above 1 means the run cost more than it
  * promised. That is the direction that matters, and it sorts by money at stake

@@ -215,7 +215,7 @@ export function hasProviderKey(id: string): boolean {
 
 export function getProviderKey(id: string): string | null {
   // An explicit env var still wins, for CI and scripted runs.
-  const fromEnv = process.env[`FOREMAN_${id.toUpperCase()}_KEY`];
+  const fromEnv = process.env[`WANIGAN_${id.toUpperCase()}_KEY`];
   if (fromEnv) return fromEnv;
   try {
     return safeStorage.decryptString(fs.readFileSync(providerKeyFile(id))).trim() || null;
@@ -230,7 +230,7 @@ export function setProviderKey(id: string, key: string) {
   if (!safeStorage.isEncryptionAvailable()) {
     throw new Error(
       'The OS keychain is unavailable, so this key cannot be stored safely. ' +
-      'Foreman will not write a credential to disk in plaintext.'
+      'Wanigan will not write a credential to disk in plaintext.'
     );
   }
   fs.writeFileSync(providerKeyFile(id), safeStorage.encryptString(trimmed), { mode: 0o600 });

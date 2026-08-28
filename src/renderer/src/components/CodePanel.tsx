@@ -51,17 +51,17 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
   const [reverting, setReverting] = useState(false);
   const [reverted, setReverted] = useState<string | null>(null);
 
-  useEffect(() => { window.foreman.code.editors().then(setEditors).catch(() => {}); }, []);
+  useEffect(() => { window.wanigan.code.editors().then(setEditors).catch(() => {}); }, []);
 
   useEffect(() => {
     if (!sessionId) { setBaseHead(null); return; }
-    window.foreman.sessions.baseline(sessionId)
+    window.wanigan.sessions.baseline(sessionId)
       .then((b) => setBaseHead(b?.head ?? null))
       .catch(() => setBaseHead(null));
   }, [sessionId]);
 
   const loadChanges = useCallback(() => {
-    window.foreman.code.changes(projectPath, sessionId).then(setChanges).catch(() => {});
+    window.wanigan.code.changes(projectPath, sessionId).then(setChanges).catch(() => {});
   }, [projectPath, sessionId]);
 
   // Poll while an agent is working — the whole point is watching edits land.
@@ -82,7 +82,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
   useEffect(() => {
     if (!sessionId) return;
     let timer: number | undefined;
-    const off = window.foreman.on.sessionEvent((e) => {
+    const off = window.wanigan.on.sessionEvent((e) => {
       if (e.sessionId !== sessionId || !e.paths?.length) return;
       const rels = e.paths.map(toRel);
       const at = Date.now();
@@ -115,13 +115,13 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
 
   useEffect(() => {
     if (tab !== 'files') return;
-    window.foreman.code.list(projectPath, dir).then(setEntries).catch((e) => setErr(String(e.message ?? e)));
+    window.wanigan.code.list(projectPath, dir).then(setEntries).catch((e) => setErr(String(e.message ?? e)));
   }, [tab, dir, projectPath]);
 
   async function askRevert(p: string) {
     const f = changes.files.find((x) => x.path === p);
     try {
-      setPlan(await window.foreman.revert.plan(projectPath, p, baseHead, f?.preexisting === true));
+      setPlan(await window.wanigan.revert.plan(projectPath, p, baseHead, f?.preexisting === true));
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }
 
@@ -130,7 +130,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
     setReverting(true);
     try {
       const f = changes.files.find((x) => x.path === plan.file);
-      const r = await window.foreman.revert.file(projectPath, plan.file, baseHead, f?.preexisting === true);
+      const r = await window.wanigan.revert.file(projectPath, plan.file, baseHead, f?.preexisting === true);
       setReverted(r.detail);
       setPlan(null);
       if (r.ok) { loadChanges(); if (sel === plan.file) { setSel(null); setDiff(''); } }
@@ -140,13 +140,13 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
 
   async function openDiff(p: string) {
     setSel(p); setFile(null); setPlan(null); setReverted(null);
-    try { setDiff(await window.foreman.code.diff(projectPath, p)); }
+    try { setDiff(await window.wanigan.code.diff(projectPath, p)); }
     catch (e) { setDiff(''); setErr(e instanceof Error ? e.message : String(e)); }
   }
 
   async function openFile(rel: string) {
     try {
-      const f = await window.foreman.code.read(projectPath, rel);
+      const f = await window.wanigan.code.read(projectPath, rel);
       setFile({ rel, ...f }); setSel(null); setDiff('');
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }
@@ -207,7 +207,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
           {changes.branch && <span className="faint mono" style={{ fontSize: 10.5 }}>{changes.branch}</span>}
           <button className="btn" style={{ padding: '3px 9px', fontSize: 11.5 }}
                   title={editor ? `Open in ${editor.label}` : 'No editor CLI found — opens in Finder'}
-                  onClick={() => window.foreman.code.open(
+                  onClick={() => window.wanigan.code.open(
                     editor?.path ?? null,
                     target ? `${projectPath}/${target}` : projectPath
                   )}>

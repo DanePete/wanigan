@@ -281,7 +281,7 @@ export async function tick(): Promise<void> {
     // take Electron down with every live PTY, or vanish with no trace of why
     // the queue stopped moving. A logged, skipped tick recovers on the next
     // interval.
-    console.warn('[foreman] queue dispatch failed; skipping this tick:', e);
+    console.warn('[wanigan] queue dispatch failed; skipping this tick:', e);
   } finally {
     ticking = false;
   }
@@ -457,7 +457,7 @@ function recoverOrphans(): boolean {
     "UPDATE queue SET state='waiting', started_at=NULL, blocked_by=? WHERE id=? AND state='running'"
   );
   for (const o of orphans) {
-    stmt.run('Foreman restarted while this was running — it is queued again from the start.', o.id);
+    stmt.run('Wanigan restarted while this was running — it is queued again from the start.', o.id);
   }
   return true;
 }

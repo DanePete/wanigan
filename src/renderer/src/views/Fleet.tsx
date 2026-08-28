@@ -99,7 +99,7 @@ export default function Fleet({ projects = [], onOpenSession }: {
   const loadSparks = useCallback(async (ids: string[]) => {
     if (!ids.length) return;
     const pairs = await Promise.all(ids.map(async (id) => {
-      try { return [id, await window.foreman.usage.throughput(id, BUCKETS)] as const; }
+      try { return [id, await window.wanigan.usage.throughput(id, BUCKETS)] as const; }
       catch { return [id, [] as number[]] as const; }
     }));
     if (!alive.current) return;
@@ -120,11 +120,11 @@ export default function Fleet({ projects = [], onOpenSession }: {
     if (busy.current) { again.current = true; return; }
     busy.current = true;
     try {
-      const list = await window.foreman.sessions.list();
+      const list = await window.wanigan.sessions.list();
       const ids = list.map((s) => s.id);
       const [att, use] = await Promise.all([
-        window.foreman.attention.list(),
-        ids.length ? window.foreman.usage.many(ids) : Promise.resolve({} as Record<string, SessionUsage>),
+        window.wanigan.attention.list(),
+        ids.length ? window.wanigan.usage.many(ids) : Promise.resolve({} as Record<string, SessionUsage>),
       ]);
       if (!alive.current) return;
       setSessions(list);
@@ -161,7 +161,7 @@ export default function Fleet({ projects = [], onOpenSession }: {
   useEffect(() => {
     alive.current = true;
     void load(true);
-    window.foreman.policy.defaultTrust().then(setDefaultTrust).catch(() => {});
+    window.wanigan.policy.defaultTrust().then(setDefaultTrust).catch(() => {});
 
     const timer = setInterval(() => {
       // A hidden window is a window nobody is reading; polling it only burns
@@ -180,9 +180,9 @@ export default function Fleet({ projects = [], onOpenSession }: {
     };
     const onVisible = () => { if (!document.hidden) nudge(); };
     document.addEventListener('visibilitychange', onVisible);
-    const offEvent = window.foreman.on.sessionEvent(nudge);
-    const offExit = window.foreman.on.exit(nudge);
-    const offList = window.foreman.on.sessions((list) => { setSessions(list); nudge(); });
+    const offEvent = window.wanigan.on.sessionEvent(nudge);
+    const offExit = window.wanigan.on.exit(nudge);
+    const offList = window.wanigan.on.sessions((list) => { setSessions(list); nudge(); });
 
     return () => {
       alive.current = false;
@@ -293,7 +293,7 @@ export default function Fleet({ projects = [], onOpenSession }: {
         <Note tone="error">
           <strong>Could not read the fleet.</strong> {err}
           <div style={{ marginTop: 6 }}>
-            The main process answers these calls; if Foreman is still starting, the database is not
+            The main process answers these calls; if Wanigan is still starting, the database is not
             open yet. Retry, and if it keeps failing reopen the window.
           </div>
           <button className="btn fleet-retry" style={{ marginTop: 8 }} onClick={() => void load(true)}>

@@ -32,7 +32,7 @@ const baseCfg = (over: Partial<RunConfig> = {}): RunConfig => ({
  * API key is a test suite nobody runs.
  */
 export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-p2-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-p2-'));
 
   /* ── phase 9 · worktrees against a real repo ───────────────────────── */
   say('── phase 9 · worktrees');
@@ -41,7 +41,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const git = (...a: string[]) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe' }).toString();
   try {
     git('init', '-q', '-b', 'main');
-    git('config', 'user.email', 'smoke@foreman.test');
+    git('config', 'user.email', 'smoke@wanigan.test');
     git('config', 'user.name', 'Smoke');
     fs.writeFileSync(path.join(repo, 'a.txt'), 'one\n');
     git('add', '-A');
@@ -56,7 +56,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // own listings and globs, and an agent will find it and get confused.
     check(!path.resolve(wt.path).startsWith(path.resolve(repo) + path.sep),
       'the worktree lives outside the repo it belongs to');
-    check((wt.branch ?? '').includes('foreman/'), 'the branch is namespaced to Foreman', wt.branch);
+    check((wt.branch ?? '').includes('wanigan/'), 'the branch is namespaced to Wanigan', wt.branch);
 
     const listed = await worktrees.listWorktrees(repo);
     check(listed.some((w) => w.path === wt.path), 'the worktree is listed by git');
@@ -162,7 +162,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const cfgPath = mcpRegistry.writeMcpConfig(null, tmp);
   check(cfgPath !== null && fs.existsSync(cfgPath), 'an .mcp.json-shaped config is generated');
   if (cfgPath) {
-    // Never into the user's repo: the config belongs to Foreman's own storage.
+    // Never into the user's repo: the config belongs to Wanigan's own storage.
     check(!path.resolve(cfgPath).startsWith(path.resolve(tmp) + path.sep),
       'the generated MCP config is written outside the project');
   }
@@ -242,9 +242,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const home = os.homedir();
   const user = home.split('/').filter(Boolean).pop() ?? 'user';
   const sample = {
-    name: 'foreman',
-    path: home + '/Projects/drupal/foreman',
-    nested: [{ msg: `failed to read ${home}/Projects/drupal/foreman/src/main/git.ts` }],
+    name: 'wanigan',
+    path: home + '/Projects/drupal/wanigan',
+    nested: [{ msg: `failed to read ${home}/Projects/drupal/wanigan/src/main/git.ts` }],
     email: 'alex@example.com',
   };
   const masked = demo.maskOut(sample) as typeof sample;

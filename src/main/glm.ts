@@ -4,7 +4,7 @@ import { GLM_DEFAULT, GLM_SMALL } from './providers';
 /**
  * The GLM model list, fetched rather than hardcoded.
  *
- * Foreman already refuses to hardcode Anthropic's catalog — `GET /v1/models`
+ * Wanigan already refuses to hardcode Anthropic's catalog — `GET /v1/models`
  * is the source of truth there, because a stale table quietly offers the wrong
  * options. Z.ai deserves the same treatment and needs it more: this file
  * shipped with `glm-4.6` as the default while the coding plan had already
@@ -15,7 +15,7 @@ import { GLM_DEFAULT, GLM_SMALL } from './providers';
  * would be a fiction — the Insights view says so rather than inventing one.
  */
 
-const MODELS_URL = process.env.FOREMAN_GLM_MODELS_URL || 'https://api.z.ai/api/paas/v4/models';
+const MODELS_URL = process.env.WANIGAN_GLM_MODELS_URL || 'https://api.z.ai/api/paas/v4/models';
 
 export type GlmModel = { id: string; label: string; source: 'api' | 'fallback' };
 
@@ -48,7 +48,7 @@ export async function glmModels(force = false): Promise<{ models: GlmModel[]; no
   if (!key) {
     return {
       models: FALLBACK, fetchedAt: null,
-      note: 'No Z.ai key yet, so this is Foreman’s local list. Add the key in Settings and it will read the live catalog.',
+      note: 'No Z.ai key yet, so this is Wanigan’s local list. Add the key in Settings and it will read the live catalog.',
     };
   }
   try {
@@ -77,7 +77,7 @@ export async function glmModels(force = false): Promise<{ models: GlmModel[]; no
     return { models, note: null, fetchedAt: cache.at };
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
-    const note = `Could not read Z.ai's catalog (${detail}), so this is Foreman's local list and may be behind.`;
+    const note = `Could not read Z.ai's catalog (${detail}), so this is Wanigan's local list and may be behind.`;
     cache = { at: Date.now(), models: FALLBACK, note };
     return { models: FALLBACK, note, fetchedAt: null };
   }

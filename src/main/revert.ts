@@ -14,7 +14,7 @@ const exec = promisify(execFile);
  * symlink. Those are not edge cases — an agent that runs `mv` or delegates to a
  * subagent produces exactly them.
  *
- * Foreman's baseline is a git commit, and git sees all three. So this is not a
+ * Wanigan's baseline is a git commit, and git sees all three. So this is not a
  * second checkpointing system; it is the revert the first one cannot offer.
  */
 
@@ -55,7 +55,7 @@ export async function planRevert(root: string, file: string, baselineHead: strin
   const abs = inside(root, file);
   if (!abs) {
     return { file, action: 'nothing', preexisting, safe: false,
-             detail: `${file} resolves outside ${root}, so Foreman will not touch it.` };
+             detail: `${file} resolves outside ${root}, so Wanigan will not touch it.` };
   }
   if (!baselineHead) {
     return { file, action: 'nothing', preexisting, safe: false,

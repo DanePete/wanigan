@@ -69,7 +69,7 @@ export default function NewSessionDialog({
   async function browseForFolder() {
     setBrowsing(true);
     try {
-      const p = await window.foreman.projects.pick();
+      const p = await window.wanigan.projects.pick();
       if (p) { setPicked((x) => [...x, p]); setProjectId(p.id); }
     } catch { /* the dialog was cancelled, or the folder vanished */ }
     finally { setBrowsing(false); }
@@ -93,8 +93,8 @@ export default function NewSessionDialog({
     let live = true;
     setTrust(null); setTrustErr(null);
     Promise.all([
-      window.foreman.policy.trust(projectId || null),
-      window.foreman.policy.defaultTrust(),
+      window.wanigan.policy.trust(projectId || null),
+      window.wanigan.policy.defaultTrust(),
     ])
       .then(([t, d]) => { if (live) { setTrust(t); setTrustDefault(d); } })
       .catch((e) => { if (live) setTrustErr(e instanceof Error ? e.message : String(e)); });
@@ -188,7 +188,7 @@ export default function NewSessionDialog({
           {trustErr ? (
             <p style={{ color: 'var(--bad)', fontSize: 12, lineHeight: 1.45 }}>
               <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>✕</span>
-              Foreman could not read this project's trust level: {trustErr} The session will still start
+              Wanigan could not read this project's trust level: {trustErr} The session will still start
               under whatever the main process decides — close this dialog and reopen it to read again.
             </p>
           ) : !trust ? (

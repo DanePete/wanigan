@@ -16,7 +16,7 @@ import os from 'node:os';
  * what the agent is about to be handed.
  *
  * It is a prediction and it says so. The InstructionsLoaded hook is the only
- * ground truth about what a particular launch loaded; Foreman reconciles the
+ * ground truth about what a particular launch loaded; Wanigan reconciles the
  * two once a session has run. Where the documented behaviour is genuinely
  * ambiguous — which project file wins when both ./CLAUDE.md and
  * ./.claude/CLAUDE.md exist, where rules interleave with memory — the
@@ -52,7 +52,7 @@ const BRACE_PATTERN_BUDGET = 1000;
 const BRACE_BYTE_BUDGET = 4 * 1024 * 1024;
 
 /**
- * How much of any one file Foreman itself pulls into memory. Claude Code will
+ * How much of any one file Wanigan itself pulls into memory. Claude Code will
  * happily load 4 MiB; the main process holding several of those while the user
  * clicks around is a different matter, so the scan is capped and every file it
  * had to cut is told so in its own warnings.
@@ -203,12 +203,12 @@ export function readInstruction(p: string): { text: string; truncated: boolean; 
     st = fs.statSync(p);
   } catch {
     throw new Error(
-      `There is no readable file at ${p}. It was renamed or deleted since Foreman scanned the project — refresh the instruction chain.`
+      `There is no readable file at ${p}. It was renamed or deleted since Wanigan scanned the project — refresh the instruction chain.`
     );
   }
   if (!st.isFile()) throw new Error(`${p} is a directory, not an instruction file, so there is nothing to show.`);
   const out = readCapped(p, SCAN_BYTES);
-  if (!out) throw new Error(`Foreman could not read ${p}. Check the file's permissions.`);
+  if (!out) throw new Error(`Wanigan could not read ${p}. Check the file's permissions.`);
   return out;
 }
 
@@ -703,10 +703,10 @@ function record(ctx: Ctx, p: string, scope: InstructionScope, opts: RecordOpts =
           text = read.text;
           lines = read.truncated ? countLinesOnDisk(p, bytes) : countLines(read.text);
           if (read.truncated) {
-            warnings.push(`Foreman read only the first ${fmtBytes(SCAN_BYTES)} of this file, so imports below that point are not listed here.`);
+            warnings.push(`Wanigan read only the first ${fmtBytes(SCAN_BYTES)} of this file, so imports below that point are not listed here.`);
           }
         } else {
-          warnings.push('Foreman could not read this file. Check its permissions — Claude Code will hit the same wall.');
+          warnings.push('Wanigan could not read this file. Check its permissions — Claude Code will hit the same wall.');
         }
       }
     }
@@ -937,7 +937,7 @@ export function resolveInstructions(projectPath: string): InstructionChain {
   let st: fs.Stats | null = null;
   try { st = fs.statSync(abs); } catch { st = null; }
   if (!st?.isDirectory()) {
-    throw new Error(`There is no directory at ${abs}, so Foreman cannot resolve its CLAUDE.md chain. Re-add the project, or pick the folder you actually launch sessions in.`);
+    throw new Error(`There is no directory at ${abs}, so Wanigan cannot resolve its CLAUDE.md chain. Re-add the project, or pick the folder you actually launch sessions in.`);
   }
 
   const hit = cache.get(abs);

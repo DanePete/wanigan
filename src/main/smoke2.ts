@@ -23,7 +23,7 @@ type Say = (s: string) => void;
  * authenticated hook post, and resolution against a repo built on disk.
  */
 export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-phases-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-phases-'));
   // Telemetry deltas accumulate in SQLite and are SUPPOSED to survive a restart,
   // so a fixed session id makes the second run against the same database read
   // the first run's totals. Unique per run, and assert on the delta.
@@ -37,8 +37,8 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   const env = otel.otelEnv(SID);
   check(env.CLAUDE_CODE_ENABLE_TELEMETRY === '1', 'telemetry enabled in the spawn env');
   check(
-    (env.OTEL_RESOURCE_ATTRIBUTES ?? '').includes(`foreman.session.id=${SID}`),
-    'session id rides the resource attributes — the join key back to Foreman'
+    (env.OTEL_RESOURCE_ATTRIBUTES ?? '').includes(`wanigan.session.id=${SID}`),
+    'session id rides the resource attributes — the join key back to Wanigan'
   );
   check(
     env.OTEL_LOG_USER_PROMPTS !== '1' && env.OTEL_LOG_ASSISTANT_RESPONSES !== '1',
@@ -48,7 +48,7 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   const nowNs = String(Date.now() * 1_000_000);
   const metricPayload = {
     resourceMetrics: [{
-      resource: { attributes: [{ key: 'foreman.session.id', value: { stringValue: SID } }] },
+      resource: { attributes: [{ key: 'wanigan.session.id', value: { stringValue: SID } }] },
       scopeMetrics: [{
         metrics: [
           { name: 'claude_code.cost.usage', sum: { dataPoints: [
@@ -65,7 +65,7 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   const tok = otel.collectorToken() ?? '';
   const post = (body: string) => fetch(`http://127.0.0.1:${port}/v1/metrics`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-foreman-token': tok },
+    headers: { 'content-type': 'application/json', 'x-wanigan-token': tok },
     body,
   });
 

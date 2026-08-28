@@ -59,9 +59,9 @@ export default function Timeline({ sessionId, onOpenFile }: {
   const load = useCallback(async () => {
     try {
       const [ev, ts, lv] = await Promise.all([
-        window.foreman.events.session(sessionId, FETCH),
-        window.foreman.events.tools(sessionId),
-        window.foreman.events.live(sessionId),
+        window.wanigan.events.session(sessionId, FETCH),
+        window.wanigan.events.tools(sessionId),
+        window.wanigan.events.live(sessionId),
       ]);
       setAll(ev);
       setTools(ts);
@@ -81,10 +81,10 @@ export default function Timeline({ sessionId, onOpenFile }: {
   }, [load]);
 
   // Whether the bus is on at all decides which empty state is honest: "nothing
-  // happened yet" and "Foreman is not listening" look identical on the rail.
+  // happened yet" and "Wanigan is not listening" look identical on the rail.
   useEffect(() => {
     let alive = true;
-    window.foreman.prefs.all()
+    window.wanigan.prefs.all()
       .then((s) => { if (alive) setHooksOn(s.hooks); })
       .catch(() => { if (alive) setHooksOn(null); });
     return () => { alive = false; };
@@ -93,7 +93,7 @@ export default function Timeline({ sessionId, onOpenFile }: {
   // Live events arrive for every session in the app; only ours belong here.
   useEffect(() => {
     let timer: number | undefined;
-    const off = window.foreman.on.sessionEvent((e) => {
+    const off = window.wanigan.on.sessionEvent((e) => {
       if (e.sessionId !== sessionId) return;
       setNow(Date.now());
       setAll((prev) => (prev.some((x) => x.id === e.id) ? prev : [e, ...prev].slice(0, FETCH)));
@@ -102,8 +102,8 @@ export default function Timeline({ sessionId, onOpenFile }: {
       if (timer === undefined) {
         timer = window.setTimeout(() => {
           timer = undefined;
-          window.foreman.events.tools(sessionId).then(setTools).catch(() => {});
-          window.foreman.events.live(sessionId).then(setLive).catch(() => {});
+          window.wanigan.events.tools(sessionId).then(setTools).catch(() => {});
+          window.wanigan.events.live(sessionId).then(setLive).catch(() => {});
         }, 1200);
       }
     });
@@ -151,8 +151,8 @@ export default function Timeline({ sessionId, onOpenFile }: {
         <Note tone="error">
           <strong>Could not read this session's events.</strong> {err}
         </Note>
-        <p className="tl-p dim">The event log is a table in Foreman's own database. Retry below; if it
-          keeps failing, another Foreman window may hold the database open — quit that one first.</p>
+        <p className="tl-p dim">The event log is a table in Wanigan's own database. Retry below; if it
+          keeps failing, another Wanigan window may hold the database open — quit that one first.</p>
         <button className="btn tl-btn" onClick={() => { setPhase('loading'); void load(); }}>Retry</button>
       </div>
     );
@@ -167,7 +167,7 @@ export default function Timeline({ sessionId, onOpenFile }: {
           <>
             <Note tone="warn">
               <span className="tl-glyph-inline" aria-hidden="true">⏸</span>
-              <strong>The hook bus is off.</strong> Foreman only knows what an agent did because the
+              <strong>The hook bus is off.</strong> Wanigan only knows what an agent did because the
               CLI posts each tool call to a loopback listener. With hooks off nothing is recorded, so
               this rail stays empty whether the agent is flat out or asleep.
             </Note>

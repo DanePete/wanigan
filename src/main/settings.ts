@@ -1,5 +1,5 @@
 import { db } from './db';
-import { DEFAULT_SLOTS, type ForemanSettings, type MotionSetting, type QueueSlots, type TrustLevel } from '../shared/types';
+import { DEFAULT_SLOTS, type WaniganSettings, type MotionSetting, type QueueSlots, type TrustLevel } from '../shared/types';
 
 /**
  * Small key/value settings. The spend cap is the one that matters: a batch is
@@ -29,7 +29,7 @@ export function spendCap(): number {
 
 /* ── feature flags ──────────────────────────────────────────────────────
    Everything phases 1-20 added is switchable, and the two that observe a
-   running agent (telemetry, hooks) default ON because they are how Foreman
+   running agent (telemetry, hooks) default ON because they are how Wanigan
    knows anything at all — but they are the first things a suspicious user
    will want to turn off, so they must be one click away and honestly named.
    ──────────────────────────────────────────────────────────────────────── */
@@ -68,7 +68,7 @@ export function eventRetentionDays(): number {
   return Number.isFinite(n) && n > 0 ? n : 30;
 }
 
-export function allSettings(): ForemanSettings {
+export function allSettings(): WaniganSettings {
   const f = flags();
   return {
     spendCapUsd: spendCap(),

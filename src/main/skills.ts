@@ -6,7 +6,7 @@ import { listProjects, projectById } from './store';
 /**
  * Skill discovery, from disk.
  *
- * Three of the four sources are real directories Foreman can read and keep
+ * Three of the four sources are real directories Wanigan can read and keep
  * honest: the user's own skills, a project's checked-in skills, and whatever
  * plugins have installed. The fourth — the skills bundled inside Claude Code
  * itself — deliberately is not, and pretending otherwise would be the whole
@@ -337,10 +337,10 @@ export function skillBody(skillPath: string): { text: string; truncated: boolean
   try {
     real = fs.realpathSync(skillPath);
   } catch {
-    throw new Error(`Foreman could not open ${skillPath}. Refresh the skill list — the file has probably moved or been deleted.`);
+    throw new Error(`Wanigan could not open ${skillPath}. Refresh the skill list — the file has probably moved or been deleted.`);
   }
   if (!skillRoots().some((root) => isInside(root, real))) {
-    throw new Error(`${skillPath} is not inside a skills directory Foreman knows about, so it will not be read. Open a skill listed in the Skills view instead.`);
+    throw new Error(`${skillPath} is not inside a skills directory Wanigan knows about, so it will not be read. Open a skill listed in the Skills view instead.`);
   }
 
   // Read only the cap. readFileSync would load every byte before the slice

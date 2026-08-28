@@ -22,7 +22,7 @@ export function db(): Database.Database {
   fs.mkdirSync(resultsDir(), { recursive: true });
   let d: Database.Database;
   try {
-    d = new Database(path.join(dataDir(), 'foreman.db'));
+    d = new Database(path.join(dataDir(), 'wanigan.db'));
   } catch (e) {
     if ((e as { code?: string }).code === 'ERR_DLOPEN_FAILED') {
       throw new Error(
@@ -357,7 +357,7 @@ function migratePhases(d: Database.Database) {
     -- P25 · durable schedules ------------------------------------------
     -- Claude Code's own /loop is session-scoped and expires after seven days,
     -- which is the right call for something that only fires while a terminal
-    -- is open. Foreman's whole reason to hold this is that it is not a
+    -- is open. Wanigan's whole reason to hold this is that it is not a
     -- session: these survive a quit, and they do not expire.
     CREATE TABLE IF NOT EXISTS schedules (
       id           TEXT PRIMARY KEY,

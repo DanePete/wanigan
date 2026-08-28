@@ -64,7 +64,7 @@ export async function startHookServer(): Promise<{ port: number; token: string }
 
   await new Promise<void>((resolve, reject) => {
     const fail = (e: Error) => reject(new Error(
-      `Foreman could not open its hook listener on 127.0.0.1: ${e.message}. ` +
+      `Wanigan could not open its hook listener on 127.0.0.1: ${e.message}. ` +
       'Sessions still run; turn Hooks off in Settings to stop trying.'
     ));
     srv.once('error', fail);
@@ -77,7 +77,7 @@ export async function startHookServer(): Promise<{ port: number; token: string }
   const addr = srv.address();
   if (typeof addr !== 'object' || addr === null) {
     srv.close();
-    throw new Error('The hook listener started without a port. Restart Foreman.');
+    throw new Error('The hook listener started without a port. Restart Wanigan.');
   }
   // A socket error after startup (an agent killed mid-post) must not reach the
   // process-level 'error' handler and take the app down.
@@ -133,22 +133,22 @@ function hooksDir(): string {
  * Writes the hook config for one session and returns its absolute path, or null
  * when hooks are off or the listener never came up.
  *
- * The file lives in Foreman's OWN userData directory and is passed to the CLI by
- * path. Foreman never writes into the user's repository — not .claude/settings
+ * The file lives in Wanigan's OWN userData directory and is passed to the CLI by
+ * path. Wanigan never writes into the user's repository — not .claude/settings
  * .json, not .claude/settings.local.json. A tool that edits tracked files to
  * instrument itself shows up in the user's next diff, and in their next commit.
  *
- * Foreman's session id has no home in the hook payload, so it is carried in the
+ * Wanigan's session id has no home in the hook payload, so it is carried in the
  * URL query string and read back off the request. Without it every event would
  * arrive with only the agent's own id, and nothing could be attributed to the
  * pane it belongs to.
  */
-export function writeHookSettings(foremanSessionId: string, projectPath: string): string | null {
+export function writeHookSettings(waniganSessionId: string, projectPath: string): string | null {
   if (!hooksEnabled()) return null;
   const live = info;
   if (!live) return null;
 
-  const url = `http://127.0.0.1:${live.port}/hook?s=${encodeURIComponent(foremanSessionId)}`;
+  const url = `http://127.0.0.1:${live.port}/hook?s=${encodeURIComponent(waniganSessionId)}`;
   const handler = { type: 'http', url, headers: { Authorization: `Bearer ${live.token}` } };
 
   const hooks: Record<string, unknown[]> = {};
@@ -158,20 +158,20 @@ export function writeHookSettings(foremanSessionId: string, projectPath: string)
 
   const dir = hooksDir();
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const file = path.join(dir, `${safeName(foremanSessionId)}.json`);
+  const file = path.join(dir, `${safeName(waniganSessionId)}.json`);
   fs.writeFileSync(file, JSON.stringify({ hooks }, null, 2), { mode: 0o600 });
   // writeFileSync honours mode only when it creates the file; an overwrite keeps
   // whatever the old one had. This file is a bearer credential.
   try { fs.chmodSync(file, 0o600); } catch { /* best effort on odd filesystems */ }
 
-  registered.set(foremanSessionId, { file, projectPath });
+  registered.set(waniganSessionId, { file, projectPath });
   return file;
 }
 
-export function cleanupHookSettings(foremanSessionId: string): void {
-  const reg = registered.get(foremanSessionId);
-  registered.delete(foremanSessionId);
-  const file = reg?.file ?? path.join(hooksDir(), `${safeName(foremanSessionId)}.json`);
+export function cleanupHookSettings(waniganSessionId: string): void {
+  const reg = registered.get(waniganSessionId);
+  registered.delete(waniganSessionId);
+  const file = reg?.file ?? path.join(hooksDir(), `${safeName(waniganSessionId)}.json`);
   try { fs.rmSync(file, { force: true }); } catch { /* already gone */ }
 }
 
@@ -196,7 +196,7 @@ function sweepStaleSettings() {
     if (!name.endsWith('.json')) continue;
     const file = path.join(dir, name);
     try {
-      // Only files older than this process, so a second Foreman instance does
+      // Only files older than this process, so a second Wanigan instance does
       // not pull the settings out from under the first one's live sessions.
       if (fs.statSync(file).mtimeMs < bornAt) fs.rmSync(file, { force: true });
     } catch { /* raced with another sweep */ }
@@ -234,7 +234,7 @@ async function onRequest(req: http.IncomingMessage, res: http.ServerResponse, to
 
   // Answer first, bookkeep after: a tool call must never wait on a SQLite write.
   if (event === 'PreToolUse' && sessionId) {
-    const decision = decide({ ...input, foreman_session_id: sessionId });
+    const decision = decide({ ...input, wanigan_session_id: sessionId });
     reply(res, 200, decision
       ? {
           hookSpecificOutput: {
@@ -327,14 +327,14 @@ function asHookInput(raw: string): HookInput | null {
 }
 
 /**
- * Which Foreman session this event belongs to. The query parameter is the real
+ * Which Wanigan session this event belongs to. The query parameter is the real
  * answer; the cwd fallback covers a config the agent copied to a subagent, which
  * keeps the URL but can lose the query string on some CLI versions.
  */
 function attribute(url: URL, input: HookInput): string | null {
   const q = url.searchParams.get('s');
   if (q) return clip(q, MAX_ID);
-  if (input.foreman_session_id) return clip(input.foreman_session_id, MAX_ID);
+  if (input.wanigan_session_id) return clip(input.wanigan_session_id, MAX_ID);
   const cwd = str(input.cwd);
   if (cwd) {
     for (const [id, reg] of registered) if (reg.projectPath === cwd) return id;
@@ -445,7 +445,7 @@ export function onHookEvent(cb: (e: SessionEvent) => void): () => void {
  * command", never a blob.
  *
  * What is deliberately absent: the submitted prompt, the subagent's prompt, and
- * tool_response. Foreman does not put prompt content or model output on disk,
+ * tool_response. Wanigan does not put prompt content or model output on disk,
  * and a single tool_response can be an entire source file.
  */
 function summarise(event: string, input: HookInput): string | null {

@@ -8,7 +8,7 @@ const exec = promisify(execFile);
 /**
  * Git, for the repo you already have open.
  *
- * Foreman could already read git — diffs, baselines, worktrees — but never act
+ * Wanigan could already read git — diffs, baselines, worktrees — but never act
  * on it, so every commit meant leaving the app. This is the acting half, kept
  * deliberately short of a full client: the operations someone running agents
  * actually performs, and none of the ones where a GUI's guess is worse than a

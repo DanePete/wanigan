@@ -70,7 +70,7 @@ const STRIPPED_ENV = [
   'ORIGINAL_XDG_CURRENT_DESKTOP',
   'GDK_PIXBUF_MODULE_FILE',
   'CHROME_DESKTOP',
-  // Foreman is often launched from inside a Claude Code session. Inheriting
+  // Wanigan is often launched from inside a Claude Code session. Inheriting
   // these makes every spawned agent believe it is a subprocess of that session,
   // which silently disables transcript saving — no history, no --resume.
   'CLAUDE_CODE_CHILD_SESSION',
@@ -81,10 +81,10 @@ const STRIPPED_ENV = [
 const STRIPPED_PREFIXES = ['VSCODE_', 'ELECTRON_IPC', 'npm_'];
 
 /**
- * Telemetry and hooks are how Foreman knows anything about a running agent, and
- * both are set here rather than asked of the user, because Foreman spawns the
+ * Telemetry and hooks are how Wanigan knows anything about a running agent, and
+ * both are set here rather than asked of the user, because Wanigan spawns the
  * CLI and therefore owns its environment. Content logging stays off: prompt and
- * response text are redacted by default and Foreman does not opt in.
+ * response text are redacted by default and Wanigan does not opt in.
  */
 function agentEnv(PATH: string, sessionId: string, providerEnv: Record<string, string> = {}): Record<string, string> {
   const out: Record<string, string> = {};
@@ -177,7 +177,7 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
   const cwd = worktree ?? project.path;
 
   // Hook config and MCP servers are injected with --settings / --mcp-config,
-  // which take a path. That is what keeps Foreman out of the user's repository:
+  // which take a path. That is what keeps Wanigan out of the user's repository:
   // nothing is written into .claude/, and nothing the user shares in git changes.
   const injected: string[] = [];
   if (def.id === 'claude') {

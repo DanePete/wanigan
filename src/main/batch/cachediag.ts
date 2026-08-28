@@ -87,10 +87,10 @@ const MAX_VOLATILE_REPORTED = 3;
  * comment: cache hits inside a batch are best-effort. The API makes no promise
  * about them, and real runs land anywhere from 30% to 98% depending on how the
  * batch gets scheduled. A diagnostic that reads as a guarantee is worse than no
- * diagnostic, because the next zero is then assumed to be a bug in Foreman.
+ * diagnostic, because the next zero is then assumed to be a bug in Wanigan.
  */
 const BEST_EFFORT_NOTE =
-  'Cache hits inside a batch are best-effort — the API does not guarantee them, and real runs land anywhere between 30% and 98% depending on how the batch is scheduled. The rate Foreman shows is measured, never promised.';
+  'Cache hits inside a batch are best-effort — the API does not guarantee them, and real runs land anywhere between 30% and 98% depending on how the batch is scheduled. The rate Wanigan shows is measured, never promised.';
 
 /**
  * Why a run's cache did or did not engage, in plain language, worst cause

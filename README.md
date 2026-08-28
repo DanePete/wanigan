@@ -1,4 +1,4 @@
-# Foreman
+# Wanigan
 
 A desktop control surface for AI work across your repos. Three things in one window:
 
@@ -13,7 +13,7 @@ every repo you own.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│ Foreman  Sessions ②  Fleet ①  Batches ①  Insights  Skills  Context  ⚙  │
+│ Wanigan  Sessions ②  Fleet ①  Batches ①  Insights  Skills  Context  ⚙  │
 ├──────────────┬─────────────────────────────────────────────────────────┤
 │ ⚠ lighthouse │  real PTY · full TUI · permission prompts work          │
 │   waiting 2m │                                                         │
@@ -60,16 +60,16 @@ and an agent will find it and get confused. Merge or discard from the UI;
 discarding a dirty worktree is refused with the count of files it would destroy.
 
 **Attachments.** Drop a screenshot on the terminal, paste one from the
-clipboard, or browse for a PDF. Foreman stages a copy into a directory it
+clipboard, or browse for a PDF. Wanigan stages a copy into a directory it
 controls and passes it with `--add-dir`, then types the reference into the
 prompt without pressing Enter — you write the question and submit it. Formats
 are checked against what the API actually accepts (JPEG, PNG, GIF, WebP and
 nothing else) from the file's magic bytes rather than its extension, because a
 `.png` that is really a HEIC otherwise fails much later and opaquely.
 
-## What Foreman knows about a running session
+## What Wanigan knows about a running session
 
-Claude Code emits OpenTelemetry natively, and Foreman spawns the CLI, so it owns
+Claude Code emits OpenTelemetry natively, and Wanigan spawns the CLI, so it owns
 the environment and points the exporter at itself. A loopback OTLP collector in
 the main process receives cost in USD, tokens split by input/output/cacheRead/
 cacheCreation, lines added and removed, commits, and a per-request event
@@ -83,17 +83,17 @@ port, refuse any non-loopback peer, and the hook bus requires a bearer token
 minted per launch.
 
 **Prompt and response content is never collected.** The CLI redacts it by
-default and Foreman does not opt in; the content-logging variables are pinned
-off rather than merely left unset, because Foreman copies your environment into
+default and Wanigan does not opt in; the content-logging variables are pinned
+off rather than merely left unset, because Wanigan copies your environment into
 the agent and an `OTEL_LOG_USER_PROMPTS=1` in your shell would otherwise flow
 straight through into SQLite.
 
 Both are switchable in Settings, and both default on, because they are how
-Foreman knows anything at all.
+Wanigan knows anything at all.
 
 ## Trust
 
-Foreman spawns agents with permission modes up to `bypassPermissions` and runs
+Wanigan spawns agents with permission modes up to `bypassPermissions` and runs
 shell commands as a batch data source. Both are legitimate; neither should be
 silent. Each project carries a trust level:
 
@@ -101,7 +101,7 @@ silent. Each project carries a trust level:
 |---|---|
 | **Read only** | Reads and searches. Writes, commands and network calls are denied. |
 | **Project** | Writes and commands inside the project directory. Outside it, denied. |
-| **Trusted** | Foreman denies nothing. |
+| **Trusted** | Wanigan denies nothing. |
 
 The decision is made at `PreToolUse` over the hook bus, and every denial and
 escalation lands in an append-only ledger you can export.
@@ -137,7 +137,7 @@ unordered in a `.jsonl` that can be hundreds of megabytes, and anything
 unfinished at 24 hours is gone. The Batches view is the surface that makes that
 survivable.
 
-| Failure mode | What Foreman does |
+| Failure mode | What Wanigan does |
 |---|---|
 | A malformed request isn't reported until the batch ends | **Dry run** sends one row synchronously first |
 | Results return in arbitrary order | Matched by stable `custom_id`, never by position |
@@ -150,7 +150,7 @@ survivable.
 | A repo audit hits the 256 MB ceiling | Rows upload once through the Files API and reference by `file_id`, cached by content hash |
 
 The server-side `fallbacks` parameter that rescues a refusal on another model is
-**rejected by the Batches API**, which is why Foreman does the rescue itself. It
+**rejected by the Batches API**, which is why Wanigan does the rescue itself. It
 also warns that caches are model-scoped, so the rescue pays full input price on
 the prefix the parent had cached.
 
@@ -224,7 +224,7 @@ Two colour decisions there are load-bearing rather than cosmetic:
   red-green colourblind users. Every chart also has a table underneath.
 
 One honesty requirement runs through the whole view: session cost arrives from
-the CLI's own accounting, batch cost is computed by Foreman from a local pricing
+the CLI's own accounting, batch cost is computed by Wanigan from a local pricing
 table, and **they will not agree to the cent**. Every chart that mixes them says
 which meter it is reading. A chart implying one authority over two is a chart
 that lies quietly.
@@ -260,12 +260,12 @@ editor extensions under versioned directories:
 ~/.vscode/extensions/openai.chatgpt-<ver>/bin/macos-aarch64/codex
 ```
 
-`which claude` returns nothing. Foreman resolves the login shell's real PATH (a
+`which claude` returns nothing. Wanigan resolves the login shell's real PATH (a
 GUI app inherits launchd's, not yours) then scans extension directories,
 newest-first.
 
 **`ELECTRON_RUN_AS_NODE` will kill the app.** VS Code sets it for its extension
-host, so a Foreman launched from a VS Code terminal inherits it,
+host, so a Wanigan launched from a VS Code terminal inherits it,
 `require('electron')` returns a path string, and startup dies with
 `Cannot read properties of undefined (reading 'whenReady')`. It is unset in the
 launcher and stripped — with the `VSCODE_*` family — from every spawned agent.
@@ -278,7 +278,7 @@ unpacked from the asar for notarisation to see them as signed binaries.
 
 **Configuration is injected, never written into your repo.** Hook config goes in
 with `--settings <file>` and MCP servers with `--mcp-config <file>`, both
-pointing at generated files under Foreman's own `userData`. Nothing lands in
+pointing at generated files under Wanigan's own `userData`. Nothing lands in
 your `.claude/`, and nothing you share in git changes.
 
 **Auto-memory keys off the git repository, not the working directory.** Every
@@ -304,7 +304,7 @@ src/main/skills.ts      what skills exist here, and honestly what cannot be know
 src/main/context/       CLAUDE.md chain, rules, memory budget, settings precedence
 src/main/spend.ts       one spend model over sessions, batches and headless runs
 src/main/notify.ts      the two expiry clocks, and polling that knows them
-src/main/mcp/           Foreman as an MCP client host, and as a server
+src/main/mcp/           Wanigan as an MCP client host, and as a server
 src/main/db.ts          one SQLite file: projects, runs, batches, requests, events
 src/main/keys.ts        OS-keychain API key storage and live verification
 src/main/batch/         build · estimate · submit · poll · results · files · evals

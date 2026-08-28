@@ -5,7 +5,7 @@ import { projectById } from './store';
 /**
  * Durable schedules.
  *
- * Claude Code has three tiers of this already, and Foreman is only worth
+ * Claude Code has three tiers of this already, and Wanigan is only worth
  * building the middle one. `/loop` fires while a session is open and expires
  * after seven days; cloud routines run without your machine but get a fresh
  * clone and no local files. The gap is a schedule that touches your real

@@ -26,7 +26,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * whole genre.
  */
 
-const KEY = 'foreman.pet.v2';
+const KEY = 'wanigan.pet.v2';
 const TICK_MS = 15_000;
 
 /** Documented P1 timings, in minutes. */
@@ -237,7 +237,7 @@ const BODY = [
   '................',
 ];
 
-/** The hard hat is the only thing that makes it Foreman's pet and not a blob. */
+/** The hard hat is the only thing that makes it Wanigan's pet and not a blob. */
 const HAT = [
   '................',
   '.....HHHHHH.....',
@@ -268,8 +268,8 @@ export default function Pet() {
     const read = async () => {
       try {
         const [ss, att] = await Promise.all([
-          window.foreman.sessions.list(),
-          window.foreman.attention.list(),
+          window.wanigan.sessions.list(),
+          window.wanigan.attention.list(),
         ]);
         if (!live) return;
         setRunning(ss.filter((s) => s.status === 'running').length);
@@ -288,11 +288,11 @@ export default function Pet() {
   /* Collapsed state is remembered: a mascot you have to re-hide every launch
      stops being charming on about the third day. */
   const [open, setOpen] = useState(() => {
-    try { return localStorage.getItem('foreman.pet.open') !== '0'; } catch { return true; }
+    try { return localStorage.getItem('wanigan.pet.open') !== '0'; } catch { return true; }
   });
   const toggle = () => setOpen((v) => {
     const next = !v;
-    try { localStorage.setItem('foreman.pet.open', next ? '1' : '0'); } catch { /* blocked */ }
+    try { localStorage.setItem('wanigan.pet.open', next ? '1' : '0'); } catch { /* blocked */ }
     return next;
   });
   const cv = useRef<HTMLCanvasElement>(null);

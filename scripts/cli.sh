@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Foreman's headless CLI.
+# Wanigan's headless CLI.
 #
 # It runs the app binary with --cli and no window, because better-sqlite3 is
 # compiled against Electron's V8 ABI — a plain `node` script loading it fails

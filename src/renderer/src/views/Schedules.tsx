@@ -40,7 +40,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
   const [hist, setHist] = useState<Record<string, { at: number; status: string; detail: string | null }[]>>({});
 
   const load = useCallback(async () => {
-    try { setList(await window.foreman.schedule.list()); setErr(null); }
+    try { setList(await window.wanigan.schedule.list()); setErr(null); }
     catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }, []);
   useEffect(() => { void load(); const t = setInterval(load, 15_000); return () => clearInterval(t); }, [load]);
@@ -49,7 +49,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
   // cannot read is a schedule you cannot audit.
   useEffect(() => {
     let live = true;
-    window.foreman.schedule.preview(cron)
+    window.wanigan.schedule.preview(cron)
       .then((p) => { if (live) { setPreview(p); setPreviewErr(null); } })
       .catch((e) => { if (live) { setPreview(null); setPreviewErr(e instanceof Error ? e.message : String(e)); } });
     return () => { live = false; };
@@ -58,7 +58,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
   async function create() {
     setBusy(true);
     try {
-      await window.foreman.schedule.create({
+      await window.wanigan.schedule.create({
         name: name.trim() || `${kind} · ${cron}`,
         cron: cron.trim(), kind,
         payload: kind === 'headless' ? { prompt: prompt.trim() } : { prompt: prompt.trim() },
@@ -72,17 +72,17 @@ export default function Schedules({ projects }: { projects: Project[] }) {
   }
 
   async function toggle(s: Schedule) {
-    try { await window.foreman.schedule.setEnabled(s.id, !s.enabled); await load(); }
+    try { await window.wanigan.schedule.setEnabled(s.id, !s.enabled); await load(); }
     catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }
   async function remove(s: Schedule) {
-    try { await window.foreman.schedule.remove(s.id); await load(); }
+    try { await window.wanigan.schedule.remove(s.id); await load(); }
     catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }
   async function history(s: Schedule) {
     if (hist[s.id]) { setHist((h) => { const n = { ...h }; delete n[s.id]; return n; }); return; }
     try {
-      const rows = await window.foreman.schedule.history(s.id, 8);
+      const rows = await window.wanigan.schedule.history(s.id, 8);
       setHist((h) => ({ ...h, [s.id]: rows }));
     } catch { /* a schedule with no history is the normal case */ }
   }
@@ -178,7 +178,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
       {list.length === 0 ? (
         <p className="faint" style={{ marginTop: 18, maxWidth: '60ch', lineHeight: 1.55 }}>
           Nothing scheduled. A nightly headless run across every project is the one most people want first —
-          it is the thing Foreman can do that a session-scoped loop cannot.
+          it is the thing Wanigan can do that a session-scoped loop cannot.
         </p>
       ) : (
         <div className="sc-list">

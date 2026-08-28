@@ -19,7 +19,7 @@ import type { BatchRow, QueueKind } from '../shared/types';
  *
  * Nothing here opens a window and nothing here starts a PTY. Work is written
  * into the same `queue` table the app's dispatcher reads, which means a script
- * can line up work while Foreman is closed and it starts when Foreman opens.
+ * can line up work while Wanigan is closed and it starts when Wanigan opens.
  */
 
 /** The integrator's signal to take this path instead of createWindow(). */
@@ -142,7 +142,7 @@ function cmdRuns(args: string[]): number {
 function cmdStatus(args: string[]): number {
   const runId = args[0];
   if (!runId) {
-    err('status needs a run id. Run "foreman runs" to list them.');
+    err('status needs a run id. Run "wanigan runs" to list them.');
     return USAGE;
   }
 
@@ -227,7 +227,7 @@ function csvCell(v: unknown): string {
 function cmdExport(args: string[]): number {
   const [runId, file] = args;
   if (!runId || !file) {
-    err('export needs a run id and a destination file: foreman export <runId> <file.csv|file.jsonl>');
+    err('export needs a run id and a destination file: wanigan export <runId> <file.csv|file.jsonl>');
     return USAGE;
   }
 
@@ -235,7 +235,7 @@ function cmdExport(args: string[]): number {
   if (!exists) {
     // Without this check the export succeeds and writes a header-only file,
     // and a typo'd run id looks like a run that produced nothing.
-    err(`Run ${runId} not found. Run "foreman runs" to list the ids Foreman knows about.`);
+    err(`Run ${runId} not found. Run "wanigan runs" to list the ids Wanigan knows about.`);
     return FAILED;
   }
 
@@ -283,7 +283,7 @@ function cmdExport(args: string[]): number {
 function cmdQueue(args: string[]): number {
   const [kind, ...rest] = args;
   if (!kind || !rest.length) {
-    err('queue needs a kind and a label: foreman queue <session|headless|batch> <label> [payload-json]');
+    err('queue needs a kind and a label: wanigan queue <session|headless|batch> <label> [payload-json]');
     return USAGE;
   }
   if (!QUEUE_KINDS.includes(kind as QueueKind)) {
@@ -308,7 +308,7 @@ function cmdQueue(args: string[]): number {
   // Nothing starts here on purpose: a session needs a window to attach to, and
   // a runner that ran in this short-lived process would be killed the moment
   // the command returned.
-  out('Queued. It starts when Foreman is open and a slot for that kind is free.');
+  out('Queued. It starts when Wanigan is open and a slot for that kind is free.');
   return OK;
 }
 
@@ -353,7 +353,7 @@ function cmdSessions(args: string[]): number {
 }
 
 function cmdHelp(): number {
-  out(`Foreman CLI — same database, no window.
+  out(`Wanigan CLI — same database, no window.
 
   npm run cli -- <command>
 
@@ -366,7 +366,7 @@ function cmdHelp(): number {
   help                         this
 
 Runs against the same database the app uses, so anything queued here is
-waiting in Foreman the next time you open it.`);
+waiting in Wanigan the next time you open it.`);
   return OK;
 }
 
@@ -382,7 +382,7 @@ export async function runCli(argv: string[]): Promise<number> {
   const command = args[0];
 
   try {
-    // A dock icon bouncing for `foreman runs` looks like the app failed to
+    // A dock icon bouncing for `wanigan runs` looks like the app failed to
     // start; this path has no window for it to point at.
     await app.whenReady();
     if (process.platform === 'darwin') app.dock?.hide();

@@ -53,7 +53,7 @@ import { allSettings, flags, slotsSetting } from './settings';
 /**
  * Batches advance in the main process on a timer. BatchStudio needed a separate
  * poller process because its server could be stopped independently; here the
- * app IS the process, so a batch keeps moving as long as Foreman is open.
+ * app IS the process, so a batch keeps moving as long as Wanigan is open.
  */
 let pollTimer: NodeJS.Timeout | null = null;
 
@@ -117,7 +117,7 @@ app.whenReady().then(async () => {
   }
 
   // Headless verification path: exercise the real main process, then exit.
-  if (process.env.FOREMAN_SMOKE === '1') {
+  if (process.env.WANIGAN_SMOKE === '1') {
     const { runSmoke } = await import('./smoke');
     await runSmoke();
     return;
@@ -156,7 +156,7 @@ async function startServices() {
 
   if (f.telemetry) {
     try { await otel.startCollector(); }
-    catch (e) { console.warn('[foreman] telemetry collector did not start:', e); }
+    catch (e) { console.warn('[wanigan] telemetry collector did not start:', e); }
   }
 
   if (f.hooks) {
@@ -164,7 +164,7 @@ async function startServices() {
       await hooks.startHookServer();
       // Phase 19 decides; phase 2 carries the decision back to the agent.
       hooks.setPolicyHook((input: HookInput) => {
-        const s = listSessions().find((x) => x.id === input.foreman_session_id);
+        const s = listSessions().find((x) => x.id === input.wanigan_session_id);
         const ctx = {
           sessionId: s?.id ?? null,
           projectId: s?.projectId ?? null,
@@ -180,7 +180,7 @@ async function startServices() {
         const w = win;
         if (w && !w.isDestroyed()) w.webContents.send('session:event', e);
       });
-    } catch (e) { console.warn('[foreman] hook bus did not start:', e); }
+    } catch (e) { console.warn('[wanigan] hook bus did not start:', e); }
   }
 
   // Both directions, or neither works: headless hands each repo to the queue,
@@ -225,7 +225,7 @@ async function startServices() {
         });
         return r.response === 1;
       });
-    } catch (e) { console.warn('[foreman] MCP server did not start:', e); }
+    } catch (e) { console.warn('[wanigan] MCP server did not start:', e); }
   }
 
   // Worktrees survive a crash; a stale one costs disk forever, so surface them.
@@ -462,7 +462,7 @@ function registerIpc() {
   handle('policy:export', async () => {
     if (!win) return null;
     const res = await dialog.showSaveDialog(win, {
-      title: 'Export the policy ledger', defaultPath: 'foreman-ledger.jsonl',
+      title: 'Export the policy ledger', defaultPath: 'wanigan-ledger.jsonl',
       filters: [{ name: 'JSONL', extensions: ['jsonl'] }],
     });
     if (res.canceled || !res.filePath) return null;

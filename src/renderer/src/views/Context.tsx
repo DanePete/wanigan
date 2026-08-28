@@ -256,7 +256,7 @@ function Bullets({ items }: { items: string[] }) {
 /** One failed channel, said in a sentence with the thing to do about it. */
 function PanelError({ channel, detail, onRetry }: { channel: string; detail: string; onRetry: () => void }) {
   return (
-    <Callout level="critical" title={`Foreman could not read this. The ${channel} call failed.`}>
+    <Callout level="critical" title={`Wanigan could not read this. The ${channel} call failed.`}>
       <p className="mono" style={{ fontSize: 11.5, marginTop: 2, wordBreak: 'break-word' }}>{detail}</p>
       <p style={{ marginTop: 6 }}>
         If the message says there is no handler, the main process has not registered{' '}
@@ -282,8 +282,8 @@ function FileBody({ path, kind }: { path: string; kind: 'instruction' | 'memory'
     let live = true;
     setB({ state: 'loading' });
     const p = kind === 'memory'
-      ? window.foreman.context.memoryBody(path)
-      : window.foreman.context.read(path);
+      ? window.wanigan.context.memoryBody(path)
+      : window.wanigan.context.read(path);
     p.then((r) => { if (live) setB({ state: 'ok', ...r }); })
      .catch((e) => { if (live) setB({ state: 'err', detail: msg(e) }); });
     return () => { live = false; };
@@ -367,14 +367,14 @@ export default function Context({ projectId, projects }: { projectId?: string; p
     if (!path) { setD(null); return; }
     setBusy(true);
     // A stale cache is not worth an error banner of its own.
-    if (rescan) { try { await window.foreman.context.refresh(path); } catch { /* ignore */ } }
+    if (rescan) { try { await window.wanigan.context.refresh(path); } catch { /* ignore */ } }
 
     const errors: Errors = {};
     const [ri, rm, rc, ra] = await Promise.allSettled([
-      window.foreman.context.instructions(path),
-      window.foreman.context.memory(path),
-      window.foreman.context.config(path),
-      window.foreman.context.agentsMd(path),
+      window.wanigan.context.instructions(path),
+      window.wanigan.context.memory(path),
+      window.wanigan.context.config(path),
+      window.wanigan.context.agentsMd(path),
     ]);
 
     const chain = ri.status === 'fulfilled' ? (ri.value as InstructionChain) : null;
@@ -393,7 +393,7 @@ export default function Context({ projectId, projects }: { projectId?: string; p
       const picked = config?.settings.find((s) => s.key === 'model' && typeof s.value === 'string');
       const model = picked ? String(picked.value) : undefined;
       const files = chain.atLaunch.map((f) => ({ path: f.path, label: `${SCOPE[f.scope].word} · ${fileName(f.path)}` }));
-      try { budget = (await window.foreman.context.budget(path, files, model)) as ContextBudget; }
+      try { budget = (await window.wanigan.context.budget(path, files, model)) as ContextBudget; }
       catch (e) { errors.budget = msg(e); }
     }
 
@@ -406,14 +406,14 @@ export default function Context({ projectId, projects }: { projectId?: string; p
   async function runInit() {
     if (!project) return;
     try {
-      const list = await window.foreman.sessions.list();
+      const list = await window.wanigan.sessions.list();
       const s = list.find((x) => x.projectId === project.id && x.status === 'running');
       if (!s) {
         setInitMsg({ tone: 'info', text:
           `No session is running in ${project.name}. Open Sessions, start one there with ⌘T, then come back — this button types /init into a live session, it does not start one.` });
         return;
       }
-      await window.foreman.skills.send(s.id, '/init');
+      await window.wanigan.skills.send(s.id, '/init');
       setInitMsg({ tone: 'ok', text:
         `Typed /init into the running session in ${project.name}. Switch to Sessions and press Enter to run it — it writes a CLAUDE.md from what is actually in the repo, and you review the diff before it lands.` });
     } catch (e) {
@@ -456,7 +456,7 @@ export default function Context({ projectId, projects }: { projectId?: string; p
     return (
       <div className="pane ctx" key={project.id}>
         <Head project={project} projects={projects} onPick={setChosen} onRescan={() => load(true)} busy={busy} />
-        <Callout level="critical" title={`Foreman could not read anything about ${project.name}.`}>
+        <Callout level="critical" title={`Wanigan could not read anything about ${project.name}.`}>
           <p>
             All four context readers failed. If every message below says there is no handler, the main
             process modules are present but their IPC channels are not registered yet — that is a wiring
@@ -1486,7 +1486,7 @@ function Setup({ full, project, slots, onInit, initMsg }: {
             <button className="btn btn-primary" onClick={onInit}>Type /init into a session</button>
           </div>
           <p className="faint" style={{ fontSize: 11.5, lineHeight: 1.5, marginTop: 7, maxWidth: 660 }}>
-            /init reads the repository and drafts a CLAUDE.md from what is actually in it. Foreman types the
+            /init reads the repository and drafts a CLAUDE.md from what is actually in it. Wanigan types the
             command into a running session in {project.name} and stops there — you press Enter, and you review
             the file it writes.
           </p>

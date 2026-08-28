@@ -13,8 +13,8 @@ for v in $(env | grep -oE '^VSCODE_[A-Z_]+' || true); do unset "$v"; done
 
 LOG="$(mktemp)"
 UDD="$(mktemp -d)"
-export FOREMAN_SMOKE=1 FOREMAN_MOCK=1 FOREMAN_MOCK_DELAY_MS=1000
-export FOREMAN_SMOKE_LOG="$LOG"
+export WANIGAN_SMOKE=1 WANIGAN_MOCK=1 WANIGAN_MOCK_DELAY_MS=1000
+export WANIGAN_SMOKE_LOG="$LOG"
 
 npm run build >/dev/null 2>&1 || { echo "build failed"; npm run build; exit 1; }
 

@@ -58,7 +58,7 @@ function joinRows(lines: string[], separator: string, remedy: string): string {
     bytes += line.length + separator.length;
     if (bytes > MAX_ROWS_BYTES) {
       throw new Error(
-        `These rows are over ${MAX_ROWS_BYTES / (1024 * 1024)} MB serialised as JSON, which is more than Foreman ` +
+        `These rows are over ${MAX_ROWS_BYTES / (1024 * 1024)} MB serialised as JSON, which is more than Wanigan ` +
         `stores in a single cell. ${remedy}`
       );
     }

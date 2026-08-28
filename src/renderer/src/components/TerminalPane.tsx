@@ -63,8 +63,8 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
       const fit = new FitAddon();
       term.loadAddon(fit);
       term.loadAddon(new WebLinksAddon());
-      term.onData((d) => window.foreman.sessions.write(sessionId, d));
-      term.onResize(({ cols, rows }) => window.foreman.sessions.resize(sessionId, cols, rows));
+      term.onData((d) => window.wanigan.sessions.write(sessionId, d));
+      term.onResize(({ cols, rows }) => window.wanigan.sessions.resize(sessionId, cols, rows));
       const container = document.createElement('div');
       container.style.width = '100%';
       container.style.height = '100%';
@@ -81,7 +81,7 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
     // an empty screen mid-conversation.
     if (!entry.primed) {
       entry.primed = true;
-      window.foreman.sessions.scrollback(sessionId)
+      window.wanigan.sessions.scrollback(sessionId)
         .then((buf) => { if (buf) entry!.term.write(buf); })
         .catch(() => {});
     }
@@ -93,7 +93,7 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
       if (!host.isConnected || host.clientWidth < 2 || host.clientHeight < 2) return;
       try {
         entry!.fit.fit();
-        window.foreman.sessions.resize(sessionId, entry!.term.cols, entry!.term.rows);
+        window.wanigan.sessions.resize(sessionId, entry!.term.cols, entry!.term.rows);
       } catch { /* host not laid out yet */ }
     };
 
@@ -117,7 +117,7 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
         try {
           if (e.container.parentNode !== host) host.appendChild(e.container);
           e.fit.fit();
-          window.foreman.sessions.resize(sessionId, e.term.cols, e.term.rows);
+          window.wanigan.sessions.resize(sessionId, e.term.cols, e.term.rows);
           // Force a repaint of the visible rows. After the container has been
           // detached and re-attached the renderer has no dirty region, so it
           // draws nothing until the agent happens to emit its next byte.

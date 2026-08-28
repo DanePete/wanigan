@@ -64,7 +64,7 @@ const TEXT_EXTS = new Set([
   'sh', 'bash', 'zsh', 'fish', 'ps1', 'sql', 'graphql', 'gql', 'patch', 'diff',
 ]);
 
-/** application/octet-stream is the "Foreman cannot classify this" answer — never uploadable. */
+/** application/octet-stream is the "Wanigan cannot classify this" answer — never uploadable. */
 const UNCLASSIFIED = 'application/octet-stream';
 
 export function mediaTypeFor(absPath: string): string {
@@ -195,7 +195,7 @@ export async function uploadFile(absPath: string, mediaType?: string): Promise<U
   const type = mediaType ?? mediaTypeFor(abs);
   if (!isUploadable(type)) {
     throw new Error(
-      `Foreman cannot classify ${path.basename(abs)} (${type}) as a document or an image, so it must not be uploaded — ` +
+      `Wanigan cannot classify ${path.basename(abs)} (${type}) as a document or an image, so it must not be uploaded — ` +
       `a content block that does not match the file fails per request. Inline it as text instead.`
     );
   }
@@ -328,7 +328,7 @@ export async function deleteUpload(hash: string): Promise<boolean> {
  * than a cache miss: it is accepted at build time and fails every request that
  * carries it, which a batch reports only when it ends.
  *
- * It deliberately does NOT delete remote files that have no local row. Foreman
+ * It deliberately does NOT delete remote files that have no local row. Wanigan
  * cannot prove it uploaded them, and the Files API is organisation-wide — a
  * "cleanup" here would destroy another application's files.
  */

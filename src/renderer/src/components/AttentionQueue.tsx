@@ -43,7 +43,7 @@ const HOT_MS = 5 * 60_000;
 const POLL_MS = 2_000;
 /** Hook events arrive in bursts of a dozen; one refresh covers all of them. */
 const BURST_MS = 250;
-const PREF = 'foreman.attention.all';
+const PREF = 'wanigan.attention.all';
 
 export default function AttentionQueue({ onJump }: { onJump: (sessionId: string) => void }) {
   const [items, setItems] = useState<Attention[] | null>(null);
@@ -62,8 +62,8 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
   const load = useCallback(async () => {
     try {
       const [list, live] = await Promise.all([
-        window.foreman.attention.list(),
-        window.foreman.sessions.list(),
+        window.wanigan.attention.list(),
+        window.wanigan.sessions.list(),
       ]);
       if (!alive.current) return;
       setItems(list);
@@ -79,7 +79,7 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
     alive.current = true;
     void load();
     const t = setInterval(() => void load(), POLL_MS);
-    const off = window.foreman.on.sessionEvent(() => {
+    const off = window.wanigan.on.sessionEvent(() => {
       if (burst.current !== null) return;
       burst.current = window.setTimeout(() => { burst.current = null; void load(); }, BURST_MS);
     });

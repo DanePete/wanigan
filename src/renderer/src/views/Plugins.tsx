@@ -41,7 +41,7 @@ export default function Plugins() {
   const load = useCallback(async (refresh = false) => {
     setBusy(true);
     try {
-      setSt(refresh ? await window.foreman.plugins.refresh() : await window.foreman.plugins.list());
+      setSt(refresh ? await window.wanigan.plugins.refresh() : await window.wanigan.plugins.list());
       setErr(null);
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
@@ -50,7 +50,7 @@ export default function Plugins() {
 
   async function read(c: Component) {
     try {
-      const f = await window.foreman.plugins.file(c.path);
+      const f = await window.wanigan.plugins.file(c.path);
       setReading({ title: c.name, text: f.text, truncated: f.truncated });
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }
@@ -60,7 +60,7 @@ export default function Plugins() {
   const loadCatalog = useCallback(async () => {
     setCatBusy(true);
     try {
-      const r = await window.foreman.plugins.catalog();
+      const r = await window.wanigan.plugins.catalog();
       setCat(r.plugins as CatalogItem[]);
       setCatNote(r.note);
     } catch (e) { setCatNote(e instanceof Error ? e.message : String(e)); }
@@ -81,7 +81,7 @@ export default function Plugins() {
   async function showCost(name: string) {
     setCost((c) => ({ ...c, [name]: c[name] ?? null }));
     try {
-      const d = await window.foreman.plugins.details(name);
+      const d = await window.wanigan.plugins.details(name);
       setCost((c) => ({ ...c, [name]: d.alwaysOnTokens }));
       if (d.text) setReading({ title: `${name} — inventory and cost`, text: d.text, truncated: false });
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
@@ -180,7 +180,7 @@ export default function Plugins() {
                       <span className="pg-chip mcp">MCP: {p.mcpServers.join(', ')}</span>
                     )}
                     {items.length === 0 && p.hookEvents.length === 0 && p.mcpServers.length === 0 && (
-                      <span className="pg-none">Provides nothing Foreman can see from disk.</span>
+                      <span className="pg-none">Provides nothing Wanigan can see from disk.</span>
                     )}
                   </div>
 
@@ -216,7 +216,7 @@ export default function Plugins() {
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     <button className="btn" style={{ fontSize: 11.5, padding: '3px 9px' }}
                             disabled={working === p.id}
-                            onClick={() => void act(p.id, () => window.foreman.plugins.setEnabled(p.id, false))}>
+                            onClick={() => void act(p.id, () => window.wanigan.plugins.setEnabled(p.id, false))}>
                       {working === p.id ? 'working…' : 'Disable'}
                     </button>
                     <button className="btn" style={{ fontSize: 11.5, padding: '3px 9px' }}
@@ -259,7 +259,7 @@ export default function Plugins() {
                 {catBusy ? 'Loading…' : 'Refresh'}
               </button>
               <button className="btn" disabled={!!working}
-                      onClick={() => void act('__market', () => window.foreman.plugins.marketUpdate())}>
+                      onClick={() => void act('__market', () => window.wanigan.plugins.marketUpdate())}>
                 Update marketplaces
               </button>
             </div>
@@ -268,7 +268,7 @@ export default function Plugins() {
                      placeholder="Add a marketplace — a GitHub repo, URL or path"
                      onChange={(e) => setMarket(e.target.value)} />
               <button className="btn" disabled={!market.trim() || !!working}
-                      onClick={() => void act('__market', () => window.foreman.plugins.marketAdd(market.trim()))}>Add</button>
+                      onClick={() => void act('__market', () => window.wanigan.plugins.marketAdd(market.trim()))}>Add</button>
             </div>
             {catNote && <div style={{ marginBottom: 10 }}><Note tone="warn">{catNote}</Note></div>}
             {result && result.id === '__market' && (
@@ -280,12 +280,12 @@ export default function Plugins() {
               <div style={{ marginBottom: 10 }}>
                 <Note tone="warn">
                   <strong>Install {confirming.name}?</strong> A plugin can ship hooks, an MCP server or an LSP —
-                  code that runs on this machine. Foreman has no terminal to answer the CLI's own prompt, so it
+                  code that runs on this machine. Wanigan has no terminal to answer the CLI's own prompt, so it
                   passes <span className="mono">-y</span>, which accepts the marketplace-declared install command
                   on your behalf. This dialog is that prompt.
                   <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
                     <button className="btn btn-primary" disabled={!!working}
-                            onClick={() => void act(confirming.id, () => window.foreman.plugins.install(confirming.id))}>
+                            onClick={() => void act(confirming.id, () => window.wanigan.plugins.install(confirming.id))}>
                       {working ? 'Installing…' : `Install ${confirming.name}`}
                     </button>
                     <button className="btn" onClick={() => setConfirming(null)}>Cancel</button>

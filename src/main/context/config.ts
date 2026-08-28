@@ -16,7 +16,7 @@ import { MODELS, DEFAULT_MODEL, modelFor } from '../batch/pricing';
  * the one question it exists to answer.
  *
  * Everything is read from disk. Nothing here talks to the network and nothing
- * here writes — Foreman never edits the user's .claude directory or the repo.
+ * here writes — Wanigan never edits the user's .claude directory or the repo.
  */
 
 /* ── shape ───────────────────────────────────────────────────────────── */
@@ -181,7 +181,7 @@ function readJsonFile(file: string, maxBytes = MAX_JSON_BYTES): JsonRead {
   if (st.size > maxBytes) {
     return {
       exists: true, value: null,
-      error: `${file} is ${(st.size / 1_048_576).toFixed(1)} MB, past the ${(maxBytes / 1_048_576).toFixed(0)} MB Foreman will parse, so nothing it declares is reflected here. Check what wrote it.`,
+      error: `${file} is ${(st.size / 1_048_576).toFixed(1)} MB, past the ${(maxBytes / 1_048_576).toFixed(0)} MB Wanigan will parse, so nothing it declares is reflected here. Check what wrote it.`,
     };
   }
   try {
@@ -513,7 +513,7 @@ function readMcp(projectPath: string, notes: string[]): McpEntry[] {
   // servers silently — a panel whose purpose is to show what will connect would
   // report the exact opposite, with nothing saying it could not tell.
   if (userRead.exists && !userRead.value) {
-    notes.push(`${userConfig} could not be read, so Foreman cannot tell which .mcp.json servers are already approved for this project, and any user-scope servers it declares are missing from the list below. What is shown is what this repository declares, not what will connect.`);
+    notes.push(`${userConfig} could not be read, so Wanigan cannot tell which .mcp.json servers are already approved for this project, and any user-scope servers it declares are missing from the list below. What is shown is what this repository declares, not what will connect.`);
     return out;
   }
 
@@ -640,7 +640,7 @@ export function readProjectConfig(projectPath: string): ProjectConfig {
   const root = path.resolve(projectPath || '.');
   let st: fs.Stats;
   try { st = fs.statSync(root); } catch {
-    throw new Error(`No such project directory: ${root}. Re-add the project in Foreman, or pick another one.`);
+    throw new Error(`No such project directory: ${root}. Re-add the project in Wanigan, or pick another one.`);
   }
   if (!st.isDirectory()) {
     throw new Error(`${root} is a file, not a project directory. Pick the repository folder instead.`);
@@ -687,7 +687,7 @@ export function readProjectConfig(projectPath: string): ProjectConfig {
 
   const userLocal = path.join(HOME, '.claude', 'settings.local.json');
   if (fs.existsSync(userLocal)) {
-    notes.push(`${userLocal} exists but is not one of the four documented settings layers, so Foreman does not merge it here.`);
+    notes.push(`${userLocal} exists but is not one of the four documented settings layers, so Wanigan does not merge it here.`);
   }
   if (layers.some((l) => [...OWN_FIELD_KEYS].some((k) => l.read.value && k in l.read.value))) {
     notes.push('hooks and permissions are listed in their own sections rather than as settings keys.');
@@ -839,9 +839,9 @@ export function contextBudget(
     `About ${estTokens.toLocaleString('en-US')} tokens, estimated locally from character counts (~4 per token for prose, ~2.8 for code) — an estimate, not a measurement, so treat it as ±15%.`,
   ];
   if (priced) {
-    parts.push(`Priced at ${priced.label}'s interactive input rate of $${(priced.batchInput * INTERACTIVE_MULTIPLIER).toFixed(2)}/MTok — double the batch rate in Foreman's pricing table — for one full read at the start of each session. A prompt-cache hit on later turns costs a tenth of that.`);
+    parts.push(`Priced at ${priced.label}'s interactive input rate of $${(priced.batchInput * INTERACTIVE_MULTIPLIER).toFixed(2)}/MTok — double the batch rate in Wanigan's pricing table — for one full read at the start of each session. A prompt-cache hit on later turns costs a tenth of that.`);
   } else {
-    parts.push(`No cost shown: "${modelId}" is not in Foreman's pricing table, and a wrong number is worse than none.`);
+    parts.push(`No cost shown: "${modelId}" is not in Wanigan's pricing table, and a wrong number is worse than none.`);
   }
   if (!modelId && priced) parts.push(`No model was given, so the default (${priced.label}) was used.`);
   // Reconcile the two meters in words as well as in fields, so nobody derives a

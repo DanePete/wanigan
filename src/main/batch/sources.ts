@@ -36,7 +36,7 @@ async function uploadPass(files: string[], notes: string[]): Promise<Map<string,
   const map = new Map<string, UploadedFile>();
   const skipped = files.length - eligible.length;
   if (skipped) {
-    notes.push(`${skipped} file(s) inlined instead of uploaded — Foreman cannot classify their type`);
+    notes.push(`${skipped} file(s) inlined instead of uploaded — Wanigan cannot classify their type`);
   }
   if (!eligible.length) return map;
 

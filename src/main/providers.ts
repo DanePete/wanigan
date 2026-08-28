@@ -131,7 +131,7 @@ export const PROVIDERS: ProviderDef[] = [
     // Deliberately the same binary. Z.ai serves an Anthropic-compatible API,
     // so GLM is Claude Code with its base URL and credentials redirected —
     // there is no glm binary to find, and inventing one would just fail to
-    // resolve. Everything Foreman builds on the CLI (telemetry, hooks, the
+    // resolve. Everything Wanigan builds on the CLI (telemetry, hooks, the
     // policy gate, transcripts) keeps working unchanged for exactly this
     // reason.
     bin: 'claude',
@@ -154,14 +154,14 @@ export const PROVIDERS: ProviderDef[] = [
       const key = getProviderKey('glm');
       if (!key) return {};
       return {
-        ANTHROPIC_BASE_URL: process.env.FOREMAN_GLM_BASE_URL || 'https://api.z.ai/api/anthropic',
+        ANTHROPIC_BASE_URL: process.env.WANIGAN_GLM_BASE_URL || 'https://api.z.ai/api/anthropic',
         ANTHROPIC_AUTH_TOKEN: key,
         // The CLI asks for a tier by name; the endpoint maps the tier to a
         // GLM model. Without these every request asks for a Claude model the
         // proxy has never heard of.
-        ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.FOREMAN_GLM_MODEL || GLM_DEFAULT,
-        ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.FOREMAN_GLM_MODEL || GLM_DEFAULT,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.FOREMAN_GLM_SMALL_MODEL || GLM_SMALL,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.WANIGAN_GLM_MODEL || GLM_DEFAULT,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.WANIGAN_GLM_MODEL || GLM_DEFAULT,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.WANIGAN_GLM_SMALL_MODEL || GLM_SMALL,
       };
     },
   },
