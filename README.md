@@ -307,8 +307,12 @@ src/main/notify.ts      the two expiry clocks, and polling that knows them
 src/main/mcp/           Wanigan as an MCP client host, and as a server
 src/main/db.ts          one SQLite file: projects, runs, batches, requests, events
 src/main/keys.ts        OS-keychain API key storage and live verification
+src/main/git.ts         the acting half of git: stage, commit, branch, stash
+src/main/glm.ts         the GLM catalogue, fetched rather than hardcoded
+src/main/demo.ts        real names out, plausible ones in, at the IPC boundary
+src/main/migrate.ts     carrying the old Foreman userData across, once
 src/main/batch/         build · estimate · submit · poll · results · files · evals
-src/main/smoke*.ts      108 assertions, run inside the real main process
+src/main/smoke*.ts      146 assertions, run inside the real main process
 src/main/plugins.ts     installed plugins, kept apart from the marketplace catalog
 src/renderer/views/     Sessions · Fleet · Batches · Insights · Skills · Plugins · Context
 ```
@@ -328,6 +332,31 @@ session: an agent left running with no window is an agent burning tokens unseen.
 | `⌘1`–`⌘8` | switch view |
 | `⌘K` | jump to a skill |
 | `⌘W` | close an exited tab |
+
+## The name
+
+A wanigan is the shack that rode the old log drives. It floated downriver with
+the crew, carrying the tools and the food and the paperwork, and it tied up
+each evening wherever the work had got to. A window that follows a crew of
+agents around your repos is near enough to the same idea that the name stuck.
+
+It used to be called Foreman. That one is already carrying freight in this
+neighbourhood — theforeman.org, and the `foreman` gem every Rails developer has
+typed at some point — and a tool you can't find is a tool nobody uses.
+
+## What you can expect
+
+This is free, and it's one person's work out of a small studio in Minnesota.
+So, plainly: I read every issue. I fix what I can. I merge what I have time
+for, and I'd rather tell you something isn't going to happen than leave it open
+for a year. If it breaks and you can't wait on me, the source is right here and
+the licence is MIT.
+
+Issues open when there's a build to download. Until then this is here to read.
+
+If it turns out to be useful and you want to chip in, there's a link on the
+site. That's not a donation — Dead North is a business, not a charity — and
+nothing here is behind it. Same app either way.
 
 ## Licence
 
