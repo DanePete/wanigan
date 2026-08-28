@@ -3,7 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "description": "Desktop control surface for local coding agents. Run a crew of Claude Code and Codex sessions across every repo from one window.",
-  "author": "Dane Petersen",
+  "author": "Dead North LLC",
+  "homepage": "https://wanigan.deadnorth.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deadnorth/wanigan.git"
+  },
   "license": "MIT",
   "main": "out/main/index.js",
   "engines": {
