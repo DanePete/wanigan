@@ -258,7 +258,7 @@ const PALETTE: Record<string, string> = {
 
 type Mood = 'ok' | 'happy' | 'sad' | 'sick' | 'asleep' | 'hungry' | 'dead';
 
-export default function Pet() {
+function PetInner() {
   // Self-contained: it reads the two signals it reacts to rather than making
   // the rail thread them through. One poll, shared with nothing.
   const [running, setRunning] = useState(0);
@@ -642,4 +642,25 @@ export default function Pet() {
       </>}
     </div>
   );
+}
+
+/**
+ * The gate. Off by default, and the check wraps the component rather than
+ * living inside it: a pet that is switched off should not be polling sessions
+ * and running a fifteen-second tick, it should not exist.
+ */
+export default function Pet() {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    let live = true;
+    const read = () => {
+      window.wanigan.prefs.all()
+        .then((p) => { if (live) setOn(p.pet); })
+        .catch(() => { if (live) setOn(false); });
+    };
+    read();
+    window.addEventListener('wanigan:prefs-changed', read);
+    return () => { live = false; window.removeEventListener('wanigan:prefs-changed', read); };
+  }, []);
+  return on ? <PetInner /> : null;
 }

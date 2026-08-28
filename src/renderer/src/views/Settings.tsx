@@ -265,6 +265,9 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
     setPending(k); setPrefsErr(null);
     try {
       setPrefs(await window.wanigan.prefs.set(k, v));
+      // App and the pet both read prefs on this event. Nothing dispatched it
+      // before, so App's listener had never once fired.
+      window.dispatchEvent(new CustomEvent('wanigan:prefs-changed'));
     } catch (e) {
       setPrefsErr(`“${k}” was not saved: ${msg(e)} — the value on screen is the one you typed, not the one on disk.`);
     } finally { setPending(null); }
@@ -498,6 +501,14 @@ function Observation({ prefs, pending, setFlag }: {
             Raises an OS notification when a batch is close to expiring, when results are about to be
             deleted, or when a session needs you. Wanigan hands the text to macOS and nothing leaves
             the machine.
+          </Toggle>
+
+          <Toggle title="Keep a pet" on={prefs.pet} busy={pending === 'pet'}
+                  onChange={(v) => void setFlag('pet', v)}>
+            A Tamagotchi in the corner of the Sessions view, emulated off the documented
+            behaviour of the 1996 P1 — a fifteen-minute care window, two counters that never
+            reset, and nothing left to chance. Off by default, because a tool that runs agents
+            in your repositories should look like one until you decide otherwise.
           </Toggle>
         </div>
       )}

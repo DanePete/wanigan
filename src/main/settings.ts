@@ -43,6 +43,8 @@ export function flags() {
     archiveTranscripts: bool('archive_transcripts', true),
     notifications: bool('notifications', true),
     mcpServerEnabled: bool('mcp_server', false),
+    // Off by default: the first screenshot anyone takes should be the tool.
+    pet: bool('pet', false),
   };
 }
 
@@ -78,6 +80,7 @@ export function allSettings(): WaniganSettings {
     archiveTranscripts: f.archiveTranscripts,
     notifications: f.notifications,
     mcpServerEnabled: f.mcpServerEnabled,
+    pet: f.pet,
     slots: slotsSetting(),
     eventRetentionDays: eventRetentionDays(),
     defaultTrust: (getSetting('default_trust', 'project') as TrustLevel),

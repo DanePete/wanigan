@@ -613,4 +613,5 @@ export type WaniganSettings = {
   eventRetentionDays: number;
   defaultTrust: TrustLevel;
   mcpServerEnabled: boolean;
+  pet: boolean;
 };
