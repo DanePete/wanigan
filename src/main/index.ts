@@ -29,6 +29,10 @@ import * as headless from './headless';
 import * as spend from './spend';
 import * as notify from './notify';
 import * as skills from './skills';
+import * as plugins from './plugins';
+import * as schedule from './schedule';
+import * as teams from './teams';
+import * as revert from './revert';
 import { isCliInvocation, runCli } from './cli';
 import * as ctxInstructions from './context/instructions';
 import * as ctxMemory from './context/memory';
@@ -189,6 +193,11 @@ async function startServices() {
     queue.enqueue('headless', `${name} · ${runId}`, { runId, projectId });
   });
   queue.setSlots(slotsSetting());
+  // Schedules feed the dispatcher; the dispatcher decides when there is a slot.
+  schedule.startScheduler(() => {
+    const w = win;
+    if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
+  });
   queue.startDispatcher(() => {
     const w = win;
     if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
@@ -221,6 +230,7 @@ async function startServices() {
 }
 
 function stopServices() {
+  try { schedule.stopScheduler(); } catch { /* already down */ }
   try { queue.stopDispatcher(); } catch { /* already down */ }
   try { hooks.stopHookServer(); } catch { /* already down */ }
   try { otel.stopCollector(); } catch { /* already down */ }
@@ -262,6 +272,7 @@ function registerIpc() {
   handle('sessions:close', (id: string) => { closeSession(id); return true; });
   handle('sessions:markRead', (id: string) => { markRead(id); return true; });
   handle('sessions:reveal', (p: string) => { shell.openPath(p); return true; });
+  handle('sessions:baseline', (id: string) => sessionBaseline(id));
   handle('sessions:past', () => pastSessions());
   handle('sessions:forget', (id: string) => { forgetPastSession(id); return pastSessions(); });
 
@@ -449,6 +460,44 @@ function registerIpc() {
   handle('skills:body', (p: string) => skills.skillBody(p));
   // A catalogue you can fire into a running agent, rather than one you read.
   handle('skills:send', (sessionId: string, invoke: string) => { writeSession(sessionId, invoke + ' '); return true; });
+
+  // ══ phase 25 · schedules ════════════════════════════════════════════
+  handle('schedule:list', () => schedule.listSchedules());
+  handle('schedule:create', (input: { name: string; cron: string; kind: schedule.ScheduleKind; payload: unknown; projectId?: string | null }) =>
+    schedule.createSchedule(input));
+  handle('schedule:setEnabled', (id: string, on: boolean) => schedule.setScheduleEnabled(id, on));
+  handle('schedule:delete', (id: string) => schedule.deleteSchedule(id));
+  handle('schedule:history', (id: string, limit?: number) => schedule.scheduleHistory(id, limit));
+  handle('schedule:preview', (cron: string) => {
+    const out: number[] = [];
+    let t = Date.now();
+    for (let i = 0; i < 5; i++) { const n = schedule.nextFire(cron, t); if (n === null) break; out.push(n); t = n; }
+    return { fires: out, describe: schedule.describeCron(cron) };
+  });
+  handle('schedule:tick', () => schedule.tickSchedules());
+
+  // ══ phase 26 · agent teams ══════════════════════════════════════════
+  handle('teams:read', () => teams.readTeams());
+
+  // ══ phase 27 · revert ═══════════════════════════════════════════════
+  handle('revert:plan', (root: string, file: string, head: string | null, pre: boolean) =>
+    revert.planRevert(root, file, head, pre));
+  handle('revert:file', (root: string, file: string, head: string | null, pre: boolean) =>
+    revert.revertFile(root, file, head, pre));
+  handle('revert:all', (root: string, files: { path: string; preexisting?: boolean }[], head: string | null) =>
+    revert.revertAll(root, files, head));
+
+  // ══ plugins ═════════════════════════════════════════════════════════
+  handle('plugins:list', () => plugins.readPlugins());
+  handle('plugins:refresh', () => { plugins.refreshPlugins(); return plugins.readPlugins(); });
+  handle('plugins:file', (p: string) => plugins.pluginFile(p));
+  handle('plugins:catalog', () => plugins.catalog());
+  handle('plugins:details', (name: string) => plugins.details(name));
+  handle('plugins:install', (id: string, scope?: 'user' | 'project' | 'local') => plugins.install(id, scope));
+  handle('plugins:setEnabled', (id: string, on: boolean) => plugins.setEnabled(id, on));
+  handle('plugins:marketUpdate', (name?: string) => plugins.updateMarketplaces(name));
+  handle('plugins:marketAdd', (source: string) => plugins.addMarketplace(source));
+  handle('plugins:marketRemove', (name: string) => plugins.removeMarketplace(name));
 
   // ══ file explorer ═══════════════════════════════════════════════════
   handle('browse:pick', (multi?: boolean, startIn?: string) => browse.pickFiles(win, { multi, startIn }));

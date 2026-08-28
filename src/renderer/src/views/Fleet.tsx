@@ -4,6 +4,7 @@ import type {
 } from '@shared/types';
 import { ATTENTION_ORDER, EMPTY_USAGE, TRUST_COPY } from '@shared/types';
 import { Note, Stat, ago, num, usd } from '../components/bits';
+import TeamPanel from '../components/TeamPanel';
 
 /**
  * The whole crew on one screen — the view you leave open on a second monitor
@@ -307,6 +308,7 @@ export default function Fleet({ projects = [], onOpenSession }: {
     return (
       <div className="pane">
         {head}
+        <TeamPanel />
         <div className="card fleet-blank">
           <h2>No agents are running</h2>
           <p className="dim">
@@ -326,6 +328,7 @@ export default function Fleet({ projects = [], onOpenSession }: {
   return (
     <div className="pane">
       {head}
+      <TeamPanel />
 
       {err && (
         <Note tone="warn">

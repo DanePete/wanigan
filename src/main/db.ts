@@ -354,6 +354,37 @@ function migratePhases(d: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_ledger_at ON policy_ledger(at DESC);
 
+    -- P25 · durable schedules ------------------------------------------
+    -- Claude Code's own /loop is session-scoped and expires after seven days,
+    -- which is the right call for something that only fires while a terminal
+    -- is open. Foreman's whole reason to hold this is that it is not a
+    -- session: these survive a quit, and they do not expire.
+    CREATE TABLE IF NOT EXISTS schedules (
+      id           TEXT PRIMARY KEY,
+      name         TEXT NOT NULL,
+      cron         TEXT NOT NULL,
+      kind         TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      project_id   TEXT,
+      enabled      INTEGER NOT NULL DEFAULT 1,
+      created_at   INTEGER NOT NULL,
+      next_at      INTEGER,
+      last_at      INTEGER,
+      last_status  TEXT,
+      last_detail  TEXT,
+      runs         INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_at);
+
+    CREATE TABLE IF NOT EXISTS schedule_runs (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      schedule_id TEXT NOT NULL,
+      at          INTEGER NOT NULL,
+      status      TEXT NOT NULL,
+      detail      TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_schedule_runs ON schedule_runs(schedule_id, at DESC);
+
     CREATE TABLE IF NOT EXISTS project_trust (
       project_id TEXT PRIMARY KEY,
       trust      TEXT NOT NULL,

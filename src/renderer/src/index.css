@@ -7,9 +7,10 @@
 @import './styles/attention.css';
 @import './styles/fleet.css';
 @import './styles/timeline.css';
-@import './styles/queue.css';
+@import './styles/queue.css';   /* plugins */
 @import './styles/evals.css';
 @import './styles/policy.css';
+@import './styles/schedule.css';
 
 /* Same tokens as BatchStudio, so the two tools read as one stack. */
 :root {

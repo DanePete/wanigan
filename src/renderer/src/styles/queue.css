@@ -1,1 +1,62 @@
-/* queue — owned by the queue phase. Tokens come from index.css; never redeclare a colour here. */
+/* plugins — the Plugins view. Tokens come from index.css; no colour is declared here. */
+
+.pg-wrap { padding: 16px 18px 40px; overflow-y: auto; width: 100%; }
+.pg-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 4px; }
+.pg-head h1 { font-size: 19px; font-weight: 600; letter-spacing: -.01em; }
+.pg-count { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px;
+            color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+.pg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; margin-top: 12px; }
+.pg-card { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px;
+           padding: 13px 15px; display: flex; flex-direction: column; gap: 8px; }
+.pg-card.gone { border-color: var(--warning); }
+.pg-top { display: flex; align-items: baseline; gap: 9px; }
+.pg-name { font-size: 15px; font-weight: 600; letter-spacing: -.005em; }
+.pg-ver { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; color: var(--text-faint);
+          margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
+.pg-desc { font-size: 13px; color: var(--text-dim); line-height: 1.48; }
+.pg-meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--text-faint);
+           font-variant-numeric: tabular-nums; }
+
+.pg-provides { display: flex; gap: 6px; flex-wrap: wrap; }
+.pg-chip { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line);
+           background: var(--bg-sunk); color: var(--text-dim); display: inline-flex; gap: 5px; align-items: center; }
+.pg-chip b { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.pg-chip.hook { border-color: var(--warning); color: var(--warning); background: var(--warning-soft); }
+.pg-chip.mcp { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.pg-none { font-size: 12px; color: var(--text-faint); font-style: italic; }
+
+.pg-expand { background: none; border: none; color: var(--accent); font-size: 11.5px;
+             cursor: pointer; padding: 2px 0; text-align: left; }
+.pg-expand:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.pg-items { display: flex; flex-direction: column; gap: 2px; border-top: 1px dashed var(--line);
+            padding-top: 7px; margin-top: 1px; }
+.pg-item { display: flex; gap: 8px; align-items: baseline; font-size: 12px; background: none;
+           border: none; color: inherit; cursor: pointer; text-align: left; padding: 2px 4px; border-radius: 4px; }
+.pg-item:hover { background: var(--bg-sunk); }
+.pg-item .k { font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; letter-spacing: .08em;
+              text-transform: uppercase; color: var(--text-faint); width: 58px; flex: none; }
+.pg-item .n { color: var(--text-dim); }
+
+.pg-sec { margin-top: 26px; }
+.pg-sec-h { display: flex; align-items: baseline; gap: 11px; border-bottom: 1px solid var(--line);
+            padding-bottom: 7px; margin-bottom: 11px; }
+.pg-sec-h h2 { font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--text-dim); }
+.pg-sec-h .n { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--text-faint); }
+
+.pg-cat { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1px;
+          background: var(--line-soft); border: 1px solid var(--line-soft); }
+.pg-cat-row { background: var(--bg-soft); padding: 8px 11px; display: flex; flex-direction: column; gap: 2px; }
+.pg-cat-row .t { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+.pg-cat-row .d { font-size: 11.5px; color: var(--text-faint); line-height: 1.4;
+                 overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+                 -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.pg-yes { font-size: 10px; color: var(--good); flex: none; margin-left: auto; }
+
+.pg-reader { position: fixed; inset: 0; background: #0009; display: grid; place-items: center;
+             padding: 5vh 6vw; z-index: 60; }
+.pg-reader-in { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 12px;
+                width: min(880px, 100%); max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
+.pg-reader-h { display: flex; align-items: baseline; gap: 10px; padding: 12px 15px; border-bottom: 1px solid var(--line); }
+.pg-reader-b { overflow: auto; padding: 14px 16px; font-family: ui-monospace, Menlo, monospace;
+               font-size: 12px; line-height: 1.55; white-space: pre-wrap; color: var(--text-dim); }

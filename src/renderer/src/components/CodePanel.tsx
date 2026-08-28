@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Note } from './bits';
 
 type Editor = { id: string; label: string; path: string };
 type Changed = { path: string; index: string; work: string; staged: boolean; untracked: boolean; preexisting?: boolean; committed?: boolean };
@@ -39,8 +40,25 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
   const [follow, setFollow] = useState(true);
   const [touched, setTouched] = useState<Record<string, number>>({});
   const [lastEdit, setLastEdit] = useState<{ path: string; at: number } | null>(null);
+  /*
+   * Reverting one file to the commit this session started from. /rewind cannot
+   * do this — it explicitly does not track files a bash command changed, or
+   * edits a background subagent made. The baseline is a git commit, so git
+   * sees both, which makes this the honest undo rather than a second one.
+   */
+  const [baseHead, setBaseHead] = useState<string | null>(null);
+  const [plan, setPlan] = useState<{ file: string; action: string; detail: string; safe: boolean } | null>(null);
+  const [reverting, setReverting] = useState(false);
+  const [reverted, setReverted] = useState<string | null>(null);
 
   useEffect(() => { window.foreman.code.editors().then(setEditors).catch(() => {}); }, []);
+
+  useEffect(() => {
+    if (!sessionId) { setBaseHead(null); return; }
+    window.foreman.sessions.baseline(sessionId)
+      .then((b) => setBaseHead(b?.head ?? null))
+      .catch(() => setBaseHead(null));
+  }, [sessionId]);
 
   const loadChanges = useCallback(() => {
     window.foreman.code.changes(projectPath, sessionId).then(setChanges).catch(() => {});
@@ -100,8 +118,28 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
     window.foreman.code.list(projectPath, dir).then(setEntries).catch((e) => setErr(String(e.message ?? e)));
   }, [tab, dir, projectPath]);
 
+  async function askRevert(p: string) {
+    const f = changes.files.find((x) => x.path === p);
+    try {
+      setPlan(await window.foreman.revert.plan(projectPath, p, baseHead, f?.preexisting === true));
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  }
+
+  async function doRevert() {
+    if (!plan) return;
+    setReverting(true);
+    try {
+      const f = changes.files.find((x) => x.path === plan.file);
+      const r = await window.foreman.revert.file(projectPath, plan.file, baseHead, f?.preexisting === true);
+      setReverted(r.detail);
+      setPlan(null);
+      if (r.ok) { loadChanges(); if (sel === plan.file) { setSel(null); setDiff(''); } }
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setReverting(false); }
+  }
+
   async function openDiff(p: string) {
-    setSel(p); setFile(null);
+    setSel(p); setFile(null); setPlan(null); setReverted(null);
     try { setDiff(await window.foreman.code.diff(projectPath, p)); }
     catch (e) { setDiff(''); setErr(e instanceof Error ? e.message : String(e)); }
   }
@@ -219,6 +257,36 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
               ))}
             </div>
             <div className="code-view">
+              {sel && baseHead && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 9px',
+                              borderBottom: '1px solid var(--line)', flexWrap: 'wrap' }}>
+                  <span className="faint" style={{ fontSize: 11 }}>
+                    against <span className="mono">{baseHead.slice(0, 8)}</span>
+                  </span>
+                  <button className="btn" style={{ fontSize: 11, padding: '2px 8px', marginLeft: 'auto' }}
+                          onClick={() => void askRevert(sel)}>Revert this file…</button>
+                </div>
+              )}
+              {plan && (
+                <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--line)' }}>
+                  <Note tone={plan.action === 'delete' ? 'warn' : 'info'}>
+                    {plan.detail}
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                      <button className="btn btn-danger" style={{ fontSize: 11.5, padding: '3px 9px' }}
+                              disabled={reverting || !plan.safe} onClick={() => void doRevert()}>
+                        {reverting ? 'Reverting…' : plan.action === 'delete' ? 'Delete it' : 'Revert it'}
+                      </button>
+                      <button className="btn" style={{ fontSize: 11.5, padding: '3px 9px' }}
+                              onClick={() => setPlan(null)}>Cancel</button>
+                    </div>
+                  </Note>
+                </div>
+              )}
+              {reverted && (
+                <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--line)' }}>
+                  <Note tone="ok">{reverted}</Note>
+                </div>
+              )}
               {sel ? <Diff text={diff} /> : (
                 <p className="faint code-hint">
                   {lastEdit

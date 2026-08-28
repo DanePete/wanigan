@@ -309,7 +309,8 @@ src/main/db.ts          one SQLite file: projects, runs, batches, requests, even
 src/main/keys.ts        OS-keychain API key storage and live verification
 src/main/batch/         build · estimate · submit · poll · results · files · evals
 src/main/smoke*.ts      108 assertions, run inside the real main process
-src/renderer/views/     Sessions · Fleet · Batches · Insights · Skills · Context
+src/main/plugins.ts     installed plugins, kept apart from the marketplace catalog
+src/renderer/views/     Sessions · Fleet · Batches · Insights · Skills · Plugins · Context
 ```
 
 Batches advance on a timer in the main process, so a run keeps moving as long as
@@ -324,7 +325,7 @@ session: an agent left running with no window is an agent burning tokens unseen.
 | | |
 |---|---|
 | `⌘T` | new session |
-| `⌘1`–`⌘7` | switch view |
+| `⌘1`–`⌘8` | switch view |
 | `⌘K` | jump to a skill |
 | `⌘W` | close an exited tab |
 

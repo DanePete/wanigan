@@ -35,6 +35,7 @@ const api = {
     close: (id: string) => call<boolean>('sessions:close', id),
     markRead: (id: string) => call<boolean>('sessions:markRead', id),
     reveal: (p: string) => call<boolean>('sessions:reveal', p),
+    baseline: (id: string) => call<{ head: string | null; dirty: string[]; at: number } | null>('sessions:baseline', id),
     past: () => call<PastSession[]>('sessions:past'),
     forget: (id: string) => call<PastSession[]>('sessions:forget', id),
     write: (id: string, data: string) => ipcRenderer.send('sessions:write', id, data),
@@ -187,6 +188,44 @@ const api = {
     refresh: () => call<boolean>('skills:refresh'),
     body: (p: string) => call<{ text: string; truncated: boolean; bytes: number }>('skills:body', p),
     send: (sessionId: string, invoke: string) => call<boolean>('skills:send', sessionId, invoke),
+  },
+  // ── phase 25 · durable schedules ─────────────────────────────────────
+  schedule: {
+    list: () => call<any[]>('schedule:list'),
+    create: (input: { name: string; cron: string; kind: 'headless' | 'session' | 'batch'; payload: unknown; projectId?: string | null }) =>
+      call<any>('schedule:create', input),
+    setEnabled: (id: string, on: boolean) => call<any>('schedule:setEnabled', id, on),
+    remove: (id: string) => call<boolean>('schedule:delete', id),
+    history: (id: string, limit?: number) => call<{ at: number; status: string; detail: string | null }[]>('schedule:history', id, limit),
+    preview: (cron: string) => call<{ fires: number[]; describe: string }>('schedule:preview', cron),
+    tick: () => call<number>('schedule:tick'),
+  },
+  // ── phase 26 · agent teams ───────────────────────────────────────────
+  teams: {
+    read: () => call<any>('teams:read'),
+  },
+  // ── phase 27 · revert against the baseline ───────────────────────────
+  revert: {
+    plan: (root: string, file: string, head: string | null, pre: boolean) => call<any>('revert:plan', root, file, head, pre),
+    file: (root: string, file: string, head: string | null, pre: boolean) =>
+      call<{ ok: boolean; detail: string }>('revert:file', root, file, head, pre),
+    all: (root: string, files: { path: string; preexisting?: boolean }[], head: string | null) =>
+      call<{ reverted: string[]; failed: { file: string; detail: string }[] }>('revert:all', root, files, head),
+  },
+  // ── plugins ──────────────────────────────────────────────────────────
+  plugins: {
+    list: () => call<any>('plugins:list'),
+    refresh: () => call<any>('plugins:refresh'),
+    file: (p: string) => call<{ text: string; truncated: boolean; bytes: number }>('plugins:file', p),
+    catalog: () => call<{ plugins: any[]; note: string | null }>('plugins:catalog'),
+    details: (name: string) => call<{ text: string; alwaysOnTokens: number | null; error: string | null }>('plugins:details', name),
+    install: (id: string, scope?: 'user' | 'project' | 'local') =>
+      call<{ ok: boolean; output: string; error: string | null }>('plugins:install', id, scope),
+    setEnabled: (id: string, on: boolean) =>
+      call<{ ok: boolean; output: string; error: string | null }>('plugins:setEnabled', id, on),
+    marketUpdate: (name?: string) => call<{ ok: boolean; output: string; error: string | null }>('plugins:marketUpdate', name),
+    marketAdd: (source: string) => call<{ ok: boolean; output: string; error: string | null }>('plugins:marketAdd', source),
+    marketRemove: (name: string) => call<{ ok: boolean; output: string; error: string | null }>('plugins:marketRemove', name),
   },
   // ── file explorer ────────────────────────────────────────────────────
   browse: {

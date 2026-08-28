@@ -6,6 +6,8 @@ import Fleet from './views/Fleet';
 import Batches from './views/Batches';
 import InsightsView from './views/Insights';
 import Skills from './views/Skills';
+import Plugins from './views/Plugins';
+import Schedules from './views/Schedules';
 import Context from './views/Context';
 import SettingsView from './views/Settings';
 import { num } from './components/bits';
@@ -17,7 +19,7 @@ import { num } from './components/bits';
  *
  * Two rules here are load-bearing rather than taste:
  *
- *  - The PTY owns its keystrokes. ⌘1–7 switch views only when focus is outside
+ *  - The PTY owns its keystrokes. ⌘1–9 switch views only when focus is outside
  *    a terminal; inside one, every key belongs to the agent.
  *  - Nothing animates around a live terminal. A view transition that fades or
  *    slides a pane containing a running PTY fights xterm's own repaint, and the
@@ -31,6 +33,8 @@ const TABS = [
   { id: 'batches',  label: 'Batches' },
   { id: 'insights', label: 'Insights' },
   { id: 'skills',   label: 'Skills' },
+  { id: 'plugins',  label: 'Plugins' },
+  { id: 'schedules', label: 'Schedules' },
   { id: 'context',  label: 'Context' },
   { id: 'settings', label: 'Settings' },
 ] as const;
@@ -239,7 +243,7 @@ export default function App() {
     return () => window.removeEventListener('foreman:session-focused', onFocused);
   }, []);
 
-  // ⌘1–7. Capture phase, because Sessions binds ⌘1–9 to its own tabs and only
+  // ⌘1–9. Capture phase, because Sessions binds ⌘1–9 to its own tabs and only
   // one of us can win; inside a terminal neither of us takes the key.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -364,8 +368,10 @@ export default function App() {
           </NavTab>
           <NavTab id="insights" n={4} tab={tab} go={go} label="Insights" />
           <NavTab id="skills"   n={5} tab={tab} go={go} label="Skills" />
-          <NavTab id="context"  n={6} tab={tab} go={go} label="Context" />
-          <NavTab id="settings" n={7} tab={tab} go={go} label="Settings">
+          <NavTab id="plugins"  n={6} tab={tab} go={go} label="Plugins" />
+          <NavTab id="schedules" n={7} tab={tab} go={go} label="Schedules" />
+          <NavTab id="context"  n={8} tab={tab} go={go} label="Context" />
+          <NavTab id="settings" n={9} tab={tab} go={go} label="Settings">
             {!hasKey && (
               <span className="nav-mark tone-warn" title="No API key set — add one in Settings before submitting a batch">
                 <span aria-hidden="true">!</span>no key
@@ -399,6 +405,8 @@ export default function App() {
         )}
         {tab === 'insights' && <InsightsView />}
         {tab === 'skills' && <Skills projectId={projectId} activeSessionId={activeSessionId} />}
+        {tab === 'plugins' && <Plugins />}
+        {tab === 'schedules' && <Schedules projects={projects} />}
         {tab === 'context' && <Context projectId={projectId} projects={projects} />}
         {tab === 'settings' && (
           <SettingsView providers={providers} projects={projects}

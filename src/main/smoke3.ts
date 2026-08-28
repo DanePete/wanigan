@@ -11,6 +11,7 @@ import * as evals from './batch/evals';
 import * as cachediag from './batch/cachediag';
 import * as mcpRegistry from './mcp/registry';
 import * as ctxConfig from './context/config';
+import * as schedule from './schedule';
 import type { RunConfig } from '../shared/types';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
@@ -179,6 +180,53 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const budget = ctxConfig.contextBudget(proj, []);
   check(budget.estTokens === 0 && /estimate/i.test(budget.note),
     'an empty context costs nothing and still says it is an estimate');
+
+  /* ── phase 25 · durable schedules ──────────────────────────────────── */
+  say('── phase 25 · schedules');
+
+  // A cron parser is the kind of code that looks right and is off by an hour.
+  const at = (y: number, mo: number, d: number, h: number, mi: number) => new Date(y, mo - 1, d, h, mi, 0, 0).getTime();
+  const fire = (expr: string, from: number) => schedule.nextFire(expr, from);
+  const iso = (t: number | null) => (t === null ? 'never' : new Date(t).toLocaleString());
+
+  check(fire('*/15 * * * *', at(2026, 6, 1, 9, 7)) === at(2026, 6, 1, 9, 15), 'a step lands on the next multiple');
+  check(fire('0 9 * * *', at(2026, 6, 1, 9, 30)) === at(2026, 6, 2, 9, 0), 'a daily job past its time waits for tomorrow');
+  check(fire('0 9 * * 1-5', at(2026, 6, 6, 12, 0)) === at(2026, 6, 8, 9, 0), 'a weekday job skips the weekend', iso(fire('0 9 * * 1-5', at(2026, 6, 6, 12, 0))));
+  check(fire('30 14 15 3 *', at(2026, 4, 1, 0, 0)) === at(2027, 3, 15, 14, 30), 'an annual date rolls to next year');
+  // Sunday is both 0 and 7 in vixie-cron, and getting that wrong shifts a
+  // weekly job by a day without ever failing loudly.
+  check(fire('0 8 * * 7', at(2026, 6, 1, 0, 0)) === fire('0 8 * * 0', at(2026, 6, 1, 0, 0)), '7 and 0 both mean Sunday');
+  // When both day fields are constrained, either matching counts.
+  const both = fire('0 0 1 * 5', at(2026, 5, 2, 0, 0));
+  check(both === at(2026, 5, 8, 0, 0), 'day-of-month OR day-of-week, not AND', iso(both));
+  check(fire('0 0 30 2 *', Date.now()) === null, '30 February never fires, and says so');
+
+  for (const bad of ['* * * *', '61 * * * *', '* 25 * * *', 'every minute', '*/0 * * * *']) {
+    let threw = false;
+    try { schedule.parseCron(bad); } catch { threw = true; }
+    check(threw, `"${bad}" is rejected rather than stored`);
+  }
+
+  check(schedule.describeCron('*/15 * * * *').includes('15'), 'a step reads as words');
+  check(/weekday/i.test(schedule.describeCron('0 9 * * 1-5')), 'weekdays read as words', schedule.describeCron('0 9 * * 1-5'));
+
+  const sch = schedule.createSchedule({
+    name: 'smoke nightly audit', cron: '0 3 * * *', kind: 'headless',
+    payload: { prompt: 'audit' }, projectId: null,
+  });
+  check(sch.nextAt !== null && sch.nextAt > Date.now(), 'a new schedule is armed for the future');
+  check(schedule.listSchedules().some((x) => x.id === sch.id), 'it is listed');
+  const off = schedule.setScheduleEnabled(sch.id, false);
+  check(off?.enabled === false && off?.nextAt === null, 'disabling disarms it rather than leaving it primed');
+  const on = schedule.setScheduleEnabled(sch.id, true);
+  check(on?.nextAt !== null && (on?.nextAt ?? 0) > Date.now(), 're-enabling re-arms from now, not from the backlog');
+
+  let rejected = false;
+  try { schedule.createSchedule({ name: 'bad', cron: '0 0 31 2 *', kind: 'headless', payload: {} }); }
+  catch { rejected = true; }
+  check(rejected, 'a schedule that can never fire is refused at creation');
+
+  check(schedule.deleteSchedule(sch.id), 'it can be deleted');
 
   fs.rmSync(tmp, { recursive: true, force: true });
 }
