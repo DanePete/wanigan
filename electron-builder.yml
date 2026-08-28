@@ -51,6 +51,12 @@ asarUnpack:
 # Rebuild native addons against the *target* arch, not the build host's.
 # Without this an x64 DMG built on Apple silicon ships arm64 .node files, and
 # it installs cleanly on an Intel Mac and then refuses to open the database.
+# Rebuilding per target arch leaves node_modules holding whichever arch was
+# built LAST — x64 here — so the repo is broken for local dev after every
+# packaging run, and worse when the x64 leg fails partway and deletes an addon
+# outright. The `dist:mac` scripts therefore run `npm run rebuild` afterwards
+# unconditionally, restoring the host arch whether packaging passed or failed.
+# Do not "simplify" that `;` into `&&`: the failure case is the one that needs it.
 npmRebuild: true
 
 mac:

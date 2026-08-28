@@ -19,14 +19,14 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "rebuild": "electron-rebuild -f -w node-pty",
+    "rebuild": "electron-rebuild -f -w node-pty,better-sqlite3",
     "postinstall": "electron-rebuild -f -w node-pty,better-sqlite3",
-    "dist:mac": "electron-vite build && electron-builder --mac",
-    "dist:mac:dir": "electron-vite build && electron-builder --mac --dir",
+    "dist:mac": "electron-vite build && { electron-builder --mac; c=$?; npm run rebuild; exit $c; }",
     "app": "./scripts/launch.sh",
     "cli": "./scripts/cli.sh",
     "smoke": "./scripts/smoke.sh",
-    "test": "npm run typecheck && npm run smoke"
+    "test": "npm run typecheck && npm run smoke",
+    "dist:mac:arm64": "electron-vite build && { electron-builder --mac --arm64; c=$?; npm run rebuild; exit $c; }"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
