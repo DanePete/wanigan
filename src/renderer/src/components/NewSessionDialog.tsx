@@ -233,7 +233,7 @@ export default function NewSessionDialog({
           {['', 'opus', 'sonnet', 'haiku', 'fable'].map((m) => (
             <FocusBtn key={m || 'default'} className="pill" onClick={() => setModel(m)}
                       aria-pressed={model === m}
-                      style={model === m ? { background: 'var(--accent)', color: '#0c0e12' }
+                      style={model === m ? { background: 'var(--accent)', color: '#14100d' }
                                          : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
               {m || 'default'}
             </FocusBtn>
@@ -247,7 +247,7 @@ export default function NewSessionDialog({
               {['', ...EFFORT_LEVELS].map((l) => (
                 <FocusBtn key={l || 'default'} className="pill" onClick={() => setEffort(l)}
                           aria-pressed={effort === l}
-                          style={effort === l ? { background: 'var(--accent)', color: '#0c0e12' }
+                          style={effort === l ? { background: 'var(--accent)', color: '#14100d' }
                                               : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
                   {l || 'default'}
                 </FocusBtn>

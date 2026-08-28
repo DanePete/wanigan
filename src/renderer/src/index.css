@@ -16,16 +16,25 @@
 
 /* Same tokens as BatchStudio, so the two tools read as one stack. */
 :root {
-  --bg: #0c0e12;
-  --bg-soft: #13161c;
-  --bg-sunk: #191d25;
-  --line: #252b35;
-  --line-soft: #1b2029;
-  --text: #e7e9ee;
-  --text-dim: #9aa1ad;
-  --text-faint: #6b7280;
-  --accent: #7c95f8;
-  --accent-soft: #1a2244;
+  /* The app is the ink half of the Dead North system, not the paper half: the
+     poster is ink on newsprint, so the app is newsprint on ink. Every neutral
+     below is warm, pulled off the mark's #171310 rather than a cool blue-black,
+     because the icon in the Dock and the window behind it have to read as one
+     product. */
+  --bg: #14100d;
+  --bg-soft: #1b1714;
+  --bg-sunk: #221d19;
+  --line: #302823;
+  --line-soft: #241f1a;
+  --text: #ece4d0;        /* the newsprint, inverted into type */
+  --text-dim: #a99e8c;
+  --text-faint: #8a7f70;
+  /* The two plates. Signal red and bolt blue are the mark's, lifted for
+     legibility on a dark ground — #b32408 and #0e3fbf go muddy below 4.5:1. */
+  --accent: #e0552c;
+  --accent-soft: #2d1710;
+  --plate-red: #e0552c;
+  --plate-blue: #4a7ffc;
   --ok: #4ade80;
   --ok-soft: #12291c;
   --warn: #fbbf24;
@@ -35,7 +44,7 @@
   --codex: #74aa9c;
   --glm: #9b8cf0;
 
-  /* Data-viz palette. Dark steps, validated against the card surface #13161c:
+  /* Data-viz palette. Dark steps, validated against the card surface #1b1714:
      categorical slots 1-4 pass the lightness band, chroma floor, adjacent-pair
      CVD separation (worst 8.4), normal-vision floor (19.8) and 3:1 contrast.
      The slot ORDER is the CVD-safety mechanism — assign by slot, never reorder
@@ -83,7 +92,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 }
 .btn:hover:not(:disabled) { background: var(--bg-sunk); border-color: var(--text-faint); }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
-.btn-primary { background: var(--accent); border-color: var(--accent); color: #0c0e12; font-weight: 600; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #14100d; font-weight: 600; }
 .btn-primary:hover:not(:disabled) { filter: brightness(1.1); background: var(--accent); }
 .btn-danger { color: var(--bad); }
 .btn-danger:hover:not(:disabled) { background: var(--bad-soft); border-color: var(--bad); }
@@ -96,7 +105,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .field:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 .label {
-  font-size: 10.5px; font-weight: 600; letter-spacing: .07em;
+  font-size: 10.5px; font-weight: 600; letter-spacing: .11em;
   text-transform: uppercase; color: var(--text-faint);
 }
 
@@ -125,7 +134,14 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   color: var(--text-dim); border-bottom: 2px solid transparent;
 }
 .nav-tab:hover { color: var(--text); }
-.nav-tab.on { color: var(--accent); border-bottom-color: var(--accent); }
+/* The plate split, doing a real job rather than decorating: the active tab is
+   the one printed twice, one plate off register under the other. Colour is an
+   event in this system and happens twice — here, and the lamp in the mark. */
+.nav-tab.on { color: var(--text); border-bottom-color: var(--plate-red); position: relative; }
+.nav-tab.on::after {
+  content: ''; position: absolute; left: 2px; right: -2px; bottom: -2px; height: 2px;
+  background: var(--plate-blue); opacity: .55; z-index: -1;
+}
 .nav-badge {
   min-width: 17px; padding: 0 5px; border-radius: 999px;
   background: var(--accent-soft); color: var(--accent);

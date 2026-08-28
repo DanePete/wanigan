@@ -47,17 +47,21 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
         cursorBlink: true,
         scrollback: 20_000,
         allowProposedApi: true,
+        // The terminal is the largest surface in the app, so it takes the same
+        // warm ink ground as the chrome — a cool-black rectangle inside warm
+        // chrome reads as a bug. ANSI slots stay recognisably themselves:
+        // scripts colour their own output and nobody's red should look orange.
         theme: {
-          background: '#0c0e12', foreground: '#e7e9ee', cursor: '#7c95f8',
-          selectionBackground: '#2b3550',
-          black: '#0c0e12',   brightBlack: '#6b7280',
-          red: '#f87171',     brightRed: '#fca5a5',
-          green: '#4ade80',   brightGreen: '#86efac',
-          yellow: '#fbbf24',  brightYellow: '#fcd34d',
-          blue: '#7c95f8',    brightBlue: '#a5b4fc',
-          magenta: '#c4b5fd', brightMagenta: '#ddd6fe',
-          cyan: '#67e8f9',    brightCyan: '#a5f3fc',
-          white: '#e7e9ee',   brightWhite: '#ffffff',
+          background: '#14100d', foreground: '#ece4d0', cursor: '#e0552c',
+          selectionBackground: '#3d2f26',
+          black: '#14100d',   brightBlack: '#8a7f70',
+          red: '#f0705a',     brightRed: '#f8a08f',
+          green: '#6cc98c',   brightGreen: '#96e0ae',
+          yellow: '#d9a441',  brightYellow: '#eec46e',
+          blue: '#7fa2fc',    brightBlue: '#a8c0fd',
+          magenta: '#c2a0ee', brightMagenta: '#dcc4f5',
+          cyan: '#68c9c4',    brightCyan: '#96dedb',
+          white: '#ece4d0',   brightWhite: '#fdf8ec',
         },
       });
       const fit = new FitAddon();
