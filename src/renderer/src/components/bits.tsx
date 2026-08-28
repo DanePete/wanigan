@@ -22,7 +22,7 @@ export function Bar({ succeeded, failed, pending }: { succeeded: number; failed:
   const total = Math.max(1, succeeded + failed + pending);
   const pct = (n: number) => `${(n / total) * 100}%`;
   return (
-    <div style={{ display: 'flex', height: 5, borderRadius: 999, overflow: 'hidden', background: 'var(--bg-sunk)' }}
+    <div style={{ display: 'flex', height: 5, borderRadius: 'var(--r-pill)', overflow: 'hidden', background: 'var(--bg-sunk)' }}
          title={`${succeeded} succeeded · ${failed} failed · ${pending} pending`}>
       <div style={{ width: pct(succeeded), background: 'var(--ok)' }} />
       <div style={{ width: pct(failed), background: 'var(--bad)' }} />
@@ -34,8 +34,8 @@ export function Stat({ label, value, sub, tone }: { label: string; value: React.
   return (
     <div className="sunk" style={{ padding: '10px 13px' }}>
       <div className="label">{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 600, marginTop: 3, color: tone, fontVariantNumeric: 'tabular-nums' }}>{value}</div>
-      {sub ? <div className="faint" style={{ fontSize: 11, marginTop: 1 }}>{sub}</div> : null}
+      <div style={{ fontSize: 'var(--t-title)', fontWeight: 600, marginTop: 3, color: tone, fontVariantNumeric: 'tabular-nums' }}>{value}</div>
+      {sub ? <div className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 1 }}>{sub}</div> : null}
     </div>
   );
 }
@@ -49,7 +49,7 @@ export function Note({ tone = 'info', children }: { tone?: 'info' | 'warn' | 'er
   }[tone];
   return (
     <div style={{ background: m.bg, color: m.fg, borderLeft: `2px solid ${m.bd}`,
-                  borderRadius: 6, padding: '7px 11px', fontSize: 12.5, lineHeight: 1.45 }}>
+                  borderRadius: 'var(--r-sm)', padding: '7px 11px', fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
       {children}
     </div>
   );
@@ -62,13 +62,13 @@ export function Section({ n, title, hint, right, children }: {
     <section className="card" style={{ padding: 15 }}>
       <div style={{ display: 'flex', gap: 10, marginBottom: 11 }}>
         {n !== undefined && (
-          <span style={{ marginTop: 1, width: 19, height: 19, flex: 'none', borderRadius: 999,
-                         display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700,
+          <span style={{ marginTop: 1, width: 19, height: 19, flex: 'none', borderRadius: 'var(--r-pill)',
+                         display: 'grid', placeItems: 'center', fontSize: 'var(--t-micro)', fontWeight: 700,
                          background: 'var(--accent-soft)', color: 'var(--accent)' }}>{n}</span>
         )}
         <div style={{ minWidth: 0 }}>
-          <h2 style={{ fontSize: 13.5, fontWeight: 600 }}>{title}</h2>
-          {hint && <p className="dim" style={{ fontSize: 12, marginTop: 2, lineHeight: 1.45 }}>{hint}</p>}
+          <h2 style={{ fontSize: 'var(--t-body)', fontWeight: 600 }}>{title}</h2>
+          {hint && <p className="dim" style={{ fontSize: 'var(--t-small)', marginTop: 2, lineHeight: 1.45 }}>{hint}</p>}
         </div>
         {right && <div style={{ marginLeft: 'auto', flex: 'none' }}>{right}</div>}
       </div>

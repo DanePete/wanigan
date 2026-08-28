@@ -279,22 +279,22 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
               return (
                 <div key={p.id}>
                   <div className="group-title">
-                    <span style={{ fontWeight: 600, fontSize: 12 }}>{p.name}</span>
-                    {p.branch && <span className="faint mono" style={{ fontSize: 10.5 }}>{p.branch}</span>}
-                    <FocusBtn className="faint" style={{ marginLeft: 'auto', fontSize: 15, lineHeight: 1, borderRadius: 5 }}
+                    <span style={{ fontWeight: 600, fontSize: 'var(--t-small)' }}>{p.name}</span>
+                    {p.branch && <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>{p.branch}</span>}
+                    <FocusBtn className="faint" style={{ marginLeft: 'auto', fontSize: 'var(--t-lead)', lineHeight: 1, borderRadius: 'var(--r-sm)' }}
                               title={`New session in ${p.name}`} onClick={() => setDialog(true)}>+</FocusBtn>
                   </div>
-                  {list.length === 0 && <p className="faint" style={{ padding: '2px 8px 4px', fontSize: 11.5 }}>no sessions</p>}
+                  {list.length === 0 && <p className="faint" style={{ padding: '2px 8px 4px', fontSize: 'var(--t-small)' }}>no sessions</p>}
                   {list.map((s) => (
                     <FocusBtn key={s.id} className={`session-item${s.id === activeId ? ' active' : ''}`}
                               onClick={() => select(s.id)}>
                       <span className="dot" style={{ background: s.status === 'running' ? TINT[s.providerId] : 'var(--text-faint)' }} />
                       <span style={{ minWidth: 0, flex: 1 }}>
-                        <span style={{ display: 'block', fontSize: 12.5 }}>
+                        <span style={{ display: 'block', fontSize: 'var(--t-small)' }}>
                           {providers.find((x) => x.id === s.providerId)?.label ?? s.providerId}
                           {s.worktree && <span className="faint" title="Runs in its own git worktree"> ⑂</span>}
                         </span>
-                        <span className="faint mono" style={{ fontSize: 10.5, fontVariantNumeric: 'tabular-nums' }}>
+                        <span className="faint mono" style={{ fontSize: 'var(--t-micro)', fontVariantNumeric: 'tabular-nums' }}>
                           {s.status === 'running' ? `pid ${s.pid}` : `exited ${s.exitCode}`}
                         </span>
                       </span>
@@ -313,7 +313,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
               <div style={{ marginTop: 16 }}>
                 <div className="group-title">
                   <span className="label">Recent</span>
-                  <span className="faint" style={{ fontSize: 10.5, marginLeft: 'auto' }}>resumable</span>
+                  <span className="faint" style={{ fontSize: 'var(--t-micro)', marginLeft: 'auto' }}>resumable</span>
                 </div>
                 {past.slice(0, 8).map((p) => (
                   <div key={p.id} className="past-row">
@@ -321,18 +321,18 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                               title={p.live ? `Resume in ${p.projectPath}` : 'Project folder no longer exists'}
                               onClick={() => resume(p)}>
                       <span style={{ minWidth: 0, flex: 1 }}>
-                        <span style={{ display: 'block', fontSize: 12 }}>
+                        <span style={{ display: 'block', fontSize: 'var(--t-small)' }}>
                           {p.projectName}
                           {!p.live && <span className="faint"> · missing</span>}
                         </span>
-                        <span className="faint mono" style={{ fontSize: 10 }}>
+                        <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>
                           {providers.find((x) => x.id === p.providerId)?.label ?? p.providerId}
                           {p.model && ` · ${p.model}`}
                           {p.effort && ` · ${p.effort}`}
                           {' · '}{ago(p.startedAt)}
                         </span>
                       </span>
-                      <span className="faint" style={{ fontSize: 11 }}>
+                      <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>
                         {resuming === p.id ? '…' : '↻'}
                       </span>
                     </FocusBtn>
@@ -343,7 +343,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                   </div>
                 ))}
                 {past.some((p) => p.providerId === 'codex') && (
-                  <p className="faint" style={{ padding: '4px 8px', fontSize: 10.5, lineHeight: 1.45 }}>
+                  <p className="faint" style={{ padding: '4px 8px', fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>
                     Codex can only resume its most recent conversation, not a specific one.
                   </p>
                 )}
@@ -364,13 +364,13 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
           <div className="tabbar">
             {sessions.map((s, i) => (
               <FocusBtn key={s.id} className={`tab${s.id === activeId ? ' active' : ''}`} onClick={() => select(s.id)}>
-                <span className="dot" style={{ width: 6, height: 6, borderRadius: 999,
+                <span className="dot" style={{ width: 6, height: 6, borderRadius: 'var(--r-pill)',
                                                background: s.status === 'running' ? TINT[s.providerId] : 'var(--text-faint)' }} />
                 {s.projectName}
-                <span className="faint mono" style={{ fontSize: 10.5 }}>⌘{i + 1}</span>
+                <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>⌘{i + 1}</span>
                 {s.status === 'exited' && (
                   <span onClick={(e) => { e.stopPropagation(); void closeTab(s.id); }}
-                        className="faint" style={{ marginLeft: 2, fontSize: 13 }} title="Close (⌘W)">×</span>
+                        className="faint" style={{ marginLeft: 2, fontSize: 'var(--t-body)' }} title="Close (⌘W)">×</span>
                 )}
               </FocusBtn>
             ))}
@@ -394,7 +394,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
           ) : listErr ? (
             <div className="empty">
               <div style={{ maxWidth: 460 }}>
-                <h1 style={{ fontSize: 17, fontWeight: 600 }}>The session list did not load</h1>
+                <h1 style={{ fontSize: 'var(--t-title)', fontWeight: 600 }}>The session list did not load</h1>
                 <p className="dim" style={{ marginTop: 6, lineHeight: 1.55 }}>{listErr}</p>
                 <p className="faint" style={{ marginTop: 6, lineHeight: 1.5 }}>
                   Running sessions are unaffected — this is Wanigan's own record of them. Retry below;
@@ -406,7 +406,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
           ) : sessions.length === 0 ? (
             <div className="empty">
               <div>
-                <h1 style={{ fontSize: 19, fontWeight: 600 }}>No sessions running</h1>
+                <h1 style={{ fontSize: 'var(--t-title)', fontWeight: 600 }}>No sessions running</h1>
                 <p className="dim" style={{ marginTop: 6, maxWidth: 460, lineHeight: 1.55 }}>
                   Each session is a real terminal, so permission prompts and the full TUI work exactly
                   as they do in your shell.
@@ -446,15 +446,15 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                   {att.dragging && active && (
                     <div style={{
                       position: 'absolute', inset: 8, pointerEvents: 'none', zIndex: 5,
-                      border: '2px dashed var(--accent)', borderRadius: 10,
+                      border: '2px dashed var(--accent)', borderRadius: 'var(--r-md)',
                       background: 'var(--accent-soft)', opacity: 0.96,
                       display: 'grid', placeItems: 'center', textAlign: 'center', padding: 20,
                     }}>
                       <div>
-                        <div style={{ fontSize: 15, fontWeight: 600 }}>
+                        <div style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>
                           ⤓ Drop to attach to {active.projectName}
                         </div>
-                        <div className="dim" style={{ fontSize: 12, marginTop: 5, lineHeight: 1.5 }}>
+                        <div className="dim" style={{ fontSize: 'var(--t-small)', marginTop: 5, lineHeight: 1.5 }}>
                           Images, PDFs, text and notebooks are staged where this agent can read them.
                           Nothing is sent anywhere — the agent opens the file itself.
                         </div>
@@ -475,7 +475,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                          title="Files this session changed">Code</Seg>
                     <Seg on={pane === 'timeline'} onClick={() => setPane(active.id, 'timeline')}
                          title="Every tool call the agent made, and how long it took">Timeline</Seg>
-                    <span className="faint mono" style={{ marginLeft: 'auto', fontSize: 10.5 }}>⌘B</span>
+                    <span className="faint mono" style={{ marginLeft: 'auto', fontSize: 'var(--t-micro)' }}>⌘B</span>
                   </div>
                   <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'grid',
                                 borderLeft: pane === 'timeline' ? '1px solid var(--line)' : undefined }}>
@@ -504,7 +504,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                 <span style={{ fontVariantNumeric: 'tabular-nums' }}>
                   {active.status === 'running' ? `pid ${active.pid}` : `exited ${active.exitCode}`}
                 </span>
-                <FocusBtn className="faint" style={{ marginLeft: 'auto', fontSize: 11.5, borderRadius: 5 }}
+                <FocusBtn className="faint" style={{ marginLeft: 'auto', fontSize: 'var(--t-small)', borderRadius: 'var(--r-sm)' }}
                           onClick={() => window.wanigan.sessions.reveal(active.worktree ?? active.projectPath)}
                           title={active.worktree
                             ? `Open the worktree this session runs in: ${active.worktree}`
@@ -512,14 +512,14 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                   open folder
                 </FocusBtn>
                 {active.status === 'running' && (
-                  <FocusBtn className="faint" style={{ fontSize: 11.5, color: 'var(--warning)', borderRadius: 5 }}
+                  <FocusBtn className="faint" style={{ fontSize: 'var(--t-small)', color: 'var(--warning)', borderRadius: 'var(--r-sm)' }}
                             title="Stop the current turn. The session stays open — this is the Escape key Claude Code listens for. ⌘."
                             onClick={() => void window.wanigan.sessions.interrupt(active.id)}>
                     ⎋ interrupt
                   </FocusBtn>
                 )}
                 {active.status === 'running' && (
-                  <FocusBtn className="faint" style={{ fontSize: 11.5, color: 'var(--bad)', borderRadius: 5 }}
+                  <FocusBtn className="faint" style={{ fontSize: 'var(--t-small)', color: 'var(--bad)', borderRadius: 'var(--r-sm)' }}
                             title="End the session entirely. The conversation goes with it."
                             onClick={() => window.wanigan.sessions.kill(active.id)}>end session</FocusBtn>
                 )}
@@ -660,7 +660,7 @@ function RunConfigBar({ session, provider }: { session: Session; provider: Provi
           <span className="label" style={{ margin: 0 }}>Model</span>
           <select
             className="field"
-            style={{ padding: '3px 7px', fontSize: 12 }}
+            style={{ padding: '3px 7px', fontSize: 'var(--t-small)' }}
             value={model}
             onChange={(e) => { setModel(e.target.value); if (e.target.value) send(`/model ${e.target.value}`); }}
           >
@@ -687,13 +687,13 @@ function RunConfigBar({ session, provider }: { session: Session; provider: Provi
             style={{ width: 128, accentColor: 'var(--accent)' }}
           />
           {/* The word, not just the notch — a slider position is not a value. */}
-          <span className="mono" style={{ fontSize: 11.5, color: 'var(--accent)', minWidth: 46 }}>
+          <span className="mono" style={{ fontSize: 'var(--t-small)', color: 'var(--accent)', minWidth: 46 }}>
             {EFFORT_LEVELS[effortIdx]}
           </span>
         </label>
       )}
 
-      <span className="faint" style={{ fontSize: 11, marginLeft: 'auto', minWidth: 0 }}>
+      <span className="faint" style={{ fontSize: 'var(--t-micro)', marginLeft: 'auto', minWidth: 0 }}>
         {sent
           ? <><span className="mono" style={{ color: 'var(--ok)' }}>{sent}</span> sent to the session</>
           : modelNote
@@ -718,13 +718,13 @@ function TrustBanner({ level, fallback, running }: {
       display: 'flex', alignItems: 'baseline', gap: 8, padding: '6px 12px',
       background: 'var(--warning-soft)', borderLeft: '3px solid var(--warning)', lineHeight: 1.45,
     }}>
-      <span aria-hidden="true" style={{ color: 'var(--warning)', fontWeight: 700, fontSize: 12 }}>
+      <span aria-hidden="true" style={{ color: 'var(--warning)', fontWeight: 700, fontSize: 'var(--t-small)' }}>
         {TRUST_GLYPH[level]}
       </span>
-      <span style={{ color: 'var(--warning)', fontWeight: 650, fontSize: 12, flex: 'none' }}>
+      <span style={{ color: 'var(--warning)', fontWeight: 650, fontSize: 'var(--t-small)', flex: 'none' }}>
         {copy.label} trust
       </span>
-      <span style={{ color: 'var(--text-dim)', fontSize: 12, minWidth: 0 }}>
+      <span style={{ color: 'var(--text-dim)', fontSize: 'var(--t-small)', minWidth: 0 }}>
         {copy.detail} {running ? 'This session is running' : 'This session ran'} above your default,
         {' '}{TRUST_COPY[fallback].label} ({TRUST_GLYPH[fallback]}).
       </span>
@@ -820,17 +820,17 @@ function WorktreeBar({ session, path, onRefresh }: {
         <span className="label" style={{ flex: 'none' }}>Worktree</span>
 
         {info === undefined ? (
-          <span className="faint" style={{ fontSize: 12 }}>Reading git…</span>
+          <span className="faint" style={{ fontSize: 'var(--t-small)' }}>Reading git…</span>
         ) : info === null ? (
-          <span className="dim" style={{ fontSize: 12, lineHeight: 1.45 }}>
+          <span className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
             Gone from disk. Wanigan removes an isolated worktree once the session ends and nothing is
             uncommitted in it — the branch it used is kept.
           </span>
         ) : (
           <>
-            <span className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{branch ?? 'detached HEAD'}</span>
-            <span className="faint mono trunc" style={{ fontSize: 11 }} title={info.path}>{info.path}</span>
-            <span className="dim" style={{ fontSize: 11.5, fontVariantNumeric: 'tabular-nums' }}>
+            <span className="mono" style={{ fontSize: 'var(--t-small)', fontWeight: 600 }}>{branch ?? 'detached HEAD'}</span>
+            <span className="faint mono trunc" style={{ fontSize: 'var(--t-micro)' }} title={info.path}>{info.path}</span>
+            <span className="dim" style={{ fontSize: 'var(--t-small)', fontVariantNumeric: 'tabular-nums' }}>
               {info.dirty > 0
                 ? `${plural(info.dirty, 'uncommitted file')}`
                 : 'nothing uncommitted'}
@@ -856,14 +856,14 @@ function WorktreeBar({ session, path, onRefresh }: {
 
       {confirm && (
         <div style={{ background: 'var(--warning-soft)', borderLeft: '3px solid var(--warning)',
-                      borderRadius: 6, padding: '8px 11px', lineHeight: 1.5 }}>
-          <div style={{ color: 'var(--warning)', fontWeight: 650, fontSize: 12.5 }}>
+                      borderRadius: 'var(--r-sm)', padding: '8px 11px', lineHeight: 1.5 }}>
+          <div style={{ color: 'var(--warning)', fontWeight: 650, fontSize: 'var(--t-small)' }}>
             <span aria-hidden="true">⚠ </span>
             {confirm.dirty > 0
               ? `${plural(confirm.dirty, 'uncommitted file')} will be deleted`
               : 'Delete this worktree folder?'}
           </div>
-          <p style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 3 }}>
+          <p style={{ color: 'var(--text-dim)', fontSize: 'var(--t-small)', marginTop: 3 }}>
             {confirm.dirty > 0
               ? <>Those changes exist only in <span className="mono">{confirm.path}</span> and nowhere else.
                   Commit them there first if you want to keep them.</>
@@ -1119,7 +1119,7 @@ function AttachStrip({ session, att }: { session: Session; att: AttachState }) {
                   padding: '6px 10px 7px', display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="label" style={{ flex: 'none' }}>Attachments</span>
-        <span className="faint" style={{ fontSize: 11.5, fontVariantNumeric: 'tabular-nums' }}>
+        <span className="faint" style={{ fontSize: 'var(--t-small)', fontVariantNumeric: 'tabular-nums' }}>
           {att.phase === 'loading' ? 'reading…'
             : att.items.length === 0 ? 'none staged'
             : `${plural(att.items.length, 'file')}`}
@@ -1147,12 +1147,12 @@ function AttachStrip({ session, att }: { session: Session; att: AttachState }) {
           <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>✕</span>
           The attachment list did not load: {att.loadErr} Files already staged are still on disk in this
           session's attachment folder.{' '}
-          <FocusBtn className="link" style={{ fontSize: 12.5 }} onClick={() => void att.reload()}>Retry</FocusBtn>
+          <FocusBtn className="link" style={{ fontSize: 'var(--t-small)' }} onClick={() => void att.reload()}>Retry</FocusBtn>
         </Note>
       ) : att.phase === 'loading' ? (
-        <p className="faint" style={{ fontSize: 11.5 }}>Reading what is staged for this session…</p>
+        <p className="faint" style={{ fontSize: 'var(--t-small)' }}>Reading what is staged for this session…</p>
       ) : att.items.length === 0 ? (
-        <p className="faint" style={{ fontSize: 11.5, lineHeight: 1.45 }}>
+        <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
           Nothing staged yet. Drop a file on the terminal, paste a screenshot with ⌘V, or add one —
           Wanigan copies it where {session.projectName}'s agent can read it and names the path in your prompt.
         </p>
@@ -1188,16 +1188,16 @@ function Chip({ a, usdCost, onRemove }: { a: Attachment; usdCost: number | null;
   const dims = a.width && a.height ? `${num(a.width)}×${num(a.height)} px` : null;
   return (
     <div style={{ flex: 'none', maxWidth: 300, display: 'flex', alignItems: 'center', gap: 8,
-                  border: '1px solid var(--line)', borderRadius: 8, background: 'var(--bg-sunk)',
+                  border: '1px solid var(--line)', borderRadius: 'var(--r-md)', background: 'var(--bg-sunk)',
                   padding: '4px 4px 4px 9px' }}>
       <span aria-hidden="true" style={{ color: 'var(--text-dim)', fontWeight: 700 }}>{k.glyph}</span>
       <span style={{ minWidth: 0 }}>
-        <span className="mono" style={{ display: 'block', fontSize: 11.5, overflow: 'hidden',
+        <span className="mono" style={{ display: 'block', fontSize: 'var(--t-small)', overflow: 'hidden',
                                         textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
               title={a.storedPath}>
           {a.name}
         </span>
-        <span className="faint" style={{ fontSize: 10.5, fontVariantNumeric: 'tabular-nums',
+        <span className="faint" style={{ fontSize: 'var(--t-micro)', fontVariantNumeric: 'tabular-nums',
                                          whiteSpace: 'nowrap' }}>
           {k.word} · {size(a.bytes)}
           {dims && <> · {dims}</>}

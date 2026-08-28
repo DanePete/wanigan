@@ -108,7 +108,7 @@ export default function Git({ projects }: { projects: Project[] }) {
 
   const bar = (
     <div className="gt-bar">
-      <select className="field" style={{ width: 'auto', fontSize: 12 }} value={projectId}
+      <select className="field" style={{ width: 'auto', fontSize: 'var(--t-small)' }} value={projectId}
               onChange={(e) => { setProjectId(e.target.value); setSel(null); setDetail(null); }}>
         {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
@@ -150,7 +150,7 @@ export default function Git({ projects }: { projects: Project[] }) {
       <div className="pane">
         {bar}
         <div className="empty"><div>
-          <h1 style={{ fontSize: 18, fontWeight: 600 }}>Not a git repository</h1>
+          <h1 style={{ fontSize: 'var(--t-title)', fontWeight: 600 }}>Not a git repository</h1>
           <p className="dim" style={{ marginTop: 6, maxWidth: '52ch', lineHeight: 1.55 }}>
             {project?.path} has no <span className="mono">.git</span>. Wanigan reads and writes git for projects that
             are repositories; everything else in the app works either way.
@@ -271,7 +271,7 @@ export default function Git({ projects }: { projects: Project[] }) {
                     <span className="go" onClick={(e) => { e.stopPropagation(); void act('Unstage', () => window.wanigan.git.unstage(st.root, [f.path])); }}>−</span>
                   </button>
                 ))}
-                {!st.staged.length && <p className="faint" style={{ padding: '4px 12px', fontSize: 11.5 }}>Nothing staged.</p>}
+                {!st.staged.length && <p className="faint" style={{ padding: '4px 12px', fontSize: 'var(--t-small)' }}>Nothing staged.</p>}
               </div>
 
               <div className="gt-sec">
@@ -302,7 +302,7 @@ export default function Git({ projects }: { projects: Project[] }) {
                     <span className="go" onClick={(e) => { e.stopPropagation(); void act('Stage', () => window.wanigan.git.stage(st.root, [f.path])); }}>+</span>
                   </button>
                 ))}
-                {st.clean && <p className="faint" style={{ padding: '4px 12px', fontSize: 11.5 }}>Working tree clean.</p>}
+                {st.clean && <p className="faint" style={{ padding: '4px 12px', fontSize: 'var(--t-small)' }}>Working tree clean.</p>}
               </div>
 
               <div className="gt-commit">
@@ -323,7 +323,7 @@ export default function Git({ projects }: { projects: Project[] }) {
                           })}>Stage all &amp; commit</button>
                 </div>
                 {!st.staged.length && !st.clean && (
-                  <span className="faint" style={{ fontSize: 11 }}>Stage something, or use “Stage all &amp; commit”.</span>
+                  <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>Stage something, or use “Stage all &amp; commit”.</span>
                 )}
               </div>
             </div>
@@ -338,7 +338,7 @@ export default function Git({ projects }: { projects: Project[] }) {
                   </span>
                   <span className="p" title={b.subject ?? ''}>
                     {b.name}
-                    {(b.ahead || b.behind) ? <span className="faint" style={{ marginLeft: 6, fontSize: 10.5 }}>↑{b.ahead} ↓{b.behind}</span> : null}
+                    {(b.ahead || b.behind) ? <span className="faint" style={{ marginLeft: 6, fontSize: 'var(--t-micro)' }}>↑{b.ahead} ↓{b.behind}</span> : null}
                   </span>
                   <span className="go" style={{ display: 'flex', gap: 5 }}>
                     {!b.current && (
@@ -380,7 +380,7 @@ export default function Git({ projects }: { projects: Project[] }) {
                   </span>
                 </div>
               ))}
-              {!stash.length && <p className="faint" style={{ padding: 12, fontSize: 12 }}>No stashes.</p>}
+              {!stash.length && <p className="faint" style={{ padding: 12, fontSize: 'var(--t-small)' }}>No stashes.</p>}
               <div className="gt-commit">
                 <button className="btn" disabled={!!busy || st.clean}
                         onClick={() => void act('Stash', () => window.wanigan.git.stashSave(st.root, msg))}>

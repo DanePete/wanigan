@@ -198,14 +198,14 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
             </button>
           )}
           {tab === 'changes' && visible.length > 0 && onSendToBatch && (
-            <button className="btn" style={{ padding: '3px 9px', fontSize: 11.5 }}
+            <button className="btn" style={{ padding: '3px 9px', fontSize: 'var(--t-small)' }}
                     title="Run one prompt across these files as a batch"
                     onClick={() => onSendToBatch(visible.map((f) => f.path))}>
               Send {visible.length} to batch
             </button>
           )}
-          {changes.branch && <span className="faint mono" style={{ fontSize: 10.5 }}>{changes.branch}</span>}
-          <button className="btn" style={{ padding: '3px 9px', fontSize: 11.5 }}
+          {changes.branch && <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>{changes.branch}</span>}
+          <button className="btn" style={{ padding: '3px 9px', fontSize: 'var(--t-small)' }}
                   title={editor ? `Open in ${editor.label}` : 'No editor CLI found — opens in Finder'}
                   onClick={() => window.wanigan.code.open(
                     editor?.path ?? null,
@@ -222,16 +222,16 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
         {tab === 'changes' ? (
           <>
             <div className="code-list">
-              {!changes.isRepo && <p className="faint" style={{ padding: 10, fontSize: 11.5 }}>Not a git repository.</p>}
+              {!changes.isRepo && <p className="faint" style={{ padding: 10, fontSize: 'var(--t-small)' }}>Not a git repository.</p>}
               {changes.isRepo && !visible.length && (
-                <p className="faint" style={{ padding: 10, fontSize: 11.5 }}>
+                <p className="faint" style={{ padding: 10, fontSize: 'var(--t-small)' }}>
                   {scope === 'session' && preexistingCount > 0
                     ? `Nothing from this session yet — ${preexistingCount} file(s) were already modified before it started.`
                     : 'No changes yet. Edits appear here as the agent makes them.'}
                 </p>
               )}
               {changes.headMoved && (
-                <p className="faint" style={{ padding: '6px 10px', fontSize: 11 }}>
+                <p className="faint" style={{ padding: '6px 10px', fontSize: 'var(--t-micro)' }}>
                   {changes.commits} commit{changes.commits === 1 ? '' : 's'} since this session started.
                 </p>
               )}
@@ -249,7 +249,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
                   {touched[f.path] && (
                     // Word as well as colour: the dot alone would be one more
                     // thing that means nothing to a colourblind reader.
-                    <span className="mono" style={{ marginLeft: 'auto', fontSize: 9.5, color: 'var(--accent)', flex: 'none' }}>
+                    <span className="mono" style={{ marginLeft: 'auto', fontSize: 'var(--t-micro)', color: 'var(--accent)', flex: 'none' }}>
                       ● just now
                     </span>
                   )}
@@ -260,10 +260,10 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
               {sel && baseHead && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 9px',
                               borderBottom: '1px solid var(--line)', flexWrap: 'wrap' }}>
-                  <span className="faint" style={{ fontSize: 11 }}>
+                  <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>
                     against <span className="mono">{baseHead.slice(0, 8)}</span>
                   </span>
-                  <button className="btn" style={{ fontSize: 11, padding: '2px 8px', marginLeft: 'auto' }}
+                  <button className="btn" style={{ fontSize: 'var(--t-micro)', padding: '2px 8px', marginLeft: 'auto' }}
                           onClick={() => void askRevert(sel)}>Revert this file…</button>
                 </div>
               )}
@@ -272,11 +272,11 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
                   <Note tone={plan.action === 'delete' ? 'warn' : 'info'}>
                     {plan.detail}
                     <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                      <button className="btn btn-danger" style={{ fontSize: 11.5, padding: '3px 9px' }}
+                      <button className="btn btn-danger" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
                               disabled={reverting || !plan.safe} onClick={() => void doRevert()}>
                         {reverting ? 'Reverting…' : plan.action === 'delete' ? 'Delete it' : 'Revert it'}
                       </button>
-                      <button className="btn" style={{ fontSize: 11.5, padding: '3px 9px' }}
+                      <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
                               onClick={() => setPlan(null)}>Cancel</button>
                     </div>
                   </Note>

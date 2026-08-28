@@ -80,12 +80,12 @@ function Callout({ level = 'warning', title, children }: {
     ? { bg: 'var(--critical-soft)', fg: 'var(--critical)', glyph: '✕' }
     : { bg: 'var(--warning-soft)', fg: 'var(--warning)', glyph: '⚠' };
   return (
-    <div style={{ background: m.bg, borderLeft: `3px solid ${m.fg}`, borderRadius: 7,
+    <div style={{ background: m.bg, borderLeft: `3px solid ${m.fg}`, borderRadius: 'var(--r-sm)',
                   padding: '10px 13px', display: 'flex', gap: 9 }}>
       <span aria-hidden="true" style={{ color: m.fg, fontWeight: 700, lineHeight: 1.4 }}>{m.glyph}</span>
       <div style={{ minWidth: 0 }}>
-        <div style={{ color: m.fg, fontWeight: 650, fontSize: 12.5, lineHeight: 1.45 }}>{title}</div>
-        {children ? <div className="dim" style={{ fontSize: 12.5, lineHeight: 1.55, marginTop: 5 }}>{children}</div> : null}
+        <div style={{ color: m.fg, fontWeight: 650, fontSize: 'var(--t-small)', lineHeight: 1.45 }}>{title}</div>
+        {children ? <div className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 5 }}>{children}</div> : null}
       </div>
     </div>
   );
@@ -121,7 +121,7 @@ function useLoad<T>(load: () => Promise<T>, deps: unknown[] = []): { v: Load<T>;
 function PanelError({ what, detail, onRetry }: { what: string; detail: string; onRetry: () => void }) {
   return (
     <Callout level="critical" title={`Wanigan could not read ${what}.`}>
-      <p className="mono" style={{ fontSize: 11.5, wordBreak: 'break-word' }}>{detail}</p>
+      <p className="mono" style={{ fontSize: 'var(--t-small)', wordBreak: 'break-word' }}>{detail}</p>
       <p style={{ marginTop: 6 }}>
         If the message names a missing handler, the main process has not registered that channel and
         nothing on this panel will work until it does. Otherwise the read was transient: try again,
@@ -135,7 +135,7 @@ function PanelError({ what, detail, onRetry }: { what: string; detail: string; o
 function Frame<T>({ v, what, onRetry, children }: {
   v: Load<T>; what: string; onRetry: () => void; children: (d: T) => React.ReactNode;
 }) {
-  if (v.s === 'loading') return <p className="dim" style={{ fontSize: 12.5, padding: '6px 2px' }}>Reading {what}…</p>;
+  if (v.s === 'loading') return <p className="dim" style={{ fontSize: 'var(--t-small)', padding: '6px 2px' }}>Reading {what}…</p>;
   if (v.s === 'err') return <PanelError what={what} detail={v.e} onRetry={onRetry} />;
   return <>{children(v.d)}</>;
 }
@@ -339,14 +339,14 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
                    value={workspaceId} spellCheck={false}
                    onChange={(e) => setWorkspaceId(e.target.value)}
                    onKeyDown={(e) => { if (e.key === 'Enter' && input.trim()) void save(); }} />
-            <p className="faint" style={{ fontSize: 11, marginTop: 4, lineHeight: 1.45 }}>
+            <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 4, lineHeight: 1.45 }}>
               Console → Settings → Workspaces. Sent as the{' '}
               <span className="mono">anthropic-workspace-id</span> header on every request.
               Plain API keys ignore it, so leaving it set is harmless.
             </p>
           </div>
         ) : (
-          <button className="faint" style={{ fontSize: 11.5, marginTop: 8 }}
+          <button className="faint" style={{ fontSize: 'var(--t-small)', marginTop: 8 }}
                   onClick={() => setShowWorkspace(true)}>
             + add a Workspace ID (needed for identity-linked keys)
           </button>
@@ -354,7 +354,7 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
 
         {msgState && <div style={{ marginTop: 11 }}><Note tone={msgState.tone === 'ok' ? 'ok' : 'error'}>{msgState.text}</Note></div>}
 
-        <div className="sunk" style={{ padding: '10px 12px', marginTop: 14, fontSize: 12, lineHeight: 1.55 }}>
+        <div className="sunk" style={{ padding: '10px 12px', marginTop: 14, fontSize: 'var(--t-small)', lineHeight: 1.55 }}>
           <p>
             <strong>This is not your Claude Code subscription.</strong> The Batches API bills per token
             against a Claude Platform account with its own credit balance. Get a key at{' '}
@@ -391,7 +391,7 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
             setMsg({ tone: 'ok', text: v > 0 ? `Runs estimated above $${v.toFixed(2)} will be blocked.` : 'Spend cap disabled.' });
           }}>Save</button>
         </div>
-        <p className="faint" style={{ fontSize: 11, marginTop: 5, lineHeight: 1.45 }}>
+        <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 5, lineHeight: 1.45 }}>
           0 disables the cap. The estimate is a low-end figure that assumes caching engages, so
           leave headroom — the builder shows the upper bound beside it.
         </p>
@@ -415,7 +415,7 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
             {p.path ? (
               <>
                 <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>{p.version ?? 'installed'}</span>
-                <span className="faint mono trunc" style={{ fontSize: 10.5, flex: 1 }} title={p.path}>{p.path}</span>
+                <span className="faint mono trunc" style={{ fontSize: 'var(--t-micro)', flex: 1 }} title={p.path}>{p.path}</span>
               </>
             ) : (
               <span className="faint">not found — <code className="mono">{p.bin}</code> is not on PATH or in an editor extension</span>
@@ -432,8 +432,8 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
                                    borderTop: '1px solid var(--line-soft)' }}>
             <span style={{ fontWeight: 500 }}>{p.name}</span>
             {p.branch && <span className="pill mono" style={{ background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>{p.branch}</span>}
-            <span className="faint mono trunc" style={{ fontSize: 10.5, flex: 1 }} title={p.path}>{p.path}</span>
-            <button className="faint" style={{ fontSize: 11.5 }} onClick={() => onRemoveProject(p.id)}>remove</button>
+            <span className="faint mono trunc" style={{ fontSize: 'var(--t-micro)', flex: 1 }} title={p.path}>{p.path}</span>
+            <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={() => onRemoveProject(p.id)}>remove</button>
           </div>
         ))}
       </Section>
@@ -471,7 +471,7 @@ function Observation({ prefs, pending, setFlag }: {
       </Note>
 
       {!prefs ? (
-        <p className="dim" style={{ fontSize: 12.5, marginTop: 12 }}>Reading your preferences…</p>
+        <p className="dim" style={{ fontSize: 'var(--t-small)', marginTop: 12 }}>Reading your preferences…</p>
       ) : (
         <div style={{ marginTop: 12 }}>
           <Toggle title="Telemetry" on={prefs.telemetry} busy={pending === 'telemetry'}
@@ -525,7 +525,7 @@ function Observation({ prefs, pending, setFlag }: {
           return (
             <div className="sunk" style={{ padding: '4px 12px 11px' }}>
               <div className="set-scroll">
-                <table className="grid" style={{ fontSize: 12 }}>
+                <table className="grid" style={{ fontSize: 'var(--t-small)' }}>
                   <thead>
                     <tr>
                       <th>Listener</th><th>Status</th><th>Address</th><th>What it accepts</th>
@@ -568,14 +568,14 @@ function Observation({ prefs, pending, setFlag }: {
                   </tbody>
                 </table>
               </div>
-              <p className="faint" style={{ fontSize: 11, lineHeight: 1.55, marginTop: 9 }}>
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 9 }}>
                 All three bind to <span className="mono">127.0.0.1</span>, never{' '}
                 <span className="mono">0.0.0.0</span> — nothing on your network can reach them, and each
                 requires a bearer token minted fresh at launch, so a stray script or a web page that
                 finds the port still cannot post to it. Ports are chosen by the OS, so they change
                 every run.
               </p>
-              <p className="faint" style={{ fontSize: 11, lineHeight: 1.55, marginTop: 6 }}>
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 6 }}>
                 A switch above applies to the next session you launch — an agent already running keeps
                 the configuration it started with. The sockets themselves are opened once, when
                 Wanigan starts: switching telemetry or the hook bus off stops new sessions reporting
@@ -688,7 +688,7 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
                               {TRUST_LEVELS.map((t) => <option key={t} value={t}>{TRUST_COPY[t].label}</option>)}
                             </select>
                           </td>
-                          <td className="dim" style={{ fontSize: 11.5, lineHeight: 1.45 }}>
+                          <td className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
                             {TRUST_COPY[lv].detail}
                             {lv === d.dflt && (
                               <span className="faint"> — same as the default.</span>
@@ -701,7 +701,7 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
                 </table>
               </div>
             )}
-            <p className="faint" style={{ fontSize: 11, marginTop: 7, lineHeight: 1.5 }}>
+            <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.5 }}>
               Changing a project here pins it: it stops following the default from that moment on.
               A level takes effect on the next tool call, not on sessions already mid-command.
             </p>
@@ -717,7 +717,7 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
             return (
               <div className="sunk set-empty">
                 The ledger is empty — no agent has called a tool through a Wanigan session yet.
-                <div className="faint" style={{ marginTop: 6, fontSize: 11.5 }}>
+                <div className="faint" style={{ marginTop: 6, fontSize: 'var(--t-small)' }}>
                   It fills on its own once the hook bus is on and a session runs. Nothing to configure.
                 </div>
               </div>
@@ -733,7 +733,7 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
                 <Stat label="✓ Allowed" value={num(s.allowed)}
                       sub={`${((s.allowed / total) * 100).toFixed(1)}% of calls`} />
               </div>
-              <p className="dim" style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.5 }}>
+              <p className="dim" style={{ fontSize: 'var(--t-small)', marginTop: 8, lineHeight: 1.5 }}>
                 {plural(total, 'decision')} recorded
                 {s.since ? <> since {fullDate(s.since)}</> : null}. An allow is still a row: the point of
                 the ledger is that everything is written down, not only the refusals.
@@ -787,12 +787,12 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
                         <td className="set-when" title={fullDate(r.at)}>{ago(r.at)}</td>
                         <td className="trunc" style={{ maxWidth: 130 }} title={r.projectName ?? 'no project'}>
                           {r.projectName ?? <span className="faint">no project</span>}
-                          <div className="faint" style={{ fontSize: 10.5 }}>{TRUST_COPY[r.trust]?.label ?? r.trust}</div>
+                          <div className="faint" style={{ fontSize: 'var(--t-micro)' }}>{TRUST_COPY[r.trust]?.label ?? r.trust}</div>
                         </td>
-                        <td className="mono" style={{ fontSize: 11.5 }}>{r.toolName}</td>
+                        <td className="mono" style={{ fontSize: 'var(--t-small)' }}>{r.toolName}</td>
                         <td className="trunc dim" style={{ maxWidth: 240 }} title={`${r.summary}\n\n${r.reason}`}>
                           {r.summary}
-                          <div className="faint" style={{ fontSize: 10.5 }}>rule: {r.rule}</div>
+                          <div className="faint" style={{ fontSize: 'var(--t-micro)' }}>rule: {r.rule}</div>
                         </td>
                         <td><Mark {...DECISION[r.decision]} title={r.reason} /></td>
                       </tr>
@@ -800,7 +800,7 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
                   </tbody>
                 </table>
               </div>
-              <p className="faint" style={{ fontSize: 11, marginTop: 7, lineHeight: 1.5 }}>
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.5 }}>
                 Showing the {plural(rows.length, 'most recent row', 'most recent rows')}
                 {deniedOnly ? ' that were denied' : ''}. Export writes the whole ledger, one JSON object
                 per line, including the reason each rule gave.
@@ -889,7 +889,7 @@ function Dispatcher() {
                       <div className="set-meter" style={{ flex: 1 }}>
                         <span style={{ width: `${Math.min(100, (inUse / limit) * 100)}%` }} />
                       </div>
-                      <span className="faint" style={{ fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
+                      <span className="faint" style={{ fontSize: 'var(--t-micro)', fontVariantNumeric: 'tabular-nums' }}>
                         {inUse} of {limit} running
                       </span>
                     </div>
@@ -908,7 +908,7 @@ function Dispatcher() {
               {dirty && (
                 <button className="btn" onClick={() => setDraft(loaded)}>Discard changes</button>
               )}
-              <span className="faint" style={{ fontSize: 11, lineHeight: 1.45 }}>
+              <span className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>
                 1 to 64 per surface. Lowering a number never stops work already running — it only
                 narrows what the next tick starts.
               </span>
@@ -925,7 +925,7 @@ function Dispatcher() {
             return (
               <div className="sunk set-empty">
                 The queue is empty. Nothing is waiting and nothing is being held back.
-                <div className="faint" style={{ marginTop: 6, fontSize: 11.5 }}>
+                <div className="faint" style={{ marginTop: 6, fontSize: 'var(--t-small)' }}>
                   Work only lands here when every slot for its kind is already busy — start more
                   sessions, headless runs or submissions than the limits above and they queue instead
                   of fighting for the machine.
@@ -955,7 +955,7 @@ function Dispatcher() {
                             title={q.error ?? q.blockedBy ?? undefined}>
                           {q.error ?? q.blockedBy ?? <span className="faint">—</span>}
                           {q.nextAttemptAt && q.state === 'waiting' && (
-                            <div className="faint" style={{ fontSize: 10.5 }}>retry {ago(q.nextAttemptAt)}</div>
+                            <div className="faint" style={{ fontSize: 'var(--t-micro)' }}>retry {ago(q.nextAttemptAt)}</div>
                           )}
                         </td>
                         <td className="set-n">{dur(age)}</td>
@@ -964,7 +964,7 @@ function Dispatcher() {
                           {q.state === 'waiting' ? (
                             <button className="set-mini danger" onClick={() => void cancel(q)}>cancel</button>
                           ) : (
-                            <span className="faint" style={{ fontSize: 10.5 }}>
+                            <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>
                               {q.state === 'running' ? 'stop it where it runs' : '—'}
                             </span>
                           )}
@@ -978,7 +978,7 @@ function Dispatcher() {
           );
         }}
       </Frame>
-      <p className="faint" style={{ fontSize: 11, marginTop: 7, lineHeight: 1.5 }}>
+      <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.5 }}>
         The 60 most recent items, finished ones included, refreshed as the dispatcher moves. Only a
         waiting item can be canceled here — once it has started the queue no longer owns it, so stop
         the session or the run itself.
@@ -1093,7 +1093,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                 copy URL
               </button>
             </div>
-            <p className="faint" style={{ fontSize: 11, marginTop: 7, lineHeight: 1.55 }}>
+            <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.55 }}>
               Streamable HTTP. The port changes every launch, so re-copy it after a restart. The bearer
               token is deliberately not displayed in this window — Wanigan passes it to sessions it
               launches itself.
@@ -1118,7 +1118,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
               <input id="mcp-name" className="field mono" style={{ marginTop: 4 }} value={draft.name}
                      placeholder="playwright" spellCheck={false}
                      onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
-              <p className="faint" style={{ fontSize: 10.5, marginTop: 4, lineHeight: 1.45 }}>
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 4, lineHeight: 1.45 }}>
                 Letters, digits, dashes and underscores. It becomes part of the tool id the agent
                 calls, so spaces and dots break it.
               </p>
@@ -1130,7 +1130,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                 <option value="">Every project (global)</option>
                 {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
-              <p className="faint" style={{ fontSize: 10.5, marginTop: 4, lineHeight: 1.45 }}>
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 4, lineHeight: 1.45 }}>
                 A project-scoped server is added on top of the global ones, not instead of them.
               </p>
             </div>
@@ -1170,7 +1170,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
             </div>
           )}
 
-          <p className="faint" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>
+          <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.5 }}>
             <span className="mono">{'{{PROJECT_PATH}}'}</span> is replaced with the project directory
             when the config is written, so one entry can serve every repo.
           </p>
@@ -1180,7 +1180,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
               {draft.id ? 'Save changes' : 'Add server'}
             </button>
             <button className="btn" onClick={() => { setDraft(null); setSaved(null); }}>Cancel</button>
-            <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+            <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--t-small)' }}>
               <input type="checkbox" checked={draft.enabled}
                      onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />
               Give it to new sessions
@@ -1195,7 +1195,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
             return (
               <div className="sunk set-empty">
                 No MCP servers configured, so agents get only their built-in tools.
-                <div className="faint" style={{ marginTop: 6, fontSize: 11.5 }}>
+                <div className="faint" style={{ marginTop: 6, fontSize: 'var(--t-small)' }}>
                   Add one and Wanigan writes it into the config of every session it launches for that scope.
                 </div>
                 <div style={{ marginTop: 9 }}>
@@ -1225,7 +1225,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                         : { glyph: '✕', word: 'failed', color: 'var(--critical)' };
                     return (
                       <tr key={s.id}>
-                        <td className="mono" style={{ fontSize: 12 }}>{s.name}</td>
+                        <td className="mono" style={{ fontSize: 'var(--t-small)' }}>{s.name}</td>
                         <td className="dim">{s.projectId === null ? 'global' : projectName(s.projectId)}</td>
                         <td className="set-path trunc" style={{ maxWidth: 210 }}
                             title={s.transport === 'stdio' ? `${s.command ?? ''} ${s.args ?? ''}`.trim() : s.url}>
@@ -1235,7 +1235,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                           <Mark {...mark} title={st?.lastError ?? undefined} />
                           {st?.lastAt ? <div className="faint set-sub-line">{ago(st.lastAt)}</div> : null}
                           {st?.lastError ? (
-                            <div className="trunc" style={{ fontSize: 10.5, color: 'var(--critical)', maxWidth: 170 }}
+                            <div className="trunc" style={{ fontSize: 'var(--t-micro)', color: 'var(--critical)', maxWidth: 170 }}
                                  title={st.lastError}>{st.lastError}</div>
                           ) : null}
                         </td>
@@ -1262,7 +1262,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
           );
         }}
       </Frame>
-      <p className="faint" style={{ fontSize: 11, marginTop: 7, lineHeight: 1.5 }}>
+      <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.5 }}>
         Connection status comes from the agent's own telemetry, so a server reads “not seen yet” until
         a session actually tries to connect to it. Status is keyed by name, so the same name in two
         projects reports as one server.
@@ -1331,11 +1331,11 @@ function Worktrees() {
                         <tr key={w.path}>
                           <td>
                             <div className="set-path" title={w.path}>{fileName(w.path)}</div>
-                            <div className="faint" style={{ fontSize: 10.5 }}>in {w.repoRoot}</div>
+                            <div className="faint" style={{ fontSize: 'var(--t-micro)' }}>in {w.repoRoot}</div>
                           </td>
-                          <td className="mono" style={{ fontSize: 11.5 }}>
+                          <td className="mono" style={{ fontSize: 'var(--t-small)' }}>
                             {w.branch ?? <span className="faint">detached</span>}
-                            {w.head && <div className="faint" style={{ fontSize: 10.5 }}>{w.head.slice(0, 8)}</div>}
+                            {w.head && <div className="faint" style={{ fontSize: 'var(--t-micro)' }}>{w.head.slice(0, 8)}</div>}
                           </td>
                           <td className="set-n">
                             {w.dirty > 0
@@ -1350,7 +1350,7 @@ function Worktrees() {
                           <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                             {asking ? (
                               <>
-                                <span className="faint" style={{ fontSize: 10.5, marginRight: 6 }}>
+                                <span className="faint" style={{ fontSize: 'var(--t-micro)', marginRight: 6 }}>
                                   destroy {w.dirty > 0 ? plural(w.dirty, 'uncommitted file') : 'it'}
                                   {w.ahead > 0 ? ` and ${plural(w.ahead, 'unpushed commit')}` : ''}?
                                 </span>
@@ -1370,7 +1370,7 @@ function Worktrees() {
                   </tbody>
                 </table>
               </div>
-              <p className="faint" style={{ fontSize: 11, marginTop: 7, lineHeight: 1.5 }}>
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.5 }}>
                 A worktree with uncommitted files or unpushed commits asks before it goes — that work
                 exists nowhere else.
               </p>
@@ -1394,7 +1394,7 @@ function Motion({ prefs, pending, setPref }: {
     <Section title="Motion"
              hint="Sparklines, the attention strip and the timeline animate as work moves. This decides whether they do.">
       {!prefs ? (
-        <p className="dim" style={{ fontSize: 12.5 }}>Reading your preferences…</p>
+        <p className="dim" style={{ fontSize: 'var(--t-small)' }}>Reading your preferences…</p>
       ) : (
         <>
           <fieldset disabled={pending === 'motion'} style={{ border: 'none' }}>
@@ -1409,7 +1409,7 @@ function Motion({ prefs, pending, setPref }: {
               onPick={(v) => void setPref('motion', v)}
             />
           </fieldset>
-          <p className="faint" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>
+          <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.5 }}>
             This page honours the setting as soon as you pick it — the switches above stop sliding.
             Motion never carries meaning anywhere in Wanigan, so turning it off costs you nothing but
             the movement.
@@ -1499,7 +1499,7 @@ function Storage({ prefs, pending, setPref }: {
               {!transcripts.length ? (
                 <div className="sunk set-empty">
                   No transcripts archived. Nothing of any conversation is on disk.
-                  <div className="faint" style={{ marginTop: 6, fontSize: 11.5 }}>
+                  <div className="faint" style={{ marginTop: 6, fontSize: 'var(--t-small)' }}>
                     {prefs?.archiveTranscripts
                       ? 'Archiving is on, so the next session that finishes will appear here.'
                       : 'Archiving is off in Observation above, so none will be written.'}
@@ -1518,7 +1518,7 @@ function Storage({ prefs, pending, setPref }: {
                       <tbody>
                         {shown.map((t) => (
                           <tr key={t.sessionId}>
-                            <td className="mono trunc" style={{ fontSize: 11.5, maxWidth: 220 }} title={t.sessionId}>
+                            <td className="mono trunc" style={{ fontSize: 'var(--t-small)', maxWidth: 220 }} title={t.sessionId}>
                               {t.sessionId}
                             </td>
                             <td className="set-n">{num(t.turns)}</td>
@@ -1539,7 +1539,7 @@ function Storage({ prefs, pending, setPref }: {
                       show the other {num(sorted.length - shown.length)} — largest first
                     </button>
                   )}
-                  <p className="faint" style={{ fontSize: 11, marginTop: 7, lineHeight: 1.5 }}>
+                  <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.5 }}>
                     Largest first, because that is the order you would delete in. Forgetting a
                     transcript removes the conversation text and the search index for it; the
                     session's cost and event history stay.
@@ -1564,7 +1564,7 @@ function Storage({ prefs, pending, setPref }: {
                         {[...uploads].sort((a, b) => b.bytes - a.bytes).map((u) => (
                           <tr key={u.hash}>
                             <td className="set-path trunc" style={{ maxWidth: 240 }} title={u.path}>{fileName(u.path)}</td>
-                            <td className="dim mono" style={{ fontSize: 11 }}>{u.mediaType}</td>
+                            <td className="dim mono" style={{ fontSize: 'var(--t-micro)' }}>{u.mediaType}</td>
                             <td className="set-n">{bytes(u.bytes)}</td>
                             <td className="set-when" title={fullDate(u.uploadedAt)}>{ago(u.uploadedAt)}</td>
                             <td style={{ textAlign: 'right' }}>
@@ -1597,7 +1597,7 @@ function Storage({ prefs, pending, setPref }: {
           <input className="field mono" type="number" min={1} max={3650} style={{ width: 84, textAlign: 'right' }}
                  aria-label="Event retention in days" value={days}
                  onChange={(e) => setDays(e.target.value)} />
-          <span className="faint" style={{ fontSize: 11.5 }}>days</span>
+          <span className="faint" style={{ fontSize: 'var(--t-small)' }}>days</span>
           <button className="btn" disabled={pending === 'event_retention_days' || !days.trim()}
                   onClick={async () => {
                     const n = Math.max(1, Math.round(Number(days) || 0));
@@ -1742,13 +1742,13 @@ function DemoPanel() {
         <button className={state.on ? 'btn btn-primary' : 'btn'} disabled={busy} onClick={() => void toggle()}>
           {busy ? '…' : state.on ? 'Demo mode is on' : 'Turn on demo mode'}
         </button>
-        <span className="faint" style={{ fontSize: 11.5 }}>⌘⇧D toggles it without touching the mouse.</span>
+        <span className="faint" style={{ fontSize: 'var(--t-small)' }}>⌘⇧D toggles it without touching the mouse.</span>
       </div>
 
       {state.on && (
         <>
           <div style={{ marginTop: 10 }}>
-            <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', fontSize: 12.5 }}>
+            <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', fontSize: 'var(--t-small)' }}>
               <input type="checkbox" checked={blur} onChange={(e) => setBlur(e.target.checked)} style={{ marginTop: 3 }} />
               <span>
                 <strong>Blur terminals too.</strong> A live terminal draws raw bytes from the agent, so nothing in the
@@ -1763,12 +1763,12 @@ function DemoPanel() {
               <tbody>
                 {state.map.slice(0, 12).map((m) => (
                   <tr key={m.real}>
-                    <td className="mono" style={{ fontSize: 11, color: 'var(--text-faint)' }}>{m.fake}</td>
+                    <td className="mono" style={{ fontSize: 'var(--t-micro)', color: 'var(--text-faint)' }}>{m.fake}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="faint" style={{ fontSize: 11.5, marginTop: 6, lineHeight: 1.5 }}>
+            <p className="faint" style={{ fontSize: 'var(--t-small)', marginTop: 6, lineHeight: 1.5 }}>
               Only the masked side is listed — printing the real paths beside them would put the thing you are
               hiding on the screen you are about to photograph.
             </p>

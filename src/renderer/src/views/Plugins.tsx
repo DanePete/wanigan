@@ -214,16 +214,16 @@ export default function Plugins() {
                     )}
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    <button className="btn" style={{ fontSize: 11.5, padding: '3px 9px' }}
+                    <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
                             disabled={working === p.id}
                             onClick={() => void act(p.id, () => window.wanigan.plugins.setEnabled(p.id, false))}>
                       {working === p.id ? 'working…' : 'Disable'}
                     </button>
-                    <button className="btn" style={{ fontSize: 11.5, padding: '3px 9px' }}
+                    <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
                             title="What this plugin adds to every session's context"
                             onClick={() => void showCost(p.name)}>Cost</button>
                     {p.hasReadme && (
-                      <button className="btn" style={{ fontSize: 11.5, padding: '3px 9px' }}
+                      <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
                               onClick={() => void read({ kind: 'skill', name: `${p.name} readme`, path: `${p.path}/README.md` })}>
                         Readme
                       </button>
@@ -304,7 +304,7 @@ export default function Plugins() {
                       {a.installed
                         ? <span className="pg-yes">✓ {a.enabled ? 'installed' : 'disabled'}</span>
                         : (
-                          <button className="btn" style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 8px' }}
+                          <button className="btn" style={{ marginLeft: 'auto', fontSize: 'var(--t-micro)', padding: '2px 8px' }}
                                   disabled={!!working}
                                   onClick={() => setConfirming(a)}>Install</button>
                         )}
@@ -335,7 +335,7 @@ export default function Plugins() {
             {st.roots.map((r) => (
               <tr key={r.path}>
                 <td style={{ width: 90 }}>{r.label}</td>
-                <td className="mono" style={{ fontSize: 11 }}>{r.path}</td>
+                <td className="mono" style={{ fontSize: 'var(--t-micro)' }}>{r.path}</td>
                 <td className="n" style={{ width: 70 }}>
                   {r.exists ? <span style={{ color: 'var(--good)' }}>✓ found</span>
                             : <span className="faint">absent</span>}
@@ -345,7 +345,7 @@ export default function Plugins() {
             {st.marketplaces.map((m) => (
               <tr key={m.name}>
                 <td>marketplace</td>
-                <td className="mono" style={{ fontSize: 11 }}>{m.name} — {m.source}</td>
+                <td className="mono" style={{ fontSize: 'var(--t-micro)' }}>{m.name} — {m.source}</td>
                 <td className="n" style={{ width: 70 }}>{m.lastUpdated ? ago(m.lastUpdated) : '—'}</td>
               </tr>
             ))}
@@ -358,8 +358,8 @@ export default function Plugins() {
              onMouseDown={(e) => { if (e.target === e.currentTarget) setReading(null); }}>
           <div className="pg-reader-in">
             <div className="pg-reader-h">
-              <strong style={{ fontSize: 14 }}>{reading.title}</strong>
-              {reading.truncated && <span className="faint" style={{ fontSize: 11 }}>truncated at 200 KB</span>}
+              <strong style={{ fontSize: 'var(--t-lead)' }}>{reading.title}</strong>
+              {reading.truncated && <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>truncated at 200 KB</span>}
               <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setReading(null)}>Close</button>
             </div>
             <div className="pg-reader-b">{reading.text}</div>

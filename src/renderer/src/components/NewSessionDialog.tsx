@@ -122,7 +122,7 @@ export default function NewSessionDialog({
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>New session</h2>
+        <h2 style={{ fontSize: 'var(--t-lead)', fontWeight: 600, marginBottom: 14 }}>New session</h2>
 
         <div className="label">Agent</div>
         <div style={{ display: 'flex', gap: 8, margin: '6px 0 14px' }}>
@@ -142,7 +142,7 @@ export default function NewSessionDialog({
                 title={p.path ?? `${p.bin} not found on PATH`}
               >
                 <span style={{ fontWeight: 600, color: on ? TINT[p.id] : undefined }}>{p.label}</span>
-                <span className="faint mono" style={{ fontSize: 10.5 }}>
+                <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>
                   {p.path ? (p.version ?? 'installed') : 'not installed'}
                 </span>
               </FocusBtn>
@@ -152,7 +152,7 @@ export default function NewSessionDialog({
 
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
           <span className="label">Project</span>
-          <FocusBtn className="faint" style={{ fontSize: 11.5, marginLeft: 'auto', borderRadius: 5 }}
+          <FocusBtn className="faint" style={{ fontSize: 'var(--t-small)', marginLeft: 'auto', borderRadius: 'var(--r-sm)' }}
                     disabled={browsing} onClick={browseForFolder}>
             {browsing ? 'choosing…' : '+ choose a folder…'}
           </FocusBtn>
@@ -186,13 +186,13 @@ export default function NewSessionDialog({
         <div className="label">Trust</div>
         <div className="sunk" style={{ margin: '6px 0 14px', padding: '9px 11px' }}>
           {trustErr ? (
-            <p style={{ color: 'var(--bad)', fontSize: 12, lineHeight: 1.45 }}>
+            <p style={{ color: 'var(--bad)', fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
               <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>✕</span>
               Wanigan could not read this project's trust level: {trustErr} The session will still start
               under whatever the main process decides — close this dialog and reopen it to read again.
             </p>
           ) : !trust ? (
-            <p className="faint" style={{ fontSize: 12 }}>Reading the trust level…</p>
+            <p className="faint" style={{ fontSize: 'var(--t-small)' }}>Reading the trust level…</p>
           ) : (
             <>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
@@ -200,28 +200,28 @@ export default function NewSessionDialog({
                       style={{ color: elevated ? 'var(--warning)' : 'var(--text-dim)', fontWeight: 700 }}>
                   {TRUST_GLYPH[trust]}
                 </span>
-                <span style={{ fontWeight: 650, fontSize: 12.5,
+                <span style={{ fontWeight: 650, fontSize: 'var(--t-small)',
                                color: elevated ? 'var(--warning)' : 'var(--text)' }}>
                   {TRUST_COPY[trust].label}
                 </span>
                 {trustDefault && (
-                  <span className="faint" style={{ fontSize: 11, marginLeft: 'auto' }}>
+                  <span className="faint" style={{ fontSize: 'var(--t-micro)', marginLeft: 'auto' }}>
                     {trust === trustDefault
                       ? 'your default'
                       : `default is ${TRUST_COPY[trustDefault].label} ${TRUST_GLYPH[trustDefault]}`}
                   </span>
                 )}
               </div>
-              <p className="dim" style={{ fontSize: 12, marginTop: 3, lineHeight: 1.45 }}>
+              <p className="dim" style={{ fontSize: 'var(--t-small)', marginTop: 3, lineHeight: 1.45 }}>
                 {TRUST_COPY[trust].detail}
               </p>
               {elevated && (
-                <p style={{ color: 'var(--warning)', fontSize: 11.5, marginTop: 5, lineHeight: 1.45 }}>
+                <p style={{ color: 'var(--warning)', fontSize: 'var(--t-small)', marginTop: 5, lineHeight: 1.45 }}>
                   <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 5 }}>⚠</span>
                   Above your default. The session header says so for as long as this session runs.
                 </p>
               )}
-              <p className="faint" style={{ fontSize: 11, marginTop: 5, lineHeight: 1.45 }}>
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 5, lineHeight: 1.45 }}>
                 Trust is set per project and applies to every session in it.
               </p>
             </>
@@ -265,7 +265,7 @@ export default function NewSessionDialog({
               {PERMISSION_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
             {(permissionMode === 'bypassPermissions' || permissionMode === 'dontAsk') && (
-              <p style={{ color: 'var(--warn)', fontSize: 11, marginTop: -8, marginBottom: 12, lineHeight: 1.45 }}>
+              <p style={{ color: 'var(--warn)', fontSize: 'var(--t-micro)', marginTop: -8, marginBottom: 12, lineHeight: 1.45 }}>
                 This session will not ask before running commands or editing files. Only use it in a
                 repo you can throw away or fully revert.
               </p>
@@ -282,18 +282,18 @@ export default function NewSessionDialog({
                  onChange={(e) => setIsolate(e.target.checked)}
                  style={{ marginTop: 2, accentColor: 'var(--accent)', width: 14, height: 14, flex: 'none' }} />
           <span style={{ minWidth: 0 }}>
-            <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600 }}>
+            <span style={{ display: 'block', fontSize: 'var(--t-small)', fontWeight: 600 }}>
               <span aria-hidden="true" style={{ color: 'var(--accent)', marginRight: 6 }}>⑂</span>
               Isolate in a worktree
             </span>
             {isRepo ? (
-              <span className="dim" style={{ display: 'block', fontSize: 11.5, marginTop: 3, lineHeight: 1.45 }}>
+              <span className="dim" style={{ display: 'block', fontSize: 'var(--t-small)', marginTop: 3, lineHeight: 1.45 }}>
                 Cuts a branch and a private checkout for this session, so two agents in {project?.name} stop
                 overwriting each other's files. Merge or discard it from the session header when the work
                 is done; a worktree with nothing uncommitted is cleaned up on exit.
               </span>
             ) : (
-              <span className="faint" style={{ display: 'block', fontSize: 11.5, marginTop: 3, lineHeight: 1.45 }}>
+              <span className="faint" style={{ display: 'block', fontSize: 'var(--t-small)', marginTop: 3, lineHeight: 1.45 }}>
                 {project
                   ? `${project.name} is not a git repository, so there is no worktree to cut. Run "git init" in it, or leave this off and the session runs in the folder itself.`
                   : 'Pick a project first — isolation needs a git repository.'}
@@ -308,7 +308,7 @@ export default function NewSessionDialog({
                   value={initialPrompt} onChange={(e) => setInitialPrompt(e.target.value)} />
 
         <details style={{ margin: '10px 0 4px' }}>
-          <summary className="faint" style={{ cursor: 'pointer', fontSize: 11.5 }}>Extra CLI flags</summary>
+          <summary className="faint" style={{ cursor: 'pointer', fontSize: 'var(--t-small)' }}>Extra CLI flags</summary>
           <input className="field mono" style={{ marginTop: 6 }}
                  placeholder="--resume    --permission-mode plan"
                  value={extraArgs} onChange={(e) => setExtraArgs(e.target.value)} />
@@ -316,7 +316,7 @@ export default function NewSessionDialog({
 
         {err && (
           <div style={{ background: 'var(--bad-soft)', color: 'var(--bad)', border: '1px solid var(--bad)',
-                        borderRadius: 6, padding: '7px 10px', margin: '10px 0', fontSize: 12, lineHeight: 1.45 }}>
+                        borderRadius: 'var(--r-sm)', padding: '7px 10px', margin: '10px 0', fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
             <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>✕</span>
             <span style={{ fontWeight: 650 }}>The session did not start. </span>{err}
           </div>
@@ -328,7 +328,7 @@ export default function NewSessionDialog({
             {busy ? 'Starting…' : isolate ? 'Start in a worktree' : 'Start session'}
           </FocusBtn>
         </div>
-        <p className="faint" style={{ fontSize: 11, marginTop: 8, textAlign: 'right' }}>⌘↵ to start</p>
+        <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, textAlign: 'right' }}>⌘↵ to start</p>
       </div>
     </div>
   );

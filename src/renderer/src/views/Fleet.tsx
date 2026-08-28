@@ -569,8 +569,8 @@ function FleetTable({ rows, att, usageOf, spark, defaultTrust, onOpen }: {
   if (!rows.length) return null;
   return (
     <div className="card" style={{ padding: 15 }}>
-      <h3 style={{ fontSize: 13, fontWeight: 600 }}>Every session, in numbers</h3>
-      <p className="dim" style={{ fontSize: 11.5, marginTop: 2, lineHeight: 1.45 }}>
+      <h3 style={{ fontSize: 'var(--t-body)', fontWeight: 600 }}>Every session, in numbers</h3>
+      <p className="dim" style={{ fontSize: 'var(--t-small)', marginTop: 2, lineHeight: 1.45 }}>
         The same rows as the cards above, in the same order, including the values each sparkline
         draws — so nothing on this screen is readable only as a shape or a colour.
       </p>
@@ -635,7 +635,7 @@ function FleetTable({ rows, att, usageOf, spark, defaultTrust, onOpen }: {
           </tbody>
         </table>
       </div>
-      <p className="faint" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.45 }}>
+      <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.45 }}>
         Tokens are input plus output; cached reads are billed at a tenth of the input rate and are
         counted separately on each card. An em dash means the collector has no samples yet, not zero
         throughput.

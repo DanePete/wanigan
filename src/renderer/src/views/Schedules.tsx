@@ -190,7 +190,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
                   <span className="nm">{s.name}</span>
                   <span className="cron">{s.cron}</span>
                   <span className="kind">{s.kind}</span>
-                  <span className="dim" style={{ fontSize: 12 }}>{s.describe}</span>
+                  <span className="dim" style={{ fontSize: 'var(--t-small)' }}>{s.describe}</span>
                 </div>
                 <div className="sc-meta">
                   <span className={s.enabled ? 'due' : ''}>
@@ -204,13 +204,13 @@ export default function Schedules({ projects }: { projects: Project[] }) {
                   {s.projectId && <span>{projects.find((p) => p.id === s.projectId)?.name ?? s.projectId}</span>}
                 </div>
                 <div className="sc-actions">
-                  <button className="btn" style={{ fontSize: 11.5, padding: '3px 9px' }} onClick={() => void toggle(s)}>
+                  <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }} onClick={() => void toggle(s)}>
                     {s.enabled ? 'Pause' : 'Resume'}
                   </button>
-                  <button className="btn" style={{ fontSize: 11.5, padding: '3px 9px' }} onClick={() => void history(s)}>
+                  <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }} onClick={() => void history(s)}>
                     {hist[s.id] ? 'Hide history' : 'History'}
                   </button>
-                  <button className="btn btn-danger" style={{ fontSize: 11.5, padding: '3px 9px' }}
+                  <button className="btn btn-danger" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
                           onClick={() => void remove(s)}>Delete</button>
                 </div>
                 {hist[s.id] && (

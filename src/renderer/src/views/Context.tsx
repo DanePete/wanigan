@@ -229,12 +229,12 @@ function Callout({ level = 'warning', title, children }: {
     ? { bg: 'var(--critical-soft)', fg: 'var(--critical)', glyph: '✕' }
     : { bg: 'var(--warning-soft)', fg: 'var(--warning)', glyph: '⚠' };
   return (
-    <div style={{ background: m.bg, borderLeft: `3px solid ${m.fg}`, borderRadius: 7,
+    <div style={{ background: m.bg, borderLeft: `3px solid ${m.fg}`, borderRadius: 'var(--r-sm)',
                   padding: '10px 13px', display: 'flex', gap: 9 }}>
       <span aria-hidden="true" style={{ color: m.fg, fontWeight: 700, lineHeight: 1.4 }}>{m.glyph}</span>
       <div style={{ minWidth: 0 }}>
-        <div style={{ color: m.fg, fontWeight: 650, fontSize: 12.5, lineHeight: 1.45 }}>{title}</div>
-        {children ? <div className="dim" style={{ fontSize: 12.5, lineHeight: 1.55, marginTop: 5 }}>{children}</div> : null}
+        <div style={{ color: m.fg, fontWeight: 650, fontSize: 'var(--t-small)', lineHeight: 1.45 }}>{title}</div>
+        {children ? <div className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 5 }}>{children}</div> : null}
       </div>
     </div>
   );
@@ -245,7 +245,7 @@ function Bullets({ items }: { items: string[] }) {
   return (
     <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 5, marginTop: 4 }}>
       {items.map((t) => (
-        <li key={t} className="dim" style={{ display: 'flex', gap: 7, fontSize: 12, lineHeight: 1.5 }}>
+        <li key={t} className="dim" style={{ display: 'flex', gap: 7, fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
           <span className="faint" aria-hidden="true">·</span><span>{t}</span>
         </li>
       ))}
@@ -257,7 +257,7 @@ function Bullets({ items }: { items: string[] }) {
 function PanelError({ channel, detail, onRetry }: { channel: string; detail: string; onRetry: () => void }) {
   return (
     <Callout level="critical" title={`Wanigan could not read this. The ${channel} call failed.`}>
-      <p className="mono" style={{ fontSize: 11.5, marginTop: 2, wordBreak: 'break-word' }}>{detail}</p>
+      <p className="mono" style={{ fontSize: 'var(--t-small)', marginTop: 2, wordBreak: 'break-word' }}>{detail}</p>
       <p style={{ marginTop: 6 }}>
         If the message says there is no handler, the main process has not registered{' '}
         <span className="mono">{channel}</span> yet — the reader module exists, the IPC channel does not.
@@ -293,7 +293,7 @@ function FileBody({ path, kind }: { path: string; kind: 'instruction' | 'memory'
   if (b.state === 'err') {
     return (
       <Callout level="warning" title={`Could not read ${fileName(path)}.`}>
-        <p className="mono" style={{ fontSize: 11.5, wordBreak: 'break-word' }}>{b.detail}</p>
+        <p className="mono" style={{ fontSize: 'var(--t-small)', wordBreak: 'break-word' }}>{b.detail}</p>
         <p style={{ marginTop: 5 }}>The chain still lists it, so the file was there when the scan ran. Re-scan to pick up a rename or a deletion.</p>
       </Callout>
     );
@@ -427,8 +427,8 @@ export default function Context({ projectId, projects }: { projectId?: string; p
       <div className="pane ctx">
         <Head project={null} projects={projects} onPick={setChosen} onRescan={() => load(true)} busy={busy} />
         <div className="card" style={{ padding: 18 }}>
-          <h2 style={{ fontSize: 14, fontWeight: 600 }}>No projects yet</h2>
-          <p className="dim" style={{ fontSize: 12.5, lineHeight: 1.55, marginTop: 6, maxWidth: 560 }}>
+          <h2 style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>No projects yet</h2>
+          <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 6, maxWidth: 560 }}>
             This view reads a project folder from disk and shows what a session launched in it would
             be told before you type anything. Add a folder in Sessions and it appears here.
           </p>
@@ -466,7 +466,7 @@ export default function Context({ projectId, projects }: { projectId?: string; p
           <ul style={{ listStyle: 'none', marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
             {([['context:instructions', e.instructions], ['context:memory', e.memory],
                ['context:config', e.config], ['context:agentsMd', e.agents]] as const).map(([ch, detail]) => (
-              <li key={ch} className="mono" style={{ fontSize: 11.5, wordBreak: 'break-word' }}>
+              <li key={ch} className="mono" style={{ fontSize: 'var(--t-small)', wordBreak: 'break-word' }}>
                 <span className="faint">{ch}</span> — {detail ?? 'no detail'}
               </li>
             ))}
@@ -784,7 +784,7 @@ function InstructionsPanel({ chain }: { chain: InstructionChain }) {
       </div>
 
       {filtering && shown.length > 0 && (
-        <p className="faint" style={{ fontSize: 11.5, marginTop: 6 }}>
+        <p className="faint" style={{ fontSize: 'var(--t-small)', marginTop: 6 }}>
           Showing {shown.length} of {ordered.length}. Numbers are positions in the full load order.
         </p>
       )}
@@ -823,13 +823,13 @@ function RulesPanel({ rules, root }: { rules: InstructionFile[]; root: string })
 
       <h3 className="ctx-sub">Loads at launch — {plural(launch.length, 'file')}</h3>
       {launch.length === 0 ? (
-        <p className="dim" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+        <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
           No rule loads at launch. Every rule here is path-scoped, so none of them costs anything until
           Claude opens a matching file.
         </p>
       ) : (
         <>
-          <p className="dim" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+          <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
             These have no <span className="mono">paths:</span> key, so they are part of every prompt in this
             project, exactly like a CLAUDE.md.
           </p>
@@ -853,7 +853,7 @@ function RulesPanel({ rules, root }: { rules: InstructionFile[]; root: string })
 
       <h3 className="ctx-sub">Loads on demand — {plural(demand.length, 'file')}</h3>
       {demand.length === 0 ? (
-        <p className="dim" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+        <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
           Nothing is path-scoped in this project. Everything above is paid for on every session.
         </p>
       ) : (
@@ -872,9 +872,9 @@ function RulesPanel({ rules, root }: { rules: InstructionFile[]; root: string })
                         : `${plural(n, 'file')} match`}
                     </span>
                   </div>
-                  <div style={{ height: 7, borderRadius: 4, background: 'var(--bg-sunk)', overflow: 'hidden' }}>
+                  <div style={{ height: 7, borderRadius: 'var(--r-sm)', background: 'var(--bg-sunk)', overflow: 'hidden' }}>
                     <div style={{ width: `${Math.max(pct, n > 0 ? 1 : 0)}%`, height: '100%',
-                                  borderRadius: 4, background: SERIES[0] }} />
+                                  borderRadius: 'var(--r-sm)', background: SERIES[0] }} />
                   </div>
                 </div>
               );
@@ -904,7 +904,7 @@ function RulesPanel({ rules, root }: { rules: InstructionFile[]; root: string })
                             <span className="ctx-path">{rel(r.path)}</span>
                           </button>
                         </td>
-                        <td className="mono" style={{ fontSize: 11.5 }}>
+                        <td className="mono" style={{ fontSize: 'var(--t-small)' }}>
                           {(r.conditional?.globs ?? []).join(', ')}
                         </td>
                         <td className="r">
@@ -926,7 +926,7 @@ function RulesPanel({ rules, root }: { rules: InstructionFile[]; root: string })
               </tbody>
             </table>
           </div>
-          <p className="faint" style={{ fontSize: 11.5, marginTop: 6, lineHeight: 1.5 }}>
+          <p className="faint" style={{ fontSize: 'var(--t-small)', marginTop: 6, lineHeight: 1.5 }}>
             Match counts come from a walk of the project that skips node_modules, .git and build output,
             so they count the files a rule would realistically fire on.
           </p>
@@ -955,18 +955,18 @@ function AgentsPanel({ a }: { a: AgentsMd }) {
       <h3 className="ctx-sub">Two fixes, either one is enough</h3>
       <ol style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 9 }}>
         <li className="sunk" style={{ padding: '10px 13px' }}>
-          <div style={{ fontSize: 12.5, fontWeight: 600 }}>1 · Import it — keeps both files</div>
-          <p className="dim" style={{ fontSize: 12.5, lineHeight: 1.5, marginTop: 3 }}>
+          <div style={{ fontSize: 'var(--t-small)', fontWeight: 600 }}>1 · Import it — keeps both files</div>
+          <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5, marginTop: 3 }}>
             Add one line to <span className="mono">CLAUDE.md</span>:
           </p>
-          <pre className="mono" style={{ fontSize: 11.5, marginTop: 5, color: 'var(--text)' }}>@AGENTS.md</pre>
+          <pre className="mono" style={{ fontSize: 'var(--t-small)', marginTop: 5, color: 'var(--text)' }}>@AGENTS.md</pre>
         </li>
         <li className="sunk" style={{ padding: '10px 13px' }}>
-          <div style={{ fontSize: 12.5, fontWeight: 600 }}>2 · Symlink it — one file, both tools</div>
-          <p className="dim" style={{ fontSize: 12.5, lineHeight: 1.5, marginTop: 3 }}>
+          <div style={{ fontSize: 'var(--t-small)', fontWeight: 600 }}>2 · Symlink it — one file, both tools</div>
+          <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5, marginTop: 3 }}>
             Replace CLAUDE.md with a link, so Claude Code and every other tool read the same file:
           </p>
-          <pre className="mono" style={{ fontSize: 11.5, marginTop: 5, color: 'var(--text)' }}>ln -s AGENTS.md CLAUDE.md</pre>
+          <pre className="mono" style={{ fontSize: 'var(--t-small)', marginTop: 5, color: 'var(--text)' }}>ln -s AGENTS.md CLAUDE.md</pre>
         </li>
       </ol>
     </>
@@ -987,7 +987,7 @@ function MemoryPanel({ m }: { m: MemoryState }) {
   return (
     <>
       <div className="stat-2">
-        <Stat label="Memory directory" value={<span className="mono" style={{ fontSize: 12 }}>{m.dir}</span>}
+        <Stat label="Memory directory" value={<span className="mono" style={{ fontSize: 'var(--t-small)' }}>{m.dir}</span>}
               sub={WHERE[m.derivedFrom]} />
         <Stat label="Auto memory"
               value={m.enabled
@@ -1028,7 +1028,7 @@ function MemoryPanel({ m }: { m: MemoryState }) {
 
       <h3 className="ctx-sub">Topic files — {plural(topics.length, 'file')}</h3>
       {topics.length === 0 ? (
-        <p className="dim" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+        <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
           No topic files yet. Claude writes them as it learns things worth keeping; the index above stays
           small because the detail lives out here.
         </p>
@@ -1058,7 +1058,7 @@ function MemoryPanel({ m }: { m: MemoryState }) {
                           <span style={{ minWidth: 0 }}>
                             <span className="ctx-path" style={{ display: 'block' }}>{f.name}</span>
                             {f.description && (
-                              <span className="dim" style={{ fontSize: 11.5, lineHeight: 1.45, display: 'block', marginTop: 2 }}>
+                              <span className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.45, display: 'block', marginTop: 2 }}>
                                 {f.description}
                               </span>
                             )}
@@ -1221,7 +1221,7 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
 
       <h3 className="ctx-sub">Which layer won each key</h3>
       {c.settings.length === 0 ? (
-        <p className="dim" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+        <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
           No settings are set in any layer, so Claude Code runs on its own defaults here.
         </p>
       ) : (
@@ -1231,14 +1231,14 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
             <tbody>
               {c.settings.map((s) => (
                 <tr key={s.key}>
-                  <td className="mono" style={{ fontSize: 11.5 }}>{s.key}</td>
-                  <td className="mono" style={{ fontSize: 11.5, wordBreak: 'break-word' }}>{fmtValue(s.value)}</td>
+                  <td className="mono" style={{ fontSize: 'var(--t-small)' }}>{s.key}</td>
+                  <td className="mono" style={{ fontSize: 'var(--t-small)', wordBreak: 'break-word' }}>{fmtValue(s.value)}</td>
                   <td><Mark {...LAYER[s.from]} /></td>
                   <td>
                     {s.shadowed.length === 0
-                      ? <span className="faint" style={{ fontSize: 11.5 }}>nothing</span>
+                      ? <span className="faint" style={{ fontSize: 'var(--t-small)' }}>nothing</span>
                       : s.shadowed.map((sh, i) => (
-                          <div key={sh.from + i} style={{ fontSize: 11, lineHeight: 1.5 }}>
+                          <div key={sh.from + i} style={{ fontSize: 'var(--t-micro)', lineHeight: 1.5 }}>
                             <span style={{ color: LAYER[sh.from].color }} aria-hidden="true">{LAYER[sh.from].glyph}</span>{' '}
                             <span className="faint">{LAYER[sh.from].word}</span>{' '}
                             <s className="faint mono">{fmtValue(sh.value)}</s>
@@ -1264,7 +1264,7 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
         </div>
       )}
       {c.hooks.length === 0 ? (
-        <p className="dim" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+        <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
           No hooks in any layer. Nothing runs automatically around your tool calls.
         </p>
       ) : (
@@ -1274,15 +1274,15 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
             <tbody>
               {c.hooks.map((h, i) => (
                 <tr key={h.event + h.source + i}>
-                  <td className="mono" style={{ fontSize: 11.5 }}>{h.event}</td>
-                  <td className="mono faint" style={{ fontSize: 11.5 }}>{h.matcher ?? 'any'}</td>
+                  <td className="mono" style={{ fontSize: 'var(--t-small)' }}>{h.event}</td>
+                  <td className="mono faint" style={{ fontSize: 'var(--t-small)' }}>{h.matcher ?? 'any'}</td>
                   <td>
                     {h.from === 'project'
                       ? <Mark glyph="⚠" word="project (shared)" color="var(--warning)"
                               title="Committed to the repository. It came from whoever wrote the repo, and it runs on your machine." />
                       : <Mark {...LAYER[h.from]} />}
                   </td>
-                  <td className="mono" style={{ fontSize: 11.5, wordBreak: 'break-word' }}>
+                  <td className="mono" style={{ fontSize: 'var(--t-small)', wordBreak: 'break-word' }}>
                     {h.summary}
                     <span className="faint"> · {h.type}</span>
                   </td>
@@ -1294,7 +1294,7 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
         </div>
       )}
       {projectHooks.length > 0 && (
-        <p className="faint" style={{ fontSize: 11.5, marginTop: 6, lineHeight: 1.5 }}>
+        <p className="faint" style={{ fontSize: 'var(--t-small)', marginTop: 6, lineHeight: 1.5 }}>
           {plural(projectHooks.length, 'hook')} are defined inside this project rather than in your home
           directory. Moving one to <span className="mono">~/.claude/settings.json</span> keeps it off other
           people’s machines; moving it to <span className="mono">.claude/settings.local.json</span> keeps it
@@ -1315,7 +1315,7 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
                     <td className="r">{num(p.allow.length)}</td>
                     <td className="r">{num(p.ask.length)}</td>
                     <td className="r">{num(p.deny.length)}</td>
-                    <td className="mono faint" style={{ fontSize: 11.5, wordBreak: 'break-word' }}>
+                    <td className="mono faint" style={{ fontSize: 'var(--t-small)', wordBreak: 'break-word' }}>
                       {p.deny.length === 0 ? '—' : p.deny.slice(0, 6).join(', ') + (p.deny.length > 6 ? ` +${p.deny.length - 6} more` : '')}
                     </td>
                   </tr>
@@ -1336,7 +1336,7 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
                 {also.map((x, i) => (
                   <tr key={x.kind + x.name + i}>
                     <td>{x.kind}</td>
-                    <td className="mono" style={{ fontSize: 11.5 }}>{x.name}</td>
+                    <td className="mono" style={{ fontSize: 'var(--t-small)' }}>{x.name}</td>
                     <td><Mark {...LAYER[x.scope === 'project' ? 'project' : 'user']} /></td>
                     <td className="dim trunc" title={`${x.detail}\n${x.source}`}>{x.detail || '—'}</td>
                   </tr>
@@ -1418,7 +1418,7 @@ function BudgetPanel({ b }: { b: ContextBudget }) {
           <tbody>
             {rows.map((r) => (
               <tr key={r.path}>
-                <td className="mono" style={{ fontSize: 11.5, wordBreak: 'break-all' }} title={r.path}>
+                <td className="mono" style={{ fontSize: 'var(--t-small)', wordBreak: 'break-all' }} title={r.path}>
                   {fileName(r.path)}
                 </td>
                 <td className="dim">{r.label.split(' · ')[0]}</td>
@@ -1452,10 +1452,10 @@ function Setup({ full, project, slots, onInit, initMsg }: {
   const offerInit = slots.some((s) => s.key === 'chain');
   return (
     <section className="card" style={{ padding: 16 }}>
-      <h2 style={{ fontSize: 14, fontWeight: 600 }}>
+      <h2 style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>
         {full ? `Nothing is loaded in ${project.name} yet` : 'Slots that are still empty'}
       </h2>
-      <p className="dim" style={{ fontSize: 12.5, lineHeight: 1.55, marginTop: 5, maxWidth: 660 }}>
+      <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 5, maxWidth: 660 }}>
         {full
           ? <>A session started here right now would begin with no project instructions, no memories and no
               project settings — only what your home directory and machine policy contribute. Here is what
@@ -1468,8 +1468,8 @@ function Setup({ full, project, slots, onInit, initMsg }: {
       <div className="ctx-slots" style={{ marginTop: 12 }}>
         {slots.map((s) => (
           <div key={s.key} className="ctx-slot">
-            <span style={{ marginTop: 1, width: 19, height: 19, flex: 'none', borderRadius: 999,
-                           display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700,
+            <span style={{ marginTop: 1, width: 19, height: 19, flex: 'none', borderRadius: 'var(--r-pill)',
+                           display: 'grid', placeItems: 'center', fontSize: 'var(--t-micro)', fontWeight: 700,
                            background: 'var(--bg-sunk)', color: 'var(--text-faint)' }}>{s.n}</span>
             <h4 className="mono">{s.title}</h4>
             <div style={{ minWidth: 0 }}>
@@ -1485,7 +1485,7 @@ function Setup({ full, project, slots, onInit, initMsg }: {
           <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
             <button className="btn btn-primary" onClick={onInit}>Type /init into a session</button>
           </div>
-          <p className="faint" style={{ fontSize: 11.5, lineHeight: 1.5, marginTop: 7, maxWidth: 660 }}>
+          <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5, marginTop: 7, maxWidth: 660 }}>
             /init reads the repository and drafts a CLAUDE.md from what is actually in it. Wanigan types the
             command into a running session in {project.name} and stops there — you press Enter, and you review
             the file it writes.

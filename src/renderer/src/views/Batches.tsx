@@ -192,7 +192,7 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
                 <tr key={r.id} onClick={() => onOpen(r.id)} className="clickable">
                   <td>
                     <div style={{ fontWeight: 500 }}>{r.name}</div>
-                    <div className="faint mono" style={{ fontSize: 10.5, marginTop: 2 }}>
+                    <div className="faint mono" style={{ fontSize: 'var(--t-micro)', marginTop: 2 }}>
                       {r.model}{r.project_name && ` · ${r.project_name}`}{r.parent_run_id && ' · retry'}
                     </div>
                   </td>
@@ -200,7 +200,7 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
                   <td className="r mono">{num(r.total_requests)}</td>
                   <td style={{ minWidth: 140 }}>
                     <Bar succeeded={r.succeeded} failed={r.failed} pending={r.pending} />
-                    <div className="faint mono" style={{ fontSize: 10.5, marginTop: 4, display: 'flex', gap: 8 }}>
+                    <div className="faint mono" style={{ fontSize: 'var(--t-micro)', marginTop: 4, display: 'flex', gap: 8 }}>
                       <span style={{ color: r.succeeded ? 'var(--ok)' : undefined }}>{num(r.succeeded)} ok</span>
                       {r.failed > 0 && <span style={{ color: 'var(--bad)' }}>{num(r.failed)} failed</span>}
                       {r.pending > 0 && <span>{num(r.pending)} pending</span>}
@@ -365,7 +365,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
       <div className="builder-main">
         <div className="pane-head">
           <div>
-            <button className="faint" style={{ fontSize: 12 }} onClick={onCancel}>← Batches</button>
+            <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={onCancel}>← Batches</button>
             <h1 style={{ marginTop: 2 }}>New run</h1>
             <p className="dim">Dataset in, one prompt across every row, results back at half price.</p>
           </div>
@@ -377,8 +377,8 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
               <button key={p.id} onClick={() => applyPreset(p.id)} className="sunk preset"
                       style={cfg.preset === p.id || (!cfg.preset && p.id === 'blank')
                         ? { borderColor: 'var(--accent)', background: 'var(--accent-soft)' } : undefined}>
-                <div style={{ fontWeight: 600, fontSize: 12.5 }}>{p.label}</div>
-                <div className="dim" style={{ fontSize: 11, marginTop: 4, lineHeight: 1.4 }}>{p.blurb}</div>
+                <div style={{ fontWeight: 600, fontSize: 'var(--t-small)' }}>{p.label}</div>
+                <div className="dim" style={{ fontSize: 'var(--t-micro)', marginTop: 4, lineHeight: 1.4 }}>{p.blurb}</div>
               </button>
             ))}
           </div>
@@ -415,7 +415,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           {previewErr && <div style={{ marginTop: 11 }}><Note tone="error">{previewErr}</Note></div>}
           {preview && (
             <div style={{ marginTop: 11 }}>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, marginBottom: 7 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 'var(--t-small)', marginBottom: 7 }}>
                 <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>{num(preview.rowCount)} rows</span>
                 <span className="dim">{preview.columns.length} columns</span>
                 {preview.note && <span className="faint">· {preview.note}</span>}
@@ -443,7 +443,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
             <div key={i} style={{ marginBottom: 11 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                 <span className="label">System block {cfg.system.length > 1 ? i + 1 : ''}</span>
-                <label style={{ marginLeft: 'auto', display: 'flex', gap: 5, alignItems: 'center', fontSize: 11.5, cursor: 'pointer' }}>
+                <label style={{ marginLeft: 'auto', display: 'flex', gap: 5, alignItems: 'center', fontSize: 'var(--t-small)', cursor: 'pointer' }}>
                   <input type="checkbox" checked={b.cache}
                          onChange={(e) => { const s = [...cfg.system]; s[i] = { ...b, cache: e.target.checked }; patch({ system: s }); invalidate(); }} />
                   cache this block
@@ -457,7 +457,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
             <span className="label">User template</span>
-            <span className="faint" style={{ fontSize: 11 }}>{'{{column}}'} binds to dataset columns</span>
+            <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>{'{{column}}'} binds to dataset columns</span>
           </div>
           <textarea className="field mono" rows={5} value={cfg.userTemplate}
                     onChange={(e) => { patch({ userTemplate: e.target.value }); invalidate(); }} />
@@ -482,7 +482,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
         <Section n={4} title="Model and output"
                  right={<button className="btn" onClick={refreshCatalog} disabled={refreshingModels}>
                    {refreshingModels ? 'Refreshing…' : 'Refresh models'}</button>}>
-          <p className="faint" style={{ fontSize: 11, marginBottom: 9, lineHeight: 1.45 }}>
+          <p className="faint" style={{ fontSize: 'var(--t-micro)', marginBottom: 9, lineHeight: 1.45 }}>
             {catalog.fetchedAt
               ? <>Capabilities read from the Models API{catalog.stale ? ' — over a day old' : ''}. Only models that support the Batch API are listed.</>
               : <>Using the local model table. Add an API key and refresh to read live capabilities, context windows and effort levels.</>}
@@ -499,7 +499,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
                 ))}
               </select>
               {model?.maxInputTokens ? (
-                <p className="faint" style={{ fontSize: 11, marginTop: 3 }}>
+                <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 3 }}>
                   {num(model.maxInputTokens)} token context
                 </p>
               ) : null}
@@ -508,7 +508,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
               <label className="label">Max tokens</label>
               <input type="number" min={1} className="field" style={{ marginTop: 4 }} value={cfg.maxTokens}
                      onChange={(e) => { patch({ maxTokens: Number(e.target.value) }); invalidate(); }} />
-              <p className="faint" style={{ fontSize: 11, marginTop: 3 }}>cap {num(cfg.extendedOutput ? 300000 : model?.maxTokens ?? 0)}</p>
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 3 }}>cap {num(cfg.extendedOutput ? 300000 : model?.maxTokens ?? 0)}</p>
             </div>
             <div>
               <label className="label">Cache TTL</label>
@@ -533,7 +533,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
                   </button>
                 ))}
               </div>
-              <p className="faint" style={{ fontSize: 11, marginTop: 5, lineHeight: 1.45 }}>
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 5, lineHeight: 1.45 }}>
                 {EFFORT_HINT[cfg.effort ?? 'high']} Effort is part of the rendered prompt, so it is set
                 once per run — changing it mid-run would invalidate the cached prefix.
               </p>
@@ -541,21 +541,21 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           )}
 
           <div style={{ display: 'flex', gap: 16, marginTop: 13, flexWrap: 'wrap' }}>
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 'var(--t-small)' }}
                    title={model?.extendedOutput ? '' : `${model?.label ?? 'This model'} does not support extended output`}>
               <input type="checkbox" disabled={!model?.extendedOutput} checked={!!cfg.extendedOutput}
                      onChange={(e) => { patch({ extendedOutput: e.target.checked }); invalidate(); }} />
               Extended output (300k max_tokens, batch only)
             </label>
             {model?.thinkingAdaptive && (
-              <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 'var(--t-small)' }}>
                 <input type="checkbox" checked={cfg.thinking === 'adaptive'}
                        onChange={(e) => { patch({ thinking: e.target.checked ? 'adaptive' : 'off' }); invalidate(); }} />
                 Adaptive thinking
               </label>
             )}
             {cfg.thinking === 'adaptive' && (
-              <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 'var(--t-small)' }}>
                 <input type="checkbox" checked={cfg.thinkingDisplay === 'summarized'}
                        onChange={(e) => { patch({ thinkingDisplay: e.target.checked ? 'summarized' : 'omitted' }); invalidate(); }} />
                 Return a reasoning summary
@@ -563,13 +563,13 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
             )}
           </div>
           <details style={{ marginTop: 13 }} open={!!cfg.schemaJson}>
-            <summary className="dim" style={{ cursor: 'pointer', fontSize: 12 }}>
+            <summary className="dim" style={{ cursor: 'pointer', fontSize: 'var(--t-small)' }}>
               Structured output schema {cfg.schemaJson ? '(set)' : '(optional)'}
               {model && !model.supportsStructuredOutputs && (
                 <span style={{ color: 'var(--warn)' }}> — {model.label} does not support this</span>
               )}
             </summary>
-            <p className="faint" style={{ fontSize: 11, marginTop: 6, lineHeight: 1.45 }}>
+            <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 6, lineHeight: 1.45 }}>
               Sent as <span className="mono">output_config.format</span>. Every object needs{' '}
               <span className="mono">additionalProperties: false</span> and a{' '}
               <span className="mono">required</span> list, or the API rejects the batch.
@@ -582,7 +582,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
 
       <aside className="builder-side">
         <div className="card" style={{ padding: 15, display: 'flex', flexDirection: 'column', gap: 11 }}>
-          <h2 style={{ fontSize: 13.5, fontWeight: 600 }}>Pre-flight</h2>
+          <h2 style={{ fontSize: 'var(--t-body)', fontWeight: 600 }}>Pre-flight</h2>
           {!hasKey && <Note tone="warn">No API key yet — add one in Settings to estimate or submit.</Note>}
           <div style={{ display: 'flex', gap: 7 }}>
             <button className="btn" style={{ flex: 1, justifyContent: 'center' }}
@@ -593,7 +593,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
               {drying ? 'Running…' : 'Dry run'}
             </button>
           </div>
-          <p className="faint" style={{ fontSize: 11, lineHeight: 1.45 }}>
+          <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>
             Batch validation is asynchronous — a malformed request is not reported until the whole
             batch ends. The dry run sends one row synchronously to find that now.
           </p>
@@ -607,14 +607,14 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
                 <Stat label="Requests" value={num(est.requests)} sub={est.chunks > 1 ? `${est.chunks} batches` : '1 batch'} />
                 <Stat label="Est. cost" value={usd(est.costLowUsd)} sub={`up to ${usd(est.costHighUsd)}`} tone="var(--accent)" />
               </div>
-              <div className="sunk" style={{ padding: '9px 11px', fontSize: 12, lineHeight: 1.7 }}>
+              <div className="sunk" style={{ padding: '9px 11px', fontSize: 'var(--t-small)', lineHeight: 1.7 }}>
                 <KV k="Mean input" v={`${num(est.meanInputTokens)} tok`} note={`sampled ${est.sampledRows}`} />
                 {est.cachedPrefixTokens > 0 && <KV k="Cached prefix" v={`${num(est.cachedPrefixTokens)} tok`} note="written once" />}
                 <KV k={est.observedOutputTokens ? 'Output (measured)' : 'Output (assumed)'}
                     v={`${num(est.observedOutputTokens ?? Math.round(est.worstCaseOutputTokens * 0.25 / est.requests))} tok/row`} />
                 <KV k="Same work, sync" v={usd(est.syncCostHighUsd)} note="you save half" />
               </div>
-              {est.notes?.map((n: string, i: number) => <p key={i} className="faint" style={{ fontSize: 11, lineHeight: 1.45 }}>{n}</p>)}
+              {est.notes?.map((n: string, i: number) => <p key={i} className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>{n}</p>)}
             </>
           )}
 
@@ -635,7 +635,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
               {submitting ? 'Submitting…' : est ? `Submit — ${usd(est.costLowUsd)}` : 'Submit'}
             </button>
             {blockers.length > 0 && (
-              <p className="faint" style={{ fontSize: 11, marginTop: 7, textAlign: 'center' }}>Still to do: {blockers.join(', ')}.</p>
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, textAlign: 'center' }}>Still to do: {blockers.join(', ')}.</p>
             )}
             {submitErr && <div style={{ marginTop: 8 }}><Note tone="error">{submitErr}</Note></div>}
           </div>
@@ -690,14 +690,14 @@ function SourceEditor({ source, onChange }: { source: UploadableSource; onChange
   if (source.kind === 'files') {
     return (
       <div>
-        <p className="dim" style={{ fontSize: 12, marginBottom: 7 }}>
+        <p className="dim" style={{ fontSize: 'var(--t-small)', marginBottom: 7 }}>
           {source.paths.length} file{source.paths.length === 1 ? '' : 's'} handed over from a session, in{' '}
           <span className="mono">{source.root}</span>.
         </p>
-        <div className="sunk mono scroll-y" style={{ maxHeight: 150, padding: 9, fontSize: 11.5, lineHeight: 1.6 }}>
+        <div className="sunk mono scroll-y" style={{ maxHeight: 150, padding: 9, fontSize: 'var(--t-small)', lineHeight: 1.6 }}>
           {source.paths.map((f) => <div key={f}>{f}</div>)}
         </div>
-        <p className="faint" style={{ fontSize: 11, marginTop: 5 }}>
+        <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 5 }}>
           Deleted files are skipped at load time rather than failing the run.
         </p>
         <UploadToggle source={source} onChange={onChange} />
@@ -738,7 +738,7 @@ function SourceEditor({ source, onChange }: { source: UploadableSource; onChange
       <textarea className="field mono" rows={4} style={{ marginTop: 4 }} value={source.command}
                 placeholder='drush sql:query --extra=-B "SELECT nid, title FROM node_field_data"'
                 onChange={(e) => onChange({ ...source, command: e.target.value })} />
-      <p className="faint" style={{ fontSize: 11, marginTop: 4 }}>
+      <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 4 }}>
         Runs in your shell with your permissions — the same trust boundary as a terminal.
       </p>
     </>
@@ -820,11 +820,11 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
     <div className="pane">
       <div className="pane-head">
         <div style={{ minWidth: 0 }}>
-          <button className="faint" style={{ fontSize: 12 }} onClick={onBack}>← Batches</button>
+          <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={onBack}>← Batches</button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 3 }}>
             <h1>{run.name}</h1><Pill status={run.status} />
           </div>
-          <p className="faint mono" style={{ fontSize: 11, marginTop: 3 }}>{run.id} · {run.model}</p>
+          <p className="faint mono" style={{ fontSize: 'var(--t-micro)', marginTop: 3 }}>{run.id} · {run.model}</p>
         </div>
         <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
           {live && <button className="btn btn-danger" disabled={busy === 'cancel'}
@@ -861,7 +861,7 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
 
       <div className="card" style={{ padding: 13 }}>
         <Bar succeeded={succeeded} failed={failed + refused} pending={pending} />
-        <div className="faint mono bx-num" style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 11, flexWrap: 'wrap' }}>
+        <div className="faint mono bx-num" style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 'var(--t-micro)', flexWrap: 'wrap' }}>
           {refused > 0 && <span style={{ color: 'var(--serious)' }}>⊘ {num(refused)} refused</span>}
           <span>{num(run.in_tokens)} tokens in</span><span>{num(run.out_tokens)} tokens out</span>
           {run.cache_read > 0 && <span style={{ color: 'var(--ok)' }}>{num(run.cache_read)} cache read</span>}
@@ -914,7 +914,7 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
             </table>
           </div>
           {total > 50 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 'var(--t-small)' }}>
               <button className="btn" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 50))}>Previous</button>
               <span className="dim">{num(offset + 1)}–{num(Math.min(offset + 50, total))} of {num(total)}</span>
               <button className="btn" disabled={offset + 50 >= total} onClick={() => setOffset(offset + 50)}>Next</button>
@@ -959,7 +959,7 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
         <div className="card">
           {!d.events.length && <p className="dim" style={{ padding: 14 }}>No events.</p>}
           {d.events.map((e: any, i: number) => (
-            <div key={i} style={{ display: 'flex', gap: 11, padding: '7px 14px', fontSize: 12, borderTop: i ? '1px solid var(--line)' : undefined }}>
+            <div key={i} style={{ display: 'flex', gap: 11, padding: '7px 14px', fontSize: 'var(--t-small)', borderTop: i ? '1px solid var(--line)' : undefined }}>
               <span className="faint mono" style={{ flex: 'none' }}>{new Date(e.at).toLocaleTimeString()}</span>
               <span style={{ color: e.level === 'error' ? 'var(--bad)' : e.level === 'warn' ? 'var(--warn)' : undefined }}>{e.message}</span>
             </div>
@@ -973,11 +973,11 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
         <div className="modal-backdrop" onClick={() => setOpen(null)}>
           <div className="drawer" onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', gap: 11, alignItems: 'center' }}>
-              <h3 className="mono" style={{ fontSize: 13.5, fontWeight: 600 }}>{open.custom_id}</h3>
+              <h3 className="mono" style={{ fontSize: 'var(--t-body)', fontWeight: 600 }}>{open.custom_id}</h3>
               <Pill status={open.status} />
               <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setOpen(null)}>Close</button>
             </div>
-            <div className="faint mono" style={{ fontSize: 11, marginTop: 4 }}>
+            <div className="faint mono" style={{ fontSize: 'var(--t-micro)', marginTop: 4 }}>
               row {open.row_index}
               {open.stop_reason && ` · stop_reason: ${open.stop_reason}`}
               {open.in_tokens > 0 && ` · ${num(open.in_tokens)} in / ${num(open.out_tokens)} out`}
@@ -1013,12 +1013,12 @@ function UploadToggle({ source, onChange }: {
   const on = source.upload === true;
   return (
     <div className="bx-lane" style={{ marginTop: 11, gap: 8 }}>
-      <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, cursor: 'pointer' }}>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 'var(--t-small)', cursor: 'pointer' }}>
         <input className="bx-f" type="checkbox" checked={on} style={{ marginTop: 2, flex: 'none' }}
                onChange={(e) => onChange({ ...source, upload: e.target.checked })} />
         <span>
           Upload files instead of inlining them
-          <span className="faint" style={{ display: 'block', fontSize: 11, marginTop: 3, lineHeight: 1.5 }}>
+          <span className="faint" style={{ display: 'block', fontSize: 'var(--t-micro)', marginTop: 3, lineHeight: 1.5 }}>
             A repo audit hits the 256 MB batch ceiling long before the 100,000 request one, and an uploaded
             file is re-used across runs instead of being re-sent with every one.
           </span>
@@ -1084,11 +1084,11 @@ function UploadCache() {
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
         <span className="label">Upload cache</span>
         {files ? (
-          <span className="faint bx-num" style={{ fontSize: 11 }}>
+          <span className="faint bx-num" style={{ fontSize: 'var(--t-micro)' }}>
             {num(files.length)} file{files.length === 1 ? '' : 's'} · {bytesLabel(total)} held on the API
           </span>
         ) : null}
-        <button className="btn bx-f" style={{ marginLeft: 'auto', padding: '4px 9px', fontSize: 11.5 }}
+        <button className="btn bx-f" style={{ marginLeft: 'auto', padding: '4px 9px', fontSize: 'var(--t-small)' }}
                 onClick={prune} disabled={busy !== null || !files?.length}>
           {busy === 'prune' ? 'Checking each file…' : 'Prune stale'}
         </button>
@@ -1128,13 +1128,13 @@ function UploadCache() {
               {files.map((f) => (
                 <tr key={f.hash}>
                   <td className="mono trunc" title={f.path}>{f.path.split('/').pop() || f.path}
-                    <div className="faint mono" style={{ fontSize: 10.5, marginTop: 2 }}>{f.fileId}</div>
+                    <div className="faint mono" style={{ fontSize: 'var(--t-micro)', marginTop: 2 }}>{f.fileId}</div>
                   </td>
-                  <td className="dim mono" style={{ fontSize: 11 }}>{f.mediaType}</td>
+                  <td className="dim mono" style={{ fontSize: 'var(--t-micro)' }}>{f.mediaType}</td>
                   <td className="r mono">{bytesLabel(f.bytes)}</td>
                   <td className="r faint mono">{ago(f.uploadedAt)}</td>
                   <td className="r">
-                    <button className="btn btn-danger bx-f" style={{ padding: '3px 8px', fontSize: 11 }}
+                    <button className="btn btn-danger bx-f" style={{ padding: '3px 8px', fontSize: 'var(--t-micro)' }}
                             disabled={busy !== null} onClick={() => void remove(f)}>
                       {busy === f.hash ? 'Deleting…' : 'Delete'}
                     </button>
@@ -1146,7 +1146,7 @@ function UploadCache() {
         </div>
       )}
 
-      <p className="faint" style={{ fontSize: 11, lineHeight: 1.5 }}>
+      <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.5 }}>
         Pruning only drops local rows whose remote file is definitely gone. It never deletes a remote file
         Wanigan cannot prove it uploaded — the Files API is organisation-wide, and another tool's files live there too.
       </p>
@@ -1203,7 +1203,7 @@ function CachePreflight({ cfg, requests, prefixTokens, onUseTtl }: {
       {err && <Note tone="error"><strong>Could not read the cache floor.</strong> {err} The run is still
         submittable — this panel is a diagnostic, not a gate.</Note>}
 
-      <div className="sunk" style={{ padding: '9px 11px', fontSize: 12, lineHeight: 1.7 }}>
+      <div className="sunk" style={{ padding: '9px 11px', fontSize: 'var(--t-small)', lineHeight: 1.7 }}>
         <KV k="Minimum prefix" v={minimum === null ? '—' : `${num(minimum)} tok`} note={cfg.model} />
         <KV k="Your cached prefix"
             v={prefixTokens > 0 ? `${num(prefixTokens)} tok` : '—'}
@@ -1232,9 +1232,9 @@ function CachePreflight({ cfg, requests, prefixTokens, onUseTtl }: {
 
       {advice && (
         <>
-          <p className="faint" style={{ fontSize: 11, lineHeight: 1.5 }}>{advice.why}</p>
+          <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.5 }}>{advice.why}</p>
           {advice.ttl !== cfg.cacheTtl && (
-            <button className="btn bx-f" style={{ alignSelf: 'flex-start', padding: '4px 9px', fontSize: 11.5 }}
+            <button className="btn bx-f" style={{ alignSelf: 'flex-start', padding: '4px 9px', fontSize: 'var(--t-small)' }}
                     onClick={() => onUseTtl(advice.ttl as CacheTtl)}>
               Switch to {advice.ttl}
             </button>
@@ -1242,7 +1242,7 @@ function CachePreflight({ cfg, requests, prefixTokens, onUseTtl }: {
         </>
       )}
 
-      <p className="faint" style={{ fontSize: 11, lineHeight: 1.5 }}>
+      <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.5 }}>
         Even with all of the above right, hits inside a batch are best-effort. The API does not guarantee them,
         and real runs land anywhere between 30% and 98% depending on how the batch is scheduled.
       </p>
@@ -1337,7 +1337,7 @@ function CacheObserved({ runId, run, config }: { runId: string; run: any; config
                 </td>
                 <td className="n">{num(p.v)}</td>
                 <td className="n" style={{ color: 'var(--text-dim)' }}>{pctLabel(p.v / total)}</td>
-                <td className="dim" style={{ fontSize: 11 }}>{p.note}</td>
+                <td className="dim" style={{ fontSize: 'var(--t-micro)' }}>{p.note}</td>
               </tr>
             ))}
           </tbody>
@@ -1485,7 +1485,7 @@ function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
                     </td>
                     <td className="n">{num(s.n)}</td>
                     <td className="n" style={{ color: 'var(--text-dim)' }}>{pctLabel(s.n / total)}</td>
-                    <td className="dim" style={{ fontSize: 11, maxWidth: 320 }}>{examples[s.category] ?? '—'}</td>
+                    <td className="dim" style={{ fontSize: 'var(--t-micro)', maxWidth: 320 }}>{examples[s.category] ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1536,7 +1536,7 @@ function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
               </button>
             </div>
           )}
-          <p className="faint" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>
+          <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.5 }}>
             {live
               ? 'This run is still in flight. Wait for it to end — the refused set is not final until it does.'
               : 'The rescue is priced before it is submitted, so it goes through the per-run spend cap rather than around it. A batch cannot be un-submitted.'}
@@ -1566,12 +1566,12 @@ function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
                     <tr key={c.id}>
                       <td>
                         <button className="link mono bx-f" onClick={() => onOpen(c.id)}>{c.id}</button>
-                        <div className="faint" style={{ fontSize: 10.5, marginTop: 2 }}>{c.name}</div>
+                        <div className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 2 }}>{c.name}</div>
                       </td>
-                      <td className="mono" style={{ fontSize: 11 }}>{c.model}</td>
+                      <td className="mono" style={{ fontSize: 'var(--t-micro)' }}>{c.model}</td>
                       <td><Pill status={c.status} /></td>
                       <td className="r">
-                        <button className="btn bx-f" style={{ padding: '3px 9px', fontSize: 11.5 }}
+                        <button className="btn bx-f" style={{ padding: '3px 9px', fontSize: 'var(--t-small)' }}
                                 disabled={busy !== null || running}
                                 title={running ? 'Still in flight — merge once it ends.' : ''}
                                 onClick={() => void merge(c)}>
@@ -1820,7 +1820,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
           )}
 
           <div className="stat-grid" style={{ marginTop: 12 }}>
-            <Stat label="Variable" value={<span style={{ fontSize: 14 }}>{pair.variable}</span>} sub="the only field that moved" />
+            <Stat label="Variable" value={<span style={{ fontSize: 'var(--t-lead)' }}>{pair.variable}</span>} sub="the only field that moved" />
             <Stat label="Mean margin" value={verdict.meanScore === null ? '—' : `${(verdict.meanScore as number).toFixed(1)}/10`}
                   sub={verdict.meanScore === null ? 'no judge has scored this' : 'gap size, not direction'} />
             <Stat label="Cost of B vs A" value={usdDelta(verdict.costDeltaUsd as number)}
@@ -1843,7 +1843,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
 
           <div className="sunk bx-lane" style={{ marginTop: 12, padding: 11, gap: 8 }}>
             <span className="label">Score this pair from a judge run</span>
-            <p className="faint" style={{ fontSize: 11, lineHeight: 1.5 }}>
+            <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.5 }}>
               A verdict without a judge is only “the outputs differ”. Paste the id of a judge run created for
               this pair and its scores land here, un-swapped — the judge sees A and B in a random order per row,
               and skipping the un-swap is how a randomised judge silently becomes a coin flip.
@@ -1863,7 +1863,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
         <Section title="Row by row"
                  hint="Matched on custom_id, never on position — results come back unordered and the two runs were submitted separately."
                  right={
-                   <span className="faint bx-num" style={{ fontSize: 11 }}>
+                   <span className="faint bx-num" style={{ fontSize: 'var(--t-micro)' }}>
                      {num(shown.length)} of {num(rows.length)} rows
                    </span>
                  }>
@@ -1881,7 +1881,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
             ))}
           </div>
 
-          <div className="bx-ab" style={{ marginBottom: 9, fontSize: 11.5 }}>
+          <div className="bx-ab" style={{ marginBottom: 9, fontSize: 'var(--t-small)' }}>
             <div>
               <span className="bx-swatch" style={{ background: SERIES[0], marginRight: 6 }} />
               <strong>A</strong> — {runA?.name ?? pair?.runAId} <span className="faint mono">{runA?.model}</span>
@@ -1917,7 +1917,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
           <div className="bx-lane" style={{ gap: 9 }}>
             {shown.slice(0, limit).map((r) => (
               <div key={r.customId} className="sunk" style={{ padding: 11 }}>
-                <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 11.5 }}>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 'var(--t-small)' }}>
                   <span className="mono" style={{ fontWeight: 600 }}>{r.customId}</span>
                   <WinnerMark winner={r.winner} same={r.same} score={r.score} />
                   <span className="faint mono bx-num" style={{ marginLeft: 'auto' }}>
@@ -1925,7 +1925,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
                   </span>
                 </div>
                 {r.rationale && (
-                  <p className="dim" style={{ fontSize: 11.5, marginTop: 6, lineHeight: 1.5 }}>{r.rationale}</p>
+                  <p className="dim" style={{ fontSize: 'var(--t-small)', marginTop: 6, lineHeight: 1.5 }}>{r.rationale}</p>
                 )}
                 <div className="bx-ab" style={{ marginTop: 8 }}>
                   <OutputSide side="A" status={r.aStatus} text={r.aText} colour={SERIES[0]} />
@@ -1960,7 +1960,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
         {gOk && <div style={{ marginTop: 10 }}><Note tone="ok">{gOk}</Note></div>}
 
         <div style={{ marginTop: 13 }}>
-          {!golden && <p className="dim" style={{ fontSize: 12 }}>Reading golden sets…</p>}
+          {!golden && <p className="dim" style={{ fontSize: 'var(--t-small)' }}>Reading golden sets…</p>}
           {golden && golden.length === 0 && (
             <div className="bx-state">
               <h4>No golden sets yet</h4>
@@ -1979,7 +1979,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
                 <tbody>
                   {golden.map((g) => (
                     <tr key={g.id}>
-                      <td>{g.name}<div className="faint mono" style={{ fontSize: 10.5, marginTop: 2 }}>{g.id}</div></td>
+                      <td>{g.name}<div className="faint mono" style={{ fontSize: 'var(--t-micro)', marginTop: 2 }}>{g.id}</div></td>
                       <td className="r mono">{num(g.rows)} rows</td>
                       <td>
                         {g.sourceRunId

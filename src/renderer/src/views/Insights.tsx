@@ -290,7 +290,7 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
         <h1>Insights</h1>
         <p className="dim">Where the tokens and the money actually went — across all three surfaces.</p>
       </div>
-      <div className="faint" style={{ fontSize: 11.5 }}>
+      <div className="faint" style={{ fontSize: 'var(--t-small)' }}>
         {busy ? 'Refreshing…' : 'Refreshes every 15s'}
       </div>
     </div>
@@ -341,7 +341,7 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
         {styles}
         {head}
         <div className="card" style={{ padding: 22 }}>
-          <h2 style={{ fontSize: 15, fontWeight: 600 }}>Nothing has been billed yet</h2>
+          <h2 style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>Nothing has been billed yet</h2>
           <p className="dim" style={{ marginTop: 8, lineHeight: 1.55, maxWidth: 640 }}>
             This page reports on money already spent, so it stays blank until something has cost
             something. Three things fill it, and any one of them is enough:
@@ -2003,7 +2003,7 @@ function SpendByModel({ rows }: { rows: Record<string, number | string>[] }) {
           const reqs = Number(r.requests) || 0;
           return (
             <div key={String(r.model)}>
-              <div style={{ display: 'flex', fontSize: 11.5, marginBottom: 3 }}>
+              <div style={{ display: 'flex', fontSize: 'var(--t-small)', marginBottom: 3 }}>
                 <span className="mono">{String(r.model)}</span>
                 <span className="mono ins-num" style={{ marginLeft: 'auto', color: 'var(--text-dim)' }}>
                   {usd(cost)}
@@ -2012,8 +2012,8 @@ function SpendByModel({ rows }: { rows: Record<string, number | string>[] }) {
                   </span>}
                 </span>
               </div>
-              <div style={{ height: 7, borderRadius: 4, background: 'var(--bg-sunk)', overflow: 'hidden' }}>
-                <div style={{ width: `${Math.max(p, 1)}%`, height: '100%', borderRadius: 4,
+              <div style={{ height: 7, borderRadius: 'var(--r-sm)', background: 'var(--bg-sunk)', overflow: 'hidden' }}>
+                <div style={{ width: `${Math.max(p, 1)}%`, height: '100%', borderRadius: 'var(--r-sm)',
                               background: 'var(--series-1)' }} />
               </div>
             </div>

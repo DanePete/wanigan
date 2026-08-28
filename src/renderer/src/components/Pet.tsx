@@ -578,7 +578,7 @@ function PetInner() {
           <>
             <button className="n" style={{ background: 'none', border: 'none', padding: 0, cursor: 'text', color: 'inherit' }}
                     title="Rename" onClick={() => setRenaming(true)}>{pet.name}</button>
-            <span className="faint" style={{ fontSize: 10 }}>
+            <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>
               {characterOf(pet)}{pet.generation > 1 ? ` · gen ${pet.generation}` : ''}
             </span>
             <span className="age">{ageText(pet.born)}</span>
@@ -605,7 +605,7 @@ function PetInner() {
       </div>
 
       <div className="pet-say">{caption}</div>
-      <div className="pet-bar" style={{ fontSize: 9.5 }}>
+      <div className="pet-bar" style={{ fontSize: 'var(--t-micro)' }}>
         <span className="k" style={{ width: 'auto' }}>
           care miss <b style={{ color: pet.careMistakes >= 3 ? 'var(--bad)' : 'var(--text-dim)' }}>{pet.careMistakes}</b>
           {'  '}· discipline miss <b style={{ color: pet.disciplineMistakes >= 3 ? 'var(--warning)' : 'var(--text-dim)' }}>{pet.disciplineMistakes}</b>
@@ -613,7 +613,7 @@ function PetInner() {
       </div>
 
       {pet.dead ? (
-        <button className="btn btn-primary" style={{ fontSize: 11 }} onClick={hatch}>Hatch a new egg</button>
+        <button className="btn btn-primary" style={{ fontSize: 'var(--t-micro)' }} onClick={hatch}>Hatch a new egg</button>
       ) : game ? (
         <div className="pet-play">
           <button className="btn" onClick={() => guess(-1)}>◀ left</button>

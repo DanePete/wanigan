@@ -376,7 +376,7 @@ export default function Skills({ projectId, activeSessionId }: {
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span className="faint" style={{ fontSize: 11.5, fontVariantNumeric: 'tabular-nums' }}>
+            <span className="faint" style={{ fontSize: 'var(--t-small)', fontVariantNumeric: 'tabular-nums' }}>
               scanned {ago(cat.scannedAt)}
             </span>
             <button className="btn" onClick={() => void load(true)} disabled={scanning}>
@@ -458,7 +458,7 @@ export default function Skills({ projectId, activeSessionId }: {
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => choose(h)}
                   >
-                    <span aria-hidden="true" style={{ color: SRC[h.skill.source].color, fontSize: 10 }}>
+                    <span aria-hidden="true" style={{ color: SRC[h.skill.source].color, fontSize: 'var(--t-micro)' }}>
                       {SRC[h.skill.source].glyph}
                     </span>
                     <span className="skills-opt-name mono">
@@ -492,7 +492,7 @@ export default function Skills({ projectId, activeSessionId }: {
                       return next;
                     })}
                   >
-                    <span aria-hidden="true" style={{ color: s.color, fontSize: 10 }}>{s.glyph}</span>
+                    <span aria-hidden="true" style={{ color: s.color, fontSize: 'var(--t-micro)' }}>{s.glyph}</span>
                     {s.word}
                     <span className="n">{num(n)}</span>
                   </button>
@@ -671,7 +671,7 @@ function SkillCard({ hit, selected, canSend, flash, onRead, onSend, onCopy }: {
 
       {s.allowedTools.length > 0 && (
         <div className="skill-tools">
-          <span className="faint" style={{ fontSize: 10.5 }}>allowed tools:</span>
+          <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>allowed tools:</span>
           {s.allowedTools.map((t) => <span key={t} className="skill-tool mono">{t}</span>)}
         </div>
       )}
@@ -771,7 +771,7 @@ function Roots({ cat }: { cat: Catalogue }) {
                   </td>
                   <td>
                     {r.exists && r.path !== '—' && (
-                      <button className="link" style={{ fontSize: 11 }}
+                      <button className="link" style={{ fontSize: 'var(--t-micro)' }}
                               onClick={() => { window.wanigan.browse.reveal(r.path).catch(() => {}); }}>
                         reveal
                       </button>
@@ -815,11 +815,11 @@ function Reader({ skill, onClose }: { skill: SkillInfo; onClose: () => void }) {
     <aside className="skills-reader" aria-label={`${skill.name} SKILL.md`}>
       <div className="skills-reader-head">
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-          <span className="mono" style={{ fontSize: 13.5, fontWeight: 600 }}>{skill.name}</span>
+          <span className="mono" style={{ fontSize: 'var(--t-body)', fontWeight: 600 }}>{skill.name}</span>
           <span className="skill-src" style={{ color: src.color }}>
             <span aria-hidden="true">{src.glyph}</span>{src.word}
           </span>
-          <button className="faint" style={{ marginLeft: 'auto', fontSize: 15, lineHeight: 1 }}
+          <button className="faint" style={{ marginLeft: 'auto', fontSize: 'var(--t-lead)', lineHeight: 1 }}
                   title="Close the reading pane" onClick={onClose}>×</button>
         </div>
         <div className="skills-path mono" title={skill.path}>{skill.path}</div>
@@ -827,7 +827,7 @@ function Reader({ skill, onClose }: { skill: SkillInfo; onClose: () => void }) {
           <span className="mono">{skill.invoke}</span>
           <span>{fileSize(skill.bytes)}</span>
           <span>edited {ago(skill.modified)}</span>
-          <button className="link" style={{ fontSize: 11 }}
+          <button className="link" style={{ fontSize: 'var(--t-micro)' }}
                   onClick={() => { window.wanigan.browse.reveal(skill.dir).catch(() => {}); }}>
             reveal folder
           </button>
@@ -841,7 +841,7 @@ function Reader({ skill, onClose }: { skill: SkillInfo; onClose: () => void }) {
             last scan — press “Rescan disk” to rebuild the catalogue.
           </Note>
         ) : !body ? (
-          <p className="dim" style={{ fontSize: 12 }}>Reading {skill.name}/SKILL.md…</p>
+          <p className="dim" style={{ fontSize: 'var(--t-small)' }}>Reading {skill.name}/SKILL.md…</p>
         ) : (
           <>
             {body.truncated && (
