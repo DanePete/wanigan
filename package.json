@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "description": "Desktop control surface for local coding agents. Run a crew of Claude Code and Codex sessions across every repo from one window.",
+  "author": "Dane Petersen",
+  "license": "MIT",
   "main": "out/main/index.js",
   "engines": {
     "node": ">=20"
@@ -14,9 +16,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "rebuild": "electron-rebuild -f -w node-pty",
     "postinstall": "electron-rebuild -f -w node-pty,better-sqlite3",
-    "dist:mac": "electron-vite build && electron-builder --mac --dir",
+    "dist:mac": "electron-vite build && electron-builder --mac",
+    "dist:mac:dir": "electron-vite build && electron-builder --mac --dir",
     "app": "./scripts/launch.sh",
-    "smoke": "./scripts/smoke.sh"
+    "cli": "./scripts/cli.sh",
+    "smoke": "./scripts/smoke.sh",
+    "test": "npm run typecheck && npm run smoke"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",

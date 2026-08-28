@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import type { ProviderId, ProviderInfo } from '../shared/types';
+import { getProviderKey } from './keys';
 
 const exec = promisify(execFile);
 
@@ -21,6 +22,15 @@ type ProviderDef = {
    */
   resumeArgs: (conversationId: string | null) => string[];
   versionArgs: string[];
+  /**
+   * Environment a provider needs beyond the shared agent env. This exists
+   * because a provider is not always a different binary: GLM is the Claude
+   * Code binary pointed at a different API, which is configuration rather
+   * than a program. Returns {} when the provider is not configured, so a
+   * session still launches and fails with the CLI's own message rather than
+   * silently talking to the wrong endpoint.
+   */
+  env?: () => Record<string, string>;
   /**
    * Where to look when the CLI is not on PATH. Both Claude Code and Codex ship
    * inside their editor extensions under a versioned directory, so a plain PATH
@@ -105,6 +115,46 @@ export const PROVIDERS: ProviderDef[] = [
         return fs.readdirSync(binDir).map((arch) => path.join(binDir, arch, 'codex'));
       } catch { return []; }
     }),
+  },
+  {
+    id: 'glm',
+    label: 'GLM · Z.ai',
+    // Deliberately the same binary. Z.ai serves an Anthropic-compatible API,
+    // so GLM is Claude Code with its base URL and credentials redirected —
+    // there is no glm binary to find, and inventing one would just fail to
+    // resolve. Everything Foreman builds on the CLI (telemetry, hooks, the
+    // policy gate, transcripts) keeps working unchanged for exactly this
+    // reason.
+    bin: 'claude',
+    args: (extra, o) => [
+      ...(o?.model ? ['--model', o.model] : []),
+      ...(o?.permissionMode ? ['--permission-mode', o.permissionMode] : []),
+      ...extra,
+    ],
+    // No effort: it is an Anthropic API parameter, and the proxy does not
+    // accept it. Passing it would make the CLI exit on an unknown option.
+    supports: { model: true, effort: false, permissionMode: true, resume: true },
+    resumeArgs: (id) => (id ? ['--resume', id] : ['--continue']),
+    versionArgs: ['--version'],
+    fallbacks: () => [
+      ...editorExtensions('anthropic.claude-code-')
+        .map((d) => path.join(d, 'resources', 'native-binary', 'claude')),
+      path.join(os.homedir(), '.claude', 'local', 'claude'),
+    ],
+    env: (): Record<string, string> => {
+      const key = getProviderKey('glm');
+      if (!key) return {};
+      return {
+        ANTHROPIC_BASE_URL: process.env.FOREMAN_GLM_BASE_URL || 'https://api.z.ai/api/anthropic',
+        ANTHROPIC_AUTH_TOKEN: key,
+        // The CLI asks for a tier by name; the endpoint maps the tier to a
+        // GLM model. Without these every request asks for a Claude model the
+        // proxy has never heard of.
+        ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.FOREMAN_GLM_MODEL || 'glm-4.6',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.FOREMAN_GLM_MODEL || 'glm-4.6',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.FOREMAN_GLM_SMALL_MODEL || 'glm-4.5-air',
+      };
+    },
   },
 ];
 

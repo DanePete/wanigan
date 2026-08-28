@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A second push while the first job is still running makes the first result
+# stale before it lands, and both jobs fight over the same npm cache.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: typecheck + smoke
+    runs-on: ubuntu-latest
+    # The smoke suite waits on batches with 30s deadlines. If Electron ever
+    # fails to exit, this stops it burning an hour of runner time.
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # postinstall rebuilds node-pty and better-sqlite3 against Electron's
+      # ABI, from source. That is half the value of running CI at all: a
+      # typecheck-only job would pass while the addon a fresh clone needs
+      # cannot compile.
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Install Xvfb
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
+
+      # Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor, and
+      # Chromium's sandbox needs them. Without this Electron aborts before
+      # app.whenReady() with a SUID sandbox error, so the smoke suite prints
+      # nothing at all rather than a failure anyone can read. Tolerated when
+      # the key does not exist, which is the case on 22.04.
+      - name: Allow Chromium's sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+      # Electron needs a display server to reach app.whenReady() even on the
+      # smoke path, which never opens a window. The suite runs the mock runner:
+      # no network, no API key, no spend.
+      - name: Smoke
+        run: xvfb-run --auto-servernum npm run smoke
+
+# No macOS packaging job here on purpose. Signing and notarisation need an
+# Apple Developer identity and an app-specific password; making CI depend on
+# secrets that only exist on a maintainer's machine turns every fork's first
+# pull request into a red build for a reason the contributor cannot fix.
+# Releases are cut with `npm run dist:mac` on a machine that has the identity.

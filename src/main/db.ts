@@ -146,6 +146,229 @@ function migrate(d: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_runs_created ON runs(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id);
   `);
+  migratePhases(d);
+}
+
+/** Idempotent ALTER TABLE — SQLite has no "ADD COLUMN IF NOT EXISTS". */
+function addColumn(d: Database.Database, table: string, column: string, decl: string) {
+  const cols = d.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (cols.some((c) => c.name === column)) return;
+  d.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+}
+
+/**
+ * Everything phases 1-20 store. Kept in one migration so a feature module
+ * never has to reach for CREATE TABLE at call time — the schema is the
+ * contract, and it exists before any of them run.
+ */
+function migratePhases(d: Database.Database) {
+  d.exec(`
+    -- P1 · telemetry ---------------------------------------------------
+    -- Counters arrive as deltas on a 10s interval; one row per session per
+    -- metric keeps the running total cheap to read.
+    CREATE TABLE IF NOT EXISTS session_metrics (
+      session_id TEXT NOT NULL,
+      metric     TEXT NOT NULL,
+      attrs      TEXT NOT NULL DEFAULT '',
+      value      REAL NOT NULL DEFAULT 0,
+      last_at    INTEGER NOT NULL,
+      PRIMARY KEY (session_id, metric, attrs)
+    );
+
+    CREATE TABLE IF NOT EXISTS session_api_events (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id  TEXT NOT NULL,
+      at          INTEGER NOT NULL,
+      kind        TEXT NOT NULL,
+      model       TEXT,
+      cost_usd    REAL NOT NULL DEFAULT 0,
+      duration_ms INTEGER,
+      in_tokens   INTEGER NOT NULL DEFAULT 0,
+      out_tokens  INTEGER NOT NULL DEFAULT 0,
+      cache_read  INTEGER NOT NULL DEFAULT 0,
+      cache_write INTEGER NOT NULL DEFAULT 0,
+      effort      TEXT,
+      detail      TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_api_events_session ON session_api_events(session_id, at DESC);
+    CREATE INDEX IF NOT EXISTS idx_api_events_at      ON session_api_events(at DESC);
+
+    -- P2 · hook bus ----------------------------------------------------
+    CREATE TABLE IF NOT EXISTS session_events (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id  TEXT NOT NULL,
+      at          INTEGER NOT NULL,
+      event       TEXT NOT NULL,
+      tool_name   TEXT,
+      summary     TEXT,
+      duration_ms INTEGER,
+      ok          INTEGER,
+      paths_json  TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_events ON session_events(session_id, at DESC);
+    CREATE INDEX IF NOT EXISTS idx_session_events_at ON session_events(at DESC);
+
+    -- P4 · transcript archive ------------------------------------------
+    CREATE TABLE IF NOT EXISTS transcripts (
+      session_id  TEXT PRIMARY KEY,
+      source_path TEXT NOT NULL,
+      stored_path TEXT NOT NULL,
+      bytes       INTEGER NOT NULL DEFAULT 0,
+      turns       INTEGER NOT NULL DEFAULT 0,
+      parsed      INTEGER NOT NULL DEFAULT 0,
+      archived_at INTEGER NOT NULL,
+      note        TEXT
+    );
+
+    -- Search is over text only; the raw file on disk stays the record of truth.
+    CREATE VIRTUAL TABLE IF NOT EXISTS transcript_fts USING fts5(
+      session_id UNINDEXED, role UNINDEXED, at UNINDEXED, text
+    );
+
+    -- P9 · worktrees ---------------------------------------------------
+    CREATE TABLE IF NOT EXISTS worktrees (
+      path       TEXT PRIMARY KEY,
+      repo_root  TEXT NOT NULL,
+      branch     TEXT,
+      session_id TEXT,
+      created_at INTEGER NOT NULL,
+      removed_at INTEGER
+    );
+
+    -- P10 · headless fan-out -------------------------------------------
+    CREATE TABLE IF NOT EXISTS headless_rows (
+      run_id        TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      project_id    TEXT NOT NULL,
+      project_name  TEXT NOT NULL,
+      project_path  TEXT NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'pending',
+      cost_usd      REAL NOT NULL DEFAULT 0,
+      duration_ms   INTEGER,
+      exit_code     INTEGER,
+      output        TEXT,
+      error         TEXT,
+      files_changed INTEGER NOT NULL DEFAULT 0,
+      worktree      TEXT,
+      started_at    INTEGER,
+      ended_at      INTEGER,
+      PRIMARY KEY (run_id, project_id)
+    );
+
+    -- P11 · dispatcher --------------------------------------------------
+    CREATE TABLE IF NOT EXISTS queue (
+      id             TEXT PRIMARY KEY,
+      kind           TEXT NOT NULL,
+      state          TEXT NOT NULL DEFAULT 'waiting',
+      priority       INTEGER NOT NULL DEFAULT 100,
+      label          TEXT NOT NULL,
+      payload_json   TEXT NOT NULL,
+      blocked_by     TEXT,
+      attempts       INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at INTEGER,
+      created_at     INTEGER NOT NULL,
+      started_at     INTEGER,
+      ended_at       INTEGER,
+      error          TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_queue_ready ON queue(state, priority, created_at);
+
+    -- P12 · MCP ---------------------------------------------------------
+    CREATE TABLE IF NOT EXISTS mcp_servers (
+      id         TEXT PRIMARY KEY,
+      project_id TEXT,
+      name       TEXT NOT NULL,
+      transport  TEXT NOT NULL,
+      command    TEXT,
+      args       TEXT,
+      url        TEXT,
+      enabled    INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS mcp_status (
+      id         TEXT PRIMARY KEY,
+      connected  INTEGER NOT NULL DEFAULT 0,
+      last_at    INTEGER,
+      last_error TEXT,
+      tool_calls INTEGER NOT NULL DEFAULT 0
+    );
+
+    -- P13 · uploaded rows ----------------------------------------------
+    -- Keyed by content hash so a re-run of the same audit re-uses the upload.
+    CREATE TABLE IF NOT EXISTS uploads (
+      hash        TEXT PRIMARY KEY,
+      file_id     TEXT NOT NULL,
+      path        TEXT NOT NULL,
+      bytes       INTEGER NOT NULL,
+      media_type  TEXT NOT NULL,
+      uploaded_at INTEGER NOT NULL,
+      last_used_at INTEGER
+    );
+
+    -- P17 · evals -------------------------------------------------------
+    CREATE TABLE IF NOT EXISTS eval_pairs (
+      id         TEXT PRIMARY KEY,
+      name       TEXT NOT NULL,
+      run_a      TEXT NOT NULL,
+      run_b      TEXT NOT NULL,
+      variable   TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS eval_scores (
+      pair_id   TEXT NOT NULL,
+      custom_id TEXT NOT NULL,
+      score     REAL,
+      winner    TEXT,
+      rationale TEXT,
+      judge_run TEXT,
+      PRIMARY KEY (pair_id, custom_id)
+    );
+    CREATE TABLE IF NOT EXISTS golden_sets (
+      id            TEXT PRIMARY KEY,
+      name          TEXT NOT NULL,
+      rows_json     TEXT NOT NULL,
+      row_count     INTEGER NOT NULL DEFAULT 0,
+      source_run_id TEXT,
+      created_at    INTEGER NOT NULL
+    );
+
+    -- P18 · budgets -----------------------------------------------------
+    CREATE TABLE IF NOT EXISTS budgets (
+      scope_id    TEXT PRIMARY KEY,
+      monthly_usd REAL NOT NULL DEFAULT 0,
+      warn_at     REAL NOT NULL DEFAULT 0.8
+    );
+
+    -- P19 · policy ledger -----------------------------------------------
+    -- Append-only on purpose: a record you can edit is not a record.
+    CREATE TABLE IF NOT EXISTS policy_ledger (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      at         INTEGER NOT NULL,
+      session_id TEXT,
+      project_id TEXT,
+      trust      TEXT NOT NULL,
+      tool_name  TEXT NOT NULL,
+      summary    TEXT NOT NULL,
+      decision   TEXT NOT NULL,
+      rule       TEXT NOT NULL,
+      reason     TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ledger_at ON policy_ledger(at DESC);
+
+    CREATE TABLE IF NOT EXISTS project_trust (
+      project_id TEXT PRIMARY KEY,
+      trust      TEXT NOT NULL,
+      set_at     INTEGER NOT NULL
+    );
+  `);
+
+  // Runs carry batches, headless fan-outs, evals and judge passes. One table,
+  // so Insights and budgets never need a special case per surface.
+  addColumn(d, 'runs', 'kind', "TEXT NOT NULL DEFAULT 'batch'");
+  addColumn(d, 'runs', 'eval_pair_id', 'TEXT');
+  // A session can run in its own worktree; the code panel scopes to it.
+  addColumn(d, 'session_log', 'worktree', 'TEXT');
+  addColumn(d, 'session_log', 'trust', 'TEXT');
+  d.exec("CREATE INDEX IF NOT EXISTS idx_runs_kind ON runs(kind, created_at DESC)");
 }
 
 export function logEvent(runId: string, level: 'info' | 'warn' | 'error', message: string) {

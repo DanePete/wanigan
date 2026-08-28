@@ -1,0 +1,155 @@
+/* motion — owned by the motion phase. Tokens come from index.css; never redeclare a colour here.
+
+   ONE RULE: every animation is driven by a measurement.
+
+   Progress advances on real counts. An indicator breathes at the rate output
+   actually arrives, and stops when it stops. Nothing spins to look busy, and
+   nothing loops to fill silence — a moving thing in this app is a claim about
+   the world, so it has to be true.
+
+   Consequences that are not negotiable:
+     - transform and opacity only. width/top/height animations run on the main
+       thread and land on the same frames as the terminal repaint.
+     - 150–250ms for a state change, under 400ms for a view swap.
+     - NOTHING animates inside a pane holding a live PTY. xterm repaints on its
+       own schedule; anything transforming near it makes the terminal, not the
+       animation, look broken. Every selector here stops at .terminal-host.
+     - prefers-reduced-motion and the Settings override both win. The root
+       carries data-motion="auto | full | off"; 'auto' follows the OS. */
+
+:root {
+  --mo-state: 180ms;   /* a state change: hover, selection, a value landing */
+  --mo-view: 240ms;    /* a whole view swapping out */
+  --mo-ease: cubic-bezier(.2, .7, .3, 1);
+  --mo-period: 2400ms; /* one breath — overwritten per element from measured rate */
+}
+
+/* 'off' means off everywhere, including the view transition. */
+:root[data-motion='off'] {
+  --mo-state: 0ms;
+  --mo-view: 0ms;
+}
+
+/* 'auto' defers to the OS; 'full' is a deliberate override of it. */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion='full']) {
+    --mo-state: 0ms;
+    --mo-view: 0ms;
+  }
+}
+
+/* ── the primitives ──────────────────────────────────────────────────
+   Each takes its number from real data. --mo-p is a ratio of counts that
+   happened; --mo-period is measured throughput. Neither has a default that
+   implies activity. */
+
+/* Progress. Advances on completed/total, scaled on the compositor so a bar
+   that updates every few hundred ms never triggers layout. */
+.mo-fill {
+  transform: scaleX(var(--mo-p, 0));
+  transform-origin: left center;
+  transition: transform var(--mo-state) var(--mo-ease);
+  will-change: transform;
+}
+
+/* Breathing. Only breathes while data-flow="live" is set by whoever is
+   measuring, at the period they measured. No flow, no motion. */
+.mo-breathe[data-flow='live'] {
+  animation: mo-breathe var(--mo-period) ease-in-out infinite;
+  transform-origin: center;
+}
+
+/* One bump per real event — a count that went up, a row that landed. */
+.mo-bump { animation: mo-bump var(--mo-state) var(--mo-ease) 1; }
+
+/* A row that has just arrived, once. */
+.mo-enter { animation: mo-in var(--mo-state) var(--mo-ease) 1; }
+
+@keyframes mo-breathe {
+  0%, 100% { transform: scale(1);    opacity: .72; }
+  50%      { transform: scale(1.14); opacity: 1; }
+}
+@keyframes mo-bump {
+  0%   { transform: scale(1); }
+  45%  { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+@keyframes mo-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes mo-fade-out {
+  to { opacity: 0; }
+}
+@keyframes mo-view-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Reduced motion keeps the state, drops the movement: a breathing dot is still
+   a dot, a bumped badge still shows its new number. */
+:root[data-motion='off'] .mo-breathe,
+:root[data-motion='off'] .mo-bump,
+:root[data-motion='off'] .mo-enter { animation: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion='full']) .mo-breathe,
+  :root:not([data-motion='full']) .mo-bump,
+  :root:not([data-motion='full']) .mo-enter { animation: none; }
+}
+
+/* The PTY's pane is a no-motion zone, whatever a caller put in it. The values
+   stay — a progress bar keeps its width — only the movement stops. */
+.terminal-host .mo-breathe,
+.terminal-host .mo-bump,
+.terminal-host .mo-enter,
+.terminal-host .mo-fill {
+  animation: none;
+  transition: none;
+}
+
+/* ── the nav underline ───────────────────────────────────────────────
+   Placed from measured tab geometry (offsetLeft/offsetWidth) so it can slide
+   as a transform. The base element is 1px wide and scaled to the real width;
+   .has-ink is only added once a measurement succeeded, so the CSS border
+   underneath stays the fallback if it never does. */
+.nav-tabs { position: relative; overflow-x: auto; }
+.nav-tabs::-webkit-scrollbar { display: none; }
+/* Seven tabs in a narrow window scroll in their own container; the shell never
+   scrolls sideways, and a tab never squeezes its label. */
+.nav-tabs > .nav-tab { flex: none; }
+
+.nav-ink {
+  position: absolute; left: 0; bottom: 0;
+  width: 1px; height: 2px;
+  background: var(--accent);
+  transform-origin: left center;
+  transform: scaleX(0);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform var(--mo-state) var(--mo-ease), opacity var(--mo-state) linear;
+}
+.nav-tabs.has-ink .nav-ink { opacity: 1; }
+.nav-tabs.has-ink .nav-tab.on { border-bottom-color: transparent; }
+
+/* ── view transitions ────────────────────────────────────────────────
+   Feature-detected in App.tsx and skipped entirely when a live terminal is on
+   either side of the swap. Only the body — the part that actually changed —
+   moves; the chrome swaps live, in place. */
+.body { view-transition-name: mo-view; }
+
+/* The chrome does not transition at all: the new root pseudo is the live
+   rendering, so hiding the old snapshot outright lets the nav — and the sliding
+   underline — animate for real underneath. It also avoids the UA's additive
+   plus-lighter blend, which flashes when an opaque snapshot sits over another. */
+::view-transition-old(root) { animation: none; opacity: 0; }
+::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+
+::view-transition-group(mo-view) { animation-duration: var(--mo-view); }
+::view-transition-old(mo-view) { animation: mo-fade-out 110ms linear both; }
+::view-transition-new(mo-view) { animation: mo-view-in var(--mo-view) var(--mo-ease) both; }
+
+/* ── state transitions ───────────────────────────────────────────────
+   Colour and background only, on chrome that is never next to a terminal. */
+.nav-tab { transition: color var(--mo-state) linear; }
+.nav-badge, .nav-mark { transition: color var(--mo-state) linear, background var(--mo-state) linear; }

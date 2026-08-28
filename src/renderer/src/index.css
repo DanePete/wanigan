@@ -1,5 +1,16 @@
 @import '@xterm/xterm/css/xterm.css';
 
+/* Feature stylesheets. Split so a phase can own its own surface without every
+   change landing in one 350-line file — the tokens below stay the single
+   source of colour, and no feature sheet declares one. */
+@import './styles/motion.css';
+@import './styles/attention.css';
+@import './styles/fleet.css';
+@import './styles/timeline.css';
+@import './styles/queue.css';
+@import './styles/evals.css';
+@import './styles/policy.css';
+
 /* Same tokens as BatchStudio, so the two tools read as one stack. */
 :root {
   --bg: #0c0e12;
@@ -19,6 +30,7 @@
   --bad-soft: #2e1616;
   --claude: #d97757;
   --codex: #74aa9c;
+  --glm: #9b8cf0;
 
   /* Data-viz palette. Dark steps, validated against the card surface #13161c:
      categorical slots 1-4 pass the lightness band, chroma floor, adjacent-pair
@@ -352,3 +364,47 @@ table.grid tr.clickable:hover { background: var(--bg-sunk); }
 .past-main:disabled { opacity: .45; cursor: not-allowed; }
 .past-x { padding: 0 6px; border-radius: 6px; font-size: 14px; line-height: 1; }
 .past-x:hover { background: var(--bg-sunk); color: var(--bad); }
+
+
+/* ── shell additions · nav status marks, project picker, focus ring ───
+   Status in the nav is never hue alone: every mark is a glyph plus a word,
+   and the colour only reinforces what the text already said. "An agent is
+   blocked waiting for you" is the one signal that must survive greyscale. */
+.nav-badge { display: inline-block; }
+
+.nav-mark {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 0 6px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 700; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.nav-mark > span { font-weight: 800; }
+.nav-mark.tone-alert   { background: var(--critical-soft); color: var(--critical); }
+.nav-mark.tone-serious { background: var(--serious-soft);  color: var(--serious); }
+.nav-mark.tone-ok      { background: var(--good-soft);     color: var(--good); }
+.nav-mark.tone-warn    { background: var(--warning-soft);  color: var(--warning); }
+
+.nav-project {
+  display: flex; align-items: center; gap: 7px;
+  margin-left: auto; padding-bottom: 8px; min-width: 0;
+}
+.nav-project .field { width: auto; max-width: 190px; padding: 3px 6px; font-size: 12px; }
+
+/* Every interactive element gets a visible focus ring. Zero-specificity
+   selector so a feature sheet can still style its own. The terminal is
+   exempt: xterm's helper textarea holds focus while you type. */
+:where(button, a, select, input, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.terminal-host :focus-visible { outline: none; }
+
+/* A run's real progress, under the tab it belongs to: requests returned over
+   requests submitted. It moves when the count moves and never otherwise. */
+.nav-tab { position: relative; }
+.nav-progress {
+  position: absolute; left: 11px; right: 11px; bottom: 5px;
+  height: 2px; border-radius: 999px; background: var(--bg-sunk); overflow: hidden;
+}
+.nav-progress > span { display: block; width: 100%; height: 100%; background: var(--accent); }

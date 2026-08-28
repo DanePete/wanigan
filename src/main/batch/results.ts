@@ -3,6 +3,7 @@ import path from 'node:path';
 import { db, logEvent, resultsDir } from '../db';
 import { client, isMock } from './anthropic';
 import { costOf } from './pricing';
+import type { CacheTtl } from '../../shared/types';
 import { mockResults } from './mock';
 
 type ResultLine = {
@@ -102,7 +103,7 @@ function toRow(runId: string, line: ResultLine) {
 }
 
 /** Recompute the run's token and cost totals from its rows. Cheap; always exact. */
-export function rollUp(runId: string, model: string) {
+export function rollUp(runId: string, model: string, cacheTtl: CacheTtl = '5m') {
   const d = db();
   const t = d.prepare(`
     SELECT COALESCE(SUM(in_tokens),0) i, COALESCE(SUM(out_tokens),0) o,
@@ -110,9 +111,13 @@ export function rollUp(runId: string, model: string) {
     FROM requests WHERE run_id = ?
   `).get(runId) as { i: number; o: number; cr: number; cw: number };
 
+  // The cache-write multiplier depends on the TTL the run actually used
+  // (1.25x at 5m, 2.0x at 1h). Defaulting it here rather than taking it from
+  // the run's config priced every 1-hour run 37.5% low on its cache-write line.
   const cost = costOf(model, {
     input_tokens: t.i, output_tokens: t.o,
     cache_read_input_tokens: t.cr, cache_creation_input_tokens: t.cw,
+    cacheTtl,
   });
 
   d.prepare('UPDATE runs SET in_tokens=?, out_tokens=?, cache_read=?, cache_write=?, cost_usd=? WHERE id=?')

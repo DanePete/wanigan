@@ -1,0 +1,168 @@
+/* fleet — owned by the fleet phase. Tokens come from index.css; never redeclare a colour here. */
+
+/* ── head controls ───────────────────────────────────────────────────── */
+.fleet-controls {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 5px;
+}
+.fleet-seg {
+  display: flex; align-items: center; gap: 2px;
+  padding: 3px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--bg-soft);
+}
+.fleet-segbtn {
+  padding: 4px 10px; border-radius: 6px;
+  font-size: 12px; font-weight: 500; color: var(--text-dim);
+  transition: background .12s, color .12s;
+}
+.fleet-segbtn:hover { color: var(--text); background: var(--bg-sunk); }
+.fleet-segbtn.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.fleet-updated { font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.fleet-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.fleet-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--bg-soft);
+  font-size: 12px; color: var(--text-dim);
+}
+.fleet-chip:hover { border-color: var(--text-faint); color: var(--text); }
+.fleet-chip.on { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
+.fleet-chip-n {
+  padding: 0 5px; border-radius: 999px; background: var(--bg-sunk);
+  font-size: 10.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+
+/* Buttons living inside prose — the blocked banner and the stalled-poll note. */
+.fleet-inline {
+  color: inherit; font-weight: 600; text-decoration: underline;
+  text-underline-offset: 2px; font-variant-numeric: tabular-nums;
+}
+.fleet-inline:hover { text-decoration-thickness: 2px; }
+
+/* ── the grid ────────────────────────────────────────────────────────── */
+.fleet-grid {
+  display: grid; gap: 11px;
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  align-items: start;
+}
+
+.fleet-card {
+  display: flex; flex-direction: column; gap: 8px;
+  width: 100%; padding: 12px 13px; text-align: left;
+  border: 1px solid var(--line); border-left-width: 3px; border-radius: 10px;
+  background: var(--bg-soft);
+  transition: background .12s, border-color .12s;
+}
+.fleet-card:hover { background: var(--bg-sunk); border-color: var(--text-faint); }
+/* Blocked reads as urgent from across the room — but the pill's glyph and word
+   inside it are what actually say so. */
+.fleet-card.urgent { border-left-color: var(--critical); }
+.fleet-card.urgent:hover { border-color: var(--critical); }
+
+.fleet-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.fleet-since { font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.fleet-title { gap: 8px; }
+.fleet-name {
+  font-size: 14px; font-weight: 600; letter-spacing: -.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fleet-prov {
+  flex: none; padding: 1px 7px;
+  border: 1px solid var(--line); background: var(--bg-sunk);
+}
+
+.fleet-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
+  font-size: 10.5px; color: var(--text-dim); line-height: 1.5;
+}
+.fleet-meta > span:nth-child(even) { color: var(--text-faint); }
+
+.fleet-detail {
+  font-size: 11.5px; color: var(--text-dim); line-height: 1.45;
+  display: -webkit-box;   /* a span, because a <p> inside a <button> is invalid */ -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden; min-height: 2.9em;
+}
+
+/* ── sparkline ───────────────────────────────────────────────────────── */
+.fleet-spark-wrap { display: block; }
+/* The dot is positioned against the plot box, not the wrap — the caption below
+   is outside the chart and would skew the percentage. */
+.fleet-spark-plot { position: relative; height: 34px; padding-right: 3px; }
+.fleet-spark {
+  display: block; width: 100%; height: 34px;
+  border-radius: 4px; background: var(--bg-sunk);
+}
+/* A DOM element rather than an SVG circle: the chart stretches with
+   preserveAspectRatio="none", which would squash a circle into an ellipse. */
+.fleet-spark-dot {
+  position: absolute; right: 0; width: 6px; height: 6px;
+  border-radius: 999px; background: var(--series-1);
+  box-shadow: 0 0 0 2px var(--bg-sunk);
+  transform: translateY(-50%); pointer-events: none;
+}
+.fleet-nodata {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  padding: 0 6px; background: var(--bg-sunk);
+  font-size: 10.5px; color: var(--text-faint); letter-spacing: .04em;
+}
+.fleet-spark-cap {
+  display: flex; justify-content: space-between; gap: 8px;
+  margin-top: 3px; font-size: 10px; color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── numbers ─────────────────────────────────────────────────────────── */
+.fleet-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.fleet-metric {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 7px 9px; border-radius: 7px;
+  background: var(--bg-sunk); border: 1px solid var(--line-soft);
+}
+.fleet-metric b {
+  font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.fleet-metric > span:last-child { font-size: 10px; font-variant-numeric: tabular-nums; }
+
+.fleet-foot {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 10.5px; font-variant-numeric: tabular-nums;
+}
+.fleet-open { margin-left: auto; color: var(--accent); font-weight: 600; }
+
+/* ── table ───────────────────────────────────────────────────────────── */
+/* Wide by design: thirteen columns of one agent each. It scrolls inside this
+   box so the page body never scrolls sideways. */
+.fleet-scroll { overflow-x: auto; }
+.fleet-scroll table.grid td { white-space: nowrap; }
+.fleet-rowbtn {
+  font-size: 12.5px; font-weight: 500; text-align: left;
+  text-decoration: underline; text-decoration-color: var(--line);
+  text-underline-offset: 2px;
+}
+.fleet-rowbtn:hover { text-decoration-color: var(--accent); color: var(--accent); }
+
+/* ── the four blank states ───────────────────────────────────────────── */
+.fleet-blank {
+  padding: 30px 22px; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 9px;
+}
+.fleet-blank h2 { font-size: 15px; font-weight: 600; }
+.fleet-blank p { max-width: 520px; line-height: 1.55; font-size: 12.5px; }
+.fleet-blank .btn { margin-top: 4px; }
+.fleet-kbd {
+  padding: 1px 6px; border-radius: 5px;
+  border: 1px solid var(--line); background: var(--bg-sunk);
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11.5px;
+}
+
+/* ── focus ───────────────────────────────────────────────────────────── */
+.fleet-card:focus-visible,
+.fleet-chip:focus-visible,
+.fleet-segbtn:focus-visible,
+.fleet-inline:focus-visible,
+.fleet-rowbtn:focus-visible,
+.fleet-retry:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px;
+}

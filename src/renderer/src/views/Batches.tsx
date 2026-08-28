@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { Project, RunConfig, SourceConfig } from '@shared/types';
+import type {
+  CacheTtl, EvalPair, EvalRowDiff, GoldenSet, Project, RunConfig, SourceConfig, UploadedFile,
+} from '@shared/types';
 import { Pill, Bar, Stat, Note, Section, num, usd, ago, until } from '../components/bits';
 
 type Preset = { id: string; label: string; blurb: string; config: Omit<RunConfig, 'name'> };
@@ -16,6 +18,96 @@ type Run = {
   expires_at: number | null; parent_run_id: string | null; project_name: string | null;
 };
 
+/** Which tab of the run detail is open. Refusals appears only when there are any. */
+type DetailTab = 'results' | 'refusals' | 'evals' | 'batches' | 'events' | 'config';
+
+/** A rescue run, as refusal.children() reports it. */
+type RescueChild = { id: string; name: string; status: string; model: string };
+
+/**
+ * `upload` is additive on the main-process side: sources.ts reads it
+ * defensively off the object so a source saved before uploads existed behaves
+ * exactly as it did, which is why it is not a field of SourceConfig. Naming it
+ * once here beats casting at every call site.
+ */
+type UploadableSource = SourceConfig & { upload?: boolean };
+
+/**
+ * Categorical slots in fixed order, exactly as Insights assigns them. The order
+ * IS the colourblind-safety mechanism — reordering to suit meaning puts yellow
+ * beside orange and the pair fails both separation floors.
+ */
+const SERIES = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--series-4)'];
+
+const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** Units, always. "412 KB" reads; "421888" is a puzzle. */
+function bytesLabel(n: number): string {
+  if (n < 1024) return `${num(n)} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+/**
+ * Per-row costs live in fractions of a cent, and usd() floors at "<$0.01" —
+ * which would render an entire A-versus-B cost column as the same three
+ * characters, hiding the one number the comparison is for.
+ */
+function usdFine(n: number): string {
+  if (!n) return '$0';
+  if (n >= 0.01) return usd(n);
+  return `$${n.toFixed(4)}`;
+}
+
+const usdDelta = (n: number) => (Math.abs(n) < 0.00005 ? 'no change' : `${n > 0 ? '+' : '\u2212'}${usdFine(Math.abs(n))}`);
+
+const pctLabel = (n: number) => `${(n * 100).toFixed(n >= 0.1 ? 0 : 1)}%`;
+
+/**
+ * The batch-depth phases have no feature stylesheet of their own and index.css
+ * belongs to the shell, so the rules ride with the surface. Namespaced `bx-`
+ * so a sibling sheet cannot collide, and every colour is a token — none is
+ * declared here.
+ */
+const BATCH_CSS = `
+.bx-lane { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+/* index.css styles :focus on .field only, and most of this surface is buttons,
+   checkboxes and selects. A keyboard user has to be able to see where they are. */
+.bx-lane :focus-visible,
+.bx-f:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.bx-lane .field:focus-visible, .field.bx-f:focus-visible { outline-offset: -1px; }
+
+/* Wide content scrolls inside its own box; the page body never moves sideways. */
+.bx-scroll { overflow-x: auto; }
+.bx-scroll > table { min-width: 540px; }
+
+.bx-num { font-variant-numeric: tabular-nums; }
+
+.bx-ab { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+@media (max-width: 940px) { .bx-ab { grid-template-columns: minmax(0, 1fr); } }
+
+.bx-out {
+  margin: 0; padding: 8px 10px; max-height: 210px; overflow: auto;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px; line-height: 1.5; color: var(--text-dim);
+}
+
+.bx-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; flex: none; }
+
+/* Empty, loading, zero-results and error all land here, and each says a
+   different thing — the shared box only makes them look like siblings. */
+.bx-state { padding: 24px 18px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 9px; }
+.bx-state h4 { font-size: 13px; font-weight: 600; }
+.bx-state p { font-size: 12.5px; color: var(--text-dim); line-height: 1.55; max-width: 60ch; }
+`;
+
+function BatchStyles() {
+  return <style>{BATCH_CSS}</style>;
+}
+
 export default function Batches({ projects, hasKey, onNeedKey, seed, onSeedConsumed }: {
   projects: Project[]; hasKey: boolean; onNeedKey: () => void;
   seed?: { projectId: string; root: string; paths: string[] } | null;
@@ -25,16 +117,18 @@ export default function Batches({ projects, hasKey, onNeedKey, seed, onSeedConsu
 
   // A session handing over its changed files opens the builder directly.
   useEffect(() => { if (seed) setView({ page: 'new' }); }, [seed]);
-  if (view.page === 'new') {
-    return <NewRun projects={projects} hasKey={hasKey} onNeedKey={onNeedKey}
-                   seed={seed} onSeedConsumed={onSeedConsumed}
-                   onDone={(id) => setView({ page: 'detail', id })} onCancel={() => setView({ page: 'list' })} />;
-  }
-  if (view.page === 'detail') {
-    return <RunDetail id={view.id} onBack={() => setView({ page: 'list' })}
-                      onOpen={(id) => setView({ page: 'detail', id })} />;
-  }
-  return <RunList onNew={() => setView({ page: 'new' })} onOpen={(id) => setView({ page: 'detail', id })} />;
+  const page =
+    view.page === 'new'
+      ? <NewRun projects={projects} hasKey={hasKey} onNeedKey={onNeedKey}
+                seed={seed} onSeedConsumed={onSeedConsumed}
+                onDone={(id) => setView({ page: 'detail', id })} onCancel={() => setView({ page: 'list' })} />
+      : view.page === 'detail'
+        ? <RunDetail id={view.id} onBack={() => setView({ page: 'list' })}
+                     onOpen={(id) => setView({ page: 'detail', id })} />
+        : <RunList onNew={() => setView({ page: 'new' })} onOpen={(id) => setView({ page: 'detail', id })} />;
+
+  // A <style> element is display:none, so it costs the flex layout nothing.
+  return <><BatchStyles />{page}</>;
 }
 
 /* ── list ─────────────────────────────────────────────────────────────── */
@@ -311,7 +405,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           <div style={{ display: 'flex', gap: 6, marginBottom: 11, flexWrap: 'wrap' }}>
             {(cfg.source.kind === 'files' ? (['files'] as const) : (['csv', 'jsonl', 'glob', 'command'] as const)).map((k) => (
               <button key={k} className="pill" onClick={() => { patch({ source: defaultSource(k) }); setPreview(null); invalidate(); }}
-                      style={cfg.source.kind === k ? { background: 'var(--accent)', color: '#0c0e12' }
+                      style={cfg.source.kind === k ? { background: 'var(--accent)', color: 'var(--bg)' }
                                                    : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
                 {({ csv: 'CSV', jsonl: 'JSONL', glob: 'Files', command: 'Command', files: 'From session' } as const)[k]}
               </button>
@@ -340,6 +434,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
               </div>
             </div>
           )}
+          {(cfg.source.kind === 'glob' || cfg.source.kind === 'files') && <UploadCache />}
         </Section>
 
         <Section n={3} title="Prompt"
@@ -432,7 +527,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
                 {model.efforts.map((lvl) => (
                   <button key={lvl} className="pill" onClick={() => { patch({ effort: lvl as never }); invalidate(); }}
                           style={(cfg.effort ?? 'high') === lvl
-                            ? { background: 'var(--accent)', color: '#0c0e12' }
+                            ? { background: 'var(--accent)', color: 'var(--bg)' }
                             : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
                     {lvl}
                   </button>
@@ -523,6 +618,10 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
             </>
           )}
 
+          <CachePreflight cfg={cfg} requests={est?.requests ?? preview?.rowCount ?? 0}
+                          prefixTokens={est?.cachedPrefixTokens ?? 0}
+                          onUseTtl={(ttl) => { patch({ cacheTtl: ttl }); invalidate(); }} />
+
           {dry?.result && (dry.result.ok
             ? <>
                 <Note tone="ok">Dry run passed — the request shape is valid.</Note>
@@ -573,7 +672,7 @@ function defaultSource(kind: SourceConfig['kind']): SourceConfig {
   }
 }
 
-function SourceEditor({ source, onChange }: { source: SourceConfig; onChange: (s: SourceConfig) => void }) {
+function SourceEditor({ source, onChange }: { source: UploadableSource; onChange: (s: UploadableSource) => void }) {
   if (source.kind === 'csv' || source.kind === 'jsonl') {
     return (
       <>
@@ -601,22 +700,26 @@ function SourceEditor({ source, onChange }: { source: SourceConfig; onChange: (s
         <p className="faint" style={{ fontSize: 11, marginTop: 5 }}>
           Deleted files are skipped at load time rather than failing the run.
         </p>
+        <UploadToggle source={source} onChange={onChange} />
       </div>
     );
   }
   if (source.kind === 'glob') {
     return (
-      <div className="row3">
-        <div><label className="label">Root directory</label>
-          <input className="field mono" style={{ marginTop: 4 }} value={source.root}
-                 onChange={(e) => onChange({ ...source, root: e.target.value })} /></div>
-        <div><label className="label">Pattern</label>
-          <input className="field mono" style={{ marginTop: 4 }} value={source.pattern}
-                 onChange={(e) => onChange({ ...source, pattern: e.target.value })} /></div>
-        <div><label className="label">Max chars</label>
-          <input type="number" className="field mono" style={{ marginTop: 4 }} value={source.maxBytes ?? 120000}
-                 onChange={(e) => onChange({ ...source, maxBytes: Number(e.target.value) })} /></div>
-      </div>
+      <>
+        <div className="row3">
+          <div><label className="label">Root directory</label>
+            <input className="field mono" style={{ marginTop: 4 }} value={source.root}
+                   onChange={(e) => onChange({ ...source, root: e.target.value })} /></div>
+          <div><label className="label">Pattern</label>
+            <input className="field mono" style={{ marginTop: 4 }} value={source.pattern}
+                   onChange={(e) => onChange({ ...source, pattern: e.target.value })} /></div>
+          <div><label className="label">Max chars</label>
+            <input type="number" className="field mono" style={{ marginTop: 4 }} value={source.maxBytes ?? 120000}
+                   onChange={(e) => onChange({ ...source, maxBytes: Number(e.target.value) })} /></div>
+        </div>
+        <UploadToggle source={source} onChange={onChange} />
+      </>
     );
   }
   return (
@@ -646,7 +749,8 @@ function SourceEditor({ source, onChange }: { source: SourceConfig; onChange: (s
 
 function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onOpen: (id: string) => void }) {
   const [d, setD] = useState<any>(null);
-  const [tab, setTab] = useState<'results' | 'batches' | 'events' | 'config'>('results');
+  const [tab, setTab] = useState<DetailTab>('results');
+  const [rescues, setRescues] = useState<RescueChild[]>([]);
   const [filter, setFilter] = useState('all');
   const [q, setQ] = useState('');
   const [rows, setRows] = useState<any[]>([]);
@@ -655,7 +759,12 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
   const [open, setOpen] = useState<any>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const loadDetail = useCallback(async () => { try { setD(await window.foreman.batch.run(id)); } catch { /* deleted */ } }, [id]);
+  const loadDetail = useCallback(async () => {
+    try { setD(await window.foreman.batch.run(id)); } catch { /* deleted */ }
+    // Rescue runs are their own runs, so a merged rescue stays worth showing
+    // after the parent's refused count has fallen back to zero.
+    try { setRescues(await window.foreman.refusal.children(id)); } catch { /* pre-P15 database */ }
+  }, [id]);
   const loadRows = useCallback(async () => {
     const r = await window.foreman.batch.results(id, filter, q, offset);
     setRows(r.rows); setTotal(r.total);
@@ -676,11 +785,26 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
   const succeeded = counts.succeeded ?? 0;
   const failed = (counts.errored ?? 0) + (counts.expired ?? 0) + (counts.canceled ?? 0);
   const pending = counts.pending ?? 0;
+  // A refusal arrives as HTTP 200 with stop_reason "refusal" — neither a
+  // success nor an error. Leaving it out of `done` is what parks a run with
+  // refusals at 94% forever, so it counts as landed here and as a failure in
+  // the bar, which is the same call Insights makes.
+  const refused = counts.refused ?? 0;
   const live = ['in_progress', 'submitting', 'canceling'].includes(run.status);
   const soonest = d.batches.filter((b: any) => b.processing_status !== 'ended').map((b: any) => b.expires_at).filter(Boolean).sort()[0];
   const exp = until(soonest);
-  const done = succeeded + failed;
+  const done = succeeded + failed + refused;
   const pct = run.total_requests ? Math.round((done / run.total_requests) * 100) : 0;
+
+  // A rescue shares the parent_run_id column with a dead-letter retry, so the
+  // two have to be told apart here or a rescue reads as "retried as".
+  const retries = (d.children as { id: string }[]).filter((c) => !rescues.some((r) => r.id === c.id));
+
+  const tabs: DetailTab[] = ['results'];
+  if (refused > 0 || rescues.length > 0) tabs.push('refusals');
+  tabs.push('evals', 'batches', 'events', 'config');
+  // Merging the last rescue can retire the refusals tab underneath the user.
+  const activeTab: DetailTab = tabs.includes(tab) ? tab : 'results';
 
   async function act(fn: () => Promise<any>, label: string) {
     setBusy(label);
@@ -715,16 +839,20 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
       </div>
 
       {run.error && <Note tone="error"><strong>Run failed.</strong> {run.error}</Note>}
-      {d.children.length > 0 && (
-        <Note tone="info">Retried as {d.children.map((c: any) => (
-          <button key={c.id} className="mono" style={{ textDecoration: 'underline' }} onClick={() => onOpen(c.id)}>{c.id}</button>
+      {retries.length > 0 && (
+        <Note tone="info">Retried as {retries.map((c: any) => (
+          <button key={c.id} className="mono bx-f" style={{ textDecoration: 'underline' }} onClick={() => onOpen(c.id)}>{c.id}</button>
         ))}.</Note>
       )}
 
-      <div className="stat-grid-5">
-        <Stat label="Progress" value={`${pct}%`} sub={`${num(done)} of ${num(run.total_requests)}`} />
+      <div className="stat-grid-5" style={refused ? { gridTemplateColumns: 'repeat(6, minmax(0, 1fr))' } : undefined}>
+        <Stat label="Progress" value={`${pct}%`} sub={`${num(done)} of ${num(run.total_requests)} requests`} />
         <Stat label="Succeeded" value={num(succeeded)} tone={succeeded ? 'var(--ok)' : undefined} />
         <Stat label="Failed" value={num(failed)} tone={failed ? 'var(--bad)' : undefined} sub={failed ? 'retryable' : 'none'} />
+        {refused > 0 && (
+          <Stat label="Refused" value={<span>⊘ {num(refused)}</span>} tone="var(--serious)"
+                sub="declined — rescue on another model" />
+        )}
         <Stat label="Cost" value={run.cost_usd ? usd(run.cost_usd) : `~${usd(run.est_cost_usd)}`} sub={run.cost_usd ? 'actual' : 'estimated'} />
         <Stat label={live ? 'Expires in' : 'Duration'}
               value={live ? exp.text : run.ended_at && run.submitted_at ? `${Math.max(1, Math.round((run.ended_at - run.submitted_at) / 60000))}m` : '—'}
@@ -732,29 +860,34 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
       </div>
 
       <div className="card" style={{ padding: 13 }}>
-        <Bar succeeded={succeeded} failed={failed} pending={pending} />
-        <div className="faint mono" style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 11 }}>
-          <span>{num(run.in_tokens)} in</span><span>{num(run.out_tokens)} out</span>
+        <Bar succeeded={succeeded} failed={failed + refused} pending={pending} />
+        <div className="faint mono bx-num" style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 11, flexWrap: 'wrap' }}>
+          {refused > 0 && <span style={{ color: 'var(--serious)' }}>⊘ {num(refused)} refused</span>}
+          <span>{num(run.in_tokens)} tokens in</span><span>{num(run.out_tokens)} tokens out</span>
           {run.cache_read > 0 && <span style={{ color: 'var(--ok)' }}>{num(run.cache_read)} cache read</span>}
           {run.cache_write > 0 && <span>{num(run.cache_write)} cache write</span>}
           <span style={{ marginLeft: 'auto' }}>{d.batches.length} batch{d.batches.length === 1 ? '' : 'es'}</span>
         </div>
       </div>
 
+      {run.submitted_at ? <CacheObserved runId={id} run={run} config={d.config} /> : null}
+
       <div className="tabs">
-        {(['results', 'batches', 'events', 'config'] as const).map((t) => (
-          <button key={t} onClick={() => setTab(t)} className={tab === t ? 'tab-on' : ''}>
-            {t}{t === 'results' && total ? ` (${num(total)})` : ''}
+        {tabs.map((t) => (
+          <button key={t} onClick={() => setTab(t)} className={activeTab === t ? 'tab-on bx-f' : 'bx-f'}>
+            {t}
+            {t === 'results' && total ? ` (${num(total)})` : ''}
+            {t === 'refusals' && refused ? ` (${num(refused)})` : ''}
           </button>
         ))}
       </div>
 
-      {tab === 'results' && (
+      {activeTab === 'results' && (
         <>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             {['all', 'succeeded', 'failed', 'pending'].map((f) => (
               <button key={f} className="pill" onClick={() => { setFilter(f); setOffset(0); }}
-                      style={filter === f ? { background: 'var(--accent)', color: '#0c0e12' }
+                      style={filter === f ? { background: 'var(--accent)', color: 'var(--bg)' }
                                           : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>{f}</button>
             ))}
             <input className="field" style={{ marginLeft: 'auto', maxWidth: 260 }} placeholder="Search prompts, output, errors…"
@@ -790,7 +923,15 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
         </>
       )}
 
-      {tab === 'batches' && (
+      {activeTab === 'refusals' && (
+        <RefusalLane runId={id} run={run} config={d.config} rescues={rescues} live={live}
+                     onOpen={onOpen}
+                     onChanged={async () => { await loadDetail(); await loadRows(); }} />
+      )}
+
+      {activeTab === 'evals' && <EvalsTab runId={id} run={run} onOpen={onOpen} />}
+
+      {activeTab === 'batches' && (
         <div className="card scroll-x">
           <table className="grid">
             <thead><tr className="label"><th>Batch</th><th>Status</th><th className="r">Requests</th><th>Counts</th><th className="r">Expires</th><th className="r">Polled</th></tr></thead>
@@ -814,7 +955,7 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
         </div>
       )}
 
-      {tab === 'events' && (
+      {activeTab === 'events' && (
         <div className="card">
           {!d.events.length && <p className="dim" style={{ padding: 14 }}>No events.</p>}
           {d.events.map((e: any, i: number) => (
@@ -826,7 +967,7 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
         </div>
       )}
 
-      {tab === 'config' && <pre className="card mono scroll-y" style={{ padding: 14, maxHeight: 560 }}>{JSON.stringify(d.config, null, 2)}</pre>}
+      {activeTab === 'config' && <pre className="card mono scroll-y" style={{ padding: 14, maxHeight: 560 }}>{JSON.stringify(d.config, null, 2)}</pre>}
 
       {open && (
         <div className="modal-backdrop" onClick={() => setOpen(null)}>
@@ -853,6 +994,1041 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── P13 · uploaded rows ──────────────────────────────────────────────── */
+
+/**
+ * The toggle that turns a file source into an uploaded one.
+ *
+ * A repo audit that inlines every file hits the 256 MB batch ceiling long
+ * before the 100,000 request one — 2,000 files at 130 KB each is already over
+ * — and an uploaded file is sent once and re-used by every later run.
+ */
+function UploadToggle({ source, onChange }: {
+  source: UploadableSource; onChange: (s: UploadableSource) => void;
+}) {
+  const on = source.upload === true;
+  return (
+    <div className="bx-lane" style={{ marginTop: 11, gap: 8 }}>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, cursor: 'pointer' }}>
+        <input className="bx-f" type="checkbox" checked={on} style={{ marginTop: 2, flex: 'none' }}
+               onChange={(e) => onChange({ ...source, upload: e.target.checked })} />
+        <span>
+          Upload files instead of inlining them
+          <span className="faint" style={{ display: 'block', fontSize: 11, marginTop: 3, lineHeight: 1.5 }}>
+            A repo audit hits the 256 MB batch ceiling long before the 100,000 request one, and an uploaded
+            file is re-used across runs instead of being re-sent with every one.
+          </span>
+        </span>
+      </label>
+      {on && (
+        <Note tone="info">
+          <strong>Loading the dataset performs the upload</strong>, so the first load is slower and every later
+          run with the same bytes reuses it for free. Rows then carry a <span className="mono">fileRef</span>{' '}
+          column and an empty <span className="mono">content</span> one — the file travels as its own content
+          block — so write the template as an instruction and drop{' '}
+          <span className="mono">{'{{content}}'}</span>. Anything Foreman cannot classify as a document or an
+          image is inlined as before, and the batch is created with the files beta; without it every uploaded
+          row fails.
+        </Note>
+      )}
+    </div>
+  );
+}
+
+/**
+ * What has actually been uploaded, keyed by content hash on the main side.
+ *
+ * A cache you cannot see is a cache you cannot trust: these files exist on the
+ * API and stay there until something deletes them, and a stale id is worse than
+ * a miss — it is accepted at build time and fails every request carrying it.
+ */
+function UploadCache() {
+  const [files, setFiles] = useState<UploadedFile[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [pruneNote, setPruneNote] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try { setFiles(await window.foreman.uploads.list()); setErr(null); }
+    catch (e) { setErr(msg(e)); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  async function prune() {
+    setBusy('prune'); setPruneNote(null); setErr(null);
+    try {
+      const n = await window.foreman.uploads.prune();
+      setPruneNote(n
+        ? `${num(n)} stale entr${n === 1 ? 'y' : 'ies'} dropped — those files no longer exist on the API, and a run reusing one would have failed every row that carried it.`
+        : 'Every cached upload still exists on the API. Nothing dropped.');
+      await load();
+    } catch (e) { setErr(msg(e)); }
+    finally { setBusy(null); }
+  }
+
+  async function remove(f: UploadedFile) {
+    setBusy(f.hash); setPruneNote(null); setErr(null);
+    try { await window.foreman.uploads.remove(f.hash); await load(); }
+    catch (e) { setErr(msg(e)); }
+    finally { setBusy(null); }
+  }
+
+  const total = files?.reduce((a, f) => a + f.bytes, 0) ?? 0;
+
+  return (
+    <div className="sunk bx-lane" style={{ marginTop: 12, padding: 12, gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+        <span className="label">Upload cache</span>
+        {files ? (
+          <span className="faint bx-num" style={{ fontSize: 11 }}>
+            {num(files.length)} file{files.length === 1 ? '' : 's'} · {bytesLabel(total)} held on the API
+          </span>
+        ) : null}
+        <button className="btn bx-f" style={{ marginLeft: 'auto', padding: '4px 9px', fontSize: 11.5 }}
+                onClick={prune} disabled={busy !== null || !files?.length}>
+          {busy === 'prune' ? 'Checking each file…' : 'Prune stale'}
+        </button>
+      </div>
+
+      {err && (
+        <Note tone="error">
+          <strong>Could not read the upload cache.</strong> {err}{' '}
+          <button className="link bx-f" onClick={() => void load()}>Try again</button>.
+        </Note>
+      )}
+      {pruneNote && <Note tone="ok">{pruneNote}</Note>}
+
+      {!files && !err && (
+        <div className="bx-state"><p>Reading the upload cache…</p></div>
+      )}
+
+      {files && files.length === 0 && !err && (
+        <div className="bx-state">
+          <h4>Nothing uploaded yet</h4>
+          <p>
+            Turn on “upload files instead of inlining them” above, then load the dataset. The first run uploads
+            each file once; every later run with the same bytes re-uses it and pays nothing to send it again.
+          </p>
+        </div>
+      )}
+
+      {files && files.length > 0 && (
+        <div className="bx-scroll">
+          <table className="grid">
+            <thead>
+              <tr className="label">
+                <th>File</th><th>Type</th><th className="r">Size</th><th className="r">Uploaded</th><th />
+              </tr>
+            </thead>
+            <tbody>
+              {files.map((f) => (
+                <tr key={f.hash}>
+                  <td className="mono trunc" title={f.path}>{f.path.split('/').pop() || f.path}
+                    <div className="faint mono" style={{ fontSize: 10.5, marginTop: 2 }}>{f.fileId}</div>
+                  </td>
+                  <td className="dim mono" style={{ fontSize: 11 }}>{f.mediaType}</td>
+                  <td className="r mono">{bytesLabel(f.bytes)}</td>
+                  <td className="r faint mono">{ago(f.uploadedAt)}</td>
+                  <td className="r">
+                    <button className="btn btn-danger bx-f" style={{ padding: '3px 8px', fontSize: 11 }}
+                            disabled={busy !== null} onClick={() => void remove(f)}>
+                      {busy === f.hash ? 'Deleting…' : 'Delete'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <p className="faint" style={{ fontSize: 11, lineHeight: 1.5 }}>
+        Pruning only drops local rows whose remote file is definitely gone. It never deletes a remote file
+        Foreman cannot prove it uploaded — the Files API is organisation-wide, and another tool's files live there too.
+      </p>
+    </div>
+  );
+}
+
+/* ── P16 · cache diagnosis ────────────────────────────────────────────── */
+
+/** One bar, direct-labelled by the hero above it. */
+function RateBar({ value }: { value: number }) {
+  const pct = Math.max(0, Math.min(1, value));
+  return (
+    <svg className="chart-svg" viewBox="0 0 100 10" role="img"
+         aria-label={`Observed cache hit rate ${Math.round(pct * 100)} percent`}>
+      <rect x="0" y="2" width="100" height="6" rx="3" fill="var(--bg-sunk)" />
+      <rect x="0" y="2" width={Math.max(1.2, pct * 100)} height="6" rx="3" fill="var(--series-3)" />
+    </svg>
+  );
+}
+
+/**
+ * Before submit: the floor and the TTL, which are the two things that decide
+ * whether a prefix caches at all. Under the floor the API creates no entry —
+ * no write, no read, no error — which is why a misconfigured run reads as a
+ * flat 0% rather than as a failure.
+ */
+function CachePreflight({ cfg, requests, prefixTokens, onUseTtl }: {
+  cfg: RunConfig; requests: number; prefixTokens: number; onUseTtl: (ttl: CacheTtl) => void;
+}) {
+  const [minimum, setMinimum] = useState<number | null>(null);
+  const [advice, setAdvice] = useState<{ ttl: string; why: string } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const cachedBlock = cfg.system.some((b) => b.cache && b.text.trim());
+
+  useEffect(() => {
+    let live = true;
+    Promise.all([window.foreman.cache.minimum(cfg.model), window.foreman.cache.ttl(cfg, requests)])
+      .then(([m, a]) => { if (live) { setMinimum(m); setAdvice(a); setErr(null); } })
+      .catch((e) => { if (live) setErr(msg(e)); });
+    return () => { live = false; };
+    // The floor and the TTL recommendation read only the model, the TTL, the
+    // request count and whether any block is cached — so a keystroke in the
+    // template must not re-ask the main process.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cfg.model, cfg.cacheTtl, requests, cachedBlock]);
+
+  const underFloor = cachedBlock && minimum !== null && prefixTokens > 0 && prefixTokens < minimum;
+
+  return (
+    <div className="bx-lane" style={{ borderTop: '1px solid var(--line)', paddingTop: 11, gap: 9 }}>
+      <span className="label">Cache diagnosis</span>
+
+      {err && <Note tone="error"><strong>Could not read the cache floor.</strong> {err} The run is still
+        submittable — this panel is a diagnostic, not a gate.</Note>}
+
+      <div className="sunk" style={{ padding: '9px 11px', fontSize: 12, lineHeight: 1.7 }}>
+        <KV k="Minimum prefix" v={minimum === null ? '—' : `${num(minimum)} tok`} note={cfg.model} />
+        <KV k="Your cached prefix"
+            v={prefixTokens > 0 ? `${num(prefixTokens)} tok` : '—'}
+            note={prefixTokens > 0 ? 'measured' : 'run the estimate'} />
+        <KV k="Recommended TTL" v={advice?.ttl ?? '—'} note={advice && advice.ttl !== cfg.cacheTtl ? `set to ${cfg.cacheTtl}` : 'matches'} />
+      </div>
+
+      {!cachedBlock && (
+        <Note tone="info">
+          No system block is marked cached, so there is no prefix and nothing can hit. Mark the block that is
+          byte-identical on every row — the instructions, never the per-row text.
+        </Note>
+      )}
+      {underFloor && (
+        <Note tone="warn">
+          <strong>The prefix is under the floor.</strong> {num(prefixTokens)} tokens against {num(minimum ?? 0)}{' '}
+          for {cfg.model}. Below it the API creates no entry at all — no write, no read and no error — so this
+          shows up as a flat 0%, not as a failure. Move more of the shared instructions into the cached block.
+        </Note>
+      )}
+      {cachedBlock && !underFloor && prefixTokens > 0 && (
+        <Note tone="ok">
+          The cached prefix clears the {num(minimum ?? 0)}-token floor for {cfg.model}, so an entry will be written.
+        </Note>
+      )}
+
+      {advice && (
+        <>
+          <p className="faint" style={{ fontSize: 11, lineHeight: 1.5 }}>{advice.why}</p>
+          {advice.ttl !== cfg.cacheTtl && (
+            <button className="btn bx-f" style={{ alignSelf: 'flex-start', padding: '4px 9px', fontSize: 11.5 }}
+                    onClick={() => onUseTtl(advice.ttl as CacheTtl)}>
+              Switch to {advice.ttl}
+            </button>
+          )}
+        </>
+      )}
+
+      <p className="faint" style={{ fontSize: 11, lineHeight: 1.5 }}>
+        Even with all of the above right, hits inside a batch are best-effort. The API does not guarantee them,
+        and real runs land anywhere between 30% and 98% depending on how the batch is scheduled.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * After the run: the rate that actually happened, reported AS OBSERVED.
+ *
+ * Null is not zero. A run whose rows landed carrying no usage has nothing to
+ * measure, and reporting that as a 0% hit rate sends someone rewriting a prompt
+ * that was never the problem.
+ */
+function CacheObserved({ runId, run, config }: { runId: string; run: any; config: RunConfig }) {
+  const [rate, setRate] = useState<number | null | undefined>(undefined);
+  const [minimum, setMinimum] = useState<number | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    window.foreman.cache.hitRate(runId)
+      .then((r) => { if (live) { setRate(r); setErr(null); } })
+      .catch((e) => { if (live) { setErr(msg(e)); setRate(null); } });
+    window.foreman.cache.minimum(run.model).then((m) => { if (live) setMinimum(m); }).catch(() => {});
+    return () => { live = false; };
+  }, [runId, run.model, run.status, run.cache_read, run.in_tokens]);
+
+  const read = run.cache_read ?? 0;
+  const write = run.cache_write ?? 0;
+  const input = run.in_tokens ?? 0;
+  const total = read + write + input;
+  const cachedBlock = config?.system?.some((b) => b.cache && b.text.trim()) ?? false;
+
+  const parts = [
+    { key: 'Read from cache', v: read, c: SERIES[2], note: 'billed at a tenth of the input rate' },
+    { key: 'Written to cache', v: write, c: SERIES[3], note: config?.cacheTtl === '1h' ? '2× base, 1-hour entry' : '1.25× base, 5-minute entry' },
+    { key: 'Uncached input', v: input, c: SERIES[0], note: 'full input rate' },
+  ];
+
+  return (
+    <div className="chart-card">
+      <h3>Cache hit rate, as observed</h3>
+      <div className="hero" style={{ marginTop: 8 }}>
+        {rate === undefined ? '…' : rate === null ? '—' : pctLabel(rate)}
+      </div>
+      <div className="hero-sub">
+        {rate === null ? (
+          <>Nothing to measure yet — no request in this run has reported usage. That is not a 0% hit rate, and
+             reading it as one sends you rewriting a prompt that was never the problem.</>
+        ) : rate === undefined ? (
+          <>Measuring across this run’s own request rows…</>
+        ) : (
+          <>{num(read)} tokens read from cache out of {num(total)} billed as input.{' '}
+             <strong>Observed, not promised:</strong> hits inside a batch are best-effort — the API guarantees
+             none of them, and real runs land anywhere between 30% and 98% depending on how the batch was
+             scheduled. The same config can read 90% one week and 40% the next.</>
+        )}
+      </div>
+
+      {typeof rate === 'number' && total > 0 && <RateBar value={rate} />}
+
+      {err && <div style={{ marginTop: 10 }}><Note tone="error"><strong>Could not measure the cache.</strong> {err}</Note></div>}
+
+      {rate === 0 && cachedBlock && minimum !== null && (
+        <div style={{ marginTop: 10 }}>
+          <Note tone="warn">
+            <strong>Zero, with a block marked cached.</strong> The commonest cause is a prefix under{' '}
+            {run.model}’s {num(minimum)}-token floor: below it the API silently creates no entry, so there is no
+            write, no read and no error to find. The second is a value that changes per run — a timestamp or a
+            UUID inside the cached text — which writes a fresh entry every time.
+          </Note>
+        </div>
+      )}
+
+      {total > 0 && (
+        <table className="viz-table">
+          <thead>
+            <tr>
+              <th>Input tokens</th>
+              <th style={{ textAlign: 'right' }}>Tokens</th>
+              <th style={{ textAlign: 'right' }}>Share</th>
+              <th>Billed at</th>
+            </tr>
+          </thead>
+          <tbody>
+            {parts.map((p) => (
+              <tr key={p.key}>
+                <td>
+                  <span className="bx-swatch" style={{ background: p.c, marginRight: 7 }} />
+                  {p.key}
+                </td>
+                <td className="n">{num(p.v)}</td>
+                <td className="n" style={{ color: 'var(--text-dim)' }}>{pctLabel(p.v / total)}</td>
+                <td className="dim" style={{ fontSize: 11 }}>{p.note}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+/* ── P15 · the refusal lane ───────────────────────────────────────────── */
+
+/**
+ * `fallbacks` — the server-side parameter that re-runs a refused request on a
+ * second model — is rejected by the Batches API, so a batch that trips a safety
+ * classifier just ends with rows nobody answered. Foreman gives those rows their
+ * own outcome, which makes it the only thing that can do the rescue itself.
+ */
+function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
+  runId: string; run: any; config: RunConfig; rescues: RescueChild[]; live: boolean;
+  onOpen: (id: string) => void; onChanged: () => Promise<void>;
+}) {
+  const [summary, setSummary] = useState<{ total: number; byCategory: { category: string; n: number }[] } | null>(null);
+  const [examples, setExamples] = useState<Record<string, string>>({});
+  const [models, setModels] = useState<Model[]>([]);
+  const [pick, setPick] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    window.foreman.refusal.summary(runId)
+      .then((s) => { if (alive) { setSummary(s); setLoadErr(null); } })
+      .catch((e) => { if (alive) setLoadErr(msg(e)); });
+    // One example explanation per category: a category name says what tripped,
+    // the model's own sentence says why, and that is what tells you whether a
+    // different model will answer or refuse in the same place.
+    window.foreman.refusal.rows(runId).then((rows) => {
+      if (!alive) return;
+      const first: Record<string, string> = {};
+      for (const r of rows) {
+        const k = (r.category as string | null) ?? 'unspecified';
+        if (!first[k] && r.explanation) first[k] = String(r.explanation);
+      }
+      setExamples(first);
+    }).catch(() => {});
+    window.foreman.batch.presets(config?.projectId).then((d) => {
+      if (!alive) return;
+      const list = d.models as Model[];
+      setModels(list);
+      setPick((cur) => cur || list.find((m) => m.id !== run.model)?.id || '');
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [runId, config?.projectId, run.model]);
+
+  async function rescue() {
+    if (!pick) return;
+    setBusy('rescue'); setErr(null); setOk(null);
+    try {
+      const r = await window.foreman.refusal.rescue(runId, pick);
+      onOpen(r.runId);
+    } catch (e) { setErr(msg(e)); setBusy(null); }
+  }
+
+  async function merge(child: RescueChild) {
+    setBusy(child.id); setErr(null); setOk(null);
+    try {
+      const r = await window.foreman.refusal.merge(child.id);
+      setOk(`${num(r.merged)} rescued row${r.merged === 1 ? '' : 's'} folded back into this run. The rescue’s spend stays on ${child.id} — this run’s totals are unchanged, because the parent was billed for the refusal and the child for the answer.`);
+      await onChanged();
+    } catch (e) { setErr(msg(e)); }
+    finally { setBusy(null); }
+  }
+
+  const cats = summary?.byCategory ?? [];
+  const total = summary?.total ?? 0;
+  const cachedBlock = config?.system?.some((b) => b.cache && b.text.trim()) ?? false;
+  const cachedTokens = config?.system?.filter((b) => b.cache && b.text.trim())
+    .reduce((a, b) => a + Math.round(b.text.length / 4), 0) ?? 0;
+
+  // Offsets first, so the stacked bar does not need a mutable counter inside JSX.
+  let cursor = 0;
+  const segments = cats.map((c, i) => {
+    const w = total > 0 ? (c.n / total) * 100 : 0;
+    const seg = { ...c, x: cursor, w, colour: SERIES[i % SERIES.length] };
+    cursor += w;
+    return seg;
+  });
+
+  return (
+    <div className="bx-lane">
+      {loadErr && (
+        <Note tone="error">
+          <strong>Could not read the refusals.</strong> {loadErr} The rows themselves are intact — the results
+          tab, filtered to failed, still lists every one.
+        </Note>
+      )}
+      {err && <Note tone="error">{err}</Note>}
+      {ok && <Note tone="ok">{ok}</Note>}
+
+      {total === 0 && !loadErr && (
+        <div className="card bx-state">
+          <h4>No refusals in this run</h4>
+          <p>
+            Nothing here was declined. Rows that errored, expired or were canceled are retryable instead —
+            use “Retry failed” at the top of the run.
+          </p>
+        </div>
+      )}
+
+      {total > 0 && (
+        <div className="chart-card">
+          <h3>Refusals by category</h3>
+          <p className="sub">
+            {num(total)} of {num(run.total_requests)} requests came back declined. A refusal is an HTTP 200 with
+            stop_reason “refusal”, so it is neither an error nor an answer — it is a decision this model made,
+            and re-asking the same model costs money to hear it again.
+          </p>
+          <svg className="chart-svg" viewBox="0 0 100 12" role="img"
+               aria-label={cats.map((c) => `${c.category} ${c.n}`).join(', ')}>
+            {segments.map((s) => (
+              <rect key={s.category} x={s.x} y="0" width={Math.max(0, s.w - 0.4)} height="9" rx="2" fill={s.colour}>
+                <title>{`${s.category}: ${num(s.n)} requests`}</title>
+              </rect>
+            ))}
+          </svg>
+          <div className="bx-scroll">
+            <table className="viz-table">
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  <th style={{ textAlign: 'right' }}>Requests</th>
+                  <th style={{ textAlign: 'right' }}>Share</th>
+                  <th>What the model said</th>
+                </tr>
+              </thead>
+              <tbody>
+                {segments.map((s) => (
+                  <tr key={s.category}>
+                    <td>
+                      <span className="bx-swatch" style={{ background: s.colour, marginRight: 7 }} />
+                      <span style={{ color: 'var(--serious)', fontWeight: 700, marginRight: 6 }}>⊘</span>
+                      refused · {s.category}
+                    </td>
+                    <td className="n">{num(s.n)}</td>
+                    <td className="n" style={{ color: 'var(--text-dim)' }}>{pctLabel(s.n / total)}</td>
+                    <td className="dim" style={{ fontSize: 11, maxWidth: 320 }}>{examples[s.category] ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {total > 0 && (
+        <Section title="Rescue these rows on another model"
+                 hint="A child run built from exactly the refused rows, keyed so the answers can be folded back onto this one.">
+          {cachedBlock && (
+            <div style={{ marginBottom: 11 }}>
+              <Note tone="warn">
+                <strong>The cache does not carry over.</strong> Prompt caches belong to one model, so a rescue
+                writes this run’s cached prefix{cachedTokens ? ` (~${num(cachedTokens)} tokens)` : ''} again at
+                full price on the fallback and reads it back across only {num(total)} request
+                {total === 1 ? '' : 's'}. Expect the cost per row to land well above this run’s.
+              </Note>
+            </div>
+          )}
+
+          {!models.length ? (
+            <Note tone="info">
+              The model catalogue has not loaded, so there is nothing to pick from yet. Open the builder once —
+              it fetches the list — then come back.
+            </Note>
+          ) : (
+            <div className="row2" style={{ alignItems: 'end' }}>
+              <div>
+                <label className="label" htmlFor="bx-fallback">Fallback model</label>
+                <select id="bx-fallback" className="field bx-f" style={{ marginTop: 4 }} value={pick}
+                        onChange={(e) => setPick(e.target.value)}>
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id} disabled={m.id === run.model}>
+                      {m.label}
+                      {m.id === run.model
+                        ? ' — this is the model that refused'
+                        : m.pricingKnown ? ` — $${m.batchInput}/$${m.batchOutput} per MTok` : ' — pricing unknown'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button className="btn btn-primary bx-f" style={{ justifyContent: 'center' }}
+                      disabled={!pick || pick === run.model || busy !== null || live}
+                      onClick={() => void rescue()}>
+                {busy === 'rescue' ? 'Submitting…' : `Rescue ${num(total)} row${total === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          )}
+          <p className="faint" style={{ fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>
+            {live
+              ? 'This run is still in flight. Wait for it to end — the refused set is not final until it does.'
+              : 'The rescue is priced before it is submitted, so it goes through the per-run spend cap rather than around it. A batch cannot be un-submitted.'}
+          </p>
+        </Section>
+      )}
+
+      <Section title="Rescue runs" hint="Each is a run of its own; merging copies the answers back, never the costs.">
+        {!rescues.length ? (
+          <div className="bx-state">
+            <h4>No rescue has been run yet</h4>
+            <p>
+              Pick a fallback above and the child run appears here. Its answers stay in it until you merge them,
+              so nothing is written onto this run without you asking.
+            </p>
+          </div>
+        ) : (
+          <div className="bx-scroll">
+            <table className="grid">
+              <thead>
+                <tr className="label"><th>Run</th><th>Model</th><th>Status</th><th /></tr>
+              </thead>
+              <tbody>
+                {rescues.map((c) => {
+                  const running = ['in_progress', 'submitting', 'canceling'].includes(c.status);
+                  return (
+                    <tr key={c.id}>
+                      <td>
+                        <button className="link mono bx-f" onClick={() => onOpen(c.id)}>{c.id}</button>
+                        <div className="faint" style={{ fontSize: 10.5, marginTop: 2 }}>{c.name}</div>
+                      </td>
+                      <td className="mono" style={{ fontSize: 11 }}>{c.model}</td>
+                      <td><Pill status={c.status} /></td>
+                      <td className="r">
+                        <button className="btn bx-f" style={{ padding: '3px 9px', fontSize: 11.5 }}
+                                disabled={busy !== null || running}
+                                title={running ? 'Still in flight — merge once it ends.' : ''}
+                                onClick={() => void merge(c)}>
+                          {busy === c.id ? 'Merging…' : 'Merge into this run'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
+    </div>
+  );
+}
+
+/* ── P17 · evals ──────────────────────────────────────────────────────── */
+
+/**
+ * A/B two runs, read the diff row by row, and pin the dataset.
+ *
+ * createPair throws when more than one config field differs, and that throw is
+ * the feature rather than an inconvenience: a comparison where the model AND
+ * the effort moved has measured "Sonnet at low" against "Opus at max" and can
+ * attribute the result to neither. The message is shown verbatim.
+ */
+function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id: string) => void }) {
+  const [pairs, setPairs] = useState<EvalPair[] | null>(null);
+  const [runs, setRuns] = useState<Run[]>([]);
+  const [sel, setSel] = useState<string | null>(null);
+  const [diff, setDiff] = useState<any>(null);
+  const [verdict, setVerdict] = useState<any>(null);
+  const [diffErr, setDiffErr] = useState<string | null>(null);
+  const [other, setOther] = useState('');
+  const [name, setName] = useState('');
+  const [pairErr, setPairErr] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [filter, setFilter] = useState<'all' | 'differs' | 'a' | 'b' | 'tie'>('all');
+  const [limit, setLimit] = useState(15);
+  const [judgeRun, setJudgeRun] = useState('');
+  const [judgeNote, setJudgeNote] = useState<string | null>(null);
+  const [judgeErr, setJudgeErr] = useState<string | null>(null);
+  const [golden, setGolden] = useState<GoldenSet[] | null>(null);
+  const [gName, setGName] = useState('');
+  const [gErr, setGErr] = useState<string | null>(null);
+  const [gOk, setGOk] = useState<string | null>(null);
+  const [gBusy, setGBusy] = useState(false);
+
+  const loadPairs = useCallback(async () => {
+    try {
+      const all = await window.foreman.evals.pairs();
+      const mine = all.filter((p) => p.runAId === runId || p.runBId === runId);
+      setPairs(mine);
+      setSel((cur) => (cur && mine.some((p) => p.id === cur) ? cur : mine[0]?.id ?? null));
+    } catch { setPairs([]); }
+  }, [runId]);
+
+  const loadGolden = useCallback(async () => {
+    try { setGolden(await window.foreman.evals.golden()); } catch { setGolden([]); }
+  }, []);
+
+  useEffect(() => { void loadPairs(); }, [loadPairs]);
+  useEffect(() => { void loadGolden(); }, [loadGolden]);
+  useEffect(() => { window.foreman.batch.runs().then((r) => setRuns(r as Run[])).catch(() => {}); }, []);
+
+  const loadDiff = useCallback(async (pairId: string) => {
+    setDiffErr(null);
+    try {
+      const [d, s] = await Promise.all([window.foreman.evals.diff(pairId), window.foreman.evals.summary(pairId)]);
+      setDiff(d); setVerdict(s);
+    } catch (e) { setDiffErr(msg(e)); setDiff(null); setVerdict(null); }
+  }, []);
+
+  useEffect(() => {
+    if (!sel) { setDiff(null); setVerdict(null); return; }
+    setLimit(15); setFilter('all');
+    void loadDiff(sel);
+  }, [sel, loadDiff]);
+
+  async function createPair() {
+    if (!other) return;
+    setCreating(true); setPairErr(null);
+    try {
+      const bName = runs.find((r) => r.id === other)?.name ?? other;
+      const p = await window.foreman.evals.createPair(name.trim() || `${run.name} vs ${bName}`, runId, other);
+      setName('');
+      await loadPairs();
+      setSel(p.id);
+    } catch (e) { setPairErr(msg(e)); }
+    finally { setCreating(false); }
+  }
+
+  async function ingest() {
+    if (!judgeRun.trim()) return;
+    setJudgeErr(null); setJudgeNote(null);
+    try {
+      const r = await window.foreman.evals.ingest(judgeRun.trim());
+      setJudgeNote(`${num(r.scored)} row${r.scored === 1 ? '' : 's'} scored. Presentation order was randomised per row and un-swapped on the way in, so the verdict is not a position bias.`);
+      setJudgeRun('');
+      if (sel) await loadDiff(sel);
+    } catch (e) { setJudgeErr(msg(e)); }
+  }
+
+  async function saveGolden() {
+    setGBusy(true); setGErr(null); setGOk(null);
+    try {
+      const g = await window.foreman.evals.saveGolden(gName.trim() || `${run.name} — snapshot`, runId);
+      setGOk(`Pinned ${num(g.rows)} row${g.rows === 1 ? '' : 's'} as “${g.name}”. A comparison against it next month measures the config, not the tree.`);
+      setGName('');
+      await loadGolden();
+    } catch (e) { setGErr(msg(e)); }
+    finally { setGBusy(false); }
+  }
+
+  const others = runs.filter((r) => r.id !== runId);
+  const pair: EvalPair | undefined = diff?.pair;
+  const rows: EvalRowDiff[] = diff?.rows ?? [];
+  const sum = diff?.summary;
+  const runA = runs.find((r) => r.id === pair?.runAId);
+  const runB = runs.find((r) => r.id === pair?.runBId);
+  const shown = rows.filter((r) => (
+    filter === 'all' ? true : filter === 'differs' ? !r.same : r.winner === filter
+  ));
+
+  const wins = verdict
+    ? [
+        { key: 'A wins', n: verdict.aWins as number, colour: SERIES[0] },
+        { key: 'B wins', n: verdict.bWins as number, colour: SERIES[1] },
+        { key: 'Ties', n: verdict.ties as number, colour: SERIES[2] },
+      ]
+    : [];
+  const judged = wins.reduce((a, w) => a + w.n, 0);
+  let cursor = 0;
+  const winSegments = wins.map((w) => {
+    const width = judged > 0 ? (w.n / judged) * 100 : 0;
+    const seg = { ...w, x: cursor, w: width };
+    cursor += width;
+    return seg;
+  });
+
+  return (
+    <div className="bx-lane">
+      <Section title="Pair this run with another"
+               hint="Exactly one config field may differ. Two moving parts make a story, not a result.">
+        {!others.length ? (
+          <div className="bx-state">
+            <h4>Only one run exists</h4>
+            <p>
+              A pair needs a second run. Copy this run in the builder, change exactly one field — the model,
+              the effort, max_tokens, the template or the schema — and submit it. Then come back here.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="row3" style={{ alignItems: 'end' }}>
+              <div>
+                <label className="label" htmlFor="bx-b">Compare against</label>
+                <select id="bx-b" className="field bx-f" style={{ marginTop: 4 }} value={other}
+                        onChange={(e) => { setOther(e.target.value); setPairErr(null); }}>
+                  <option value="">Pick a run…</option>
+                  {others.map((r) => (
+                    <option key={r.id} value={r.id}>{r.name} — {r.model}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="label" htmlFor="bx-pname">Name (optional)</label>
+                <input id="bx-pname" className="field bx-f" style={{ marginTop: 4 }} value={name}
+                       placeholder="e.g. effort: high vs medium"
+                       onChange={(e) => setName(e.target.value)} />
+              </div>
+              <button className="btn btn-primary bx-f" style={{ justifyContent: 'center' }}
+                      disabled={!other || creating} onClick={() => void createPair()}>
+                {creating ? 'Pairing…' : 'Pair runs'}
+              </button>
+            </div>
+            {pairErr && (
+              <div style={{ marginTop: 11 }}>
+                <Note tone="error">
+                  <strong>These two runs cannot be compared.</strong>
+                  <span style={{ display: 'block', marginTop: 4 }}>{pairErr}</span>
+                </Note>
+              </div>
+            )}
+          </>
+        )}
+
+        {pairs && pairs.length > 0 && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 13 }}>
+            {pairs.map((p) => (
+              <button key={p.id} className="pill bx-f" onClick={() => setSel(p.id)}
+                      style={sel === p.id
+                        ? { background: 'var(--accent)', color: 'var(--bg)' }
+                        : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
+                {p.name} · {p.variable}
+              </button>
+            ))}
+          </div>
+        )}
+      </Section>
+
+      {!sel && pairs && pairs.length === 0 && others.length > 0 && (
+        <div className="card bx-state">
+          <h4>No comparison yet</h4>
+          <p>
+            Pick a second run above to pair it with this one. Foreman refuses the pair unless exactly one field
+            differs, so whatever the diff shows can be attributed to that field and nothing else.
+          </p>
+        </div>
+      )}
+
+      {diffErr && <Note tone="error"><strong>Could not read the comparison.</strong> {diffErr}</Note>}
+
+      {sel && verdict && pair && (
+        <div className="chart-card">
+          <h3>Verdict</h3>
+          <p className="sub">{verdict.verdict}</p>
+
+          {judged > 0 && (
+            <>
+              <svg className="chart-svg" viewBox="0 0 100 12" role="img"
+                   aria-label={wins.map((w) => `${w.key} ${w.n}`).join(', ')}>
+                {winSegments.map((s) => (
+                  <rect key={s.key} x={s.x} y="0" width={Math.max(0, s.w - 0.4)} height="9" rx="2" fill={s.colour}>
+                    <title>{`${s.key}: ${num(s.n)} rows`}</title>
+                  </rect>
+                ))}
+              </svg>
+              <table className="viz-table">
+                <thead>
+                  <tr><th>Outcome</th><th style={{ textAlign: 'right' }}>Rows</th><th style={{ textAlign: 'right' }}>Share</th></tr>
+                </thead>
+                <tbody>
+                  {wins.map((w) => (
+                    <tr key={w.key}>
+                      <td><span className="bx-swatch" style={{ background: w.colour, marginRight: 7 }} />{w.key}</td>
+                      <td className="n">{num(w.n)}</td>
+                      <td className="n" style={{ color: 'var(--text-dim)' }}>{pctLabel(w.n / judged)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+
+          <div className="stat-grid" style={{ marginTop: 12 }}>
+            <Stat label="Variable" value={<span style={{ fontSize: 14 }}>{pair.variable}</span>} sub="the only field that moved" />
+            <Stat label="Mean margin" value={verdict.meanScore === null ? '—' : `${(verdict.meanScore as number).toFixed(1)}/10`}
+                  sub={verdict.meanScore === null ? 'no judge has scored this' : 'gap size, not direction'} />
+            <Stat label="Cost of B vs A" value={usdDelta(verdict.costDeltaUsd as number)}
+                  tone={(verdict.costDeltaUsd as number) > 0 ? 'var(--warn)' : undefined}
+                  sub={`A ${usdFine(sum?.costA ?? 0)} · B ${usdFine(sum?.costB ?? 0)}`} />
+            <Stat label="Rows matched" value={num((sum?.same ?? 0) + (sum?.different ?? 0))}
+                  sub={`${num(sum?.same ?? 0)} identical · ${num(sum?.different ?? 0)} differ`} />
+          </div>
+
+          {(sum?.onlyA > 0 || sum?.onlyB > 0) && (
+            <div style={{ marginTop: 11 }}>
+              <Note tone="warn">
+                <strong>The two datasets are not identical.</strong> {num(sum.onlyA)} row
+                {sum.onlyA === 1 ? '' : 's'} exist only in A and {num(sum.onlyB)} only in B. Rows are matched by
+                custom_id, so this is a glob or a command source that re-read a tree which moved between the two
+                submits — a second variable hiding inside “same dataset”. Pin it with a golden set below.
+              </Note>
+            </div>
+          )}
+
+          <div className="sunk bx-lane" style={{ marginTop: 12, padding: 11, gap: 8 }}>
+            <span className="label">Score this pair from a judge run</span>
+            <p className="faint" style={{ fontSize: 11, lineHeight: 1.5 }}>
+              A verdict without a judge is only “the outputs differ”. Paste the id of a judge run created for
+              this pair and its scores land here, un-swapped — the judge sees A and B in a random order per row,
+              and skipping the un-swap is how a randomised judge silently becomes a coin flip.
+            </p>
+            <div style={{ display: 'flex', gap: 7 }}>
+              <input className="field mono bx-f" placeholder="run_…" value={judgeRun}
+                     onChange={(e) => setJudgeRun(e.target.value)} />
+              <button className="btn bx-f" disabled={!judgeRun.trim()} onClick={() => void ingest()}>Ingest scores</button>
+            </div>
+            {judgeErr && <Note tone="error">{judgeErr}</Note>}
+            {judgeNote && <Note tone="ok">{judgeNote}</Note>}
+          </div>
+        </div>
+      )}
+
+      {sel && diff && (
+        <Section title="Row by row"
+                 hint="Matched on custom_id, never on position — results come back unordered and the two runs were submitted separately."
+                 right={
+                   <span className="faint bx-num" style={{ fontSize: 11 }}>
+                     {num(shown.length)} of {num(rows.length)} rows
+                   </span>
+                 }>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 11 }}>
+            {([
+              ['all', 'all rows'], ['differs', 'output differs'],
+              ['a', 'A wins'], ['b', 'B wins'], ['tie', 'ties'],
+            ] as const).map(([k, label]) => (
+              <button key={k} className="pill bx-f" onClick={() => setFilter(k)}
+                      style={filter === k
+                        ? { background: 'var(--accent)', color: 'var(--bg)' }
+                        : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="bx-ab" style={{ marginBottom: 9, fontSize: 11.5 }}>
+            <div>
+              <span className="bx-swatch" style={{ background: SERIES[0], marginRight: 6 }} />
+              <strong>A</strong> — {runA?.name ?? pair?.runAId} <span className="faint mono">{runA?.model}</span>
+            </div>
+            <div>
+              <span className="bx-swatch" style={{ background: SERIES[1], marginRight: 6 }} />
+              <strong>B</strong> — {runB?.name ?? pair?.runBId} <span className="faint mono">{runB?.model}</span>
+            </div>
+          </div>
+
+          {rows.length === 0 && (
+            <div className="bx-state">
+              <h4>Neither run has landed a result yet</h4>
+              <p>
+                Rows appear here as each batch ends. Both sides have to have ingested before a comparison means
+                anything — a half-finished run reads as a regression that is really just latency.
+              </p>
+            </div>
+          )}
+
+          {rows.length > 0 && shown.length === 0 && (
+            <div className="bx-state">
+              <h4>That filter excluded all {num(rows.length)} rows</h4>
+              <p>
+                {filter === 'differs'
+                  ? 'Every matched row produced identical output, so the change made no difference to the text at all — which is itself the result.'
+                  : 'No row carries that verdict. Only a judge pass assigns winners; without one, every row is unjudged.'}
+              </p>
+              <button className="btn bx-f" onClick={() => setFilter('all')}>Show all rows</button>
+            </div>
+          )}
+
+          <div className="bx-lane" style={{ gap: 9 }}>
+            {shown.slice(0, limit).map((r) => (
+              <div key={r.customId} className="sunk" style={{ padding: 11 }}>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 11.5 }}>
+                  <span className="mono" style={{ fontWeight: 600 }}>{r.customId}</span>
+                  <WinnerMark winner={r.winner} same={r.same} score={r.score} />
+                  <span className="faint mono bx-num" style={{ marginLeft: 'auto' }}>
+                    A {usdFine(r.aCost)} · B {usdFine(r.bCost)} · {usdDelta(r.bCost - r.aCost)}
+                  </span>
+                </div>
+                {r.rationale && (
+                  <p className="dim" style={{ fontSize: 11.5, marginTop: 6, lineHeight: 1.5 }}>{r.rationale}</p>
+                )}
+                <div className="bx-ab" style={{ marginTop: 8 }}>
+                  <OutputSide side="A" status={r.aStatus} text={r.aText} colour={SERIES[0]} />
+                  <OutputSide side="B" status={r.bStatus} text={r.bText} colour={SERIES[1]} />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {shown.length > limit && (
+            <button className="btn bx-f" style={{ marginTop: 11 }} onClick={() => setLimit(limit + 25)}>
+              Show 25 more — {num(shown.length - limit)} still hidden
+            </button>
+          )}
+        </Section>
+      )}
+
+      <Section title="Golden sets"
+               hint="A glob or a command source re-reads the world at submit time, so “the same dataset” is otherwise a hope.">
+        <div className="row2" style={{ alignItems: 'end' }}>
+          <div>
+            <label className="label" htmlFor="bx-gname">Name this snapshot</label>
+            <input id="bx-gname" className="field bx-f" style={{ marginTop: 4 }} value={gName}
+                   placeholder={`${run.name} — snapshot`} onChange={(e) => setGName(e.target.value)} />
+          </div>
+          <button className="btn bx-f" style={{ justifyContent: 'center' }} disabled={gBusy}
+                  onClick={() => void saveGolden()}>
+            {gBusy ? 'Snapshotting…' : 'Pin this run’s rows'}
+          </button>
+        </div>
+        {gErr && <div style={{ marginTop: 10 }}><Note tone="error">{gErr}</Note></div>}
+        {gOk && <div style={{ marginTop: 10 }}><Note tone="ok">{gOk}</Note></div>}
+
+        <div style={{ marginTop: 13 }}>
+          {!golden && <p className="dim" style={{ fontSize: 12 }}>Reading golden sets…</p>}
+          {golden && golden.length === 0 && (
+            <div className="bx-state">
+              <h4>No golden sets yet</h4>
+              <p>
+                The rows a run actually saw are the only durable record of its dataset. Pin them and a config
+                from next month can be compared with one from today and have the comparison mean something.
+              </p>
+            </div>
+          )}
+          {golden && golden.length > 0 && (
+            <div className="bx-scroll">
+              <table className="grid">
+                <thead>
+                  <tr className="label"><th>Set</th><th className="r">Rows</th><th>From run</th><th className="r">Created</th></tr>
+                </thead>
+                <tbody>
+                  {golden.map((g) => (
+                    <tr key={g.id}>
+                      <td>{g.name}<div className="faint mono" style={{ fontSize: 10.5, marginTop: 2 }}>{g.id}</div></td>
+                      <td className="r mono">{num(g.rows)} rows</td>
+                      <td>
+                        {g.sourceRunId
+                          ? <button className="link mono bx-f" onClick={() => onOpen(g.sourceRunId as string)}>{g.sourceRunId}</button>
+                          : <span className="faint">—</span>}
+                      </td>
+                      <td className="r faint mono">{ago(g.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+/** Winner is a status: it carries a glyph and a word, never a hue on its own. */
+function WinnerMark({ winner, same, score }: {
+  winner: 'a' | 'b' | 'tie' | null; same: boolean; score: number | null;
+}) {
+  const gap = typeof score === 'number' ? ` · gap ${score.toFixed(1)}/10` : '';
+  if (winner === 'a') return <span style={{ color: SERIES[0], fontWeight: 600 }}>◀ A wins{gap}</span>;
+  if (winner === 'b') return <span style={{ color: SERIES[1], fontWeight: 600 }}>▶ B wins{gap}</span>;
+  if (winner === 'tie') return <span className="dim">= tie{gap}</span>;
+  return same
+    ? <span className="dim">≡ identical output</span>
+    : <span className="dim">≠ differs · unjudged</span>;
+}
+
+function OutputSide({ side, status, text, colour }: {
+  side: 'A' | 'B'; status: string; text: string | null; colour: string;
+}) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ display: 'flex', gap: 7, alignItems: 'center', marginBottom: 4 }}>
+        <span className="bx-swatch" style={{ background: colour }} />
+        <span className="label">{side}</span>
+        {status === 'missing'
+          ? <span className="pill" style={{ background: 'var(--warn-soft)', color: 'var(--warn)' }}>no such row</span>
+          : <Pill status={status} />}
+      </div>
+      <pre className="sunk bx-out">
+        {text ?? (status === 'missing'
+          ? 'This custom_id does not exist in this run — the datasets drifted between the two submits.'
+          : 'No output on this side.')}
+      </pre>
     </div>
   );
 }

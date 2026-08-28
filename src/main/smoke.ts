@@ -155,6 +155,17 @@ export async function runSmoke(): Promise<void> {
   await expectThrow(async () => batch.deleteRun(live.runId),
     'Cancel the run before deleting', 'in-flight run cannot be silently deleted');
 
+  // Everything above is the batch pipeline. Phases 1-24 are exercised here,
+  // in the same real main process, because compiling is not working.
+  try {
+    const { runPhaseSmoke } = await import('./smoke2');
+    await runPhaseSmoke(check, say);
+    const { runPhaseSmoke2 } = await import('./smoke3');
+    await runPhaseSmoke2(check, say);
+  } catch (e) {
+    check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   fs.rmSync(tmp, { recursive: true, force: true });
   say(`\n════ ${pass} passed, ${fail} failed ════\n`);
   app.exit(fail === 0 ? 0 : 1);

@@ -1,8 +1,30 @@
 import { useEffect, useState } from 'react';
-import type { LaunchOptions, Project, ProviderId, ProviderInfo } from '@shared/types';
-import { EFFORT_LEVELS, PERMISSION_MODES } from '@shared/types';
+import type { LaunchOptions, Project, ProviderId, ProviderInfo, TrustLevel } from '@shared/types';
+import { EFFORT_LEVELS, PERMISSION_MODES, TRUST_COPY, TRUST_LEVELS } from '@shared/types';
 
-const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)' };
+const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)', glm: 'var(--glm)' };
+
+/** Same filled progression the session header uses: ◇ → ◈ → ◆ reads in greyscale. */
+const TRUST_GLYPH: Record<TrustLevel, string> = { readonly: '◇', project: '◈', trusted: '◆' };
+
+/**
+ * index.css owns the global focus styles and this dialog does not; the buttons
+ * it hand-styles therefore carry their own ring. :focus-visible is asked of the
+ * element, so a click never draws one and a Tab always does.
+ */
+function FocusBtn({ style, onFocus, onBlur, children, ...rest }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const [ring, setRing] = useState(false);
+  return (
+    <button
+      {...rest}
+      onFocus={(e) => { setRing(e.currentTarget.matches(':focus-visible')); onFocus?.(e); }}
+      onBlur={(e) => { setRing(false); onBlur?.(e); }}
+      style={ring ? { ...style, outline: '2px solid var(--accent)', outlineOffset: 1 } : style}
+    >
+      {children}
+    </button>
+  );
+}
 
 export default function NewSessionDialog({
   providers, projects, defaultProjectId, onClose, onCreate, onAddProject,
@@ -23,8 +45,15 @@ export default function NewSessionDialog({
   const [permissionMode, setPermissionMode] = useState('');
   const [extraArgs, setExtraArgs] = useState('');
   const [initialPrompt, setInitialPrompt] = useState('');
+  const [isolate, setIsolate] = useState(false);
+  const [trust, setTrust] = useState<TrustLevel | null>(null);
+  const [trustDefault, setTrustDefault] = useState<TrustLevel | null>(null);
+  const [trustErr, setTrustErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const project = projects.find((p) => p.id === projectId) ?? null;
+  const isRepo = !!project?.branch;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -35,17 +64,37 @@ export default function NewSessionDialog({
     return () => window.removeEventListener('keydown', onKey);
   });
 
+  // What this project's agents may do is decided before launch, not discovered
+  // afterwards from a denial in the terminal.
+  useEffect(() => {
+    let live = true;
+    setTrust(null); setTrustErr(null);
+    Promise.all([
+      window.foreman.policy.trust(projectId || null),
+      window.foreman.policy.defaultTrust(),
+    ])
+      .then(([t, d]) => { if (live) { setTrust(t); setTrustDefault(d); } })
+      .catch((e) => { if (live) setTrustErr(e instanceof Error ? e.message : String(e)); });
+    return () => { live = false; };
+  }, [projectId]);
+
+  // A folder that is not a git repo has no worktree to cut.
+  useEffect(() => { if (!isRepo) setIsolate(false); }, [isRepo]);
+
   async function go() {
     if (!projectId || busy) return;
     setBusy(true); setErr(null);
     try {
-      await onCreate({ providerId, projectId, model, effort, permissionMode, extraArgs, initialPrompt });
+      await onCreate({ providerId, projectId, model, effort, permissionMode, extraArgs, initialPrompt, isolate });
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setBusy(false);
     }
   }
+
+  const elevated = !!trust && !!trustDefault
+    && TRUST_LEVELS.indexOf(trust) > TRUST_LEVELS.indexOf(trustDefault);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -57,7 +106,7 @@ export default function NewSessionDialog({
           {providers.map((p) => {
             const on = providerId === p.id;
             return (
-              <button
+              <FocusBtn
                 key={p.id}
                 disabled={!p.path}
                 onClick={() => setProviderId(p.id)}
@@ -73,15 +122,15 @@ export default function NewSessionDialog({
                 <span className="faint mono" style={{ fontSize: 10.5 }}>
                   {p.path ? (p.version ?? 'installed') : 'not installed'}
                 </span>
-              </button>
+              </FocusBtn>
             );
           })}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
           <span className="label">Project</span>
-          <button className="faint" style={{ fontSize: 11.5, marginLeft: 'auto' }}
-                  onClick={onAddProject}>+ add a folder</button>
+          <FocusBtn className="faint" style={{ fontSize: 11.5, marginLeft: 'auto', borderRadius: 5 }}
+                    onClick={onAddProject}>+ add a folder</FocusBtn>
         </div>
         {projects.length ? (
           <select className="field" style={{ margin: '6px 0 14px' }}
@@ -98,14 +147,61 @@ export default function NewSessionDialog({
           </p>
         )}
 
+        {/* ── P19 · what this project's agents are allowed to do ───────── */}
+        <div className="label">Trust</div>
+        <div className="sunk" style={{ margin: '6px 0 14px', padding: '9px 11px' }}>
+          {trustErr ? (
+            <p style={{ color: 'var(--bad)', fontSize: 12, lineHeight: 1.45 }}>
+              <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>✕</span>
+              Foreman could not read this project's trust level: {trustErr} The session will still start
+              under whatever the main process decides — close this dialog and reopen it to read again.
+            </p>
+          ) : !trust ? (
+            <p className="faint" style={{ fontSize: 12 }}>Reading the trust level…</p>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
+                <span aria-hidden="true"
+                      style={{ color: elevated ? 'var(--warning)' : 'var(--text-dim)', fontWeight: 700 }}>
+                  {TRUST_GLYPH[trust]}
+                </span>
+                <span style={{ fontWeight: 650, fontSize: 12.5,
+                               color: elevated ? 'var(--warning)' : 'var(--text)' }}>
+                  {TRUST_COPY[trust].label}
+                </span>
+                {trustDefault && (
+                  <span className="faint" style={{ fontSize: 11, marginLeft: 'auto' }}>
+                    {trust === trustDefault
+                      ? 'your default'
+                      : `default is ${TRUST_COPY[trustDefault].label} ${TRUST_GLYPH[trustDefault]}`}
+                  </span>
+                )}
+              </div>
+              <p className="dim" style={{ fontSize: 12, marginTop: 3, lineHeight: 1.45 }}>
+                {TRUST_COPY[trust].detail}
+              </p>
+              {elevated && (
+                <p style={{ color: 'var(--warning)', fontSize: 11.5, marginTop: 5, lineHeight: 1.45 }}>
+                  <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 5 }}>⚠</span>
+                  Above your default. The session header says so for as long as this session runs.
+                </p>
+              )}
+              <p className="faint" style={{ fontSize: 11, marginTop: 5, lineHeight: 1.45 }}>
+                Trust is set per project and applies to every session in it.
+              </p>
+            </>
+          )}
+        </div>
+
         <div className="label">Model <span style={{ textTransform: 'none' }}>— blank uses the CLI default</span></div>
         <div style={{ display: 'flex', gap: 5, margin: '6px 0 14px', flexWrap: 'wrap' }}>
           {['', 'opus', 'sonnet', 'haiku', 'fable'].map((m) => (
-            <button key={m || 'default'} className="pill" onClick={() => setModel(m)}
-                    style={model === m ? { background: 'var(--accent)', color: '#0c0e12' }
-                                       : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
+            <FocusBtn key={m || 'default'} className="pill" onClick={() => setModel(m)}
+                      aria-pressed={model === m}
+                      style={model === m ? { background: 'var(--accent)', color: '#0c0e12' }
+                                         : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
               {m || 'default'}
-            </button>
+            </FocusBtn>
           ))}
         </div>
 
@@ -114,11 +210,12 @@ export default function NewSessionDialog({
             <div className="label">Effort <span style={{ textTransform: 'none' }}>— governs thinking depth, tool calls and length</span></div>
             <div style={{ display: 'flex', gap: 5, margin: '6px 0 14px', flexWrap: 'wrap' }}>
               {['', ...EFFORT_LEVELS].map((l) => (
-                <button key={l || 'default'} className="pill" onClick={() => setEffort(l)}
-                        style={effort === l ? { background: 'var(--accent)', color: '#0c0e12' }
-                                            : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
+                <FocusBtn key={l || 'default'} className="pill" onClick={() => setEffort(l)}
+                          aria-pressed={effort === l}
+                          style={effort === l ? { background: 'var(--accent)', color: '#0c0e12' }
+                                              : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
                   {l || 'default'}
-                </button>
+                </FocusBtn>
               ))}
             </div>
           </>
@@ -141,6 +238,35 @@ export default function NewSessionDialog({
           </>
         )}
 
+        {/* ── P9 · isolation ───────────────────────────────────────────── */}
+        <div className="label">Working tree</div>
+        <label className="sunk"
+               style={{ display: 'flex', gap: 9, alignItems: 'flex-start', margin: '6px 0 14px',
+                        padding: '9px 11px', cursor: isRepo ? 'pointer' : 'not-allowed' }}>
+          <input type="checkbox" checked={isolate} disabled={!isRepo}
+                 onChange={(e) => setIsolate(e.target.checked)}
+                 style={{ marginTop: 2, accentColor: 'var(--accent)', width: 14, height: 14, flex: 'none' }} />
+          <span style={{ minWidth: 0 }}>
+            <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600 }}>
+              <span aria-hidden="true" style={{ color: 'var(--accent)', marginRight: 6 }}>⑂</span>
+              Isolate in a worktree
+            </span>
+            {isRepo ? (
+              <span className="dim" style={{ display: 'block', fontSize: 11.5, marginTop: 3, lineHeight: 1.45 }}>
+                Cuts a branch and a private checkout for this session, so two agents in {project?.name} stop
+                overwriting each other's files. Merge or discard it from the session header when the work
+                is done; a worktree with nothing uncommitted is cleaned up on exit.
+              </span>
+            ) : (
+              <span className="faint" style={{ display: 'block', fontSize: 11.5, marginTop: 3, lineHeight: 1.45 }}>
+                {project
+                  ? `${project.name} is not a git repository, so there is no worktree to cut. Run "git init" in it, or leave this off and the session runs in the folder itself.`
+                  : 'Pick a project first — isolation needs a git repository.'}
+              </span>
+            )}
+          </span>
+        </label>
+
         <div className="label">First message <span style={{ textTransform: 'none' }}>(optional)</span></div>
         <textarea className="field mono" rows={3} style={{ margin: '6px 0 4px', resize: 'vertical' }}
                   placeholder="Typed into the session once it is up."
@@ -155,16 +281,17 @@ export default function NewSessionDialog({
 
         {err && (
           <div style={{ background: 'var(--bad-soft)', color: 'var(--bad)', border: '1px solid var(--bad)',
-                        borderRadius: 6, padding: '7px 10px', margin: '10px 0', fontSize: 12 }}>
-            {err}
+                        borderRadius: 6, padding: '7px 10px', margin: '10px 0', fontSize: 12, lineHeight: 1.45 }}>
+            <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>✕</span>
+            <span style={{ fontWeight: 650 }}>The session did not start. </span>{err}
           </div>
         )}
 
         <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-          <button className="btn" onClick={onClose} style={{ marginLeft: 'auto' }}>Cancel</button>
-          <button className="btn btn-primary" onClick={go} disabled={!projectId || busy}>
-            {busy ? 'Starting…' : 'Start session'}
-          </button>
+          <FocusBtn className="btn" onClick={onClose} style={{ marginLeft: 'auto' }}>Cancel</FocusBtn>
+          <FocusBtn className="btn btn-primary" onClick={go} disabled={!projectId || busy}>
+            {busy ? 'Starting…' : isolate ? 'Start in a worktree' : 'Start session'}
+          </FocusBtn>
         </div>
         <p className="faint" style={{ fontSize: 11, marginTop: 8, textAlign: 'right' }}>⌘↵ to start</p>
       </div>

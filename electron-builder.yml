@@ -1,0 +1,108 @@
+# macOS distribution.
+#
+# `npm run dist:mac` produces a DMG and a zip per architecture in release/.
+# The zip is not a duplicate of the DMG: it is the only format that round-trips
+# a notarised .app without a human dragging anything, so it is what an update
+# feed or a scripted install consumes.
+
+appId: com.danepetersen.foreman
+productName: Foreman
+copyright: Copyright © 2026 Dane Petersen
+
+directories:
+  buildResources: build
+  output: release
+
+# package.json and the production node_modules tree are added to this list by
+# electron-builder no matter what; dev dependencies are never copied. So this
+# only has to name the build output.
+files:
+  - out/**
+
+# ── The step that costs a day ───────────────────────────────────────────────
+#
+# node-pty and better-sqlite3 are external to the Vite bundle on purpose (see
+# rollupOptions.external in electron.vite.config.ts). Bundling one rewrites its
+# dynamic require of the .node binary to a path that does not exist, and it
+# fails at RUNTIME while typecheck and build both pass clean — the app builds,
+# ships, and dies on first launch with ERR_DLOPEN_FAILED.
+#
+# Being external means they are loaded from node_modules at runtime, and that
+# is where asar bites twice:
+#
+#   1. dlopen takes a filesystem path. A .node file sealed inside app.asar has
+#      no such path — the archive is one file to the kernel — so the addon can
+#      never load from inside it.
+#   2. Notarisation inspects every Mach-O binary in the bundle and requires
+#      each one to be signed. The signer cannot see into app.asar, so a .node
+#      file in there is never signed, and Apple rejects the whole submission
+#      with "The binary is not signed with a valid Developer ID certificate"
+#      naming a path you did not know existed.
+#
+# node-pty's spawn-helper is the third case and the sharpest: it is not loaded,
+# it is exec'd. You cannot exec a file that lives inside an archive at all, so
+# every session would fail to start with ENOENT on a path that is right there
+# in the source tree.
+asarUnpack:
+  - '**/*.node'
+  - node_modules/node-pty/**
+  - node_modules/better-sqlite3/**
+
+# Rebuild native addons against the *target* arch, not the build host's.
+# Without this an x64 DMG built on Apple silicon ships arm64 .node files, and
+# it installs cleanly on an Intel Mac and then refuses to open the database.
+npmRebuild: true
+
+mac:
+  category: public.app-category.developer-tools
+
+  # Two single-arch builds rather than one universal binary. A universal app
+  # has to lipo every unpacked .node file into a fat Mach-O; node-gyp compiles
+  # these two per-arch, so there is nothing to merge and the universal build
+  # fails on the first addon it finds.
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  # Helper processes inherit the parent's entitlements only if they are signed
+  # with them; the renderer is where V8 needs JIT, so it needs the same plist.
+  entitlementsInherit: build/entitlements.mac.plist
+
+  # gatekeeperAssess runs `spctl --assess`, which only passes for an app that
+  # is already notarised. Leaving it on fails the build one step before the
+  # step that would have made it pass.
+  gatekeeperAssess: false
+
+  # Notarisation credentials come from the environment — APPLE_ID,
+  # APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID — so nothing secret is in
+  # this repo. With those unset, electron-builder logs that it skipped
+  # notarisation and still produces the DMG, which is what a contributor
+  # without an Apple Developer account gets.
+  notarize: true
+
+  extendInfo:
+    # Foreman spawns agent CLIs that read whatever repo you point them at.
+    # macOS attributes a child process's file access to the app that started
+    # it, so these prompts say "Foreman"; with no usage string the access is
+    # denied outright instead of asked about, and the agent reports a file that
+    # plainly exists as unreadable.
+    NSDocumentsFolderUsageDescription: Foreman runs coding agents in the repositories you add.
+    NSDesktopFolderUsageDescription: Foreman runs coding agents in the repositories you add.
+    NSDownloadsFolderUsageDescription: Foreman runs coding agents in the repositories you add.
+
+dmg:
+  # The Applications alias is the install instruction. Without it people run
+  # Foreman straight from the mounted image, where the database lives on a
+  # read-only volume and everything they did disappears when they eject it.
+  contents:
+    - x: 140
+      y: 220
+      type: file
+    - x: 400
+      y: 220
+      type: link
+      path: /Applications

@@ -9,7 +9,14 @@ import fs from 'node:fs';
 import type { PastSession } from '../shared/types';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { Baseline } from '../shared/types';
+import type { Baseline, TrustLevel } from '../shared/types';
+import { otelEnv } from './otel';
+import { writeHookSettings, cleanupHookSettings } from './hooks';
+import { archiveSession } from './transcripts';
+import { createWorktree, removeWorktree } from './worktrees';
+import { trustFor } from './policy';
+import { writeMcpConfig } from './mcp/registry';
+import { flags } from './settings';
 
 const exec = promisify(execFile);
 
@@ -73,7 +80,13 @@ const STRIPPED_ENV = [
 ];
 const STRIPPED_PREFIXES = ['VSCODE_', 'ELECTRON_IPC', 'npm_'];
 
-function agentEnv(PATH: string): Record<string, string> {
+/**
+ * Telemetry and hooks are how Foreman knows anything about a running agent, and
+ * both are set here rather than asked of the user, because Foreman spawns the
+ * CLI and therefore owns its environment. Content logging stays off: prompt and
+ * response text are redacted by default and Foreman does not opt in.
+ */
+function agentEnv(PATH: string, sessionId: string, providerEnv: Record<string, string> = {}): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
@@ -87,6 +100,11 @@ function agentEnv(PATH: string): Record<string, string> {
   out.TERM = 'xterm-256color';
   out.COLORTERM = 'truecolor';
   out.FORCE_COLOR = '1';
+  if (flags().telemetry) Object.assign(out, otelEnv(sessionId));
+  // Last, so a provider that redirects the API wins over anything inherited
+  // from the shell — an ANTHROPIC_BASE_URL in your profile must not silently
+  // point a GLM session back at Anthropic, or the other way round.
+  Object.assign(out, providerEnv);
   return out;
 }
 
@@ -124,6 +142,9 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
 
   // Claude accepts a conversation id we choose, which is what makes a specific
   // session resumable later rather than just "the most recent one".
+  const id0 = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const id = id0;
+
   const resuming = opts.resumeFrom;
   const conversationId = resuming
     ? resuming.conversationId
@@ -135,14 +156,46 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
     ? def.resumeArgs(resuming.conversationId)
     : conversationId ? ['--session-id', conversationId] : [];
 
-  const args = [...idArgs, ...def.args(extra, {
+  // Trust is resolved once, at launch, and travels with the session — a policy
+  // that can change under a running agent is a policy nobody can reason about.
+  const trust: TrustLevel = trustFor(project.id);
+
+  // A worktree keeps parallel agents off each other's working tree. It lives
+  // outside the repo so the agent never trips over it in its own file listings.
+  let worktree: string | null = null;
+  if (opts.isolate) {
+    try {
+      const wt = await createWorktree(project.path, project.name, id0);
+      worktree = wt.path;
+    } catch (e) {
+      throw new Error(
+        `Could not create an isolated worktree for ${project.name}: ` +
+        `${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+  const cwd = worktree ?? project.path;
+
+  // Hook config and MCP servers are injected with --settings / --mcp-config,
+  // which take a path. That is what keeps Foreman out of the user's repository:
+  // nothing is written into .claude/, and nothing the user shares in git changes.
+  const injected: string[] = [];
+  if (def.id === 'claude') {
+    if (flags().hooks) {
+      const settingsFile = writeHookSettings(id0, cwd);
+      if (settingsFile) injected.push('--settings', settingsFile);
+    }
+    const mcpFile = writeMcpConfig(project.id, cwd);
+    if (mcpFile) injected.push('--mcp-config', mcpFile);
+  }
+
+  const args = [...idArgs, ...injected, ...def.args(extra, {
     model: opts.model || undefined,
     effort: def.supports.effort ? opts.effort || undefined : undefined,
     permissionMode: def.supports.permissionMode ? opts.permissionMode || undefined : undefined,
   })];
-  const baseline = await captureBaseline(project.path);
+  const baseline = await captureBaseline(cwd);
 
-  const id = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const meta: Session = {
     id,
     providerId: opts.providerId,
@@ -150,6 +203,8 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
     projectPath: project.path,
     projectName: project.name,
     title: `${def.label} · ${project.name}`,
+    worktree,
+    trust,
     model: opts.model || undefined,
     effort: def.supports.effort ? (opts.effort || undefined) : undefined,
     permissionMode: def.supports.permissionMode ? (opts.permissionMode || undefined) : undefined,
@@ -167,8 +222,8 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
       name: 'xterm-256color',
       cols: 120,
       rows: 32,
-      cwd: project.path,
-      env: agentEnv(PATH),
+      cwd,
+      env: agentEnv(PATH, id, def.env?.() ?? {}),
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -184,11 +239,12 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
 
   db().prepare(`
     INSERT INTO session_log (id, conversation_id, provider_id, project_id, project_path,
-                             project_name, model, effort, permission_mode, started_at, resumed_from)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                             project_name, model, effort, permission_mode, started_at,
+                             resumed_from, worktree, trust)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(id, conversationId, opts.providerId, project.id, project.path, project.name,
          meta.model ?? null, meta.effort ?? null, meta.permissionMode ?? null,
-         meta.createdAt, resuming?.sessionId ?? null);
+         meta.createdAt, resuming?.sessionId ?? null, worktree, trust);
   const live: Live = { meta, proc, buffer: '' };
   sessions.set(id, live);
 
@@ -208,6 +264,23 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
       db().prepare('UPDATE session_log SET ended_at = ?, exit_code = ? WHERE id = ?')
         .run(live.meta.endedAt, exitCode, id);
     } catch { /* db closing during quit */ }
+
+    // Sessions are killed on quit by design; their transcripts should not die
+    // with them. Archiving here is the only moment the file is guaranteed to
+    // exist and be complete.
+    if (flags().archiveTranscripts) {
+      try { archiveSession(id, live.meta.projectPath, conversationId); }
+      catch { /* an unreadable transcript must never fail a session exit */ }
+    }
+    try { cleanupHookSettings(id); } catch { /* nothing to remove */ }
+
+    // An isolated worktree with no changes is disk cost and nothing else.
+    if (worktree) {
+      void removeWorktree(worktree, false).catch(() => {
+        /* dirty worktrees are kept on purpose — the human reviews and merges */
+      });
+    }
+
     broadcast('session:exit', { sessionId: id, exitCode });
     broadcast('session:list', listSessions());
   });

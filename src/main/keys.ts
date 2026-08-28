@@ -192,3 +192,56 @@ export async function verifyKey(
     ].filter(Boolean).join(' '),
   };
 }
+
+
+/* ── provider credentials ────────────────────────────────────────────────
+   A second class of secret entirely. GLM runs the Claude Code binary against
+   Z.ai's Anthropic-compatible endpoint, so it needs a Z.ai token — which is
+   NOT the Anthropic key and must never be substituted for it. Separate file,
+   separate keychain blob, separate decision.
+   ──────────────────────────────────────────────────────────────────────── */
+
+function providerKeyFile(id: string): string {
+  // The id is ours, not the user's, but a path built from a string still gets
+  // the same treatment as any other.
+  const safe = id.replace(/[^a-z0-9-]/gi, '');
+  if (!safe) throw new Error('A provider credential needs a provider id.');
+  return path.join(app.getPath('userData'), `provider-${safe}.bin`);
+}
+
+export function hasProviderKey(id: string): boolean {
+  return fs.existsSync(providerKeyFile(id));
+}
+
+export function getProviderKey(id: string): string | null {
+  // An explicit env var still wins, for CI and scripted runs.
+  const fromEnv = process.env[`FOREMAN_${id.toUpperCase()}_KEY`];
+  if (fromEnv) return fromEnv;
+  try {
+    return safeStorage.decryptString(fs.readFileSync(providerKeyFile(id))).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export function setProviderKey(id: string, key: string) {
+  const trimmed = key.trim();
+  if (!trimmed) throw new Error('That key is empty.');
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error(
+      'The OS keychain is unavailable, so this key cannot be stored safely. ' +
+      'Foreman will not write a credential to disk in plaintext.'
+    );
+  }
+  fs.writeFileSync(providerKeyFile(id), safeStorage.encryptString(trimmed), { mode: 0o600 });
+}
+
+export function clearProviderKey(id: string) {
+  try { fs.unlinkSync(providerKeyFile(id)); } catch { /* already gone */ }
+}
+
+export function providerKeyFingerprint(id: string): string | null {
+  const k = getProviderKey(id);
+  if (!k) return null;
+  return k.length <= 12 ? '…' + k.slice(-4) : k.slice(0, 8) + '…' + k.slice(-4);
+}
