@@ -49,6 +49,13 @@ import * as cachediag from './batch/cachediag';
 import * as evals from './batch/evals';
 import * as uploads from './batch/files';
 import { allSettings, flags, slotsSetting } from './settings';
+import { migrateUserData } from './migrate';
+
+// Before any other statement in this file, and before anything opens the
+// database: the rename moved userData, and everything that was in the old
+// directory has to arrive before the first reader looks for it. Every db
+// access in src/main is lazy, so module scope here is the earliest safe point.
+const migration = migrateUserData();
 
 /**
  * Batches advance in the main process on a timer. BatchStudio needed a separate
@@ -107,6 +114,9 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  if (migration.moved) console.log(`[wanigan] carried userData across from ${migration.from}`);
+  else if (migration.note) console.warn(`[wanigan] userData migration skipped: ${migration.note}`);
+
   // Headless command path: same database, same Electron ABI, no window. This
   // has to come first — reaching createWindow() would open a window nobody
   // asked for and never exit, which is what a CLI hanging looks like.

@@ -13,6 +13,7 @@ import * as mcpRegistry from './mcp/registry';
 import * as ctxConfig from './context/config';
 import * as schedule from './schedule';
 import * as demo from './demo';
+import * as migrate from './migrate';
 import type { RunConfig } from '../shared/types';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
@@ -262,6 +263,47 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(passthrough.path === sample.path, 'nothing is masked when demo mode is off');
   check(demo.maskOut('/plain/string') === '/plain/string', 'strings pass through untouched when off');
   demo.setDemo(wasOn);
+
+  /* -- userData migration: the guard matters more than the move -------- */
+  say('-- userData migration');
+  const mtmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-mig-'));
+  const appData = path.join(mtmp, 'Application Support');
+  const oldDir = path.join(appData, 'Foreman');
+  fs.mkdirSync(path.join(oldDir, 'transcripts'), { recursive: true });
+  fs.writeFileSync(path.join(oldDir, 'foreman.db'), 'DB');
+  fs.writeFileSync(path.join(oldDir, 'foreman.db-wal'), 'WAL');
+  fs.writeFileSync(path.join(oldDir, 'foreman.json'), '{}');
+  fs.writeFileSync(path.join(oldDir, 'apikey.bin'), 'KEY');
+  fs.writeFileSync(path.join(oldDir, 'transcripts', 's1.jsonl'), 'T');
+
+  const newDir = path.join(appData, 'Wanigan');
+  check(migrate.findOldDir(appData, newDir) === oldDir, 'the old directory is found by its database, not its name');
+
+  migrate.moveUserData(oldDir, newDir);
+  check(fs.existsSync(path.join(newDir, 'wanigan.db')), 'the database arrives under the new name');
+  // A -wal separated from its database silently discards every committed
+  // transaction still in the log, so this is the assertion that matters most.
+  check(fs.existsSync(path.join(newDir, 'wanigan.db-wal')), 'the write-ahead log travels with the database');
+  check(fs.readFileSync(path.join(newDir, 'apikey.bin'), 'utf8') === 'KEY', 'the encrypted key comes across untouched');
+  check(fs.existsSync(path.join(newDir, 'transcripts', 's1.jsonl')), 'nested directories come across whole');
+  check(!fs.existsSync(oldDir), 'the old directory is gone rather than duplicated');
+  check(migrate.findOldDir(appData, newDir) === null, 'a second run finds nothing to do');
+
+  // Merging into a destination Electron already created must never overwrite
+  // what the new build wrote there.
+  const oldB = path.join(appData, 'foreman');
+  const newB = path.join(appData, 'wanigan2');
+  fs.mkdirSync(oldB, { recursive: true });
+  fs.mkdirSync(newB, { recursive: true });
+  fs.writeFileSync(path.join(oldB, 'foreman.db'), 'OLD');
+  fs.writeFileSync(path.join(oldB, 'apikey.bin'), 'OLDKEY');
+  fs.writeFileSync(path.join(newB, 'apikey.bin'), 'NEWKEY');
+  migrate.moveUserData(oldB, newB);
+  check(fs.readFileSync(path.join(newB, 'apikey.bin'), 'utf8') === 'NEWKEY',
+    'a file already in the destination is not overwritten by the old one');
+  check(fs.readFileSync(path.join(newB, 'wanigan.db'), 'utf8') === 'OLD', 'the database still lands');
+
+  fs.rmSync(mtmp, { recursive: true, force: true });
 
   fs.rmSync(tmp, { recursive: true, force: true });
 }
