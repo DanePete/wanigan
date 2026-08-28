@@ -333,6 +333,39 @@ session: an agent left running with no window is an agent burning tokens unseen.
 | `⌘K` | jump to a skill |
 | `⌘W` | close an exited tab |
 
+## What this app believes
+
+Five, and they're written to settle arguments rather than to be agreed with.
+Each one has ruled something out.
+
+**The operator is the constraint.** Design for what one person can review, not
+for what the machine can launch. One person tracks two or three agents before
+they lose the thread; with a surface built for it, ten or twenty. The ceiling
+is attention, not compute — so "run more at once" is almost never the answer
+here, and every request for more parallelism gets measured against review
+capacity first.
+
+**Nothing happens you can't see afterward.** Every tool call, every denial,
+every dollar lands in a record on your disk. This is why the telemetry
+collector, the hook timeline and the policy ledger exist, and why none of them
+are optional extras. An app whose job is telling you what your agents did earns
+nothing if the account is partial.
+
+**It survives a quit.** Crashes, restarts and closed laptops are normal
+operating conditions, not exceptions. Sessions come back, schedules stay
+armed, and the database is the source of truth rather than whatever happened
+to be in memory.
+
+**Local, and yours.** Your files, your keychain, one SQLite file you can copy.
+This is why there is no cloud tier — a permanent no, not a "not yet". Anything
+that would require shipping your repos somewhere is out of scope by
+construction.
+
+**Say the true thing.** No false greens, no "done" that wasn't verified, no
+success reported for a step that was skipped. This one is here because it was
+earned the hard way: a test run once exited zero after a single assertion
+because it had been killed, and it very nearly got reported as passing.
+
 ## The name
 
 A wanigan is the shack that rode the old log drives. It floated downriver with
