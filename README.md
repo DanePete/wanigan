@@ -354,9 +354,9 @@ the licence is MIT.
 
 Issues open when there's a build to download. Until then this is here to read.
 
-If it turns out to be useful and you want to chip in, there's a link on the
+When there's a build worth chipping in for, there'll be a way to do it on the
 site. That's not a donation — Dead North is a business, not a charity — and
-nothing here is behind it. Same app either way.
+nothing here will ever be behind it. Same app either way.
 
 ## Licence
 
