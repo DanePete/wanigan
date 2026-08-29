@@ -5,6 +5,7 @@ import type { Socket } from 'node:net';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { app } from 'electron';
 import { db } from './db';
+import { recordGoalTrace } from './goal-trace';
 import { getSetting } from './settings';
 import { answerFor, contextForSession, trustBriefing } from './policy';
 import type { HookEventName, HookInput, PolicyDecision, SessionEvent } from '../shared/types';
@@ -509,7 +510,7 @@ function store(sessionId: string, event: string, input: HookInput, at: number): 
       sessionId, at, event, toolName, summary, durationMs, ok,
       paths.length ? JSON.stringify(paths) : null,
     );
-    return {
+    const stored: SessionEvent = {
       id: Number(res.lastInsertRowid),
       sessionId,
       at,
@@ -520,6 +521,9 @@ function store(sessionId: string, event: string, input: HookInput, at: number): 
       ok: ok === null ? null : ok === 1,
       paths,
     };
+    recordGoalTrace({ sessionId, source: 'hook', kind: event, status: ok === 0 ? 'failed' : 'recorded',
+      toolName, summary, durationMs, costUsd: 0, inTokens: 0, outTokens: 0, createdAt: at });
+    return stored;
   } catch {
     // The timeline losing a row is not worth failing the agent's tool call over.
     return null;

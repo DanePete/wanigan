@@ -782,6 +782,44 @@ function migrateControl(d: Database.Database) {
       UNIQUE(node_id)
     );
     CREATE INDEX IF NOT EXISTS idx_mcp_task_records_status ON mcp_task_records(status, updated_at DESC);
+
+    -- Recovery facts identify the exact conversation and worktree a Goal task
+    -- owns. They exclude prompts and terminal output.
+    CREATE TABLE IF NOT EXISTS work_resume_receipts (
+      node_id         TEXT PRIMARY KEY REFERENCES work_nodes(id) ON DELETE CASCADE,
+      docket_id       TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
+      session_id      TEXT NOT NULL,
+      conversation_id TEXT,
+      provider_id     TEXT NOT NULL,
+      model           TEXT,
+      base_commit     TEXT,
+      worktree        TEXT,
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_work_resume_receipts_docket ON work_resume_receipts(docket_id, updated_at DESC);
+
+    -- Provider-neutral, content-free operational evidence. The terminal and
+    -- provider retain any prompt or response content; Control records only
+    -- linkage, timing, spend, token totals and safe summaries.
+    CREATE TABLE IF NOT EXISTS work_trace_events (
+      id           TEXT PRIMARY KEY,
+      docket_id    TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
+      node_id      TEXT NOT NULL REFERENCES work_nodes(id) ON DELETE CASCADE,
+      session_id   TEXT NOT NULL,
+      source       TEXT NOT NULL,
+      kind         TEXT NOT NULL,
+      status       TEXT NOT NULL,
+      tool_name    TEXT,
+      summary      TEXT,
+      duration_ms  INTEGER,
+      cost_usd     REAL NOT NULL DEFAULT 0,
+      in_tokens    INTEGER NOT NULL DEFAULT 0,
+      out_tokens   INTEGER NOT NULL DEFAULT 0,
+      created_at   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_work_trace_events_docket ON work_trace_events(docket_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_work_trace_events_session ON work_trace_events(session_id, created_at DESC);
   `);
 }
 

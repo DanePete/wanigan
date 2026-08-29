@@ -14,7 +14,7 @@ import type {
   OptimizerDiagnostic, ProviderManifestInspection, ProviderPackInfo, ProviderProfileInfo, SkillDiagnostic,
   TeachWaniganInput,
   ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode, DocketProof,
-  DocketRisk, McpTaskRecord, ModelOutcome, WorkDocket,
+  DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, WorkDocket,
 } from '../shared/types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -327,6 +327,8 @@ const api = {
     dismissEvent: (id: string) => call<boolean>('control:dismissEvent', id),
     mcpTasks: (docketId?: string) => call<McpTaskRecord[]>('control:mcpTasks', docketId),
     cancelMcpTask: (id: string) => call<boolean>('control:cancelMcpTask', id),
+    resumeReceipts: (docketId: string) => call<GoalResumeReceipt[]>('control:resumeReceipts', docketId),
+    traces: (docketId: string, limit?: number) => call<GoalTraceEvent[]>('control:traces', docketId, limit),
   },
   // ── phase 26 · agent teams ───────────────────────────────────────────
   teams: {

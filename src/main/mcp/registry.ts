@@ -263,7 +263,7 @@ type HttpEntry = { type: 'http'; url: string; headers?: Record<string, string> }
  * — the same placeholder the batch presets use — so one global server row can
  * serve every repo instead of being duplicated per project.
  */
-export function writeMcpConfig(projectId: string | null, projectPath: string): string | null {
+export function writeMcpConfig(projectId: string | null, projectPath: string, sessionId?: string): string | null {
   const fill = (v: string) => v.split(PROJECT_PATH_SLOT).join(projectPath);
   const entries: Record<string, StdioEntry | HttpEntry> = {};
 
@@ -281,7 +281,14 @@ export function writeMcpConfig(projectId: string | null, projectPath: string): s
   // to the batch engine instead of grinding through them at full price.
   const self = mcpServerInfo();
   if (self) {
-    entries.wanigan = { type: 'http', url: self.url, headers: { Authorization: `Bearer ${self.token}` } };
+    // The bearer token authenticates Wanigan to the local listener. The
+    // per-launch session id is not a secret, but it binds a Goal mutation to
+    // the session that owns that Goal node. A copied config can still read
+    // Control data; it cannot checkpoint or claim work on another session.
+    entries.wanigan = {
+      type: 'http', url: self.url,
+      headers: { Authorization: `Bearer ${self.token}`, ...(sessionId ? { 'X-Wanigan-Session': sessionId } : {}) },
+    };
   }
 
   const dir = path.join(dataDir(), 'mcp');

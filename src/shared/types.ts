@@ -755,6 +755,40 @@ export type McpTaskRecord = {
   updatedAt: number;
 };
 
+/** A restart/recovery decision for a Goal task, based on durable facts only. */
+export type GoalResumeReceipt = {
+  nodeId: string;
+  docketId: string;
+  sessionId: string;
+  conversationId: string | null;
+  providerId: string;
+  model: string | null;
+  baseCommit: string | null;
+  worktree: string | null;
+  createdAt: number;
+  updatedAt: number;
+  state: 'exact' | 'writer_active' | 'identity_pending' | 'worktree_missing';
+  detail: string;
+};
+
+/** Content-free operational evidence correlated to a durable Goal task. */
+export type GoalTraceEvent = {
+  id: string;
+  docketId: string;
+  nodeId: string;
+  sessionId: string;
+  source: 'hook' | 'telemetry';
+  kind: string;
+  status: 'recorded' | 'failed';
+  toolName: string | null;
+  summary: string | null;
+  durationMs: number | null;
+  costUsd: number;
+  inTokens: number;
+  outTokens: number;
+  createdAt: number;
+};
+
 /* ── P11 · dispatcher ───────────────────────────────────────────────── */
 
 export type QueueKind = 'session' | 'headless' | 'batch';

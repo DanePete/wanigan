@@ -1,14 +1,16 @@
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
+import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { db } from './db';
 import { projectById } from './store';
-import { createSession } from './sessions';
+import { createSession, listSessions } from './sessions';
 import * as review from './review';
 import * as otel from './otel';
+import { listGoalTrace } from './goal-trace';
 import type {
   ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode,
-  DocketNodeKind, DocketNodeStatus, DocketProof, DocketRisk, DocketStatus,
+  DocketNodeKind, DocketNodeStatus, DocketProof, DocketRisk, DocketStatus, GoalResumeReceipt, GoalTraceEvent,
   McpTaskRecord, ModelOutcome, WorkDocket,
 } from '../shared/types';
 
@@ -243,6 +245,13 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
     isolate: true, initialPrompt: prompt });
   db().prepare(`UPDATE work_nodes SET status='running',provider_id=?,model=?,session_id=?,worktree=?,started_at=?,detail=NULL WHERE id=?`)
     .run(providerId, input.model?.trim() || null, session.id, session.worktree ?? null, now(), nodeId);
+  db().prepare(`INSERT INTO work_resume_receipts
+    (node_id,docket_id,session_id,conversation_id,provider_id,model,base_commit,worktree,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(node_id) DO UPDATE SET session_id=excluded.session_id,conversation_id=excluded.conversation_id,
+      provider_id=excluded.provider_id,model=excluded.model,base_commit=excluded.base_commit,worktree=excluded.worktree,updated_at=excluded.updated_at`)
+    .run(nodeId, parent.id, session.id, session.conversationId, providerId, input.model?.trim() || null,
+      parent.base_commit, session.worktree ?? null, now(), now());
   setTaskStatus(nodeId, 'working'); setDocketPhase(node.docketId);
   return mapNodes(rawNodes(node.docketId)).find((value) => value.id === nodeId)!;
 }
@@ -259,6 +268,70 @@ export function checkpointNode(nodeId: string, rawNote: string): DocketCheckpoin
   db().prepare(`INSERT INTO work_checkpoints (id,docket_id,node_id,session_id,conversation_id,repo_commit,worktree,note,created_at)
     VALUES (?,?,?,?,?,?,?,?,?)`).run(row.id,row.docketId,row.nodeId,row.sessionId,row.conversationId,row.repoCommit,row.worktree,row.note,row.createdAt);
   touch(parent.id); return row;
+}
+
+/**
+ * MCP receives a per-launch Wanigan session header, not an ambient ability to
+ * mutate any Goal. Keep this check in Control rather than the transport so an
+ * alternate transport cannot accidentally bypass the ownership rule.
+ */
+function requireNodeSession(nodeId: string, sessionId: string): void {
+  const node = nodeRow(nodeId);
+  if (!node.session_id || node.session_id !== sessionId) {
+    throw new Error('This Goal task is not owned by the calling Wanigan session. Read its evidence, then ask the owning agent or operator to update it.');
+  }
+}
+
+export function checkpointForSession(sessionId: string, nodeId: string, note: string): DocketCheckpoint {
+  requireNodeSession(nodeId, sessionId);
+  return checkpointNode(nodeId, note);
+}
+
+export function claimForSession(sessionId: string, nodeId: string, relPath: string): DocketClaim {
+  requireNodeSession(nodeId, sessionId);
+  return claimPath(nodeId, relPath);
+}
+
+/**
+ * Refresh a receipt from the durable session row before presenting it. Codex
+ * learns a new thread id only after its first prompt, so freezing the null from
+ * launch would incorrectly leave an otherwise exact resume looking unsafe.
+ */
+export function resumeReceipts(docketId: string): GoalResumeReceipt[] {
+  const rows = db().prepare(`SELECT r.*, l.conversation_id AS current_conversation_id
+    FROM work_resume_receipts r LEFT JOIN session_log l ON l.id=r.session_id
+    WHERE r.docket_id=? ORDER BY r.updated_at DESC`).all(docketId) as Array<{
+      node_id: string; docket_id: string; session_id: string; conversation_id: string | null; current_conversation_id: string | null;
+      provider_id: string; model: string | null; base_commit: string | null; worktree: string | null; created_at: number; updated_at: number;
+    }>;
+  const live = new Set(listSessions().filter((session) => session.status !== 'exited').map((session) => session.id));
+  return rows.map((row) => {
+    const conversationId = row.current_conversation_id ?? row.conversation_id;
+    if (conversationId && conversationId !== row.conversation_id) {
+      db().prepare('UPDATE work_resume_receipts SET conversation_id=?,updated_at=? WHERE node_id=?')
+        .run(conversationId, now(), row.node_id);
+    }
+    const missingWorktree = !!row.worktree && !pathExists(row.worktree);
+    const state: GoalResumeReceipt['state'] = live.has(row.session_id) ? 'writer_active'
+      : !conversationId ? 'identity_pending' : missingWorktree ? 'worktree_missing' : 'exact';
+    const detail = state === 'exact' ? 'Exact conversation identity is saved; no Wanigan writer is active.'
+      : state === 'writer_active' ? 'This exact conversation already has an active Wanigan writer.'
+        : state === 'identity_pending' ? 'The provider has not yet reported a durable conversation identity.'
+          : 'The isolated worktree recorded for this task is no longer present.';
+    return { nodeId: row.node_id, docketId: row.docket_id, sessionId: row.session_id, conversationId,
+      providerId: row.provider_id, model: row.model, baseCommit: row.base_commit, worktree: row.worktree,
+      createdAt: row.created_at, updatedAt: row.updated_at, state, detail };
+  });
+}
+
+function pathExists(value: string): boolean {
+  try { return !!value && fs.existsSync(value); } catch { return false; }
+}
+
+export function traces(docketId: string, limit?: number): GoalTraceEvent[] {
+  // Ensure callers cannot enumerate a deleted Goal through trace ids.
+  docketRow(docketId);
+  return listGoalTrace(docketId, limit);
 }
 
 export async function runProof(nodeId: string): Promise<DocketProof> {

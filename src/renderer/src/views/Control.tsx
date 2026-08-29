@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
-  ControlEvent, DocketDetail, DocketNode, DocketRisk, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
+  ControlEvent, DocketDetail, DocketNode, DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
 } from '@shared/types';
 import { Note, ago, usd } from '../components/bits';
 
@@ -31,6 +31,8 @@ export default function Control({ projects, providers, onOpenSession }: {
   const [outcomes, setOutcomes] = useState<ModelOutcome[]>([]);
   const [events, setEvents] = useState<ControlEvent[]>([]);
   const [tasks, setTasks] = useState<McpTaskRecord[]>([]);
+  const [receipts, setReceipts] = useState<GoalResumeReceipt[]>([]);
+  const [traces, setTraces] = useState<GoalTraceEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -59,9 +61,11 @@ export default function Control({ projects, providers, onOpenSession }: {
       const linked = goalFromHash();
       const id = focus ?? (linked && next.some((docket) => docket.id === linked) ? linked : null) ?? selected ?? next[0]?.id ?? null;
       if (id && next.some((docket) => docket.id === id)) {
-        const [full, mcp] = await Promise.all([window.wanigan.control.get(id), window.wanigan.control.mcpTasks(id)]);
-        setSelected(id); setDetail(full); setTasks(mcp);
-      } else { setSelected(null); setDetail(null); setTasks([]); }
+        const [full, mcp, nextReceipts, nextTraces] = await Promise.all([
+          window.wanigan.control.get(id), window.wanigan.control.mcpTasks(id), window.wanigan.control.resumeReceipts(id), window.wanigan.control.traces(id, 8),
+        ]);
+        setSelected(id); setDetail(full); setTasks(mcp); setReceipts(nextReceipts); setTraces(nextTraces);
+      } else { setSelected(null); setDetail(null); setTasks([]); setReceipts([]); setTraces([]); }
       setError(null);
     } catch (e) { setError(errText(e)); }
   }, [selected]);
@@ -168,6 +172,7 @@ export default function Control({ projects, providers, onOpenSession }: {
         onNote={(value) => setNotes((previous) => ({ ...previous, [node.id]: value }))} onClaim={(value) => setClaims((previous) => ({ ...previous, [node.id]: value }))}
         onStart={() => start(node)} onCheckpoint={() => checkpoint(node)} onClaimAdd={() => addClaim(node)} onProof={() => proof(node)} onComplete={(decision) => complete(node, decision)} />)}</div>
       <div className="control-evidence"><div><span className="label">Proof bundle</span><h3>{detail.proofs.length} record{detail.proofs.length === 1 ? '' : 's'}</h3>{detail.proofs.length === 0 ? <p className="faint">No evidence yet. A review gate result is required before verification can pass.</p> : detail.proofs.map((proof) => <p key={proof.id}><span className={`control-status ${proof.status}`}>{proof.status}</span> {proof.summary} <small>{ago(proof.createdAt)}</small></p>)}</div><div><span className="label">Continuity</span><h3>{detail.checkpoints.length} checkpoint{detail.checkpoints.length === 1 ? '' : 's'}</h3>{detail.checkpoints.length === 0 ? <p className="faint">Save a checkpoint before handoff or interruption. It records the exact provider conversation when one exists.</p> : detail.checkpoints.slice(0, 4).map((checkpoint) => <p key={checkpoint.id}>{checkpoint.note}<small>{checkpoint.conversationId ? ` · thread ${checkpoint.conversationId.slice(0, 12)}…` : ''} · {ago(checkpoint.createdAt)}</small></p>)}</div></div>
+      <div className="control-evidence"><div><span className="label">Safe recovery</span><h3>{receipts.length === 0 ? 'No launched task yet' : `${receipts.filter((receipt) => receipt.state === 'exact').length} exact resume${receipts.filter((receipt) => receipt.state === 'exact').length === 1 ? '' : 's'}`}</h3>{receipts.map((receipt) => <p key={receipt.nodeId}><span className={`control-status ${receipt.state === 'exact' ? 'passed' : receipt.state === 'writer_active' ? 'working' : 'blocked'}`}>{receipt.state.replace('_', ' ')}</span> {receipt.detail}<small>{receipt.conversationId ? ` · thread ${receipt.conversationId.slice(0, 12)}…` : ''}</small></p>)}</div><div><span className="label">Goal trace</span><h3>{traces.length} recent signal{traces.length === 1 ? '' : 's'}</h3>{traces.length === 0 ? <p className="faint">Operational events appear here without copying prompts or responses into Control.</p> : traces.slice(0, 5).map((trace) => <p key={trace.id}><span className={`control-status ${trace.status}`}>{trace.status}</span> {trace.toolName ?? trace.kind}{trace.summary ? ` · ${trace.summary}` : ''}<small>{trace.durationMs !== null ? ` · ${trace.durationMs}ms` : ''}{trace.costUsd ? ` · ${usd(trace.costUsd)}` : ''} · {ago(trace.createdAt)}</small></p>)}</div></div>
       <div className="control-claims"><span className="label">Active file claims</span>{detail.claims.filter((claim) => !claim.releasedAt).length === 0 ? <p className="faint">No paths claimed. Claims are optional but prevent overlapping parallel edits.</p> : detail.claims.filter((claim) => !claim.releasedAt).map((claim) => <span key={claim.id} className="control-claim">{claim.path} <button className="btn btn-small" onClick={() => void act(`release-${claim.id}`, async () => { await window.wanigan.control.releaseClaim(claim.id); await load(detail.id); })}>release</button></span>)}</div>
     </section>}
 

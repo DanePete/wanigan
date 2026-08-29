@@ -418,7 +418,7 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
       if (settingsFile) injected.push('--settings', settingsFile);
     }
     if (detected.capabilities.mcp) {
-      const mcpFile = writeMcpConfig(project.id, cwd);
+      const mcpFile = writeMcpConfig(project.id, cwd, id0);
       if (mcpFile) injected.push('--mcp-config', mcpFile);
     }
   }

@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { db } from './db';
 import { EMPTY_USAGE, type ApiEvent, type SessionUsage } from '../shared/types';
 import { mergeCodexUsage } from './codex-usage';
+import { recordGoalTrace } from './goal-trace';
 
 /**
  * Claude Code exports OpenTelemetry natively. Wanigan spawns the CLI, so it
@@ -537,6 +538,9 @@ function recordEvents(events: EventDelta[]): void {
     for (const e of rows) {
       ins.run(e.sessionId, e.at, e.kind, e.model, e.costUsd, e.durationMs,
               e.inTokens, e.outTokens, e.cacheRead, e.cacheWrite, e.effort, e.detail);
+      recordGoalTrace({ sessionId: e.sessionId, source: 'telemetry', kind: `api_${e.kind}`,
+        status: e.kind === 'error' ? 'failed' : 'recorded', toolName: null, summary: e.detail,
+        durationMs: e.durationMs, costUsd: e.costUsd, inTokens: e.inTokens, outTokens: e.outTokens, createdAt: e.at });
     }
   })(events);
 }

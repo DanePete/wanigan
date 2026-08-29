@@ -7,6 +7,7 @@ import { addProject, listProjects, projectById } from '../store';
 import { createSession, listSessions } from '../sessions';
 import { findRepos } from '../browse';
 import { trustFor } from '../policy';
+import * as control from '../control';
 import type { ProviderId, RunConfig, SourceConfig, SystemBlock } from '../../shared/types';
 
 /**
@@ -175,6 +176,7 @@ type ToolDef = {
   description: string;
   inputSchema: Record<string, unknown>;
   annotations: Record<string, boolean>;
+  _meta?: Record<string, unknown>;
 };
 
 const TOOLS: ToolDef[] = [
@@ -258,6 +260,52 @@ const TOOLS: ToolDef[] = [
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
 
+  /* ── durable Goals ────────────────────────────────────────────────
+     A Goal is the contract and evidence surrounding work, not a terminal.
+     These tools deliberately expose that record without letting a model mark
+     its own work approved or start another agent. ───────────────────── */
+  {
+    name: 'wanigan_list_goals',
+    title: 'List Wanigan Goals',
+    description: 'List durable Goals with their project, phase, risk and budget. Goals survive terminal exits and restarts.',
+    inputSchema: {
+      type: 'object', additionalProperties: false,
+      properties: { projectId: { type: 'string', description: 'Optional Wanigan project id.' }, limit: { type: 'integer', minimum: 1, maximum: 80 } },
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: 'wanigan_get_goal',
+    title: 'Inspect a Wanigan Goal',
+    description: 'Read one Goal’s objective, acceptance checks, tasks, file claims, checkpoints and verification evidence.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['goalId'],
+      properties: { goalId: { type: 'string', description: 'Goal id from wanigan_list_goals.' } },
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    _meta: { ui: { resourceUri: 'ui://wanigan/goal-inspector' } },
+  },
+  {
+    name: 'wanigan_goal_checkpoint',
+    title: 'Record a Goal checkpoint',
+    description: 'Record a concise, durable progress checkpoint for the calling session’s own Goal task. It cannot complete, approve, or change another task.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['nodeId', 'note'],
+      properties: { nodeId: { type: 'string' }, note: { type: 'string', maxLength: 4000 } },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'wanigan_goal_claim',
+    title: 'Claim a Goal file path',
+    description: 'Claim a relative project path for the calling session’s own Goal task. Overlapping active claims are refused before concurrent agents collide.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['nodeId', 'path'],
+      properties: { nodeId: { type: 'string' }, path: { type: 'string', maxLength: 1000 } },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+
   /* ── driving Wanigan itself ─────────────────────────────────────────
      Reading is free. Anything that adds state or starts an agent goes
      through the same human confirmation as spending money, because an
@@ -333,6 +381,16 @@ const INSTRUCTIONS =
   'want to work through a turn at a time, hand them over instead: wanigan_estimate_run to price it, wanigan_dry_run ' +
   'to prove one row works, then wanigan_submit_run. Submitting spends real money and requires a human to approve the ' +
   'estimate — it will block, and it may be declined. Poll wanigan_run_status and collect with wanigan_fetch_results.';
+
+/**
+ * A deliberately dependency-free MCP App shell. Hosts that implement MCP Apps
+ * may render it beside a Goal result; older hosts retain the structured/text
+ * result unchanged. No network is declared, so the sandbox has no reason to
+ * grant one.
+ */
+const GOAL_INSPECTOR_HTML = `<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;padding:16px;background:#171714;color:#f2efe7;font:14px/1.45 system-ui,sans-serif}h2{margin:0 0 6px;font-size:18px}p{margin:0;color:#c5c1b8}.hint{margin-top:13px;padding:10px;border-left:2px solid #cfa35f;background:#20201b;color:#dfdacd}
+</style></head><body><h2>Wanigan Goal</h2><p>This result is the durable contract for the work: objective, acceptance checks, evidence, claims, and review decision.</p><div class="hint">Use the structured Goal result in this conversation. Wanigan keeps approvals and final completion in Control.</div></body></html>`;
 
 /* ── argument narrowing ──────────────────────────────────────────────── */
 
@@ -485,7 +543,7 @@ function toolError(message: string): ToolResult {
   return { content: [{ type: 'text', text: message }], isError: true };
 }
 
-async function callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+async function callTool(name: string, args: Record<string, unknown>, callerSessionId: string | null): Promise<ToolResult> {
   switch (name) {
     case 'wanigan_estimate_run': {
       const cfg = runConfigFrom(args);
@@ -665,6 +723,29 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
       return ok({ runs });
     }
 
+    case 'wanigan_list_goals': {
+      const projectId = optStr(args.projectId, 'projectId');
+      const limit = optNum(args.limit, 'limit');
+      return ok({ goals: control.listDockets(projectId, limit ?? 80) });
+    }
+
+    case 'wanigan_get_goal': {
+      const goal = control.docket(str(args.goalId, 'goalId'));
+      return ok({ goal });
+    }
+
+    case 'wanigan_goal_checkpoint': {
+      if (!callerSessionId) return toolError('Goal checkpoints require a Wanigan-generated per-session MCP config. This caller can read Goals but cannot mutate them.');
+      const checkpoint = control.checkpointForSession(callerSessionId, str(args.nodeId, 'nodeId'), str(args.note, 'note'));
+      return ok({ checkpoint, note: 'Checkpoint recorded. Completing or approving a Goal remains an operator-controlled Control action.' });
+    }
+
+    case 'wanigan_goal_claim': {
+      if (!callerSessionId) return toolError('Goal claims require a Wanigan-generated per-session MCP config. This caller can read Goals but cannot mutate them.');
+      const claim = control.claimForSession(callerSessionId, str(args.nodeId, 'nodeId'), str(args.path, 'path'));
+      return ok({ claim });
+    }
+
     default:
       return toolError(`No such tool: ${name}. Call tools/list to see what this server offers.`);
   }
@@ -672,7 +753,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<To
 
 /* ── protocol ────────────────────────────────────────────────────────── */
 
-async function dispatch(msg: JsonRpcMessage): Promise<JsonRpcResponse | null> {
+async function dispatch(msg: JsonRpcMessage, callerSessionId: string | null): Promise<JsonRpcResponse | null> {
   const id: JsonRpcId = msg.id ?? null;
 
   // A message with no id is a notification: it gets no response, and it is not
@@ -684,7 +765,7 @@ async function dispatch(msg: JsonRpcMessage): Promise<JsonRpcResponse | null> {
     case 'initialize':
       return result(id, {
         protocolVersion: MCP_PROTOCOL_VERSION,
-        capabilities: { tools: { listChanged: false } },
+        capabilities: { tools: { listChanged: false }, resources: { listChanged: false } },
         serverInfo: { name: 'wanigan', title: 'Wanigan', version: app.getVersion() },
         instructions: INSTRUCTIONS,
       });
@@ -700,13 +781,22 @@ async function dispatch(msg: JsonRpcMessage): Promise<JsonRpcResponse | null> {
     case 'tools/list':
       return result(id, { tools: TOOLS });
 
+    case 'resources/list':
+      return result(id, { resources: [{ uri: 'ui://wanigan/goal-inspector', name: 'Wanigan Goal inspector', mimeType: 'text/html', description: 'A sandboxed, network-free companion view for durable Goal results.' }] });
+
+    case 'resources/read': {
+      const params = isRecord(msg.params) ? msg.params : {};
+      if (params.uri !== 'ui://wanigan/goal-inspector') return failure(id, INVALID_PARAMS, 'Unknown Wanigan resource URI.');
+      return result(id, { contents: [{ uri: 'ui://wanigan/goal-inspector', mimeType: 'text/html', text: GOAL_INSPECTOR_HTML }] });
+    }
+
     case 'tools/call': {
       const params = isRecord(msg.params) ? msg.params : {};
       const name = typeof params.name === 'string' ? params.name : '';
       if (!name) return failure(id, INVALID_PARAMS, 'tools/call needs a "name".');
       const args = isRecord(params.arguments) ? params.arguments : {};
       try {
-        return result(id, await callTool(name, args));
+        return result(id, await callTool(name, args, callerSessionId));
       } catch (e) {
         // A bad argument or a rejected run is the tool's answer, not a
         // protocol failure — reported inside the result so the model reads it
@@ -862,7 +952,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   }
 
   try {
-    const answer = await dispatch(parsed);
+    const sessionHeader = req.headers['x-wanigan-session'];
+    const callerSessionId = typeof sessionHeader === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(sessionHeader)
+      ? sessionHeader : null;
+    const answer = await dispatch(parsed, callerSessionId);
     // A notification has no reply: 202 with an empty body is the whole answer.
     if (!answer) { send(res, 202, null); return; }
     send(res, 200, answer);

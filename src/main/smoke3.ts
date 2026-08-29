@@ -12,6 +12,7 @@ import * as spend from './spend';
 import * as evals from './batch/evals';
 import * as cachediag from './batch/cachediag';
 import * as mcpRegistry from './mcp/registry';
+import * as mcpServer from './mcp/server';
 import * as ctxConfig from './context/config';
 import * as schedule from './schedule';
 import * as demo from './demo';
@@ -22,6 +23,7 @@ import * as observed from './observed';
 import * as otel from './otel';
 import * as policy from './policy';
 import * as control from './control';
+import { listGoalTrace, recordGoalTrace } from './goal-trace';
 import * as review from './review';
 import * as providers from './providers';
 import * as batch from './batch';
@@ -1232,6 +1234,46 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const tasks = control.mcpTasks(docket.id);
     check(tasks.length === 4 && tasks.some((task) => task.status === 'completed'),
       'docket nodes expose durable MCP-compatible task lifecycle state');
+    const receiptSession = `s_receipt_${Date.now().toString(36)}`;
+    const receiptConversation = '01a04e58-e0eb-7a41-82b7-ddcacf7a9038';
+    db().prepare(`INSERT INTO session_log (id,conversation_id,provider_id,project_id,project_path,project_name,started_at)
+      VALUES (?,?,?,?,?,?,?)`).run(receiptSession, receiptConversation, 'codex', controlProject.id, controlRepo, 'control', Date.now());
+    db().prepare('UPDATE work_nodes SET session_id=? WHERE id=?').run(receiptSession, planNode.id);
+    db().prepare(`INSERT INTO work_resume_receipts
+      (node_id,docket_id,session_id,conversation_id,provider_id,model,base_commit,worktree,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`).run(planNode.id, docket.id, receiptSession, null, 'codex', 'smoke', docket.baseCommit, controlRepo, Date.now(), Date.now());
+    const receipt = control.resumeReceipts(docket.id).find((row) => row.nodeId === planNode.id);
+    check(receipt?.state === 'exact' && receipt.conversationId === receiptConversation,
+      'a Goal recovery receipt refreshes the exact durable conversation before offering resume', receipt);
+    recordGoalTrace({ sessionId: receiptSession, source: 'hook', kind: 'PostToolUse', status: 'recorded', toolName: 'Read',
+      summary: 'README.md', durationMs: 12, costUsd: 0, inTokens: 0, outTokens: 0 });
+    check(listGoalTrace(docket.id).some((trace) => trace.sessionId === receiptSession && trace.toolName === 'Read'),
+      'content-free hook evidence is correlated to its durable Goal task');
+    const goalMcp = await mcpServer.startMcpServer();
+    const rpc = async (method: string, params: Record<string, unknown> = {}, sessionId?: string) => {
+      const response = await fetch(goalMcp.url, { method: 'POST', headers: {
+        'content-type': 'application/json', authorization: `Bearer ${goalMcp.token}`,
+        ...(sessionId ? { 'x-wanigan-session': sessionId } : {}),
+      }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+      return response.json() as Promise<{ result?: any }>;
+    };
+    try {
+      const listedTools = await rpc('tools/list');
+      check(listedTools.result?.tools?.some((tool: { name?: string }) => tool.name === 'wanigan_get_goal'),
+        'Wanigan MCP advertises durable Goal tools to supported sessions');
+      const readGoal = await rpc('tools/call', { name: 'wanigan_get_goal', arguments: { goalId: docket.id } });
+      check(readGoal.result?.structuredContent?.goal?.id === docket.id,
+        'Wanigan MCP returns a Goal contract as structured content');
+      const deniedClaim = await rpc('tools/call', { name: 'wanigan_goal_claim', arguments: { nodeId: planNode.id, path: 'other.ts' } }, 's_someone_else');
+      check(deniedClaim.result?.isError === true,
+        'a copied MCP config cannot mutate a different session’s Goal task');
+      const ownCheckpoint = await rpc('tools/call', { name: 'wanigan_goal_checkpoint', arguments: { nodeId: planNode.id, note: 'MCP checkpoint.' } }, receiptSession);
+      check(ownCheckpoint.result?.structuredContent?.checkpoint?.nodeId === planNode.id,
+        'the owning session can record a scoped Goal checkpoint through MCP');
+      const resource = await rpc('resources/read', { uri: 'ui://wanigan/goal-inspector' });
+      check(typeof resource.result?.contents?.[0]?.text === 'string',
+        'the Goal inspector MCP App resource is available without network access');
+    } finally { mcpServer.stopMcpServer(); }
   } catch (error) {
     check(false, `durable work control suite threw: ${error instanceof Error ? error.message : String(error)}`);
   }

@@ -1607,13 +1607,14 @@ function Mcp({ projects, prefs, pending, setFlag }: {
              right={!draft && <button className="btn" onClick={() => setDraft(BLANK)}>+ Add server</button>}>
 
       <div className="set-sub">Wanigan's own MCP server</div>
-      <Callout level="warning" title="Turning this on lets a session dispatch batch work that costs real money.">
-        An agent connected to this server can build and queue a batch run against your Claude Platform
-        key. <strong>Submission always stops for a human.</strong> Wanigan raises a system dialog
-        naming the run and its estimated cost, and nothing reaches the API until you press Submit —
-        a model asking is never enough, and a batch cannot be un-submitted. The server binds to
-        loopback with a bearer token minted at launch, so only a process on this machine that Wanigan
-        handed the token to can reach it.
+      <Callout level="warning" title="Turning this on lets compatible sessions use Wanigan tools.">
+        New Claude-compatible sessions receive Goal tools for reading their assigned Goal and recording
+        their own checkpoints. They cannot update another session’s Goal. The same local server can
+        build and queue a batch run against your Claude Platform key. <strong>Submission always stops
+        for a human.</strong> Wanigan raises a system dialog naming the run and its estimated cost, and
+        nothing reaches the API until you press Submit — a model asking is never enough, and a batch
+        cannot be un-submitted. The server binds to loopback with a bearer token minted at launch, so
+        only a process on this machine that Wanigan handed the token to can reach it.
       </Callout>
 
       {prefs && (
@@ -1621,8 +1622,8 @@ function Mcp({ projects, prefs, pending, setFlag }: {
           <Toggle title="Enable Wanigan's MCP server" on={prefs.mcpServerEnabled} busy={pending === 'mcp_server'}
                   onChange={(v) => void setFlag('mcp_server', v)}>
             Off by default. The port is bound once, when Wanigan starts, so switching this on takes
-            effect at the next launch. After that, point a session at the URL below and it can read
-            your runs and prepare a submission for you to approve.
+            effect at the next launch. New compatible sessions can then read their assigned Goal,
+            record a checkpoint, inspect runs, and prepare a submission for you to approve.
           </Toggle>
         </div>
       )}
