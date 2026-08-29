@@ -440,6 +440,7 @@ function migratePhases(d: Database.Database) {
   addColumn(d, 'session_log', 'origin', "TEXT NOT NULL DEFAULT 'wanigan'");
   d.exec("CREATE INDEX IF NOT EXISTS idx_runs_kind ON runs(kind, created_at DESC)");
   migrateLearning(d);
+  migrateControl(d);
 }
 
 /**
@@ -654,6 +655,134 @@ function migrateLearning(d: Database.Database) {
   addColumn(d, 'session_log', 'provider_profile_json', 'TEXT');
   addColumn(d, 'session_log', 'backend_id', 'TEXT');
   addColumn(d, 'session_log', 'harness_id', 'TEXT');
+}
+
+/**
+ * P30 · Durable agent control plane.
+ *
+ * A terminal is an execution detail, not the record of a piece of work. These
+ * rows preserve the human contract (objective, acceptance, evidence and
+ * decision) across a terminal exit, provider swap, app restart, or a handoff
+ * to a second agent. Prompts and terminal output deliberately stay out of the
+ * coordination tables; their owning session/transcript remains the source.
+ */
+function migrateControl(d: Database.Database) {
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS work_dockets (
+      id              TEXT PRIMARY KEY,
+      project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      title           TEXT NOT NULL,
+      objective       TEXT NOT NULL,
+      acceptance_json TEXT NOT NULL DEFAULT '[]',
+      risk            TEXT NOT NULL DEFAULT 'elevated',
+      budget_usd      REAL,
+      base_commit     TEXT,
+      status          TEXT NOT NULL DEFAULT 'draft',
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_work_dockets_project_updated
+      ON work_dockets(project_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_work_dockets_status_updated
+      ON work_dockets(status, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS work_nodes (
+      id              TEXT PRIMARY KEY,
+      docket_id       TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
+      kind            TEXT NOT NULL,
+      title           TEXT NOT NULL,
+      instructions    TEXT NOT NULL,
+      depends_json    TEXT NOT NULL DEFAULT '[]',
+      status          TEXT NOT NULL DEFAULT 'pending',
+      provider_id     TEXT,
+      model           TEXT,
+      session_id      TEXT,
+      worktree        TEXT,
+      started_at      INTEGER,
+      ended_at        INTEGER,
+      detail          TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_work_nodes_docket ON work_nodes(docket_id, id);
+    CREATE INDEX IF NOT EXISTS idx_work_nodes_session ON work_nodes(session_id);
+
+    CREATE TABLE IF NOT EXISTS work_claims (
+      id          TEXT PRIMARY KEY,
+      docket_id   TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
+      node_id     TEXT NOT NULL REFERENCES work_nodes(id) ON DELETE CASCADE,
+      path        TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      released_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_work_claims_open ON work_claims(path) WHERE released_at IS NULL;
+
+    CREATE TABLE IF NOT EXISTS work_proofs (
+      id           TEXT PRIMARY KEY,
+      docket_id    TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
+      node_id      TEXT REFERENCES work_nodes(id) ON DELETE SET NULL,
+      kind         TEXT NOT NULL,
+      status       TEXT NOT NULL,
+      summary      TEXT NOT NULL,
+      detail_json  TEXT NOT NULL DEFAULT '{}',
+      created_at   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_work_proofs_docket ON work_proofs(docket_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS work_checkpoints (
+      id              TEXT PRIMARY KEY,
+      docket_id       TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
+      node_id         TEXT REFERENCES work_nodes(id) ON DELETE SET NULL,
+      session_id      TEXT,
+      conversation_id TEXT,
+      repo_commit     TEXT,
+      worktree        TEXT,
+      note            TEXT NOT NULL,
+      created_at      INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_work_checkpoints_docket ON work_checkpoints(docket_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS work_model_outcomes (
+      id            TEXT PRIMARY KEY,
+      docket_id     TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
+      node_id       TEXT NOT NULL REFERENCES work_nodes(id) ON DELETE CASCADE,
+      provider_id   TEXT NOT NULL,
+      model         TEXT NOT NULL,
+      task_kind     TEXT NOT NULL,
+      accepted      INTEGER NOT NULL DEFAULT 0,
+      tests_passed  INTEGER NOT NULL DEFAULT 0,
+      cost_usd      REAL NOT NULL DEFAULT 0,
+      created_at    INTEGER NOT NULL,
+      UNIQUE(node_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_work_model_outcomes_route
+      ON work_model_outcomes(provider_id, model, task_kind, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS control_events (
+      id          TEXT PRIMARY KEY,
+      project_id  TEXT REFERENCES projects(id) ON DELETE SET NULL,
+      source      TEXT NOT NULL,
+      kind        TEXT NOT NULL,
+      summary     TEXT NOT NULL,
+      status      TEXT NOT NULL DEFAULT 'new',
+      docket_id   TEXT REFERENCES work_dockets(id) ON DELETE SET NULL,
+      created_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_control_events_status ON control_events(status, created_at DESC);
+
+    -- This mirrors the safe, server-owned task lifecycle from the current MCP
+    -- Tasks extension. It is an adapter boundary, not a claim that Wanigan
+    -- implements every experimental wire version.
+    CREATE TABLE IF NOT EXISTS mcp_task_records (
+      id          TEXT PRIMARY KEY,
+      docket_id   TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
+      node_id     TEXT NOT NULL REFERENCES work_nodes(id) ON DELETE CASCADE,
+      title       TEXT NOT NULL,
+      status      TEXT NOT NULL DEFAULT 'working',
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL,
+      UNIQUE(node_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_mcp_task_records_status ON mcp_task_records(status, updated_at DESC);
+  `);
 }
 
 export function logEvent(runId: string, level: 'info' | 'warn' | 'error', message: string) {

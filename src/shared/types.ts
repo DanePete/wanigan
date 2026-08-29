@@ -644,6 +644,117 @@ export type ReviewRun = {
   results: { command: string; exitCode: number | null; output: string; durationMs: number }[];
 };
 
+/* ── P30 · durable agent control plane ─────────────────────────────── */
+
+/** A Docket is the human-owned contract for a piece of agent work. */
+export type DocketStatus = 'draft' | 'executing' | 'review' | 'accepted' | 'rejected' | 'blocked';
+export type DocketRisk = 'low' | 'elevated' | 'high';
+export type DocketNodeKind = 'plan' | 'implement' | 'verify' | 'review';
+export type DocketNodeStatus = 'pending' | 'ready' | 'running' | 'completed' | 'failed' | 'canceled' | 'blocked';
+
+export type WorkDocket = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  title: string;
+  objective: string;
+  acceptance: string[];
+  risk: DocketRisk;
+  budgetUsd: number | null;
+  baseCommit: string | null;
+  status: DocketStatus;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type DocketNode = {
+  id: string;
+  docketId: string;
+  kind: DocketNodeKind;
+  title: string;
+  instructions: string;
+  dependsOn: string[];
+  status: DocketNodeStatus;
+  providerId: string | null;
+  model: string | null;
+  sessionId: string | null;
+  worktree: string | null;
+  startedAt: number | null;
+  endedAt: number | null;
+  detail: string | null;
+};
+
+export type DocketClaim = {
+  id: string;
+  docketId: string;
+  nodeId: string;
+  path: string;
+  createdAt: number;
+  releasedAt: number | null;
+};
+
+export type DocketProof = {
+  id: string;
+  docketId: string;
+  nodeId: string | null;
+  kind: 'plan' | 'test' | 'diff' | 'review' | 'decision';
+  status: 'recorded' | 'passed' | 'failed';
+  summary: string;
+  createdAt: number;
+};
+
+export type DocketCheckpoint = {
+  id: string;
+  docketId: string;
+  nodeId: string | null;
+  sessionId: string | null;
+  conversationId: string | null;
+  repoCommit: string | null;
+  worktree: string | null;
+  note: string;
+  createdAt: number;
+};
+
+export type DocketDetail = WorkDocket & {
+  nodes: DocketNode[];
+  claims: DocketClaim[];
+  proofs: DocketProof[];
+  checkpoints: DocketCheckpoint[];
+};
+
+export type ModelOutcome = {
+  providerId: string;
+  model: string;
+  taskKind: DocketNodeKind;
+  samples: number;
+  accepted: number;
+  testsPassed: number;
+  totalCostUsd: number;
+  acceptedRate: number | null;
+  testPassRate: number | null;
+};
+
+export type ControlEvent = {
+  id: string;
+  projectId: string | null;
+  source: string;
+  kind: string;
+  summary: string;
+  status: 'new' | 'triaged' | 'dismissed';
+  docketId: string | null;
+  createdAt: number;
+};
+
+export type McpTaskRecord = {
+  id: string;
+  docketId: string;
+  nodeId: string;
+  title: string;
+  status: 'working' | 'input_required' | 'completed' | 'failed' | 'cancelled';
+  createdAt: number;
+  updatedAt: number;
+};
+
 /* ── P11 · dispatcher ───────────────────────────────────────────────── */
 
 export type QueueKind = 'session' | 'headless' | 'batch';

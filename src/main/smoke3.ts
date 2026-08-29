@@ -21,6 +21,8 @@ import * as hooks from './hooks';
 import * as observed from './observed';
 import * as otel from './otel';
 import * as policy from './policy';
+import * as control from './control';
+import * as review from './review';
 import * as providers from './providers';
 import * as batch from './batch';
 import { egressReport } from './egress';
@@ -31,6 +33,7 @@ import { backfillCodexThreadIds, captureNewCodexThreadId, matchCodexThreads } fr
 import { __test as codexUsageTest } from './codex-usage';
 import { getSetting, setSetting } from './settings';
 import { db } from './db';
+import { addProject } from './store';
 import { EMPTY_USAGE, type HookInput, type RunConfig, type Session } from '../shared/types';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
@@ -1179,6 +1182,60 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'the caveats that stop the table overclaiming are carried whole, not summarised');
   otel.stopCollector();
 
+  /* ── phase 30 · durable work control ─────────────────────────────── */
+  say('── phase 30 · durable work control');
+  const controlRepo = path.join(tmp, 'control-repo');
+  fs.mkdirSync(controlRepo, { recursive: true });
+  try {
+    const gitControl = (...args: string[]) => execFileSync('git', ['-C', controlRepo, ...args], { stdio: 'pipe' }).toString();
+    gitControl('init', '-q', '-b', 'main');
+    gitControl('config', 'user.email', 'smoke@wanigan.test');
+    gitControl('config', 'user.name', 'Smoke');
+    fs.writeFileSync(path.join(controlRepo, 'README.md'), '# control\n');
+    gitControl('add', '-A'); gitControl('commit', '-qm', 'base');
+    const controlProject = await addProject(controlRepo);
+    const docket = control.createDocket({ projectId: controlProject.id, title: 'Control smoke',
+      objective: 'Prove the work contract survives without a live terminal.',
+      acceptance: ['Review gate passes.', 'A human review decision is recorded.'], risk: 'elevated' });
+    check(docket.nodes.length === 4 && docket.nodes[0].status === 'ready' && docket.nodes[1].status === 'blocked',
+      'a docket creates a dependency graph rather than four uncoordinated sessions');
+    const planNode = docket.nodes.find((node) => node.kind === 'plan')!;
+    const implementNode = docket.nodes.find((node) => node.kind === 'implement')!;
+    control.claimPath(implementNode.id, 'src/control.ts');
+    let overlapRefused = false;
+    try {
+      const second = control.createDocket({ projectId: controlProject.id, title: 'Collision', objective: 'Try an overlapping claim.',
+        acceptance: ['It is refused.'] });
+      control.claimPath(second.nodes.find((node) => node.kind === 'implement')!.id, 'src');
+    } catch { overlapRefused = true; }
+    check(overlapRefused, 'an overlapping live file claim is refused before parallel work starts');
+    const checkpoint = control.checkpointNode(planNode.id, 'Plan handoff saved.');
+    check(checkpoint.repoCommit !== null && checkpoint.conversationId === null,
+      'a checkpoint stores a concrete repository point without fabricating a conversation id');
+    control.completeNode(planNode.id, { detail: 'Plan reviewed.' });
+    check(control.docket(docket.id).nodes.find((node) => node.id === implementNode.id)?.status === 'ready',
+      'completing a prerequisite releases exactly its dependent task');
+    control.completeNode(implementNode.id, { detail: 'Implementation evidence recorded.' });
+    const verifyNode = control.docket(docket.id).nodes.find((node) => node.kind === 'verify')!;
+    review.saveRecipe(controlProject.id, ['true']);
+    const proof = await control.runProof(verifyNode.id);
+    check(proof.status === 'passed', 'the review gate becomes a durable passed proof rather than terminal text');
+    control.completeNode(verifyNode.id, { detail: 'Gate passed.' });
+    const reviewNode = control.docket(docket.id).nodes.find((node) => node.kind === 'review')!;
+    control.completeNode(reviewNode.id, { detail: 'Checked proof bundle.', decision: 'approve' });
+    check(control.docket(docket.id).status === 'accepted',
+      'a docket is accepted only after verification evidence and a human review decision');
+    const event = control.addEvent({ projectId: controlProject.id, source: 'ci', kind: 'failure', summary: 'Smoke CI failed.' });
+    const triaged = control.triageEvent(event.id, {});
+    check(control.listEvents('triaged').some((item) => item.docketId === triaged.id),
+      'event triage creates a durable docket without automatically starting an agent');
+    const tasks = control.mcpTasks(docket.id);
+    check(tasks.length === 4 && tasks.some((task) => task.status === 'completed'),
+      'docket nodes expose durable MCP-compatible task lifecycle state');
+  } catch (error) {
+    check(false, `durable work control suite threw: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
   /* ── wiring this smoke cannot call ─────────────────────────────────── */
   // startServices() never runs under WANIGAN_SMOKE and there is no renderer to
   // send an IPC message, so these read the source. Every one of them was dead
@@ -1190,6 +1247,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const providerSrc = sourceOf('src/main/providers.ts');
   const daemonSrc = sourceOf('src/main/daemon.ts');
   const reviewSrc = sourceOf('src/main/review.ts');
+  const controlSrc = sourceOf('src/main/control.ts');
+  const controlViewSrc = sourceOf('src/renderer/src/views/Control.tsx');
   const schedulesSrc = sourceOf('src/renderer/src/views/Schedules.tsx');
   const sessionsSrc = sourceOf('src/renderer/src/views/Sessions.tsx');
   const appSrc = sourceOf('src/renderer/src/App.tsx');
@@ -1232,6 +1291,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'the optional macOS scheduler is a windowless app daemon, not a timer that dies with the window');
   check(/handle\(\s*'review:run'/.test(mainSrc) && /review_runs/.test(reviewSrc),
     'review gates keep command evidence in a durable record, not only in a terminal scrollback');
+  check(/handle\(\s*'control:create'/.test(mainSrc) && /control:\s*\{/.test(preloadSrc)
+    && /<Control/.test(appSrc) && /Dockets/.test(controlViewSrc) && controlSrc.includes('work_dockets'),
+    'the durable control plane has schema, IPC, renderer binding and a visible operator surface');
 
   const kindDecl = /type Kind = ([^;]+);/.exec(schedulesSrc)?.[1] ?? '';
   check(kindDecl.includes("'batch'") && !kindDecl.includes("'session'"),

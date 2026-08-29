@@ -3,6 +3,7 @@ import { flushSync } from 'react-dom';
 import type { Attention, AttentionKind, MotionSetting, Project, ProviderInfo, Session } from '@shared/types';
 import Sessions from './views/Sessions';
 import Fleet from './views/Fleet';
+import Control from './views/Control';
 import Batches from './views/Batches';
 import InsightsView from './views/Insights';
 import Learning from './views/Learning';
@@ -37,6 +38,7 @@ type CodexStatus = {
 const TABS = [
   { id: 'sessions', label: 'Sessions' },
   { id: 'fleet',    label: 'Fleet' },
+  { id: 'control',  label: 'Control' },
   { id: 'batches',  label: 'Batches' },
   { id: 'insights', label: 'Insights' },
   { id: 'learning', label: 'Learning' },
@@ -417,7 +419,8 @@ export default function App() {
               </span>
             )}
           </NavTab>
-          <NavTab id="batches" n={3} tab={tab} go={go} label="Batches">
+          <NavTab id="control" n={3} tab={tab} go={go} label="Control" />
+          <NavTab id="batches" n={4} tab={tab} go={go} label="Batches">
             {activeRuns > 0 && (
               <span className="nav-badge"
                     title={`${activeRuns} batch run${activeRuns === 1 ? '' : 's'} in flight`}>{activeRuns}</span>
@@ -431,11 +434,11 @@ export default function App() {
               </span>
             )}
           </NavTab>
-          <NavTab id="insights" n={4} tab={tab} go={go} label="Insights" />
-          <NavTab id="learning" n={5} tab={tab} go={go} label="Learning" />
-          <NavTab id="plugins"  n={6} tab={tab} go={go} label="Plugins" />
-          <NavTab id="schedules" n={7} tab={tab} go={go} label="Schedules" />
-          <NavTab id="git"      n={8} tab={tab} go={go} label="Git" />
+          <NavTab id="insights" n={5} tab={tab} go={go} label="Insights" />
+          <NavTab id="learning" n={6} tab={tab} go={go} label="Learning" />
+          <NavTab id="plugins"  n={7} tab={tab} go={go} label="Plugins" />
+          <NavTab id="schedules" n={8} tab={tab} go={go} label="Schedules" />
+          <NavTab id="git"      n={9} tab={tab} go={go} label="Git" />
           <NavTab id="runs"     n={0} tab={tab} go={go} label="Runs" />
           <NavTab id="settings" tab={tab} go={go} label="Settings">
             {!hasKey && (
@@ -472,6 +475,7 @@ export default function App() {
                     onSendToBatch={(seed) => { setBatchSeed(seed); go('batches'); }} />
         )}
         {tab === 'fleet' && <Fleet projects={projects} onOpenSession={openSession} />}
+        {tab === 'control' && <Control projects={projects} providers={providers} onOpenSession={openSession} />}
         {tab === 'batches' && (
           <Batches projects={projects} hasKey={hasKey} onNeedKey={() => go('settings')}
                    seed={batchSeed} onSeedConsumed={() => setBatchSeed(null)} />

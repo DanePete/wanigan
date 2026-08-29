@@ -13,6 +13,8 @@ import type {
   LearningExperiment, LearningOverview, LearningSettings, LearningSignal,
   OptimizerDiagnostic, ProviderManifestInspection, ProviderPackInfo, ProviderProfileInfo, SkillDiagnostic,
   TeachWaniganInput,
+  ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode, DocketProof,
+  DocketRisk, McpTaskRecord, ModelOutcome, WorkDocket,
 } from '../shared/types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -303,6 +305,28 @@ const api = {
     saveRecipe: (projectId: string, commands: string[]) => call<ReviewRecipe>('review:saveRecipe', projectId, commands),
     history: (projectId: string, limit?: number) => call<ReviewRun[]>('review:history', projectId, limit),
     run: (projectId: string) => call<ReviewRun>('review:run', projectId),
+  },
+  // ── P30 · durable agent control plane ───────────────────────────────
+  control: {
+    list: (projectId?: string | null, limit?: number) => call<WorkDocket[]>('control:list', projectId, limit),
+    get: (id: string) => call<DocketDetail>('control:get', id),
+    create: (input: { projectId: string; title: string; objective: string; acceptance: string[]; risk?: DocketRisk; budgetUsd?: number | null }) =>
+      call<DocketDetail>('control:create', input),
+    claim: (nodeId: string, relPath: string) => call<DocketClaim>('control:claim', nodeId, relPath),
+    releaseClaim: (id: string) => call<boolean>('control:releaseClaim', id),
+    start: (nodeId: string, input: { providerId: string; model?: string; effort?: string; permissionMode?: string }) =>
+      call<DocketNode>('control:start', nodeId, input),
+    checkpoint: (nodeId: string, note: string) => call<DocketCheckpoint>('control:checkpoint', nodeId, note),
+    runProof: (nodeId: string) => call<DocketProof>('control:runProof', nodeId),
+    complete: (nodeId: string, input?: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }) =>
+      call<DocketNode>('control:complete', nodeId, input ?? {}),
+    outcomes: (projectId?: string | null) => call<ModelOutcome[]>('control:outcomes', projectId),
+    events: (status?: ControlEvent['status'] | 'all', limit?: number) => call<ControlEvent[]>('control:events', status, limit),
+    addEvent: (input: { projectId?: string | null; source: string; kind: string; summary: string }) => call<ControlEvent>('control:addEvent', input),
+    triageEvent: (id: string, input?: { title?: string; acceptance?: string[]; risk?: DocketRisk }) => call<DocketDetail>('control:triageEvent', id, input ?? {}),
+    dismissEvent: (id: string) => call<boolean>('control:dismissEvent', id),
+    mcpTasks: (docketId?: string) => call<McpTaskRecord[]>('control:mcpTasks', docketId),
+    cancelMcpTask: (id: string) => call<boolean>('control:cancelMcpTask', id),
   },
   // ── phase 26 · agent teams ───────────────────────────────────────────
   teams: {

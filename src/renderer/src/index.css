@@ -13,6 +13,7 @@
 @import './styles/schedule.css';
 @import './styles/pet.css';
 @import './styles/git.css';
+@import './styles/control.css';
 
 /* Same tokens as BatchStudio, so the two tools read as one stack. */
 :root {

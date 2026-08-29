@@ -63,6 +63,7 @@ import { isDaemonInvocation, daemonStatus, installDaemon, uninstallDaemon } from
 import * as review from './review';
 import * as codexStatus from './codex-status';
 import * as learning from './learning-service';
+import * as control from './control';
 
 // Before any other statement in this file, and before anything opens the
 // database: the rename moved userData, and everything that was in the old
@@ -1034,6 +1035,30 @@ function registerIpc() {
     catch (error) { console.warn('[wanigan] review learning signal skipped:', error); }
     return result;
   });
+
+  // ══ P30 · durable agent control plane ═══════════════════════════════
+  handle('control:list', (projectId?: string | null, limit?: number) => control.listDockets(projectId, limit));
+  handle('control:get', (id: string) => control.docket(id));
+  handle('control:create', (input: {
+    projectId: string; title: string; objective: string; acceptance?: string[];
+    risk?: 'low' | 'elevated' | 'high'; budgetUsd?: number | null;
+  }) => control.createDocket(input));
+  handle('control:claim', (nodeId: string, relPath: string) => control.claimPath(nodeId, relPath));
+  handle('control:releaseClaim', (id: string) => control.releaseClaim(id));
+  handle('control:start', (nodeId: string, input: { providerId: string; model?: string; effort?: string; permissionMode?: string }) =>
+    control.startNode(nodeId, input));
+  handle('control:checkpoint', (nodeId: string, note: string) => control.checkpointNode(nodeId, note));
+  handle('control:runProof', (nodeId: string) => control.runProof(nodeId));
+  handle('control:complete', (nodeId: string, input?: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }) =>
+    control.completeNode(nodeId, input ?? {}));
+  handle('control:outcomes', (projectId?: string | null) => control.outcomes(projectId));
+  handle('control:events', (status?: 'new' | 'triaged' | 'dismissed' | 'all', limit?: number) => control.listEvents(status ?? 'all', limit));
+  handle('control:addEvent', (input: { projectId?: string | null; source: string; kind: string; summary: string }) => control.addEvent(input));
+  handle('control:triageEvent', (id: string, input?: { title?: string; acceptance?: string[]; risk?: 'low' | 'elevated' | 'high' }) =>
+    control.triageEvent(id, input ?? {}));
+  handle('control:dismissEvent', (id: string) => control.dismissEvent(id));
+  handle('control:mcpTasks', (docketId?: string) => control.mcpTasks(docketId));
+  handle('control:cancelMcpTask', (id: string) => control.cancelMcpTask(id));
 
   // ══ phase 26 · agent teams ══════════════════════════════════════════
   handle('teams:read', () => teams.readTeams());

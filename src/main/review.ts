@@ -52,20 +52,30 @@ async function runCommand(command: string, cwd: string): Promise<ReviewRun['resu
   });
 }
 
-export async function run(projectId: string): Promise<ReviewRun> {
+/**
+ * The control plane may point a gate at a worktree created by Wanigan. Keeping
+ * this internal argument out of the IPC surface means a renderer can never
+ * turn a saved review recipe into arbitrary-shell execution elsewhere.
+ */
+export async function runAt(projectId: string, cwd?: string): Promise<ReviewRun> {
   const project = projectById(projectId);
   if (!project) throw new Error('Project not found.');
+  const root = cwd ?? project.path;
   const commands = recipe(projectId).commands;
   if (!commands.length) throw new Error('Add at least one review command before running a gate.');
   const id = `rev_${randomUUID().slice(0, 12)}`; const startedAt = Date.now();
   db().prepare('INSERT INTO review_runs (id, project_id, started_at, status, results_json) VALUES (?,?,?,?,?)').run(id, projectId, startedAt, 'running', '[]');
   const results: ReviewRun['results'] = [];
   for (const command of commands) {
-    const result = await runCommand(command, project.path); results.push(result);
+    const result = await runCommand(command, root); results.push(result);
     if (result.exitCode !== 0) break;
   }
   const status: ReviewRun['status'] = results.length === commands.length && results.every((r) => r.exitCode === 0) ? 'passed' : 'failed';
   const endedAt = Date.now();
   db().prepare('UPDATE review_runs SET ended_at=?, status=?, results_json=? WHERE id=?').run(endedAt, status, JSON.stringify(results), id);
   return { id, projectId, startedAt, endedAt, status, results };
+}
+
+export async function run(projectId: string): Promise<ReviewRun> {
+  return runAt(projectId);
 }
