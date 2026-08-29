@@ -774,6 +774,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && shell.headers.get('x-frame-options') === 'DENY',
     'the content-free mobile shell is no-store and cannot be framed');
     check(!shellText.includes(privateMarker), 'the unauthenticated shell contains no fleet data');
+    const manifest = await fetch(new URL('manifest.webmanifest', monitor.localUrl));
+    check(manifest.ok && JSON.parse(await manifest.text()).display === 'standalone',
+      'the paired dashboard is installable as an iPad Home Screen web app');
 
     const apiUrl = new URL('api/status', monitor.localUrl).toString();
     const refused = await fetch(apiUrl);
@@ -792,6 +795,37 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(write.status === 405 && write.headers.get('allow') === 'GET',
       'the monitor has no write verb or remote-control route', write.status);
 
+    const controlUrl = new URL('api/control', monitor.localUrl).toString();
+    const lockedControl = await fetch(controlUrl, { headers: { authorization: `Bearer ${token}` } });
+    check(lockedControl.status === 403, 'paired monitoring stays read-only until remote control is separately enabled', lockedControl.status);
+    const remoteActions: string[] = [];
+    mobile.configureMobileControlSource({
+      projects: async () => [{ id: 'prj_mobile', name: 'Mobile repo', branch: 'main' }],
+      providers: async () => [{ id: 'codex', label: 'Codex', available: true }],
+      launch: async (input) => { remoteActions.push(`launch:${input.projectId}:${input.providerId}:${input.prompt}`); return { id: 's_mobile', title: 'Codex · Mobile repo' }; },
+      prompt: async (id, prompt) => { remoteActions.push(`prompt:${id}:${prompt}`); },
+      interrupt: async (id) => { remoteActions.push(`interrupt:${id}`); return true; },
+    });
+    await mobile.setMobileConfig({ remoteControlEnabled: true });
+    const controls = await fetch(controlUrl, { headers: { authorization: `Bearer ${token}` } });
+    const launch = await fetch(new URL('api/action', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'launch', projectId: 'prj_mobile', providerId: 'codex', prompt: 'Run the check' }),
+    });
+    check(controls.ok && JSON.parse(await controls.text()).projects?.[0]?.id === 'prj_mobile'
+      && launch.status === 201 && remoteActions[0] === 'launch:prj_mobile:codex:Run the check',
+    'a paired iPad receives only launch choices and can start an explicitly requested session');
+    const remotePrompt = await fetch(new URL('api/action', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'prompt', sessionId: 's_mobile', prompt: 'Continue' }),
+    });
+    const remoteInterrupt = await fetch(new URL('api/action', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'interrupt', sessionId: 's_mobile' }),
+    });
+    check(remotePrompt.ok && remoteInterrupt.ok && remoteActions.slice(1).join('|') === 'prompt:s_mobile:Continue|interrupt:s_mobile',
+      'remote control allows instruction and interrupt, not hidden terminal browsing or permission approval');
+
     const rotated = await mobile.regenerateMobileToken();
     const oldToken = await fetch(apiUrl, { headers: { authorization: `Bearer ${token}` } });
     const newToken = new URLSearchParams(new URL(rotated.pairingUrl).hash.slice(1)).get('token') ?? '';
@@ -800,8 +834,10 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       'rotating the pairing link revokes old phones immediately');
   } finally {
     setSetting('mobile_dashboard_enabled', '0');
+    setSetting('mobile_remote_control_enabled', '0');
     mobile.stopMobileMonitor();
     mobile.configureSnapshotSource(null);
+    mobile.configureMobileControlSource(null);
   }
 
   say('── phone fleet · bounded outbound alert');

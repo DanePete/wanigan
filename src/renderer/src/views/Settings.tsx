@@ -987,12 +987,13 @@ function PhoneMonitor() {
   return (
     <Section title="Phone monitor"
              hint="Walk away without losing the fleet: a private read-only status page and opt-in phone alerts for the same states as desktop notifications.">
-      <Callout title="The phone surface cannot type into a terminal or approve a prompt.">
+      <Callout title="The dashboard is read-only until you explicitly enable iPad control.">
         It receives the Mac hostname, Wanigan version, an internal session id, project/session names,
         provider/model, state, session and update timestamps, spend, request/error counts, token counts
         and line totals.
         It does not receive repository paths, commands, hook details, terminal output, transcripts,
-        worktrees, process ids or conversation ids. Remote controls need a separate threat model and are not hidden behind this switch.
+        worktrees, process ids or conversation ids. iPad control is a separate, disabled-by-default switch below;
+        it can start sessions, send instructions and interrupt turns, but cannot approve a permission request.
       </Callout>
 
       {!status ? (
@@ -1007,6 +1008,12 @@ function PhoneMonitor() {
                   onChange={(on) => void configure({ dashboardEnabled: on }, on ? 'Phone dashboard started' : 'Phone dashboard stopped')}>
             Opens an authenticated HTTP service on <span className="mono">127.0.0.1</span> only.
             A phone cannot reach that listener directly; a private HTTPS reverse proxy such as Tailscale Serve connects it without opening Wanigan to the LAN or public internet.
+          </Toggle>
+
+          <Toggle title="Allow paired iPad control" on={status.config.remoteControlEnabled} busy={busy !== null}
+                  onChange={(on) => void configure({ remoteControlEnabled: on }, on ? 'Paired iPad control enabled' : 'Paired iPad control disabled')}>
+            Requires the dashboard above. A paired browser can start an agent session, send its next instruction,
+            or interrupt a turn. It cannot approve permissions, browse terminal output, manage files, or change settings.
           </Toggle>
 
           {status.config.dashboardEnabled && (

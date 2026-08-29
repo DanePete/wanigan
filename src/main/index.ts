@@ -278,6 +278,20 @@ app.whenReady().then(async () => {
       otel.usageForMany(sessions.map((value) => value.id)),
     );
   });
+  mobile.configureMobileControlSource({
+    projects: async () => listProjects().map((project) => ({ id: project.id, name: project.name, branch: project.branch })),
+    providers: async () => (await detectProviders()).map((provider) => ({ id: provider.id, label: provider.label, available: Boolean(provider.path) })),
+    launch: async ({ projectId, providerId, prompt }) => {
+      const session = await createSession({ providerId, projectId, initialPrompt: prompt });
+      return { id: session.id, title: session.title };
+    },
+    prompt: async (sessionId, prompt) => {
+      const session = listSessions().find((value) => value.id === sessionId && value.status !== 'exited');
+      if (!session) throw new Error('That session is no longer running.');
+      writeSession(sessionId, `${prompt}\r`);
+    },
+    interrupt: async (sessionId) => interruptSession(sessionId),
+  });
   await startServices();
   try { await mobile.startMobileMonitor(); }
   catch (e) { console.warn('[wanigan] phone monitor did not start:', e); }

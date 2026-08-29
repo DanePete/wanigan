@@ -545,6 +545,8 @@ export type MobileFleetSnapshot = {
 
 export type MobileMonitorConfig = {
   dashboardEnabled: boolean;
+  /** Enables paired iPad controls; this is separate from the read-only dashboard. */
+  remoteControlEnabled: boolean;
   port: number;
   /** Tailnet HTTPS URL (or another private reverse proxy) used for deep links. */
   dashboardUrl: string;

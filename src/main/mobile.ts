@@ -45,6 +45,7 @@ const TOPIC_BYTES = 24;
 
 const KEY = {
   dashboardEnabled: 'mobile_dashboard_enabled',
+  remoteControlEnabled: 'mobile_remote_control_enabled',
   port: 'mobile_port',
   dashboardUrl: 'mobile_dashboard_url',
   token: 'mobile_token',
@@ -58,6 +59,13 @@ let memorySecrets: MobileSecrets | null = null;
 let secretsError: string | null = null;
 
 type SnapshotSource = () => MobileFleetSnapshot | Promise<MobileFleetSnapshot>;
+export type MobileControlSource = {
+  projects: () => Promise<{ id: string; name: string; branch: string | null }[]>;
+  providers: () => Promise<{ id: string; label: string; available: boolean }[]>;
+  launch: (input: { projectId: string; providerId: string; prompt: string }) => Promise<{ id: string; title: string }>;
+  prompt: (sessionId: string, prompt: string) => Promise<void>;
+  interrupt: (sessionId: string) => Promise<boolean>;
+};
 
 export type MobileConfigPatch = Partial<MobileMonitorConfig>;
 
@@ -78,6 +86,7 @@ export type MobilePushResult = {
 };
 
 let snapshotSource: SnapshotSource | null = null;
+let controlSource: MobileControlSource | null = null;
 let server: http.Server | null = null;
 let serverPort: number | null = null;
 let pendingServer: http.Server | null = null;
@@ -86,6 +95,7 @@ let lifecycleVersion = 0;
 let lastServerError: string | null = null;
 let pushResult: MobilePushResult | null = null;
 const sockets = new Set<Socket>();
+const actionTimes: number[] = [];
 
 const ATTENTION = new Set(['permission', 'error', 'finished', 'idle', 'working']);
 const SESSION_STATUS = new Set(['starting', 'running', 'exited']);
@@ -238,10 +248,16 @@ export function configureSnapshotSource(fn: SnapshotSource | null): void {
   snapshotSource = fn;
 }
 
+/** The desktop main process supplies the small, explicit remote-control bridge. */
+export function configureMobileControlSource(source: MobileControlSource | null): void {
+  controlSource = source;
+}
+
 /** Read the persisted, non-secret monitor configuration. */
 export function mobileConfig(): MobileMonitorConfig {
   return {
     dashboardEnabled: boolSetting(KEY.dashboardEnabled),
+    remoteControlEnabled: boolSetting(KEY.remoteControlEnabled),
     port: portSetting(),
     dashboardUrl: getSetting(KEY.dashboardUrl, '').trim(),
     pushEnabled: boolSetting(KEY.pushEnabled),
@@ -281,6 +297,7 @@ export async function setMobileConfig(patch: MobileConfigPatch): Promise<MobileM
   const current = mobileConfig();
   const next: MobileMonitorConfig = {
     dashboardEnabled: patch.dashboardEnabled ?? current.dashboardEnabled,
+    remoteControlEnabled: patch.remoteControlEnabled ?? current.remoteControlEnabled,
     port: patch.port ?? current.port,
     dashboardUrl: patch.dashboardUrl === undefined
       ? current.dashboardUrl
@@ -318,6 +335,7 @@ export async function setMobileConfig(patch: MobileConfigPatch): Promise<MobileM
   // Validate every field before writing any of them, so a rejected patch does
   // not leave half of a configuration behind.
   setSetting(KEY.dashboardEnabled, next.dashboardEnabled ? '1' : '0');
+  setSetting(KEY.remoteControlEnabled, next.remoteControlEnabled ? '1' : '0');
   setSetting(KEY.port, String(next.port));
   setSetting(KEY.dashboardUrl, next.dashboardUrl);
   setSetting(KEY.pushEnabled, next.pushEnabled ? '1' : '0');
@@ -523,6 +541,73 @@ async function serveStatus(res: http.ServerResponse): Promise<void> {
   }
 }
 
+function controlAllowed(): boolean {
+  return mobileConfig().dashboardEnabled && mobileConfig().remoteControlEnabled && controlSource !== null;
+}
+
+function actionRateAllowed(): boolean {
+  const since = Date.now() - 60_000;
+  while (actionTimes.length && actionTimes[0] < since) actionTimes.shift();
+  if (actionTimes.length >= 20) return false;
+  actionTimes.push(Date.now());
+  return true;
+}
+
+async function requestJson(req: http.IncomingMessage, limit = 16_384): Promise<Record<string, unknown> | null> {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const chunk of req) {
+    const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    bytes += piece.length;
+    if (bytes > limit) throw new Error('Request is too large.');
+    chunks.push(piece);
+  }
+  try {
+    const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  } catch { return null; }
+}
+
+function actionText(value: unknown, label: string): string {
+  if (typeof value !== 'string') throw new Error(`${label} is required.`);
+  const text = value.trim();
+  if (!text || text.length > 8_000 || /\u0000/.test(text)) throw new Error(`${label} must be 1–8000 characters.`);
+  return text;
+}
+
+async function serveControl(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+  const source = controlSource;
+  if (!controlAllowed() || !source) { json(res, 403, { error: 'Remote control is disabled in Wanigan Settings.' }); return; }
+  if (req.method === 'GET' && url.pathname === '/api/control') {
+    const [projects, providers] = await Promise.all([source.projects(), source.providers()]);
+    json(res, 200, { projects, providers });
+    return;
+  }
+  if (req.method !== 'POST' || url.pathname !== '/api/action') {
+    json(res, 405, { error: 'Unsupported control operation.' }, { allow: 'GET, POST' }); return;
+  }
+  if (!actionRateAllowed()) { json(res, 429, { error: 'Too many remote actions. Wait a minute and try again.' }); return; }
+  const body = await requestJson(req);
+  const action = typeof body?.action === 'string' ? body.action : '';
+  try {
+    if (action === 'launch') {
+      const session = await source.launch({ projectId: actionText(body?.projectId, 'Project'), providerId: actionText(body?.providerId, 'Provider'), prompt: actionText(body?.prompt, 'Prompt') });
+      json(res, 201, { ok: true, session: { id: safeString(session.id, 160), title: safeString(session.title, 200) } }); return;
+    }
+    if (action === 'prompt') {
+      await source.prompt(actionText(body?.sessionId, 'Session'), actionText(body?.prompt, 'Prompt'));
+      json(res, 200, { ok: true }); return;
+    }
+    if (action === 'interrupt') {
+      const interrupted = await source.interrupt(actionText(body?.sessionId, 'Session'));
+      json(res, interrupted ? 200 : 409, { ok: interrupted }); return;
+    }
+    json(res, 400, { error: 'Unknown remote action.' });
+  } catch (error) {
+    json(res, 400, { error: safeString(error instanceof Error ? error.message : String(error), 240, 'Remote action was refused.') });
+  }
+}
+
 function dashboardHtml(nonce: string): string {
   return `<!doctype html>
 <html lang="en">
@@ -530,6 +615,11 @@ function dashboardHtml(nonce: string): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon.svg">
   <title>Wanigan Mobile</title>
   <style nonce="${nonce}">
     :root { color-scheme: dark; --bg:#090b0f; --panel:#11151c; --line:#252b35; --ink:#edf0f4; --dim:#929cab; --faint:#667080; --accent:#e1a651; --critical:#ff7167; --serious:#ef9b6b; --good:#70ca91; --blue:#73a8e8; }
@@ -567,6 +657,18 @@ function dashboardHtml(nonce: string): string {
     .notice { padding:18px; color:var(--dim); }
     .notice strong { color:var(--ink); display:block; margin-bottom:4px; }
     .hidden { display:none; }
+    .controls { margin-top:20px; }
+    .control-card { border:1px solid var(--line); border-radius:13px; background:linear-gradient(145deg,#151a22,#0e1218); padding:14px; margin-top:10px; }
+    .control-card h3 { margin:0 0 4px; font-size:15px; }
+    .control-card p { color:var(--dim); font-size:12px; margin-bottom:10px; }
+    .fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+    select,textarea,button { font:inherit; }
+    select,textarea { width:100%; color:var(--ink); background:#0a0e14; border:1px solid var(--line); border-radius:9px; padding:10px; font-size:16px; }
+    textarea { min-height:78px; resize:vertical; grid-column:1 / -1; }
+    button { border:1px solid #d89b43; background:#e1a651; color:#17110a; font-weight:760; border-radius:9px; min-height:42px; padding:8px 12px; touch-action:manipulation; }
+    button.secondary { color:var(--ink); background:transparent; border-color:var(--line); }
+    button:disabled { opacity:.55; }
+    .control-result { color:var(--dim); min-height:20px; font-size:12px; margin-top:8px; }
     footer { color:var(--faint); font-size:11px; margin-top:24px; text-align:center; }
     @media (max-width:680px) { .stats { grid-template-columns:repeat(2,minmax(0,1fr)); } .grid { grid-template-columns:1fr; } header { align-items:flex-start; flex-direction:column; gap:8px; } }
     @media (prefers-reduced-motion:no-preference) { .dot.live { animation:pulse 2.4s ease-in-out infinite; } @keyframes pulse { 50% { box-shadow:0 0 0 6px #70ca9114; } } }
@@ -590,6 +692,18 @@ function dashboardHtml(nonce: string): string {
       <h2>Sessions</h2>
       <div id="sessions" class="grid"></div>
       <div id="empty" class="notice hidden"><strong>No session panes are open.</strong>Start one in Wanigan and it will appear on the next poll.</div>
+      <section id="controls" class="controls hidden">
+        <h2>iPad control</h2>
+        <div class="control-card">
+          <h3>Start an agent</h3><p>Launches a normal Wanigan session on your Mac. The prompt is sent to the selected provider.</p>
+          <form id="launch-form" class="fields"><select id="project" aria-label="Project"></select><select id="provider" aria-label="Provider"></select><textarea id="launch-prompt" maxlength="8000" placeholder="What should this agent do?"></textarea><button>Start session</button></form>
+        </div>
+        <div class="control-card">
+          <h3>Steer a running agent</h3><p>Send the next instruction or interrupt the current turn. Permission decisions still stay at the Mac.</p>
+          <form id="prompt-form" class="fields"><select id="session" aria-label="Running session"></select><textarea id="session-prompt" maxlength="8000" placeholder="Next instruction"></textarea><button>Send instruction</button><button id="interrupt" type="button" class="secondary">Interrupt turn</button></form>
+        </div>
+        <div id="control-result" class="control-result" role="status"></div>
+      </section>
     </section>
     <footer id="updated">No fleet data yet.</footer>
   </main>
@@ -604,6 +718,38 @@ function dashboardHtml(nonce: string): string {
       const dot = byId('dot');
       const connection = byId('connection');
       let busy = false;
+      let controlOptions = null;
+      let visibleSessions = [];
+      const control = byId('controls');
+      const controlResult = byId('control-result');
+
+      async function api(path, init) {
+        const token = localStorage.getItem(KEY);
+        const endpoint = new URL(path, location.href); endpoint.hash = '';
+        const response = await fetch(endpoint, Object.assign({ headers: { authorization: 'Bearer ' + token }, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' }, init || {}));
+        if (response.status === 401) { localStorage.removeItem(KEY); throw new Error('Pairing expired.'); }
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || ('Wanigan returned HTTP ' + response.status + '.'));
+        return data;
+      }
+      function option(value, label) { const out = node('option', '', label); out.value = value; return out; }
+      async function renderControls(sessions) {
+        visibleSessions = sessions.filter((session) => session.status !== 'exited');
+        try {
+          if (!controlOptions) controlOptions = await api('api/control');
+          const project = byId('project'), provider = byId('provider'), session = byId('session');
+          project.replaceChildren(...(controlOptions.projects || []).map((value) => option(value.id, value.name + (value.branch ? ' · ' + value.branch : ''))));
+          provider.replaceChildren(...(controlOptions.providers || []).filter((value) => value.available).map((value) => option(value.id, value.label)));
+          session.replaceChildren(...visibleSessions.map((value) => option(value.id, value.title + ' · ' + value.projectName)));
+          byId('launch-form').querySelector('button').disabled = !project.value || !provider.value;
+          byId('prompt-form').querySelector('button').disabled = !session.value;
+          byId('interrupt').disabled = !session.value;
+          control.classList.remove('hidden');
+        } catch (error) {
+          control.classList.add('hidden');
+          if (error instanceof Error && !/disabled/.test(error.message)) controlResult.textContent = error.message;
+        }
+      }
 
       function tokenFromFragment() {
         const raw = location.hash.slice(1);
@@ -674,6 +820,7 @@ function dashboardHtml(nonce: string): string {
         byId('empty').classList.toggle('hidden', sessions.length !== 0);
         text('updated', 'Updated ' + new Date(snapshot.generatedAt || Date.now()).toLocaleTimeString() +
           (snapshot.version ? ' · Wanigan ' + snapshot.version : ''));
+        void renderControls(sessions);
       }
 
       function state(kind, label) {
@@ -716,6 +863,23 @@ function dashboardHtml(nonce: string): string {
       }
 
       tokenFromFragment();
+      byId('launch-form').addEventListener('submit', async (event) => {
+        event.preventDefault(); controlResult.textContent = 'Starting session…';
+        try {
+          const result = await api('api/action', { method:'POST', headers:{ 'content-type':'application/json', authorization:'Bearer ' + localStorage.getItem(KEY) }, body:JSON.stringify({ action:'launch', projectId:byId('project').value, providerId:byId('provider').value, prompt:byId('launch-prompt').value }) });
+          byId('launch-prompt').value = ''; controlResult.textContent = 'Started ' + result.session.title + '.'; void poll();
+        } catch (error) { controlResult.textContent = error instanceof Error ? error.message : 'Could not start the session.'; }
+      });
+      byId('prompt-form').addEventListener('submit', async (event) => {
+        event.preventDefault(); controlResult.textContent = 'Sending instruction…';
+        try { await api('api/action', { method:'POST', headers:{ 'content-type':'application/json', authorization:'Bearer ' + localStorage.getItem(KEY) }, body:JSON.stringify({ action:'prompt', sessionId:byId('session').value, prompt:byId('session-prompt').value }) }); byId('session-prompt').value = ''; controlResult.textContent = 'Instruction sent.'; }
+        catch (error) { controlResult.textContent = error instanceof Error ? error.message : 'Could not send instruction.'; }
+      });
+      byId('interrupt').addEventListener('click', async () => {
+        controlResult.textContent = 'Interrupting…';
+        try { await api('api/action', { method:'POST', headers:{ 'content-type':'application/json', authorization:'Bearer ' + localStorage.getItem(KEY) }, body:JSON.stringify({ action:'interrupt', sessionId:byId('session').value }) }); controlResult.textContent = 'Interrupt sent.'; }
+        catch (error) { controlResult.textContent = error instanceof Error ? error.message : 'Could not interrupt the session.'; }
+      });
       void poll();
       setInterval(() => { void poll(); }, 3000);
       document.addEventListener('visibilitychange', () => { if (!document.hidden) void poll(); });
@@ -725,6 +889,14 @@ function dashboardHtml(nonce: string): string {
 </html>`;
 }
 
+function dashboardManifest(): string {
+  return JSON.stringify({ name: 'Wanigan Remote', short_name: 'Wanigan', display: 'standalone', start_url: './', background_color: '#090b0f', theme_color: '#090b0f', icons: [{ src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }] });
+}
+
+function dashboardIcon(): string {
+  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="42" fill="#11151c"/><path d="M45 46h102v100H45z" fill="#e1a651"/><path d="M61 68h70v16H61zm0 30h70v16H61zm0 30h45v16H61z" fill="#17110a"/></svg>';
+}
+
 async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   if (!isLoopback(req.socket.remoteAddress)) {
     req.socket.destroy();
@@ -732,12 +904,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   }
 
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-  if (req.method !== 'GET') {
-    json(res, 405, { error: 'The mobile monitor is read-only.' }, { allow: 'GET' });
-    return;
-  }
-
   if (url.pathname === '/' || url.pathname === '/index.html') {
+    if (req.method !== 'GET') { json(res, 405, { error: 'Method not allowed.' }, { allow: 'GET' }); return; }
     // The shell carries no fleet data and cannot authenticate a top-level
     // navigation: URL fragments are deliberately never sent over HTTP. The
     // bearer-protected API below is the authenticated dashboard boundary.
@@ -746,7 +914,19 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     return;
   }
 
+  if (url.pathname === '/manifest.webmanifest') {
+    if (req.method !== 'GET') { json(res, 405, { error: 'Method not allowed.' }, { allow: 'GET' }); return; }
+    send(res, 200, 'application/manifest+json; charset=utf-8', dashboardManifest());
+    return;
+  }
+  if (url.pathname === '/icon.svg') {
+    if (req.method !== 'GET') { json(res, 405, { error: 'Method not allowed.' }, { allow: 'GET' }); return; }
+    send(res, 200, 'image/svg+xml; charset=utf-8', dashboardIcon());
+    return;
+  }
+
   if (url.pathname === '/api/status') {
+    if (req.method !== 'GET') { json(res, 405, { error: 'Method not allowed.' }, { allow: 'GET' }); return; }
     if (!authorized(req)) {
       json(res, 401, { error: 'Missing or invalid mobile monitor token.' }, {
         'www-authenticate': 'Bearer realm="wanigan-mobile"',
@@ -754,6 +934,15 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       return;
     }
     await serveStatus(res);
+    return;
+  }
+
+  if (url.pathname === '/api/control' || url.pathname === '/api/action') {
+    if (!authorized(req)) {
+      json(res, 401, { error: 'Missing or invalid mobile monitor token.' }, { 'www-authenticate': 'Bearer realm="wanigan-mobile"' });
+      return;
+    }
+    await serveControl(req, res, url);
     return;
   }
 
