@@ -1,4 +1,4 @@
-.control-view { max-width: 1500px; margin: 0 auto; padding: 26px 30px 54px; display: grid; gap: 18px; }
+.control-view { flex: 1; min-height: 0; overflow-y: auto; max-width: 1500px; width: 100%; box-sizing: border-box; margin: 0 auto; padding: 26px 30px 54px; display: grid; gap: 18px; }
 .control-head, .control-card-head, .control-inline, .control-launch, .control-evidence, .control-node, .control-review-actions { display: flex; gap: 14px; }
 .control-head { justify-content: space-between; align-items: end; }
 .control-head h1 { margin: 4px 0; font-size: 28px; }
