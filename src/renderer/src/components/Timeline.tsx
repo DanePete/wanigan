@@ -405,6 +405,8 @@ function markFor(r: Row): Mark {
         : { glyph: '▶', word: 'running', tone: 'var(--accent)', soft: 'var(--accent-soft)', loud: true };
     case 'PermissionRequest':
       return { glyph: '⏸', word: 'asked you', tone: 'var(--warning)', soft: 'var(--warning-soft)', loud: true };
+    case 'PermissionResponse':
+      return { glyph: '↩', word: 'you responded', tone: 'var(--text-dim)' };
     case 'PermissionDenied':
       return { glyph: '⊘', word: 'denied', tone: 'var(--serious)', soft: 'var(--serious-soft)', loud: true };
     case 'UserPromptSubmit':

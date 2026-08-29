@@ -97,19 +97,23 @@ function tailFor(sessionId: string): SessionEvent[] {
 const lastOutput = new Map<string, number>();
 
 /**
- * Optional: tell the queue that a session produced terminal output.
+ * Tell the queue that a session produced terminal output.
  *
  * Idle means no hook event *and* no output. An agent streaming a long answer
  * fires no hooks at all, so without this it drops into the idle bucket while it
- * is visibly working. Wiring it into the PTY data path is the integrator's call;
- * unwired, idle is decided on hook events alone and a quiet-but-streaming
- * session reads as idle after 90 seconds.
+ * is visibly working. Called from the PTY data path in sessions.ts, which
+ * throttles it to roughly one call a second: the stamp is only ever read
+ * against the 90-second threshold below, so finer resolution buys nothing.
  */
 export function noteOutput(sessionId: string, at: number = Date.now()) {
   lastOutput.set(sessionId, at);
 }
 
-/** Drop a closed session, so the output map does not grow for the life of the app. */
+/**
+ * Drop a closed session, so the output map does not grow for the life of the
+ * app. Called from the PTY exit path; an exited session is classified from its
+ * exit code well before this map is consulted, so nothing is lost by it.
+ */
 export function forgetSession(sessionId: string) {
   lastOutput.delete(sessionId);
 }
@@ -175,6 +179,7 @@ function mk(
   session: Session,
   kind: AttentionKind,
   since: number,
+  transitionId: string,
   detail: string | null,
   tool: string | null,
   now: number
@@ -182,6 +187,7 @@ function mk(
   return {
     sessionId: session.id,
     kind,
+    transitionId,
     // Clamped: an event stamped in the future would sort ahead of a real
     // four-minute wait and pin itself to the top of the queue.
     since: Math.min(since, now),
@@ -206,6 +212,7 @@ function classify(session: Session, now: number): Attention {
       session,
       'permission',
       live.since || last?.at || now,
+      last ? `event:${last.id}` : `permission:${live.since || now}`,
       join(tool, last?.summary ?? null) ?? 'Waiting for your approval.',
       tool,
       now
@@ -213,20 +220,39 @@ function classify(session: Session, now: number): Attention {
   }
 
   if (exited && session.exitCode !== null && session.exitCode !== 0) {
-    return mk(session, 'error', session.endedAt ?? now, `Exited with code ${session.exitCode}.`, null, now);
+    const ended = session.endedAt ?? now;
+    return mk(session, 'error', ended, `exit:${ended}:${session.exitCode}`, `Exited with code ${session.exitCode}.`, null, now);
   }
 
   if (last && FAILURE_EVENTS.has(last.event) && now - last.at <= ERROR_WINDOW_MS) {
-    return mk(session, 'error', last.at, describe(last) ?? 'The last step failed.', last.toolName, now);
+    return mk(session, 'error', last.at, `event:${last.id}`, describe(last) ?? 'The last step failed.', last.toolName, now);
   }
 
   if (exited) {
     // A null exit code means the PTY never reported one — closed out on quit.
     // That is not evidence of a failure, so it is not claimed as one.
+    const ended = session.endedAt ?? now;
+    // A clean PTY exit after Stop is the same completed turn, even if the user
+    // leaves the finished prompt sitting for a while before closing it. Only a
+    // later event, not elapsed wall time, proves that another turn intervened.
+    let transitionId = `exit:${ended}:${session.exitCode ?? 'unknown'}`;
+    if (session.exitCode === 0) {
+      for (let i = events.length - 1; i >= 0; i--) {
+        const candidate = events[i];
+        if (candidate.event !== 'Stop') continue;
+        const after = events.slice(i + 1);
+        if (ended - candidate.at >= 0
+          && after.every((value) => value.event === 'SessionEnd')) {
+          transitionId = `event:${candidate.id}`;
+        }
+        break;
+      }
+    }
     return mk(
       session,
       'finished',
-      session.endedAt ?? now,
+      ended,
+      transitionId,
       session.exitCode === 0 ? 'Exited cleanly.' : 'Exited.',
       null,
       now
@@ -234,7 +260,7 @@ function classify(session: Session, now: number): Attention {
   }
 
   if (last?.event === 'Stop') {
-    return mk(session, 'finished', last.at, last.summary ?? 'Finished its turn.', null, now);
+    return mk(session, 'finished', last.at, `event:${last.id}`, last.summary ?? 'Finished its turn.', null, now);
   }
 
   const activeAt = Math.max(session.createdAt, live.lastAt ?? 0, lastOutput.get(session.id) ?? 0);
@@ -246,6 +272,7 @@ function classify(session: Session, now: number): Attention {
       session,
       'idle',
       activeAt + IDLE_MS,
+      `idle:${activeAt + IDLE_MS}`,
       last ? `Quiet since ${lastSeen(last)}.` : 'No hook events yet.',
       live.tool,
       now
@@ -260,7 +287,16 @@ function classify(session: Session, now: number): Attention {
   } else if (last && !PRIVATE_SUMMARY.has(last.event)) {
     detail = describe(last);
   }
-  return mk(session, 'working', workingSince(session, events), detail, live.tool, now);
+  const began = workingSince(session, events);
+  return mk(
+    session,
+    'working',
+    began,
+    last ? `event:${last.id}` : `working:${began}`,
+    detail,
+    live.tool,
+    now,
+  );
 }
 
 /* ── the queue ───────────────────────────────────────────────────────── */

@@ -3,17 +3,53 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import type { ProviderId, ProviderInfo } from '../shared/types';
+import { createHash } from 'node:crypto';
+import type { ProviderCapabilities, ProviderId, ProviderInfo } from '../shared/types';
 import { getProviderKey } from './keys';
+import { probeProviderAdapter } from './provider-adapter';
+import {
+  createDefaultProviderPackRegistry,
+  type ProviderCapabilityDeclaration,
+  type ProviderLaunchFieldSchema,
+  type ProviderPackSnapshot,
+  type ProviderRuntimeDefinition,
+} from './provider-packs';
 
 const exec = promisify(execFile);
 
-type ProviderDef = {
-  id: ProviderId;
+export type ProviderDef = {
+  id: string;
   label: string;
   bin: string;
+  /**
+   * Which CLI a session actually runs. Not a duplicate of `bin`: `bin` is what
+   * to execute, this is whose flags, config files and side-effects the session
+   * will produce. Two providers share the claude binary, so every test written
+   * as `id === 'claude'` silently excludes GLM — that is how GLM sessions came
+   * to have telemetry but no archived transcript. Ask this, never the id.
+   */
+  cli: 'claude' | 'codex' | 'generic';
+  /** Provider-neutral harness identity. Branch on this, never profile id/bin. */
+  harness: 'claude-code' | 'codex' | 'generic-cli';
+  /** Supported unattended invocation protocol, if any. */
+  headless: 'claude-json' | 'codex-json' | 'none';
+  /** Frozen manifest identity. Stored with sessions so upgrades cannot rewrite history. */
+  packId: string;
+  packVersion: string;
+  backendId: string;
+  /** Built-ins are Wanigan-reviewed; local profiles need adapter proof for harness capabilities. */
+  source: 'builtin' | 'local';
+  /** Exact frozen profile identity used to invalidate probes and revalidate launches. */
+  profileFingerprint: string;
+  launchFields: ProviderLaunchFieldSchema[];
+  declaredCapabilities: ProviderCapabilityDeclaration;
   /** Args to launch an interactive session in `cwd`. */
   args: (extra: string[], opts?: { model?: string; effort?: string; permissionMode?: string }) => string[];
+  /** Full manifest-driven launcher used once dynamic fields cross the IPC API. */
+  launchArgs: (
+    extra: string[],
+    values?: Record<string, string | boolean | null | undefined>
+  ) => string[];
   /** Which of the shared options this CLI actually accepts. */
   supports: { model: boolean; effort: boolean; permissionMode: boolean; resume: boolean };
   /**
@@ -22,6 +58,7 @@ type ProviderDef = {
    */
   resumeArgs: (conversationId: string | null) => string[];
   versionArgs: string[];
+  helpArgs: string[];
   /**
    * Environment a provider needs beyond the shared agent env. This exists
    * because a provider is not always a different binary: GLM is the Claude
@@ -86,20 +123,37 @@ function firstExecutable(candidates: string[]): string | null {
 export const GLM_DEFAULT = 'glm-5.3';
 export const GLM_SMALL = 'glm-5.3-flash';
 
-export const PROVIDERS: ProviderDef[] = [
+const LEGACY_BUILTINS: ProviderDef[] = [
   {
     id: 'claude',
     label: 'Claude Code',
     bin: 'claude',
+    cli: 'claude',
+    harness: 'claude-code',
+    headless: 'claude-json',
+    packId: 'wanigan.claude',
+    packVersion: '1',
+    backendId: 'anthropic',
+    source: 'builtin',
+    profileFingerprint: 'legacy:claude',
+    launchFields: [],
+    declaredCapabilities: {},
     args: (extra, o) => [
       ...(o?.model ? ['--model', o.model] : []),
       ...(o?.effort ? ['--effort', o.effort] : []),
       ...(o?.permissionMode ? ['--permission-mode', o.permissionMode] : []),
       ...extra,
     ],
+    launchArgs: (extra, o) => [
+      ...(typeof o?.model === 'string' && o.model ? ['--model', o.model] : []),
+      ...(typeof o?.effort === 'string' && o.effort ? ['--effort', o.effort] : []),
+      ...(typeof o?.permissionMode === 'string' && o.permissionMode ? ['--permission-mode', o.permissionMode] : []),
+      ...extra,
+    ],
     supports: { model: true, effort: true, permissionMode: true, resume: true },
     resumeArgs: (id) => (id ? ['--resume', id] : ['--continue']),
     versionArgs: ['--version'],
+    helpArgs: ['--help'],
     fallbacks: () => [
       ...editorExtensions('anthropic.claude-code-')
         .map((d) => path.join(d, 'resources', 'native-binary', 'claude')),
@@ -110,14 +164,40 @@ export const PROVIDERS: ProviderDef[] = [
     id: 'codex',
     label: 'Codex',
     bin: 'codex',
+    cli: 'codex',
+    harness: 'codex',
+    headless: 'codex-json',
+    packId: 'wanigan.codex',
+    packVersion: '1',
+    backendId: 'openai',
+    source: 'builtin',
+    profileFingerprint: 'legacy:codex',
+    launchFields: [],
+    declaredCapabilities: {},
     // Codex takes a model but not Claude's effort or permission-mode flags;
     // passing them would make it exit immediately on an unknown option.
-    args: (extra, o) => [...(o?.model ? ['--model', o.model] : []), ...extra],
-    supports: { model: true, effort: false, permissionMode: false, resume: true },
-    // `codex resume --last` is a subcommand, not a flag, and cannot target a
-    // specific conversation the way Claude can.
-    resumeArgs: () => ['resume', '--last'],
+    args: (extra, o) => [
+      ...(o?.model ? ['--model', o.model] : []),
+      // Codex exposes reasoning effort as a typed config value, not Claude's
+      // --effort flag. Each argv item is passed directly (never through a
+      // shell), and quoting makes the value valid TOML for every CLI version.
+      ...(o?.effort ? ['--config', `model_reasoning_effort="${o.effort}"`] : []),
+      ...extra,
+    ],
+    launchArgs: (extra, o) => [
+      ...(typeof o?.model === 'string' && o.model ? ['--model', o.model] : []),
+      ...(typeof o?.effort === 'string' && o.effort
+        ? ['--config', `model_reasoning_effort="${o.effort}"`]
+        : []),
+      ...extra,
+    ],
+    supports: { model: true, effort: true, permissionMode: false, resume: true },
+    // Current Codex accepts an exact saved thread UUID. Falling back to the
+    // picker is deliberate: `--last` can silently open a different thread —
+    // or collide with its live writer — when the user chose an older row.
+    resumeArgs: (id) => (id ? ['resume', id] : ['resume']),
     versionArgs: ['--version'],
+    helpArgs: ['--help'],
     fallbacks: () => editorExtensions('openai.chatgpt-').flatMap((d) => {
       const binDir = path.join(d, 'bin');
       try {
@@ -131,13 +211,37 @@ export const PROVIDERS: ProviderDef[] = [
     // Deliberately the same binary. Z.ai serves an Anthropic-compatible API,
     // so GLM is Claude Code with its base URL and credentials redirected —
     // there is no glm binary to find, and inventing one would just fail to
-    // resolve. Everything Wanigan builds on the CLI (telemetry, hooks, the
-    // policy gate, transcripts) keeps working unchanged for exactly this
-    // reason.
+    // resolve.
+    //
+    // What that buys is real but conditional: everything Wanigan builds on the
+    // CLI (telemetry, hooks, the policy gate, the transcript on disk) works for
+    // GLM only where the caller tests `cli` instead of `id`. It did not, and a
+    // GLM session ran with telemetry and nothing else. runsClaudeCli() below is
+    // that test; adding a fourth provider on this binary needs nothing more.
+    //
+    // Spend is the one thing that stays wrong on purpose. A session banks the
+    // cost figure the CLI hands it, and neither otel.ts nor spend.ts knows a
+    // Z.ai coding plan is a flat monthly fee, so a GLM session's dollars are
+    // the CLI's arithmetic about a model it is not billing for — not a bill.
     bin: 'claude',
+    cli: 'claude',
+    harness: 'claude-code',
+    headless: 'claude-json',
+    packId: 'wanigan.glm',
+    packVersion: '1',
+    backendId: 'zai',
+    source: 'builtin',
+    profileFingerprint: 'legacy:glm',
+    launchFields: [],
+    declaredCapabilities: {},
     args: (extra, o) => [
       ...(o?.model ? ['--model', o.model] : []),
       ...(o?.permissionMode ? ['--permission-mode', o.permissionMode] : []),
+      ...extra,
+    ],
+    launchArgs: (extra, o) => [
+      ...(typeof o?.model === 'string' && o.model ? ['--model', o.model] : []),
+      ...(typeof o?.permissionMode === 'string' && o.permissionMode ? ['--permission-mode', o.permissionMode] : []),
       ...extra,
     ],
     // No effort: it is an Anthropic API parameter, and the proxy does not
@@ -145,6 +249,7 @@ export const PROVIDERS: ProviderDef[] = [
     supports: { model: true, effort: false, permissionMode: true, resume: true },
     resumeArgs: (id) => (id ? ['--resume', id] : ['--continue']),
     versionArgs: ['--version'],
+    helpArgs: ['--help'],
     fallbacks: () => [
       ...editorExtensions('anthropic.claude-code-')
         .map((d) => path.join(d, 'resources', 'native-binary', 'claude')),
@@ -167,8 +272,248 @@ export const PROVIDERS: ProviderDef[] = [
   },
 ];
 
-export function providerById(id: ProviderId): ProviderDef | undefined {
+export const providerPackRegistry = createDefaultProviderPackRegistry({ credentialResolver: getProviderKey });
+
+/** Stable array identity for older callers; contents are refreshed in place. */
+export const PROVIDERS: ProviderDef[] = [];
+
+function fromRuntime(
+  runtime: ProviderRuntimeDefinition,
+  packVersion: string,
+  backendId: string,
+  source: 'builtin' | 'local',
+  profileFingerprint: string,
+): ProviderDef {
+  return {
+    id: runtime.id,
+    label: runtime.label,
+    bin: runtime.bin,
+    cli: runtime.cli,
+    harness: runtime.harness,
+    headless: runtime.headless,
+    packId: runtime.packId,
+    packVersion,
+    backendId,
+    source,
+    profileFingerprint,
+    launchFields: runtime.launchFields,
+    declaredCapabilities: runtime.capabilities,
+    args: (extra, opts) => runtime.args(extra, opts),
+    launchArgs: runtime.args,
+    supports: runtime.supports,
+    resumeArgs: runtime.resumeArgs,
+    versionArgs: runtime.versionArgs,
+    helpArgs: runtime.helpArgs,
+    env: runtime.env,
+    fallbacks: runtime.fallbacks,
+  };
+}
+
+/**
+ * Local manifests cannot claim the privacy identity of a built-in backend by
+ * writing `backend.id: "anthropic"`. The stable pack id is the trust namespace;
+ * profiles inside one pack may share a backend, but another pack cannot inherit
+ * their semantic memory without a future explicit linking consent.
+ */
+export function effectiveProviderBackendId(
+  profile: { source: 'builtin' | 'local'; packId: string; backend: { id: string } }
+): string {
+  return profile.source === 'local' ? `${profile.packId}:${profile.backend.id}` : profile.backend.id;
+}
+
+function fingerprint(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function synchronizeProviderDefinitions(refreshPacks = false): ProviderPackSnapshot {
+  const snapshot = refreshPacks ? providerPackRegistry.refresh() : providerPackRegistry.snapshot();
+  const active = snapshot.profiles.filter((profile) => profile.enabled);
+  const definitions = active.map((profile): ProviderDef => {
+    const profileFingerprint = fingerprint(profile);
+    const legacy = LEGACY_BUILTINS.find((candidate) => candidate.id === profile.id && profile.source === 'builtin');
+    const runtime = providerPackRegistry.runtimeById(profile.id);
+    if (!runtime) throw new Error(`Provider profile "${profile.id}" could not be compiled.`);
+    if (!legacy) {
+      return fromRuntime(
+        runtime,
+        profile.packVersion,
+        effectiveProviderBackendId(profile),
+        profile.source,
+        profileFingerprint,
+      );
+    }
+    // The hand-written launch functions are retained for the built-ins during
+    // migration, while all routing metadata comes from the same manifests that
+    // third-party packs use. This makes the change behavior-preserving today.
+    return {
+      ...legacy,
+      packId: profile.packId,
+      packVersion: profile.packVersion,
+      backendId: effectiveProviderBackendId(profile),
+      source: profile.source,
+      profileFingerprint,
+      harness: profile.harness,
+      headless: profile.headless ?? 'none',
+      launchFields: profile.launchFields ?? [],
+      declaredCapabilities: profile.capabilities ?? {},
+      launchArgs: runtime.args,
+    };
+  });
+  PROVIDERS.splice(0, PROVIDERS.length, ...definitions);
+  return snapshot;
+}
+
+synchronizeProviderDefinitions();
+
+/** Re-scan Application Support after install/enable/disable/uninstall. */
+export function refreshProviderPacks(): ProviderPackSnapshot {
+  return synchronizeProviderDefinitions(true);
+}
+
+export function providerById(id: ProviderId | string): ProviderDef | undefined {
+  synchronizeProviderDefinitions();
   return PROVIDERS.find((p) => p.id === id);
+}
+
+/**
+ * True when this provider launches the Claude Code binary rather than a CLI of
+ * its own. The question behind every caller is the same one: will this session
+ * take --settings and --mcp-config, accept a --session-id we chose, and leave a
+ * transcript in ~/.claude/projects. GLM answers yes to all four; Codex is a
+ * different program that exits on an unknown flag and writes no such file.
+ *
+ * Takes an id as well as a definition because the callers on the database side
+ * only ever have the provider_id string a session was logged with. An id this
+ * build does not recognise is not Claude — a session logged by a future or
+ * removed provider must not inherit Claude's transcript on a guess.
+ */
+export function runsClaudeCli(p: ProviderDef | string | null | undefined): boolean {
+  if (!p) return false;
+  const def = typeof p === 'string' ? providerById(p) : p;
+  return def?.cli === 'claude';
+}
+
+const capabilityCache = new Map<string, ProviderCapabilities>();
+
+/**
+ * The flags a provider definition knows are not necessarily the flags in the
+ * binary the user has installed.  Keep the launch contract conservative, but
+ * report the actual capability boundary before a session starts.
+ */
+async function capabilitiesFor(def: ProviderDef, resolved: string | null, PATH: string): Promise<ProviderCapabilities> {
+  const declared = (id: string, fallback: boolean): boolean => {
+    const state = def.declaredCapabilities[id];
+    // A manifest may narrow a built-in harness, but it cannot turn a claim
+    // into observed support. Generic packs need an adapter probe before these
+    // booleans may become true; until then the safe harness fallback wins.
+    if (def.source === 'local') return false;
+    if (state === 'supported') return fallback;
+    if (state === 'unsupported' || state === 'unknown' || state === 'probe') return false;
+    return fallback;
+  };
+  const isClaude = def.harness === 'claude-code';
+  const base: ProviderCapabilities = {
+    probed: false,
+    hooks: declared('hooks', isClaude),
+    telemetry: declared('telemetry', isClaude),
+    mcp: declared('mcp', isClaude),
+    policy: declared('policy', isClaude),
+    transcript: declared('transcript', isClaude),
+    namedResume: declared('resume.named', isClaude),
+    headlessJson: declared('headless.json', def.headless !== 'none'),
+    note: isClaude
+      ? 'Wanigan injects hooks, MCP configuration, policy and telemetry into this CLI.'
+      : def.harness === 'codex'
+        ? 'Terminal and declared Codex capabilities are available; Claude-specific injection is not used.'
+        : 'Generic terminal sessions work. Additional capabilities remain unavailable until this provider adapter proves them.',
+  };
+  if (!resolved) return { ...base, note: `${def.label} is not installed.` };
+  const adapter = providerPackRegistry.trustedAdapterForProfile(def.id);
+  const profile = providerPackRegistry.profileById(def.id);
+  const key = [
+    resolved, def.id, def.packId, def.packVersion, def.backendId, def.harness, def.headless,
+    def.profileFingerprint, JSON.stringify(def.versionArgs), JSON.stringify(def.helpArgs),
+    JSON.stringify(def.declaredCapabilities), adapter?.sha256 ?? '',
+  ].join(':');
+  const prior = capabilityCache.get(key);
+  if (prior) return prior;
+  let observed: ProviderCapabilities;
+  try {
+    const { stdout, stderr } = await exec(resolved, def.helpArgs, {
+      timeout: 8_000, maxBuffer: 512 * 1024, env: providerProbeEnvironment(PATH),
+    });
+    const help = `${stdout}\n${stderr}`.toLowerCase();
+    let resumeHelp = '';
+    if (def.source === 'builtin' && def.harness === 'codex' && help.includes('resume')) {
+      try {
+        const result = await exec(resolved, ['resume', '--help'], {
+          timeout: 8_000, maxBuffer: 512 * 1024, env: providerProbeEnvironment(PATH),
+        });
+        resumeHelp = `${result.stdout}\n${result.stderr}`.toLowerCase();
+      } catch { /* the capability remains unproven */ }
+    }
+    const probed: ProviderCapabilities = {
+      ...base,
+      // Local harness capability comes only from its separately trusted
+      // adapter below. Running an approved CLI's --help is discovery, not
+      // proof that Wanigan's Claude/Codex integration contract is present.
+      probed: def.source === 'builtin',
+      namedResume: base.namedResume || (def.source === 'builtin' && (
+        def.harness === 'claude-code'
+          ? help.includes('resume')
+          : def.harness === 'codex' && /session[_ -]id/.test(resumeHelp)
+      )),
+      headlessJson: base.headlessJson || (def.source === 'builtin' &&
+        def.harness === 'codex' && help.includes('exec') && help.includes('--json')
+      ),
+      note: base.note,
+    };
+    observed = probed;
+  } catch {
+    observed = { ...base, note: `${base.note ?? ''} CLI help could not be inspected.`.trim() };
+  }
+
+  if (adapter && profile) {
+    try {
+      const proof = await probeProviderAdapter(adapter, profile);
+      const declarationFor: Record<keyof typeof proof.capabilities, string> = {
+        hooks: 'hooks', telemetry: 'telemetry', mcp: 'mcp', policy: 'policy',
+        transcript: 'transcript', namedResume: 'resume.named', headlessJson: 'headless.json',
+      };
+      const accepted: Partial<ProviderCapabilities> = {};
+      for (const [name, value] of Object.entries(proof.capabilities) as Array<[
+        keyof typeof proof.capabilities, boolean
+      ]>) {
+        // Only an explicit `probe` declaration delegates this fact to code.
+        // Unsupported/unknown remains fail-closed even if the adapter asserts it.
+        if (def.declaredCapabilities[declarationFor[name]] === 'probe') accepted[name] = value;
+      }
+      observed = {
+        ...observed,
+        ...accepted,
+        probed: true,
+        note: [observed.note, proof.note ? `Adapter: ${proof.note}` : 'Trusted adapter probe passed.']
+          .filter(Boolean).join(' '),
+      };
+    } catch (error) {
+      observed = {
+        ...observed,
+        note: `${observed.note ?? ''} Trusted adapter probe failed closed: ${
+          error instanceof Error ? error.message : String(error)
+        }`.trim(),
+      };
+    }
+  }
+  capabilityCache.set(key, observed);
+  return observed;
+}
+
+function providerProbeEnvironment(PATH: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { PATH };
+  for (const name of ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL']) {
+    if (process.env[name] !== undefined) env[name] = process.env[name];
+  }
+  return env;
 }
 
 /**
@@ -210,11 +555,14 @@ function nvmBinDirs(): string[] {
 
 async function which(def: ProviderDef): Promise<string | null> {
   const p = await shellPath();
-  const onPath = firstExecutable(p.split(':').filter(Boolean).map((d) => path.join(d, def.bin)));
+  const onPath = path.isAbsolute(def.bin)
+    ? firstExecutable([def.bin])
+    : firstExecutable(p.split(':').filter(Boolean).map((d) => path.join(d, def.bin)));
   return onPath ?? firstExecutable(def.fallbacks());
 }
 
 export async function detectProviders(): Promise<ProviderInfo[]> {
+  refreshProviderPacks();
   const p = await shellPath();
   return Promise.all(
     PROVIDERS.map(async (def): Promise<ProviderInfo> => {
@@ -224,12 +572,35 @@ export async function detectProviders(): Promise<ProviderInfo[]> {
         try {
           const { stdout } = await exec(resolved, def.versionArgs, {
             timeout: 10_000,
-            env: { ...process.env, PATH: p },
+            env: providerProbeEnvironment(p),
           });
           version = stdout.trim().split('\n')[0] || null;
         } catch { version = null; }
       }
-      return { id: def.id, label: def.label, bin: def.bin, path: resolved, version, supports: def.supports };
+      const capabilities = await capabilitiesFor(def, resolved, p);
+      return {
+        id: def.id,
+        label: def.label,
+        bin: def.bin,
+        path: resolved,
+        version,
+        supports: def.supports,
+        capabilities,
+        packId: def.packId,
+        packVersion: def.packVersion,
+        profileFingerprint: def.profileFingerprint,
+        harnessId: def.harness,
+        backendId: def.backendId,
+        launchFields: def.launchFields.map((field) => ({
+          id: field.id,
+          label: field.label,
+          kind: field.kind,
+          required: field.required,
+          description: field.description,
+          options: field.choices,
+          defaultValue: field.defaultValue,
+        })),
+      };
     })
   );
 }

@@ -6,8 +6,8 @@ import { mcpServerInfo } from './server';
 import type { McpServerConfig, McpServerStatus } from '../../shared/types';
 
 /**
- * The inbound half of MCP: which servers a project's agents get, and whether
- * they are actually connecting.
+ * The inbound half of MCP: which servers a project's agents get, and how much
+ * they turned out to be used.
  *
  * Wanigan never writes into the user's repo. A generated `.mcp.json` dropped
  * next to their code would land in `git status`, get committed by an agent
@@ -96,6 +96,13 @@ export function upsertServer(cfg: Omit<McpServerConfig, 'id'> & { id?: string })
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       throw new Error(`MCP over ${parsed.protocol.replace(':', '')} is not supported. Use an http:// or https:// URL.`);
     }
+    // Credentials and tool output can cross this connection. Plain HTTP is
+    // only defensible for an agent server bound to this machine; a remote HTTP
+    // endpoint would expose bearer credentials and repository-derived context.
+    const loopback = parsed.hostname === '127.0.0.1' || parsed.hostname === '::1' || parsed.hostname === 'localhost';
+    if (parsed.protocol !== 'https:' && !loopback) {
+      throw new Error('Remote MCP servers must use HTTPS. Plain HTTP is allowed only for localhost loopback servers.');
+    }
   }
 
   const projectId = cfg.projectId ?? null;
@@ -132,82 +139,104 @@ export function upsertServer(cfg: Omit<McpServerConfig, 'id'> & { id?: string })
 }
 
 export function removeServer(id: string) {
-  const d = db();
-  const row = d.prepare('SELECT name FROM mcp_servers WHERE id = ?').get(id) as { name: string } | undefined;
-  if (!row) return;
-  d.prepare('DELETE FROM mcp_servers WHERE id = ?').run(id);
-  // Status is keyed by name (see noteConnection), so it may still belong to
-  // another project's server of the same name.
-  d.prepare('DELETE FROM mcp_status WHERE id = ? AND NOT EXISTS (SELECT 1 FROM mcp_servers WHERE name = ?)')
-    .run(row.name, row.name);
+  db().prepare('DELETE FROM mcp_servers WHERE id = ?').run(id);
+  // Nothing else to clean up. Use is read back out of session_events, which is
+  // the record of what the agents did: removing a server stops it being handed
+  // out, it does not unhappen the calls already made through it.
 }
 
-type StatusRow = { id: string; connected: number; last_at: number | null; last_error: string | null; tool_calls: number };
+/* ── what the servers are actually doing ─────────────────────────────── */
 
-export function serverStatuses(): McpServerStatus[] {
-  const d = db();
-  const statuses = new Map(
-    (d.prepare('SELECT * FROM mcp_status').all() as StatusRow[]).map((s) => [s.id, s])
-  );
-  const out: McpServerStatus[] = [];
-  const seen = new Set<string>();
+/**
+ * Wanigan never sees an MCP server connect. The CLI spawns them from the config
+ * written below, inside the session's own process tree, and reports nothing back
+ * about them — no hook event, no metric.
+ *
+ * There was an mcp_status table here that pretended otherwise: a connected flag,
+ * a last_error and a tool-call counter, written by two functions nothing ever
+ * called. Every server in Settings therefore read "not connected, 0 calls" for
+ * the life of the install, however hard it was being used, and a user who saw
+ * that would go looking for a fault in a server that was working. A status
+ * nobody writes is not a missing feature, it is a false one.
+ *
+ * What is honestly knowable is what the agents did with them. Every MCP tool
+ * call reaches the hook bus as `mcp__<server>__<tool>` and is already in
+ * session_events, so use is a read over a table that is written on every call.
+ * That is a record of use and not of health: it can say a server answered at
+ * 14:02, it cannot say the server is up now, and nothing here claims it.
+ */
 
-  for (const s of d.prepare('SELECT id, name FROM mcp_servers ORDER BY name').all() as { id: string; name: string }[]) {
-    const st = statuses.get(s.name);
-    seen.add(s.name);
-    out.push({
-      id: s.id,
-      name: s.name,
-      connected: st?.connected === 1,
-      lastAt: st?.last_at ?? null,
-      lastError: st?.last_error ?? null,
-      toolCalls: st?.tool_calls ?? 0,
-    });
-  }
+const MCP_TOOL_PREFIX = 'mcp__';
 
-  // A server the user configured outside Wanigan still reports connections.
-  // Dropping those rows would make a failing server look like it does not
-  // exist, which is the least useful thing a status list can do.
-  for (const st of statuses.values()) {
-    if (seen.has(st.id)) continue;
-    out.push({
-      id: st.id, name: st.id, connected: st.connected === 1,
-      lastAt: st.last_at, lastError: st.last_error, toolCalls: st.tool_calls,
-    });
-  }
-  return out;
+type UsageRow = { tool_name: string; calls: number; last_at: number | null; failures: number | null };
+
+/**
+ * The server half of a tool id, read the way policy.ts reads it: everything
+ * between the first and second `__`. A name with no second separator is dropped
+ * rather than guessed at — hooks.ts clips a tool name at 64 characters, and a
+ * clipped one can end mid-name, which would otherwise credit the calls to a
+ * server that does not exist.
+ */
+function serverOf(toolName: string): string | null {
+  if (!toolName.startsWith(MCP_TOOL_PREFIX)) return null;
+  const rest = toolName.slice(MCP_TOOL_PREFIX.length);
+  const end = rest.indexOf('__');
+  if (end <= 0) return null;
+  return rest.slice(0, end);
 }
 
 /**
- * Fed by the telemetry/hook side, which reports `mcp_server_connection` events.
- * Those name the server and nothing else — the agent has no idea Wanigan has a
- * row id for it — so status is keyed by name, and one name may cover the same
- * server configured in several projects.
+ * Use per configured server, counted from the calls the hook bus recorded.
+ *
+ * Completed calls only, the way toolStats counts them: a call the policy gate
+ * denied never reached the server, and one still in flight has not happened
+ * yet. Keyed by name rather than by row id, because the tool id is all the
+ * agent ever says — so the same name configured in two projects reports as one
+ * server, which is also what the generated config makes it.
+ *
+ * These are a floor and not a total, which is the honest way to read them: a
+ * session run with hooks switched off reports nothing, Codex is handed no hook
+ * settings at all, and session_events is prunable. Zero here means "no call on
+ * record", never "this server does not work".
  */
-export function noteConnection(name: string, ok: boolean, error?: string | null) {
-  const id = name.trim();
-  if (!id) return;
-  db().prepare(`
-    INSERT INTO mcp_status (id, connected, last_at, last_error, tool_calls)
-    VALUES (@id, @connected, @at, @error, 0)
-    ON CONFLICT(id) DO UPDATE SET
-      connected = excluded.connected,
-      last_at   = excluded.last_at,
-      -- A failure that arrives without a message must not erase the last real
-      -- reason; that message is the only thing that explains the red dot.
-      last_error = CASE WHEN @connected = 1 THEN NULL ELSE COALESCE(@error, mcp_status.last_error) END
-  `).run({ id, connected: ok ? 1 : 0, at: Date.now(), error: error ?? null });
-}
+export function serverStatuses(): McpServerStatus[] {
+  const d = db();
+  // GLOB, not LIKE: `_` is a LIKE wildcard, so the prefix would need escaping,
+  // and GLOB is case-sensitive — `MCP__` is not a tool id.
+  const rows = d.prepare(`
+    SELECT tool_name,
+           COUNT(*)                                AS calls,
+           MAX(at)                                 AS last_at,
+           SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END) AS failures
+    FROM session_events
+    WHERE event IN ('PostToolUse', 'PostToolUseFailure')
+      AND tool_name GLOB '${MCP_TOOL_PREFIX}*'
+    GROUP BY tool_name
+  `).all() as UsageRow[];
 
-/** Same feed, for `mcp__<server>__<tool>` tool calls seen on the hook bus. */
-export function noteToolCall(name: string, n = 1) {
-  const id = name.trim();
-  if (!id || n <= 0) return;
-  db().prepare(`
-    INSERT INTO mcp_status (id, connected, last_at, tool_calls)
-    VALUES (@id, 1, @at, @n)
-    ON CONFLICT(id) DO UPDATE SET tool_calls = mcp_status.tool_calls + @n, last_at = excluded.last_at
-  `).run({ id, at: Date.now(), n });
+  const use = new Map<string, { calls: number; lastAt: number; failures: number }>();
+  for (const r of rows) {
+    const server = serverOf(r.tool_name);
+    if (!server) continue;
+    const cur = use.get(server) ?? { calls: 0, lastAt: 0, failures: 0 };
+    cur.calls += Number(r.calls);
+    cur.failures += Number(r.failures ?? 0);
+    cur.lastAt = Math.max(cur.lastAt, Number(r.last_at ?? 0));
+    use.set(server, cur);
+  }
+
+  const servers = d.prepare('SELECT id, name FROM mcp_servers ORDER BY name')
+    .all() as { id: string; name: string }[];
+  return servers.map((s) => {
+    const u = use.get(s.name);
+    return {
+      id: s.id,
+      name: s.name,
+      lastUsedAt: u && u.lastAt > 0 ? u.lastAt : null,
+      toolCalls: u?.calls ?? 0,
+      failures: u?.failures ?? 0,
+    };
+  });
 }
 
 /**

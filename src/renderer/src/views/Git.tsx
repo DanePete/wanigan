@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Project } from '@shared/types';
 import { Note, ago } from '../components/bits';
+import ReviewGate from '../components/ReviewGate';
 
 type GFile = { path: string; index: string; work: string; staged: boolean; untracked: boolean; conflicted: boolean };
 type Status = {
@@ -179,6 +180,8 @@ export default function Git({ projects }: { projects: Project[] }) {
           </Note>
         </div>
       )}
+
+      <ReviewGate projectId={projectId} />
 
       <div className="gt" style={{ flex: 1, minHeight: 0 }}>
         {/* ── the graph ─────────────────────────────────────────────── */}

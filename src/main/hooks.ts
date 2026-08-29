@@ -6,6 +6,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { app } from 'electron';
 import { db } from './db';
 import { getSetting } from './settings';
+import { answerFor, contextForSession, trustBriefing } from './policy';
 import type { HookEventName, HookInput, PolicyDecision, SessionEvent } from '../shared/types';
 
 /**
@@ -39,11 +40,34 @@ type Listener = (e: SessionEvent) => void;
 
 let server: http.Server | null = null;
 let info: { port: number; token: string } | null = null;
-let policy: ((input: HookInput) => PolicyDecision) | null = null;
+/**
+ * Returns null for "no answer", which is not the same as an allow: the CLI falls
+ * back to its own permission prompt, and a human decides. Only ever a safe thing
+ * to return when there is a human.
+ */
+let policy: ((input: HookInput) => PolicyDecision | null) | null = null;
+/** Optional, bounded project briefing supplied by the learning engine. */
+export type LearningBriefingContext = {
+  providerId: string;
+  backendId?: string | null;
+  projectId: string | null;
+  projectPath: string | null;
+  /** The current task, when known, so retrieval is relevant rather than a project dump. */
+  query?: string;
+  path?: string | null;
+};
+let learningBriefing: ((
+  sessionId: string,
+  context?: LearningBriefingContext,
+) => string | null | Promise<string | null>) | null = null;
 const listeners = new Set<Listener>();
 const sockets = new Set<Socket>();
 /** sessionId → the settings file written for it, so cleanup is exact. */
-const registered = new Map<string, { file: string; projectPath: string }>();
+const registered = new Map<string, {
+  file: string;
+  projectPath: string;
+  learningContext?: LearningBriefingContext;
+}>();
 
 /* ── server ──────────────────────────────────────────────────────────── */
 
@@ -143,7 +167,11 @@ function hooksDir(): string {
  * arrive with only the agent's own id, and nothing could be attributed to the
  * pane it belongs to.
  */
-export function writeHookSettings(waniganSessionId: string, projectPath: string): string | null {
+export function writeHookSettings(
+  waniganSessionId: string,
+  projectPath: string,
+  learningContext?: LearningBriefingContext,
+): string | null {
   if (!hooksEnabled()) return null;
   const live = info;
   if (!live) return null;
@@ -164,7 +192,7 @@ export function writeHookSettings(waniganSessionId: string, projectPath: string)
   // whatever the old one had. This file is a bearer credential.
   try { fs.chmodSync(file, 0o600); } catch { /* best effort on odd filesystems */ }
 
-  registered.set(waniganSessionId, { file, projectPath });
+  registered.set(waniganSessionId, { file, projectPath, learningContext });
   return file;
 }
 
@@ -234,7 +262,7 @@ async function onRequest(req: http.IncomingMessage, res: http.ServerResponse, to
 
   // Answer first, bookkeep after: a tool call must never wait on a SQLite write.
   if (event === 'PreToolUse' && sessionId) {
-    const decision = decide({ ...input, wanigan_session_id: sessionId });
+    const decision = decide({ ...input, wanigan_session_id: sessionId }, sessionId);
     reply(res, 200, decision
       ? {
           hookSpecificOutput: {
@@ -244,6 +272,8 @@ async function onRequest(req: http.IncomingMessage, res: http.ServerResponse, to
           },
         }
       : {});
+  } else if (event === 'SessionStart' && sessionId) {
+    reply(res, 200, await briefing(sessionId));
   } else {
     // A hook that returns nothing is a hook that stays out of the way.
     reply(res, 200, {});
@@ -330,6 +360,13 @@ function asHookInput(raw: string): HookInput | null {
  * Which Wanigan session this event belongs to. The query parameter is the real
  * answer; the cwd fallback covers a config the agent copied to a subagent, which
  * keeps the URL but can lose the query string on some CLI versions.
+ *
+ * Two things produce these ids now: a PTY pane, and one row of a headless
+ * fan-out, whose id stands for a (runId, projectId) pair because that pair is
+ * all a fan-out row has. Nothing here needs to tell them apart — the id is
+ * opaque to attribution — but the clip below is why headless.ts keeps its ids
+ * short: an id that came back shorter than the one registered with policy.ts
+ * would find no context and be judged at the default trust level.
  */
 function attribute(url: URL, input: HookInput): string | null {
   const q = url.searchParams.get('s');
@@ -344,19 +381,79 @@ function attribute(url: URL, input: HookInput): string | null {
 
 /* ── policy ──────────────────────────────────────────────────────────── */
 
-export function setPolicyHook(fn: ((input: HookInput) => PolicyDecision) | null): void {
+export function setPolicyHook(fn: ((input: HookInput) => PolicyDecision | null) | null): void {
   policy = fn;
 }
 
-function decide(input: HookInput): PolicyDecision | null {
+/**
+ * Registers the provider-neutral briefing source without coupling the hook bus
+ * to the learning store. A broken or disabled learner is equivalent to no
+ * extra context; it can never prevent a session from starting.
+ */
+export function setLearningBriefingHook(
+  fn: ((sessionId: string, context?: LearningBriefingContext) => string | null | Promise<string | null>) | null,
+): void {
+  learningBriefing = fn;
+}
+
+function decide(input: HookInput, sessionId: string): PolicyDecision | null {
+  // A run Wanigan launched and owns the lifetime of carries its own context. The
+  // headless fan-out has no pane in the live session list for the app's resolver
+  // to find, so handing its calls to that resolver would judge a Trusted
+  // repository at whatever the default trust level happens to be. It is also the
+  // only route that can fail closed, because it is the only one that knows there
+  // is nobody there.
+  const own = contextForSession(sessionId);
+  if (own) return answerFor(own, input);
+
   const fn = policy;
   if (!fn) return null;
   try {
     return fn(input);
   } catch {
     // A broken rule must not wedge the tool call. No answer hands the decision
-    // back to the agent's own permission prompt, which is the safe default.
+    // back to the agent's own permission prompt — which is only a safe default
+    // because somebody is sitting in front of it, ready to be annoyed by it. An
+    // unattended run never arrives here: it goes through answerFor above, which
+    // denies rather than letting the call through unexamined.
     return null;
+  }
+}
+
+/**
+ * SessionStart is the one moment the agent is listening and has nothing to
+ * unlearn, so it is where the trust level belongs. The difference is between an
+ * agent that works within the constraint and one that finds it by having a Write
+ * denied, retrying it, and having it denied again.
+ *
+ * Nothing is said when no context is registered for the session: naming a trust
+ * level would mean guessing which one, and a guessed constraint stated as fact
+ * is worse for the agent than silence. That is also why only SessionStart gets
+ * an output here — nothing rewrites a tool's input on the way past, because a
+ * change nobody can see afterwards is the one kind this app does not make.
+ */
+async function briefing(sessionId: string): Promise<Record<string, unknown>> {
+  try {
+    const ctx = contextForSession(sessionId);
+    const parts: string[] = [];
+    if (ctx) parts.push(trustBriefing(ctx));
+    try {
+      const learned = (await learningBriefing?.(sessionId, registered.get(sessionId)?.learningContext))?.trim();
+      if (learned) parts.push(learned);
+    } catch {
+      // Learning context is an optimization, never a session dependency.
+    }
+    if (!parts.length) return {};
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'SessionStart',
+        additionalContext: parts.join('\n\n'),
+      },
+    };
+  } catch {
+    // A session that starts without its briefing is a session missing one
+    // sentence; one that fails to start is a session missing entirely.
+    return {};
   }
 }
 
@@ -433,6 +530,29 @@ function emit(e: SessionEvent) {
   for (const cb of listeners) {
     try { cb(e); } catch { /* one bad subscriber must not stop the rest */ }
   }
+}
+
+/**
+ * Record a lifecycle fact learned directly from a provider's terminal
+ * protocol. Codex exposes completion/approval notifications as OSC 9 rather
+ * than posting the HTTP hook envelope used by Claude-compatible harnesses.
+ * Feeding both through this store keeps attention, timelines and listeners
+ * provider-neutral without retaining prompt or response content.
+ */
+export function recordProviderEvent(
+  sessionId: string,
+  event: HookEventName,
+  message: string | null = null,
+  at: number = Date.now(),
+): SessionEvent | null {
+  const input: HookInput = {
+    hook_event_name: event,
+    wanigan_session_id: sessionId,
+    ...(message ? { message } : {}),
+  };
+  const stored = store(sessionId, event, input, at);
+  if (stored) emit(stored);
+  return stored;
 }
 
 export function onHookEvent(cb: (e: SessionEvent) => void): () => void {

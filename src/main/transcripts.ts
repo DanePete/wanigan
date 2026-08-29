@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { db, dataDir } from './db';
+import { runsClaudeCli } from './providers';
 import type { ProviderId, TranscriptHit, TranscriptTurn } from '../shared/types';
 
 /* ── where Claude Code keeps its transcripts ─────────────────────────── */
@@ -241,15 +242,55 @@ function readForParse(file: string): { text: string; truncated: boolean } {
 
 type Located = { path: string; exact: boolean; note: string };
 
+type SessionRouting = {
+  provider_id: string;
+  started_at: number;
+  ended_at: number | null;
+  harness_id: string | null;
+  provider_profile_json: string | null;
+};
+
+/**
+ * History is routed by the launch snapshot, never by whichever packs happen to
+ * be enabled now. `harness_id` is authoritative when present; the serialized
+ * profile covers rows written during the short migration window before that
+ * dedicated column existed. Only genuinely legacy rows consult today's
+ * registry as a compatibility fallback.
+ */
+function frozenHarness(row: SessionRouting): string | null {
+  if (row.harness_id?.trim()) return row.harness_id.trim();
+  if (row.provider_profile_json) {
+    try {
+      const profile = JSON.parse(row.provider_profile_json) as unknown;
+      if (isRecord(profile) && typeof profile.harness === 'string' && profile.harness.trim()) {
+        return profile.harness.trim();
+      }
+    } catch { /* malformed old snapshot; fall through to the legacy provider id */ }
+  }
+  return null;
+}
+
 function locate(sessionId: string, projectPath: string, conversationId: string | null): Located | { note: string } {
   const row = db().prepare(
-    'SELECT provider_id, started_at, ended_at FROM session_log WHERE id = ?'
-  ).get(sessionId) as { provider_id: string; started_at: number; ended_at: number | null } | undefined;
+    `SELECT provider_id, started_at, ended_at, harness_id, provider_profile_json
+       FROM session_log WHERE id = ?`
+  ).get(sessionId) as SessionRouting | undefined;
 
-  // Only Claude Code writes these files. Without this check a Codex session run
-  // in a repo Claude has also worked in would adopt Claude's transcript and
-  // present another agent's conversation as its own.
-  if (row && row.provider_id !== 'claude') {
+  // Only the Claude Code CLI writes these files — but more than one provider
+  // runs it. GLM is that same binary with its base URL redirected, so it fills
+  // ~/.claude/projects exactly as Claude does; testing the provider id here
+  // left every GLM session with telemetry, a queue entry, and no archive of
+  // the conversation that produced them. The test has to be the CLI.
+  //
+  // It still refuses Codex, which is the reason the check exists: Codex writes
+  // no such file, so without this a Codex session run in a repo Claude has also
+  // worked in would adopt Claude's transcript and present another agent's
+  // conversation as its own.
+  const harness = row ? frozenHarness(row) : null;
+  const writesClaudeTranscript = row
+    ? harness !== null ? harness === 'claude-code' : runsClaudeCli(row.provider_id)
+    : true;
+  if (row && !writesClaudeTranscript) {
     return { note: `${row.provider_id} sessions do not write a transcript file — nothing to archive.` };
   }
 
@@ -412,7 +453,13 @@ const HIT_COLUMNS = `
   LEFT JOIN transcripts t ON t.session_id = transcript_fts.session_id`;
 
 function toHit(r: HitRow, fallbackSnippet: string): TranscriptHit {
-  const provider: ProviderId = r.provider_id === 'codex' ? 'codex' : 'claude';
+  // Now that GLM sessions are archived too, folding them into 'claude' here
+  // would badge another model's answers with Claude's colour in every search
+  // result. Anything else — a forgotten row, a provider a later build drops —
+  // falls back to 'claude' because the shape demands one of the three.
+  const provider: ProviderId = r.provider_id === 'codex' || r.provider_id === 'glm'
+    ? r.provider_id
+    : 'claude';
   return {
     sessionId: r.session_id,
     projectName: r.project_name ?? '(forgotten session)',

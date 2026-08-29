@@ -156,6 +156,16 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   check(okShot.ok && okShot.kind === 'image', 'a real PNG is accepted');
   check(okShot.width === 1 && okShot.height === 1, 'dimensions read from the header, not the extension');
 
+  const attachmentSession = `${SID}-attachment`;
+  const staged = attachments.attachBufferToSession(attachmentSession, fs.readFileSync(png), 'shot.png');
+  check(fs.statSync(staged.storedPath).isFile(), 'a pasted image is durably staged before it is recorded');
+  check(attachments.promptableSessionAttachments(attachmentSession).length === 1,
+    'only an on-disk attachment can be named in a prompt');
+  fs.rmSync(staged.storedPath, { force: true });
+  check(attachments.promptableSessionAttachments(attachmentSession).length === 0,
+    'a stale attachment record is never named in a prompt');
+  attachments.cleanupSessionAttachments(attachmentSession);
+
   // HEIC bytes wearing a .png name — the case that otherwise fails much later.
   const fakePng = path.join(tmp, 'vacation.png');
   const heic = Buffer.alloc(32);

@@ -4,6 +4,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { db } from './db';
 import { EMPTY_USAGE, type ApiEvent, type SessionUsage } from '../shared/types';
+import { mergeCodexUsage } from './codex-usage';
 
 /**
  * Claude Code exports OpenTelemetry natively. Wanigan spawns the CLI, so it
@@ -652,6 +653,11 @@ export function usageForMany(ids: string[]): Record<string, SessionUsage> {
     u.pullRequests = Math.round(u.pullRequests);
     u.activeSeconds = Math.round(u.activeSeconds);
   }
+
+  // Codex does not emit Wanigan's OTLP stream, but its local rollout contains
+  // authoritative cumulative token counters.  Keep the two sources merged at
+  // the boundary so Fleet, phone Fleet, and the session panel agree.
+  mergeCodexUsage(out);
 
   return out;
 }

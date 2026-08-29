@@ -15,7 +15,10 @@ import { GLM_DEFAULT, GLM_SMALL } from './providers';
  * would be a fiction — the Insights view says so rather than inventing one.
  */
 
-const MODELS_URL = process.env.WANIGAN_GLM_MODELS_URL || 'https://api.z.ai/api/paas/v4/models';
+// Coding Plan credentials must use its dedicated endpoint. The general PaaS
+// catalogue can include models a Coding Plan token cannot run, which made a
+// perfectly valid-looking choice fail only after a session was already open.
+const MODELS_URL = process.env.WANIGAN_GLM_MODELS_URL || 'https://api.z.ai/api/coding/paas/v4/models';
 
 export type GlmModel = { id: string; label: string; source: 'api' | 'fallback' };
 
@@ -80,6 +83,31 @@ export async function glmModels(force = false): Promise<{ models: GlmModel[]; no
     const note = `Could not read Z.ai's catalog (${detail}), so this is Wanigan's local list and may be behind.`;
     cache = { at: Date.now(), models: FALLBACK, note };
     return { models: FALLBACK, note, fetchedAt: null };
+  }
+}
+
+/** Verify a Coding Plan token against the same catalogue sessions rely on. */
+export async function verifyGlmKey(key = getProviderKey('glm')): Promise<{ ok: boolean; detail: string; models: GlmModel[] }> {
+  const token = key?.trim();
+  if (!token) return { ok: false, detail: 'No Z.ai Coding Plan API key is set.', models: [] };
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 12_000);
+    const r = await fetch(MODELS_URL, {
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, signal: ctl.signal,
+    });
+    clearTimeout(timer);
+    if (!r.ok) return { ok: false, detail: `Z.ai Coding Plan rejected the key (HTTP ${r.status}).`, models: [] };
+    const body = (await r.json()) as { data?: { id?: unknown }[] };
+    const models = (body.data ?? [])
+      .map((m) => typeof m.id === 'string' ? m.id : '')
+      .filter((id) => id && /glm/i.test(id))
+      .map((id) => ({ id, label: pretty(id), source: 'api' as const }));
+    if (!models.length) return { ok: false, detail: 'Z.ai accepted the key but returned no GLM Coding Plan models.', models: [] };
+    cache = { at: Date.now(), models, note: null };
+    return { ok: true, detail: `${models.length} GLM model${models.length === 1 ? '' : 's'} available through your Coding Plan.`, models };
+  } catch (e) {
+    return { ok: false, detail: `Could not reach Z.ai’s Coding Plan catalogue: ${e instanceof Error ? e.message : String(e)}`, models: [] };
   }
 }
 

@@ -3,15 +3,19 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import { db, logEvent, newRunId } from './db';
-import { providerById, shellPath } from './providers';
+import { detectProviders, providerById, refreshProviderPacks, shellPath } from './providers';
 import { projectById } from './store';
-import { trustFor } from './policy';
+import { trustFor, registerPolicyContext, releasePolicyContext } from './policy';
+import { writeHookSettings, cleanupHookSettings } from './hooks';
+import { flags, learningSettings } from './settings';
 import { createWorktree, removeWorktree } from './worktrees';
-import type { HeadlessConfig, HeadlessRow, ProviderId, TrustLevel } from '../shared/types';
+import { buildBriefing } from './learning';
+import type { HeadlessConfig, HeadlessRow, HeadlessRun, TrustLevel } from '../shared/types';
 
 const exec = promisify(execFile);
 
 type ProviderDef = NonNullable<ReturnType<typeof providerById>>;
+type StoredHeadlessConfig = HeadlessConfig & { providerProfileFingerprint: string };
 
 /** Row output is read in a pane, not streamed; past this it is only weight. */
 const OUTPUT_LIMIT = 64 * 1024;
@@ -33,6 +37,12 @@ const PROCESS_START = Date.now();
    with is the only authority it will ever have, which makes the mode a
    policy decision rather than a preference, and is why it is derived from
    the project's trust level here instead of taken from the run config.
+
+   The mode is only half of it. The other half is the permission hook, wired
+   into the spawn in runOneRepo: the mode decides what the CLI does without
+   asking, and the hook is what writes down what it did and refuses the calls
+   the trust level does not cover. A run with Hooks off in Settings has the
+   mode and nothing else, which is why that case says so on the run log.
    ───────────────────────────────────────────────────────────────────── */
 
 /** Matches TRUST_COPY.readonly: read and search, no writes, no shell, no network. */
@@ -83,9 +93,10 @@ function gateFor(trust: TrustLevel, def: ProviderDef): Gate {
         // here can name servers the user configured and Wanigan has never heard
         // of. --strict-mcp-config with no --mcp-config beside it leaves the child
         // exactly zero servers. Without it a "no writes, no network" fan-out can
-        // still call mcp__github__create_issue: the interactive path denies MCP
-        // in policy.ts through the permission hook, and a headless child gets no
-        // hook config at all, so this flag is the only thing standing there.
+        // still call mcp__github__create_issue. The headless child now gets the
+        // same permission hook the interactive path uses, which denies non-read
+        // MCP calls in policy.ts — but only when Hooks are on and the listener
+        // came up, so this flag is what still stands when they are not.
         '--strict-mcp-config',
       ],
     };
@@ -137,7 +148,10 @@ const STRIPPED_ENV = [
 ];
 const STRIPPED_PREFIXES = ['VSCODE_', 'ELECTRON_IPC', 'npm_'];
 
-function headlessEnv(PATH: string): NodeJS.ProcessEnv {
+/** Build the non-interactive child environment. Provider values are applied
+ * last for the same reason as attended sessions: a profile's backend routing
+ * must beat stale ambient values inherited by the desktop process. */
+export function headlessEnv(PATH: string, providerEnv: Record<string, string> = {}): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
@@ -146,6 +160,7 @@ function headlessEnv(PATH: string): NodeJS.ProcessEnv {
     out[k] = v;
   }
   out.PATH = PATH;
+  Object.assign(out, providerEnv);
   // The PTY path forces colour on. Here stdout is JSON that has to be parsed,
   // and an SGR escape in the middle of it is a parse failure, so colour is off.
   out.NO_COLOR = '1';
@@ -155,26 +170,44 @@ function headlessEnv(PATH: string): NodeJS.ProcessEnv {
 
 /* ── binary resolution ────────────────────────────────────────────────── */
 
-const binCache = new Map<ProviderId, string>();
+const binCache = new Map<string, string>();
+
+function binCacheKey(def: ProviderDef): string {
+  // Profile ids are intentionally reusable after a pack is removed. The exact
+  // manifest fingerprint and command therefore belong in the cache identity;
+  // an id-only cache can launch an old pack's binary under a new pack's argv,
+  // environment and backend attribution.
+  return `${def.id}\0${def.profileFingerprint}\0${def.bin}`;
+}
 
 /**
  * detectProviders() runs `--version` on every CLI it finds; a fan-out across
  * twenty repos would pay that twenty times before doing any work. The answer
  * cannot change while the app is open, so it is resolved once.
  */
-async function resolveBin(def: ProviderDef): Promise<string> {
-  const cached = binCache.get(def.id);
-  if (cached) return cached;
+export async function resolveBin(def: ProviderDef): Promise<string> {
+  const key = binCacheKey(def);
+  const cached = binCache.get(key);
+  if (cached) {
+    try {
+      fs.accessSync(cached, fs.constants.X_OK);
+      return cached;
+    } catch {
+      binCache.delete(key);
+    }
+  }
 
   const PATH = await shellPath();
   const candidates = [
-    ...PATH.split(':').filter(Boolean).map((d) => path.join(d, def.bin)),
+    ...(path.isAbsolute(def.bin)
+      ? [def.bin]
+      : PATH.split(':').filter(Boolean).map((d) => path.join(d, def.bin))),
     ...def.fallbacks(),
   ];
   for (const c of candidates) {
     try {
       fs.accessSync(c, fs.constants.X_OK);
-      binCache.set(def.id, c);
+      binCache.set(key, c);
       return c;
     } catch { /* next candidate */ }
   }
@@ -191,31 +224,54 @@ async function resolveBin(def: ProviderDef): Promise<string> {
  * different shape (Claude takes -p, Codex takes a subcommand), so it lives here
  * rather than being bolted onto a definition the PTY path also reads.
  */
-function headlessArgs(
+export function headlessArgs(
   def: ProviderDef,
   cfg: HeadlessConfig,
-  gate: { mode: string; clampArgs: string[] }
+  gate: { mode: string; clampArgs: string[] },
+  settingsFile: string | null,
+  learningCapsule: string | null = null,
 ): string[] {
-  const shared = def.args(gate.clampArgs, {
-    model: cfg.model || undefined,
+  const shared = def.launchArgs(gate.clampArgs, {
+    ...cfg.providerOptions,
+    model: def.supports.model ? cfg.model || undefined : undefined,
     effort: def.supports.effort ? cfg.effort || undefined : undefined,
     permissionMode: def.supports.permissionMode ? gate.mode : undefined,
   });
 
-  if (def.id === 'codex') {
+  if (def.headless === 'codex-json') {
     // Codex has no budget flag of its own and reports no cost, so cfg.timeoutMs
-    // is the only ceiling a Codex row has.
-    return ['exec', '--json', ...shared, cfg.prompt];
+    // is the only ceiling a Codex row has. It takes no hook configuration
+    // either, which is why the gate above refuses it below 'trusted'.
+    return [
+      'exec', '--json',
+      ...(learningCapsule
+        ? ['--config', `developer_instructions=${JSON.stringify(learningCapsule)}`]
+        : []),
+      ...shared, cfg.prompt,
+    ];
   }
 
-  return [
+  if (def.headless === 'claude-json') return [
     '-p', cfg.prompt,
     '--output-format', 'json',
+    // Wanigan's own hook config, handed over by path out of its userData
+    // directory — never .claude/settings.json inside the user's repository.
+    // Without it this is the one surface that spends money with nobody watching
+    // and leaves no ledger row behind.
+    ...(settingsFile ? ['--settings', settingsFile] : []),
+    // When the hook listener is unavailable, Claude still receives the same
+    // bounded capsule through its invocation-scoped system-prompt flag.
+    ...(learningCapsule ? ['--append-system-prompt', learningCapsule] : []),
     ...shared,
     // The CLI's own ceiling. Wanigan does not wrap it, so a run that hits the
     // budget stops on the CLI's terms and still reports what it spent.
     ...(cfg.maxBudgetUsd > 0 ? ['--max-budget-usd', String(cfg.maxBudgetUsd)] : []),
   ];
+
+  // The manifest is the capability boundary. An adapter that has not declared
+  // a non-interactive protocol must never inherit Claude's flags merely because
+  // it happens to expose a similarly named binary.
+  throw new Error(`${def.label} does not provide a trusted headless protocol.`);
 }
 
 /* ── CLI output ───────────────────────────────────────────────────────── */
@@ -337,6 +393,22 @@ const canceledRuns = new Set<string>();
 const rowKey = (runId: string, projectId: string) => `${runId}/${projectId}`;
 
 /**
+ * The hook bus keys everything on a session id, and this fan-out has no
+ * sessions: a row is a (runId, projectId) pair with no pane, no PTY and no entry
+ * in the live session list. So the pair is the id — one per row, stable for the
+ * life of the row, and prefixed so a ledger entry reads as a repository in a
+ * fan-out rather than a terminal somebody sat in front of.
+ *
+ * Short on purpose. hooks.ts clips an inbound id at MAX_ID and turns it into a
+ * filename; an id that came back shorter than the one registered with policy.ts
+ * would match no context, and the run would be judged at the default trust level
+ * — which is the exact failure this wiring exists to remove. runId and projectId
+ * are both fixed-width and word-safe, so the result is ~40 characters and passes
+ * through the URL and the filename untouched.
+ */
+const hookSessionId = (runId: string, projectId: string) => `h_${runId}__${projectId}`;
+
+/**
  * Signals the agent's whole process group, and says whether a signal landed.
  *
  * child.kill() reaches only the CLI's own pid. Anything it started — a dev
@@ -419,13 +491,46 @@ export function registerHeadlessRunner(fn: HeadlessRunner | null) {
 /* ── the fan-out ──────────────────────────────────────────────────────── */
 
 export async function startHeadlessRun(cfg: HeadlessConfig): Promise<{ runId: string; rows: number }> {
-  const def = providerById(cfg.providerId);
+  // The app may have been open while an on-disk pack changed. Refresh before
+  // accepting the requested identity or probing its executable.
+  refreshProviderPacks();
+  let def = providerById(cfg.providerId);
   if (!def) throw new Error(`Unknown provider: ${cfg.providerId}`);
+  if (def.headless === 'none') {
+    throw new Error(
+      `${def.label} does not declare a headless protocol. It can run in an attended session, ` +
+      'but Wanigan will not guess unattended flags for an arbitrary provider adapter.'
+    );
+  }
   if (!cfg.prompt.trim()) {
     throw new Error('A headless run needs a prompt — there is no terminal to type one into afterwards.');
   }
   if (!(cfg.timeoutMs > 0)) {
     throw new Error('A headless run needs a per-repo timeout. Without one, a stuck agent runs until the app quits.');
+  }
+
+  const detected = (await detectProviders()).find((provider) => provider.id === cfg.providerId);
+  const refreshedDef = providerById(cfg.providerId);
+  if (!refreshedDef || !detected?.path || detected.profileFingerprint !== refreshedDef.profileFingerprint) {
+    throw new Error(`${def.label} is disabled, changed, or no longer installed.`);
+  }
+  def = refreshedDef;
+  if (!detected.capabilities.headlessJson || (def.source === 'local' && !detected.capabilities.probed)) {
+    throw new Error(
+      `${def.label} has not proven the declared headless protocol. ` +
+      'Review and trust its capability adapter, then refresh providers.'
+    );
+  }
+
+  // Compile before writing the run or queue rows. Manifest launch fields can be
+  // required or constrained selects; discovering a bad value after a row is
+  // marked running leaves a phantom in-progress job with no child process.
+  try {
+    headlessArgs(def, cfg, { mode: 'manual', clampArgs: [] }, null);
+  } catch (error) {
+    throw new Error(
+      `${def.label} headless options are invalid: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 
   const picked = cfg.projectIds.map((id) => ({ id, project: projectById(id) }));
@@ -436,10 +541,29 @@ export async function startHeadlessRun(cfg: HeadlessConfig): Promise<{ runId: st
     );
   }
   if (!picked.length) throw new Error('Pick at least one repository to fan out across.');
+  const constrained = picked.find(({ project }) => project && trustFor(project.id) !== 'trusted');
+  if (constrained && !detected.capabilities.policy) {
+    throw new Error(
+      `${def.label} has not proven Wanigan policy enforcement, so it cannot run unattended ` +
+      `for ${constrained.project!.name} below Trusted.`
+    );
+  }
 
   // Resolved before a single row is written, so a missing CLI is one refusal to
   // start rather than N identical failures to read one at a time.
   await resolveBin(def);
+  refreshProviderPacks();
+  const finalDef = providerById(cfg.providerId);
+  if (!finalDef || finalDef.profileFingerprint !== def.profileFingerprint) {
+    throw new Error(`${def.label} changed or was disabled before the run could be queued.`);
+  }
+  def = finalDef;
+  const storedConfig: StoredHeadlessConfig = {
+    ...cfg,
+    // Last on purpose: an IPC caller cannot choose the identity that later rows
+    // are authorised to launch.
+    providerProfileFingerprint: def.profileFingerprint,
+  };
 
   const runId = newRunId();
   const now = Date.now();
@@ -459,7 +583,7 @@ export async function startHeadlessRun(cfg: HeadlessConfig): Promise<{ runId: st
     // runs.model feeds Insights and the budget roll-up. When the run names no
     // model the provider is the honest answer: the CLI chose, not Wanigan.
     model: cfg.model?.trim() || cfg.providerId,
-    config: JSON.stringify(cfg),
+    config: JSON.stringify(storedConfig),
     total: picked.length,
     created: now,
   });
@@ -545,11 +669,43 @@ export async function runOneRepo(runId: string, projectId: string): Promise<void
 
   const run = d.prepare('SELECT config_json FROM runs WHERE id=?').get(runId) as { config_json: string } | undefined;
   if (!run) throw new Error(`Run ${runId} not found.`);
-  const cfg = JSON.parse(run.config_json) as HeadlessConfig;
-  const def = providerById(cfg.providerId);
+  const cfg = JSON.parse(run.config_json) as Partial<StoredHeadlessConfig> & HeadlessConfig;
+  const queuedFingerprint = typeof cfg.providerProfileFingerprint === 'string'
+    ? cfg.providerProfileFingerprint.trim()
+    : '';
+  if (!queuedFingerprint) {
+    failRow(
+      runId,
+      projectId,
+      'This fan-out predates frozen provider profiles and cannot be resumed safely. Start it again.',
+    );
+    return;
+  }
+  // The process may have been open since this row was queued. Refresh before
+  // accepting the stored identity so an on-disk enable/disable or manifest
+  // replacement is rejected before we create a worktree or fetch learning.
+  refreshProviderPacks();
+  let def = providerById(cfg.providerId);
   if (!def) { failRow(runId, projectId, `Unknown provider: ${cfg.providerId}`); return; }
+  if (def.profileFingerprint !== queuedFingerprint) {
+    failRow(
+      runId,
+      projectId,
+      `${def.label} changed after this fan-out was queued. Review the provider pack and start the run again.`,
+    );
+    return;
+  }
+  if (def.headless === 'none') {
+    failRow(runId, projectId, `${def.label} no longer declares a headless protocol.`);
+    return;
+  }
 
-  const gate = gateFor(trustFor(projectId), def);
+  // Resolved once and used twice: the gate picks the spawn flags from it, and
+  // the policy context registered below answers every tool call with it. Reading
+  // the setting twice would let a trust level change between the two and leave a
+  // run whose flags and whose ledger rows disagree about what it was allowed.
+  const trust = trustFor(projectId);
+  const gate = gateFor(trust, def);
   if (!gate.ok) {
     d.prepare("UPDATE headless_rows SET status='blocked', error=?, ended_at=? WHERE run_id=? AND project_id=?")
       .run(gate.reason, Date.now(), runId, projectId);
@@ -602,17 +758,142 @@ export async function runOneRepo(runId: string, projectId: string): Promise<void
   const baseHead = await headOf(cwd);
   const before = await changedSet(cwd, null);
 
-  const args = headlessArgs(def, cfg, gate);
-  const env = headlessEnv(await shellPath());
+  let launchPath: string;
+  try {
+    launchPath = await shellPath();
+  } catch (error) {
+    failRow(
+      runId, projectId,
+      `Could not resolve the launch environment for ${def.label} in ${row.project_name}: ${error instanceof Error ? error.message : String(error)}`,
+      startedAt
+    );
+    return;
+  }
 
   // Checked again here, not only on entry: resolveBin, the worktree checkout and
   // the two git snapshots above are all awaits, and a cancel landing anywhere in
   // that window finds a row already 'running' with no child to kill. Without
   // this, cancelling a fan-out still launches an agent afterwards and pays for a
-  // whole run. Everything from here to liveChildren.set is synchronous, so no
-  // cancel can slip in behind the check.
+  // whole run. Briefing retrieval below has its own second check because it is
+  // the only remaining await before liveChildren.set.
   if (canceledRuns.has(runId)) {
     markCanceled(runId, projectId);
+    return;
+  }
+
+  /* ── the ledger ─────────────────────────────────────────────────────
+     The same hook config the interactive path writes, for the surface that
+     needs it more. Nobody is watching this agent, and at 'trusted' Wanigan
+     starts it at bypassPermissions on purpose. Without these lines the
+     append-only policy_ledger — the artifact behind "nothing happens you
+     cannot see afterward" — covers only the sessions a human was already
+     sitting in front of, which is the opposite of where it is wanted.
+
+     Registered before the file reaches the CLI, so the first PreToolUse
+     cannot arrive ahead of the context that answers it. Arriving early
+     would fall through to the resolver for live panes, find no pane for a
+     fan-out row, and judge a Trusted repository at the default trust level.
+     ─────────────────────────────────────────────────────────────────── */
+  const hookId = hookSessionId(runId, projectId);
+  // Harness, not provider id or binary spelling: GLM and future compatible
+  // profiles can intentionally use the Claude hook contract, while an
+  // arbitrary adapter cannot gain it by naming its executable `claude`.
+  const takesHooks = def.harness === 'claude-code';
+  const hooksOn = flags().hooks;
+  let hookSettings: string | null = takesHooks && hooksOn ? writeHookSettings(hookId, cwd, {
+    providerId: def.id,
+    backendId: def.backendId,
+    projectId,
+    projectPath: row.project_path,
+    query: cfg.prompt,
+  }) : null;
+  if (hookSettings) {
+    registerPolicyContext({
+      sessionId: hookId,
+      projectId,
+      // cwd, not the repository path. An isolated row runs in a worktree that
+      // lives outside the repo, and judging its writes against the repo root
+      // would deny every edit the run was started to make.
+      projectPath: cwd,
+      trust,
+      // The one field that only this module ever sets. There is no terminal and
+      // stdin is /dev/null, so nothing here can be put to a human: an 'ask'
+      // would be a row waiting out its whole timeout, and a rule that throws
+      // would otherwise let the call run unexamined and unrecorded.
+      attended: false,
+    });
+  } else {
+    // Said out loud rather than left to be inferred from an empty ledger: a
+    // fan-out with no gate is a defensible thing to run and an indefensible
+    // thing to discover afterwards.
+    logEvent(runId, 'warn',
+      `${row.project_name}: running with no policy gate — ` +
+      (!takesHooks ? `${def.label} takes no hook configuration`
+        : !hooksOn ? 'Hooks are off in Settings'
+        : 'the hook listener is not up') +
+      ', so nothing this agent does reaches the ledger.');
+  }
+  /** Drops the bearer credential on disk and the context that answers for it. */
+  const releaseHooks = () => {
+    if (!hookSettings) return;
+    hookSettings = null;
+    try { cleanupHookSettings(hookId); } catch { /* already gone */ }
+    releasePolicyContext(hookId);
+  };
+
+  // Codex has no SessionStart hook contract. Claude normally receives this
+  // through the hook above, but if hooks are disabled or the listener failed to
+  // start, --append-system-prompt is its lossless fallback. Retrieval is keyed
+  // to the exact task and frozen backend rather than dumping a whole project.
+  let learningCapsule: string | null = null;
+  if (learningSettings().enabled && (
+    def.harness === 'codex' || (def.harness === 'claude-code' && !hookSettings)
+  )) {
+    try {
+      const learned = await buildBriefing({
+        query: cfg.prompt,
+        providerId: def.id,
+        backendId: def.backendId,
+        projectId,
+        maxTokens: learningSettings().briefingMaxTokens,
+        projectRoot: row.project_path,
+        allowedEvidenceRoots: [row.project_path],
+      });
+      learningCapsule = learned.text.trim() || null;
+    } catch { /* learned context is an optimization, never a launch dependency */ }
+  }
+
+  // Briefing freshness checks touch the filesystem asynchronously. A cancel can
+  // land while they run, so do not let a paid child slip out after cancellation.
+  if (canceledRuns.has(runId)) {
+    releaseHooks();
+    markCanceled(runId, projectId);
+    return;
+  }
+
+  let args: string[];
+  let env: NodeJS.ProcessEnv;
+  try {
+    // This is the last filesystem/trust refresh before spawn, after binary
+    // discovery, worktree setup, git snapshots and briefing retrieval have all
+    // yielded. Everything executable below is recomputed from the definition
+    // whose exact fingerprint was frozen when the run was queued.
+    refreshProviderPacks();
+    const finalDef = providerById(cfg.providerId);
+    if (!finalDef || finalDef.profileFingerprint !== queuedFingerprint) {
+      throw new Error(`${def.label} changed or was disabled before this repository could launch.`);
+    }
+    fs.accessSync(bin, fs.constants.X_OK);
+    def = finalDef;
+    env = headlessEnv(launchPath, def.env?.() ?? {});
+    args = headlessArgs(def, cfg, gate, hookSettings, learningCapsule);
+  } catch (error) {
+    releaseHooks();
+    failRow(
+      runId, projectId,
+      `Could not configure ${def.label} in ${row.project_name}: ${error instanceof Error ? error.message : String(error)}`,
+      startedAt
+    );
     return;
   }
 
@@ -630,6 +911,7 @@ export async function runOneRepo(runId: string, projectId: string): Promise<void
       detached: true,
     });
   } catch (e) {
+    releaseHooks();
     failRow(
       runId, projectId,
       `Could not start ${def.label} in ${row.project_name}: ${e instanceof Error ? e.message : String(e)}`,
@@ -693,6 +975,12 @@ export async function runOneRepo(runId: string, projectId: string): Promise<void
   // process's event loop alive, which is the same hang one step further along.
   child.stdout?.destroy();
   child.stderr?.destroy();
+
+  // Here rather than at the end of the function: the settings file carries this
+  // app run's hook bearer token, and the git snapshots below take seconds. The
+  // ledger rows are already written — releasing only stops a dead row's id from
+  // answering for anything, and keeps a stale trust level out of the map.
+  releaseHooks();
 
   const endedAt = Date.now();
   const reported = parseCliOutput(stdout);
@@ -846,8 +1134,8 @@ export function headlessRows(runId: string): HeadlessRow[] {
   }));
 }
 
-export function headlessRuns(limit = 50): unknown[] {
-  return db().prepare(`
+export function headlessRuns(limit = 50): HeadlessRun[] {
+  const rows = db().prepare(`
     SELECT r.id, r.name, r.model, r.status, r.cost_usd, r.total_requests,
            r.created_at, r.submitted_at, r.ended_at, r.error,
            (SELECT COUNT(*) FROM headless_rows h WHERE h.run_id=r.id AND h.status='succeeded') succeeded,
@@ -857,7 +1145,17 @@ export function headlessRuns(limit = 50): unknown[] {
            (SELECT COALESCE(SUM(files_changed),0) FROM headless_rows h WHERE h.run_id=r.id) files_changed
       FROM runs r WHERE r.kind='headless'
      ORDER BY r.created_at DESC LIMIT ?
-  `).all(limit);
+  `).all(limit) as Record<string, string | number | null>[];
+  return rows.map((r) => ({
+    id: String(r.id), name: String(r.name), model: String(r.model),
+    status: String(r.status) as HeadlessRun['status'], costUsd: Number(r.cost_usd) || 0,
+    totalRequests: Number(r.total_requests) || 0, createdAt: Number(r.created_at),
+    submittedAt: r.submitted_at === null ? null : Number(r.submitted_at),
+    endedAt: r.ended_at === null ? null : Number(r.ended_at),
+    error: r.error === null ? null : String(r.error), succeeded: Number(r.succeeded) || 0,
+    failed: Number(r.failed) || 0, blocked: Number(r.blocked) || 0,
+    open: Number(r.open) || 0, filesChanged: Number(r.files_changed) || 0,
+  }));
 }
 
 /* ── cancel ───────────────────────────────────────────────────────────── */

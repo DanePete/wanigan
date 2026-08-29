@@ -242,6 +242,23 @@ export function attachmentsDir(sessionId: string): string {
   return path.join(attachmentsRoot(), id);
 }
 
+/**
+ * Make the per-session directory before the agent starts. Both Claude Code and
+ * Codex are launched with this directory as an additional allowed root, so a
+ * file attached later in the session is readable without relaxing access to
+ * the whole Wanigan data directory.
+ */
+export function prepareAttachmentDir(sessionId: string): string {
+  const dir = attachmentsDir(sessionId);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Wanigan could not prepare the attachment folder ${dir} (${msg}).`);
+  }
+  return dir;
+}
+
 function contained(base: string, full: string): boolean {
   return full === base || full.startsWith(base + path.sep);
 }
@@ -841,34 +858,50 @@ function stage(
 ): Attachment {
   if (!check.ok) throw new Error(check.error ?? `Wanigan cannot attach ${name}.`);
 
-  const dir = attachmentsDir(sessionId);
-  fs.mkdirSync(dir, { recursive: true });
+  const dir = prepareAttachmentDir(sessionId);
   const stored = uniqueName(dir, safeName(name, check));
   const dest = path.join(dir, stored);
 
   try {
     write(dest);
+    const written = fs.statSync(dest);
+    if (!written.isFile() || written.size !== check.bytes) {
+      throw new Error(
+        `the staged file is ${written.size} bytes; expected ${check.bytes} bytes. Please attach it again.`
+      );
+    }
   } catch (e) {
+    // A failed paste used to leave an empty session directory behind. That
+    // looked like a successful attachment path even though there was no image
+    // for the agent to read.
+    try { fs.rmSync(dest, { force: true }); } catch { /* best effort */ }
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(
       `Wanigan could not stage ${name} into ${dir} (${msg}). Check that the disk is writable and not full.`
     );
   }
 
-  return insert({
-    id: newId(),
-    sessionId,
-    name: stored,
-    storedPath: dest,
-    kind: check.kind,
-    mediaType: check.mediaType,
-    bytes: check.bytes,
-    width: check.width,
-    height: check.height,
-    visualTokens: check.visualTokens,
-    addedAt: Date.now(),
-    fileId: null,
-  });
+  try {
+    return insert({
+      id: newId(),
+      sessionId,
+      name: stored,
+      storedPath: dest,
+      kind: check.kind,
+      mediaType: check.mediaType,
+      bytes: check.bytes,
+      width: check.width,
+      height: check.height,
+      visualTokens: check.visualTokens,
+      addedAt: Date.now(),
+      fileId: null,
+    });
+  } catch (e) {
+    // Never show a file as staged when its durable record was not written.
+    try { fs.rmSync(dest, { force: true }); } catch { /* best effort */ }
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Wanigan staged ${name}, but could not record it (${msg}). Attach it again.`);
+  }
 }
 
 export function attachToSession(sessionId: string, absPath: string): Attachment {
@@ -896,6 +929,14 @@ export function sessionAttachments(sessionId: string): Attachment[] {
   return rows.map(toAttachment);
 }
 
+/** A prompt must never name a stale attachment row whose file has gone away. */
+export function promptableSessionAttachments(sessionId: string): Attachment[] {
+  return sessionAttachments(sessionId).filter((attachment) => {
+    try { return fs.statSync(attachment.storedPath).isFile(); }
+    catch { return false; }
+  });
+}
+
 /**
  * Removing an attachment deletes the staged copy, never the original. A batch
  * attachment's stored_path is the user's own file, still sitting wherever they
@@ -916,10 +957,11 @@ export function removeAttachment(id: string): boolean {
 }
 
 /**
- * Everything a finished session staged. Returns the number of files removed so
- * the caller can say what it did. The directory goes with them: an empty
- * per-session directory left behind for every session ever run is its own slow
- * mess, and a stale one would keep answering yes to isAttachmentPath.
+ * Explicitly discard everything a session staged. This is intentionally not
+ * normal exit cleanup: the directory is also the agent's granted artifact
+ * directory, and reports or generated images linked from a saved conversation
+ * must survive the PTY that created them. Call this only for a launch that
+ * never started or an explicit removal action.
  */
 export function cleanupSessionAttachments(sessionId: string): number {
   let dir: string;

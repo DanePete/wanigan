@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
-  WaniganSettings, LedgerEntry, McpServerConfig, McpServerStatus, MotionSetting,
-  Project, ProviderInfo, QueueItem, QueueSlots, QueueState, TrustLevel, UploadedFile, WorktreeInfo,
+  WaniganSettings, EgressHost, LedgerEntry, McpServerConfig, MotionSetting,
+  MobileMonitorConfig, MobileMonitorStatus, Project, ProviderInfo, QueueItem, QueueSlots, QueueState,
+  TrustLevel, UploadedFile, WorktreeInfo,
 } from '@shared/types';
 import { TRUST_COPY, TRUST_LEVELS } from '@shared/types';
 import { Note, Section, Stat, ago, num } from '../components/bits';
 
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
+type ProviderKeyStatus = { present: boolean; fingerprint: string | null };
 
 /* ── formatting ──────────────────────────────────────────────────────── */
 
@@ -210,6 +212,10 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
   const [busy, setBusy] = useState(false);
   const [msgState, setMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [cap, setCap] = useState('1.00');
+  const [glmKey, setGlmKey] = useState('');
+  const [glmStatus, setGlmStatus] = useState<ProviderKeyStatus | null>(null);
+  const [glmBusy, setGlmBusy] = useState(false);
+  const [glmMsg, setGlmMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
 
   const load = () => window.wanigan.key.status().then((st) => {
     setStatus(st);
@@ -217,8 +223,34 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
   });
   useEffect(() => {
     void load();
+    void window.wanigan.key.provider('glm').then(setGlmStatus).catch(() => {});
     window.wanigan.settings.get().then((s) => setCap(s.spendCapUsd.toFixed(2))).catch(() => {});
   }, []);
+
+  const loadGlm = () => window.wanigan.key.provider('glm').then(setGlmStatus);
+  async function saveGlm() {
+    setGlmBusy(true); setGlmMsg(null);
+    try {
+      await window.wanigan.key.setProvider('glm', glmKey);
+      const verified = await window.wanigan.key.glmVerify();
+      setGlmKey(''); await loadGlm(); onKeyChange();
+      setGlmMsg({ tone: verified.ok ? 'ok' : 'error', text: verified.detail });
+    } catch (e) { setGlmMsg({ tone: 'error', text: msg(e) }); }
+    finally { setGlmBusy(false); }
+  }
+  async function verifyGlm() {
+    setGlmBusy(true); setGlmMsg(null);
+    try {
+      const verified = await window.wanigan.key.glmVerify();
+      setGlmMsg({ tone: verified.ok ? 'ok' : 'error', text: verified.detail });
+    } catch (e) { setGlmMsg({ tone: 'error', text: msg(e) }); }
+    finally { setGlmBusy(false); }
+  }
+  async function clearGlm() {
+    setGlmBusy(true);
+    try { await window.wanigan.key.clearProvider('glm'); await loadGlm(); onKeyChange(); setGlmMsg(null); }
+    finally { setGlmBusy(false); }
+  }
 
   async function save() {
     setBusy(true); setMsg(null);
@@ -379,6 +411,28 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
         </div>
       </Section>
 
+      <Section title="GLM Coding Plan"
+               hint="Runs GLM through the installed Claude Code runtime, with the Z.ai Coding Plan endpoint and Wanigan’s normal sessions, attachments, code review, worktrees, MCP configuration and headless runs.">
+        {glmStatus?.present ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 11 }}>
+            <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>Coding Plan key installed</span>
+            <span className="mono faint">{glmStatus.fingerprint}</span>
+            <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => void verifyGlm()} disabled={glmBusy}>Verify live catalogue</button>
+            <button className="btn btn-danger" onClick={() => void clearGlm()} disabled={glmBusy}>Remove</button>
+          </div>
+        ) : <Note tone="warn">No Z.ai Coding Plan key stored. GLM sessions cannot authenticate until you add one.</Note>}
+        <label className="label" style={{ marginTop: 11 }}>{glmStatus?.present ? 'Replace Z.ai key' : 'Paste Z.ai Coding Plan API key'}</label>
+        <div style={{ display: 'flex', gap: 7, marginTop: 4 }}>
+          <input className="field mono" type="password" placeholder="Z.ai API key" value={glmKey} autoComplete="off" spellCheck={false}
+                 onChange={(e) => setGlmKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && glmKey.trim()) void saveGlm(); }} />
+          <button className="btn btn-primary" onClick={() => void saveGlm()} disabled={glmBusy || !glmKey.trim()}>{glmBusy ? 'Checking…' : 'Save & verify'}</button>
+        </div>
+        {glmMsg && <div style={{ marginTop: 10 }}><Note tone={glmMsg.tone === 'ok' ? 'ok' : 'error'}>{glmMsg.text}</Note></div>}
+        <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.45 }}>
+          The key is verified against <span className="mono">api.z.ai/api/coding/paas/v4/models</span> before Wanigan saves it, then encrypted in your macOS Keychain. Wanigan does not show or log the key.
+        </p>
+      </Section>
+
       <Section title="Spending"
                hint="A batch cannot be un-submitted. The cap is checked against the estimate at submit time — the last moment anything is preventable.">
         <label className="label">Maximum estimated cost per run (USD)</label>
@@ -400,6 +454,8 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
       {prefsErr && <Callout level="critical" title="A preference did not save.">{prefsErr}</Callout>}
 
       <Observation prefs={prefs} pending={pending} setFlag={setFlag} />
+      <PhoneMonitor />
+      <Egress />
       <Trust projects={projects} onAddProject={onAddProject} />
       <Dispatcher />
       <Mcp projects={projects} prefs={prefs} pending={pending} setFlag={setFlag} />
@@ -483,9 +539,9 @@ function Observation({ prefs, pending, setFlag }: {
 
           <Toggle title="Hook bus" on={prefs.hooks} busy={pending === 'hooks'}
                   onChange={(v) => void setFlag('hooks', v)}>
-            The CLI posts an event when a tool starts, finishes, fails, or stops to ask you for
-            permission. This is the one that tells you an agent is blocked and waiting for a human.
-            With it off, a blocked agent and a working agent look identical.
+            Claude-compatible CLIs post an event when a tool starts, finishes, fails, or stops to ask
+            for permission. With it off, those providers lose tool-level state. Codex uses its own
+            per-session approval and completed-turn notification channel instead.
           </Toggle>
 
           <Toggle title="Archive transcripts" on={prefs.archiveTranscripts} busy={pending === 'archive_transcripts'}
@@ -498,9 +554,8 @@ function Observation({ prefs, pending, setFlag }: {
 
           <Toggle title="Desktop notifications" on={prefs.notifications} busy={pending === 'notifications'}
                   onChange={(v) => void setFlag('notifications', v)}>
-            Raises an OS notification when a batch is close to expiring, when results are about to be
-            deleted, or when a session needs you. Wanigan hands the text to macOS and nothing leaves
-            the machine.
+            Raises an OS notification when an observed session asks for permission, fails, or finishes
+            a turn. Wanigan hands the text to macOS and nothing leaves the machine.
           </Toggle>
 
           <Toggle title="Keep a pet" on={prefs.pet} busy={pending === 'pet'}
@@ -586,6 +641,441 @@ function Observation({ prefs, pending, setFlag }: {
           );
         }}
       </Frame>
+    </Section>
+  );
+}
+
+/* ── what leaves this machine ─────────────────────────────────────────────
+   The one panel where a false statement would cost the most, so nothing on it
+   is written here. The hosts, the pinned variables, the paths and the
+   sentences about what cannot be enumerated all arrive from the main process,
+   which is the side that actually knows them. A host list typed into the
+   renderer would go on saying what was true the day it was typed, and would
+   keep saying it after someone adds a sixth fetch() to a file this view has
+   never heard of — a privacy claim that quietly stops being true is worse than
+   no claim at all.
+   ──────────────────────────────────────────────────────────────────────── */
+
+/** Who opens the socket. An agent binary's own traffic is not Wanigan's to claim. */
+const OPENED_BY: Record<EgressHost['by'], string> = {
+  wanigan: 'Wanigan itself',
+  agent: 'the agent CLI',
+};
+
+/**
+ * Whether the condition beside it holds right now — a key stored, a provider
+ * configured. Deliberately not the word "connected": Wanigan holds no
+ * connection open to any of these, and a mark that implied otherwise would be
+ * the overclaim this whole panel exists to avoid.
+ */
+function contactable(now: boolean | null): MarkSpec {
+  if (now === null) return { glyph: '?', word: 'unknown', color: 'var(--text-dim)' };
+  return now
+    ? { glyph: '●', word: 'yes', color: 'var(--series-1)' }
+    : { glyph: '○', word: 'no', color: 'var(--text-faint)' };
+}
+
+function Egress() {
+  const report = useLoad(async () => window.wanigan.egress.report());
+
+  return (
+    <Section title="What leaves this machine"
+             hint="Every host Wanigan can open a connection to and why, what is pinned off so it cannot, and where the data sits on this disk."
+             right={<button className="btn" onClick={report.reload}>Re-read</button>}>
+      <Frame v={report.v} what="what leaves this machine" onRetry={report.reload}>
+        {(d) => (
+          <>
+            <div className="set-sub">Hosts</div>
+            {!d.hosts.length ? (
+              <div className="sunk set-empty">
+                The report came back with no hosts at all. That is a bigger claim than this panel is
+                willing to make on Wanigan's behalf — read it as the report failing, not as proof that
+                nothing leaves.
+              </div>
+            ) : (
+              <div className="set-scroll wide">
+                <table className="grid">
+                  <thead>
+                    <tr>
+                      <th>Host</th><th>Opened by</th><th>Why</th><th>Only when</th><th>Now</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {d.hosts.map((h) => (
+                      <tr key={`${h.by} ${h.host} ${h.purpose}`}>
+                        <td>
+                          <div className="set-path" style={{ fontWeight: 600 }}>{h.host}</div>
+                          {h.paths.map((p) => <div key={p} className="faint set-path">{p}</div>)}
+                          {h.overrideEnv && (
+                            <div className="faint set-sub-line">
+                              redirected by <span className="mono">{h.overrideEnv}</span>
+                            </div>
+                          )}
+                        </td>
+                        <td className="dim">{OPENED_BY[h.by]}</td>
+                        <td className="dim" style={{ lineHeight: 1.45 }}>{h.purpose}</td>
+                        <td className="dim" style={{ lineHeight: 1.45 }}>{h.when}</td>
+                        <td><Mark {...contactable(h.activeNow)} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.5 }}>
+              “Now” answers the condition in the column beside it and nothing more. It does not mean a
+              request is in flight: Wanigan keeps no connection open to any of these and reaches one
+              only at the moment the thing under “why” happens.
+            </p>
+            <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 6, lineHeight: 1.5 }}>
+              {d.provenance}
+            </p>
+
+            <div style={{ marginTop: 11 }}>
+              <Callout level="warning"
+                       title="This is Wanigan's own traffic. It is not everything that leaves this machine.">
+                {d.unenumerated.length ? (
+                  <ul style={{ margin: 0, paddingLeft: 16 }}>
+                    {d.unenumerated.map((line) => <li key={line} style={{ marginTop: 4 }}>{line}</li>)}
+                  </ul>
+                ) : (
+                  <p>
+                    Nothing was reported here, which is not the same as there being nothing. Read the
+                    table above as covering Wanigan's own code and no other program's.
+                  </p>
+                )}
+              </Callout>
+            </div>
+
+            <div className="set-sub">Pinned off on every agent launch</div>
+            {!d.pins.length ? (
+              <div className="sunk set-empty">
+                Nothing is reported as pinned. If that is right, each agent is launched with whatever
+                your own shell has set for content logging — so treat the claim below about prompt
+                text staying out of the database as unproven until this list fills.
+              </div>
+            ) : (
+              <>
+                <div className="set-scroll">
+                  <table className="grid">
+                    <thead><tr><th>Variable</th><th>Pinned to</th><th>What that prevents</th></tr></thead>
+                    <tbody>
+                      {d.pins.map((p) => (
+                        <tr key={p.name}>
+                          <td className="set-path">{p.name}</td>
+                          <td className="mono" style={{ fontSize: 'var(--t-micro)' }}>{p.value}</td>
+                          <td className="dim" style={{ lineHeight: 1.45 }}>{p.prevents}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.5 }}>
+                  Pinned, not merely left unset. A spawned agent inherits Wanigan's own environment, so
+                  one of these switched on in your shell would otherwise flow through the CLI and land
+                  in the database on this machine. Setting them explicitly on every launch is what
+                  makes the row true whatever your shell says.
+                </p>
+              </>
+            )}
+
+            <div className="set-sub">Where it sits on this disk</div>
+            {!d.paths.length ? (
+              <div className="sunk set-empty">
+                No paths were reported. Wanigan does keep files — Storage below lists what it has —
+                so read this as the report failing rather than as an empty disk.
+              </div>
+            ) : (
+              <div className="set-scroll">
+                <table className="grid">
+                  <thead><tr><th>What</th><th>Where</th><th>Present</th></tr></thead>
+                  <tbody>
+                    {d.paths.map((p) => (
+                      <tr key={p.path}>
+                        <td>
+                          <div style={{ fontWeight: 500 }}>{p.label}</div>
+                          <div className="dim" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>{p.what}</div>
+                        </td>
+                        <td className="set-path" style={{ userSelect: 'all' }}>{p.path}</td>
+                        <td>
+                          <Mark {...(p.exists
+                            ? { glyph: '✓', word: 'on disk', color: 'var(--good)' }
+                            : { glyph: '○', word: 'not yet', color: 'var(--text-faint)' })} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.5 }}>
+              These files stay on this disk and are never copied wholesale. The optional Phone monitor
+              exports only the allow-listed status fields described in its own section below; it never
+              sends these files, repository paths, terminal bytes or transcripts. “Not yet” means
+              nothing has been written there yet.
+            </p>
+
+            <div className="set-sub">What never leaves</div>
+            <div className="sunk" style={{ padding: '10px 12px', fontSize: 'var(--t-small)', lineHeight: 1.55 }}>
+              <p>
+                <strong>The API key.</strong> It is sent as an auth header to the hosts in the table
+                above and to nothing else, and it is never handed to this window — the key panel shows
+                a fingerprint because a fingerprint is all the renderer is ever given. At rest it is
+                encrypted by the OS credential store
+                {d.keychainAvailable
+                  ? '.'
+                  : ', which this machine reports as unavailable right now — in that state Wanigan refuses to store a key at all rather than fall back to a plaintext file.'}
+              </p>
+              <p style={{ marginTop: 8 }}>
+                <strong>Conversation text, into Wanigan's own measurements.</strong> The pinned
+                variables above stop the CLI putting prompt and response content into the telemetry
+                stream, so measuring what a session cost never copies what it said. Archived
+                transcripts are the single exception: they are written to the transcripts directory
+                above and nowhere else, and Storage below lists every one and will delete any of them.
+              </p>
+              <p style={{ marginTop: 8 }}>
+                <strong>Your prompts do reach the model provider, though.</strong> That is what running
+                an agent is, and pretending otherwise would be exactly the lie this panel exists to
+                avoid. What Wanigan adds on top of it is nothing: no analytics host, no crash reporter,
+                no account, no session sync, and no second copy of the conversation going anywhere but
+                this disk.
+              </p>
+              <p style={{ marginTop: 8 }}>
+                <strong>Nothing on the LAN can reach a listener directly.</strong> Wanigan binds its
+                receivers to 127.0.0.1 rather than 0.0.0.0. If you explicitly configure Phone monitor
+                with Tailscale Serve, that private proxy intentionally forwards authenticated,
+                read-only dashboard requests from your tailnet to its loopback listener.
+              </p>
+            </div>
+          </>
+        )}
+      </Frame>
+    </Section>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Phone monitor
+   ════════════════════════════════════════════════════════════════════════ */
+
+function PhoneMonitor() {
+  const [status, setStatus] = useState<MobileMonitorStatus | null>(null);
+  const [server, setServer] = useState('https://ntfy.sh');
+  const [topic, setTopic] = useState('');
+  const [dashboardUrl, setDashboardUrl] = useState('');
+  const [port, setPort] = useState('47831');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+
+  const absorb = useCallback((next: MobileMonitorStatus) => {
+    setStatus(next);
+    setServer(next.config.pushServer);
+    setTopic(next.config.pushTopic);
+    setDashboardUrl(next.config.dashboardUrl);
+    setPort(String(next.config.port));
+  }, []);
+
+  const load = useCallback(() => {
+    window.wanigan.mobile.status().then(absorb)
+      .catch((e) => setResult({ tone: 'error', text: `Phone monitoring could not be read: ${msg(e)}` }));
+  }, [absorb]);
+  useEffect(() => { load(); }, [load]);
+
+  const configure = useCallback(async (patch: Partial<MobileMonitorConfig>, label: string) => {
+    setBusy(label); setResult(null);
+    try {
+      const next = await window.wanigan.mobile.configure(patch);
+      absorb(next);
+      if (next.config.dashboardEnabled && !next.running) {
+        throw new Error(next.error ?? 'The loopback listener did not start.');
+      }
+      setResult({ tone: 'ok', text: label });
+    } catch (e) {
+      setResult({ tone: 'error', text: `${label} failed: ${msg(e)}` });
+    } finally { setBusy(null); }
+  }, [absorb]);
+
+  async function copy(value: string, what: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setResult({ tone: 'ok', text: `${what} copied.` });
+    } catch (e) {
+      setResult({ tone: 'error', text: `The clipboard refused the write: ${msg(e)}` });
+    }
+  }
+
+  async function saveConnection() {
+    const parsedPort = Number(port);
+    await configure({
+      port: parsedPort,
+      dashboardUrl: dashboardUrl.trim(),
+      pushServer: server.trim(),
+      pushTopic: topic.trim(),
+    }, 'Phone connection settings saved');
+  }
+
+  async function testPush() {
+    setBusy('test'); setResult(null);
+    try {
+      const next = await window.wanigan.mobile.configure({
+        pushServer: server.trim(), pushTopic: topic.trim(), dashboardUrl: dashboardUrl.trim(),
+      });
+      absorb(next);
+      const tested = await window.wanigan.mobile.testPush();
+      setResult({ tone: tested.ok ? 'ok' : 'error', text: tested.detail });
+      absorb(await window.wanigan.mobile.status());
+    } catch (e) {
+      setResult({ tone: 'error', text: `Test alert failed: ${msg(e)}` });
+    } finally { setBusy(null); }
+  }
+
+  const serveCommand = `tailscale serve --bg ${status?.config.port ?? 47831}`;
+
+  return (
+    <Section title="Phone monitor"
+             hint="Walk away without losing the fleet: a private read-only status page and opt-in phone alerts for the same states as desktop notifications.">
+      <Callout title="The phone surface cannot type into a terminal or approve a prompt.">
+        It receives the Mac hostname, Wanigan version, an internal session id, project/session names,
+        provider/model, state, session and update timestamps, spend, request/error counts, token counts
+        and line totals.
+        It does not receive repository paths, commands, hook details, terminal output, transcripts,
+        worktrees, process ids or conversation ids. Remote controls need a separate threat model and are not hidden behind this switch.
+      </Callout>
+
+      {!status ? (
+        <p className="dim" style={{ fontSize: 'var(--t-small)', marginTop: 12 }}>Reading phone monitoring…</p>
+      ) : (
+        <>
+          {status.error && !status.config.dashboardEnabled && (
+            <div style={{ marginTop: 10 }}><Callout level="critical" title={status.error} /></div>
+          )}
+          <div className="set-sub">Read-only Fleet page</div>
+          <Toggle title="Run the phone dashboard" on={status.config.dashboardEnabled} busy={busy !== null}
+                  onChange={(on) => void configure({ dashboardEnabled: on }, on ? 'Phone dashboard started' : 'Phone dashboard stopped')}>
+            Opens an authenticated HTTP service on <span className="mono">127.0.0.1</span> only.
+            A phone cannot reach that listener directly; a private HTTPS reverse proxy such as Tailscale Serve connects it without opening Wanigan to the LAN or public internet.
+          </Toggle>
+
+          {status.config.dashboardEnabled && (
+            <div className="sunk" style={{ padding: '12px 13px', marginTop: 10 }}>
+              <div style={{ display: 'flex', gap: 9, alignItems: 'center', flexWrap: 'wrap' }}>
+                <Mark {...(status.running
+                  ? { glyph: '✓', word: 'listening', color: 'var(--good)' }
+                  : { glyph: '✕', word: 'not listening', color: 'var(--critical)' })} />
+                <code className="set-path">{status.localUrl}</code>
+              </div>
+              {status.error && <div style={{ marginTop: 9 }}><Callout level="critical" title={status.error} /></div>}
+
+              <div className="row2" style={{ marginTop: 12 }}>
+                <div>
+                  <label className="label" htmlFor="mobile-port">Loopback port</label>
+                  <input id="mobile-port" className="field mono" inputMode="numeric" value={port}
+                         onChange={(e) => setPort(e.target.value)} disabled={busy !== null} />
+                </div>
+                <div>
+                  <label className="label" htmlFor="mobile-url">Private HTTPS URL</label>
+                  <input id="mobile-url" className="field mono" value={dashboardUrl}
+                         placeholder="https://this-mac.example.ts.net" spellCheck={false}
+                         onChange={(e) => setDashboardUrl(e.target.value)} disabled={busy !== null} />
+                </div>
+              </div>
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 6 }}>
+                Install Tailscale on this Mac and your phone, run the command below once, then paste the HTTPS URL it prints.
+                Wanigan stays bound to loopback; tailnet ACLs and the pairing token both still apply.
+                Tailscale&apos;s background Serve mapping persists independently: turning this switch off or changing ports does not remove it,
+                so disable/reset that mapping in Tailscale when you stop using it.
+              </p>
+              <div style={{ display: 'flex', gap: 7, alignItems: 'center', marginTop: 9, flexWrap: 'wrap' }}>
+                <code className="set-path" style={{ userSelect: 'all', flex: 1 }}>{serveCommand}</code>
+                <button className="set-mini" onClick={() => void copy(serveCommand, 'Tailscale command')}>copy command</button>
+                <a className="set-mini" style={{ textDecoration: 'none' }} href="https://tailscale.com/download" target="_blank" rel="noreferrer">get Tailscale</a>
+              </div>
+
+              <div style={{ marginTop: 13 }}>
+                <label className="label">Pairing link</label>
+                <div style={{ display: 'flex', gap: 7, alignItems: 'center', marginTop: 5, flexWrap: 'wrap' }}>
+                  <code className="set-path" style={{ userSelect: 'all', flex: 1, overflowWrap: 'anywhere' }}>{status.pairingUrl}</code>
+                  <button className="set-mini" disabled={!status.running || !status.config.dashboardUrl}
+                          onClick={() => void copy(status.pairingUrl, 'Pairing link')}>copy link</button>
+                  <button className="set-mini" disabled={busy !== null}
+                          onClick={async () => {
+                            setBusy('rotate'); setResult(null);
+                            try { absorb(await window.wanigan.mobile.regenerateToken()); setResult({ tone: 'ok', text: 'Old pairing links were revoked.' }); }
+                            catch (e) { setResult({ tone: 'error', text: `The pairing token was not changed: ${msg(e)}` }); }
+                            finally { setBusy(null); }
+                          }}>revoke &amp; replace</button>
+                </div>
+                <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 6 }}>
+                  Open this once on the phone. The credential sits after <span className="mono">#</span>, so it is absent from the initial navigation request and Referer;
+                  the page saves it on that device, removes it from the address bar, then sends it only as the Authorization header on status requests.
+                  Replacing it immediately signs every paired browser out.
+                  {!status.config.dashboardUrl && ' Save the private HTTPS URL above before copying this link to a phone.'}
+                </p>
+              </div>
+            </div>
+          )}
+
+          <div className="set-sub">Phone alerts · ntfy</div>
+          <Toggle title="Send alerts to ntfy" on={status.config.pushEnabled} busy={busy !== null}
+                  onChange={(on) => void configure({
+                    pushEnabled: on, pushServer: server.trim(), pushTopic: topic.trim(), dashboardUrl: dashboardUrl.trim(),
+                  }, on ? 'Phone alerts enabled' : 'Phone alerts disabled')}>
+            Sends only notification title, project name, state and wait time. Prompt text,
+            commands, paths and terminal output are excluded. Permission waits and errors use ntfy&apos;s urgent/maximum priority;
+            finished turns are normal priority.
+          </Toggle>
+          <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 6 }}>
+            Built-in Claude-compatible and Codex sessions expose those in-turn states. A provider pack
+            without a lifecycle channel still reports process exit, but not arbitrary prompts inferred from terminal text.
+          </p>
+
+          <div className="sunk" style={{ padding: '12px 13px', marginTop: 10 }}>
+            <div className="row2">
+              <div>
+                <label className="label" htmlFor="mobile-ntfy-server">ntfy server</label>
+                <input id="mobile-ntfy-server" className="field mono" value={server} spellCheck={false}
+                       onChange={(e) => setServer(e.target.value)} disabled={busy !== null} />
+              </div>
+              <div>
+                <label className="label" htmlFor="mobile-ntfy-topic">Private topic</label>
+                <input id="mobile-ntfy-topic" className="field mono" value={topic} spellCheck={false}
+                       onChange={(e) => setTopic(e.target.value)} disabled={busy !== null} />
+              </div>
+            </div>
+            <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 6 }}>
+              Install the ntfy app and subscribe to this exact topic on the server above. The generated topic is the subscription credential:
+              anyone who learns it can subscribe or publish, so do not use a guessable word. With <span className="mono">ntfy.sh</span>, the alert text leaves this machine for delivery.
+            </p>
+            <div style={{ display: 'flex', gap: 7, marginTop: 10, flexWrap: 'wrap' }}>
+              <button className="btn" disabled={busy !== null} onClick={() => void saveConnection()}>Save connection</button>
+              <button className="btn" disabled={busy !== null || !topic.trim()} onClick={() => void testPush()}>
+                {busy === 'test' ? 'Sending…' : 'Send test alert'}
+              </button>
+              <button className="set-mini" disabled={!topic.trim()} onClick={() => void copy(topic.trim(), 'ntfy topic')}>copy topic</button>
+              <button className="set-mini" disabled={busy !== null}
+                      onClick={async () => {
+                        setBusy('topic'); setResult(null);
+                        try {
+                          const next = await window.wanigan.mobile.regenerateTopic();
+                          absorb(next);
+                          setResult({ tone: 'ok', text: 'Wanigan now uses the replacement topic. Unsubscribe the old one in ntfy; ntfy topics themselves cannot be revoked.' });
+                        } catch (e) { setResult({ tone: 'error', text: `The ntfy topic was not changed: ${msg(e)}` }); }
+                        finally { setBusy(null); }
+                      }}>replace topic</button>
+              <a className="set-mini" style={{ textDecoration: 'none' }} href="https://ntfy.sh" target="_blank" rel="noreferrer">get ntfy</a>
+            </div>
+            {(status.lastPushAt || status.lastPushError) && (
+              <p className={status.lastPushError ? 'critical' : 'faint'} style={{ fontSize: 'var(--t-micro)', marginTop: 8 }}>
+                {status.lastPushError
+                  ? `Last delivery failed: ${status.lastPushError}`
+                  : `Last alert accepted by ntfy ${status.lastPushAt ? ago(status.lastPushAt) : 'recently'} (device receipt is not reported).`}
+              </p>
+            )}
+          </div>
+        </>
+      )}
+      <Result r={result} />
     </Section>
   );
 }
@@ -1009,10 +1499,13 @@ function Mcp({ projects, prefs, pending, setFlag }: {
   const [tick, setTick] = useState(0);
 
   const own = useLoad(() => window.wanigan.mcp.server(), [prefs?.mcpServerEnabled]);
-  const servers = useLoad(async () => {
-    const [list, status] = await Promise.all([window.wanigan.mcp.servers(), window.wanigan.mcp.status()]);
-    return { list, status };
-  }, [tick]);
+  // Configuration only, no status. There were Connection and Calls columns here
+  // reading mcp_status, and nothing in the app has ever written that table —
+  // registry.ts's noteConnection and noteToolCall have no callers — so every
+  // server read “not seen yet” with zero calls, permanently, which is a false
+  // negative wearing the clothes of a measurement. The table and its writers are
+  // left alone for whoever wires them up; only the display is gone.
+  const servers = useLoad(() => window.wanigan.mcp.servers(), [tick]);
 
   const projectName = (id: string | null) =>
     id === null ? 'every project' : projects.find((p) => p.id === id)?.name ?? 'a project Wanigan no longer has';
@@ -1190,7 +1683,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
       )}
 
       <Frame v={servers.v} what="the MCP server list" onRetry={servers.reload}>
-        {({ list, status }) => {
+        {(list) => {
           if (!list.length) {
             return (
               <div className="sunk set-empty">
@@ -1204,58 +1697,38 @@ function Mcp({ projects, prefs, pending, setFlag }: {
               </div>
             );
           }
-          const byId = new Map(status.map((s) => [s.id, s]));
-          const byName = new Map(status.map((s) => [s.name, s]));
           return (
             <div className="set-scroll wide">
               <table className="grid">
                 <thead>
                   <tr>
-                    <th>Name</th><th>Scope</th><th>Target</th><th>Connection</th>
-                    <th className="r">Calls</th><th>Given out</th><th />
+                    <th>Name</th><th>Scope</th><th>Target</th><th>Given out</th><th />
                   </tr>
                 </thead>
                 <tbody>
-                  {list.map((s) => {
-                    const st: McpServerStatus | undefined = byId.get(s.id) ?? byName.get(s.name);
-                    const mark: MarkSpec = !st || st.lastAt === null
-                      ? { glyph: '·', word: 'not seen yet', color: 'var(--text-faint)' }
-                      : st.connected
-                        ? { glyph: '✓', word: 'connected', color: 'var(--good)' }
-                        : { glyph: '✕', word: 'failed', color: 'var(--critical)' };
-                    return (
-                      <tr key={s.id}>
-                        <td className="mono" style={{ fontSize: 'var(--t-small)' }}>{s.name}</td>
-                        <td className="dim">{s.projectId === null ? 'global' : projectName(s.projectId)}</td>
-                        <td className="set-path trunc" style={{ maxWidth: 210 }}
-                            title={s.transport === 'stdio' ? `${s.command ?? ''} ${s.args ?? ''}`.trim() : s.url}>
-                          {s.transport === 'stdio' ? `${s.command ?? ''} ${s.args ?? ''}`.trim() : s.url}
-                        </td>
-                        <td>
-                          <Mark {...mark} title={st?.lastError ?? undefined} />
-                          {st?.lastAt ? <div className="faint set-sub-line">{ago(st.lastAt)}</div> : null}
-                          {st?.lastError ? (
-                            <div className="trunc" style={{ fontSize: 'var(--t-micro)', color: 'var(--critical)', maxWidth: 170 }}
-                                 title={st.lastError}>{st.lastError}</div>
-                          ) : null}
-                        </td>
-                        <td className="set-n">{num(st?.toolCalls ?? 0)}</td>
-                        <td>
-                          <button className="set-mini" aria-pressed={s.enabled}
-                                  onClick={() => void toggleServer(s, !s.enabled)}>
-                            <Mark {...(s.enabled ? ON : OFF)} />
-                          </button>
-                        </td>
-                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                          <button className="set-mini" onClick={() => setDraft({
-                            id: s.id, name: s.name, projectId: s.projectId ?? '', transport: s.transport,
-                            command: s.command ?? '', args: s.args ?? '', url: s.url ?? '', enabled: s.enabled,
-                          })}>edit</button>
-                          <button className="set-mini danger" onClick={() => void remove(s)}>remove</button>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {list.map((s) => (
+                    <tr key={s.id}>
+                      <td className="mono" style={{ fontSize: 'var(--t-small)' }}>{s.name}</td>
+                      <td className="dim">{s.projectId === null ? 'global' : projectName(s.projectId)}</td>
+                      <td className="set-path trunc" style={{ maxWidth: 210 }}
+                          title={s.transport === 'stdio' ? `${s.command ?? ''} ${s.args ?? ''}`.trim() : s.url}>
+                        {s.transport === 'stdio' ? `${s.command ?? ''} ${s.args ?? ''}`.trim() : s.url}
+                      </td>
+                      <td>
+                        <button className="set-mini" aria-pressed={s.enabled}
+                                onClick={() => void toggleServer(s, !s.enabled)}>
+                          <Mark {...(s.enabled ? ON : OFF)} />
+                        </button>
+                      </td>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        <button className="set-mini" onClick={() => setDraft({
+                          id: s.id, name: s.name, projectId: s.projectId ?? '', transport: s.transport,
+                          command: s.command ?? '', args: s.args ?? '', url: s.url ?? '', enabled: s.enabled,
+                        })}>edit</button>
+                        <button className="set-mini danger" onClick={() => void remove(s)}>remove</button>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -1263,9 +1736,9 @@ function Mcp({ projects, prefs, pending, setFlag }: {
         }}
       </Frame>
       <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.5 }}>
-        Connection status comes from the agent's own telemetry, so a server reads “not seen yet” until
-        a session actually tries to connect to it. Status is keyed by name, so the same name in two
-        projects reports as one server.
+        Wanigan writes these into the config of each session it launches and does not watch them
+        afterwards. Whether a server answered is between the agent and that server, and this page will
+        not guess: it reports what was handed out, not what connected.
       </p>
 
       <Result r={saved} />

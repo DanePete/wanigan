@@ -5,13 +5,19 @@ import Sessions from './views/Sessions';
 import Fleet from './views/Fleet';
 import Batches from './views/Batches';
 import InsightsView from './views/Insights';
-import Skills from './views/Skills';
+import Learning from './views/Learning';
 import Plugins from './views/Plugins';
 import Schedules from './views/Schedules';
 import Git from './views/Git';
-import Context from './views/Context';
+import HeadlessRuns from './views/HeadlessRuns';
 import SettingsView from './views/Settings';
 import { num } from './components/bits';
+
+type CodexStatus = {
+  fetchedAt: number; plan: string | null; spendControlReached: boolean | null;
+  primary: { usedPercent: number; remainingPercent: number; resetsAt: number | null; windowMinutes: number | null } | null;
+  secondary: { usedPercent: number; remainingPercent: number; resetsAt: number | null; windowMinutes: number | null } | null;
+};
 
 /**
  * The shell: which surface is on screen, what the nav is allowed to shout
@@ -33,11 +39,11 @@ const TABS = [
   { id: 'fleet',    label: 'Fleet' },
   { id: 'batches',  label: 'Batches' },
   { id: 'insights', label: 'Insights' },
-  { id: 'skills',   label: 'Skills' },
+  { id: 'learning', label: 'Learning' },
   { id: 'plugins',  label: 'Plugins' },
   { id: 'schedules', label: 'Schedules' },
   { id: 'git',      label: 'Git' },
-  { id: 'context',  label: 'Context' },
+  { id: 'runs',     label: 'Runs' },
   { id: 'settings', label: 'Settings' },
 ] as const;
 
@@ -82,9 +88,11 @@ export default function App() {
   const [needs, setNeeds] = useState<{ total: number; worst: AttentionKind | null; detail: string }>(
     { total: 0, worst: null, detail: '' });
   const [error, setError] = useState<string | null>(null);
+  const [palette, setPalette] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState('');
   // A session handing its changed files to a new batch run.
   const [batchSeed, setBatchSeed] = useState<{ projectId: string; root: string; paths: string[] } | null>(null);
-  // Which session the keyboard-less surfaces (Skills) should talk to.
+  // Which session the keyboard-less surfaces should talk to.
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   // The project the user last chose or last worked in, remembered per machine.
   const [picked, setPicked] = useState<string | null>(() => localStorage.getItem('wanigan.project'));
@@ -193,7 +201,7 @@ export default function App() {
 
   // ── the shared selection ───────────────────────────────────────────
   // If the session we were pointing at is gone, fall back to the newest live
-  // one rather than handing a dead id to Skills.
+  // one rather than handing a dead id to a session-aware surface.
   useEffect(() => {
     setActiveSessionId((cur) => {
       if (cur && sessions.some((s) => s.id === cur)) return cur;
@@ -209,6 +217,19 @@ export default function App() {
 
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeSessionId) ?? null, [sessions, activeSessionId]);
+
+  // Main cannot infer which pane the renderer is showing. Keep its suppression
+  // target current so the Mac does not show a redundant banner for the session
+  // already on screen. Phone alerts are a separate opt-in sink and are never
+  // suppressed merely because this desktop window remains focused.
+  useEffect(() => {
+    void window.wanigan.notify
+      .setWatchedSession(tab === 'sessions' ? activeSessionId : null)
+      .catch(() => {});
+  }, [tab, activeSessionId]);
+  useEffect(() => () => {
+    void window.wanigan.notify.setWatchedSession(null).catch(() => {});
+  }, []);
 
   const projectId = useMemo(() => {
     const known = (id?: string | null) => (id && projects.some((p) => p.id === id) ? id : undefined);
@@ -251,11 +272,19 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
       if (e.key.length !== 1) return;
-      const n = Number(e.key);
-      if (!Number.isInteger(n) || n < 1 || n > TABS.length) return;
       const el = document.activeElement as HTMLElement | null;
       if (el?.closest('.terminal-host')) return;          // the PTY owns its keystrokes
       if (document.querySelector('.modal-backdrop')) return;  // a dialog owns the keyboard
+      // Runs is the tenth surface. It deserves a direct route rather than
+      // being the only tab that disappears once the header overflows.
+      if (e.key === '0') {
+        e.preventDefault();
+        e.stopPropagation();
+        go('runs');
+        return;
+      }
+      const n = Number(e.key);
+      if (!Number.isInteger(n) || n < 1 || n > TABS.length) return;
       e.preventDefault();
       e.stopPropagation();
       go(TABS[n - 1].id);
@@ -263,6 +292,21 @@ export default function App() {
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [go]);
+
+  // A tab strip has a finite width; the command palette does not. It is the
+  // keyboard route to every surface, not a second hidden navigation system.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'k') return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el?.closest('.terminal-host') || document.querySelector('.modal-backdrop')) return;
+      e.preventDefault();
+      setPaletteQuery('');
+      setPalette((open) => !open);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
 
   const addProject = useCallback(async () => {
     try {
@@ -291,6 +335,10 @@ export default function App() {
     const place = () => {
       const on = wrap.querySelector<HTMLElement>('.nav-tab.on');
       if (!on || !on.offsetWidth) { wrap.classList.remove('has-ink'); return; }
+      // The tabs intentionally scroll rather than compressing into unreadable
+      // labels. Keep the destination in view when it was reached by keyboard
+      // or a quick action, because an invisible scrollbar is not navigation.
+      on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
       if (!placed.current) { ink.style.transition = 'none'; }
       ink.style.transform = `translateX(${on.offsetLeft}px) scaleX(${on.offsetWidth})`;
       wrap.classList.add('has-ink');
@@ -384,12 +432,12 @@ export default function App() {
             )}
           </NavTab>
           <NavTab id="insights" n={4} tab={tab} go={go} label="Insights" />
-          <NavTab id="skills"   n={5} tab={tab} go={go} label="Skills" />
+          <NavTab id="learning" n={5} tab={tab} go={go} label="Learning" />
           <NavTab id="plugins"  n={6} tab={tab} go={go} label="Plugins" />
           <NavTab id="schedules" n={7} tab={tab} go={go} label="Schedules" />
           <NavTab id="git"      n={8} tab={tab} go={go} label="Git" />
-          <NavTab id="context"  n={9} tab={tab} go={go} label="Context" />
-          <NavTab id="settings" n={10} tab={tab} go={go} label="Settings">
+          <NavTab id="runs"     n={0} tab={tab} go={go} label="Runs" />
+          <NavTab id="settings" tab={tab} go={go} label="Settings">
             {!hasKey && (
               <span className="nav-mark tone-warn" title="No API key set — add one in Settings before submitting a batch">
                 <span aria-hidden="true">!</span>no key
@@ -399,11 +447,18 @@ export default function App() {
           <span className="nav-ink" ref={inkRef} aria-hidden="true" />
         </div>
 
-        {tab === 'skills' && projects.length > 1 && (
+        <button className="nav-quick-run" onClick={() => go('runs')}
+                title="Open headless Runs (⌘0)">
+          Runs <span aria-hidden="true">⌘0</span>
+        </button>
+
+        {providers.some((p) => p.id === 'codex' && p.path) && <CodexStatusBadge />}
+
+        {tab === 'learning' && projects.length > 1 && (
           <label className="nav-project">
             <span className="label">Project</span>
             <select className="field" value={projectId ?? ''} onChange={(e) => choose(e.target.value)}
-                    title="Which project's skills and settings to read">
+                    title="Which project's learning, skills, and context to read">
               {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </label>
@@ -422,11 +477,11 @@ export default function App() {
                    seed={batchSeed} onSeedConsumed={() => setBatchSeed(null)} />
         )}
         {tab === 'insights' && <InsightsView />}
-        {tab === 'skills' && <Skills projectId={projectId} activeSessionId={activeSessionId} />}
+        {tab === 'learning' && <Learning projectId={projectId} projects={projects} providers={providers} />}
         {tab === 'plugins' && <Plugins />}
         {tab === 'schedules' && <Schedules projects={projects} />}
         {tab === 'git' && <Git projects={projects} />}
-        {tab === 'context' && <Context projectId={projectId} projects={projects} />}
+        {tab === 'runs' && <HeadlessRuns projects={projects} providers={providers} />}
         {tab === 'settings' && (
           <SettingsView providers={providers} projects={projects}
                         onKeyChange={loadShell} onRemoveProject={removeProject} onAddProject={addProject} />
@@ -438,17 +493,101 @@ export default function App() {
           {error} <span className="faint">— click to dismiss</span>
         </div>
       )}
+      {palette && (
+        <CommandPalette
+          query={paletteQuery}
+          onQuery={setPaletteQuery}
+          onClose={() => setPalette(false)}
+          onChoose={(id) => { go(id); setPalette(false); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Your Codex limit windows, without sending /status through a live agent. */
+function CodexStatusBadge() {
+  const [status, setStatus] = useState<CodexStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback((force = false) => {
+    void window.wanigan.codex.status(force).then((next) => {
+      setStatus(next); setError(null);
+    }).catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, []);
+  useEffect(() => {
+    load();
+    const timer = window.setInterval(() => load(), 60_000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+
+  const label = (window: CodexStatus['primary'], short: string) => {
+    if (!window) return null;
+    const reset = window.resetsAt ? ` · resets ${relativeReset(window.resetsAt)}` : '';
+    return `${short} ${window.remainingPercent}% left${reset}`;
+  };
+  const primary = label(status?.primary ?? null, 'Now');
+  const secondary = label(status?.secondary ?? null, 'Week');
+  const title = error
+    ? `Codex status unavailable: ${error}`
+    : status
+      ? [`Codex ${status.plan ?? 'account'} limits`, primary, secondary, 'Click to refresh now.'].filter(Boolean).join('\n')
+      : 'Reading your Codex status…';
+
+  return (
+    <button className={`nav-codex-status${status?.primary && status.primary.remainingPercent <= 20 ? ' low' : ''}`}
+            title={title} aria-label={title} onClick={() => load(true)}>
+      {status ? <><span className="faint">Codex</span> {primary ?? 'Status unavailable'}{secondary && <span className="nav-codex-week">· {secondary}</span>}</>
+        : error ? <><span className="faint">Codex</span> status unavailable</>
+          : <><span className="faint">Codex</span> status…</>}
+    </button>
+  );
+}
+
+function relativeReset(at: number): string {
+  const mins = Math.max(0, Math.round((at - Date.now()) / 60_000));
+  if (mins < 60) return `${mins}m`;
+  if (mins < 48 * 60) return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+  return new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function CommandPalette({ query, onQuery, onClose, onChoose }: {
+  query: string; onQuery: (value: string) => void; onClose: () => void; onChoose: (id: Tab) => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const shown = TABS.filter((item) => item.label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  useEffect(() => { input.current?.focus(); }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
+  return (
+    <div className="command-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="command-palette" role="dialog" aria-modal="true" aria-label="Go to a Wanigan view"
+               onMouseDown={(e) => e.stopPropagation()}>
+        <input ref={input} className="field" value={query} onChange={(e) => onQuery(e.target.value)}
+               placeholder="Go to a view…" aria-label="Search views" />
+        <div className="command-results">
+          {shown.length === 0 ? <p className="faint">No matching view.</p> : shown.map((item, index) => (
+            <button key={item.id} className="command-item" onClick={() => onChoose(item.id)}>
+              <span>{item.label}</span>
+              <span className="faint mono">{index < 9 ? `⌘${index + 1}` : item.id === 'runs' ? '⌘0' : ''}</span>
+            </button>
+          ))}
+        </div>
+        <p className="faint" style={{ margin: '8px 0 0', fontSize: 'var(--t-small)' }}>Esc closes · ⌘K opens</p>
+      </section>
     </div>
   );
 }
 
 function NavTab({ id, n, tab, go, label, children }: {
-  id: Tab; n: number; tab: Tab; go: (t: Tab) => void; label: string; children?: React.ReactNode;
+  id: Tab; n?: number; tab: Tab; go: (t: Tab) => void; label: string; children?: React.ReactNode;
 }) {
   const on = tab === id;
   return (
     <button className={`nav-tab${on ? ' on' : ''}`} onClick={() => go(id)}
-            aria-current={on ? 'page' : undefined} title={`${label} (⌘${n})`}>
+            aria-current={on ? 'page' : undefined} title={n ? `${label} (⌘${n})` : label}>
       {label}
       {children}
     </button>

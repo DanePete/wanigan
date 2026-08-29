@@ -173,6 +173,17 @@ async function dirtyCount(dir: string): Promise<Dirty> {
   return r.ok ? { count: countPorcelain(r.stdout), said: null } : { count: null, said: gitSaid(r) };
 }
 
+/**
+ * The same shape as Dirty, for the same reason and one step further along.
+ *
+ * A failed `rev-list --count` collapsed to 0, and 0 is precisely what merge
+ * reads as "there is nothing here to merge". So a count that timed out on a big
+ * history told the operator to go and commit work they had already committed,
+ * and the merge they asked for never ran — a refusal that names the wrong cause
+ * is worse than an error, because it sends someone off to fix the wrong thing.
+ */
+type Ahead = { count: number; said: null } | { count: null; said: string };
+
 /* ── the worktree list git itself keeps ──────────────────────────────── */
 
 type Record_ = { path: string; head: string | null; branch: string | null; locked: boolean; prunable: boolean };
@@ -394,7 +405,7 @@ export async function relinkWorktree(worktreePath: string): Promise<LinkedPath[]
  * need it, and re-running `git status` in merge and remove would mean a second
  * 30s wait in exactly the case where the first one already timed out.
  */
-async function inspect(p: string): Promise<{ info: WorktreeInfo; dirty: Dirty } | null> {
+async function inspect(p: string): Promise<{ info: WorktreeInfo; dirty: Dirty; ahead: Ahead } | null> {
   const abs = canon(p);
   if (!fs.existsSync(abs)) return null;
 
@@ -411,22 +422,33 @@ async function inspect(p: string): Promise<{ info: WorktreeInfo; dirty: Dirty } 
   ]);
   const head = headR.ok ? headR.stdout.trim() || null : null;
 
-  let ahead = 0;
+  // No base is "there is nothing to count from", which is not a failure and is
+  // not reported as one: merge refuses on a missing recorded base long before
+  // it reads this, so only a git call that actually went wrong becomes unknown.
+  let ahead: Ahead = { count: 0, said: null };
   const base = await baseForCount(repoRoot, branch);
-  if (base && head) {
-    const r = await git(abs, ['rev-list', '--count', `${base}..HEAD`], 20_000);
-    if (r.ok) ahead = Number(r.stdout.trim()) || 0;
+  if (base) {
+    if (!head) {
+      ahead = { count: null, said: `git could not resolve HEAD in ${abs}` };
+    } else {
+      const r = await git(abs, ['rev-list', '--count', `${base}..HEAD`], 20_000);
+      const text = r.stdout.trim();
+      const n = r.ok && text ? Number(text) : NaN;
+      ahead = Number.isFinite(n) ? { count: n, said: null } : { count: null, said: gitSaid(r) };
+    }
   }
 
   const info: WorktreeInfo = {
     path: abs, branch, head, repoRoot,
     sessionId: rowFor(abs)?.session_id ?? null,
     // Unknown shows as 0 in the list, which is only a display: nothing
-    // destructive is decided from this field — merge and remove read `dirty`.
+    // destructive is decided from these two fields — merge and remove read the
+    // Dirty and Ahead beside them, where null is refused rather than rounded
+    // down to a number that happens to mean "carry on".
     dirty: dirty.count ?? 0,
-    ahead,
+    ahead: ahead.count ?? 0,
   };
-  return { info, dirty };
+  return { info, dirty, ahead };
 }
 
 /** Null when the path is gone or was never a worktree — both are normal. */
@@ -456,6 +478,9 @@ export async function listWorktrees(repoRoot: string): Promise<WorktreeInfo[]> {
 
 /* ── merge ───────────────────────────────────────────────────────────── */
 
+/** Repo roots with a merge in flight. See mergeWorktree for why this exists. */
+const merging = new Set<string>();
+
 async function conflictedFiles(dir: string): Promise<string[]> {
   const r = await git(dir, ['diff', '--name-only', '--diff-filter=U', '-z'], 20_000);
   return r.ok ? r.stdout.split('\0').filter(Boolean) : [];
@@ -479,9 +504,35 @@ export async function mergeWorktree(
   p: string,
   opts?: { squash?: boolean; message?: string }
 ): Promise<{ merged: boolean; detail: string }> {
+  // Keyed on the repo, not the worktree: every merge for a repo lands in
+  // whichever tree holds the base branch, so two merges started from two
+  // *different* worktrees of one repo are the pair that collides. Behind a
+  // button this is one double-click away, and the collision is not a wasted
+  // run — it is the second merge's `git merge --abort` reaching into the first
+  // one's finished merge and backing it out, in the tree that holds the only
+  // copy of the work.
+  const key = (await repoRootFor(p)) ?? canon(p);
+  if (merging.has(key)) {
+    return {
+      merged: false,
+      detail: `Another merge into ${key} is already running. Wait for it to finish and try again — both land in the same working tree, and backing one out on a conflict would undo the other.`,
+    };
+  }
+  merging.add(key);
+  try {
+    return await runMerge(p, opts);
+  } finally {
+    merging.delete(key);
+  }
+}
+
+async function runMerge(
+  p: string,
+  opts?: { squash?: boolean; message?: string }
+): Promise<{ merged: boolean; detail: string }> {
   const found = await inspect(p);
   if (!found) throw new Error(`There is no git worktree at ${p} — it may already have been removed. Reconcile the worktree list and try again.`);
-  const { info, dirty } = found;
+  const { info, dirty, ahead } = found;
 
   if (!info.branch) {
     return { merged: false, detail: `The worktree at ${info.path} is on a detached HEAD, not a branch, so there is nothing named to merge. Check out a branch in it first.` };
@@ -503,7 +554,10 @@ export async function mergeWorktree(
   if (!(await branchExists(info.repoRoot, base))) {
     return { merged: false, detail: `${info.branch} was created from ${base}, which is no longer a branch in ${info.repoRoot} (it was a detached HEAD, or the branch has since been deleted). Pick a target and merge it by hand.` };
   }
-  if (info.ahead === 0) {
+  if (ahead.count === null) {
+    return { merged: false, detail: `git could not count how far ${info.branch} is ahead of ${base}: ${ahead.said}. Refusing to merge until it can — "nothing to merge" and "git could not tell" are not the same answer, and only one of them is your problem to fix. Run "git log ${base}..${info.branch}" in ${info.path} and try again.` };
+  }
+  if (ahead.count === 0) {
     return { merged: false, detail: `${info.branch} has no commits that ${base} does not already have — nothing to merge. Commit the agent's work in the worktree first.` };
   }
 
@@ -527,7 +581,10 @@ export async function mergeWorktree(
   }
 
   const changed = await git(info.repoRoot, ['diff', '--name-only', '-z', `${base}...${info.branch}`], 30_000);
-  const files = changed.ok ? changed.stdout.split('\0').filter(Boolean).length : 0;
+  // null, not 0. This is the number a person reads to see whether the merge did
+  // anything, and a diff that timed out reporting "touching 0 files" next to
+  // "Merged" is the app saying the merge was empty when it was not.
+  const files = changed.ok ? changed.stdout.split('\0').filter(Boolean).length : null;
   const squash = opts?.squash === true;
   const message = opts?.message?.trim() || `wanigan: ${squash ? 'squash' : 'merge'} ${info.branch} into ${base}`;
 
@@ -558,10 +615,13 @@ export async function mergeWorktree(
     }
   }
 
-  const how = squash ? `Squashed ${plural(info.ahead, 'commit')}` : `Merged ${plural(info.ahead, 'commit')}`;
+  const how = squash ? `Squashed ${plural(ahead.count, 'commit')}` : `Merged ${plural(ahead.count, 'commit')}`;
+  const touched = files === null
+    ? `. git could not list the files it touched (${gitSaid(changed)}), so that count is missing rather than zero`
+    : `, touching ${plural(files, 'file')}`;
   return {
     merged: true,
-    detail: `${how} from ${info.branch} into ${base} in ${target.path}, touching ${plural(files, 'file')}. The worktree is untouched — remove it when you are done with it.`,
+    detail: `${how} from ${info.branch} into ${base} in ${target.path}${touched}. The worktree is untouched — remove it when you are done with it.`,
   };
 }
 

@@ -213,14 +213,15 @@ export default function Fleet({ projects = [], onOpenSession }: {
   }, [sessions, attention]);
 
   const totals = useMemo(() => {
-    let cost = 0, requests = 0, added = 0, removed = 0, commits = 0, running = 0;
+    let cost = 0, requests = 0, added = 0, removed = 0, commits = 0, running = 0, costUnavailable = false;
     for (const s of sessions) {
       const u = usageOf(s.id);
       cost += u.costUsd; requests += u.requests;
+      costUnavailable ||= u.costStatus === 'unavailable';
       added += u.linesAdded; removed += u.linesRemoved; commits += u.commits;
       if (s.status !== 'exited') running += 1;
     }
-    return { cost, requests, added, removed, commits, running, exited: sessions.length - running };
+    return { cost, requests, added, removed, commits, running, exited: sessions.length - running, costUnavailable };
   }, [sessions, usageOf]);
 
   const blocked = useMemo(
@@ -366,7 +367,9 @@ export default function Fleet({ projects = [], onOpenSession }: {
               sub={blocked.length
                 ? `longest wait ${dur(Date.now() - (attention[blocked[0].id]?.since ?? Date.now()))}`
                 : 'nobody is blocked'} />
-        <Stat label="Fleet spend" value={usd(totals.cost)} sub={`${num(totals.requests)} API requests`} />
+        <Stat label="Fleet spend"
+              value={totals.costUnavailable ? (totals.cost > 0 ? `${usd(totals.cost)} +` : 'Not reported') : usd(totals.cost)}
+              sub={totals.costUnavailable ? 'Codex plan has no per-thread invoice' : `${num(totals.requests)} API requests`} />
         <Stat label="Lines changed"
               value={<>+{num(totals.added)} <span className="faint">/</span> −{num(totals.removed)}</>}
               sub={`${num(totals.commits)} commits`} />
@@ -472,7 +475,8 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen }: {
       <Spark values={spark} live={u.lastAt} />
 
       <div className="fleet-metrics">
-        <Metric label="Cost" value={usd(u.costUsd)} sub={`${num(u.requests)} requests`} />
+        <Metric label="Cost" value={u.costStatus === 'unavailable' ? 'Not reported' : usd(u.costUsd)}
+                sub={u.costStatus === 'unavailable' ? 'Codex plan total unavailable' : `${num(u.requests)} requests`} />
         <Metric label="Tokens" value={num(tokens)} sub={`${num(u.cacheRead)} cached`} />
         <Metric
           label="Lines"
@@ -623,7 +627,7 @@ function FleetTable({ rows, att, usageOf, spark, defaultTrust, onOpen }: {
                     <span aria-hidden="true">{TRUST_GLYPH[trust]} </span>{TRUST_COPY[trust].label.toLowerCase()}
                   </td>
                   <td className="r">{num(u.requests)}</td>
-                  <td className="r">{usd(u.costUsd)}</td>
+                  <td className="r">{u.costStatus === 'unavailable' ? 'Not reported' : usd(u.costUsd)}</td>
                   <td className="r">{num(u.inTokens + u.outTokens)}</td>
                   <td className="r">+{num(u.linesAdded)} / −{num(u.linesRemoved)}</td>
                   <td className="r">{vals.length ? rate(last) : '—'}</td>

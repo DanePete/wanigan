@@ -158,6 +158,7 @@ type SyncRow = { day: string; actualUsd: number; syncUsd: number };
 type EffortRow = { effort: string; requests: number; costUsd: number };
 type CacheRow = { surface: string; read: number; write: number; input: number; rate: number; note: string };
 type AccuracyRow = { model: string; runs: number; estUsd: number; actualUsd: number; ratio: number };
+type CodexUsage = { conversations: number; inTokens: number; outTokens: number; cacheRead: number; totalTokens: number; lastAt: number | null };
 
 type DayRow = { day: string; session: number; batch: number; headless: number; total: number; sync: number };
 
@@ -197,6 +198,7 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
   const [breached, setBreached] = useState<BudgetState[]>([]);
   const [acc, setAcc] = useState<AccuracyRow[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [codexUsage, setCodexUsage] = useState<CodexUsage | null>(null);
   const [errs, setErrs] = useState<{ batch?: string; spend?: string; budgets?: string }>({});
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -222,6 +224,12 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
           const r = await window.wanigan.batch.insights();
           if (alive.current) setBatch(r as BatchInsights);
         } catch (e) { next.batch = msg(e); }
+      })(),
+      (async () => {
+        try {
+          const value = await window.wanigan.codex.usageSummary();
+          if (alive.current) setCodexUsage(value);
+        } catch { /* Codex may not be installed; the rest of Insights still works. */ }
       })(),
       (async () => {
         try {
@@ -280,7 +288,7 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
   const everSpent =
     hasBatch || win.total > 0 || cacheTotal > 0 ||
     effort.some((e) => e.costUsd > 0 || e.requests > 0) ||
-    buds.some((b) => b.spentUsd > 0);
+    buds.some((b) => b.spentUsd > 0) || (codexUsage?.totalTokens ?? 0) > 0;
 
   const styles = <style precedence="default" href="wanigan-insights">{CSS}</style>;
 
@@ -404,6 +412,10 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
         a default rate, and the CLI's figure covers turns Wanigan never sees token counts for. Every
         chart that mixes them names both sources underneath.
       </Note>
+
+      {codexUsage && codexUsage.totalTokens > 0 && (
+        <CodexActivity usage={codexUsage} />
+      )}
 
       {/* One filter row, above everything it scopes. */}
       <div className="ins-filters">
@@ -533,6 +545,32 @@ function BreachBanner({ breached }: { breached: BudgetState[] }) {
         })}
       </ul>
     </Note>
+  );
+}
+
+/** Codex plan activity is measurable even when its account surface has no invoice. */
+function CodexActivity({ usage }: { usage: CodexUsage }) {
+  return (
+    <div className="card" style={{ padding: 15 }}>
+      <div className="ins-cardhead">
+        <div>
+          <h3 style={{ fontSize: 'var(--t-body)', fontWeight: 600 }}>Codex activity</h3>
+          <p className="dim" style={{ marginTop: 3, lineHeight: 1.45 }}>
+            Exact cumulative counters from local Codex rollouts across {num(usage.conversations)} conversation{usage.conversations === 1 ? '' : 's'}.
+          </p>
+        </div>
+        <span className="pill" style={{ background: 'var(--warn-soft)', color: 'var(--warn)' }}>No per-thread invoice</span>
+      </div>
+      <div className="stat-grid ins-hero-row">
+        <Stat label="Total tokens" value={num(usage.totalTokens)} sub="input plus output" />
+        <Stat label="Input" value={num(usage.inTokens)} sub={`${num(usage.cacheRead)} cached reads`} />
+        <Stat label="Output" value={num(usage.outTokens)} sub="including model output" />
+        <Stat label="Dollar amount" value="Not reported" sub="your Codex plan does not expose one per conversation" />
+      </div>
+      <p className="faint" style={{ marginTop: 10, fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
+        These tokens are real usage, but they are not converted to dollars: a ChatGPT/Codex plan can include usage, rate limits, or credits that do not map to a fixed API price. Wanigan will show a dollar amount only when the provider reports a billable amount.
+      </p>
+    </div>
   );
 }
 

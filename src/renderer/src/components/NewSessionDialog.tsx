@@ -54,12 +54,21 @@ export default function NewSessionDialog({
   const [permissionMode, setPermissionMode] = useState('');
   const [extraArgs, setExtraArgs] = useState('');
   const [initialPrompt, setInitialPrompt] = useState('');
+  const [providerOptions, setProviderOptions] = useState<Record<string, string | boolean>>({});
   const [isolate, setIsolate] = useState(false);
   const [trust, setTrust] = useState<TrustLevel | null>(null);
   const [trustDefault, setTrustDefault] = useState<TrustLevel | null>(null);
   const [trustErr, setTrustErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [codexModels, setCodexModels] = useState([
+    { value: '', label: 'Auto (default)', description: 'Codex current default', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
+    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', description: 'Latest frontier agentic coding model', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
+    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', description: 'Balanced agentic coding model', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
+    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', description: 'Fast, affordable agentic coding model', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+    { value: 'gpt-5.5', label: 'GPT-5.5', description: null, efforts: ['low', 'medium', 'high', 'xhigh'] },
+    { value: 'gpt-5.4', label: 'GPT-5.4', description: null, efforts: ['low', 'medium', 'high', 'xhigh'] },
+  ]);
 
   const options = useMemo(() => {
     const seen = new Set(projects.map((p) => p.id));
@@ -77,6 +86,58 @@ export default function NewSessionDialog({
 
   const project = options.find((p) => p.id === projectId) ?? null;
   const isRepo = !!project?.branch;
+  // Do not offer Claude aliases to a Codex process.  Empty deliberately means
+  // Codex's Auto/default route; its live /model picker offers the full dynamic
+  // catalog and reasoning choices once the session is running.
+  const codexHarness = provider?.harnessId === 'codex' || providerId === 'codex';
+  const genericHarness = provider?.harnessId === 'generic-cli';
+  const zaiBackend = provider?.backendId === 'zai' || providerId === 'glm';
+  const manifestModelField = provider?.launchFields?.find((field) => field.id === 'model');
+  const modelChoices = genericHarness
+    ? (manifestModelField?.options ?? [])
+    : codexHarness
+    ? codexModels
+    : zaiBackend
+      ? [{ value: 'glm-5.3', label: 'GLM 5.3' }, { value: 'glm-5.3-flash', label: 'GLM 5.3 Flash' }, { value: 'glm-5.2', label: 'GLM 5.2' }, { value: '', label: 'Provider default' }]
+    : [{ value: '', label: 'default' }, { value: 'opus', label: 'opus' }, { value: 'sonnet', label: 'sonnet' }, { value: 'haiku', label: 'haiku' }, { value: 'fable', label: 'fable' }];
+
+  useEffect(() => {
+    setModel((current) => modelChoices.some((choice) => choice.value === current) ? current : '');
+  // A provider switch is the only event that can make an otherwise valid
+  // model alias invalid; modelChoices is derived wholly from it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providerId]);
+
+  useEffect(() => {
+    const next: Record<string, string | boolean> = {};
+    for (const field of provider?.launchFields ?? []) {
+      if (['model', 'effort', 'permissionMode'].includes(field.id)) continue;
+      if (field.defaultValue !== undefined) next[field.id] = field.defaultValue;
+    }
+    setProviderOptions(next);
+  }, [providerId, provider?.launchFields]);
+
+  useEffect(() => {
+    if (!codexHarness) return;
+    let live = true;
+    window.wanigan.codex.models().then((catalog) => {
+      if (!live || !catalog.models.length) return;
+      setCodexModels([
+        { value: '', label: 'Auto (default)', description: 'Codex current default', efforts: catalog.models.find((m) => m.isDefault)?.reasoningEfforts ?? ['low', 'medium', 'high', 'xhigh', 'max'] },
+        ...catalog.models.map((m) => ({ value: m.id, label: m.label, description: m.description, efforts: m.reasoningEfforts })),
+      ]);
+    }).catch(() => { /* static current-model fallback remains usable */ });
+    return () => { live = false; };
+  }, [codexHarness]);
+
+  const effortChoices = useMemo(() => codexHarness
+    ? (codexModels.find((choice) => choice.value === model)?.efforts ?? ['low', 'medium', 'high', 'xhigh', 'max'])
+    : [...EFFORT_LEVELS], [codexHarness, model, codexModels]);
+
+  useEffect(() => {
+    if (!codexHarness) return;
+    setEffort((current) => effortChoices.includes(current) ? current : '');
+  }, [codexHarness, model, codexModels]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -106,9 +167,17 @@ export default function NewSessionDialog({
 
   async function go() {
     if (!projectId || busy) return;
+    const missing = (provider?.launchFields ?? []).find((field) => {
+      if (!field.required) return false;
+      const value = field.id === 'model' ? model
+        : field.id === 'effort' ? effort
+          : field.id === 'permissionMode' ? permissionMode : providerOptions[field.id];
+      return value === undefined || value === null || value === '';
+    });
+    if (missing) { setErr(`${missing.label} is required by this provider profile.`); return; }
     setBusy(true); setErr(null);
     try {
-      await onCreate({ providerId, projectId, model, effort, permissionMode, extraArgs, initialPrompt, isolate });
+      await onCreate({ providerId, projectId, model, effort, permissionMode, providerOptions, extraArgs, initialPrompt, isolate });
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -136,12 +205,12 @@ export default function NewSessionDialog({
                 className="btn"
                 style={{
                   flex: 1, flexDirection: 'column', alignItems: 'flex-start', gap: 2, padding: '9px 11px',
-                  borderColor: on ? TINT[p.id] : 'var(--line)',
+                  borderColor: on ? (TINT[p.id] ?? 'var(--accent)') : 'var(--line)',
                   background: on ? 'var(--bg-sunk)' : 'var(--bg-soft)',
                 }}
                 title={p.path ?? `${p.bin} not found on PATH`}
               >
-                <span style={{ fontWeight: 600, color: on ? TINT[p.id] : undefined }}>{p.label}</span>
+                <span style={{ fontWeight: 600, color: on ? (TINT[p.id] ?? 'var(--accent)') : undefined }}>{p.label}</span>
                 <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>
                   {p.path ? (p.version ?? 'installed') : 'not installed'}
                 </span>
@@ -149,6 +218,16 @@ export default function NewSessionDialog({
             );
           })}
         </div>
+
+        {provider?.capabilities && (
+          <p className={provider.capabilities.hooks ? 'faint' : 'dim'}
+             style={{ margin: '-8px 0 14px', fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>
+            {provider.capabilities.hooks
+              ? '✓ Timeline, policy, MCP and telemetry are available for this session.'
+              : '△ Terminal-only observation for this provider: no injected timeline, policy, MCP or transcript archive yet.'}
+            {provider.capabilities.probed ? '' : ' CLI capability probe was unavailable.'}
+          </p>
+        )}
 
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
           <span className="label">Project</span>
@@ -228,23 +307,37 @@ export default function NewSessionDialog({
           )}
         </div>
 
-        <div className="label">Model <span style={{ textTransform: 'none' }}>— blank uses the CLI default</span></div>
-        <div style={{ display: 'flex', gap: 5, margin: '6px 0 14px', flexWrap: 'wrap' }}>
-          {['', 'opus', 'sonnet', 'haiku', 'fable'].map((m) => (
-            <FocusBtn key={m || 'default'} className="pill" onClick={() => setModel(m)}
-                      aria-pressed={model === m}
-                      style={model === m ? { background: 'var(--accent)', color: '#14100d' }
-                                         : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
-              {m || 'default'}
-            </FocusBtn>
-          ))}
-        </div>
+        {provider?.supports.model && <>
+          <div className="label">Model <span style={{ textTransform: 'none' }}>— {codexHarness ? 'Auto uses Codex’s current default' : 'blank uses the CLI default'}</span></div>
+          {genericHarness && manifestModelField?.kind !== 'select' ? (
+            <input className="field mono" style={{ margin: '6px 0 14px' }} value={model}
+                   placeholder={manifestModelField?.required ? 'Required by provider' : 'Provider default'}
+                   onChange={(e) => setModel(e.target.value)} />
+          ) : (
+            <div style={{ display: 'flex', gap: 5, margin: '6px 0 14px', flexWrap: 'wrap' }}>
+              {!manifestModelField?.required && genericHarness && (
+                <FocusBtn className="pill" onClick={() => setModel('')} aria-pressed={model === ''}
+                          style={model === '' ? { background: 'var(--accent)', color: '#14100d' } : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
+                  Provider default
+                </FocusBtn>
+              )}
+              {modelChoices.map((choice) => (
+                <FocusBtn key={choice.value || 'default'} className="pill" onClick={() => setModel(choice.value)}
+                          aria-pressed={model === choice.value}
+                          style={model === choice.value ? { background: 'var(--accent)', color: '#14100d' }
+                                             : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
+                  <span title={(choice as { description?: string | null }).description ?? undefined}>{choice.label}</span>
+                </FocusBtn>
+              ))}
+            </div>
+          )}
+        </>}
 
         {provider?.supports.effort && (
           <>
             <div className="label">Effort <span style={{ textTransform: 'none' }}>— governs thinking depth, tool calls and length</span></div>
             <div style={{ display: 'flex', gap: 5, margin: '6px 0 14px', flexWrap: 'wrap' }}>
-              {['', ...EFFORT_LEVELS].map((l) => (
+              {['', ...effortChoices].map((l) => (
                 <FocusBtn key={l || 'default'} className="pill" onClick={() => setEffort(l)}
                           aria-pressed={effort === l}
                           style={effort === l ? { background: 'var(--accent)', color: '#14100d' }
@@ -254,6 +347,20 @@ export default function NewSessionDialog({
               ))}
             </div>
           </>
+        )}
+
+        {codexHarness && (
+          <div className="sunk" style={{ margin: '6px 0 14px', padding: '9px 11px' }}>
+            <div className="label" style={{ color: 'var(--codex)', marginBottom: 4 }}>Codex session controls</div>
+            <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
+              Start with a model here if you know it; after launch, Wanigan shows <span className="mono">Model &amp; effort…</span>
+              {' '}and <span className="mono">Plan mode</span> directly above the terminal. The first opens Codex’s own
+              picker, including its Auto choices and reasoning levels.
+            </p>
+            <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 5, lineHeight: 1.4 }}>
+              Codex uses its own controls — Claude permission and effort fields do not apply to it.
+            </p>
+          </div>
         )}
 
         {provider?.supports.permissionMode && (
@@ -272,6 +379,30 @@ export default function NewSessionDialog({
             )}
           </>
         )}
+
+        {(provider?.launchFields ?? []).filter((field) => !['model', 'effort', 'permissionMode'].includes(field.id)).map((field) => (
+          <label key={field.id} className="sunk" style={{ display: 'flex', flexDirection: 'column', gap: 6, margin: '6px 0 14px', padding: '9px 11px' }}>
+            <span className="label">{field.label}{field.required ? ' · required' : ''}</span>
+            {field.description && <span className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.4 }}>{field.description}</span>}
+            {field.kind === 'boolean' ? (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" checked={providerOptions[field.id] === true}
+                       onChange={(e) => setProviderOptions((old) => ({ ...old, [field.id]: e.target.checked }))} />
+                {providerOptions[field.id] === true ? 'Enabled' : 'Disabled'}
+              </span>
+            ) : field.kind === 'select' ? (
+              <select className="field" value={String(providerOptions[field.id] ?? '')}
+                      onChange={(e) => setProviderOptions((old) => ({ ...old, [field.id]: e.target.value }))}>
+                {!field.required && <option value="">Provider default</option>}
+                {(field.options ?? []).map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+              </select>
+            ) : (
+              <input className="field mono" type={field.kind === 'secret' ? 'password' : 'text'}
+                     value={String(providerOptions[field.id] ?? '')}
+                     onChange={(e) => setProviderOptions((old) => ({ ...old, [field.id]: e.target.value }))} />
+            )}
+          </label>
+        ))}
 
         {/* ── P9 · isolation ───────────────────────────────────────────── */}
         <div className="label">Working tree</div>

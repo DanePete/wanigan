@@ -2,9 +2,17 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   LaunchOptions, PastSession, Project, ProviderInfo, Session, RunConfig, SourceConfig,
   SessionUsage, ApiEvent, SessionEvent, Attention, TranscriptHit, TranscriptTurn,
-  WorktreeInfo, HeadlessConfig, HeadlessRow, QueueItem, QueueKind, QueueSlots, QueueState,
+  WorktreeInfo, HeadlessConfig, HeadlessRow, HeadlessRun, QueueItem, QueueKind, QueueSlots, QueueState,
   McpServerConfig, McpServerStatus, BudgetState, Reconciliation, TrustLevel, LedgerEntry,
   WaniganSettings, UploadedFile, EvalPair, GoldenSet,
+  EgressReport, ObservedSession, ObservedState,
+  MobileMonitorConfig, MobileMonitorStatus,
+  ReviewRecipe, ReviewRun,
+  ArtifactRoiSummary, ForgedSkill, KnowledgeBriefing, KnowledgeCandidate,
+  KnowledgeEvidence, KnowledgeItem, KnowledgeProjection, KnowledgeVersion,
+  LearningExperiment, LearningOverview, LearningSettings, LearningSignal,
+  OptimizerDiagnostic, ProviderManifestInspection, ProviderPackInfo, ProviderProfileInfo, SkillDiagnostic,
+  TeachWaniganInput,
 } from '../shared/types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -19,6 +27,27 @@ async function call<T>(channel: string, ...args: unknown[]): Promise<T> {
 const api = {
   providers: {
     list: () => call<ProviderInfo[]>('providers:list'),
+  },
+  providerPacks: {
+    list: (includeRemoved?: boolean) => call<ProviderPackInfo[]>('providerPacks:list', includeRemoved),
+    inspectManifest: (packId: string) =>
+      call<ProviderManifestInspection>('providerPacks:inspectManifest', packId),
+    profiles: (includeDisabled?: boolean) => call<ProviderProfileInfo[]>('providerPacks:profiles', includeDisabled),
+    refresh: () => call<ProviderPackInfo[]>('providerPacks:refresh'),
+    setEnabled: (packId: string, enabled: boolean) =>
+      call<ProviderPackInfo[]>('providerPacks:setEnabled', packId, enabled),
+    trustManifest: (packId: string, sha256: string) =>
+      call<ProviderPackInfo[]>('providerPacks:trustManifest', packId, sha256),
+    inspectAdapter: (packId: string) => call<{
+      packId: string; path: string | null; sha256: string | null; trusted: boolean;
+      executable: boolean; args: string[]; warning: string | null;
+    }>('providerPacks:inspectAdapter', packId),
+    trustAdapter: (packId: string, sha256: string) =>
+      call<ProviderPackInfo[]>('providerPacks:trustAdapter', packId, sha256),
+    revokeAdapterTrust: (packId: string) =>
+      call<ProviderPackInfo[]>('providerPacks:revokeAdapterTrust', packId),
+    remove: (packId: string) => call<ProviderPackInfo[]>('providerPacks:remove', packId),
+    restore: (packId: string) => call<ProviderPackInfo[]>('providerPacks:restore', packId),
   },
   projects: {
     list: () => call<Project[]>('projects:list'),
@@ -77,6 +106,21 @@ const api = {
     read: (root: string, rel: string) =>
       call<{ text: string; truncated: boolean; size: number; binary: boolean }>('code:read', root, rel),
   },
+  codex: {
+    status: (force?: boolean) => call<{
+      fetchedAt: number; plan: string | null; spendControlReached: boolean | null;
+      primary: { usedPercent: number; remainingPercent: number; resetsAt: number | null; windowMinutes: number | null } | null;
+      secondary: { usedPercent: number; remainingPercent: number; resetsAt: number | null; windowMinutes: number | null } | null;
+    }>('codex:status', force),
+    models: () => call<{
+      fetchedAt: number; note: string | null;
+      models: { id: string; label: string; description: string | null; reasoningEfforts: string[]; defaultReasoningEffort: string | null; isDefault: boolean }[];
+    }>('codex:models'),
+    usageSummary: () => call<{
+      conversations: number; inTokens: number; outTokens: number; cacheRead: number;
+      totalTokens: number; lastAt: number | null;
+    }>('codex:usageSummary'),
+  },
   settings: {
     get: () => call<{ spendCapUsd: number }>('settings:get'),
     setSpendCap: (v: number) => call<number>('settings:setSpendCap', v),
@@ -92,6 +136,7 @@ const api = {
     clearProvider: (id: string) => call<boolean>('key:clearProvider', id),
     glmModels: (force?: boolean) =>
       call<{ models: { id: string; label: string; source: string }[]; note: string | null; fetchedAt: number | null }>('glm:models', force),
+    glmVerify: () => call<{ ok: boolean; detail: string; models: { id: string; label: string; source: string }[] }>('glm:verify'),
     clear: () => call<boolean>('key:clear'),
   },
 
@@ -127,12 +172,16 @@ const api = {
     orphans: () => call<WorktreeInfo[]>('worktrees:orphans'),
     relink: (p: string) => call<{ path: string; kind: string; bytes: number | null }[]>('worktrees:relink', p),
     forSession: (id: string) => call<string | null>('worktrees:forSession', id),
+    // Refusals come back as merged:false with the reason; this only rejects
+    // when there is no worktree at the path at all.
+    merge: (p: string, opts?: { squash?: boolean; message?: string }) =>
+      call<{ merged: boolean; detail: string }>('worktrees:merge', p, opts),
   },
   // ── phase 10 · headless fan-out ──────────────────────────────────────
   headless: {
     start: (cfg: HeadlessConfig) => call<{ runId: string; rows: number }>('headless:start', cfg),
     rows: (runId: string) => call<HeadlessRow[]>('headless:rows', runId),
-    runs: (limit?: number) => call<unknown[]>('headless:runs', limit),
+    runs: (limit?: number) => call<HeadlessRun[]>('headless:runs', limit),
     cancel: (runId: string) => call<number>('headless:cancel', runId),
   },
   // ── phase 11 · dispatcher ────────────────────────────────────────────
@@ -175,6 +224,19 @@ const api = {
     resultsExpiring: () => call<unknown[]>('notify:resultsExpiring'),
     enabled: () => call<boolean>('notify:enabled'),
     setEnabled: (on: boolean) => call<boolean>('notify:setEnabled', on),
+    // Which session is on screen right now, so main can keep quiet about the
+    // one you are already looking at. Null means none is.
+    setWatchedSession: (sessionId: string | null) =>
+      call<boolean>('notify:setWatchedSession', sessionId),
+  },
+  // ── read-only phone fleet + outbound alerts ─────────────────────────
+  mobile: {
+    status: () => call<MobileMonitorStatus>('mobile:status'),
+    configure: (patch: Partial<MobileMonitorConfig>) =>
+      call<MobileMonitorStatus>('mobile:configure', patch),
+    regenerateToken: () => call<MobileMonitorStatus>('mobile:regenerateToken'),
+    regenerateTopic: () => call<MobileMonitorStatus>('mobile:regenerateTopic'),
+    testPush: () => call<{ ok: boolean; detail: string }>('mobile:testPush'),
   },
   // ── phase 19 · trust and the ledger ──────────────────────────────────
   policy: {
@@ -229,6 +291,15 @@ const api = {
     history: (id: string, limit?: number) => call<{ at: number; status: string; detail: string | null }[]>('schedule:history', id, limit),
     preview: (cron: string) => call<{ fires: number[]; describe: string }>('schedule:preview', cron),
     tick: () => call<number>('schedule:tick'),
+    daemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string }>('schedule:daemon'),
+    installDaemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string }>('schedule:installDaemon'),
+    uninstallDaemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string }>('schedule:uninstallDaemon'),
+  },
+  review: {
+    recipe: (projectId: string) => call<ReviewRecipe>('review:recipe', projectId),
+    saveRecipe: (projectId: string, commands: string[]) => call<ReviewRecipe>('review:saveRecipe', projectId, commands),
+    history: (projectId: string, limit?: number) => call<ReviewRun[]>('review:history', projectId, limit),
+    run: (projectId: string) => call<ReviewRun>('review:run', projectId),
   },
   // ── phase 26 · agent teams ───────────────────────────────────────────
   teams: {
@@ -318,6 +389,75 @@ const api = {
   prefs: {
     all: () => call<WaniganSettings>('settings:all'),
     set: (k: string, v: string) => call<WaniganSettings>('settings:set', k, v),
+  },
+  // ── Wanigan Compound · provider-neutral learning ───────────────────
+  learning: {
+    overview: (projectId?: string | null) => call<LearningOverview>('learning:overview', projectId),
+    settings: () => call<LearningSettings>('learning:settings'),
+    setSettings: (patch: Partial<LearningSettings>) =>
+      call<LearningSettings>('learning:setSettings', patch),
+    teach: (input: TeachWaniganInput) => call<KnowledgeCandidate>('learning:teach', input),
+    consolidate: (projectId?: string | null) =>
+      call<{ processed: number; candidates: number; autoApplied: number }>('learning:consolidate', projectId),
+    signals: (filter?: { projectId?: string | null; providerId?: string | null; processed?: boolean; limit?: number }) =>
+      call<LearningSignal[]>('learning:signals', filter),
+    candidates: (filter?: { projectId?: string | null; status?: string | string[]; scope?: string; limit?: number }) =>
+      call<KnowledgeCandidate[]>('learning:candidates', filter),
+    updateCandidate: (id: string, patch: Partial<Pick<KnowledgeCandidate,
+      'title' | 'proposedText' | 'targetKind' | 'scope' | 'providerId' | 'projectId' | 'pathScope'>>) =>
+      call<KnowledgeCandidate>('learning:updateCandidate', id, patch),
+    reviewCandidate: (id: string, action: 'approve' | 'reject' | 'snooze' | 'reopen', note?: string) =>
+      call<KnowledgeCandidate>('learning:reviewCandidate', id, action, note),
+    promoteCandidate: (id: string) =>
+      call<{ item: KnowledgeItem; version: KnowledgeVersion }>('learning:promoteCandidate', id),
+    applyCandidate: (id: string, providerId: string) =>
+      call<{ item: KnowledgeItem; version: KnowledgeVersion; projection: KnowledgeProjection }>('learning:applyCandidate', id, providerId),
+    knowledge: (filter?: { projectId?: string | null; scope?: string; kind?: string; status?: string; limit?: number }) =>
+      call<KnowledgeItem[]>('learning:knowledge', filter),
+    search: (query: string, opts?: { projectId?: string | null; path?: string | null; kinds?: string[]; limit?: number }) =>
+      call<{ item: KnowledgeItem; rank: number; version: KnowledgeVersion | null }[]>('learning:search', query, opts),
+    item: (id: string) => call<{
+      item: KnowledgeItem; versions: KnowledgeVersion[]; evidence: KnowledgeEvidence[];
+      projections: KnowledgeProjection[]; roi: ArtifactRoiSummary;
+    }>('learning:item', id),
+    briefing: (input: { query: string; providerId: string; projectId?: string | null; path?: string | null; maxTokens?: number }) =>
+      call<KnowledgeBriefing>('learning:briefing', input),
+    projections: (filter?: { itemId?: string; candidateId?: string; status?: string; limit?: number }) =>
+      call<KnowledgeProjection[]>('learning:projections', filter),
+    undoProjection: (id: string) => call<KnowledgeProjection>('learning:undoProjection', id),
+    diagnostics: (projectId?: string | null) =>
+      call<OptimizerDiagnostic[]>('learning:diagnostics', projectId),
+    forgeSkill: (input: {
+      name: string; description: string; trigger: string; scope: 'personal' | 'project';
+      inputs?: string[]; steps: { title: string; instruction: string; tool?: string | null }[];
+      verification: string[]; safety?: string[]; allowedTools?: string[]; providerIds?: string[];
+    }) => call<ForgedSkill>('learning:forgeSkill', input),
+    doctorSkill: (skillMd: string, root?: string) =>
+      call<SkillDiagnostic[]>('learning:doctorSkill', skillMd, root),
+    installSkill: (skill: ForgedSkill, providerIds: string[], projectId?: string | null) =>
+      call<KnowledgeProjection[]>('learning:installSkill', skill, providerIds, projectId),
+    experiments: (filter?: { projectId?: string | null; status?: string; limit?: number }) =>
+      call<LearningExperiment[]>('learning:experiments', filter),
+    createExperiment: (input: {
+      name: string; projectId?: string | null; itemId?: string | null; candidateId?: string | null;
+      baselineVersionId?: string | null; candidateVersionId?: string | null; providerId: string;
+      model: string; effort?: string | null; commitHash: string; config?: Record<string, unknown>;
+    }) => call<LearningExperiment>('learning:createExperiment', input),
+    setExperimentStatus: (id: string, action: 'start' | 'cancel' | 'complete', outcome?: Record<string, unknown>) =>
+      call<LearningExperiment>('learning:setExperimentStatus', id, action, outcome),
+  },
+  // ── phase 27 · observed sessions ─────────────────────────────────────
+  observed: {
+    list: () => call<ObservedSession[]>('observed:list'),
+    state: () => call<ObservedState>('observed:state'),
+    setEnabled: (on: boolean) => call<boolean>('observed:setEnabled', on),
+  },
+  // ── phase 29 · what leaves this machine ──────────────────────────────
+  // Hosts, pinned variables and paths all come from main. The renderer must
+  // never hold a copy of that list: one typed into a view goes on saying what
+  // was true the day it was typed.
+  egress: {
+    report: () => call<EgressReport>('egress:report'),
   },
   on: {
     batchChanged: (cb: () => void) => {

@@ -1,22 +1,25 @@
-import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Socket } from 'node:net';
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import { BrowserWindow, Notification } from 'electron';
 import { db, resultsDir } from './db';
 import { getSetting, setSetting } from './settings';
+import { sendMobilePush } from './mobile';
+import type { MobilePushResult } from './mobile';
+import type { Attention, AttentionKind } from '../shared/types';
 
 /**
  * Telling the human something happened, and knowing when to look.
  *
  * The Batches API can call a completion webhook — HMAC-signed, retried for a
  * day — and it is genuinely better than polling for anything with a public
- * URL. Wanigan does not have one. A desktop app can only receive a webhook if
- * the user first stands up a tunnel and keeps it up, which is a second daemon
- * to babysit in exchange for removing a request every ten seconds. So polling
- * stayed, and startWebhookReceiver below is opt-in for the minority who
- * already have an endpoint.
+ * URL. Wanigan does not have one. Receiving one on a laptop means the user
+ * standing up a public tunnel and keeping it up, and it means this app opening
+ * a webhook receiver to the internet. The separately opt-in phone dashboard is
+ * not that: it is read-only, bearer-authenticated, bound to loopback, and can
+ * only be carried to another device by the operator's private reverse proxy.
+ * A webhook receiver used to sit at the bottom of this file, unreachable from
+ * anywhere in the app and attached to no promise made to anyone. It is gone,
+ * and polling is the whole answer.
  *
  * The reason that trade is safe is worth writing down, because it is the
  * opposite of the usual one: the failure mode that loses batches here is not a
@@ -28,6 +31,15 @@ import { getSetting, setSetting } from './settings';
  * a poll schedule that knows where it is in those two clocks and tightens up at
  * the moments where the difference between 'ended' and 'expired' gets decided,
  * plus surfacing both deadlines so the human can reopen the app in time.
+ *
+ * The other half of the file is the promise the Settings toggle makes. It
+ * defaults ON, so every announce below has to actually reach the OS or the
+ * toggle is decoration — Wanigan spent a while in exactly that state, with
+ * three announce functions nothing called. Which states are worth interrupting
+ * a human for is therefore decided here rather than at the call sites: a caller
+ * that forgot to filter would either say nothing at all or say everything, and
+ * of those two the second is worse, because it is the one that gets the whole
+ * feature switched off.
  */
 
 /* ── the two clocks ──────────────────────────────────────────────────── */
@@ -74,12 +86,29 @@ export const RESULTS_WARNING_MS = 7 * 24 * 60 * 60_000;
 
 const SETTING_KEY = 'notifications';
 
-/** Labels from ATTENTION_LABEL in attention.ts that are worth a sound. */
-const URGENT_LABELS = new Set(['Asking', 'Failed']);
+/**
+ * Which session states are worth taking a human away from something else, and
+ * which of those are worth a sound.
+ *
+ * Keyed on AttentionKind and not on the word from ATTENTION_LABEL, which is
+ * what this used to match against. The label is display text — one word, chosen
+ * to stay distinct in a truncated rail — and it is going to get reworded at some
+ * point by somebody working on the rail. A set of strings matched against it
+ * fails silently when that happens: 'Asking' stops being urgent, permission
+ * prompts go quiet, and nothing anywhere reports an error. The kind is the enum
+ * the classifier actually decided on, and renaming a label cannot move it.
+ *
+ * Idle and working are absent on purpose. Idle flips on a 90-second threshold
+ * and would fire for every agent that pauses to think; working fires
+ * constantly. Either one turns the toggle off for good, and it takes the
+ * permission prompt — the one alert that is genuinely blocking work — with it.
+ */
+const ANNOUNCE_KINDS = new Set<AttentionKind>(['permission', 'error', 'finished']);
+const URGENT_KINDS = new Set<AttentionKind>(['permission', 'error']);
 
 const RUN_ENDED_DEDUPE_MS = 6 * 60 * 60_000;
 const CAP_DEDUPE_MS = 5 * 60_000;
-const ATTENTION_DEDUPE_MS = 5 * 60_000;
+const ATTENTION_RETRY_MS = 30_000;
 const MAX_DEDUPE_KEYS = 500;
 
 /* ── the switch ──────────────────────────────────────────────────────── */
@@ -122,8 +151,37 @@ export function setNotificationsEnabled(on: boolean): void {
  */
 const live = new Set<Notification>();
 
-export function notify(opts: { title: string; body: string; urgent?: boolean; onClick?: () => void }): void {
-  if (!notificationsEnabled()) return;
+export function notify(opts: {
+  title: string;
+  body: string;
+  /** Redacted alternative when desktop detail contains a command or path. */
+  mobileBody?: string;
+  urgent?: boolean;
+  onClick?: () => void;
+  /** Internal sink controls let attention suppress only the Mac banner. */
+  desktop?: boolean;
+  mobile?: boolean;
+  onMobileResult?: (result: MobilePushResult) => void;
+}): void {
+  // Phone delivery is its own opt-in. A user may reasonably turn off banners
+  // on the Mac while keeping the alert that lets them leave the room, so the
+  // desktop toggle must not gate this sink. Delivery is bounded and failures
+  // are recorded by mobile.ts; a network service never sits in the hook path.
+  if (opts.mobile !== false) {
+    void sendMobilePush({
+      title: opts.title,
+      body: opts.mobileBody ?? opts.body,
+      urgent: opts.urgent === true,
+    }).then(
+      (result) => opts.onMobileResult?.(result),
+      () => opts.onMobileResult?.({
+        at: Date.now(), ok: false, skipped: false, retryable: true,
+        httpStatus: null, error: 'Mobile push failed.',
+      }),
+    );
+  }
+
+  if (opts.desktop === false || !notificationsEnabled()) return;
   try {
     // isSupported() is false on a Linux box with no notification daemon, and
     // the constructor itself throws before the app is ready.
@@ -172,6 +230,44 @@ function focusWanigan(): void {
     w.focus();
   } catch {
     // No window yet, or the app is on its way out.
+  }
+}
+
+/* ── what the operator is already looking at ─────────────────────────── */
+
+/**
+ * The session on screen, as last reported by the renderer. Null when no session
+ * is selected, which is most of the app.
+ */
+let watchedSessionId: string | null = null;
+
+export function setWatchedSession(sessionId: string | null): void {
+  watchedSessionId = sessionId;
+}
+
+/**
+ * Whether telling the human about this session would be telling them something
+ * they can already see.
+ *
+ * Both halves are required, and each one alone gets it wrong in a different
+ * direction. The renderer keeps reporting its selected session after you switch
+ * to another app — it has no reason not to — so the id alone would silence
+ * exactly the notification that matters most: you walked away with that session
+ * open, which is the entire scenario desktop notifications exist for. Window
+ * focus alone is no better: you can be sitting in Batches with the window front
+ * and centre while a different agent blocks on a permission prompt you cannot
+ * see.
+ *
+ * Deliberately fails open. If the window cannot be asked whether it is focused,
+ * the notification goes out — a redundant ping costs a glance, a suppressed one
+ * costs however long the agent sits there waiting.
+ */
+function alreadyOnScreen(sessionId: string): boolean {
+  if (watchedSessionId !== sessionId) return false;
+  try {
+    return BrowserWindow.getAllWindows().some((w) => !w.isDestroyed() && w.isFocused());
+  } catch {
+    return false;
   }
 }
 
@@ -319,6 +415,66 @@ function haveLocalCopy(batchId: string): boolean {
 const said = new Map<string, number>();
 
 /**
+ * Attention is a state transition, not a five-minute bucket. The classifier
+ * carries the exact hook-event or PTY-exit identity: repeated refreshes keep it,
+ * while a second permission prompt or completed turn gets a new value even if
+ * it follows seconds later. Each sink claims independently because looking at
+ * a session may suppress its Mac banner but must never suppress the phone alert.
+ */
+const attentionSaid = new Map<string, {
+  transitionId: string;
+  state: 'pending' | 'sent' | 'failed' | 'rejected';
+  at: number;
+}>();
+
+/** Reconsider current transitions after the operator changes phone delivery. */
+export function resetMobileAttentionDelivery(): void {
+  for (const key of attentionSaid.keys()) {
+    if (key.startsWith('mobile:')) attentionSaid.delete(key);
+  }
+}
+
+function claimAttention(
+  sink: 'desktop' | 'mobile',
+  a: Attention,
+): boolean {
+  const key = `${sink}:${a.sessionId}:${a.kind}`;
+  const previous = attentionSaid.get(key);
+  const now = Date.now();
+  if (previous?.transitionId === a.transitionId) {
+    if (sink === 'desktop' || previous.state !== 'failed' || now - previous.at < ATTENTION_RETRY_MS) {
+      return false;
+    }
+  }
+  if (attentionSaid.size > MAX_DEDUPE_KEYS * 2) {
+    for (const [k, value] of attentionSaid) {
+      if (now - value.at > RUN_ENDED_DEDUPE_MS) attentionSaid.delete(k);
+    }
+  }
+  attentionSaid.set(key, {
+    transitionId: a.transitionId,
+    state: sink === 'mobile' ? 'pending' : 'sent',
+    at: now,
+  });
+  return true;
+}
+
+function settleMobileAttention(a: Attention, result: MobilePushResult): void {
+  const key = `mobile:${a.sessionId}:${a.kind}`;
+  const current = attentionSaid.get(key);
+  if (current?.transitionId !== a.transitionId) return;
+  attentionSaid.set(key, {
+    ...current,
+    // A disabled sink has not consumed the transition: if the operator enables
+    // phone alerts while a prompt is still waiting, the periodic attention
+    // check should deliver it. Both skips and network failures retry locally
+    // after the same bounded backoff; only an accepted ntfy publish is final.
+    state: result.ok ? 'sent' : result.retryable ? 'failed' : 'rejected',
+    at: Date.now(),
+  });
+}
+
+/**
  * True the first time this key comes up inside `windowMs`, false for a repeat.
  *
  * The poll loop revisits the same run every tick, so without this a run that
@@ -340,15 +496,6 @@ function claim(key: string, windowMs: number): boolean {
 function usd(n: number): string {
   if (!Number.isFinite(n)) return '$0.00';
   return n > 0 && n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
-}
-
-function runName(runId: string): string | null {
-  try {
-    const r = db().prepare('SELECT name FROM runs WHERE id = ?').get(runId) as { name: string } | undefined;
-    return r?.name ?? null;
-  } catch {
-    return null;
-  }
 }
 
 /** Failures first: an OS notification truncates the tail, never the head. */
@@ -384,13 +531,21 @@ export function announceRunEnded(runId: string): void {
 }
 
 /**
- * A run stopped at the spend cap. Always urgent: this one is not a report on
- * work that happened, it is work that did NOT happen and is waiting on a
- * decision — a silent version of it reads as "the batch is running".
+ * A submission was refused by the spend cap. Always urgent: this one is not a
+ * report on work that happened, it is work that did NOT happen and is waiting
+ * on a decision — a silent version of it reads as "the batch is running".
+ *
+ * Takes the run's NAME, not a run id, and that is not a convenience. The cap is
+ * checked in createAndSubmitRun before newRunId() is called, because a run that
+ * was refused must not leave a row behind claiming it exists. So at the only
+ * moment this function can be called there is no run id to pass and no row to
+ * look a name up in — an id-shaped signature here could only ever be satisfied
+ * by inventing one, and the notification would name a run the user cannot open.
+ * The name is what they typed into the form, which is also what they will
+ * recognise.
  */
-export function announceSpendCapTrip(runId: string, projected: number, cap: number): void {
-  if (!claim(`cap:${runId}:${cap}`, CAP_DEDUPE_MS)) return;
-  const name = runName(runId) ?? runId;
+export function announceSpendCapTrip(name: string, projected: number, cap: number): void {
+  if (!claim(`cap:${name}:${cap}`, CAP_DEDUPE_MS)) return;
   notify({
     title: 'Stopped at the spend cap',
     body: `${name} is estimated at ${usd(projected)}, above your ${usd(cap)} cap. Nothing was submitted — raise the cap in Settings or cut the dataset down.`,
@@ -400,350 +555,76 @@ export function announceSpendCapTrip(runId: string, projected: number, cap: numb
 }
 
 /**
- * A session needs a human. `label` is the word from ATTENTION_LABEL, `detail`
- * the one-line summary the attention queue already built.
+ * A session needs a human.
  *
- * The caller decides which states are worth interrupting for — a notification
- * per 'Working' would be unusable. Neither argument is logged or stored here;
- * detail reaches the OS notification and nowhere else, and attention.ts is
- * where the human's prompt text was already kept out of it.
+ * This is the function the app's binding constraint is answered by. One
+ * operator can only watch one screen, and Fleet is described as "the view you
+ * leave open on a second monitor while eight agents work" — which is only true
+ * if leaving it is safe. A blocked agent that waits in silence until somebody
+ * happens to look does not cost a notification, it costs the wall-clock time of
+ * every agent downstream of it.
+ *
+ * Takes the whole Attention rather than a loose (id, label, detail) triple.
+ * That is what lets the interrupt-worthiness decision key on `kind` instead of
+ * on display text, and it removes the failure where a caller pairs one
+ * session's label with another's detail — which would be a notification that
+ * reads perfectly and is wrong, the worst kind this app can send.
+ *
+ * Nothing here is logged or stored; `detail` reaches the OS notification and
+ * nowhere else, and attention.ts is where the human's own prompt text was
+ * already kept out of it. Safe to call on every hook event: the filters below
+ * are cheap and the transition identity does the rest.
  */
-export function announceAttention(sessionId: string, label: string, detail: string): void {
-  if (!claim(`session:${sessionId}:${label}`, ATTENTION_DEDUPE_MS)) return;
+export function announceAttention(a: Attention): void {
+  if (!ANNOUNCE_KINDS.has(a.kind)) return;
+
+  // A focused Wanigan window means only that the Mac banner would be redundant.
+  // It says nothing about whether the human is still physically at the desk,
+  // which is precisely why the separately opt-in phone sink exists.
+  const sendMobile = claimAttention('mobile', a);
+  const sendDesktop = !alreadyOnScreen(a.sessionId)
+    && claimAttention('desktop', a);
+  if (!sendMobile && !sendDesktop) return;
+
   let where: string | null = null;
   try {
-    const r = db().prepare('SELECT project_name FROM session_log WHERE id = ?').get(sessionId) as
+    const r = db().prepare('SELECT project_name FROM session_log WHERE id = ?').get(a.sessionId) as
       { project_name: string } | undefined;
     where = r?.project_name ?? null;
   } catch {
     // Unnamed is worse than named, but not worse than silent.
   }
-  notify({
-    title: where ? `${label} — ${where}` : label,
-    body: detail,
-    urgent: URGENT_LABELS.has(label),
+  const message = {
+    title: where ? `${a.label} — ${where}` : a.label,
+    // The classifier supplies a detail for all three announced kinds, but the
+    // field is nullable and a notification with an empty body is a rectangle
+    // that says nothing. Send them somewhere instead.
+    body: a.detail ?? 'Open Wanigan to see where it stopped.',
+    // Hook details can contain a shell command or file name. That is useful on
+    // the trusted desktop and needless at an external push provider; the
+    // project/state/wait is enough to decide whether to walk back to the Mac.
+    mobileBody: mobileAttentionBody(a),
+    urgent: URGENT_KINDS.has(a.kind),
     onClick: focusWanigan,
-  });
-}
-
-/* ── webhook receiver (opt-in) ───────────────────────────────────────── */
-
-export const WEBHOOK_PATH = '/webhooks/anthropic';
-/** Replay window. A delivery older than this is refused however well it is signed. */
-export const WEBHOOK_TOLERANCE_MS = 5 * 60_000;
-/** A completion event is a few hundred bytes. Anything near this is not one. */
-const WEBHOOK_MAX_BODY = 256 * 1024;
-const WEBHOOK_REQUEST_BUDGET_MS = 5000;
-
-export type WebhookEvent = {
-  /** e.g. 'batch.completed'. 'unknown' when the payload did not name itself. */
-  type: string;
-  /** The event's own id, for de-duplicating redeliveries. */
-  id: string | null;
-  /** The batch the event is about, when it is about one. */
-  batchId: string | null;
-  raw: unknown;
-};
-
-type Receiver = { server: http.Server; port: number; secret: string };
-
-let receiver: Receiver | null = null;
-const receiverSockets = new Set<Socket>();
-const webhookListeners = new Set<(e: WebhookEvent) => void>();
-
-/**
- * Called for every verified delivery. Returns an unsubscribe.
- *
- * The right handler is one that kicks a poll: the event says something moved,
- * and the API remains the only thing that knows what. Acting on the payload's
- * contents directly would mean trusting counts from a body that arrived over
- * the network to be newer than the ones we fetched ourselves.
- */
-export function onWebhook(handler: (e: WebhookEvent) => void): () => void {
-  webhookListeners.add(handler);
-  return () => { webhookListeners.delete(handler); };
-}
-
-export function webhookReceiverUrl(): string | null {
-  return receiver ? `http://127.0.0.1:${receiver.port}${WEBHOOK_PATH}` : null;
-}
-
-/**
- * Starts the completion-webhook endpoint. OFF by default and never started
- * implicitly — nothing else in this module calls it, and it should stay that
- * way: an app that opens a listening port because a feature flag defaulted on
- * is an app that opened a port the user never agreed to.
- *
- * Bound to 127.0.0.1, which is not a contradiction — the endpoint is reachable
- * because the user is running a tunnel (cloudflared, ngrok, an ssh -R) that
- * connects to it from this machine. Binding 0.0.0.0 instead would publish it on
- * every café Wi-Fi the laptop joins, and the signature check is not a reason to
- * do that: it is a reason the endpoint is safe from forgery, not a reason to
- * offer it to strangers.
- */
-export async function startWebhookReceiver(port: number, secret: string): Promise<{ url: string }> {
-  if (receiver) {
-    // Port 0 means "any port", so it is already satisfied by whatever the OS
-    // assigned. Comparing the request against the ASSIGNED port would make a
-    // second start(0, …) — reopening Settings, a retry, any caller that treats
-    // start as idempotent — throw "already listening on 51234, stop it before
-    // moving it to 0", which is both untrue and impossible to act on.
-    if (port !== 0 && receiver.port !== port) {
-      throw new Error(
-        `The webhook receiver is already listening on port ${receiver.port}. ` +
-        `Stop it before moving it to ${port}.`
-      );
-    }
-    return { url: webhookReceiverUrl()! };
-  }
-  if (!secret.trim()) {
-    throw new Error(
-      'A webhook receiver needs the signing secret from the Console (it starts with "whsec_"). ' +
-      'Without it every delivery has to be refused as unverifiable, which is worse than not listening at all.'
-    );
-  }
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
-    throw new Error(`${port} is not a usable port. Use 0 to let the OS pick one, or a number from 1 to 65535.`);
-  }
-
-  const srv = http.createServer((req, res) => { handleWebhook(req, res, secret); });
-  // A tunnel holds its connection open between deliveries; without these the
-  // app waits on an idle one at quit instead of closing.
-  srv.keepAliveTimeout = 5000;
-  srv.headersTimeout = 10_000;
-  srv.on('connection', (s: Socket) => {
-    receiverSockets.add(s);
-    s.on('close', () => receiverSockets.delete(s));
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    const fail = (e: NodeJS.ErrnoException) => {
-      const why = e.code === 'EADDRINUSE'
-        ? `port ${port} is already in use — pick another, or use 0 to let the OS choose`
-        : e.message;
-      reject(new Error(
-        `Wanigan could not open the webhook receiver: ${why}. Batches still advance on polling.`
-      ));
-    };
-    srv.once('error', fail);
-    srv.listen(port, '127.0.0.1', () => { srv.off('error', fail); resolve(); });
-  });
-
-  const addr = srv.address();
-  if (typeof addr !== 'object' || addr === null) {
-    srv.close();
-    throw new Error('The webhook receiver started without a port. Stop it and try again.');
-  }
-  // Socket noise after startup — a tunnel dropping mid-delivery — must not
-  // reach the process error handler and take the app down.
-  srv.on('error', () => {});
-
-  receiver = { server: srv, port: addr.port, secret };
-  return { url: webhookReceiverUrl()! };
-}
-
-export function stopWebhookReceiver(): void {
-  const r = receiver;
-  receiver = null;
-  if (!r) return;
-  try { r.server.close(); } catch { /* never listened */ }
-  // close() only refuses new connections; an established keep-alive socket
-  // keeps the event loop — and therefore the quit — waiting.
-  for (const s of receiverSockets) { try { s.destroy(); } catch { /* already gone */ } }
-  receiverSockets.clear();
-}
-
-/**
- * Verifies one delivery.
- *
- * Signed content is `webhookId + '.' + timestamp + '.' + rawBody`, which is the
- * Standard Webhooks wire format Anthropic signs with. Leaving the id out is not
- * a laxer check, it is a different digest: every genuine delivery then fails
- * verification, Wanigan answers 401, and the sender retries for 24 hours while
- * the Console's delivery log makes it look like the signing secret is wrong.
- *
- * Over the RAW body: re-encoding the parsed JSON changes key order and
- * whitespace, and every signature then fails for a payload that was perfectly
- * genuine.
- */
-export function verifyWebhookSignature(secret: string, webhookId: string, timestamp: string, rawBody: string, signature: string): boolean {
-  // No id means nothing that can be verified — the digest cannot be formed
-  // without it, so accepting the delivery would mean accepting it unchecked.
-  if (!secret || !webhookId || !timestamp || !signature) return false;
-
-  const sentAt = parseTimestamp(timestamp);
-  if (sentAt === null) return false;
-  // Both directions. Rejecting only old timestamps leaves a captured delivery
-  // dated a year ahead replayable forever, and clock skew between the sender
-  // and this laptop makes a small future allowance necessary anyway.
-  if (Math.abs(Date.now() - sentAt) > WEBHOOK_TOLERANCE_MS) return false;
-
-  let digest: Buffer;
-  try {
-    digest = createHmac('sha256', signingKey(secret)).update(`${webhookId}.${timestamp}.${rawBody}`, 'utf8').digest();
-  } catch {
-    return false;
-  }
-  const hex = digest.toString('hex');
-  const b64 = digest.toString('base64');
-
-  // During a secret rotation the sender signs with both keys and sends the
-  // signatures space-separated in one header; one match is a match. Each may
-  // carry a scheme prefix ("v1,<sig>"), which is not part of the digest.
-  for (const token of signature.trim().split(/\s+/)) {
-    const comma = token.indexOf(',');
-    const value = comma >= 0 ? token.slice(comma + 1) : token;
-    if (constantTimeEqual(value, hex) || constantTimeEqual(value, b64)) return true;
-  }
-  return false;
-}
-
-/**
- * Never `===`. String comparison returns at the first differing byte, and
- * anything that can post to this endpoint can time that and walk out a valid
- * signature one byte at a time. Length is compared openly because the digest
- * length is fixed by SHA-256 and public.
- */
-function constantTimeEqual(given: string, want: string): boolean {
-  const a = Buffer.from(given, 'utf8');
-  const b = Buffer.from(want, 'utf8');
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-/**
- * Webhook secrets are issued as `whsec_<base64>`, and the bytes that signed the
- * delivery are the DECODED base64 — not the printable string. Keying the HMAC
- * with the string produces a digest that can never match, and the only symptom
- * is every delivery being rejected as forged, which reads like an attack rather
- * than a configuration mistake.
- */
-function signingKey(secret: string): Buffer {
-  const s = secret.trim();
-  return s.startsWith('whsec_') ? Buffer.from(s.slice(6), 'base64') : Buffer.from(s, 'utf8');
-}
-
-/** Unix seconds is what the spec sends; milliseconds is what hand-rolled senders send. */
-function parseTimestamp(timestamp: string): number | null {
-  const n = Number(timestamp.trim());
-  if (!Number.isFinite(n) || n <= 0) return null;
-  // A millisecond value below 1e12 would be 1970, so the ambiguity is not real.
-  return n < 1e12 ? n * 1000 : n;
-}
-
-function handleWebhook(req: http.IncomingMessage, res: http.ServerResponse, secret: string): void {
-  const url = (req.url ?? '').split('?')[0];
-  if (req.method !== 'POST' || url !== WEBHOOK_PATH) {
-    end(res, 404);
-    return;
-  }
-
-  readBody(req).then((body) => {
-    if (!body.ok) { end(res, body.status); return; }
-
-    // All three headers are part of the signature. Reading only two is how the
-    // receiver ends up recomputing a digest the sender never produced.
-    const id = header(req, 'webhook-id');
-    const timestamp = header(req, 'webhook-timestamp');
-    const signature = header(req, 'webhook-signature');
-    if (!verifyWebhookSignature(secret, id, timestamp, body.text, signature)) {
-      // 401, not 200. The sender retries for 24 hours on a non-2xx, which is
-      // pointless for a bad signature but honest — silently accepting an
-      // unverified delivery is how a forged one gets treated as real.
-      end(res, 401);
-      return;
-    }
-
-    // Answer before doing anything. The sender treats a slow response as a
-    // failed delivery and redelivers, so a listener that takes a second to run
-    // would manufacture duplicates of an event that arrived exactly once.
-    end(res, 204);
-
-    const event = parseWebhookEvent(body.text);
-    // A signed body we cannot parse is ours and still useless; redelivery will
-    // not make it parseable, which is why it was already answered 204.
-    if (!event) return;
-    for (const listener of webhookListeners) {
-      try {
-        listener(event);
-      } catch {
-        // One bad listener must not stop the others, or the socket cleanup.
-      }
-    }
-  }).catch(() => { end(res, 400); });
-}
-
-function header(req: http.IncomingMessage, name: string): string {
-  const v = req.headers[name];
-  return typeof v === 'string' ? v : '';
-}
-
-type BodyResult = { ok: true; text: string } | { ok: false; status: number };
-
-/**
- * The raw body, or the status to answer with.
- *
- * An oversized delivery pauses the request rather than destroying it, so the
- * 413 actually reaches the sender. Destroying the socket first is the obvious
- * version and the wrong one: the delivery then shows up in the Console's log as
- * a connection error, which sends whoever is debugging it to look at their
- * tunnel instead of at the payload. `connection: close` on the reply takes the
- * socket down once the answer has flushed.
- */
-function readBody(req: http.IncomingMessage): Promise<BodyResult> {
-  return new Promise((resolve) => {
-    let chunks: Buffer[] = [];
-    let size = 0;
-    let settled = false;
-    const finish = (r: BodyResult) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(r);
-    };
-    // A body still arriving after this is a stuck socket, not a slow sender,
-    // and there is nothing to answer on a socket that is not moving.
-    const timer = setTimeout(() => { req.destroy(); finish({ ok: false, status: 408 }); }, WEBHOOK_REQUEST_BUDGET_MS);
-
-    req.on('data', (c: Buffer) => {
-      size += c.length;
-      if (size > WEBHOOK_MAX_BODY) {
-        req.pause();
-        chunks = [];
-        finish({ ok: false, status: 413 });
-        return;
-      }
-      chunks.push(c);
-    });
-    req.on('end', () => finish({ ok: true, text: Buffer.concat(chunks).toString('utf8') }));
-    req.on('error', () => finish({ ok: false, status: 400 }));
-  });
-}
-
-function end(res: http.ServerResponse, status: number): void {
-  try {
-    res.writeHead(status, { 'content-length': '0', connection: 'close' });
-    res.end();
-  } catch {
-    // The tunnel hung up first.
-  }
-}
-
-function parseWebhookEvent(text: string): WebhookEvent | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-
-  const o = parsed as Record<string, unknown>;
-  const data = typeof o.data === 'object' && o.data !== null ? (o.data as Record<string, unknown>) : {};
-  const objectId = typeof data.id === 'string' ? data.id : null;
-  return {
-    type: typeof o.type === 'string' ? o.type : 'unknown',
-    id: typeof o.id === 'string' ? o.id : null,
-    batchId: objectId && objectId.startsWith('msgbatch') ? objectId : null,
-    raw: parsed,
   };
+  if (sendMobile) notify({
+    ...message,
+    desktop: false,
+    mobile: true,
+    onMobileResult: (result) => settleMobileAttention(a, result),
+  });
+  if (sendDesktop) notify({ ...message, desktop: true, mobile: false });
+}
+
+export function mobileAttentionBody(a: Attention): string {
+  const elapsed = Math.max(0, Date.now() - a.since);
+  const seconds = Math.floor(elapsed / 1000);
+  const waited = seconds < 60
+    ? `${seconds}s`
+    : seconds < 3600
+      ? `${Math.floor(seconds / 60)}m`
+      : `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+  if (a.kind === 'permission') return `Waiting for approval for ${waited}.`;
+  if (a.kind === 'error') return `Failed ${waited} ago.`;
+  return `Turn finished ${waited} ago.`;
 }

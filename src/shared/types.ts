@@ -1,4 +1,5 @@
-export type ProviderId = 'claude' | 'codex' | 'glm';
+/** Provider/profile ids come from installable manifests, not a compiled enum. */
+export type ProviderId = string;
 
 export type ProviderInfo = {
   id: ProviderId;
@@ -8,6 +9,130 @@ export type ProviderInfo = {
   path: string | null;
   version: string | null;
   supports: { model: boolean; effort: boolean; permissionMode: boolean; resume: boolean };
+  /** What this installed CLI can actually expose to Wanigan.  Unlike `supports`,
+   * this is observation, not a promise made by a provider definition. */
+  capabilities: ProviderCapabilities;
+  /** Frozen manifest identity used to launch this profile, when pack-backed. */
+  packId?: string;
+  packVersion?: string;
+  /** Exact active profile identity; launchers use it to reject async refresh races. */
+  profileFingerprint?: string;
+  harnessId?: string;
+  backendId?: string;
+  launchFields?: ProviderLaunchField[];
+};
+
+export type ProviderCapabilities = {
+  /** Help text was successfully inspected for this installed binary. */
+  probed: boolean;
+  hooks: boolean;
+  telemetry: boolean;
+  mcp: boolean;
+  policy: boolean;
+  transcript: boolean;
+  namedResume: boolean;
+  headlessJson: boolean;
+  note: string | null;
+};
+
+/** Serializable provider-pack records exposed to the renderer. */
+export type ProviderPackInfo = {
+  id: string;
+  name?: string;
+  label?: string;
+  version: string | null;
+  description?: string;
+  source?: string;
+  root?: string;
+  builtIn?: boolean;
+  enabled: boolean;
+  state?: 'active' | 'enabled' | 'disabled' | 'needs-trust' | 'pending-removal' | 'removed' | 'invalid';
+  status?: 'enabled' | 'disabled' | 'needs-trust' | 'pending-removal' | 'removed' | 'invalid';
+  error?: string | null;
+  errors?: string[];
+  manifestSha256?: string | null;
+  trustedManifestSha256?: string | null;
+  adapterSha256?: string | null;
+  trustedAdapterSha256?: string | null;
+  pendingActiveProfileIds?: string[];
+  removedAt?: number | null;
+  recoverable?: boolean;
+  adapter?: {
+    path: string;
+    sha256: string;
+    trusted: boolean;
+    executable: boolean;
+  } | null;
+  profiles?: ProviderProfileInfo[];
+  [key: string]: unknown;
+};
+
+export type ProviderProfileInfo = {
+  id: string;
+  packId: string;
+  packVersion?: string;
+  label: string;
+  description?: string;
+  harness: string;
+  backendId: string;
+  bin: string;
+  enabled: boolean;
+  supports: { model: boolean; effort: boolean; permissionMode: boolean; resume: boolean };
+  capabilities?: Record<string, boolean | string | null>;
+  launchFields?: ProviderLaunchField[];
+  [key: string]: unknown;
+};
+
+export type ProviderManifestInspection = {
+  packId: string;
+  label: string;
+  version: string | null;
+  sha256: string | null;
+  publisher: string | null;
+  adapter: { executable: string; args: string[]; sha256: string | null } | null;
+  commands: Array<{
+    profileId: string;
+    profileLabel: string;
+    harness: string;
+    headless: string;
+    declaredBackendId: string;
+    backendId: string;
+    bin: string;
+    baseArgs: string[];
+    versionArgs: string[];
+    helpArgs: string[];
+    launchFields: Array<{
+      id: string;
+      label: string;
+      kind: string;
+      argv: string[];
+      trueArgv: string[];
+      falseArgv: string[];
+    }>;
+    resume: { conversationArgs: string[]; continueArgs: string[] } | null;
+    fallbackPaths: string[];
+    editorExtensions: Array<{ prefix: string; executablePaths: string[] }>;
+    environment: Array<{
+      name: string;
+      source: 'literal' | 'process' | 'credential';
+      value: string | null;
+      processName: string | null;
+      fallback: string | null;
+      credentialId: string | null;
+    }>;
+    credentialIds: string[];
+  }>;
+  warning: string;
+};
+
+export type ProviderLaunchField = {
+  id: string;
+  label: string;
+  kind: 'text' | 'select' | 'boolean' | 'secret';
+  required?: boolean;
+  description?: string;
+  options?: { value: string; label: string }[];
+  defaultValue?: string | boolean;
 };
 
 /** Effort levels the Claude Code CLI accepts. */
@@ -51,6 +176,15 @@ export type Session = {
   worktree?: string | null;
   /** What this project's agents are permitted to do. */
   trust?: TrustLevel;
+  /** Capability snapshot at launch, so history does not reinterpret an old
+   * session through a newer CLI installation. */
+  capabilities?: ProviderCapabilities;
+  /** Exact pack/profile snapshot; later pack upgrades do not reinterpret it. */
+  providerPackId?: string | null;
+  providerPackVersion?: string | null;
+  providerProfile?: ProviderProfileInfo | null;
+  backendId?: string | null;
+  harnessId?: string | null;
 };
 
 export type LaunchOptions = {
@@ -64,6 +198,8 @@ export type LaunchOptions = {
   permissionMode?: string;
   /** Extra CLI flags, split on whitespace. */
   extraArgs?: string;
+  /** Values for manifest-defined launch fields. They become argv entries, never shell text. */
+  providerOptions?: Record<string, string | boolean>;
   /** Initial prompt typed into the session once it is ready. */
   initialPrompt?: string;
   /** Resume a previous conversation instead of starting a new one. */
@@ -86,6 +222,8 @@ export type PastSession = {
   startedAt: number;
   endedAt: number | null;
   exitCode: number | null;
+  /** Number of execution records folded into this one resumable conversation. */
+  continuationCount: number;
   /** True when the project directory still exists. */
   live: boolean;
 };
@@ -219,6 +357,12 @@ export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type SessionUsage = {
   sessionId: string;
   costUsd: number;
+  /**
+   * Whether `costUsd` is an amount the provider actually reported.  Codex on
+   * a ChatGPT plan reports token counters but not a per-thread invoice, so a
+   * zero there must render as "not reported", never "$0.00".
+   */
+  costStatus: 'reported' | 'unavailable';
   inTokens: number;
   outTokens: number;
   cacheRead: number;
@@ -238,7 +382,7 @@ export type SessionUsage = {
 };
 
 export const EMPTY_USAGE: Omit<SessionUsage, 'sessionId'> = {
-  costUsd: 0, inTokens: 0, outTokens: 0, cacheRead: 0, cacheWrite: 0,
+  costUsd: 0, costStatus: 'reported', inTokens: 0, outTokens: 0, cacheRead: 0, cacheWrite: 0,
   linesAdded: 0, linesRemoved: 0, commits: 0, pullRequests: 0,
   activeSeconds: 0, requests: 0, errors: 0, refusals: 0, lastAt: null, models: [],
 };
@@ -263,7 +407,7 @@ export type ApiEvent = {
 
 export const HOOK_EVENTS = [
   'SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse',
-  'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied', 'Notification',
+  'PostToolUseFailure', 'PermissionRequest', 'PermissionResponse', 'PermissionDenied', 'Notification',
   'Stop', 'StopFailure', 'PreCompact', 'PostCompact', 'FileChanged',
   'SubagentStart', 'SubagentStop',
 ] as const;
@@ -312,6 +456,8 @@ export type AttentionKind = (typeof ATTENTION_ORDER)[number];
 export type Attention = {
   sessionId: string;
   kind: AttentionKind;
+  /** Stable identity for this exact state transition, used for notification dedupe. */
+  transitionId: string;
   /** When the session entered this state. */
   since: number;
   /** Word — never hue alone. Pairs with a glyph in the UI. */
@@ -353,6 +499,72 @@ export type FleetCard = {
   worktree: string | null;
 };
 
+/* ── read-only phone monitor ────────────────────────────────────────── */
+
+/** A fleet card with every local-control and content-bearing field removed. */
+export type MobileFleetSession = {
+  /** Opaque rendering key only; no remote action accepts it. */
+  id: string;
+  projectName: string;
+  title: string;
+  providerId: ProviderId;
+  model: string | null;
+  status: SessionStatus;
+  createdAt: number;
+  endedAt: number | null;
+  attention: Pick<Attention, 'kind' | 'label' | 'since'>;
+  usage: Pick<SessionUsage,
+    'costUsd' | 'costStatus' | 'inTokens' | 'outTokens' | 'linesAdded' | 'linesRemoved' |
+    'requests' | 'errors' | 'lastAt'>;
+};
+
+export type MobileFleetSnapshot = {
+  generatedAt: number;
+  host: string;
+  version: string;
+  totals: {
+    sessions: number;
+    running: number;
+    permission: number;
+    error: number;
+    finished: number;
+    idle: number;
+    working: number;
+    costUsd: number;
+    /** At least one live session supplied tokens but no billable dollar amount. */
+    costUnavailable: boolean;
+    inTokens: number;
+    outTokens: number;
+    linesAdded: number;
+    linesRemoved: number;
+    requests: number;
+    errors: number;
+  };
+  sessions: MobileFleetSession[];
+};
+
+export type MobileMonitorConfig = {
+  dashboardEnabled: boolean;
+  port: number;
+  /** Tailnet HTTPS URL (or another private reverse proxy) used for deep links. */
+  dashboardUrl: string;
+  pushEnabled: boolean;
+  pushServer: string;
+  /** A random ntfy topic acts as the subscription credential. */
+  pushTopic: string;
+};
+
+export type MobileMonitorStatus = {
+  config: MobileMonitorConfig;
+  running: boolean;
+  localUrl: string;
+  pairingUrl: string;
+  tokenFingerprint: string;
+  error: string | null;
+  lastPushAt: number | null;
+  lastPushError: string | null;
+};
+
 /* ── P9 · worktrees ─────────────────────────────────────────────────── */
 
 export type WorktreeInfo = {
@@ -380,6 +592,8 @@ export type HeadlessConfig = {
   prompt: string;
   model?: string;
   effort?: string;
+  /** Values for manifest-defined launch fields. They become argv entries, never shell text. */
+  providerOptions?: Record<string, string | boolean>;
   /** Passed to the CLI's own budget flag, not enforced by wrapping. */
   maxBudgetUsd: number;
   /** Wall-clock ceiling per repo. */
@@ -403,6 +617,31 @@ export type HeadlessRow = {
   worktree: string | null;
   startedAt: number | null;
   endedAt: number | null;
+};
+
+export type HeadlessRun = {
+  id: string;
+  name: string;
+  model: string;
+  status: 'submitting' | 'in_progress' | 'ended' | 'failed';
+  costUsd: number;
+  totalRequests: number;
+  createdAt: number;
+  submittedAt: number | null;
+  endedAt: number | null;
+  error: string | null;
+  succeeded: number;
+  failed: number;
+  blocked: number;
+  open: number;
+  filesChanged: number;
+};
+
+export type ReviewRecipe = { projectId: string; commands: string[]; updatedAt: number | null };
+export type ReviewRun = {
+  id: string; projectId: string; startedAt: number; endedAt: number | null;
+  status: 'running' | 'passed' | 'failed';
+  results: { command: string; exitCode: number | null; output: string; durationMs: number }[];
 };
 
 /* ── P11 · dispatcher ───────────────────────────────────────────────── */
@@ -443,13 +682,26 @@ export type McpServerConfig = {
   enabled: boolean;
 };
 
+/**
+ * Use, not status — and the name is now the only thing left of the old shape.
+ *
+ * `connected` and `lastError` were fields nothing ever wrote: Wanigan hands an
+ * MCP config to the CLI, which spawns the servers inside the session's own
+ * process tree and reports nothing back, so there was never a source for them
+ * and never could be. A permanently false "connected" beside a real server is
+ * a false red, which is the same lie as a false green. What is knowable is what
+ * the agents actually called: every MCP tool call arrives on the hook bus as
+ * `mcp__<server>__<tool>` and is already in session_events.
+ */
 export type McpServerStatus = {
   id: string;
   name: string;
-  connected: boolean;
-  lastAt: number | null;
-  lastError: string | null;
+  /** When a tool from this server last completed, or null if none is on record. */
+  lastUsedAt: number | null;
+  /** Completed tool calls on record for this server. */
   toolCalls: number;
+  /** How many of those came back an error. */
+  failures: number;
 };
 
 /* ── P13 · uploaded rows ────────────────────────────────────────────── */
@@ -562,7 +814,13 @@ export type TrustLevel = (typeof TRUST_LEVELS)[number];
 export const TRUST_COPY: Record<TrustLevel, { label: string; detail: string }> = {
   readonly: {
     label: 'Read only',
-    detail: 'The agent can read and search. Writes, shell commands and network calls are denied.',
+    // Not "network calls are denied". READ_TOOLS in policy.ts allows WebFetch
+    // and WebSearch on purpose — a level that cannot look anything up is a
+    // level nobody keeps switched on — so the old sentence promised a
+    // containment the gate has never enforced. This string is what the user
+    // reads before choosing a trust level for a repository, which makes it the
+    // most expensive place in the app to be wrong.
+    detail: 'The agent can read, search and look things up on the web. File writes, shell commands and any MCP call that is not a read are denied.',
   },
   project: {
     label: 'Project',
@@ -614,4 +872,347 @@ export type WaniganSettings = {
   defaultTrust: TrustLevel;
   mcpServerEnabled: boolean;
   pet: boolean;
+  learning: LearningSettings;
+};
+
+/* ── Wanigan Compound · provider-neutral learning ───────────────────── */
+
+export type KnowledgeKind =
+  | 'instruction' | 'rule' | 'memory' | 'skill' | 'mission'
+  | 'gate' | 'eval' | 'project-map';
+export type ArtifactScope = 'personal' | 'project' | 'path';
+export type CandidateStatus =
+  | 'pending' | 'approved' | 'rejected' | 'snoozed'
+  | 'promoted' | 'applied' | 'failed' | 'superseded';
+export type KnowledgeStatus = 'active' | 'quarantined' | 'retired';
+export type ProjectionStatus = 'preview' | 'applied' | 'stale' | 'undone' | 'failed';
+export type EvidenceLevel = 'estimate' | 'correlation' | 'causal';
+
+export type LearningSettings = {
+  enabled: boolean;
+  contentMode: 'operational-only' | 'local-same-provider';
+  automation: 'review-only' | 'hybrid';
+  allowModelAssistance: boolean;
+  monthlyBudgetUsd: number;
+  briefingMaxTokens: number;
+  consolidationEnabled: boolean;
+};
+
+export type LearningSignal = {
+  id: string;
+  kind: string;
+  providerId: string | null;
+  backendId: string | null;
+  sessionId: string | null;
+  taskHash: string | null;
+  projectId: string | null;
+  projectPath: string | null;
+  pathScope: string | null;
+  summary: string;
+  detail: Record<string, unknown>;
+  contentHash: string;
+  semanticEligible: boolean;
+  createdAt: number;
+  processedAt: number | null;
+};
+
+export type CandidateConflict = {
+  itemId: string;
+  title: string;
+  relation: 'possible-conflict' | 'duplicate';
+  reason: string;
+};
+
+export type KnowledgeCandidate = {
+  id: string;
+  itemId: string | null;
+  targetKind: KnowledgeKind;
+  scope: ArtifactScope;
+  providerId: string | null;
+  projectId: string | null;
+  pathScope: string | null;
+  title: string;
+  proposedText: string;
+  rationale: string;
+  confidence: number;
+  status: CandidateStatus;
+  evidenceCount: number;
+  taskCount: number;
+  estimatedTokenDelta: number;
+  conflicts: CandidateConflict[];
+  signalIds: string[];
+  createdAt: number;
+  updatedAt: number;
+  reviewedAt: number | null;
+  reviewerNote: string | null;
+};
+
+export type CreateKnowledgeCandidate = {
+  itemId?: string | null;
+  targetKind: KnowledgeKind;
+  scope: ArtifactScope;
+  providerId?: string | null;
+  projectId?: string | null;
+  pathScope?: string | null;
+  title: string;
+  proposedText: string;
+  rationale: string;
+  confidence: number;
+  signalIds: string[];
+  estimatedTokenDelta?: number;
+};
+
+export type KnowledgeItem = {
+  id: string;
+  kind: KnowledgeKind;
+  scope: ArtifactScope;
+  projectId: string | null;
+  pathScope: string | null;
+  title: string;
+  canonicalText: string;
+  status: KnowledgeStatus;
+  confidence: number;
+  sourceCount: number;
+  currentVersion: number;
+  contentHash: string;
+  createdAt: number;
+  updatedAt: number;
+  lastValidatedAt: number | null;
+  expiresAt: number | null;
+  supersededBy: string | null;
+};
+
+export type KnowledgeVersion = {
+  id: string;
+  itemId: string;
+  version: number;
+  canonicalText: string;
+  metadata: Record<string, unknown>;
+  contentHash: string;
+  createdBy: string;
+  previousVersionId: string | null;
+  createdAt: number;
+};
+
+export type KnowledgeEvidence = {
+  id: string;
+  itemId: string | null;
+  versionId: string | null;
+  candidateId: string | null;
+  signalId: string | null;
+  sourceType: string;
+  sourceId: string;
+  citation: string;
+  contentHash: string | null;
+  weight: number;
+  observedAt: number;
+};
+
+export type KnowledgeProjection = {
+  id: string;
+  candidateId: string;
+  itemId: string | null;
+  versionId: string | null;
+  providerId: string;
+  adapterId: string;
+  scope: ArtifactScope;
+  projectId: string | null;
+  targetPath: string;
+  targetFormat: string;
+  proposedContent: string;
+  baseHash: string;
+  appliedHash: string | null;
+  previousContent: string | null;
+  status: ProjectionStatus;
+  error: string | null;
+  createdAt: number;
+  appliedAt: number | null;
+  undoneAt: number | null;
+};
+
+export type KnowledgeBriefing = {
+  text: string;
+  entries: {
+    itemId: string;
+    versionId: string | null;
+    kind: KnowledgeKind;
+    title: string;
+    text: string;
+    citations: string[];
+    estimatedTokens: number;
+  }[];
+  estimatedTokens: number;
+  omitted: number;
+};
+
+export type OptimizerDiagnostic = {
+  kind: string;
+  severity: 'info' | 'warning' | 'error';
+  itemIds: string[];
+  title: string;
+  detail: string;
+  estimatedTokenDelta: number;
+};
+
+export type ForgedSkill = {
+  name: string;
+  scope: 'personal' | 'project';
+  skillMd: string;
+  allowedTools: string[];
+  providerIds: string[];
+  estimatedTokens: number;
+};
+
+export type SkillDiagnostic = {
+  code: string;
+  severity: 'info' | 'warning' | 'error';
+  message: string;
+  line?: number;
+};
+
+export type LearningExperiment = {
+  id: string;
+  name: string;
+  projectId: string | null;
+  itemId: string | null;
+  candidateId: string | null;
+  baselineVersionId: string | null;
+  candidateVersionId: string | null;
+  providerId: string;
+  model: string;
+  effort: string | null;
+  commitHash: string;
+  config: Record<string, unknown>;
+  status: 'draft' | 'running' | 'completed' | 'cancelled' | 'failed';
+  outcome: Record<string, unknown> | null;
+  createdAt: number;
+  startedAt: number | null;
+  endedAt: number | null;
+};
+
+export type ArtifactRoiSummary = {
+  itemId: string;
+  evidenceLevel: EvidenceLevel;
+  samples: number;
+  tokensLoaded: number;
+  tokensSaved: number;
+  costUsd: number;
+  successfulUses: number;
+  failedUses: number;
+  repairDelta: number;
+};
+
+export type LearningOverview = {
+  pending: number;
+  activeKnowledge: number;
+  quarantined: number;
+  activeSkills: number;
+  experiments: number;
+  signals: number;
+  projectedTokenDelta: number;
+};
+
+export type TeachWaniganInput = {
+  projectId?: string | null;
+  projectPath?: string | null;
+  sessionId?: string | null;
+  providerId?: string | null;
+  kind?: KnowledgeKind;
+  scope: ArtifactScope;
+  pathScope?: string | null;
+  title: string;
+  text: string;
+  outcome?: 'worked' | 'failed' | 'corrected' | 'preference';
+};
+
+/* ── P27 · observed sessions ─────────────────────────────────────────── */
+
+/**
+ * A Claude session running on this machine that Wanigan did not start.
+ *
+ * Every field here is something the CLI wrote about itself into
+ * ~/.claude/sessions/<pid>.json, plus two things Wanigan worked out by looking:
+ * which project the cwd belongs to, and whether the pid is really that session.
+ * There is deliberately no cost, no status, no attention kind and no socket
+ * path — Wanigan was not consulted when this session launched and receives no
+ * hook events for it, so anything of that shape would be invented.
+ */
+export type ObservedSession = {
+  /** The CLI's own session id — what its transcript is filed under. */
+  sessionId: string;
+  pid: number;
+  cwd: string;
+  /** Set when cwd resolves to a project Wanigan already knows. */
+  projectId: string | null;
+  /** The project's name, or the directory's, so a row always has a label. */
+  projectName: string;
+  /** The CLI's own derived name, e.g. "wanigan-dd". Null before it has one. */
+  name: string | null;
+  /** 'cli', 'claude-vscode', 'vscode-agent-host' — how it was launched. */
+  entrypoint: string | null;
+  kind: string | null;
+  version: string | null;
+  /** The editor holding this cwd open, when one is. */
+  editor: string | null;
+  startedAt: number | null;
+  /** False when the process start time could not be checked, so the row means
+   *  "that pid is alive", not "this session is". */
+  verified: boolean;
+  observedAt: number;
+};
+
+/**
+ * What the surface needs before it has a list. "Switched off" and "nothing
+ * running" are different answers and a UI that cannot tell them apart will
+ * confidently print the wrong one.
+ */
+export type ObservedState = {
+  enabled: boolean;
+  /** The registry directory exists, so there is something to read. */
+  available: boolean;
+  registry: string;
+  /** The observe-only sentence the UI must print. */
+  notice: string;
+  note: string | null;
+};
+
+/* ── P29 · what leaves this machine ──────────────────────────────────── */
+
+/**
+ * The egress report, assembled in the main process because that is the side
+ * that knows. A host list typed into the renderer would go on saying what was
+ * true the day it was typed, and would keep saying it after someone adds a
+ * sixth fetch() to a file the view has never heard of — a privacy claim that
+ * has quietly stopped being true is worse than no claim at all.
+ */
+export type EgressHost = {
+  /** Host only, no scheme or path. */
+  host: string;
+  /** Paths under it Wanigan actually calls, for someone reading the source. */
+  paths: string[];
+  /** Who opens the socket. */
+  by: 'wanigan' | 'agent';
+  /** Why it is contacted, one sentence. */
+  purpose: string;
+  /** The condition under which it is contacted at all. */
+  when: string;
+  /** Whether that condition holds right now; null when Wanigan cannot tell. */
+  activeNow: boolean | null;
+  /** The variable that redirects it, when one exists. */
+  overrideEnv: string | null;
+};
+
+export type EgressPin = { name: string; value: string; prevents: string };
+export type EgressPath = { label: string; path: string; what: string; exists: boolean };
+
+export type EgressReport = {
+  hosts: EgressHost[];
+  pins: EgressPin[];
+  paths: EgressPath[];
+  /** Traffic Wanigan cannot enumerate. Rendered verbatim, one line each. */
+  unenumerated: string[];
+  /** How the host list was produced, so the reader can weigh it. Verbatim. */
+  provenance: string;
+  /** safeStorage.isEncryptionAvailable(), so the keychain claim is measured. */
+  keychainAvailable: boolean;
 };

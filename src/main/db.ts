@@ -207,6 +207,11 @@ function migratePhases(d: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_session_events ON session_events(session_id, at DESC);
     CREATE INDEX IF NOT EXISTS idx_session_events_at ON session_events(at DESC);
+    -- serverStatuses() asks this table for every mcp__ tool call each time
+    -- Settings opens. GLOB is case-sensitive, so SQLite can use an index for the
+    -- prefix; without one it is a full scan of a table that grows with every tool
+    -- call and is never pruned — pruneEvents() has no callers.
+    CREATE INDEX IF NOT EXISTS idx_session_events_tool ON session_events(tool_name);
 
     -- P4 · transcript archive ------------------------------------------
     CREATE TABLE IF NOT EXISTS transcripts (
@@ -284,13 +289,15 @@ function migratePhases(d: Database.Database) {
       enabled    INTEGER NOT NULL DEFAULT 1,
       created_at INTEGER NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS mcp_status (
-      id         TEXT PRIMARY KEY,
-      connected  INTEGER NOT NULL DEFAULT 0,
-      last_at    INTEGER,
-      last_error TEXT,
-      tool_calls INTEGER NOT NULL DEFAULT 0
-    );
+    -- There was an mcp_status table here (connected, last_at, last_error,
+    -- tool_calls) and nothing ever wrote a row into it: Wanigan hands an MCP
+    -- config to the CLI, which spawns the servers inside the session's own
+    -- process tree and reports nothing back. A permanently empty table is an
+    -- invitation to the next reader to believe it means something, so new
+    -- installs no longer get one. It is deliberately NOT dropped for existing
+    -- installs — a migration that destroys rows is a migration nobody can trust
+    -- the next time one of these needs to run, and an empty table costs a page.
+    -- Server use is now derived from session_events; see mcp/registry.ts.
 
     -- P13 · uploaded rows ----------------------------------------------
     -- Keyed by content hash so a re-run of the same audit re-uses the upload.
@@ -390,6 +397,24 @@ function migratePhases(d: Database.Database) {
       trust      TEXT NOT NULL,
       set_at     INTEGER NOT NULL
     );
+
+    -- A review recipe is operator-owned commands plus the immutable evidence
+    -- from each execution. Agents may suggest commands; only this surface runs
+    -- the configured gate and records its result.
+    CREATE TABLE IF NOT EXISTS review_recipes (
+      project_id TEXT PRIMARY KEY,
+      commands_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS review_runs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER,
+      status TEXT NOT NULL,
+      results_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_review_runs_project ON review_runs(project_id, started_at DESC);
   `);
 
   // Runs carry batches, headless fan-outs, evals and judge passes. One table,
@@ -400,7 +425,235 @@ function migratePhases(d: Database.Database) {
   addColumn(d, 'worktrees', 'linked_json', 'TEXT');
   addColumn(d, 'session_log', 'worktree', 'TEXT');
   addColumn(d, 'session_log', 'trust', 'TEXT');
+  // The binary that actually ran, resolved path and all. provider_id stopped
+  // being able to answer "which CLI produced this" the moment claude and glm
+  // became two ids on one program, and a reader six months from now has only
+  // this row: without it a glm transcript and a claude transcript are
+  // indistinguishable from a codex one that never wrote a file at all.
+  addColumn(d, 'session_log', 'bin', 'TEXT');
+  addColumn(d, 'session_log', 'capabilities_json', 'TEXT');
+  // Foreign sessions are observed, never recorded. Nothing writes a row with a
+  // non-default value yet — observed.ts inserts nothing at all — so this is a
+  // precondition rather than a dependency: the next person cannot write a row
+  // from outside Wanigan without declaring it foreign, and history, spend and
+  // resume exclude it by the shape of the query rather than by remembering.
+  addColumn(d, 'session_log', 'origin', "TEXT NOT NULL DEFAULT 'wanigan'");
   d.exec("CREATE INDEX IF NOT EXISTS idx_runs_kind ON runs(kind, created_at DESC)");
+  migrateLearning(d);
+}
+
+/**
+ * Wanigan Compound's provider-neutral learning store.
+ *
+ * The raw provider transcript remains in the provider-owned/archive location.
+ * These tables hold bounded operational signals, canonical knowledge,
+ * provenance, and the exact reversible projection that was offered or applied.
+ * Keeping this migration additive is important: uninstalling a provider pack
+ * must never erase the knowledge or evidence produced while it was installed.
+ */
+function migrateLearning(d: Database.Database) {
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS learning_signals (
+      id                TEXT PRIMARY KEY,
+      kind              TEXT NOT NULL,
+      provider_id       TEXT,
+      backend_id        TEXT,
+      session_id        TEXT,
+      task_hash         TEXT,
+      project_id        TEXT,
+      project_path      TEXT,
+      path_scope        TEXT,
+      summary           TEXT NOT NULL,
+      detail_json       TEXT NOT NULL DEFAULT '{}',
+      content_hash      TEXT NOT NULL UNIQUE,
+      semantic_eligible INTEGER NOT NULL DEFAULT 0,
+      created_at        INTEGER NOT NULL,
+      processed_at      INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_learning_signals_project
+      ON learning_signals(project_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_learning_signals_provider_processed
+      ON learning_signals(provider_id, processed_at, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_learning_signals_task
+      ON learning_signals(task_hash, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS knowledge_items (
+      id                TEXT PRIMARY KEY,
+      kind              TEXT NOT NULL,
+      scope             TEXT NOT NULL,
+      project_id        TEXT,
+      path_scope        TEXT,
+      title             TEXT NOT NULL,
+      canonical_text    TEXT NOT NULL,
+      status            TEXT NOT NULL,
+      confidence        REAL NOT NULL DEFAULT 0,
+      source_count      INTEGER NOT NULL DEFAULT 0,
+      current_version   INTEGER NOT NULL DEFAULT 1,
+      content_hash      TEXT NOT NULL,
+      created_at        INTEGER NOT NULL,
+      updated_at        INTEGER NOT NULL,
+      last_validated_at INTEGER,
+      expires_at        INTEGER,
+      superseded_by     TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_knowledge_items_scope_status
+      ON knowledge_items(scope, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_items_project
+      ON knowledge_items(project_id, status, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS knowledge_versions (
+      id                  TEXT PRIMARY KEY,
+      item_id             TEXT NOT NULL REFERENCES knowledge_items(id) ON DELETE CASCADE,
+      version             INTEGER NOT NULL,
+      canonical_text      TEXT NOT NULL,
+      metadata_json       TEXT NOT NULL DEFAULT '{}',
+      content_hash        TEXT NOT NULL,
+      created_by          TEXT NOT NULL,
+      previous_version_id TEXT,
+      created_at          INTEGER NOT NULL,
+      UNIQUE(item_id, version)
+    );
+
+    CREATE TABLE IF NOT EXISTS knowledge_candidates (
+      id                    TEXT PRIMARY KEY,
+      item_id               TEXT,
+      target_kind           TEXT NOT NULL,
+      scope                 TEXT NOT NULL,
+      provider_id           TEXT,
+      project_id            TEXT,
+      path_scope            TEXT,
+      title                 TEXT NOT NULL,
+      proposed_text         TEXT NOT NULL,
+      rationale             TEXT NOT NULL,
+      confidence            REAL NOT NULL DEFAULT 0,
+      status                TEXT NOT NULL,
+      evidence_count        INTEGER NOT NULL DEFAULT 0,
+      task_count            INTEGER NOT NULL DEFAULT 0,
+      estimated_token_delta INTEGER NOT NULL DEFAULT 0,
+      conflicts_json        TEXT NOT NULL DEFAULT '[]',
+      signal_ids_json       TEXT NOT NULL DEFAULT '[]',
+      created_at            INTEGER NOT NULL,
+      updated_at            INTEGER NOT NULL,
+      reviewed_at           INTEGER,
+      reviewer_note         TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_knowledge_candidates_status
+      ON knowledge_candidates(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_candidates_project
+      ON knowledge_candidates(project_id, status, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS knowledge_evidence (
+      id           TEXT PRIMARY KEY,
+      item_id      TEXT,
+      version_id   TEXT,
+      candidate_id TEXT,
+      signal_id    TEXT,
+      source_type  TEXT NOT NULL,
+      source_id    TEXT,
+      citation     TEXT NOT NULL,
+      content_hash TEXT,
+      weight       REAL NOT NULL DEFAULT 1,
+      observed_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_knowledge_evidence_item
+      ON knowledge_evidence(item_id, observed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_evidence_candidate
+      ON knowledge_evidence(candidate_id, observed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_evidence_signal
+      ON knowledge_evidence(signal_id);
+
+    CREATE TABLE IF NOT EXISTS knowledge_relations (
+      from_item_id TEXT NOT NULL,
+      to_item_id   TEXT NOT NULL,
+      relation     TEXT NOT NULL,
+      confidence   REAL NOT NULL DEFAULT 0,
+      evidence_json TEXT NOT NULL DEFAULT '[]',
+      created_at   INTEGER NOT NULL,
+      resolved_at  INTEGER,
+      PRIMARY KEY(from_item_id, to_item_id, relation)
+    );
+
+    CREATE TABLE IF NOT EXISTS knowledge_projections (
+      id               TEXT PRIMARY KEY,
+      candidate_id     TEXT,
+      item_id          TEXT,
+      version_id       TEXT,
+      provider_id      TEXT NOT NULL,
+      adapter_id       TEXT NOT NULL,
+      scope            TEXT NOT NULL,
+      project_id       TEXT,
+      target_path      TEXT NOT NULL,
+      target_format    TEXT NOT NULL,
+      proposed_content TEXT NOT NULL,
+      base_hash        TEXT,
+      applied_hash     TEXT,
+      previous_content TEXT,
+      status           TEXT NOT NULL,
+      error            TEXT,
+      created_at       INTEGER NOT NULL,
+      applied_at       INTEGER,
+      undone_at        INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_knowledge_projections_candidate
+      ON knowledge_projections(candidate_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_projections_item
+      ON knowledge_projections(item_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_projections_status
+      ON knowledge_projections(status, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS learning_experiments (
+      id                  TEXT PRIMARY KEY,
+      name                TEXT NOT NULL,
+      project_id          TEXT,
+      item_id             TEXT,
+      candidate_id        TEXT,
+      baseline_version_id TEXT,
+      candidate_version_id TEXT,
+      provider_id         TEXT,
+      model               TEXT,
+      effort              TEXT,
+      commit_hash         TEXT,
+      config_json         TEXT NOT NULL DEFAULT '{}',
+      status              TEXT NOT NULL,
+      outcome_json        TEXT,
+      created_at          INTEGER NOT NULL,
+      started_at          INTEGER,
+      ended_at            INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_learning_experiments_status_project
+      ON learning_experiments(status, project_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS artifact_metrics (
+      id             TEXT PRIMARY KEY,
+      item_id        TEXT,
+      version_id     TEXT,
+      projection_id  TEXT,
+      session_id     TEXT,
+      provider_id    TEXT,
+      metric         TEXT NOT NULL,
+      value          REAL NOT NULL,
+      evidence_level TEXT NOT NULL,
+      attrs_json     TEXT NOT NULL DEFAULT '{}',
+      at             INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_artifact_metrics_item_metric_at
+      ON artifact_metrics(item_id, metric, at DESC);
+    CREATE INDEX IF NOT EXISTS idx_artifact_metrics_provider
+      ON artifact_metrics(provider_id, metric, at DESC);
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
+      item_id UNINDEXED, title, canonical_text, path_scope
+    );
+  `);
+
+  // A session keeps the exact profile it launched with. Provider packs can be
+  // disabled or upgraded while the PTY is alive without changing history's
+  // meaning or the resume path of an existing conversation.
+  addColumn(d, 'session_log', 'provider_pack_id', 'TEXT');
+  addColumn(d, 'session_log', 'provider_pack_version', 'TEXT');
+  addColumn(d, 'session_log', 'provider_profile_json', 'TEXT');
+  addColumn(d, 'session_log', 'backend_id', 'TEXT');
+  addColumn(d, 'session_log', 'harness_id', 'TEXT');
 }
 
 export function logEvent(runId: string, level: 'info' | 'warn' | 'error', message: string) {

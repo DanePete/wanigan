@@ -114,7 +114,11 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
   const [defaultTrust, setDefaultTrust] = useState<TrustLevel | null>(null);
   const [past, setPast] = useState<PastSession[]>([]);
   const [resuming, setResuming] = useState<string | null>(null);
+  const [teachSession, setTeachSession] = useState<Session | null>(null);
   const activeRef = useRef<string | null>(null);
+  // React state does not change until the next render. The ref closes the
+  // same-tick gap so a double click cannot launch two writers for one thread.
+  const resumePendingRef = useRef(false);
   activeRef.current = activeId;
 
   const refresh = useCallback(async () => {
@@ -137,6 +141,8 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
   }, []);
 
   async function resume(p: PastSession) {
+    if (resumePendingRef.current) return;
+    resumePendingRef.current = true;
     setResuming(p.id);
     try {
       const s = await window.wanigan.sessions.create({
@@ -150,7 +156,10 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
       await refresh();
       select(s.id);
     } catch (e) { onError(msg(e)); }
-    finally { setResuming(null); }
+    finally {
+      resumePendingRef.current = false;
+      setResuming(null);
+    }
   }
 
   useEffect(() => {
@@ -312,13 +321,15 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
             {past.length > 0 && (
               <div style={{ marginTop: 16 }}>
                 <div className="group-title">
-                  <span className="label">Recent</span>
-                  <span className="faint" style={{ fontSize: 'var(--t-micro)', marginLeft: 'auto' }}>resumable</span>
+                  <span className="label">Recent conversations</span>
+                  <span className="faint" style={{ fontSize: 'var(--t-micro)', marginLeft: 'auto' }}>exact resume</span>
                 </div>
                 {past.slice(0, 8).map((p) => (
                   <div key={p.id} className="past-row">
-                    <FocusBtn className="past-main" disabled={!p.live || resuming === p.id}
-                              title={p.live ? `Resume in ${p.projectPath}` : 'Project folder no longer exists'}
+                    <FocusBtn className="past-main" disabled={!p.live || resuming !== null}
+                              title={p.live
+                                ? `Resume this exact conversation in ${p.projectPath}`
+                                : 'Project folder no longer exists'}
                               onClick={() => resume(p)}>
                       <span style={{ minWidth: 0, flex: 1 }}>
                         <span style={{ display: 'block', fontSize: 'var(--t-small)' }}>
@@ -329,6 +340,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                           {providers.find((x) => x.id === p.providerId)?.label ?? p.providerId}
                           {p.model && ` · ${p.model}`}
                           {p.effort && ` · ${p.effort}`}
+                          {p.continuationCount > 1 && ` · ${p.continuationCount} launches`}
                           {' · '}{ago(p.startedAt)}
                         </span>
                       </span>
@@ -336,17 +348,12 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                         {resuming === p.id ? '…' : '↻'}
                       </span>
                     </FocusBtn>
-                    <FocusBtn className="past-x faint" title={`Forget ${p.projectName}`}
+                    <FocusBtn className="past-x faint" title={`Forget this conversation and all ${p.continuationCount} saved launch record${p.continuationCount === 1 ? '' : 's'}`}
                               onClick={() => window.wanigan.sessions.forget(p.id).then(setPast).catch((e) => onError(msg(e)))}>
                       ×
                     </FocusBtn>
                   </div>
                 ))}
-                {past.some((p) => p.providerId === 'codex') && (
-                  <p className="faint" style={{ padding: '4px 8px', fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>
-                    Codex can only resume its most recent conversation, not a specific one.
-                  </p>
-                )}
               </div>
             )}
 
@@ -365,7 +372,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
             {sessions.map((s, i) => (
               <FocusBtn key={s.id} className={`tab${s.id === activeId ? ' active' : ''}`} onClick={() => select(s.id)}>
                 <span className="dot" style={{ width: 6, height: 6, borderRadius: 'var(--r-pill)',
-                                               background: s.status === 'running' ? TINT[s.providerId] : 'var(--text-faint)' }} />
+                                               background: s.status === 'running' ? (TINT[s.providerId] ?? 'var(--accent)') : 'var(--text-faint)' }} />
                 {s.projectName}
                 <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>⌘{i + 1}</span>
                 {s.status === 'exited' && (
@@ -511,6 +518,11 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                             : `Open ${active.projectPath}`}>
                   open folder
                 </FocusBtn>
+                <FocusBtn className="faint" style={{ fontSize: 'var(--t-small)', color: 'var(--accent)', borderRadius: 'var(--r-sm)' }}
+                          title="Turn an outcome, correction, preference, or reusable fact from this session into a reviewable Learning Inbox proposal"
+                          onClick={() => setTeachSession(active)}>
+                  ◇ teach Wanigan
+                </FocusBtn>
                 {active.status === 'running' && (
                   <FocusBtn className="faint" style={{ fontSize: 'var(--t-small)', color: 'var(--warning)', borderRadius: 'var(--r-sm)' }}
                             title="Stop the current turn. The session stays open — this is the Escape key Claude Code listens for. ⌘."
@@ -533,6 +545,61 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
         <NewSessionDialog providers={providers} projects={projects} defaultProjectId={active?.projectId}
                           onClose={() => setDialog(false)} onCreate={createSession} onAddProject={onAddProject} />
       )}
+      {teachSession && (
+        <SessionTeachModal session={teachSession} onClose={() => setTeachSession(null)} onError={onError} />
+      )}
+    </div>
+  );
+}
+
+function SessionTeachModal({ session, onClose, onError }: {
+  session: Session;
+  onClose: () => void;
+  onError: (message: string) => void;
+}) {
+  const [title, setTitle] = useState('');
+  const [text, setText] = useState('');
+  const [outcome, setOutcome] = useState<'worked' | 'failed' | 'corrected' | 'preference'>('worked');
+  const [scope, setScope] = useState<'personal' | 'project' | 'path'>('project');
+  const [pathScope, setPathScope] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await window.wanigan.learning.teach({
+        sessionId: session.id,
+        providerId: session.providerId,
+        projectId: scope === 'personal' ? null : session.projectId,
+        projectPath: scope === 'personal' ? null : session.projectPath,
+        scope,
+        pathScope: scope === 'path' ? pathScope.trim() || null : null,
+        kind: outcome === 'failed' || outcome === 'corrected' ? 'rule' : 'memory',
+        title: title.trim(),
+        text: text.trim(),
+        outcome,
+      });
+      onClose();
+    } catch (e) { onError(msg(e)); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="learning-modal-backdrop" onMouseDown={onClose}>
+      <section className="learning-modal card" role="dialog" aria-modal="true" aria-label="Teach Wanigan from this session"
+               onMouseDown={(e) => e.stopPropagation()}>
+        <div className="learning-card-head">
+          <div><span className="label">{session.providerId} · {session.projectName}</span><h2>Teach Wanigan from this session</h2></div>
+          <button className="btn" onClick={onClose}>Close</button>
+        </div>
+        <p className="dim">This stores your explanation and a reference to this session as evidence. It does not copy the whole transcript or edit project files.</p>
+        <label><span className="label">What happened?</span><select className="field" value={outcome} onChange={(e) => setOutcome(e.target.value as typeof outcome)}><option value="worked">This worked</option><option value="failed">This failed</option><option value="corrected">I corrected the agent</option><option value="preference">My preference</option></select></label>
+        <label><span className="label">Title</span><input className="field" autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="The reusable lesson" /></label>
+        <label><span className="label">What should future agents know?</span><textarea className="field" rows={8} value={text} onChange={(e) => setText(e.target.value)} placeholder="State the outcome, constraint, correction, or procedure clearly…" /></label>
+        <div className="learning-form-grid">
+          <label><span className="label">Scope</span><select className="field" value={scope} onChange={(e) => setScope(e.target.value as typeof scope)}><option value="project">This project</option><option value="path">A path in this project</option><option value="personal">My knowledge</option></select></label>
+          {scope === 'path' && <label><span className="label">Path pattern</span><input className="field mono" value={pathScope} onChange={(e) => setPathScope(e.target.value)} placeholder="src/api/**" /></label>}
+        </div>
+        <div className="learning-actions"><button className="btn btn-primary" disabled={busy || !title.trim() || !text.trim()} onClick={() => void submit()}>{busy ? 'Adding…' : 'Add reviewable lesson'}</button></div>
+      </section>
     </div>
   );
 }
@@ -580,9 +647,14 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
 }) {
   const trust = session.trust ?? null;
   const elevated = !!trust && !!defaultTrust && rank(trust) > rank(defaultTrust);
-  const tunable = session.status === 'running' &&
+  const tunable = session.providerId !== 'codex' && session.status === 'running' &&
     (provider?.supports.model === true || provider?.supports.effort === true);
-  if (!elevated && !session.worktree && !tunable) return null;
+  // Codex has its own live controls.  Its TUI's /model picker changes model,
+  // reasoning effort and Auto choices, and /plan changes the next turn's
+  // collaboration mode.  Treating it as Claude made this whole useful row
+  // disappear merely because it does not accept Claude slash commands.
+  const codexControls = session.providerId === 'codex' && session.status === 'running';
+  if (!elevated && !session.worktree && !tunable && !codexControls) return null;
 
   return (
     <div style={{ borderBottom: '1px solid var(--line)', background: 'var(--bg-soft)' }}>
@@ -591,6 +663,43 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
       )}
       {session.worktree && <WorktreeBar session={session} path={session.worktree} onRefresh={onRefresh} />}
       {tunable && provider && <RunConfigBar session={session} provider={provider} />}
+      {codexControls && <CodexControlBar session={session} />}
+    </div>
+  );
+}
+
+/** Controls that Codex itself documents in its interactive command palette. */
+function CodexControlBar({ session }: { session: Session }) {
+  const [sent, setSent] = useState<string | null>(null);
+  const send = (command: '/model' | '/plan', label: string) => {
+    // These are actual Codex TUI commands, not prompts that ask the agent to
+    // imitate a settings change.  They take effect in the terminal the user is
+    // already looking at and do not create an extra conversation turn.
+    window.wanigan.sessions.write(session.id, `${command}\r`);
+    setSent(label);
+    window.setTimeout(() => setSent((current) => current === label ? null : current), 4000);
+  };
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                  padding: '8px 12px', borderTop: '1px solid var(--line-soft)',
+                  background: 'color-mix(in srgb, var(--codex) 9%, var(--bg-soft))' }}>
+      <span className="label" style={{ margin: 0, color: 'var(--codex)' }}>Codex</span>
+      <span className="mono" style={{ fontSize: 'var(--t-micro)', color: 'var(--text-dim)' }}>
+        {session.model || 'Auto'} · effort {session.effort || 'Auto'}
+      </span>
+      <button className="btn btn-primary" style={{ fontSize: 'var(--t-small)', padding: '4px 10px' }}
+              title="Open Codex’s model picker: choose model, reasoning effort, or an Auto choice"
+              onClick={() => send('/model', 'Codex model picker opened')}>
+        Change model &amp; effort…
+      </button>
+      <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+              title="Enter Codex Plan mode for the next task; Codex will explain the plan before changing files"
+              onClick={() => send('/plan', 'Plan mode opened')}>
+        Plan next task
+      </button>
+      <span className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.35, minWidth: 0 }}>
+        {sent ?? 'Use Model & effort for Auto / reasoning level. Plan mode affects the next task, not work already running.'}
+      </span>
     </div>
   );
 }
@@ -763,17 +872,11 @@ function WorktreeBar({ session, path, onRefresh }: {
   async function merge() {
     setBusy('merge'); setResult(null);
     try {
-      const fn = mergeFn();
-      if (!fn) {
-        const branch = info?.branch ?? '<branch>';
-        setResult({
-          ok: false,
-          text: `Wanigan cannot merge from this window yet. In ${info?.repoRoot ?? session.projectPath}, `
-              + `run: git merge --no-ff ${branch}`,
-        });
-        return;
-      }
-      const r = await fn(path);
+      // Every refusal comes back as merged:false carrying the reason — a dirty
+      // tree, a base branch nobody has checked out, a conflict it aborted and
+      // restored — so the catch below is for the one case that throws: no
+      // worktree at this path any more.
+      const r = await window.wanigan.worktrees.merge(path);
       setResult({ ok: r.merged, text: r.detail });
       await load();
       await onRefresh();
@@ -903,19 +1006,6 @@ function WorktreeBar({ session, path, onRefresh }: {
       )}
     </div>
   );
-}
-
-/**
- * mergeWorktree() is implemented in the main process but has no IPC channel of
- * its own yet, so the button asks for one at call time and, when it is absent,
- * hands back the git command instead of failing silently.
- */
-type MergeFn = (p: string, opts?: { squash?: boolean; message?: string })
-  => Promise<{ merged: boolean; detail: string }>;
-
-function mergeFn(): MergeFn | null {
-  const wt = window.wanigan.worktrees as unknown as { merge?: MergeFn };
-  return typeof wt.merge === 'function' ? wt.merge.bind(wt) : null;
 }
 
 /* ── P21 · attachments ────────────────────────────────────────────────── */

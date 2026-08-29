@@ -162,7 +162,17 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
      so cap the width to stop the nameplate shoving the tabs when it is absent. */
   max-width: 11ch; overflow: hidden;
 }
-.nav-tabs { display: flex; gap: 2px; }
+.nav-tabs { display: flex; flex: 1 1 auto; min-width: 0; gap: 2px; }
+.nav-codex-status {
+  flex: none; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--r-pill);
+  background: var(--bg-sunk); color: var(--text-dim); font-size: var(--t-micro);
+  font-variant-numeric: tabular-nums;
+}
+.nav-codex-status:hover { border-color: var(--accent); color: var(--text); }
+.nav-codex-status.low { border-color: var(--warning); color: var(--warning); }
+.nav-codex-week { margin-left: 4px; }
+@media (max-width: 1180px) { .nav-codex-week { display: none; } .nav-codex-status { max-width: 138px; } }
 .nav-tab {
   display: flex; align-items: center; gap: 6px;
   padding: 6px 11px 10px; font-size: var(--t-body); font-weight: 500;
@@ -177,6 +187,26 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   content: ''; position: absolute; left: 2px; right: -2px; bottom: -2px; height: 2px;
   background: var(--plate-blue); opacity: .55; z-index: -1;
 }
+.nav-quick-run {
+  flex: none; align-self: center; margin-bottom: 3px;
+  padding: 4px 7px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  color: var(--accent); background: var(--accent-soft); font-size: var(--t-small); font-weight: 650;
+  white-space: nowrap;
+}
+.nav-quick-run:hover { background: var(--bg-sunk); color: var(--text); }
+.nav-quick-run span { color: var(--text-faint); font-size: var(--t-micro); margin-left: 2px; }
+.command-backdrop {
+  position: fixed; inset: 0; z-index: 110; display: grid; place-items: start center; padding-top: min(20vh, 180px);
+  background: rgba(10, 12, 17, .56); backdrop-filter: blur(3px);
+}
+.command-palette {
+  width: min(540px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--line);
+  border-radius: var(--r-md); background: var(--bg-soft); box-shadow: 0 20px 70px rgba(0, 0, 0, .5);
+}
+.command-palette > .field { width: 100%; }
+.command-results { display: grid; gap: 3px; margin-top: 10px; max-height: min(52vh, 420px); overflow: auto; }
+.command-item { display: flex; justify-content: space-between; padding: 9px 10px; border-radius: var(--r-sm); text-align: left; }
+.command-item:hover, .command-item:focus-visible { background: var(--accent-soft); color: var(--text); }
 .nav-badge {
   min-width: 18px; padding: 0 5px; border-radius: var(--r-pill);
   background: var(--accent-soft); color: var(--accent);
@@ -368,7 +398,7 @@ table.grid tr.clickable:hover { background: var(--bg-sunk); }
 .term-split .term-col { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 
 .code-panel {
-  display: flex; flex-direction: column; min-width: 0;
+  display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0;
   border-left: 1px solid var(--line); background: var(--bg-soft);
 }
 .code-head {
@@ -398,7 +428,7 @@ table.grid tr.clickable:hover { background: var(--bg-sunk); }
 .crumb { color: var(--text-dim); }
 .crumb:hover { color: var(--accent); text-decoration: underline; }
 
-.code-view { overflow: auto; }
+.code-view { min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .code-hint { padding: 18px 12px; font-size: var(--t-small); text-align: center; }
 .code-err {
   padding: 6px 10px; font-size: var(--t-small);
@@ -423,6 +453,43 @@ table.grid tr.clickable:hover { background: var(--bg-sunk); }
   color: var(--text-faint); user-select: none;
 }
 .fl .lt { color: var(--text); padding-right: 12px; }
+
+/* The rail is for a glance. This is the full reading surface when a review
+   needs reliable scrolling without handing control to a second editor. */
+.code-inspector-backdrop {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-items: center;
+  padding: 24px; background: rgba(10, 12, 17, .76); backdrop-filter: blur(3px);
+}
+.code-inspector {
+  display: flex; flex-direction: column; width: min(1500px, 100%); height: min(900px, 100%);
+  border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden;
+  background: var(--bg-soft); box-shadow: 0 20px 70px rgba(0, 0, 0, .5);
+}
+.code-inspector-head {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  border-bottom: 1px solid var(--line); flex-wrap: wrap;
+}
+.code-inspector-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+.code-inspector-actions .field { width: 160px; }
+.code-inspector-body {
+  flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 8px 0 24px;
+  font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+  font-size: var(--t-small); line-height: 1.55; outline: none; overscroll-behavior: contain;
+}
+.code-inspector-body.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
+.code-inspector-line { display: flex; min-width: max-content; white-space: pre; padding-right: 18px; }
+.code-inspector-body.wrap .code-inspector-line { min-width: 0; white-space: pre-wrap; }
+.code-inspector-line .ln { flex: none; width: 58px; padding: 0 12px 0 8px; color: var(--text-faint); text-align: right; user-select: none; }
+.code-inspector-line.add { color: #7ee2a8; background: rgba(12,163,12,.12); }
+.code-inspector-line.del { color: #f5a3a3; background: rgba(208,59,59,.12); }
+.code-inspector-line.hunk { color: var(--series-1); background: rgba(57,135,229,.08); }
+.code-inspector-line.meta { color: var(--text-faint); }
+.code-inspector-line.match { outline: 1px solid var(--warning); outline-offset: -1px; background: rgba(224, 170, 40, .16); }
+@media (max-width: 760px) {
+  .code-inspector-backdrop { padding: 8px; }
+  .code-inspector { height: 100%; }
+  .code-inspector-actions { margin-left: 0; }
+}
 
 .past-row { display: flex; align-items: stretch; gap: 2px; }
 .past-main {

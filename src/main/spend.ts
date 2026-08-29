@@ -1,4 +1,5 @@
 import { db } from './db';
+import { codexUsageSummary } from './codex-usage';
 import type { BudgetState, Reconciliation } from '../shared/types';
 
 /**
@@ -347,8 +348,8 @@ export function effortDistribution(
 /* ── caching ──────────────────────────────────────────────────────────── */
 
 const CACHE_NOTE_CLI =
-  'Counted by the Claude Code CLI itself and reported over OTLP — the agent’s own token ' +
-  'counters, not Wanigan’s arithmetic.';
+  'Claude Code reports these counters over OTLP; Codex contributes its exact local rollout ' +
+  'counters. Neither figure is Wanigan’s price arithmetic.';
 
 /**
  * Named in the returned data, not buried in a source comment, because it is the
@@ -405,6 +406,13 @@ export function unifiedCacheRate(): {
     sWrite = e.w;
     sInput = e.i;
   }
+
+  // Codex does not export Claude's OTLP metric stream.  Its local rollout is
+  // still an authoritative cumulative counter, so Insights must not claim the
+  // cache is empty just because the active provider is Codex.
+  const codex = codexUsageSummary();
+  sRead += codex.cacheRead;
+  sInput += codex.inTokens;
 
   const runTotals = (kind: string) => d.prepare(`
     SELECT COALESCE(SUM(cache_read), 0) AS r, COALESCE(SUM(cache_write), 0) AS w,

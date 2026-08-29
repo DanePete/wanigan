@@ -1,5 +1,12 @@
 import { db } from './db';
-import { DEFAULT_SLOTS, type WaniganSettings, type MotionSetting, type QueueSlots, type TrustLevel } from '../shared/types';
+import {
+  DEFAULT_SLOTS,
+  type LearningSettings,
+  type WaniganSettings,
+  type MotionSetting,
+  type QueueSlots,
+  type TrustLevel,
+} from '../shared/types';
 
 /**
  * Small key/value settings. The spend cap is the one that matters: a batch is
@@ -70,6 +77,26 @@ export function eventRetentionDays(): number {
   return Number.isFinite(n) && n > 0 ? n : 30;
 }
 
+export function learningSettings(): LearningSettings {
+  const content = getSetting('learning_content_mode', 'local-same-provider');
+  const automation = getSetting('learning_automation', 'hybrid');
+  const budget = Number(getSetting('learning_monthly_budget_usd', '0'));
+  const briefing = Number(getSetting('learning_briefing_max_tokens', '1200'));
+  return {
+    enabled: bool('learning_enabled', true),
+    contentMode: content === 'operational-only' ? 'operational-only' : 'local-same-provider',
+    automation: automation === 'review-only' ? 'review-only' : 'hybrid',
+    // Reserved for a metered provider-specific consolidator. Until that path
+    // exists end to end, reporting this as enabled would be a false control.
+    allowModelAssistance: false,
+    monthlyBudgetUsd: Number.isFinite(budget) && budget >= 0 ? budget : 0,
+    briefingMaxTokens: Number.isFinite(briefing)
+      ? Math.min(8_000, Math.max(200, Math.round(briefing)))
+      : 1_200,
+    consolidationEnabled: bool('learning_consolidation', true),
+  };
+}
+
 export function allSettings(): WaniganSettings {
   const f = flags();
   return {
@@ -84,5 +111,6 @@ export function allSettings(): WaniganSettings {
     slots: slotsSetting(),
     eventRetentionDays: eventRetentionDays(),
     defaultTrust: (getSetting('default_trust', 'project') as TrustLevel),
+    learning: learningSettings(),
   };
 }

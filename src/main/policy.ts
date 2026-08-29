@@ -21,6 +21,13 @@ export type PolicyContext = {
   projectId: string | null;
   projectPath: string | null;
   trust: TrustLevel;
+  /**
+   * Whether a human is sitting in front of this run. Optional, and only ever
+   * read as `=== false`: an absent value means "nobody said", and not knowing is
+   * not grounds for denying a call or for telling an agent it is alone. The
+   * headless fan-out is the one caller that sets it, and it sets it false.
+   */
+  attended?: boolean;
 };
 
 /* ── trust levels ─────────────────────────────────────────────────────── */
@@ -483,6 +490,144 @@ function projectDecision(ctx: PolicyContext, tool: string, input: HookInput): Po
   }
 
   return allow(`${TRUST_COPY.project.label} allows everything that is not a write or a command outside the project.`, 'project.allow');
+}
+
+/* ── who is on the other end ──────────────────────────────────────────── */
+
+/**
+ * Contexts for runs Wanigan launched and owns the lifetime of.
+ *
+ * An interactive pane can be looked up in the live session list. The headless
+ * fan-out cannot: its "session" is a (runId, projectId) row with no pane, no PTY
+ * and no entry in that list. Without a registration here every headless tool
+ * call would be judged at the default trust level with no project root — so a
+ * repository the operator marked Trusted would start collecting denials, and one
+ * marked Read only would be evaluated as though nothing had been set at all.
+ */
+const contexts = new Map<string, PolicyContext>();
+
+export function registerPolicyContext(ctx: PolicyContext): void {
+  if (!ctx.sessionId) return;
+  contexts.set(ctx.sessionId, ctx);
+}
+
+/**
+ * Called when the run that registered the context is over. A context left behind
+ * keeps answering for an id nothing is using, with a trust level the operator
+ * may have changed in the meantime.
+ */
+export function releasePolicyContext(sessionId: string): void {
+  contexts.delete(sessionId);
+}
+
+/**
+ * The registered context for a session id, or null when nothing registered one.
+ *
+ * Null means "Wanigan does not know", which is deliberately not the same answer
+ * as "the default trust level": the caller decides what to do with not knowing,
+ * and nothing here invents a project root or an attendance it cannot vouch for.
+ */
+export function contextForSession(sessionId: string | null): PolicyContext | null {
+  if (!sessionId) return null;
+  return contexts.get(sessionId) ?? null;
+}
+
+/**
+ * An 'ask' is a question, and a question needs somebody to answer it.
+ *
+ * On an unattended run there is nobody: headless.ts spawns with stdin on
+ * /dev/null precisely because there is no keyboard, so an 'ask' handed back to
+ * the CLI is not a checkpoint — it is the row sitting still until its per-repo
+ * timeout fires and reports a timeout for something that was only ever waiting
+ * to be asked. Denying says the true thing, costs one tool call rather than the
+ * whole timeout, and leaves the agent free to do the rest of its work.
+ */
+function nobodyToAsk(d: PolicyDecision): PolicyDecision {
+  if (d.decision !== 'ask') return d;
+  return {
+    decision: 'deny',
+    reason: `This run is unattended, so there was nobody to put the question to and Wanigan denied it. The question was: ${d.reason}`,
+    rule: `${d.rule}.unattended`,
+  };
+}
+
+/**
+ * The answer when the gate itself failed — a rule that threw, or a ledger write
+ * that did.
+ *
+ * On an attended session no answer is the right answer: the CLI falls back to
+ * its own permission prompt and a human decides. On an unattended run there is
+ * no prompt and no human, so "no answer" means the call runs unexamined and
+ * unrecorded, on the one surface Wanigan deliberately launches at
+ * bypassPermissions. That is the exact thing the ledger exists to prevent.
+ *
+ * The failure mode if this misfires is bounded and loud on purpose. It is a
+ * denial, not a hang: every tool call in the run gets this sentence back, the
+ * agent stops early instead of waiting, the row still lands inside its per-repo
+ * timeout, and 'unattended.unevaluable' is one ledger query away — so a run that
+ * hit this looks nothing like a run that simply had little to do.
+ */
+function unevaluable(): PolicyDecision {
+  return deny(
+    'Wanigan could not work out whether this call is allowed, and this run has nobody at the keyboard to ask, ' +
+    'so it was denied rather than allowed. Open this repository as an interactive session if you need to approve it yourself.',
+    'unattended.unevaluable'
+  );
+}
+
+/**
+ * Decide, write it down, and fail in the direction this particular run can
+ * survive. One function because the three are one answer: a decision nobody
+ * recorded and a refusal nobody explained are each worse than no gate at all.
+ */
+export function answerFor(ctx: PolicyContext, input: HookInput): PolicyDecision | null {
+  try {
+    const decided = decideFor(ctx, input);
+    const answer = ctx.attended === false ? nobodyToAsk(decided) : decided;
+    recordDecision(ctx, input, answer);
+    return answer;
+  } catch {
+    if (ctx.attended !== false) return null;
+    const refusal = unevaluable();
+    // Best effort: if the ledger is what just threw, this writes nothing — which
+    // is why the refusal above also says so to the agent, in the only channel
+    // left that a person will read afterwards.
+    try { recordDecision(ctx, input, refusal); } catch { /* the ledger is what failed */ }
+    return refusal;
+  }
+}
+
+/**
+ * One sentence for the agent at SessionStart, so the constraint the operator set
+ * is something it knows rather than something it discovers one denial at a time.
+ *
+ * Deliberately not TRUST_COPY.detail. That copy tells the user Read only denies
+ * "network calls", which READ_TOOLS above does not do — see the comment there —
+ * and repeating it to an agent would hand it a constraint that is not real. An
+ * agent that believes it cannot look anything up stops trying. The label comes
+ * from TRUST_COPY because the label is the half that is true, and the agent
+ * should name the level the same way the Settings screen does.
+ *
+ * No budget figure appears here, and none should be added. Nothing in Wanigan
+ * refuses, pauses or throttles work when a budget is breached — budgetBreached()
+ * draws a banner and stops there — so a remaining-spend sentence would be
+ * announcing a constraint that does not exist.
+ */
+export function trustBriefing(ctx: PolicyContext): string {
+  const where = ctx.projectPath ? ` (${ctx.projectPath})` : '';
+  const line =
+    ctx.trust === 'trusted'
+      ? `Wanigan is running this session at ${TRUST_COPY.trusted.label} trust: it denies nothing, and it still writes shell commands, non-read MCP calls and writes outside the working directory to its policy ledger.`
+      : ctx.trust === 'readonly'
+        ? `Wanigan is running this session at ${TRUST_COPY.readonly.label} trust: reads, searches and lookups are allowed, and file writes, shell commands and any MCP call that is not a read will be denied — describe the change rather than attempting it.`
+        : `Wanigan is running this session at ${TRUST_COPY.project.label} trust: writes and shell commands are allowed inside the working directory${where}, and anything resolving outside it, or touching the credential directories under your home folder, will be denied.`;
+
+  // Only for a run with nobody watching, and only because it changes what the
+  // agent should expect back. Everywhere else an unevaluable call becomes a
+  // prompt somebody answers, and saying this there would be false.
+  return ctx.attended === false
+    ? `${line} Nobody is watching this run, so a call Wanigan cannot evaluate is denied rather than queued for approval.`
+    : line;
 }
 
 /* ── the ledger ───────────────────────────────────────────────────────── */

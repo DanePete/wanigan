@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Note } from './bits';
 
 type Editor = { id: string; label: string; path: string };
@@ -50,6 +50,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
   const [plan, setPlan] = useState<{ file: string; action: string; detail: string; safe: boolean } | null>(null);
   const [reverting, setReverting] = useState(false);
   const [reverted, setReverted] = useState<string | null>(null);
+  const [inspector, setInspector] = useState(false);
 
   useEffect(() => { window.wanigan.code.editors().then(setEditors).catch(() => {}); }, []);
 
@@ -153,6 +154,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
 
   const editor = editors[0] ?? null;
   const target = sel ?? file?.rel;
+  const inspectorText = sel ? diff : file?.text ?? '';
 
   const visible = useMemo(
     () => (scope === 'session' ? changes.files.filter((f) => !f.preexisting) : changes.files),
@@ -212,6 +214,12 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
                     target ? `${projectPath}/${target}` : projectPath
                   )}>
             {editor ? `Open in ${editor.label}` : 'Reveal'}
+          </button>
+          <button className="btn" style={{ padding: '3px 9px', fontSize: 'var(--t-small)' }}
+                  disabled={!target}
+                  title={target ? 'Open this file or diff in Wanigan’s full-height code inspector' : 'Select a file first'}
+                  onClick={() => setInspector(true)}>
+            Pop out
           </button>
         </div>
       </div>
@@ -327,6 +335,16 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
           </>
         )}
       </div>
+      {inspector && target && (
+        <CodeInspector
+          title={target}
+          text={inspectorText}
+          kind={sel ? 'diff' : 'file'}
+          truncated={file?.truncated === true}
+          onClose={() => setInspector(false)}
+          onExternal={() => void window.wanigan.code.open(editor?.path ?? null, `${projectPath}/${target}`)}
+        />
+      )}
     </div>
   );
 }
@@ -373,5 +391,77 @@ function FileView({ file }: { file: { rel: string; text: string; truncated: bool
         ))}
       </pre>
     </>
+  );
+}
+
+/** A full-height reading surface for a file or review diff. */
+function CodeInspector({ title, text, kind, truncated, onClose, onExternal }: {
+  title: string; text: string; kind: 'diff' | 'file'; truncated: boolean;
+  onClose: () => void; onExternal: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [wrap, setWrap] = useState(false);
+  const body = useRef<HTMLPreElement>(null);
+  const lines = useMemo(() => text.split('\n'), [text]);
+  const needle = query.trim().toLocaleLowerCase();
+  const matches = useMemo(() => needle
+    ? lines.map((line, i) => line.toLocaleLowerCase().includes(needle) ? i : -1).filter((i) => i >= 0)
+    : [], [lines, needle]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
+
+  const jump = (where: 'top' | 'bottom' | 'match') => {
+    const el = body.current;
+    if (!el) return;
+    if (where === 'top') { el.scrollTop = 0; return; }
+    if (where === 'bottom') { el.scrollTop = el.scrollHeight; return; }
+    el.querySelector<HTMLElement>('[data-match="true"]')?.scrollIntoView({ block: 'center' });
+  };
+
+  return (
+    <div className="code-inspector-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="code-inspector" role="dialog" aria-modal="true" aria-label={`Code inspector: ${title}`}
+               onMouseDown={(e) => e.stopPropagation()}>
+        <header className="code-inspector-head">
+          <div style={{ minWidth: 0 }}>
+            <div className="label">{kind === 'diff' ? 'Diff inspector' : 'File inspector'}</div>
+            <strong className="mono trunc" title={title}>{title}</strong>
+          </div>
+          <span className="faint mono">{lines.length.toLocaleString()} lines</span>
+          <div className="code-inspector-actions">
+            <input className="field" value={query} onChange={(e) => setQuery(e.target.value)}
+                   placeholder="Find in code" aria-label="Find in code" />
+            {needle && <button className="btn" onClick={() => jump('match')}>{matches.length} match{matches.length === 1 ? '' : 'es'}</button>}
+            <button className="btn" aria-pressed={wrap} onClick={() => setWrap((v) => !v)}>{wrap ? 'Wrapped' : 'No wrap'}</button>
+            <button className="btn" onClick={() => jump('top')}>Top</button>
+            <button className="btn" onClick={() => jump('bottom')}>Bottom</button>
+            <button className="btn" onClick={onExternal}>Open externally</button>
+            <button className="btn" onClick={onClose}>Close <span className="faint">Esc</span></button>
+          </div>
+        </header>
+        {truncated && <div className="code-err">This file is truncated for display. Open it externally for the complete contents.</div>}
+        <pre ref={body} className={`code-inspector-body${wrap ? ' wrap' : ''}`} tabIndex={0}>
+          {lines.map((line, i) => {
+            const match = needle !== '' && line.toLocaleLowerCase().includes(needle);
+            let cls = '';
+            if (kind === 'diff') {
+              if (line.startsWith('+') && !line.startsWith('+++')) cls = ' add';
+              else if (line.startsWith('-') && !line.startsWith('---')) cls = ' del';
+              else if (line.startsWith('@@')) cls = ' hunk';
+              else if (line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('+++') || line.startsWith('---')) cls = ' meta';
+            }
+            return <span className={`code-inspector-line${cls}${match ? ' match' : ''}`} data-match={match || undefined} key={i}>
+              <span className="ln">{i + 1}</span><span>{line || ' '}</span>
+            </span>;
+          })}
+        </pre>
+      </section>
+    </div>
   );
 }
