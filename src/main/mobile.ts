@@ -697,7 +697,7 @@ function dashboardHtml(nonce: string): string {
       <div><div class="eyebrow">Read-only fleet monitor</div><h1 id="host">Wanigan</h1></div>
       <div class="connection"><span id="dot" class="dot"></span><span id="connection">Connecting…</span></div>
     </header>
-    <section id="pair" class="notice hidden"><strong>This phone is not paired.</strong>Open the fresh pairing link from Wanigan Settings.</section>
+    <section id="pair" class="notice hidden"><strong>This Wanigan app is not paired yet.</strong><p style="margin-top:6px">Home Screen apps keep their own private pairing. Paste the pairing link from Wanigan Settings once.</p><form id="pair-form" style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><input id="pair-token" aria-label="Pairing link or token" autocomplete="off" placeholder="Paste pairing link" style="flex:1;min-width:220px"><button>Pair this app</button></form></section>
     <section id="error" class="notice hidden"><strong>Could not read Wanigan.</strong><span id="error-text">The next poll will retry.</span></section>
     <section id="dashboard" class="hidden">
       <div class="stats">
@@ -796,15 +796,22 @@ function dashboardHtml(nonce: string): string {
         }
       }
 
-      function tokenFromFragment() {
-        const raw = location.hash.slice(1);
+      function pairingToken(rawValue) {
+        let raw = String(rawValue || '').trim();
+        if (raw.includes('://')) {
+          try { raw = new URL(raw).hash.slice(1); } catch { return ''; }
+        }
         if (!raw) return;
         const params = new URLSearchParams(raw);
         let token = params.get('token');
         if (!token && !raw.includes('=')) {
           try { token = decodeURIComponent(raw); } catch { token = ''; }
         }
-        if (token && /^[A-Za-z0-9_-]{40,128}$/.test(token)) localStorage.setItem(KEY, token);
+        return token && /^[A-Za-z0-9_-]{40,128}$/.test(token) ? token : '';
+      }
+      function tokenFromFragment() {
+        const token = pairingToken(location.hash.slice(1));
+        if (token) localStorage.setItem(KEY, token);
         history.replaceState(null, '', location.pathname + location.search);
       }
 
@@ -908,6 +915,12 @@ function dashboardHtml(nonce: string): string {
       }
 
       tokenFromFragment();
+      byId('pair-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const token = pairingToken(byId('pair-token').value);
+        if (!token) { byId('pair-token').setCustomValidity('Paste the complete pairing link from Wanigan Settings.'); byId('pair-token').reportValidity(); return; }
+        byId('pair-token').setCustomValidity(''); localStorage.setItem(KEY, token); byId('pair-token').value = ''; void poll();
+      });
       byId('provider').addEventListener('change', renderLaunchChoices);
       byId('session').addEventListener('change', () => { byId('terminal').textContent = 'Loading terminal…'; void loadTerminal(); });
       byId('terminal-refresh').addEventListener('click', () => void loadTerminal());
