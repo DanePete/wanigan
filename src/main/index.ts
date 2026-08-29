@@ -306,6 +306,11 @@ app.whenReady().then(async () => {
       writeSession(sessionId, `${prompt}\r`);
     },
     interrupt: async (sessionId) => interruptSession(sessionId),
+    terminal: async (sessionId) => {
+      const session = listSessions().find((value) => value.id === sessionId);
+      if (!session) throw new Error('That session is no longer available.');
+      return { title: session.title, running: session.status !== 'exited', text: scrollback(sessionId) };
+    },
   });
   await startServices();
   try { await mobile.startMobileMonitor(); }

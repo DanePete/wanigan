@@ -39,6 +39,7 @@ export const MOBILE_PUSH_TIMEOUT_MS = 8_000;
 
 const MAX_SESSIONS = 250;
 const MAX_JSON_BYTES = 512 * 1024;
+const MAX_TERMINAL_BYTES = 240 * 1024;
 const SNAPSHOT_TIMEOUT_MS = 3_000;
 const TOKEN_BYTES = 32;
 const TOPIC_BYTES = 24;
@@ -65,6 +66,7 @@ export type MobileControlSource = {
   launch: (input: { projectId: string; providerId: string; model?: string; effort?: string; prompt: string }) => Promise<{ id: string; title: string }>;
   prompt: (sessionId: string, prompt: string) => Promise<void>;
   interrupt: (sessionId: string) => Promise<boolean>;
+  terminal: (sessionId: string) => Promise<{ title: string; running: boolean; text: string }>;
 };
 
 export type MobileConfigPatch = Partial<MobileMonitorConfig>;
@@ -589,6 +591,13 @@ async function serveControl(req: http.IncomingMessage, res: http.ServerResponse,
     json(res, 200, { projects, providers });
     return;
   }
+  if (req.method === 'GET' && url.pathname === '/api/terminal') {
+    const sessionId = safeString(url.searchParams.get('session'), 160);
+    if (!sessionId) { json(res, 400, { error: 'Choose a session.' }); return; }
+    const terminal = await source.terminal(sessionId);
+    json(res, 200, { title: safeString(terminal.title, 200), running: terminal.running, text: terminal.text.slice(-MAX_TERMINAL_BYTES) });
+    return;
+  }
   if (req.method !== 'POST' || url.pathname !== '/api/action') {
     json(res, 405, { error: 'Unsupported control operation.' }, { allow: 'GET, POST' }); return;
   }
@@ -675,6 +684,8 @@ function dashboardHtml(nonce: string): string {
     button.secondary { color:var(--ink); background:transparent; border-color:var(--line); }
     button:disabled { opacity:.55; }
     .control-result { color:var(--dim); min-height:20px; font-size:12px; margin-top:8px; }
+    .terminal { margin-top:10px; max-height:58vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; padding:13px; border-radius:10px; background:#06080c; border:1px solid var(--line); color:#d9e1eb; font:12px/1.48 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .terminal-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
     footer { color:var(--faint); font-size:11px; margin-top:24px; text-align:center; }
     @media (max-width:680px) { .stats { grid-template-columns:repeat(2,minmax(0,1fr)); } .grid { grid-template-columns:1fr; } header { align-items:flex-start; flex-direction:column; gap:8px; } }
     @media (prefers-reduced-motion:no-preference) { .dot.live { animation:pulse 2.4s ease-in-out infinite; } @keyframes pulse { 50% { box-shadow:0 0 0 6px #70ca9114; } } }
@@ -708,6 +719,7 @@ function dashboardHtml(nonce: string): string {
           <h3>Steer a running agent</h3><p>Send the next instruction or interrupt the current turn. Permission decisions still stay at the Mac.</p>
           <form id="prompt-form" class="fields"><select id="session" aria-label="Running session"></select><textarea id="session-prompt" maxlength="8000" placeholder="Next instruction"></textarea><button>Send instruction</button><button id="interrupt" type="button" class="secondary">Interrupt turn</button></form>
         </div>
+        <div class="control-card"><div class="terminal-head"><div><h3 id="terminal-title">Live terminal</h3><p>Latest terminal output from the selected session.</p></div><button id="terminal-refresh" type="button" class="secondary">Refresh</button></div><pre id="terminal" class="terminal">Choose a running session to open its terminal.</pre></div>
         <div id="control-result" class="control-result" role="status"></div>
       </section>
     </section>
@@ -726,6 +738,7 @@ function dashboardHtml(nonce: string): string {
       let busy = false;
       let controlOptions = null;
       let visibleSessions = [];
+      let terminalBusy = false;
       const control = byId('controls');
       const controlResult = byId('control-result');
 
@@ -747,6 +760,20 @@ function dashboardHtml(nonce: string): string {
         model.disabled = !provider || !(provider.models || []).length;
         effort.disabled = !provider || !(provider.efforts || []).length;
       }
+      async function loadTerminal() {
+        const select = byId('session'); const sessionId = select.value;
+        if (terminalBusy || !sessionId) return;
+        terminalBusy = true;
+        const output = byId('terminal');
+        const follow = output.scrollTop + output.clientHeight >= output.scrollHeight - 24;
+        try {
+          const detail = await api('api/terminal?session=' + encodeURIComponent(sessionId));
+          byId('terminal-title').textContent = detail.title + (detail.running ? ' · live' : ' · ended');
+          output.textContent = detail.text || 'No terminal output yet.';
+          if (follow) output.scrollTop = output.scrollHeight;
+        } catch (error) { output.textContent = error instanceof Error ? error.message : 'Could not read this terminal.'; }
+        finally { terminalBusy = false; }
+      }
       async function renderControls(sessions) {
         visibleSessions = sessions.filter((session) => session.status !== 'exited');
         try {
@@ -755,11 +782,14 @@ function dashboardHtml(nonce: string): string {
           project.replaceChildren(...(controlOptions.projects || []).map((value) => option(value.id, value.name + (value.branch ? ' · ' + value.branch : ''))));
           provider.replaceChildren(...(controlOptions.providers || []).filter((value) => value.available).map((value) => option(value.id, value.label)));
           renderLaunchChoices();
+          const selectedSession = session.value;
           session.replaceChildren(...visibleSessions.map((value) => option(value.id, value.title + ' · ' + value.projectName)));
+          if ([...session.options].some((value) => value.value === selectedSession)) session.value = selectedSession;
           byId('launch-form').querySelector('button').disabled = !project.value || !provider.value;
           byId('prompt-form').querySelector('button').disabled = !session.value;
           byId('interrupt').disabled = !session.value;
           control.classList.remove('hidden');
+          void loadTerminal();
         } catch (error) {
           control.classList.add('hidden');
           if (error instanceof Error && !/disabled/.test(error.message)) controlResult.textContent = error.message;
@@ -879,6 +909,8 @@ function dashboardHtml(nonce: string): string {
 
       tokenFromFragment();
       byId('provider').addEventListener('change', renderLaunchChoices);
+      byId('session').addEventListener('change', () => { byId('terminal').textContent = 'Loading terminal…'; void loadTerminal(); });
+      byId('terminal-refresh').addEventListener('click', () => void loadTerminal());
       byId('launch-form').addEventListener('submit', async (event) => {
         event.preventDefault(); controlResult.textContent = 'Starting session…';
         try {
@@ -898,6 +930,7 @@ function dashboardHtml(nonce: string): string {
       });
       void poll();
       setInterval(() => { void poll(); }, 3000);
+      setInterval(() => { if (!document.hidden) void loadTerminal(); }, 1500);
       document.addEventListener('visibilitychange', () => { if (!document.hidden) void poll(); });
     })();
   </script>
@@ -953,7 +986,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     return;
   }
 
-  if (url.pathname === '/api/control' || url.pathname === '/api/action') {
+  if (url.pathname === '/api/control' || url.pathname === '/api/action' || url.pathname === '/api/terminal') {
     if (!authorized(req)) {
       json(res, 401, { error: 'Missing or invalid mobile monitor token.' }, { 'www-authenticate': 'Bearer realm="wanigan-mobile"' });
       return;
