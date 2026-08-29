@@ -6,6 +6,16 @@ import { Note, ago, usd } from '../components/bits';
 
 const errText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const risks: DocketRisk[] = ['low', 'elevated', 'high'];
+const goalHash = (id: string) => `#goal=${encodeURIComponent(id)}`;
+const goalFromHash = () => new URLSearchParams(window.location.hash.slice(1)).get('goal');
+async function copyText(value: string): Promise<void> {
+  if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(value); return; }
+  const field = document.createElement('textarea');
+  field.value = value; field.setAttribute('readonly', ''); field.style.position = 'fixed'; field.style.opacity = '0';
+  document.body.append(field); field.select();
+  const copied = document.execCommand('copy'); field.remove();
+  if (!copied) throw new Error('Your system clipboard did not accept the goal link.');
+}
 
 /**
  * Dockets are intentionally not a second terminal surface. They make the
@@ -46,7 +56,8 @@ export default function Control({ projects, providers, onOpenSession }: {
         window.wanigan.control.list(), window.wanigan.control.outcomes(), window.wanigan.control.events('all'),
       ]);
       setDockets(next); setOutcomes(nextOutcomes); setEvents(nextEvents);
-      const id = focus ?? selected ?? next[0]?.id ?? null;
+      const linked = goalFromHash();
+      const id = focus ?? (linked && next.some((docket) => docket.id === linked) ? linked : null) ?? selected ?? next[0]?.id ?? null;
       if (id && next.some((docket) => docket.id === id)) {
         const [full, mcp] = await Promise.all([window.wanigan.control.get(id), window.wanigan.control.mcpTasks(id)]);
         setSelected(id); setDetail(full); setTasks(mcp);
@@ -56,6 +67,11 @@ export default function Control({ projects, providers, onOpenSession }: {
   }, [selected]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const onHash = () => { const id = goalFromHash(); if (id) void load(id); };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, [load]);
   useEffect(() => { if (!projectId && projects[0]) setProjectId(projects[0].id); }, [projectId, projects]);
   useEffect(() => { if (!providerId && enabledProviders[0]) setProviderId(enabledProviders[0].id); }, [enabledProviders, providerId]);
 
@@ -71,9 +87,16 @@ export default function Control({ projects, providers, onOpenSession }: {
       acceptance: acceptance.split('\n').map((line) => line.trim()).filter(Boolean), risk,
       budgetUsd: budget.trim() ? Number(budget) : null });
     setTitle(''); setObjective(''); setAcceptance(''); setBudget(''); await load(created.id);
-  }, 'Docket created. Start with the planning task; downstream work stays blocked until its prerequisites are complete.');
+  }, 'Goal created. Start with the planning task; downstream work stays blocked until its prerequisites are complete.');
 
-  const choose = (id: string) => act(`choose-${id}`, async () => { await load(id); });
+  const choose = (id: string) => act(`choose-${id}`, async () => {
+    if (window.location.hash !== goalHash(id)) window.history.replaceState(null, '', goalHash(id));
+    await load(id);
+  });
+  const copyGoalLink = (id: string) => act(`link-${id}`, async () => {
+    const url = `${window.location.href.split('#')[0]}${goalHash(id)}`;
+    await copyText(url);
+  }, 'Goal link copied. Opening it in Wanigan returns to this exact durable goal.');
   const start = (node: DocketNode) => act(`start-${node.id}`, async () => {
     const launched = await window.wanigan.control.start(node.id, { providerId, model: model.trim() || undefined });
     await load(detail?.id);
@@ -110,7 +133,7 @@ export default function Control({ projects, providers, onOpenSession }: {
     </header>
     <section className="card control-guide" aria-labelledby="control-guide-title">
       <div><span className="label">Quick start</span><h2 id="control-guide-title">How Control works</h2>
-        <p>Use a docket for work you want to delegate without losing the reason for it, the evidence, or the final decision.</p></div>
+        <p>A docket is a <strong>Goal</strong>: use it for work you want to delegate without losing the reason for it, the evidence, or the final decision.</p></div>
       <ol>
         <li><strong>Define the contract.</strong> Choose a project, write the objective, then add observable acceptance checks. These become the shared definition of done.</li>
         <li><strong>Work the graph in order.</strong> Start <em>Plan</em> first. Once you mark it complete, <em>Implement</em> unlocks in an isolated worktree. Claim paths such as <code>src/cart/total.ts</code> before parallel work touches them.</li>
@@ -132,13 +155,13 @@ export default function Control({ projects, providers, onOpenSession }: {
         <button className="btn btn-primary" disabled={busy !== null || !projectId || !title.trim() || !objective.trim() || !acceptance.trim()} onClick={() => void create()}>{busy === 'create' ? 'Creating…' : 'Create work graph'}</button>
       </article>
 
-      <article className="card control-list"><div className="control-card-head"><div><span className="label">Durable work</span><h2>Dockets</h2></div><span className="faint">{dockets.length}</span></div>
+      <article className="card control-list"><div className="control-card-head"><div><span className="label">Durable work</span><h2>Goals</h2></div><span className="faint">{dockets.length}</span></div>
         {dockets.length === 0 && <p className="faint">Nothing is in flight. Create a contract before sending work to an agent.</p>}
-        {dockets.map((docket) => <button key={docket.id} className={`control-docket ${selected === docket.id ? 'selected' : ''}`} onClick={() => void choose(docket.id)}><span className={`control-status ${docket.status}`}>{docket.status}</span><strong>{docket.title}</strong><small>{docket.projectName} · {ago(docket.updatedAt)}</small></button>)}
+        {dockets.map((docket) => <button key={docket.id} className={`control-docket ${selected === docket.id ? 'selected' : ''}`} onClick={() => void choose(docket.id)}><span className={`control-status ${docket.status}`}>{docket.status}</span><strong>{docket.title}</strong><small>Goal · {docket.projectName} · {ago(docket.updatedAt)}</small></button>)}
       </article>
     </section>
 
-    {detail && <section className="control-detail card"><div className="control-card-head"><div><span className="label">{detail.status} · {detail.risk} risk{detail.budgetUsd !== null ? ` · ${usd(detail.budgetUsd)} budget` : ''}</span><h2>{detail.title}</h2></div><span className="mono">base {detail.baseCommit?.slice(0, 10) ?? 'not a git repo'}</span></div>
+    {detail && <section className="control-detail card" id={`goal-${detail.id}`}><div className="control-card-head"><div><span className="label">Goal · {detail.status} · {detail.risk} risk{detail.budgetUsd !== null ? ` · ${usd(detail.budgetUsd)} budget` : ''}</span><h2>{detail.title}</h2></div><div className="control-goal-meta"><span className="mono">base {detail.baseCommit?.slice(0, 10) ?? 'not a git repo'}</span><a href={goalHash(detail.id)} onClick={() => void choose(detail.id)}>Goal link</a><button className="btn btn-small" onClick={() => void copyGoalLink(detail.id)} disabled={busy !== null}>Copy goal link</button></div></div>
       <p>{detail.objective}</p><ol className="control-acceptance">{detail.acceptance.map((check, index) => <li key={index}>{check}</li>)}</ol>
       <div className="control-launch"><label><span className="label">Provider for next task</span><select className="field" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{enabledProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label><span className="label">Model override</span><input className="field" value={model} onChange={(event) => setModel(event.target.value)} placeholder="provider default" /></label></div>
       <div className="control-nodes">{detail.nodes.map((node) => <NodeCard key={node.id} node={node} busy={busy} note={notes[node.id] ?? ''} claim={claims[node.id] ?? ''}
