@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { LaunchOptions, Project, ProviderId, ProviderInfo, TrustLevel } from '@shared/types';
 import { EFFORT_LEVELS, PERMISSION_MODES, TRUST_COPY, TRUST_LEVELS } from '@shared/types';
 
-const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)', glm: 'var(--glm)' };
+const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)', glm: 'var(--glm)', deepseek: 'var(--series-4)' };
 
 /** Same filled progression the session header uses: ◇ → ◈ → ◆ reads in greyscale. */
 const TRUST_GLYPH: Record<TrustLevel, string> = { readonly: '◇', project: '◈', trusted: '◆' };
@@ -92,6 +92,7 @@ export default function NewSessionDialog({
   const codexHarness = provider?.harnessId === 'codex' || providerId === 'codex';
   const genericHarness = provider?.harnessId === 'generic-cli';
   const zaiBackend = provider?.backendId === 'zai' || providerId === 'glm';
+  const deepseekBackend = provider?.backendId === 'deepseek' || providerId === 'deepseek';
   const manifestModelField = provider?.launchFields?.find((field) => field.id === 'model');
   const modelChoices = genericHarness
     ? (manifestModelField?.options ?? [])
@@ -99,6 +100,8 @@ export default function NewSessionDialog({
     ? codexModels
     : zaiBackend
       ? [{ value: 'glm-5.3', label: 'GLM 5.3' }, { value: 'glm-5.3-flash', label: 'GLM 5.3 Flash' }, { value: 'glm-5.2', label: 'GLM 5.2' }, { value: '', label: 'Provider default' }]
+      : deepseekBackend
+        ? [{ value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' }, { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' }, { value: '', label: 'Provider default' }]
     : [{ value: '', label: 'default' }, { value: 'opus', label: 'opus' }, { value: 'sonnet', label: 'sonnet' }, { value: 'haiku', label: 'haiku' }, { value: 'fable', label: 'fable' }];
 
   useEffect(() => {

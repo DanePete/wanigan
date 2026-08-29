@@ -216,6 +216,10 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
   const [glmStatus, setGlmStatus] = useState<ProviderKeyStatus | null>(null);
   const [glmBusy, setGlmBusy] = useState(false);
   const [glmMsg, setGlmMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [deepseekKey, setDeepseekKey] = useState('');
+  const [deepseekStatus, setDeepseekStatus] = useState<ProviderKeyStatus | null>(null);
+  const [deepseekBusy, setDeepseekBusy] = useState(false);
+  const [deepseekMsg, setDeepseekMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
 
   const load = () => window.wanigan.key.status().then((st) => {
     setStatus(st);
@@ -224,6 +228,7 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
   useEffect(() => {
     void load();
     void window.wanigan.key.provider('glm').then(setGlmStatus).catch(() => {});
+    void window.wanigan.key.provider('deepseek').then(setDeepseekStatus).catch(() => {});
     window.wanigan.settings.get().then((s) => setCap(s.spendCapUsd.toFixed(2))).catch(() => {});
   }, []);
 
@@ -250,6 +255,31 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
     setGlmBusy(true);
     try { await window.wanigan.key.clearProvider('glm'); await loadGlm(); onKeyChange(); setGlmMsg(null); }
     finally { setGlmBusy(false); }
+  }
+
+  const loadDeepseek = () => window.wanigan.key.provider('deepseek').then(setDeepseekStatus);
+  async function saveDeepseek() {
+    setDeepseekBusy(true); setDeepseekMsg(null);
+    try {
+      await window.wanigan.key.setProvider('deepseek', deepseekKey);
+      const verified = await window.wanigan.key.deepseekVerify();
+      setDeepseekKey(''); await loadDeepseek(); onKeyChange();
+      setDeepseekMsg({ tone: verified.ok ? 'ok' : 'error', text: verified.detail });
+    } catch (e) { setDeepseekMsg({ tone: 'error', text: msg(e) }); }
+    finally { setDeepseekBusy(false); }
+  }
+  async function verifyDeepseek() {
+    setDeepseekBusy(true); setDeepseekMsg(null);
+    try {
+      const verified = await window.wanigan.key.deepseekVerify();
+      setDeepseekMsg({ tone: verified.ok ? 'ok' : 'error', text: verified.detail });
+    } catch (e) { setDeepseekMsg({ tone: 'error', text: msg(e) }); }
+    finally { setDeepseekBusy(false); }
+  }
+  async function clearDeepseek() {
+    setDeepseekBusy(true);
+    try { await window.wanigan.key.clearProvider('deepseek'); await loadDeepseek(); onKeyChange(); setDeepseekMsg(null); }
+    finally { setDeepseekBusy(false); }
   }
 
   async function save() {
@@ -430,6 +460,28 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
         {glmMsg && <div style={{ marginTop: 10 }}><Note tone={glmMsg.tone === 'ok' ? 'ok' : 'error'}>{glmMsg.text}</Note></div>}
         <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.45 }}>
           The key is verified against <span className="mono">api.z.ai/api/coding/paas/v4/models</span> before Wanigan saves it, then encrypted in your macOS Keychain. Wanigan does not show or log the key.
+        </p>
+      </Section>
+
+      <Section title="DeepSeek"
+               hint="Runs DeepSeek through the installed Claude Code runtime using DeepSeek’s Anthropic-compatible endpoint. It gets the same Wanigan terminal, review, policy, worktree and headless-run controls as Claude and GLM.">
+        {deepseekStatus?.present ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 11 }}>
+            <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>DeepSeek key installed</span>
+            <span className="mono faint">{deepseekStatus.fingerprint}</span>
+            <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => void verifyDeepseek()} disabled={deepseekBusy}>Verify live catalogue</button>
+            <button className="btn btn-danger" onClick={() => void clearDeepseek()} disabled={deepseekBusy}>Remove</button>
+          </div>
+        ) : <Note tone="warn">No DeepSeek key stored. DeepSeek sessions cannot authenticate until you add one.</Note>}
+        <label className="label" style={{ marginTop: 11 }}>{deepseekStatus?.present ? 'Replace DeepSeek key' : 'Paste DeepSeek API key'}</label>
+        <div style={{ display: 'flex', gap: 7, marginTop: 4 }}>
+          <input className="field mono" type="password" placeholder="DeepSeek API key" value={deepseekKey} autoComplete="off" spellCheck={false}
+                 onChange={(e) => setDeepseekKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && deepseekKey.trim()) void saveDeepseek(); }} />
+          <button className="btn btn-primary" onClick={() => void saveDeepseek()} disabled={deepseekBusy || !deepseekKey.trim()}>{deepseekBusy ? 'Checking…' : 'Save & verify'}</button>
+        </div>
+        {deepseekMsg && <div style={{ marginTop: 10 }}><Note tone={deepseekMsg.tone === 'ok' ? 'ok' : 'error'}>{deepseekMsg.text}</Note></div>}
+        <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.45 }}>
+          Wanigan verifies the key against <span className="mono">api.deepseek.com/models</span>, then stores it encrypted in your macOS Keychain. The key is never shown, logged or sent to a renderer.
         </p>
       </Section>
 

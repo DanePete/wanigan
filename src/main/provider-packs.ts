@@ -821,6 +821,30 @@ export const BUILTIN_PROVIDER_PACKS: ProviderPackManifest[] = [
       headless: 'claude-json',
     }],
   },
+  {
+    schemaVersion: 1,
+    id: 'wanigan.deepseek',
+    label: 'DeepSeek',
+    version: '1',
+    description: 'Claude Code harness connected to DeepSeek’s Anthropic-compatible API.',
+    publisher: { id: 'wanigan', name: 'Wanigan' },
+    profiles: [{
+      id: 'deepseek', label: 'DeepSeek', harness: 'claude-code',
+      backend: { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/anthropic' },
+      command: CLAUDE_COMMAND,
+      launchFields: CLAUDE_FIELDS.filter((field) => field.id !== 'effort'),
+      resume: { conversationArgs: ['--resume', '{conversationId}'], continueArgs: ['--continue'] },
+      environment: {
+        ANTHROPIC_BASE_URL: { source: 'process', name: 'WANIGAN_DEEPSEEK_BASE_URL', fallback: 'https://api.deepseek.com/anthropic' },
+        ANTHROPIC_AUTH_TOKEN: { source: 'credential', id: 'deepseek' },
+        ANTHROPIC_DEFAULT_OPUS_MODEL: { source: 'process', name: 'WANIGAN_DEEPSEEK_MODEL', fallback: 'deepseek-v4-pro' },
+        ANTHROPIC_DEFAULT_SONNET_MODEL: { source: 'process', name: 'WANIGAN_DEEPSEEK_MODEL', fallback: 'deepseek-v4-pro' },
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: { source: 'process', name: 'WANIGAN_DEEPSEEK_SMALL_MODEL', fallback: 'deepseek-v4-flash' },
+      },
+      capabilities: CLAUDE_CAPABILITIES,
+      headless: 'claude-json',
+    }],
+  },
 ];
 
 export function defaultProviderPacksRoot(userDataDir?: string): string {

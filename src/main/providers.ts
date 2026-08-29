@@ -122,6 +122,8 @@ function firstExecutable(candidates: string[]): string | null {
  */
 export const GLM_DEFAULT = 'glm-5.3';
 export const GLM_SMALL = 'glm-5.3-flash';
+export const DEEPSEEK_DEFAULT = 'deepseek-v4-pro';
+export const DEEPSEEK_SMALL = 'deepseek-v4-flash';
 
 const LEGACY_BUILTINS: ProviderDef[] = [
   {
@@ -267,6 +269,41 @@ const LEGACY_BUILTINS: ProviderDef[] = [
         ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.WANIGAN_GLM_MODEL || GLM_DEFAULT,
         ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.WANIGAN_GLM_MODEL || GLM_DEFAULT,
         ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.WANIGAN_GLM_SMALL_MODEL || GLM_SMALL,
+      };
+    },
+  },
+  {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    // DeepSeek publishes an Anthropic-compatible endpoint, so it can use the
+    // same reviewed Claude Code harness as GLM without a proxy or key shim.
+    bin: 'claude', cli: 'claude', harness: 'claude-code', headless: 'claude-json',
+    packId: 'wanigan.deepseek', packVersion: '1', backendId: 'deepseek', source: 'builtin',
+    profileFingerprint: 'legacy:deepseek', launchFields: [], declaredCapabilities: {},
+    args: (extra, o) => [
+      ...(o?.model ? ['--model', o.model] : []),
+      ...(o?.permissionMode ? ['--permission-mode', o.permissionMode] : []), ...extra,
+    ],
+    launchArgs: (extra, o) => [
+      ...(typeof o?.model === 'string' && o.model ? ['--model', o.model] : []),
+      ...(typeof o?.permissionMode === 'string' && o.permissionMode ? ['--permission-mode', o.permissionMode] : []), ...extra,
+    ],
+    supports: { model: true, effort: false, permissionMode: true, resume: true },
+    resumeArgs: (id) => (id ? ['--resume', id] : ['--continue']),
+    versionArgs: ['--version'], helpArgs: ['--help'],
+    fallbacks: () => [
+      ...editorExtensions('anthropic.claude-code-').map((d) => path.join(d, 'resources', 'native-binary', 'claude')),
+      path.join(os.homedir(), '.claude', 'local', 'claude'),
+    ],
+    env: (): Record<string, string> => {
+      const key = getProviderKey('deepseek');
+      if (!key) return {};
+      return {
+        ANTHROPIC_BASE_URL: process.env.WANIGAN_DEEPSEEK_BASE_URL || 'https://api.deepseek.com/anthropic',
+        ANTHROPIC_AUTH_TOKEN: key,
+        ANTHROPIC_DEFAULT_OPUS_MODEL: process.env.WANIGAN_DEEPSEEK_MODEL || DEEPSEEK_DEFAULT,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: process.env.WANIGAN_DEEPSEEK_MODEL || DEEPSEEK_DEFAULT,
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: process.env.WANIGAN_DEEPSEEK_SMALL_MODEL || DEEPSEEK_SMALL,
       };
     },
   },

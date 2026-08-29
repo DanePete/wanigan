@@ -69,6 +69,11 @@ function glmKey(): boolean {
   }
 }
 
+function deepseekKey(): boolean {
+  try { return hasProviderKey('deepseek'); }
+  catch { return false; }
+}
+
 /* ── hosts ───────────────────────────────────────────────────────────── */
 
 /**
@@ -83,8 +88,11 @@ function hosts(): EgressHost[] {
   const anthropicBase = process.env.ANTHROPIC_BASE_URL?.trim() || 'https://api.anthropic.com';
   const glmModels = process.env.WANIGAN_GLM_MODELS_URL?.trim() || 'https://api.z.ai/api/paas/v4/models';
   const glmBase = process.env.WANIGAN_GLM_BASE_URL?.trim() || 'https://api.z.ai/api/anthropic';
+  const deepseekModels = process.env.WANIGAN_DEEPSEEK_MODELS_URL?.trim() || 'https://api.deepseek.com/models';
+  const deepseekBase = process.env.WANIGAN_DEEPSEEK_BASE_URL?.trim() || 'https://api.deepseek.com/anthropic';
   const key = platformKey();
   const glm = glmKey();
+  const deepseek = deepseekKey();
   const phone = mobileConfig();
 
   return [
@@ -142,6 +150,20 @@ function hosts(): EgressHost[] {
       when: 'Only for sessions launched on the GLM provider, and only when a Z.ai key is stored.',
       activeNow: glm,
       overrideEnv: 'WANIGAN_GLM_BASE_URL',
+    },
+    {
+      host: hostOf(deepseekModels, 'api.deepseek.com'),
+      paths: ['/models'], by: 'wanigan',
+      purpose: 'Verifying a DeepSeek key and reading its model list before Wanigan offers it.',
+      when: 'Only when you save or verify a DeepSeek key, or refresh its catalog.',
+      activeNow: deepseek, overrideEnv: 'WANIGAN_DEEPSEEK_MODELS_URL',
+    },
+    {
+      host: hostOf(deepseekBase, 'api.deepseek.com'),
+      paths: ['/v1/messages'], by: 'agent',
+      purpose: 'Where Claude Code sends requests for DeepSeek sessions; Wanigan supplies the endpoint and key but does not inspect the traffic.',
+      when: 'Only for DeepSeek sessions and only while a DeepSeek key is stored.',
+      activeNow: deepseek, overrideEnv: 'WANIGAN_DEEPSEEK_BASE_URL',
     },
     {
       host: hostOf(phone.pushServer, 'ntfy.sh'),
@@ -247,6 +269,11 @@ function paths(): EgressPath[] {
       label: 'Z.ai credential',
       path: path.join(userData, 'provider-glm.bin'),
       what: 'The GLM token, encrypted the same way and kept apart from the Anthropic key because it is a different secret with a different blast radius.',
+    },
+    {
+      label: 'DeepSeek credential',
+      path: path.join(userData, 'provider-deepseek.bin'),
+      what: 'The DeepSeek token, encrypted by the OS credential store and kept separate from every other provider credential.',
     },
     {
       label: 'Phone monitor credentials',

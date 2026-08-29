@@ -346,10 +346,19 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   say('── providers · the binary, not the label');
   check(providers.runsClaudeCli('claude'), 'claude runs the claude CLI');
   check(providers.runsClaudeCli('glm'), 'so does glm, which is what earns it hooks and a transcript');
+  check(providers.runsClaudeCli('deepseek'), 'DeepSeek uses the reviewed Claude Code harness too');
   check(!providers.runsClaudeCli('codex'), 'codex does not, and still gets none of those flags');
   check(!providers.runsClaudeCli('made-up'), 'an id nobody recognises is refused rather than guessed at');
   check(providers.providerById('glm')?.bin === 'claude' && providers.providerById('codex')?.bin === 'codex',
     'and the provider table agrees: glm spawns claude, codex spawns codex');
+  const priorDeepseekKey = process.env.WANIGAN_DEEPSEEK_KEY;
+  process.env.WANIGAN_DEEPSEEK_KEY = 'smoke-deepseek-key';
+  const deepseekEnv = providers.providerById('deepseek')?.env?.() ?? {};
+  if (priorDeepseekKey === undefined) delete process.env.WANIGAN_DEEPSEEK_KEY;
+  else process.env.WANIGAN_DEEPSEEK_KEY = priorDeepseekKey;
+  check(deepseekEnv.ANTHROPIC_BASE_URL === 'https://api.deepseek.com/anthropic' &&
+    deepseekEnv.ANTHROPIC_AUTH_TOKEN === 'smoke-deepseek-key',
+  'DeepSeek launches against its Anthropic-compatible endpoint with its own credential', deepseekEnv.ANTHROPIC_BASE_URL);
   const codexArgs = providers.providerById('codex')?.args([], { model: 'gpt-5.6-luna', effort: 'high' }) ?? [];
   check(codexArgs.includes('--model') && codexArgs.includes('gpt-5.6-luna'),
     'a chosen Codex model is passed to the CLI');

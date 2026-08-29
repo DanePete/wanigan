@@ -37,6 +37,7 @@ import { mobileFleetSnapshot } from './fleet-snapshot';
 import * as skills from './skills';
 import * as plugins from './plugins';
 import { glmModels, verifyGlmKey } from './glm';
+import { deepseekModels, verifyDeepSeekKey } from './deepseek';
 import * as gitOps from './git';
 import { demoOn, setDemo, demoMap, maskOut, unmaskIn, noteAuthors } from './demo';
 import * as schedule from './schedule';
@@ -803,12 +804,18 @@ function registerIpc() {
       const verified = await verifyGlmKey(key);
       if (!verified.ok) throw new Error(verified.detail);
     }
+    if (id === 'deepseek') {
+      const verified = await verifyDeepSeekKey(key);
+      if (!verified.ok) throw new Error(verified.detail);
+    }
     setProviderKey(id, key);
     return { present: true, fingerprint: providerKeyFingerprint(id) };
   });
   handle('key:clearProvider', (id: string) => { clearProviderKey(id); return true; });
   handle('glm:models', (force?: boolean) => glmModels(force === true));
   handle('glm:verify', () => verifyGlmKey());
+  handle('deepseek:models', (force?: boolean) => deepseekModels(force === true));
+  handle('deepseek:verify', () => verifyDeepSeekKey());
   handle('settings:get', () => ({ spendCapUsd: spendCap() }));
 
   // ── code panel ───────────────────────────────────────────────────────
