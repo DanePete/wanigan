@@ -61,8 +61,8 @@ let secretsError: string | null = null;
 type SnapshotSource = () => MobileFleetSnapshot | Promise<MobileFleetSnapshot>;
 export type MobileControlSource = {
   projects: () => Promise<{ id: string; name: string; branch: string | null }[]>;
-  providers: () => Promise<{ id: string; label: string; available: boolean }[]>;
-  launch: (input: { projectId: string; providerId: string; prompt: string }) => Promise<{ id: string; title: string }>;
+  providers: () => Promise<{ id: string; label: string; available: boolean; models: { value: string; label: string }[]; efforts: string[] }[]>;
+  launch: (input: { projectId: string; providerId: string; model?: string; effort?: string; prompt: string }) => Promise<{ id: string; title: string }>;
   prompt: (sessionId: string, prompt: string) => Promise<void>;
   interrupt: (sessionId: string) => Promise<boolean>;
 };
@@ -575,6 +575,12 @@ function actionText(value: unknown, label: string): string {
   return text;
 }
 
+function optionalLaunchValue(value: unknown, label: string): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string' || value.trim().length > 120 || /[\u0000-\u001f\x7f]/.test(value)) throw new Error(`${label} is invalid.`);
+  return value.trim();
+}
+
 async function serveControl(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
   const source = controlSource;
   if (!controlAllowed() || !source) { json(res, 403, { error: 'Remote control is disabled in Wanigan Settings.' }); return; }
@@ -591,7 +597,7 @@ async function serveControl(req: http.IncomingMessage, res: http.ServerResponse,
   const action = typeof body?.action === 'string' ? body.action : '';
   try {
     if (action === 'launch') {
-      const session = await source.launch({ projectId: actionText(body?.projectId, 'Project'), providerId: actionText(body?.providerId, 'Provider'), prompt: actionText(body?.prompt, 'Prompt') });
+      const session = await source.launch({ projectId: actionText(body?.projectId, 'Project'), providerId: actionText(body?.providerId, 'Provider'), model: optionalLaunchValue(body?.model, 'Model'), effort: optionalLaunchValue(body?.effort, 'Effort'), prompt: actionText(body?.prompt, 'Prompt') });
       json(res, 201, { ok: true, session: { id: safeString(session.id, 160), title: safeString(session.title, 200) } }); return;
     }
     if (action === 'prompt') {
@@ -696,7 +702,7 @@ function dashboardHtml(nonce: string): string {
         <h2>iPad control</h2>
         <div class="control-card">
           <h3>Start an agent</h3><p>Launches a normal Wanigan session on your Mac. The prompt is sent to the selected provider.</p>
-          <form id="launch-form" class="fields"><select id="project" aria-label="Project"></select><select id="provider" aria-label="Provider"></select><textarea id="launch-prompt" maxlength="8000" placeholder="What should this agent do?"></textarea><button>Start session</button></form>
+          <form id="launch-form" class="fields"><select id="project" aria-label="Project"></select><select id="provider" aria-label="Provider"></select><select id="model" aria-label="Model"></select><select id="effort" aria-label="Reasoning effort"></select><textarea id="launch-prompt" maxlength="8000" placeholder="What should this agent do?"></textarea><button>Start session</button></form>
         </div>
         <div class="control-card">
           <h3>Steer a running agent</h3><p>Send the next instruction or interrupt the current turn. Permission decisions still stay at the Mac.</p>
@@ -733,6 +739,14 @@ function dashboardHtml(nonce: string): string {
         return data;
       }
       function option(value, label) { const out = node('option', '', label); out.value = value; return out; }
+      function renderLaunchChoices() {
+        const provider = (controlOptions && controlOptions.providers || []).find((value) => value.id === byId('provider').value);
+        const model = byId('model'), effort = byId('effort');
+        model.replaceChildren(option('', 'Provider default model'), ...((provider && provider.models) || []).map((value) => option(value.value, value.label)));
+        effort.replaceChildren(option('', 'Provider default effort'), ...((provider && provider.efforts) || []).map((value) => option(value, value)));
+        model.disabled = !provider || !(provider.models || []).length;
+        effort.disabled = !provider || !(provider.efforts || []).length;
+      }
       async function renderControls(sessions) {
         visibleSessions = sessions.filter((session) => session.status !== 'exited');
         try {
@@ -740,6 +754,7 @@ function dashboardHtml(nonce: string): string {
           const project = byId('project'), provider = byId('provider'), session = byId('session');
           project.replaceChildren(...(controlOptions.projects || []).map((value) => option(value.id, value.name + (value.branch ? ' · ' + value.branch : ''))));
           provider.replaceChildren(...(controlOptions.providers || []).filter((value) => value.available).map((value) => option(value.id, value.label)));
+          renderLaunchChoices();
           session.replaceChildren(...visibleSessions.map((value) => option(value.id, value.title + ' · ' + value.projectName)));
           byId('launch-form').querySelector('button').disabled = !project.value || !provider.value;
           byId('prompt-form').querySelector('button').disabled = !session.value;
@@ -863,10 +878,11 @@ function dashboardHtml(nonce: string): string {
       }
 
       tokenFromFragment();
+      byId('provider').addEventListener('change', renderLaunchChoices);
       byId('launch-form').addEventListener('submit', async (event) => {
         event.preventDefault(); controlResult.textContent = 'Starting session…';
         try {
-          const result = await api('api/action', { method:'POST', headers:{ 'content-type':'application/json', authorization:'Bearer ' + localStorage.getItem(KEY) }, body:JSON.stringify({ action:'launch', projectId:byId('project').value, providerId:byId('provider').value, prompt:byId('launch-prompt').value }) });
+          const result = await api('api/action', { method:'POST', headers:{ 'content-type':'application/json', authorization:'Bearer ' + localStorage.getItem(KEY) }, body:JSON.stringify({ action:'launch', projectId:byId('project').value, providerId:byId('provider').value, model:byId('model').value, effort:byId('effort').value, prompt:byId('launch-prompt').value }) });
           byId('launch-prompt').value = ''; controlResult.textContent = 'Started ' + result.session.title + '.'; void poll();
         } catch (error) { controlResult.textContent = error instanceof Error ? error.message : 'Could not start the session.'; }
       });

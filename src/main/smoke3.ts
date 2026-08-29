@@ -801,8 +801,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const remoteActions: string[] = [];
     mobile.configureMobileControlSource({
       projects: async () => [{ id: 'prj_mobile', name: 'Mobile repo', branch: 'main' }],
-      providers: async () => [{ id: 'codex', label: 'Codex', available: true }],
-      launch: async (input) => { remoteActions.push(`launch:${input.projectId}:${input.providerId}:${input.prompt}`); return { id: 's_mobile', title: 'Codex · Mobile repo' }; },
+      providers: async () => [{ id: 'codex', label: 'Codex', available: true, models: [{ value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' }], efforts: ['high'] }],
+      launch: async (input) => { remoteActions.push(`launch:${input.projectId}:${input.providerId}:${input.model ?? ''}:${input.effort ?? ''}:${input.prompt}`); return { id: 's_mobile', title: 'Codex · Mobile repo' }; },
       prompt: async (id, prompt) => { remoteActions.push(`prompt:${id}:${prompt}`); },
       interrupt: async (id) => { remoteActions.push(`interrupt:${id}`); return true; },
     });
@@ -810,11 +810,11 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const controls = await fetch(controlUrl, { headers: { authorization: `Bearer ${token}` } });
     const launch = await fetch(new URL('api/action', monitor.localUrl), {
       method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'launch', projectId: 'prj_mobile', providerId: 'codex', prompt: 'Run the check' }),
+      body: JSON.stringify({ action: 'launch', projectId: 'prj_mobile', providerId: 'codex', model: 'gpt-5.6-sol', effort: 'high', prompt: 'Run the check' }),
     });
     check(controls.ok && JSON.parse(await controls.text()).projects?.[0]?.id === 'prj_mobile'
-      && launch.status === 201 && remoteActions[0] === 'launch:prj_mobile:codex:Run the check',
-    'a paired iPad receives only launch choices and can start an explicitly requested session');
+      && launch.status === 201 && remoteActions[0] === 'launch:prj_mobile:codex:gpt-5.6-sol:high:Run the check',
+    'a paired iPad receives model and effort choices and can start an explicitly requested session');
     const remotePrompt = await fetch(new URL('api/action', monitor.localUrl), {
       method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ action: 'prompt', sessionId: 's_mobile', prompt: 'Continue' }),

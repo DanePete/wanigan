@@ -19,6 +19,7 @@ import type {
   LaunchOptions, RunConfig, SourceConfig, HeadlessConfig, HookInput,
   McpServerConfig, ProviderManifestInspection, QueueKind, QueueSlots, TrustLevel,
 } from '../shared/types';
+import { EFFORT_LEVELS } from '../shared/types';
 
 // ── phases 1-24 ────────────────────────────────────────────────────────
 import * as otel from './otel';
@@ -280,9 +281,23 @@ app.whenReady().then(async () => {
   });
   mobile.configureMobileControlSource({
     projects: async () => listProjects().map((project) => ({ id: project.id, name: project.name, branch: project.branch })),
-    providers: async () => (await detectProviders()).map((provider) => ({ id: provider.id, label: provider.label, available: Boolean(provider.path) })),
-    launch: async ({ projectId, providerId, prompt }) => {
-      const session = await createSession({ providerId, projectId, initialPrompt: prompt });
+    providers: async () => {
+      const providers = await detectProviders();
+      const [glm, deepseek] = await Promise.all([glmModels().catch(() => null), deepseekModels().catch(() => null)]);
+      const staticModels: Record<string, { value: string; label: string }[]> = {
+        claude: [{ value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'haiku', label: 'Haiku' }, { value: 'fable', label: 'Fable' }],
+        codex: [{ value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' }, { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' }, { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' }],
+      };
+      return providers.map((provider) => ({
+        id: provider.id, label: provider.label, available: Boolean(provider.path),
+        models: provider.id === 'glm' ? (glm?.models ?? []).map((model) => ({ value: model.id, label: model.label }))
+          : provider.id === 'deepseek' ? (deepseek?.models ?? []).map((model) => ({ value: model.id, label: model.label }))
+          : (staticModels[provider.id] ?? []),
+        efforts: provider.supports.effort ? [...EFFORT_LEVELS, ...(provider.id === 'codex' ? ['ultra'] : [])] : [],
+      }));
+    },
+    launch: async ({ projectId, providerId, model, effort, prompt }) => {
+      const session = await createSession({ providerId, projectId, model, effort, initialPrompt: prompt });
       return { id: session.id, title: session.title };
     },
     prompt: async (sessionId, prompt) => {
