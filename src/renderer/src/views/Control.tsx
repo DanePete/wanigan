@@ -108,6 +108,17 @@ export default function Control({ projects, providers, onOpenSession }: {
         <p>A docket is a durable work contract: task graph, worktree, claim, evidence, checkpoint, and human decision.</p></div>
       <div className="control-head-stats"><strong>{dockets.filter((docket) => ['executing', 'review'].includes(docket.status)).length}</strong><span>active dockets</span></div>
     </header>
+    <section className="card control-guide" aria-labelledby="control-guide-title">
+      <div><span className="label">Quick start</span><h2 id="control-guide-title">How Control works</h2>
+        <p>Use a docket for work you want to delegate without losing the reason for it, the evidence, or the final decision.</p></div>
+      <ol>
+        <li><strong>Define the contract.</strong> Choose a project, write the objective, then add observable acceptance checks. These become the shared definition of done.</li>
+        <li><strong>Work the graph in order.</strong> Start <em>Plan</em> first. Once you mark it complete, <em>Implement</em> unlocks in an isolated worktree. Claim paths such as <code>src/cart/total.ts</code> before parallel work touches them.</li>
+        <li><strong>Capture proof and continuity.</strong> Save a checkpoint before a handoff or interruption. In <em>Verify</em>, run the project review gate; a passing command result is required before the task can complete.</li>
+        <li><strong>Make the final call.</strong> The <em>Review</em> task can approve only after verification passed. Request changes or reject when the evidence does not meet the contract.</li>
+      </ol>
+      <div className="control-example"><span className="label">Example</span><p><strong>Title:</strong> “Prevent duplicate checkout charge”</p><p><strong>Objective:</strong> “Make checkout retries idempotent without changing successful order flow.”</p><p><strong>Acceptance:</strong> “A repeated payment callback is ignored; the existing checkout suite passes; the diff has a review decision.”</p><p className="faint">Start Plan with your preferred provider, claim the payment handler during Implement, run the configured review gate in Verify, then approve or request changes in Review.</p></div>
+    </section>
     {error && <Note tone="error">{error}</Note>}
     {notice && <Note tone="ok">{notice}</Note>}
 
