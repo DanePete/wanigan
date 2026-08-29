@@ -1050,6 +1050,17 @@ function PhoneMonitor() {
               </div>
 
               <div style={{ marginTop: 13 }}>
+                <label className="label">Pairing code</label>
+                <div style={{ display: 'flex', gap: 7, alignItems: 'center', marginTop: 5 }}>
+                  <code className="set-path" style={{ letterSpacing: '0.12em', fontWeight: 700 }}>{status.pairingCode}</code>
+                  <button className="set-mini" onClick={() => void copy(status.pairingCode, 'Pairing code')}>copy code</button>
+                </div>
+                <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 6 }}>
+                  Type this code in the Home Screen Wanigan app. It expires after ten minutes; reopen this panel for a fresh code.
+                </p>
+              </div>
+
+              <div style={{ marginTop: 13 }}>
                 <label className="label">Pairing link</label>
                 <div style={{ display: 'flex', gap: 7, alignItems: 'center', marginTop: 5, flexWrap: 'wrap' }}>
                   <code className="set-path" style={{ userSelect: 'all', flex: 1, overflowWrap: 'anywhere' }}>{status.pairingUrl}</code>

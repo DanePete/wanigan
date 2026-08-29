@@ -561,6 +561,8 @@ export type MobileMonitorStatus = {
   running: boolean;
   localUrl: string;
   pairingUrl: string;
+  /** Time-limited code for pairing a Home Screen app without copying a bearer URL. */
+  pairingCode: string;
   tokenFingerprint: string;
   error: string | null;
   lastPushAt: number | null;

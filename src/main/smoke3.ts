@@ -784,6 +784,12 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
 
     const hash = new URLSearchParams(new URL(monitor.pairingUrl).hash.slice(1));
     const token = hash.get('token') ?? '';
+    const codePair = await fetch(new URL('api/pair', monitor.localUrl), {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: monitor.pairingCode }),
+    });
+    const pairedByCode = await codePair.json() as { token?: string };
+    check(codePair.ok && typeof pairedByCode.token === 'string' && pairedByCode.token === token,
+      'a time-limited desktop pairing code exchanges for the same browser credential without copying a URL');
     const accepted = await fetch(apiUrl, { headers: { authorization: `Bearer ${token}` } });
     const body = await accepted.text();
     check(accepted.ok && JSON.parse(body).sessions?.[0]?.attention?.kind === 'permission',

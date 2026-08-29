@@ -1,6 +1,6 @@
 import http from 'node:http';
 import type { Socket } from 'node:net';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, safeStorage } from 'electron';
@@ -43,6 +43,7 @@ const MAX_TERMINAL_BYTES = 240 * 1024;
 const SNAPSHOT_TIMEOUT_MS = 3_000;
 const TOKEN_BYTES = 32;
 const TOPIC_BYTES = 24;
+const PAIR_CODE_MS = 10 * 60_000;
 
 const KEY = {
   dashboardEnabled: 'mobile_dashboard_enabled',
@@ -98,6 +99,7 @@ let lastServerError: string | null = null;
 let pushResult: MobilePushResult | null = null;
 const sockets = new Set<Socket>();
 const actionTimes: number[] = [];
+const pairingAttempts: number[] = [];
 
 const ATTENTION = new Set(['permission', 'error', 'finished', 'idle', 'working']);
 const SESSION_STATUS = new Set(['starting', 'running', 'exited']);
@@ -226,6 +228,21 @@ function ensureMobileToken(): string {
   return mobileSecrets().token;
 }
 
+function pairingCode(token: string, slot = Math.floor(Date.now() / PAIR_CODE_MS)): string {
+  return createHmac('sha256', token).update(`wanigan-mobile-pair:${slot}`).digest('hex').slice(0, 10).toUpperCase();
+}
+
+function pairingCodeValid(value: string): boolean {
+  const given = value.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  if (!/^[A-F0-9]{10}$/.test(given)) return false;
+  const token = ensureMobileToken();
+  return [0, -1].some((offset) => {
+    const expected = Buffer.from(pairingCode(token, Math.floor(Date.now() / PAIR_CODE_MS) + offset));
+    const candidate = Buffer.from(given);
+    return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+  });
+}
+
 function ensurePushTopic(): string {
   return mobileSecrets().topic;
 }
@@ -287,6 +304,7 @@ export function mobileStatus(): MobileMonitorStatus {
     running: Boolean(server?.listening && serverPort === config.port),
     localUrl: localUrl(config.port),
     pairingUrl: `${dashboardBase(config)}#token=${encodeURIComponent(token)}`,
+    pairingCode: pairingCode(token),
     tokenFingerprint: `${token.slice(0, 8)}…${token.slice(-4)}`,
     error: credentialIssue ?? lastServerError,
     lastPushAt: pushResult?.ok ? pushResult.at : null,
@@ -570,6 +588,18 @@ async function requestJson(req: http.IncomingMessage, limit = 16_384): Promise<R
   } catch { return null; }
 }
 
+async function servePair(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (req.method !== 'POST') { json(res, 405, { error: 'Method not allowed.' }, { allow: 'POST' }); return; }
+  const cutoff = Date.now() - 60_000;
+  while (pairingAttempts.length && pairingAttempts[0] < cutoff) pairingAttempts.shift();
+  if (pairingAttempts.length >= 8) { json(res, 429, { error: 'Too many pairing attempts. Wait a minute and try again.' }); return; }
+  pairingAttempts.push(Date.now());
+  const body = await requestJson(req, 1024);
+  const code = typeof body?.code === 'string' ? body.code : '';
+  if (!pairingCodeValid(code)) { json(res, 401, { error: 'That pairing code is invalid or expired.' }); return; }
+  json(res, 200, { token: ensureMobileToken() });
+}
+
 function actionText(value: unknown, label: string): string {
   if (typeof value !== 'string') throw new Error(`${label} is required.`);
   const text = value.trim();
@@ -697,7 +727,7 @@ function dashboardHtml(nonce: string): string {
       <div><div class="eyebrow">Read-only fleet monitor</div><h1 id="host">Wanigan</h1></div>
       <div class="connection"><span id="dot" class="dot"></span><span id="connection">Connecting…</span></div>
     </header>
-    <section id="pair" class="notice hidden"><strong>This Wanigan app is not paired yet.</strong><p style="margin-top:6px">Home Screen apps keep their own private pairing. Paste the pairing link from Wanigan Settings once.</p><form id="pair-form" style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><input id="pair-token" aria-label="Pairing link or token" autocomplete="off" placeholder="Paste pairing link" style="flex:1;min-width:220px"><button>Pair this app</button></form></section>
+    <section id="pair" class="notice hidden"><strong>This Wanigan app is not paired yet.</strong><p style="margin-top:6px">On the Mac, open Wanigan Settings → Phone monitor and type its ten-character pairing code here.</p><form id="pair-form" style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><input id="pair-token" aria-label="Pairing code" autocomplete="one-time-code" autocapitalize="characters" placeholder="Pairing code" maxlength="12" style="flex:1;min-width:220px"><button>Pair this app</button></form></section>
     <section id="error" class="notice hidden"><strong>Could not read Wanigan.</strong><span id="error-text">The next poll will retry.</span></section>
     <section id="dashboard" class="hidden">
       <div class="stats">
@@ -918,8 +948,12 @@ function dashboardHtml(nonce: string): string {
       byId('pair-form').addEventListener('submit', (event) => {
         event.preventDefault();
         const token = pairingToken(byId('pair-token').value);
-        if (!token) { byId('pair-token').setCustomValidity('Paste the complete pairing link from Wanigan Settings.'); byId('pair-token').reportValidity(); return; }
-        byId('pair-token').setCustomValidity(''); localStorage.setItem(KEY, token); byId('pair-token').value = ''; void poll();
+        if (token) { byId('pair-token').setCustomValidity(''); localStorage.setItem(KEY, token); byId('pair-token').value = ''; void poll(); return; }
+        const code = String(byId('pair-token').value || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+        fetch(new URL('api/pair', location.href), { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ code }), cache:'no-store', credentials:'omit', referrerPolicy:'no-referrer' })
+          .then((response) => response.json().then((body) => ({ response, body })))
+          .then(({ response, body }) => { if (!response.ok || !body.token) throw new Error(body.error || 'Pairing failed.'); localStorage.setItem(KEY, body.token); byId('pair-token').value = ''; void poll(); })
+          .catch((error) => { byId('pair-token').setCustomValidity(error instanceof Error ? error.message : 'Pairing failed.'); byId('pair-token').reportValidity(); });
       });
       byId('provider').addEventListener('change', renderLaunchChoices);
       byId('session').addEventListener('change', () => { byId('terminal').textContent = 'Loading terminal…'; void loadTerminal(); });
@@ -996,6 +1030,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       return;
     }
     await serveStatus(res);
+    return;
+  }
+
+  if (url.pathname === '/api/pair') {
+    await servePair(req, res);
     return;
   }
 
