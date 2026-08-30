@@ -139,7 +139,7 @@ async function main() {
     const stableLaunch = await launchAndVerifyInstalledWanigan('/Applications/Wanigan.app', 1, {
       sleep: async (milliseconds) => { assert.equal(milliseconds, LAUNCH_STABILITY_MS); },
       execute: async (file, args) => {
-        if (file === '/usr/bin/open') { assert.deepEqual(args, ['-n', '/Applications/Wanigan.app']); return {}; }
+        if (file === '/usr/bin/open') { assert.deepEqual(args, ['/Applications/Wanigan.app']); return {}; }
         if (file === '/bin/ps') { stablePolls += 1; return { stdout: stableProcessTable }; }
         throw new Error(`Unexpected stable-launch command: ${file} ${args.join(' ')}`);
       },

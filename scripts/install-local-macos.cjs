@@ -616,8 +616,10 @@ async function launchAndVerifyInstalledWanigan(destination, launchTimeoutSeconds
   console.log(`Launching ${destination}…`);
   try {
     // Passing the bundle path rather than -a Wanigan makes LaunchServices use
-    // precisely the bundle we just verified and promoted.
-    await execute('/usr/bin/open', ['-n', destination]);
+    // precisely the bundle we just verified and promoted. Do not use `-n`:
+    // Wanigan intentionally owns a single desktop instance, and a forced
+    // second instance adds a needless single-instance-lock race after a swap.
+    await execute('/usr/bin/open', [destination]);
   } catch (error) {
     throw installError(`Installed Wanigan but could not launch the exact /Applications bundle.\n${formatCommandFailure(error)}`, error);
   }
