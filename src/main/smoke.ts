@@ -25,6 +25,18 @@ function say(line: string) {
   console.log(line);
   if (LOG) { try { fs.appendFileSync(LOG, line + '\n'); } catch { /* best effort */ } }
 }
+
+// A smoke process has no window and therefore no natural operator escape
+// hatch. Keep a generous, deterministic ceiling so an accidental future
+// await cannot strand an Electron main process during test runs.
+const SMOKE_SUITE_TIMEOUT_MS = 180_000;
+setTimeout(() => {
+  say(`\nFATAL: smoke suite exceeded ${SMOKE_SUITE_TIMEOUT_MS / 1000}s; exiting instead of leaving a headless Electron process.`);
+  // Unlike app.exit(), this cannot be intercepted by the attended-app quit
+  // drain. The smoke profile and its output are both temporary.
+  process.exit(1);
+}, SMOKE_SUITE_TIMEOUT_MS);
+
 const ok = (m: string) => { say(`  \x1b[32m✓\x1b[0m ${m}`); pass++; };
 const bad = (m: string, d?: unknown) => {
   say(`  \x1b[31m✗\x1b[0m ${m}`);

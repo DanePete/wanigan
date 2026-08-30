@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, session } from 'electron';
 import type { WebContents } from 'electron';
+import fs from 'node:fs';
 import path from 'node:path';
 import {
   detectProviders, effectiveProviderBackendId, providerPackRegistry, refreshProviderPacks,
@@ -65,6 +66,51 @@ import * as review from './review';
 import * as codexStatus from './codex-status';
 import * as learning from './learning-service';
 import * as control from './control';
+
+// The smoke suite deliberately has no window. A rejected startup promise in
+// that path otherwise leaves an idle Electron main process behind, with
+// neither a renderer nor the suite's normal log to explain what happened.
+// Keep this entirely test-only: production startup retains its recovery flow.
+const smokeMode = process.env.WANIGAN_SMOKE === '1';
+const smokeLog = process.env.WANIGAN_SMOKE_LOG;
+let smokeBootstrapWatchdog: NodeJS.Timeout | null = null;
+
+function traceSmokeBootstrap(message: string): void {
+  if (!smokeMode) return;
+  const line = `[wanigan smoke bootstrap] ${message}`;
+  console.error(line);
+  if (smokeLog) {
+    try { fs.appendFileSync(smokeLog, line + '\n'); } catch { /* diagnostic only */ }
+  }
+}
+
+function clearSmokeBootstrapWatchdog(): void {
+  if (!smokeBootstrapWatchdog) return;
+  clearTimeout(smokeBootstrapWatchdog);
+  smokeBootstrapWatchdog = null;
+}
+
+function failSmokeBootstrap(stage: string, error: unknown): void {
+  clearSmokeBootstrapWatchdog();
+  const detail = error instanceof Error
+    ? `${error.name}: ${error.message}${error.stack ? `\n${error.stack}` : ''}`
+    : String(error);
+  traceSmokeBootstrap(`FATAL at ${stage}: ${detail.slice(0, 4000)}`);
+  // `app.exit()` runs the normal quit interceptor, which may itself touch
+  // SQLite and turn a failed headless test back into a live GUI process.
+  // This is an isolated disposable profile, so force only this test process
+  // out after the diagnostic has been synchronously recorded.
+  process.exit(1);
+}
+
+if (smokeMode) {
+  traceSmokeBootstrap('main module loaded; waiting for Electron ready');
+  // Electron normally reaches ready in well under a second. Thirty seconds
+  // leaves room for a busy CI/macOS host while still bounding a bad bootstrap.
+  smokeBootstrapWatchdog = setTimeout(() => {
+    failSmokeBootstrap('Electron ready', new Error('Timed out after 30 seconds before the smoke suite began.'));
+  }, 30_000);
+}
 
 // Before any other statement in this file, and before anything opens the
 // database: the rename moved userData, and everything that was in the old
@@ -298,6 +344,10 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  if (smokeMode) {
+    clearSmokeBootstrapWatchdog();
+    traceSmokeBootstrap('Electron ready');
+  }
   if (!ownsUiInstance) return;
   // Wanigan does not use camera, microphone, notifications from web content,
   // or any other Chromium permission. OS notifications are created only by
@@ -326,9 +376,15 @@ app.whenReady().then(async () => {
   }
 
   // Headless verification path: exercise the real main process, then exit.
-  if (process.env.WANIGAN_SMOKE === '1') {
-    const { runSmoke } = await import('./smoke');
-    await runSmoke();
+  if (smokeMode) {
+    try {
+      traceSmokeBootstrap('loading smoke suite');
+      const { runSmoke } = await import('./smoke');
+      traceSmokeBootstrap('smoke suite loaded');
+      await runSmoke();
+    } catch (error) {
+      failSmokeBootstrap('smoke suite startup', error);
+    }
     return;
   }
 

@@ -21,9 +21,17 @@ npm run build >/dev/null 2>&1 || { echo "build failed"; npm run build; exit 1; }
 # Use the installed Electron directly. `npx electron` inherits npm's own
 # lifecycle environment when this script is itself run by `npm test`, which can
 # make Electron exit before main initializes (and before the smoke log exists).
-# Keep stdout/stderr attached: on macOS, Electron can abort during bootstrap
-# when both descriptors are redirected by this nested npm lifecycle.
-./node_modules/.bin/electron . --user-data-dir="$UDD"
+#
+# Electron 44 on macOS can defer app.ready indefinitely when a nested test
+# runner gives it only pipes. `script` supplies a small local pseudo-terminal;
+# it preserves the child exit status and keeps this real-Electron smoke test
+# deterministic both in CI and from an interactive shell. Other platforms use
+# the direct invocation they already supported.
+if [ "$(uname -s)" = "Darwin" ] && command -v script >/dev/null 2>&1; then
+  script -q /dev/null ./node_modules/.bin/electron . --user-data-dir="$UDD"
+else
+  ./node_modules/.bin/electron . --user-data-dir="$UDD"
+fi
 CODE=$?
 
 # Electron prints the results while attached. On an early failure, the log can
