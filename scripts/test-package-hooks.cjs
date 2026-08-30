@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
@@ -11,6 +12,7 @@ const {
   hasUsableSigningIdentity,
   signLocalMacAppIfNeeded,
 } = require('./sign-local-macos-app.cjs');
+const { assertElectronAsarIntegrity, synchronizeElectronAsarIntegrity } = require('./macos-asar-integrity.cjs');
 
 async function exists(file) {
   try {
@@ -57,9 +59,16 @@ async function main() {
       'Release',
       'spawn-helper'
     );
+    const packagedApp = path.join(fixture, 'Wanigan.app');
+    const packagedAsar = path.join(packagedApp, 'Contents', 'Resources', 'app.asar');
+    const packagedInfo = path.join(packagedApp, 'Contents', 'Info.plist');
     await fs.mkdir(path.dirname(packagedHelper), { recursive: true });
     await fs.writeFile(packagedHelper, 'helper');
     await fs.chmod(packagedHelper, 0o755);
+    await fs.mkdir(path.dirname(packagedAsar), { recursive: true });
+    await fs.writeFile(packagedAsar, 'fixture asar bytes');
+    await fs.writeFile(packagedInfo, `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>ElectronAsarIntegrity</key><dict><key>Resources/app.asar</key><dict><key>hash</key><string>${'0'.repeat(64)}</string></dict></dict></dict></plist>`);
 
     const afterPackContext = {
       appOutDir: fixture,
@@ -73,6 +82,9 @@ async function main() {
       },
     };
     await afterPack(afterPackContext);
+    if (process.platform === 'darwin') {
+      await assertElectronAsarIntegrity(packagedApp);
+    }
 
     await fs.chmod(packagedHelper, 0o644);
     await assert.rejects(afterPack(afterPackContext), /not executable/);
@@ -159,6 +171,33 @@ async function main() {
     assert.equal(discoveryOptOut.signed, true,
       'disabling builder identity discovery must still leave a sealed local app');
     assert.equal(discoveryOptOutCalls.filter(([file]) => file === '/usr/bin/codesign').length, 3);
+
+    const integrityBytes = Buffer.from('archive that must be hashed exactly');
+    const expectedIntegrity = crypto.createHash('sha256').update(integrityBytes).digest('hex');
+    let embeddedIntegrity = 'f'.repeat(64);
+    const integrityCalls = [];
+    const integrityOptions = {
+      filesystem: { readFile: async (file) => { assert.match(file, /Resources\/app\.asar$/); return integrityBytes; } },
+      execute: async (file, args) => {
+        integrityCalls.push([file, args]);
+        if (args[0] !== '-c') throw new Error(`Unexpected integrity command: ${file}`);
+        if (args[1].startsWith('Set ')) {
+          embeddedIntegrity = args[1].split(' ').at(-1);
+          return {};
+        }
+        if (args[1].startsWith('Print ')) return { stdout: `${embeddedIntegrity}\n` };
+        throw new Error(`Unexpected integrity plist command: ${args[1]}`);
+      },
+    };
+    assert.equal(await synchronizeElectronAsarIntegrity('/fixture/Wanigan.app', integrityOptions), expectedIntegrity,
+      'afterPack derives ElectronAsarIntegrity from the exact packed archive bytes');
+    assert.equal(await assertElectronAsarIntegrity('/fixture/Wanigan.app', integrityOptions), expectedIntegrity,
+      'release verification accepts a matching embedded Electron archive checksum');
+    embeddedIntegrity = '0'.repeat(64);
+    await assert.rejects(assertElectronAsarIntegrity('/fixture/Wanigan.app', integrityOptions), /does not match/,
+      'release verification rejects a stale embedded Electron archive checksum');
+    assert.equal(integrityCalls.filter(([, args]) => args[1].startsWith('Set ')).length, 1,
+      'integrity repair happens once before the app signature is sealed');
 
     console.log('package hook checks passed');
   } finally {

@@ -505,6 +505,7 @@ function migratePhases(d: Database.Database) {
   d.exec("CREATE INDEX IF NOT EXISTS idx_runs_kind ON runs(kind, created_at DESC)");
   migrateLearning(d);
   migrateControl(d);
+  migrateImprovementScout(d);
 }
 
 /**
@@ -885,6 +886,150 @@ function migrateControl(d: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_work_trace_events_docket ON work_trace_events(docket_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_work_trace_events_session ON work_trace_events(session_id, created_at DESC);
   `);
+}
+
+/**
+ * AI Improvement Scout is intentionally an evidence inbox, not a self-editing
+ * updater. Its source registry is local and allow-listed; fetched excerpts and
+ * deterministic proposals stay in this database until a person explicitly
+ * turns one into a Control Goal.
+ */
+function migrateImprovementScout(d: Database.Database) {
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS improvement_scout_sources (
+      id              TEXT PRIMARY KEY,
+      label           TEXT NOT NULL,
+      description     TEXT NOT NULL,
+      url             TEXT NOT NULL UNIQUE,
+      publisher       TEXT NOT NULL,
+      kind            TEXT NOT NULL,
+      official        INTEGER NOT NULL DEFAULT 1,
+      enabled         INTEGER NOT NULL DEFAULT 1,
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL,
+      last_checked_at INTEGER,
+      last_status     TEXT,
+      last_detail     TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_improvement_scout_sources_enabled
+      ON improvement_scout_sources(enabled, id);
+
+    CREATE TABLE IF NOT EXISTS improvement_scout_runs (
+      id                TEXT PRIMARY KEY,
+      mode              TEXT NOT NULL,
+      status            TEXT NOT NULL,
+      network_allowed   INTEGER NOT NULL DEFAULT 0,
+      source_count      INTEGER NOT NULL DEFAULT 0,
+      evidence_count    INTEGER NOT NULL DEFAULT 0,
+      suggestion_count  INTEGER NOT NULL DEFAULT 0,
+      analysis_method   TEXT NOT NULL,
+      inventory_json    TEXT NOT NULL DEFAULT '{}',
+      started_at        INTEGER NOT NULL,
+      ended_at          INTEGER,
+      detail            TEXT,
+      error             TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_improvement_scout_runs_recent
+      ON improvement_scout_runs(started_at DESC);
+    -- The attended app and its optional launchd daemon share this database.
+    -- One durable running row is the cross-process claim that stops them both
+    -- from fetching the same weekly sources at once.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_improvement_scout_one_running
+      ON improvement_scout_runs(status) WHERE status='running';
+
+    CREATE TABLE IF NOT EXISTS improvement_scout_suggestions (
+      id                TEXT PRIMARY KEY,
+      fingerprint       TEXT NOT NULL UNIQUE,
+      run_id            TEXT REFERENCES improvement_scout_runs(id) ON DELETE SET NULL,
+      status            TEXT NOT NULL DEFAULT 'new',
+      category          TEXT NOT NULL,
+      title             TEXT NOT NULL,
+      summary           TEXT NOT NULL,
+      why_now           TEXT NOT NULL,
+      recommendation    TEXT NOT NULL,
+      score             INTEGER NOT NULL DEFAULT 0,
+      confidence        REAL NOT NULL DEFAULT 0,
+      effort            TEXT NOT NULL,
+      risk              TEXT NOT NULL,
+      analysis_method   TEXT NOT NULL,
+      created_at        INTEGER NOT NULL,
+      updated_at        INTEGER NOT NULL,
+      reviewed_at       INTEGER,
+      note              TEXT,
+      docket_id         TEXT REFERENCES work_dockets(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_improvement_scout_suggestions_status
+      ON improvement_scout_suggestions(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_improvement_scout_suggestions_run
+      ON improvement_scout_suggestions(run_id, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS improvement_scout_evidence (
+      id                TEXT PRIMARY KEY,
+      run_id            TEXT NOT NULL REFERENCES improvement_scout_runs(id) ON DELETE CASCADE,
+      suggestion_id     TEXT REFERENCES improvement_scout_suggestions(id) ON DELETE SET NULL,
+      source_id         TEXT NOT NULL REFERENCES improvement_scout_sources(id) ON DELETE RESTRICT,
+      source_title      TEXT NOT NULL,
+      source_url        TEXT NOT NULL,
+      publisher         TEXT NOT NULL,
+      excerpt           TEXT NOT NULL,
+      content_hash      TEXT NOT NULL,
+      published_at      INTEGER,
+      retrieved_at      INTEGER NOT NULL,
+      UNIQUE(run_id, source_id, content_hash)
+    );
+    CREATE INDEX IF NOT EXISTS idx_improvement_scout_evidence_suggestion
+      ON improvement_scout_evidence(suggestion_id, retrieved_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_improvement_scout_evidence_run
+      ON improvement_scout_evidence(run_id, retrieved_at DESC);
+
+    -- One official document can support more than one capability gap. Keeping
+    -- that cardinality in a join table avoids silently moving the evidence to
+    -- whichever deterministic rule happened to run last.
+    CREATE TABLE IF NOT EXISTS improvement_scout_suggestion_evidence (
+      suggestion_id TEXT NOT NULL REFERENCES improvement_scout_suggestions(id) ON DELETE CASCADE,
+      evidence_id   TEXT NOT NULL REFERENCES improvement_scout_evidence(id) ON DELETE CASCADE,
+      created_at    INTEGER NOT NULL,
+      PRIMARY KEY (suggestion_id, evidence_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_improvement_scout_suggestion_evidence_evidence
+      ON improvement_scout_suggestion_evidence(evidence_id, created_at DESC);
+  `);
+
+  // The first Scout build stored a single nullable suggestion_id directly on
+  // evidence. Preserve every existing relation while upgrades gain the
+  // many-to-many link; an old row can never be made less attributable by a
+  // schema upgrade.
+  d.exec(`
+    INSERT OR IGNORE INTO improvement_scout_suggestion_evidence (suggestion_id,evidence_id,created_at)
+    SELECT suggestion_id,id,retrieved_at
+      FROM improvement_scout_evidence
+     WHERE suggestion_id IS NOT NULL
+  `);
+
+  // Seed only absent rows. A later build can improve its copy or add a source,
+  // but it must never silently re-enable a source the operator turned off.
+  const at = Date.now();
+  const seed = d.prepare(`
+    INSERT OR IGNORE INTO improvement_scout_sources
+      (id,label,description,url,publisher,kind,official,enabled,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
+  `);
+  const sources: Array<[string, string, string, string, string, string]> = [
+    ['openai-release-notes', 'OpenAI developer changelog', 'Official OpenAI developer and product capability changes.', 'https://learn.chatgpt.com/docs/changelog', 'OpenAI', 'changelog'],
+    ['claude-code-changelog', 'Claude Code changelog', 'Official Claude Code changes and developer-workflow additions.', 'https://code.claude.com/docs/en/changelog', 'Anthropic', 'changelog'],
+    ['anthropic-platform-release-notes', 'Anthropic Platform release notes', 'Official API and platform changes relevant to agent integrations.', 'https://platform.claude.com/docs/en/release-notes/overview', 'Anthropic', 'release-notes'],
+    ['github-changelog', 'GitHub changelog', 'Official GitHub platform and MCP ecosystem announcements.', 'https://github.blog/changelog/', 'GitHub', 'changelog'],
+    ['github-releases-rest-docs', 'GitHub Releases REST API', 'Official release-discovery API reference and change context.', 'https://docs.github.com/en/rest/releases', 'GitHub', 'documentation'],
+  ];
+  for (const source of sources) seed.run(...source, 1, 1, at, at);
+  // URLs are code-owned security policy rather than an operator preference.
+  // Refresh those fields on upgrade while preserving the user's enabled flag,
+  // evidence history and last-check status.
+  const refresh = d.prepare(`UPDATE improvement_scout_sources
+    SET label=?,description=?,url=?,publisher=?,kind=?,official=1,updated_at=? WHERE id=?`);
+  for (const [id, label, description, url, publisher, kind] of sources) {
+    refresh.run(label, description, url, publisher, kind, at, id);
+  }
 }
 
 export function logEvent(runId: string, level: 'info' | 'warn' | 'error', message: string) {

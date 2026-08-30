@@ -89,6 +89,7 @@ export function slotsSetting(): QueueSlots {
       session: Math.max(1, Number(parsed.session) || DEFAULT_SLOTS.session),
       headless: Math.max(1, Number(parsed.headless) || DEFAULT_SLOTS.headless),
       batch: Math.max(1, Number(parsed.batch) || DEFAULT_SLOTS.batch),
+      scout: Math.max(1, Number(parsed.scout) || DEFAULT_SLOTS.scout),
     };
   } catch { return DEFAULT_SLOTS; }
 }

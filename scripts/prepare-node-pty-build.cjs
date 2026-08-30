@@ -3,6 +3,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { signLocalMacAppIfNeeded } = require('./sign-local-macos-app.cjs');
+const { synchronizeElectronAsarIntegrity } = require('./macos-asar-integrity.cjs');
 
 /**
  * electron-builder runs @electron/rebuild without force. Its `.forge-meta`
@@ -81,6 +82,14 @@ async function afterPack(context) {
 
   if (!stat.isFile() || (stat.mode & 0o111) === 0) {
     throw new Error(`node-pty spawn-helper is not executable in the packaged app: ${helper}`);
+  }
+
+  // Electron's fuse can verify this archive before Node starts. Keep the
+  // embedded checksum current before any ad-hoc or Developer ID signature
+  // seals Info.plist; otherwise a package can pass codesign yet fail once the
+  // integrity fuse is enabled.
+  if (process.platform === 'darwin') {
+    await synchronizeElectronAsarIntegrity(path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`));
   }
 
   // electron-builder skips its signing phase when this Mac has no valid

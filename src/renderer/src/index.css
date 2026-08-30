@@ -364,18 +364,18 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .nav-menu-item:hover, .nav-menu-item:focus-visible, .nav-menu-item.on { background: var(--accent-soft); color: var(--text); }
 .nav-menu-item.on { box-shadow: inset 2px 0 0 var(--plate-red); }
 .nav-menu-shortcut { color: var(--text-faint); font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace; font-size: var(--t-micro); }
-.nav-codex-status {
+.nav-usage-status {
   flex: none; min-height: 38px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r-sm);
   background: var(--bg-sunk); color: var(--text-dim); font-size: var(--t-micro); font-variant-numeric: tabular-nums;
 }
-.nav-codex-status:hover { border-color: var(--accent); color: var(--text); }
-.nav-codex-status.low { border-color: var(--warning); color: var(--warning); }
-.nav-codex-week { margin-left: 4px; }
-@media (max-width: 1180px) { .nav-codex-week { display: none; } .nav-codex-status { max-width: 138px; } }
+.nav-usage-status:hover { border-color: var(--accent); color: var(--text); }
+.nav-usage-status.low { border-color: var(--warning); color: var(--warning); }
+.nav-usage-week { margin-left: 4px; }
+@media (max-width: 1180px) { .nav-usage-week { display: none; } .nav-usage-status { max-width: 138px; } }
 @media (max-width: 920px) {
   .brand-context { display: none; }
-  .nav-codex-status { display: none; }
+  .nav-usage-status { display: none; }
 }
 @media (max-width: 700px) {
   .nav-titlebar { min-height: 50px; gap: var(--s-2); padding-right: var(--s-2); }
@@ -397,7 +397,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 }
 @media (pointer: coarse) {
   .nav-titlebar { padding-left: var(--s-4); }
-  .nav-new-session, .nav-views-button, .nav-quick-run, .nav-codex-status, .theme-control { min-height: 44px; }
+  .nav-new-session, .nav-views-button, .nav-quick-run, .nav-usage-status, .theme-control { min-height: 44px; }
   .theme-control select { min-height: 38px; }
   .nav-menu-item { min-height: 44px; }
 }

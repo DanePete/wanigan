@@ -28,9 +28,12 @@ npm run build >/dev/null 2>&1 || { echo "build failed"; npm run build; exit 1; }
 # deterministic both in CI and from an interactive shell. Other platforms use
 # the direct invocation they already supported.
 if [ "$(uname -s)" = "Darwin" ] && command -v script >/dev/null 2>&1; then
-  script -q /dev/null ./node_modules/.bin/electron . --user-data-dir="$UDD"
+  # Keep the launch boundary explicit as well as unsetting it above. Some
+  # editor/Codex hosts export this development flag for every child they start;
+  # Electron interprets it before Wanigan can report a useful smoke failure.
+  env -u ELECTRON_RUN_AS_NODE script -q /dev/null ./node_modules/.bin/electron . --user-data-dir="$UDD"
 else
-  ./node_modules/.bin/electron . --user-data-dir="$UDD"
+  env -u ELECTRON_RUN_AS_NODE ./node_modules/.bin/electron . --user-data-dir="$UDD"
 fi
 CODE=$?
 

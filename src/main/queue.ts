@@ -224,6 +224,10 @@ export function slots(): QueueSlots {
     session: clampSlot(o.session, DEFAULT_SLOTS.session),
     headless: clampSlot(o.headless, DEFAULT_SLOTS.headless),
     batch: clampSlot(o.batch, DEFAULT_SLOTS.batch),
+    // Scout source collection is bounded and serial by design. It gets its
+    // own lane so a weekly evidence pass never waits behind terminal work,
+    // while still going through the same durable dispatcher/lease boundary.
+    scout: clampSlot(o.scout, DEFAULT_SLOTS.scout),
   };
 }
 
@@ -241,6 +245,7 @@ export function setSlots(next: Partial<QueueSlots>): QueueSlots {
     session: next.session === undefined ? cur.session : clampSlot(next.session, cur.session, 1),
     headless: next.headless === undefined ? cur.headless : clampSlot(next.headless, cur.headless, 1),
     batch: next.batch === undefined ? cur.batch : clampSlot(next.batch, cur.batch, 1),
+    scout: next.scout === undefined ? cur.scout : clampSlot(next.scout, cur.scout, 1),
   };
   setSetting(SLOTS_KEY, JSON.stringify(merged));
   emit();
@@ -310,7 +315,7 @@ async function dispatch(): Promise<void> {
   let moved = recoverExpiredLeases(now);
 
   const limits = slots();
-  const used: Record<QueueKind, number> = { session: 0, headless: 0, batch: 0 };
+  const used: Record<QueueKind, number> = { session: 0, headless: 0, batch: 0, scout: 0 };
   const running = d.prepare("SELECT kind, COUNT(*) n FROM queue WHERE state='running' GROUP BY kind")
     .all() as { kind: string; n: number }[];
   for (const r of running) {

@@ -1592,6 +1592,7 @@ const KIND_COPY: { id: keyof QueueSlots; label: string; detail: string }[] = [
   { id: 'session',  label: 'Interactive sessions', detail: 'Terminals you drive yourself.' },
   { id: 'headless', label: 'Headless runs',        detail: 'One unattended agent per repo.' },
   { id: 'batch',    label: 'Batch submissions',    detail: 'Submissions in flight against the Batches API.' },
+  { id: 'scout',    label: 'Improvement Scout',     detail: 'One bounded official-source research pass at a time.' },
 ];
 
 function Dispatcher({ active }: { active: boolean }) {
@@ -1612,7 +1613,7 @@ function Dispatcher({ active }: { active: boolean }) {
   }, [active]);
 
   const running = useMemo(() => {
-    const by: Record<string, number> = { session: 0, headless: 0, batch: 0 };
+    const by: Record<string, number> = { session: 0, headless: 0, batch: 0, scout: 0 };
     if (queue.v.s === 'ok') for (const q of queue.v.d) if (q.state === 'running') by[q.kind] = (by[q.kind] ?? 0) + 1;
     return by;
   }, [queue.v]);
@@ -1623,7 +1624,7 @@ function Dispatcher({ active }: { active: boolean }) {
       const applied = await window.wanigan.queue.setSlots(next);
       setDraft(applied);
       slots.reload();
-      setSaved({ tone: 'ok', text: `Wanigan will now start at most ${applied.session} sessions, ${applied.headless} headless runs and ${applied.batch} batch submissions at a time.` });
+      setSaved({ tone: 'ok', text: `Wanigan will now start at most ${applied.session} sessions, ${applied.headless} headless runs, ${applied.batch} batch submissions and ${applied.scout} Scout pass${applied.scout === 1 ? '' : 'es'} at a time.` });
     } catch (e) { setSaved({ tone: 'error', text: `Slots were not saved: ${msg(e)}` }); }
   }
 
@@ -1644,7 +1645,7 @@ function Dispatcher({ active }: { active: boolean }) {
       <Frame v={slots.v} what="the slot limits" onRetry={slots.reload}>
         {(loaded) => {
           const d = draft ?? loaded;
-          const dirty = (['session', 'headless', 'batch'] as const).some((k) => d[k] !== loaded[k]);
+          const dirty = (['session', 'headless', 'batch', 'scout'] as const).some((k) => d[k] !== loaded[k]);
           return (
           <>
             {KIND_COPY.map(({ id, label, detail }) => {

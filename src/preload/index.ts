@@ -13,6 +13,8 @@ import type {
   LearningExperiment, LearningOverview, LearningSettings, LearningSignal,
   OptimizerDiagnostic, ProviderManifestInspection, ProviderPackInfo, ProviderProfileInfo, SkillDiagnostic,
   TeachWaniganInput,
+  ImprovementScoutGoal, ImprovementScoutOverview, ImprovementScoutRun,
+  ImprovementScoutSettings, ImprovementScoutSource, ImprovementScoutSuggestion, ImprovementScoutSuggestionStatus,
   ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode, DocketProof,
   DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, WorkDocket,
 } from '../shared/types';
@@ -308,6 +310,29 @@ const api = {
     daemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string }>('schedule:daemon'),
     installDaemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string }>('schedule:installDaemon'),
     uninstallDaemon: () => call<{ supported: boolean; installed: boolean; path: string; detail: string }>('schedule:uninstallDaemon'),
+  },
+  // ── AI Improvement Scout ──────────────────────────────────────────
+  // Source URLs never cross this bridge. The main process selects from its
+  // fixed official allow-list, and an explicit `allowNetwork` click grants
+  // only one manual pass; weekly egress has a separate stored setting.
+  scout: {
+    overview: () => call<ImprovementScoutOverview>('scout:overview'),
+    settings: () => call<ImprovementScoutSettings>('scout:settings'),
+    setSettings: (patch: Partial<ImprovementScoutSettings>) =>
+      call<ImprovementScoutSettings>('scout:setSettings', patch),
+    sources: () => call<ImprovementScoutSource[]>('scout:sources'),
+    setSourceEnabled: (id: string, enabled: boolean) =>
+      call<ImprovementScoutSource[]>('scout:setSourceEnabled', id, enabled),
+    runs: (limit?: number) => call<ImprovementScoutRun[]>('scout:runs', limit),
+    suggestions: (filter?: { status?: ImprovementScoutSuggestionStatus | ImprovementScoutSuggestionStatus[]; limit?: number }) =>
+      call<ImprovementScoutSuggestion[]>('scout:suggestions', filter),
+    suggestion: (id: string) => call<ImprovementScoutSuggestion>('scout:suggestion', id),
+    updateSuggestion: (id: string, patch: { status?: ImprovementScoutSuggestionStatus; note?: string | null }) =>
+      call<ImprovementScoutSuggestion>('scout:updateSuggestion', id, patch),
+    run: (input?: { mode?: 'manual' | 'preview'; allowNetwork?: boolean }) =>
+      call<ImprovementScoutRun>('scout:run', input),
+    createGoal: (id: string, input: { projectId: string }) =>
+      call<ImprovementScoutGoal>('scout:createGoal', id, input),
   },
   review: {
     recipe: (projectId: string) => call<ReviewRecipe>('review:recipe', projectId),

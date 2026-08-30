@@ -22,6 +22,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFile: execFileCallback } = require('node:child_process');
 const { promisify } = require('node:util');
+const { assertElectronAsarIntegrity } = require('./macos-asar-integrity.cjs');
 
 const execFile = promisify(execFileCallback);
 
@@ -171,6 +172,19 @@ function formatCommandFailure(error) {
   return details || 'No diagnostic was returned by macOS.';
 }
 
+/**
+ * Electron treats this opt-in development variable as an instruction to run
+ * its binary as Node. An installer is often invoked from an editor extension
+ * host (including Codex), where that variable is inherited legitimately.
+ * LaunchServices must never pass it into the desktop app, or a healthy bundle
+ * appears to launch and then exits as a Node process before Wanigan loads.
+ */
+function desktopLaunchEnvironment(environment = process.env) {
+  const cleaned = { ...environment };
+  delete cleaned.ELECTRON_RUN_AS_NODE;
+  return cleaned;
+}
+
 async function lstatOrNull(file, filesystem = fs) {
   try {
     return await filesystem.lstat(file);
@@ -297,6 +311,11 @@ async function assertVerifiedWaniganApp(appPath, options = {}) {
     );
   }
   const signatureMetadata = await verifyCodeSignature(resolvedPath, execute);
+  try {
+    await assertElectronAsarIntegrity(resolvedPath, { filesystem, execute });
+  } catch (error) {
+    throw installError(`Electron archive integrity verification failed for ${resolvedPath}.\n${error.message}`, error);
+  }
   return { appPath: resolvedPath, executable, helper, bundleIdentifier, signatureMetadata };
 }
 
@@ -304,23 +323,45 @@ function targetExecutable(destination = path.join(APPLICATIONS_DIRECTORY, APP_FI
   return path.join(destination, 'Contents', 'MacOS', APP_NAME);
 }
 
-function parseTargetProcessIds(processTable, executablePath) {
-  const ids = [];
+function parseWaniganProcessRecords(processTable) {
+  const processes = [];
   for (const line of String(processTable || '').split('\n')) {
     const match = line.match(/^\s*(\d+)\s+(.+)$/);
-    if (match && match[2].includes(executablePath)) ids.push(Number(match[1]));
+    if (!match) continue;
+    // The executable is the main bundle binary, not a Helper process. Match
+    // the canonical bundle plus hidden/update/previous variants: any of them
+    // can own Electron's shared user-data lock. Anchoring at the command start
+    // keeps an argument that merely mentions Wanigan.app from impersonating a
+    // process.
+    const app = match[2].match(/^(\/.*?\/(?:\.?Wanigan\.app(?:[.-][^/]+)?))\/Contents\/MacOS\/Wanigan(?=$|\s+--)/);
+    if (!app) continue;
+    processes.push({ pid: Number(match[1]), appPath: path.resolve(app[1]), command: match[2] });
   }
-  return [...new Set(ids)];
+  return processes;
+}
+
+function parseTargetProcessIds(processTable, executablePath) {
+  const destination = path.resolve(path.dirname(path.dirname(path.dirname(executablePath))));
+  return [...new Set(
+    parseWaniganProcessRecords(processTable)
+      .filter((process) => process.appPath === destination)
+      .map((process) => process.pid),
+  )];
+}
+
+async function waniganAppProcesses(execute = execFile) {
+  try {
+    const result = await execute('/bin/ps', ['-wwax', '-o', 'pid=,command=']);
+    return parseWaniganProcessRecords(result?.stdout || '');
+  } catch (error) {
+    throw installError(`Could not inspect Wanigan processes.\n${formatCommandFailure(error)}`, error);
+  }
 }
 
 async function runningTargetProcessIds(destination, execute = execFile) {
   const executable = targetExecutable(destination);
-  try {
-    const result = await execute('/bin/ps', ['-wwax', '-o', 'pid=,command=']);
-    return parseTargetProcessIds(result?.stdout || '', executable);
-  } catch (error) {
-    throw installError(`Could not inspect the installed Wanigan process.\n${formatCommandFailure(error)}`, error);
-  }
+  const processes = await waniganAppProcesses(execute);
+  return processes.filter((process) => process.command.includes(executable)).map((process) => process.pid);
 }
 
 function delay(milliseconds) {
@@ -385,6 +426,23 @@ async function assertNoInstalledWaniganProcess(destination, execute = execFile) 
       `Wanigan is running (PID ${processIds.join(', ')}). The installer will not replace a live app; close it normally and try again.`,
     );
   }
+}
+
+/**
+ * Electron's single-instance lock belongs to Wanigan's user-data directory,
+ * not an individual .app path. A release, staging, or older copy can therefore
+ * make the newly promoted /Applications bundle exit immediately even though
+ * the installed path itself was quiet. Refuse before touching either bundle;
+ * this is an inventory guard, never a signal or a forced close.
+ */
+async function assertNoOtherWaniganProcess(destination, execute = execFile) {
+  const target = path.resolve(destination);
+  const other = (await waniganAppProcesses(execute)).filter((process) => process.appPath !== target);
+  if (!other.length) return;
+  const detail = other.map((process) => `PID ${process.pid} (${process.appPath})`).join(', ');
+  throw installError(
+    `Another Wanigan bundle is still running: ${detail}. It can own Wanigan's single-instance lock. Close that copy normally before installing; no files were changed.`,
+  );
 }
 
 function safeToken(value) {
@@ -509,6 +567,7 @@ async function installVerifiedBundle(source, options = {}) {
     await assertAbsent(paths.trashApp, filesystem);
     await assertKnownInstalledWanigan(paths.destination, { filesystem, execute });
     await assertNoInstalledWaniganProcess(paths.destination, execute);
+    await assertNoOtherWaniganProcess(paths.destination, execute);
 
     await filesystem.mkdir(paths.stageRoot, { mode: 0o700 });
     stageCreated = true;
@@ -518,6 +577,7 @@ async function installVerifiedBundle(source, options = {}) {
     // Check once more immediately before the first rename. A quit request is
     // made by the caller; this guard makes a launch race fail without a swap.
     await assertNoInstalledWaniganProcess(paths.destination, execute);
+    await assertNoOtherWaniganProcess(paths.destination, execute);
     const hasCurrentInstall = await assertKnownInstalledWanigan(paths.destination, { filesystem, execute });
     if (hasCurrentInstall) {
       await filesystem.rename(paths.destination, paths.backupApp);
@@ -613,13 +673,14 @@ async function runPrivilegedInstall(options, execute = execFile) {
 async function launchAndVerifyInstalledWanigan(destination, launchTimeoutSeconds, options = {}) {
   const execute = options.execute || execFile;
   const sleep = options.sleep || delay;
+  const environment = desktopLaunchEnvironment(options.environment || process.env);
   console.log(`Launching ${destination}…`);
   try {
     // Passing the bundle path rather than -a Wanigan makes LaunchServices use
     // precisely the bundle we just verified and promoted. Do not use `-n`:
     // Wanigan intentionally owns a single desktop instance, and a forced
     // second instance adds a needless single-instance-lock race after a swap.
-    await execute('/usr/bin/open', [destination]);
+    await execute('/usr/bin/open', [destination], { env: environment });
   } catch (error) {
     throw installError(`Installed Wanigan but could not launch the exact /Applications bundle.\n${formatCommandFailure(error)}`, error);
   }
@@ -661,6 +722,7 @@ async function main() {
   await assertVerifiedWaniganApp(options.source);
   await assertKnownInstalledWanigan(paths.destination);
   await gracefullyQuitInstalledWanigan(paths.destination, options.quitTimeoutSeconds);
+  await assertNoOtherWaniganProcess(paths.destination);
 
   await ensureTrashDirectory(paths.trashDirectory);
   const canWriteApplications = await canWriteDirectory(APPLICATIONS_DIRECTORY);
@@ -689,18 +751,21 @@ if (require.main === module) {
 exports.APP_FILENAME = APP_FILENAME;
 exports.APPLICATIONS_DIRECTORY = APPLICATIONS_DIRECTORY;
 exports.BUNDLE_IDENTIFIER = BUNDLE_IDENTIFIER;
+exports.desktopLaunchEnvironment = desktopLaunchEnvironment;
 exports.DEFAULT_SOURCE = DEFAULT_SOURCE;
 exports.LAUNCH_STABILITY_MS = LAUNCH_STABILITY_MS;
 exports.SPAWN_HELPER_RELATIVE_PATH = SPAWN_HELPER_RELATIVE_PATH;
 exports.appleScriptString = appleScriptString;
 exports.assertTrashDirectory = assertTrashDirectory;
 exports.assertKnownInstalledWanigan = assertKnownInstalledWanigan;
+exports.assertNoOtherWaniganProcess = assertNoOtherWaniganProcess;
 exports.assertSignatureMetadata = assertSignatureMetadata;
 exports.assertVerifiedWaniganApp = assertVerifiedWaniganApp;
 exports.gracefullyQuitInstalledWanigan = gracefullyQuitInstalledWanigan;
 exports.installationPaths = installationPaths;
 exports.launchAndVerifyInstalledWanigan = launchAndVerifyInstalledWanigan;
 exports.parseArguments = parseArguments;
+exports.parseWaniganProcessRecords = parseWaniganProcessRecords;
 exports.parseTargetProcessIds = parseTargetProcessIds;
 exports.privilegedCommand = privilegedCommand;
 exports.shellQuote = shellQuote;

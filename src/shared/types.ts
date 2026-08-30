@@ -797,7 +797,7 @@ export type GoalTraceEvent = {
 
 /* ── P11 · dispatcher ───────────────────────────────────────────────── */
 
-export type QueueKind = 'session' | 'headless' | 'batch';
+export type QueueKind = 'session' | 'headless' | 'batch' | 'scout';
 export type QueueState = 'waiting' | 'running' | 'done' | 'failed' | 'canceled';
 
 export type QueueItem = {
@@ -817,8 +817,8 @@ export type QueueItem = {
   error: string | null;
 };
 
-export type QueueSlots = { session: number; headless: number; batch: number };
-export const DEFAULT_SLOTS: QueueSlots = { session: 4, headless: 3, batch: 2 };
+export type QueueSlots = { session: number; headless: number; batch: number; scout: number };
+export const DEFAULT_SLOTS: QueueSlots = { session: 4, headless: 3, batch: 2, scout: 1 };
 
 /* ── P12 · MCP ──────────────────────────────────────────────────────── */
 
@@ -1032,6 +1032,129 @@ export type WaniganSettings = {
   mcpServerEnabled: boolean;
   pet: boolean;
   learning: LearningSettings;
+};
+
+/* ── AI Improvement Scout ──────────────────────────────────────────── */
+
+/**
+ * The scout deliberately starts as an evidence/rules engine. `deterministic`
+ * means no model saw the retrieved material; the UI must never imply a model
+ * reviewed a release note unless a future analyzer records that fact.
+ */
+export type ImprovementScoutAnalysisMethod = 'deterministic-rules';
+export type ImprovementScoutRunMode = 'manual' | 'preview' | 'scheduled';
+export type ImprovementScoutRunStatus = 'running' | 'completed' | 'blocked' | 'failed';
+export type ImprovementScoutSuggestionStatus = 'new' | 'reviewed' | 'snoozed' | 'dismissed' | 'goal-created';
+export type ImprovementScoutEffort = 'small' | 'medium' | 'large';
+export type ImprovementScoutRisk = 'low' | 'elevated' | 'high';
+export type ImprovementScoutSourceKind = 'release-notes' | 'changelog' | 'documentation';
+
+/** Explicit, bounded operator choices. A weekly run is not armed until both
+ * `weeklyEnabled` and `networkEnabled` are true; manual one-off research has
+ * its own explicit `allowNetwork` action. */
+export type ImprovementScoutSettings = {
+  enabled: boolean;
+  weeklyEnabled: boolean;
+  /** Local weekday, Sunday = 0. */
+  weekday: number;
+  /** Local 24-hour clock. */
+  hour: number;
+  cron: string;
+  /** Permission for unattended, allow-listed official-source requests. */
+  networkEnabled: boolean;
+  /** Readable alias for the same persisted unattended-research permission. */
+  onlineResearch: boolean;
+  /** Reserved until a real provider-neutral analyzer is connected. */
+  providerId: string | null;
+  model: string | null;
+  modelAssistanceEnabled: false;
+  analysisMethod: ImprovementScoutAnalysisMethod;
+};
+
+export type ImprovementScoutSource = {
+  id: string;
+  label: string;
+  description: string;
+  url: string;
+  publisher: string;
+  kind: ImprovementScoutSourceKind;
+  official: boolean;
+  enabled: boolean;
+  lastCheckedAt: number | null;
+  lastStatus: 'never' | 'ok' | 'failed' | 'skipped';
+  lastDetail: string | null;
+};
+
+export type ImprovementScoutEvidence = {
+  id: string;
+  runId: string;
+  suggestionId: string | null;
+  sourceId: string;
+  title: string;
+  url: string;
+  publisher: string;
+  excerpt: string;
+  contentHash: string;
+  publishedAt: number | null;
+  retrievedAt: number;
+};
+
+export type ImprovementScoutSuggestion = {
+  id: string;
+  status: ImprovementScoutSuggestionStatus;
+  category: string;
+  title: string;
+  summary: string;
+  /** Why the currently stored evidence makes this worth a human look. */
+  whyNow: string;
+  /** A proposed objective only. It is never executed or applied automatically. */
+  recommendation: string;
+  score: number;
+  confidence: number;
+  effort: ImprovementScoutEffort;
+  risk: ImprovementScoutRisk;
+  analysisMethod: ImprovementScoutAnalysisMethod;
+  evidence: ImprovementScoutEvidence[];
+  createdAt: number;
+  updatedAt: number;
+  reviewedAt: number | null;
+  note: string | null;
+  goalId: string | null;
+};
+
+export type ImprovementScoutRun = {
+  id: string;
+  mode: ImprovementScoutRunMode;
+  status: ImprovementScoutRunStatus;
+  networkAllowed: boolean;
+  sourceCount: number;
+  evidenceCount: number;
+  suggestionCount: number;
+  analysisMethod: ImprovementScoutAnalysisMethod;
+  startedAt: number;
+  endedAt: number | null;
+  detail: string | null;
+  error: string | null;
+};
+
+export type ImprovementScoutOverview = {
+  enabled: boolean;
+  weeklyEnabled: boolean;
+  networkEnabled: boolean;
+  cadenceLabel: string;
+  lastRunAt: number | null;
+  nextRunAt: number | null;
+  pendingSuggestions: number;
+  sourceCount: number;
+  enabledSourceCount: number;
+  analysisMethod: ImprovementScoutAnalysisMethod;
+  latestRun: ImprovementScoutRun | null;
+};
+
+export type ImprovementScoutGoal = {
+  goalId: string;
+  /** A local deep link that opens the durable Control Goal after Control is selected. */
+  goalUrl: string;
 };
 
 /* ── Wanigan Compound · provider-neutral learning ───────────────────── */

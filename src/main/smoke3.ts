@@ -40,7 +40,8 @@ import { __test as codexUsageTest } from './codex-usage';
 import { getSetting, setSetting } from './settings';
 import { dataDir, db, resultsDir } from './db';
 import { addProject } from './store';
-import { EMPTY_USAGE, type HookInput, type RunConfig, type Session } from '../shared/types';
+import { selectedProviderStatus, selectedSessionTelemetry } from '../shared/provider-status';
+import { EMPTY_USAGE, type HookInput, type ProviderInfo, type RunConfig, type Session, type SessionUsage } from '../shared/types';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 type Say = (s: string) => void;
@@ -127,6 +128,38 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'Codex counters split uncached input, cached input and output without double-counting', codexUsage);
   check(codexUsage?.totalTokens === 112,
     'Codex total tokens keep cached input as a subset, not a second charge', codexUsage);
+
+  /* ── selected provider header ─────────────────────────────────────── */
+  say('── selected provider header');
+  const headerProviders = [
+    { id: 'codex', label: 'Codex' },
+    { id: 'claude', label: 'Claude Code' },
+    { id: 'glm', label: 'GLM · Z.ai' },
+    { id: 'deepseek', label: 'DeepSeek' },
+  ] as ProviderInfo[];
+  const headerSession = (id: string, providerId: string, harnessId: string, label?: string, status: Session['status'] = 'running') => ({
+    id, providerId, harnessId, status,
+    providerProfile: label ? { label } : null,
+  }) as Session;
+  const codexHeader = selectedProviderStatus(headerSession('s_header_codex', 'codex', 'codex'), headerProviders);
+  const claudeHeader = selectedProviderStatus(headerSession('s_header_claude', 'claude', 'claude-code'), headerProviders);
+  const glmHeader = selectedProviderStatus(headerSession('s_header_glm', 'glm', 'claude-code'), headerProviders);
+  const deepseekHeader = selectedProviderStatus(headerSession('s_header_deepseek', 'deepseek', 'claude-code', 'DeepSeek'), headerProviders);
+  check(selectedProviderStatus(null, headerProviders) === null
+    && codexHeader?.label === 'Codex' && codexHeader.usesCodexAccountLimits
+    && claudeHeader?.label === 'Claude Code' && !claudeHeader.usesCodexAccountLimits
+    && glmHeader?.label === 'GLM · Z.ai' && !glmHeader.usesCodexAccountLimits
+    && deepseekHeader?.label === 'DeepSeek' && !deepseekHeader.usesCodexAccountLimits,
+  'the header follows the selected frozen provider profile and never defaults a Claude/GLM/DeepSeek session to Codex limits');
+  const headerTelemetry = {
+    sessionId: 's_header_claude', inTokens: 500, outTokens: 1_900, cacheRead: 100, cacheWrite: 0,
+    costUsd: 0, costStatus: 'unavailable', linesAdded: 0, linesRemoved: 0, commits: 0, pullRequests: 0,
+    activeSeconds: 0, requests: 1, errors: 0, refusals: 0, lastAt: null, models: [],
+  } as SessionUsage;
+  check(selectedSessionTelemetry(headerTelemetry, 'running') === '2.5k tokens'
+    && selectedSessionTelemetry(null, 'starting') === 'starting'
+    && selectedSessionTelemetry(null, 'exited') === 'ended',
+  'non-Codex header values are selected-session telemetry or state, never a fabricated account percentage');
 
   /* ── phase 9 · worktrees against a real repo ───────────────────────── */
   say('── phase 9 · worktrees');
@@ -1538,6 +1571,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const cssSrc = sourceOf('src/renderer/src/index.css');
   const sessionsCssSrc = sourceOf('src/renderer/src/styles/sessions.css');
   const compactCssSrc = sourceOf('src/renderer/src/styles/compact.css');
+  const learningSrc = sourceOf('src/renderer/src/views/Learning.tsx');
+  const scoutViewSrc = sourceOf('src/renderer/src/views/ImprovementScout.tsx');
+  const scoutCssSrc = sourceOf('src/renderer/src/styles/improvement-scout.css');
   const sessionManagerSrc = sourceOf('src/main/sessions.ts');
   check(mainSrc.length > 1000 && preloadSrc.length > 500 && schedulesSrc.length > 500
     && sessionsSrc.length > 500 && settingsSrc.length > 500 && appSrc.length > 500 && sessionManagerSrc.length > 500,
@@ -1596,6 +1632,29 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && sessionsSrc.includes('setDialog(true);')
     && cssSrc.includes('.nav-new-session') && cssSrc.includes('.command-item-primary'),
   'the header and command palette start one explicit interactive session from any view without leaving an old dialog request behind');
+  check(appSrc.includes('<ProviderUsageBadge session={activeSession} providers={providers} />')
+    && !appSrc.includes('CodexStatusBadge')
+    && appSrc.includes('selectedProviderStatus(session, providers)')
+    && appSrc.includes('window.wanigan.usage.session(session.id)')
+    && appSrc.includes('window.wanigan.codex.status(force)')
+    && appSrc.includes('requestEpoch.current')
+    && appSrc.includes('epoch !== requestEpoch.current')
+    && cssSrc.includes('.nav-usage-status') && !cssSrc.includes('.nav-codex-status'),
+  'the header keys provider data to the selected session, uses Codex account limits only on Codex, and ignores stale provider replies after a switch');
+  check(learningSrc.includes("id: 'scout'")
+    && learningSrc.includes('<ImprovementScout projects={projects} onOpenGoal={onOpenGoal} />')
+    && scoutViewSrc.includes("allowNetwork: true")
+    && scoutViewSrc.includes("mode === 'manual'")
+    && scoutViewSrc.includes('Preview locally')
+    && scoutViewSrc.includes('Create linked Goal')
+    && scoutViewSrc.includes('target="_blank" rel="noreferrer"')
+    && scoutViewSrc.includes('networkEnabled') && scoutViewSrc.includes('weeklyEnabled')
+    && !scoutViewSrc.includes('window.wanigan.control.create')
+    && !scoutViewSrc.includes("goal_created")
+    && scoutCssSrc.includes('@media (pointer: coarse)')
+    && scoutCssSrc.includes('min-height: 44px')
+    && scoutCssSrc.includes('.learning-scroll > .scout-view'),
+  'Scout is a touch-safe nested Learning surface with a hard local preview, one explicit online action, separate unattended-network consent, cited external links, and a Control Goal handoff');
   check(appSrc.includes('aria-modal="true"')
     && appSrc.includes('const focusable = Array.from(dialog.current')
     && appSrc.includes('tabStop={!railHasActiveTab}')

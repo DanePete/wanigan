@@ -66,6 +66,7 @@ import * as review from './review';
 import * as codexStatus from './codex-status';
 import * as learning from './learning-service';
 import * as control from './control';
+import * as scout from './improvement-scout';
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -633,6 +634,25 @@ async function startServices() {
     );
     void batch.pollOnce().catch(() => {});
   });
+  // The Scout is a fourth dispatcher lane rather than a loose timer. That
+  // gives its weekly schedule the same durable lease and attended/launchd
+  // cross-process behavior as every other scheduled task. The runner only
+  // accepts Wanigan's fixed schedule payload; renderer text cannot name a URL.
+  queue.registerRunner('scout', async (payload) => {
+    const value = payload as { scout?: unknown; version?: unknown };
+    if (value.scout !== true || value.version !== 1) {
+      throw new Error('This Scout queue item is not a Wanigan weekly-research schedule. Remove it and re-enable the Scout schedule from its dashboard.');
+    }
+    // A queue item may have been claimed just before the operator disabled
+    // weekly/network research. Do not make it fail/retry; it has no authority
+    // to override the newer persisted preference.
+    if (!scout.scheduledResearchAllowed()) return;
+    await scout.runScheduled();
+  });
+  // Upsert a stable schedule id on both the attended app and launchd. It is
+  // disabled by default and only arms after the operator permits unattended
+  // allow-listed source requests in Scout settings.
+  scout.syncWeeklySchedule();
   headless.registerHeadlessRunner((runId, projectId) => {
     const name = projectById(projectId)?.name ?? projectId;
     queue.enqueue('headless', `${name} · ${runId}`, { runId, projectId });
@@ -1263,6 +1283,30 @@ function registerIpc() {
   handle('schedule:daemon', () => daemonStatus());
   handle('schedule:installDaemon', () => installDaemon());
   handle('schedule:uninstallDaemon', () => uninstallDaemon());
+
+  // ── AI Improvement Scout ──────────────────────────────────────────
+  handle('scout:overview', () => scout.overview());
+  handle('scout:settings', () => scout.settings());
+  handle('scout:setSettings', (patch: Partial<import('../shared/types').ImprovementScoutSettings>) =>
+    scout.updateSettings(patch));
+  handle('scout:sources', () => scout.listSources());
+  handle('scout:setSourceEnabled', (id: string, enabled: boolean) => scout.setSourceEnabled(id, enabled === true));
+  handle('scout:runs', (limit?: number) => scout.listRuns(limit));
+  handle('scout:suggestions', (filter?: Parameters<typeof scout.listSuggestions>[0]) => scout.listSuggestions(filter));
+  handle('scout:suggestion', (id: string) => scout.suggestion(id));
+  handle('scout:updateSuggestion', (id: string, patch: Parameters<typeof scout.updateSuggestion>[1]) =>
+    scout.updateSuggestion(id, patch));
+  // Scheduled mode belongs only to the durable queue runner above. A renderer
+  // can explicitly ask for a visible manual pass or a hard local-only preview,
+  // but cannot borrow the stored unattended-network permission by forging a
+  // `scheduled` IPC payload.
+  handle('scout:run', (input?: { mode?: 'manual' | 'preview'; allowNetwork?: boolean }) => {
+    if (input?.mode !== undefined && input.mode !== 'manual' && input.mode !== 'preview') {
+      throw new Error('Scout IPC supports manual research or a local preview. Weekly research runs only through its durable schedule.');
+    }
+    return scout.run({ mode: input?.mode ?? 'manual', allowNetwork: input?.allowNetwork === true });
+  });
+  handle('scout:createGoal', (id: string, input: { projectId: string }) => scout.createGoal(id, input));
 
   // ── reproducible review gates ──────────────────────────────────────
   handle('review:recipe', (projectId: string) => review.recipe(projectId));

@@ -361,6 +361,43 @@ skills. The A/B registry pins provider, model, effort and commit but does not ye
 launch or ingest paired workloads automatically; manual outcomes remain estimates.
 Savings become causal only after controlled metrics are actually attached.
 
+### Improvement Scout
+
+**Learning → Scout** is Wanigan’s controlled product-research loop. It watches
+only the official sources shown in its allow-list, compares fresh source text
+against Wanigan’s declared capability inventory, and puts evidence-linked ideas
+in a review queue. It is an inbox for work worth considering, not an updater:
+Scout cannot edit Wanigan, install software, change a provider, deploy code, or
+start an agent.
+
+Use it in this order:
+
+1. Choose the official sources you want to follow. Source URLs are fixed in
+   Wanigan; the dashboard only lets you include or exclude them.
+2. Use **Preview locally** to refresh the capability inventory without opening
+   a network connection.
+3. Use **Run scout now** for one visible, credential-free check of the enabled
+   sources. This does not turn on recurring research.
+4. To enable a weekly check, separately allow unattended official-source
+   checks, pick a local day/time, then turn on **Weekly watch**. On macOS it
+   can continue while Wanigan is closed when the optional local Schedules
+   LaunchAgent is installed; otherwise it runs while Wanigan is open.
+5. Inspect the evidence, dismiss/snooze/review ideas as needed, then use
+   **Create linked Goal** for a proposal you want to pursue. The new Control
+   Goal retains the official citations and starts no agent until you choose a
+   task yourself.
+
+The current analyzer is explicitly labelled **deterministic rules**. No model
+sees retrieved source text, and no provider call is made. A future
+model-assisted analyzer must add its own provider, budget, and consent path;
+it must not be inferred from the Scout name or its suggestions.
+
+Example: a Claude Code changelog entry mentioning LSP diagnostics can surface
+an “Evaluate a language-server diagnostic bridge” proposal if Wanigan’s local
+capability inventory still marks that feature absent. Creating its Goal gives
+you a reviewable design/verification graph with the changelog citation; it does
+not silently add an LSP integration.
+
 ## Provider packs
 
 A provider is assembled from three replaceable parts: a terminal **harness**, a
@@ -525,6 +562,7 @@ src/main/worktrees.ts   isolation, merge, and reconciling orphans after a crash
 src/main/headless.ts    one prompt × N repos, capped and trust-gated
 src/main/queue.ts       one dispatcher in front of all three surfaces
 src/main/schedule.ts    cron rows that outlive a quit — see the caveat below
+src/main/improvement-scout.ts official-source research, capability gaps, and Goal handoff
 src/main/observed.ts    Claude sessions this app did not start, read-only
 src/main/egress.ts      every host Wanigan can reach, enumerated for Settings
 src/main/transcripts.ts archive on exit, FTS5 search across every session
@@ -544,7 +582,7 @@ src/main/batch/         build · estimate · submit · poll · results · files 
 src/main/smoke*.ts      the smoke suite, run inside the real main process
 src/main/plugins.ts     installed plugins, kept apart from the marketplace catalog
 src/renderer/views/     Sessions · Fleet · Batches · Insights · Skills · Plugins
-src/renderer/views/     Schedules · Git · Context · Runs · Settings
+src/renderer/views/     Learning → Scout · Schedules · Git · Context · Runs · Settings
 ```
 
 Batches advance on a timer in the main process, so a run keeps moving as long as

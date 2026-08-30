@@ -14,12 +14,14 @@ import type {
   SkillDiagnostic,
 } from '@shared/types';
 import { EFFORT_LEVELS } from '@shared/types';
+import ImprovementScout from './ImprovementScout';
 import '../styles/learning.css';
 
-type LearningTab = 'overview' | 'inbox' | 'knowledge' | 'skills' | 'map' | 'optimize' | 'experiments';
+type LearningTab = 'overview' | 'scout' | 'inbox' | 'knowledge' | 'skills' | 'map' | 'optimize' | 'experiments';
 
 const TABS: { id: LearningTab; label: string; hint: string }[] = [
   { id: 'overview', label: 'Overview', hint: 'health and controls' },
+  { id: 'scout', label: 'Scout', hint: 'source-backed product ideas' },
   { id: 'inbox', label: 'Inbox', hint: 'review proposed learning' },
   { id: 'knowledge', label: 'Knowledge', hint: 'canonical, cited facts' },
   { id: 'skills', label: 'Skills', hint: 'forge reusable workflows' },
@@ -53,10 +55,12 @@ const when = (at: number | null) => at ? new Date(at).toLocaleString() : 'never'
 const tokens = (n: number) => `${n > 0 ? '+' : ''}${Math.round(n).toLocaleString()} tokens`;
 const confidence = (n: number) => `${Math.round(Math.max(0, Math.min(1, n)) * 100)}%`;
 
-export default function Learning({ projectId, projects, providers }: {
+export default function Learning({ projectId, projects, providers, onOpenGoal }: {
   projectId?: string;
   projects: Project[];
   providers: ProviderInfo[];
+  /** Moves a Scout-created Goal into Control instead of leaving a bare hash. */
+  onOpenGoal?: (id: string) => void;
 }) {
   const [tab, setTab] = useState<LearningTab>('overview');
   const [overview, setOverview] = useState<LearningOverview>(EMPTY_OVERVIEW);
@@ -165,6 +169,7 @@ export default function Learning({ projectId, projects, providers }: {
                     projectId={projectId ?? null}
                     busy={busy} act={act} />
         )}
+        {tab === 'scout' && <ImprovementScout projects={projects} onOpenGoal={onOpenGoal} />}
         {tab === 'inbox' && (
           <Inbox candidates={candidates} signals={signals} providers={availableProviders}
                  busy={busy} act={act} />

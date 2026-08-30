@@ -36,6 +36,10 @@ const USAGE = 2;
 const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'help'] as const;
 type Command = (typeof COMMANDS)[number];
 
+// Scout rows are created only by the fixed weekly schedule. Keeping this
+// generic CLI out of that lane prevents an arbitrary JSON payload from being
+// mistaken for a source-research authorization; use the Scout dashboard for a
+// visible manual pass or its explicit weekly setting instead.
 const QUEUE_KINDS: QueueKind[] = ['session', 'headless', 'batch'];
 
 function isCommand(v: string): v is Command {

@@ -4,6 +4,7 @@
 // never invokes macOS tools, and never reads or changes /Applications.
 
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
@@ -14,14 +15,20 @@ const {
   LAUNCH_STABILITY_MS,
   SPAWN_HELPER_RELATIVE_PATH,
   assertKnownInstalledWanigan,
+  assertNoOtherWaniganProcess,
   assertSignatureMetadata,
   assertVerifiedWaniganApp,
+  desktopLaunchEnvironment,
   installationPaths,
   launchAndVerifyInstalledWanigan,
   parseArguments,
+  parseWaniganProcessRecords,
   parseTargetProcessIds,
   privilegedCommand,
 } = require('./install-local-macos.cjs');
+
+const FIXTURE_ASAR = Buffer.from('fixture app archive');
+const FIXTURE_ASAR_HASH = crypto.createHash('sha256').update(FIXTURE_ASAR).digest('hex');
 
 const SEALED_METADATA = [
   `Identifier=${BUNDLE_IDENTIFIER}`,
@@ -32,6 +39,7 @@ const SEALED_METADATA = [
 function fixtureExecutor(options = {}) {
   const identifier = options.identifier || BUNDLE_IDENTIFIER;
   const metadata = options.metadata || SEALED_METADATA;
+  const integrityHash = options.integrityHash || FIXTURE_ASAR_HASH;
   return async (file, args) => {
     if (file === '/usr/bin/plutil') {
       assert.equal(args[0], '-extract');
@@ -39,6 +47,9 @@ function fixtureExecutor(options = {}) {
     }
     if (file === '/usr/bin/codesign' && args[0] === '--verify') return {};
     if (file === '/usr/bin/codesign' && args[0] === '-dv') return { stderr: metadata };
+    if (file === '/usr/libexec/PlistBuddy' && args[0] === '-c' && args[1]?.startsWith('Print ')) {
+      return { stdout: `${integrityHash}\n` };
+    }
     throw new Error(`Unexpected fixture command: ${file} ${args.join(' ')}`);
   };
 }
@@ -48,12 +59,15 @@ async function createFixtureBundle(root) {
   const info = path.join(app, 'Contents', 'Info.plist');
   const executable = path.join(app, 'Contents', 'MacOS', 'Wanigan');
   const helper = path.join(app, SPAWN_HELPER_RELATIVE_PATH);
+  const asar = path.join(app, 'Contents', 'Resources', 'app.asar');
   await fs.mkdir(path.dirname(info), { recursive: true });
   await fs.mkdir(path.dirname(executable), { recursive: true });
   await fs.mkdir(path.dirname(helper), { recursive: true });
+  await fs.mkdir(path.dirname(asar), { recursive: true });
   await fs.writeFile(info, '<?xml version="1.0"?><plist version="1.0"><dict/></plist>');
   await fs.writeFile(executable, '#!/bin/sh\nexit 0\n');
   await fs.writeFile(helper, '#!/bin/sh\nexit 0\n');
+  await fs.writeFile(asar, FIXTURE_ASAR);
   await Promise.all([fs.chmod(executable, 0o755), fs.chmod(helper, 0o755)]);
   return { app, helper };
 }
@@ -81,6 +95,11 @@ async function main() {
       /Code signature is not bound/,
       'an Electron-only thin signature must not pass as a sealed Wanigan app',
     );
+    await assert.rejects(
+      assertVerifiedWaniganApp(app, { execute: fixtureExecutor({ integrityHash: '0'.repeat(64) }) }),
+      /Electron archive integrity verification failed.*does not match/s,
+      'a sealed app whose embedded app.asar hash is stale must never be installed',
+    );
 
     await assert.rejects(
       assertKnownInstalledWanigan(app, { execute: fixtureExecutor({ identifier: 'com.example.unrelated' }) }),
@@ -105,6 +124,11 @@ async function main() {
     assert.throws(() => parseArguments(['--source', '/tmp/bad\nWanigan.app']), /line break/);
     assert.throws(() => parseArguments(['--quit-timeout', '0']), /between 0 and 300/);
     assert.throws(() => parseArguments(['--trash-dir', '/tmp/not-trash']), /must be a \.Trash directory/);
+    assert.deepEqual(
+      desktopLaunchEnvironment({ PATH: '/usr/bin', ELECTRON_RUN_AS_NODE: '1', WANIGAN_TEST: 'present' }),
+      { PATH: '/usr/bin', WANIGAN_TEST: 'present' },
+      'the installer never launches the packaged Electron app in inherited Node mode',
+    );
 
     const paths = installationPaths({
       applicationsDirectory: '/Applications',
@@ -124,6 +148,23 @@ async function main() {
       [201],
       'only the exact installed bundle may receive a graceful Quit request',
     );
+    const alternateWanigan = '/private/tmp/Wanigan.app';
+    const hiddenPreviousWanigan = '/Applications/.Wanigan.app.previous-20260830';
+    const processInventory = `  201 ${exactExecutable}\n  202 ${alternateWanigan}/Contents/MacOS/Wanigan\n  203 ${alternateWanigan}/Contents/MacOS/Wanigan Helper --type=renderer\n  204 ${hiddenPreviousWanigan}/Contents/MacOS/Wanigan --type=renderer\n`;
+    assert.deepEqual(
+      parseWaniganProcessRecords(processInventory).map((process) => [process.pid, process.appPath]),
+      [[201, '/Applications/Wanigan.app'], [202, alternateWanigan], [204, hiddenPreviousWanigan]],
+      'the installer inventories canonical, hidden and prior Wanigan bundle executables, not helper names or argument text',
+    );
+    await assert.rejects(
+      assertNoOtherWaniganProcess('/Applications/Wanigan.app', async (file, args) => {
+        assert.equal(file, '/bin/ps');
+        assert.deepEqual(args, ['-wwax', '-o', 'pid=,command=']);
+        return { stdout: processInventory };
+      }),
+      /Another Wanigan bundle is still running: PID 202 \(\/private\/tmp\/Wanigan\.app\), PID 204 \(\/Applications\/\.Wanigan\.app\.previous-20260830\)/,
+      'an alternate or hidden prior bundle holding the shared single-instance lock blocks the install before any swap',
+    );
 
     const privileged = privilegedCommand({
       source: "/tmp/Wanigan's release/Wanigan.app",
@@ -136,10 +177,16 @@ async function main() {
 
     const stableProcessTable = `  201 ${exactExecutable}\n`;
     let stablePolls = 0;
+    const nodeModeEnvironment = { PATH: '/usr/bin', ELECTRON_RUN_AS_NODE: '1', WANIGAN_TEST: 'present' };
     const stableLaunch = await launchAndVerifyInstalledWanigan('/Applications/Wanigan.app', 1, {
+      environment: nodeModeEnvironment,
       sleep: async (milliseconds) => { assert.equal(milliseconds, LAUNCH_STABILITY_MS); },
-      execute: async (file, args) => {
-        if (file === '/usr/bin/open') { assert.deepEqual(args, ['/Applications/Wanigan.app']); return {}; }
+      execute: async (file, args, options) => {
+        if (file === '/usr/bin/open') {
+          assert.deepEqual(args, ['/Applications/Wanigan.app']);
+          assert.deepEqual(options?.env, { PATH: '/usr/bin', WANIGAN_TEST: 'present' });
+          return {};
+        }
         if (file === '/bin/ps') { stablePolls += 1; return { stdout: stableProcessTable }; }
         throw new Error(`Unexpected stable-launch command: ${file} ${args.join(' ')}`);
       },

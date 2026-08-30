@@ -17,6 +17,7 @@ import Context from './views/Context';
 import { num } from './components/bits';
 import ThemeControl from './components/ThemeControl';
 import { useThemePreference } from './theme';
+import { selectedProviderStatus, selectedSessionTelemetry } from '@shared/provider-status';
 
 type CodexStatus = {
   fetchedAt: number; plan: string | null; spendControlReached: boolean | null;
@@ -64,6 +65,18 @@ const TABS = [
 type Tab = (typeof TABS)[number]['id'];
 type TabGroup = (typeof TABS)[number]['group'];
 
+/** A Goal is a durable Control record. Honour its deep link before the first
+ * render so opening a copied Goal URL cannot strand someone on Sessions with
+ * a perfectly valid `#goal=` fragment that nothing visible is reading. */
+function initialTabFromLocation(): Tab {
+  try {
+    const goal = new URLSearchParams(window.location.hash.slice(1)).get('goal');
+    return goal ? 'control' : 'sessions';
+  } catch {
+    return 'sessions';
+  }
+}
+
 const TAB_GROUPS: readonly TabGroup[] = ['Work', 'Explore', 'Manage'];
 
 // The wide rail prioritises the surfaces used continuously while an agent is
@@ -101,7 +114,7 @@ function motionOn(): boolean {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('sessions');
+  const [tab, setTab] = useState<Tab>(initialTabFromLocation);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [hasKey, setHasKey] = useState(false);
@@ -311,6 +324,20 @@ export default function App() {
     doc.startViewTransition(() => { flushSync(swap); });
   }, []);
 
+  // Goal links are intentionally portable: another Wanigan window (or a
+  // pasted link while this one is already open) should switch to Control
+  // before Control reads the fragment. `replaceState` used inside Control
+  // does not emit hashchange, so this never fights an in-place selection.
+  useEffect(() => {
+    const onHashChange = () => {
+      try {
+        if (new URLSearchParams(window.location.hash.slice(1)).get('goal')) go('control');
+      } catch { /* malformed fragments stay ordinary navigation state */ }
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, [go]);
+
   const requestNewSession = useCallback(() => {
     setNewSessionRequest((previous) => (previous ?? 0) + 1);
     go('sessions');
@@ -341,6 +368,14 @@ export default function App() {
     if (s) choose(s.projectId);
     go('sessions');
   }, [choose, go]);
+
+  /** Scout proposals become durable Control Goals. Set the portable fragment
+   * and move to the owning surface together; a fragment alone has no visible
+   * effect while another tab is mounted. */
+  const openGoal = useCallback((id: string) => {
+    window.history.replaceState(null, '', `#goal=${encodeURIComponent(id)}`);
+    go('control');
+  }, [go]);
 
   const focusSession = useCallback((id: string, projectId?: string) => {
     setActiveSessionId(id);
@@ -649,7 +684,7 @@ export default function App() {
               <span className="nav-shortcut" aria-hidden="true">⌘0</span>
             </button>
 
-            {providers.some((p) => p.id === 'codex' && p.path) && <CodexStatusBadge />}
+            {activeSession && <ProviderUsageBadge session={activeSession} providers={providers} />}
             <ThemeControl preference={theme.preference} resolved={theme.resolved} onChange={theme.setTheme} />
           </div>
         </div>
@@ -718,7 +753,7 @@ export default function App() {
                    seed={batchSeed} onSeedConsumed={() => setBatchSeed(null)} />
         )}
         {tab === 'insights' && <InsightsView />}
-        {tab === 'learning' && <Learning projectId={projectId} projects={projects} providers={providers} />}
+        {tab === 'learning' && <Learning projectId={projectId} projects={projects} providers={providers} onOpenGoal={openGoal} />}
         {tab === 'skills' && <Skills projectId={projectId} activeSessionId={activeSessionId} />}
         {tab === 'context' && <Context projectId={projectId} projects={projects} />}
         {tab === 'plugins' && <Plugins />}
@@ -750,19 +785,61 @@ export default function App() {
   );
 }
 
-/** Your Codex limit windows, without sending /status through a live agent. */
-function CodexStatusBadge() {
-  const [status, setStatus] = useState<CodexStatus | null>(null);
+/**
+ * A selected-session status, rather than a global "Codex is installed" badge.
+ * Codex can honestly report account windows; other providers receive only
+ * their own session telemetry until they expose an equivalent account reader.
+ */
+function ProviderUsageBadge({ session, providers }: { session: Session; providers: ProviderInfo[] }) {
+  const context = useMemo(() => selectedProviderStatus(session, providers), [providers, session]);
+  // The parent calls us only for a real session. Keep the guard in place so a
+  // future reuse cannot silently fall back to an unrelated account status.
+  if (!context) return null;
+
+  const [status, setStatus] = useState<{ key: string; value: CodexStatus } | null>(null);
+  const [usage, setUsage] = useState<{ key: string; value: Awaited<ReturnType<typeof window.wanigan.usage.session>> } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
+  // An account-status reply can arrive after the operator changes sessions.
+  // Epochs make that stale reply a no-op instead of relabelling Claude as Codex.
+  const requestEpoch = useRef(0);
   const load = useCallback((force = false) => {
-    void window.wanigan.codex.status(force).then((next) => {
-      setStatus(next); setError(null);
-    }).catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, []);
+    const epoch = ++requestEpoch.current;
+    const key = context.key;
+    setLoadingKey(key);
+    setError(null);
+    const done = () => {
+      if (epoch === requestEpoch.current) setLoadingKey(null);
+    };
+    if (context.usesCodexAccountLimits) {
+      void window.wanigan.codex.status(force).then((next) => {
+        if (epoch !== requestEpoch.current) return;
+        setStatus({ key, value: next });
+      }).catch((e) => {
+        if (epoch !== requestEpoch.current) return;
+        setError(e instanceof Error ? e.message : String(e));
+      }).finally(done);
+      return;
+    }
+    void window.wanigan.usage.session(session.id).then((next) => {
+      if (epoch !== requestEpoch.current) return;
+      setUsage({ key, value: next });
+    }).catch((e) => {
+      if (epoch !== requestEpoch.current) return;
+      setError(e instanceof Error ? e.message : String(e));
+    }).finally(done);
+  }, [context.key, context.usesCodexAccountLimits, session.id]);
   useEffect(() => {
+    // Clear the previous provider synchronously at the effect boundary. The
+    // keyed reads below are the second guard against an async race.
+    setStatus(null);
+    setUsage(null);
     load();
     const timer = window.setInterval(() => load(), 60_000);
-    return () => window.clearInterval(timer);
+    return () => {
+      requestEpoch.current += 1;
+      window.clearInterval(timer);
+    };
   }, [load]);
 
   const label = (window: CodexStatus['primary'], short: string) => {
@@ -770,20 +847,30 @@ function CodexStatusBadge() {
     const reset = window.resetsAt ? ` · resets ${relativeReset(window.resetsAt)}` : '';
     return `${short} ${window.remainingPercent}% left${reset}`;
   };
-  const primary = label(status?.primary ?? null, 'Now');
-  const secondary = label(status?.secondary ?? null, 'Week');
+  const codex = status?.key === context.key ? status.value : null;
+  const sessionUsage = usage?.key === context.key ? usage.value : null;
+  const primary = label(codex?.primary ?? null, 'Now');
+  const secondary = label(codex?.secondary ?? null, 'Week');
+  const telemetry = selectedSessionTelemetry(sessionUsage, session.status);
+  const loading = loadingKey === context.key;
+  const sessionLine = `${context.label} · selected ${session.status} session${session.model ? ` · ${session.model}` : ''}`;
   const title = error
-    ? `Codex status unavailable: ${error}`
-    : status
-      ? [`Codex ${status.plan ?? 'account'} limits`, primary, secondary, 'Click to refresh now.'].filter(Boolean).join('\n')
-      : 'Reading your Codex status…';
+    ? `${sessionLine}\nStatus unavailable: ${error}\nClick to refresh this selected session.`
+    : context.usesCodexAccountLimits
+      ? [sessionLine, `Codex ${codex?.plan ?? 'account'} limits`, primary, secondary,
+        'Account limits are shared across Codex sessions. Click to refresh now.'].filter(Boolean).join('\n')
+      : [sessionLine, `Session telemetry: ${telemetry}.`,
+        'This provider does not expose account-plan remaining or reset time to Wanigan, so no quota is invented.',
+        'Click to refresh this selected session.'].join('\n');
+  const visible = context.usesCodexAccountLimits
+    ? primary ?? (loading ? 'limits…' : 'Status unavailable')
+    : error ? 'usage unavailable' : loading && !sessionUsage ? 'session…' : telemetry;
 
   return (
-    <button className={`nav-codex-status${status?.primary && status.primary.remainingPercent <= 20 ? ' low' : ''}`}
+    <button className={`nav-usage-status${codex?.primary && codex.primary.remainingPercent <= 20 ? ' low' : ''}`}
             title={title} aria-label={title} onClick={() => load(true)}>
-      {status ? <><span className="faint">Codex</span> {primary ?? 'Status unavailable'}{secondary && <span className="nav-codex-week">· {secondary}</span>}</>
-        : error ? <><span className="faint">Codex</span> status unavailable</>
-          : <><span className="faint">Codex</span> status…</>}
+      <span className="faint">{context.label}</span> {visible}
+      {context.usesCodexAccountLimits && secondary && <span className="nav-usage-week">· {secondary}</span>}
     </button>
   );
 }

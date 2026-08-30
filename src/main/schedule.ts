@@ -16,7 +16,11 @@ import { projectById } from './store';
  * being visible and disableable rather than by dying on a timer.
  */
 
-export type ScheduleKind = 'headless' | 'session' | 'batch';
+export type ScheduleKind = 'headless' | 'session' | 'batch' | 'scout';
+
+/** The Scout owns this schedule through its dedicated privacy controls. It is
+ * intentionally not a second editable row in the generic Schedules surface. */
+export const IMPROVEMENT_SCOUT_SCHEDULE_ID = 'sch_improvement_scout_weekly';
 
 export type Schedule = {
   id: string;
@@ -147,7 +151,10 @@ function toSchedule(r: Row): Schedule {
 }
 
 export function listSchedules(): Schedule[] {
-  return (db().prepare('SELECT * FROM schedules ORDER BY enabled DESC, next_at').all() as Row[]).map(toSchedule);
+  // Scout scheduling has separate source/network consent and evidence history;
+  // showing its internal queue source here would offer controls that cannot
+  // safely preserve those invariants. Its dashboard is the single owner.
+  return (db().prepare("SELECT * FROM schedules WHERE kind != 'scout' ORDER BY enabled DESC, next_at").all() as Row[]).map(toSchedule);
 }
 
 export function createSchedule(input: {
@@ -160,6 +167,9 @@ export function createSchedule(input: {
     throw new Error(`"${input.cron}" never matches a real date — check the day-of-month and month fields.`);
   }
   if (!input.name.trim()) throw new Error('Give the schedule a name you will recognise in a week.');
+  if (!['headless', 'session', 'batch'].includes(input.kind)) {
+    throw new Error('AI Improvement Scout scheduling is controlled from the Scout dashboard; generic schedules may only run headless work or batches.');
+  }
 
   const id = `sch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   db().prepare(`
@@ -173,6 +183,9 @@ export function createSchedule(input: {
 export function setScheduleEnabled(id: string, on: boolean): Schedule | null {
   const row = db().prepare('SELECT * FROM schedules WHERE id=?').get(id) as Row | undefined;
   if (!row) return null;
+  if (row.id === IMPROVEMENT_SCOUT_SCHEDULE_ID || row.kind === 'scout') {
+    throw new Error('AI Improvement Scout scheduling is controlled from the Scout dashboard so its source and network permissions stay paired.');
+  }
   // Re-arm from now rather than firing immediately for every tick missed
   // while it was off.
   const next = on ? nextFire(row.cron) : null;
@@ -181,6 +194,10 @@ export function setScheduleEnabled(id: string, on: boolean): Schedule | null {
 }
 
 export function deleteSchedule(id: string): boolean {
+  const row = db().prepare('SELECT id,kind FROM schedules WHERE id=?').get(id) as { id: string; kind: string } | undefined;
+  if (row && (row.id === IMPROVEMENT_SCOUT_SCHEDULE_ID || row.kind === 'scout')) {
+    throw new Error('AI Improvement Scout scheduling is controlled from the Scout dashboard so its source and network permissions stay paired.');
+  }
   const info = db().prepare('DELETE FROM schedules WHERE id=?').run(id);
   db().prepare('DELETE FROM schedule_runs WHERE schedule_id=?').run(id);
   return info.changes > 0;

@@ -7,6 +7,7 @@ import { otelEnv } from './otel';
 import { transcriptsDir } from './transcripts';
 import { flags } from './settings';
 import { mobileConfig } from './mobile';
+import { improvementScoutSettings, listSources } from './improvement-scout';
 import type { EgressHost, EgressPath, EgressPin, EgressReport } from '../shared/types';
 
 /**
@@ -94,6 +95,30 @@ function hosts(): EgressHost[] {
   const glm = glmKey();
   const deepseek = deepseekKey();
   const phone = mobileConfig();
+  const scout = improvementScoutSettings();
+  const scoutHosts: EgressHost[] = listSources().map((source) => {
+    let host = source.url;
+    let pathname = '/';
+    try {
+      const parsed = new URL(source.url);
+      host = parsed.hostname;
+      pathname = parsed.pathname || '/';
+    } catch { /* source metadata is code-owned; retain a visible fallback */ }
+    return {
+      host,
+      paths: [pathname],
+      by: 'wanigan' as const,
+      purpose: `Checking the allow-listed official ${source.publisher} source “${source.label}” for deterministic capability-gap evidence.`,
+      when: source.enabled
+        ? 'Only when you explicitly press Research now, or when AI Improvement Scout weekly research and its separate unattended-network permission are both on. Requests are GET-only, credential-free, HTTPS-only, bounded, and never include project files, prompts, paths, or terminal content.'
+        : 'Never while this Scout source is disabled. Re-enable it in AI Improvement Scout before a manual or scheduled pass can request it.',
+      // Manual research is a momentary click, so this reports only a durable
+      // scheduled permission as "active now" rather than pretending a source
+      // is being contacted just because it is available in the allow-list.
+      activeNow: source.enabled && scout.enabled && scout.weeklyEnabled && scout.onlineResearch,
+      overrideEnv: null,
+    };
+  });
 
   return [
     {
@@ -186,6 +211,7 @@ function hosts(): EgressHost[] {
       activeNow: null,
       overrideEnv: null,
     },
+    ...scoutHosts,
   ];
 }
 
@@ -248,7 +274,7 @@ function paths(): EgressPath[] {
     {
       label: 'Database',
       path: path.join(userData, 'wanigan.db'),
-      what: 'Projects, runs, sessions, costs, hook events, the policy ledger and the transcript index. WAL mode adds -wal and -shm beside it.',
+      what: 'Projects, runs, sessions, costs, hook events, the policy ledger, transcript index, and AI Improvement Scout settings, bounded official-source excerpts/evidence, and proposals. WAL mode adds -wal and -shm beside it.',
     },
     {
       label: 'Archived transcripts',
@@ -305,7 +331,7 @@ const UNENUMERATED = [
 ];
 
 const PROVENANCE =
-  "This table is enumerated by hand from Wanigan's own source — every fetch() in the main process. " +
+  "This table is enumerated by hand from Wanigan's own source — every fetch() in the main process and the Scout's static official-source registry. " +
   'It is exhaustive for Wanigan’s code and for nothing else. The caveat below is the part that keeps it honest.';
 
 export function egressReport(): EgressReport {
