@@ -22,11 +22,14 @@
     "rebuild": "electron-rebuild -f -w node-pty,better-sqlite3",
     "postinstall": "electron-rebuild -f -w node-pty,better-sqlite3",
     "dist:mac": "electron-vite build && { electron-builder --mac; c=$?; npm run rebuild; exit $c; }",
+    "install:mac:arm64": "node scripts/install-local-macos.cjs",
+    "dist:mac:arm64:install": "npm run dist:mac:arm64 && npm run install:mac:arm64",
     "test:package-hooks": "node scripts/test-package-hooks.cjs",
+    "test:local-install": "node scripts/test-local-macos-install.cjs",
     "app": "./scripts/launch.sh",
     "cli": "./scripts/cli.sh",
     "smoke": "./scripts/smoke.sh",
-    "test": "npm run typecheck && npm run test:package-hooks && npm run smoke",
+    "test": "npm run typecheck && npm run test:package-hooks && npm run test:local-install && npm run smoke",
     "dist:mac:arm64": "electron-vite build && { electron-builder --mac --arm64; c=$?; npm run rebuild; exit $c; }"
   },
   "dependencies": {

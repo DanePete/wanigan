@@ -25,6 +25,8 @@ files:
 # partial prior rebuild leaves that helper out, the marker can make the next
 # package silently reuse the incomplete build. Clear just that marker before
 # each macOS target so node-gyp rebuilds both native targets for that arch.
+# The same after-pack hook also seals a no-certificate local build with an
+# ad-hoc signature; it deliberately yields to Developer ID/CSC signing.
 beforeBuild: ./scripts/prepare-node-pty-build.cjs
 afterPack: ./scripts/prepare-node-pty-build.cjs
 

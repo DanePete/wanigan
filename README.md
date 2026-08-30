@@ -35,6 +35,31 @@ npm test         # typecheck, then the smoke suite: no network, no spend
 npm run cli      # the same database from a terminal
 ```
 
+### Installing a local macOS arm64 build
+
+Build first, then install the exact verified bundle rather than dragging a
+second copy into `/Applications`:
+
+```bash
+npm run dist:mac:arm64
+npm run install:mac:arm64
+# or both: npm run dist:mac:arm64:install
+```
+
+`install:mac:arm64` verifies the sealed code signature, bundle identity and
+executable `node-pty` helper before it changes anything. It asks the installed
+Wanigan to quit and waits; it never force-kills a running app or swaps it while
+it is live. The new bundle is copied into a hidden staging directory inside
+`/Applications`, promoted with a same-volume rename, and the prior bundle goes
+to the macOS Trash instead of a Spotlight-visible `Wanigan.app.previous` copy.
+The script then launches and checks the exact `/Applications/Wanigan.app`.
+
+If macOS does not grant your account write access to `/Applications`, it shows
+one administrator prompt for the staging/swap only. The app is quit and
+launched by your signed-in session, never by the privileged helper. To install
+a separately built verified bundle, pass
+`npm run install:mac:arm64 -- --source "/path/to/Wanigan.app"`.
+
 ## Sessions
 
 Each session is a real pseudo-terminal running the actual agent CLI. Nothing is

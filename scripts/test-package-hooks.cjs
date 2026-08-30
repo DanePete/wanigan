@@ -6,6 +6,11 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { afterPack, beforeBuild } = require('./prepare-node-pty-build.cjs');
+const {
+  assertSealedBundleSignature,
+  hasUsableSigningIdentity,
+  signLocalMacAppIfNeeded,
+} = require('./sign-local-macos-app.cjs');
 
 async function exists(file) {
   try {
@@ -59,7 +64,13 @@ async function main() {
     const afterPackContext = {
       appOutDir: fixture,
       electronPlatformName: 'darwin',
-      packager: { appInfo: { productFilename: 'Wanigan' } },
+      // This fixture deliberately is not a real .app, so explicitly mirror a
+      // caller that opted out of signing while exercising the node-pty guard.
+      packager: {
+        appInfo: { productFilename: 'Wanigan' },
+        platformSpecificBuildOptions: { identity: null },
+        config: {},
+      },
     };
     await afterPack(afterPackContext);
 
@@ -68,6 +79,86 @@ async function main() {
 
     await fs.unlink(packagedHelper);
     await assert.rejects(afterPack(afterPackContext), /missing/);
+
+    assert.equal(hasUsableSigningIdentity('  1) ABCDEF0123456789ABCDEF0123456789ABCDEF01 "Developer ID Application: Example (TEAMID)"'), true,
+      'a valid keychain identity must preserve electron-builder signing');
+    assert.equal(hasUsableSigningIdentity('     0 valid identities found'), false,
+      'the no-identity keychain result must allow the local fallback');
+    assert.doesNotThrow(() => assertSealedBundleSignature(
+      'Identifier=io.deadnorth.wanigan\nInfo.plist entries=35\nSealed Resources version=2 rules=13 files=264',
+      'io.deadnorth.wanigan',
+    ));
+    assert.throws(() => assertSealedBundleSignature(
+      'Identifier=Electron\nInfo.plist=not bound\nSealed Resources=none',
+      'io.deadnorth.wanigan',
+    ), /bundle identifier/);
+
+    const signingContext = {
+      appOutDir: fixture,
+      electronPlatformName: 'darwin',
+      packager: {
+        appInfo: { productFilename: 'Wanigan', id: 'io.deadnorth.wanigan' },
+        platformSpecificBuildOptions: {},
+        config: {},
+      },
+    };
+    const signingCalls = [];
+    const signed = await signLocalMacAppIfNeeded(signingContext, {
+      platform: 'darwin',
+      environment: {},
+      access: async () => {},
+      log: () => {},
+      execute: async (file, args) => {
+        signingCalls.push([file, args]);
+        if (file === '/usr/bin/security') return { stdout: '     0 valid identities found\n' };
+        if (args[0] === '-dv') {
+          return { stderr: 'Identifier=io.deadnorth.wanigan\nInfo.plist entries=35\nSealed Resources version=2 rules=13 files=264\n' };
+        }
+        return {};
+      },
+    });
+    assert.equal(signed.signed, true, 'no identity must produce a sealed local ad-hoc app');
+    assert.deepEqual(signingCalls.slice(1), [
+      ['/usr/bin/codesign', ['--force', '--deep', '--sign', '-', path.join(fixture, 'Wanigan.app')]],
+      ['/usr/bin/codesign', ['--verify', '--deep', '--strict', path.join(fixture, 'Wanigan.app')]],
+      ['/usr/bin/codesign', ['-dv', '--verbose=4', path.join(fixture, 'Wanigan.app')]],
+    ], 'the fallback must sign, verify, then prove that the bundle is sealed');
+
+    const configured = await signLocalMacAppIfNeeded(signingContext, {
+      platform: 'darwin',
+      environment: { CSC_LINK: 'certificate.p12' },
+      execute: async () => { throw new Error('a configured credential must not be probed or replaced'); },
+    });
+    assert.equal(configured.signed, false);
+    assert.match(configured.reason, /CSC_LINK/);
+
+    const identityAvailable = await signLocalMacAppIfNeeded(signingContext, {
+      platform: 'darwin',
+      environment: {},
+      execute: async () => ({ stdout: '  1) ABCDEF0123456789ABCDEF0123456789ABCDEF01 "Developer ID Application: Example (TEAMID)"\n' }),
+    });
+    assert.deepEqual(identityAvailable, { signed: false, reason: 'identity-available' });
+
+    const discoveryOptOutCalls = [];
+    const discoveryOptOut = await signLocalMacAppIfNeeded(signingContext, {
+      platform: 'darwin',
+      environment: { CSC_IDENTITY_AUTO_DISCOVERY: 'false' },
+      access: async () => {},
+      log: () => {},
+      execute: async (file, args) => {
+        discoveryOptOutCalls.push([file, args]);
+        if (file === '/usr/bin/security') {
+          return { stdout: '  1) ABCDEF0123456789ABCDEF0123456789ABCDEF01 "Developer ID Application: Example (TEAMID)"\n' };
+        }
+        if (args[0] === '-dv') {
+          return { stderr: 'Identifier=io.deadnorth.wanigan\nInfo.plist entries=35\nSealed Resources version=2 rules=13 files=264\n' };
+        }
+        return {};
+      },
+    });
+    assert.equal(discoveryOptOut.signed, true,
+      'disabling builder identity discovery must still leave a sealed local app');
+    assert.equal(discoveryOptOutCalls.filter(([file]) => file === '/usr/bin/codesign').length, 3);
 
     console.log('package hook checks passed');
   } finally {

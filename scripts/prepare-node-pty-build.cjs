@@ -2,6 +2,7 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { signLocalMacAppIfNeeded } = require('./sign-local-macos-app.cjs');
 
 /**
  * electron-builder runs @electron/rebuild without force. Its `.forge-meta`
@@ -81,6 +82,12 @@ async function afterPack(context) {
   if (!stat.isFile() || (stat.mode & 0o111) === 0) {
     throw new Error(`node-pty spawn-helper is not executable in the packaged app: ${helper}`);
   }
+
+  // electron-builder skips its signing phase when this Mac has no valid
+  // identity. Seal that local app before artifacts are made; the helper itself
+  // decides whether a configured/available Developer ID signer should retain
+  // full control of the normal signing and notarization flow.
+  await signLocalMacAppIfNeeded(context);
 }
 
 exports.beforeBuild = beforeBuild;
