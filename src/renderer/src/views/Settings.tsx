@@ -9,6 +9,15 @@ import { Note, Section, Stat, ago, num } from '../components/bits';
 
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
 type ProviderKeyStatus = { present: boolean; fingerprint: string | null };
+type SettingsTab = 'connections' | 'projects' | 'automation' | 'visibility' | 'app';
+
+const SETTINGS_TABS: { id: SettingsTab; label: string; detail: string }[] = [
+  { id: 'connections', label: 'Connections', detail: 'Provider credentials and the local agent runtimes Wanigan can launch.' },
+  { id: 'projects', label: 'Projects', detail: 'Repositories and isolated worktrees for safe parallel work.' },
+  { id: 'automation', label: 'Automation', detail: 'Budgets, trust, dispatching, and agent tools.' },
+  { id: 'visibility', label: 'Visibility', detail: 'What Wanigan observes, shares, and lets leave this Mac.' },
+  { id: 'app', label: 'App & data', detail: 'Appearance, local storage, and safe screenshot mode.' },
+];
 
 /* ── formatting ──────────────────────────────────────────────────────── */
 
@@ -220,6 +229,7 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
   const [deepseekStatus, setDeepseekStatus] = useState<ProviderKeyStatus | null>(null);
   const [deepseekBusy, setDeepseekBusy] = useState(false);
   const [deepseekMsg, setDeepseekMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('connections');
 
   const load = () => window.wanigan.key.status().then((st) => {
     setStatus(st);
@@ -346,9 +356,22 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
     <div className="pane set" style={{ maxWidth: 780 }} data-motion={prefs?.motion ?? 'auto'}>
       <style>{SHEET}</style>
 
-      <div className="pane-head"><div><h1>Settings</h1></div></div>
+      <div className="pane-head set-head">
+        <div><div className="set-kicker">Wanigan setup</div><h1>Settings</h1><p className="dim">Configure how Wanigan connects, works, and stays private on this Mac.</p></div>
+      </div>
+      <div className="set-tabs" role="tablist" aria-label="Settings sections">
+        {SETTINGS_TABS.map((tab) => (
+          <button key={tab.id} type="button" role="tab" aria-selected={settingsTab === tab.id}
+                  aria-controls={`settings-${tab.id}`} className={settingsTab === tab.id ? 'on' : ''}
+                  onClick={() => setSettingsTab(tab.id)}>{tab.label}</button>
+        ))}
+      </div>
+      <div className="set-tab-summary" role="status">
+        <strong>{SETTINGS_TABS.find((tab) => tab.id === settingsTab)?.label}</strong>
+        <span>{SETTINGS_TABS.find((tab) => tab.id === settingsTab)?.detail}</span>
+      </div>
 
-      <DemoPanel />
+      {settingsTab === 'connections' && <div className="set-tab-panel" role="tabpanel" id="settings-connections">
 
       <Section title="Claude Platform API key"
                hint="Needed for Batches — estimating, dry runs, and submitting. Agent sessions do not use it; they authenticate through their own CLI.">
@@ -485,6 +508,9 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
         </p>
       </Section>
 
+      </div>}
+
+      {settingsTab === 'automation' && <div className="set-tab-panel" role="tabpanel" id="settings-automation">
       <Section title="Spending"
                hint="A batch cannot be un-submitted. The cap is checked against the estimate at submit time — the last moment anything is preventable.">
         <label className="label">Maximum estimated cost per run (USD)</label>
@@ -503,18 +529,33 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
         </p>
       </Section>
 
+      </div>}
+
       {prefsErr && <Callout level="critical" title="A preference did not save.">{prefsErr}</Callout>}
 
+      {settingsTab === 'visibility' && <div className="set-tab-panel" role="tabpanel" id="settings-visibility">
       <Observation prefs={prefs} pending={pending} setFlag={setFlag} />
       <PhoneMonitor />
       <Egress />
+      </div>}
+
+      {settingsTab === 'automation' && <div className="set-tab-panel" role="tabpanel" id="settings-automation-tools">
       <Trust projects={projects} onAddProject={onAddProject} />
       <Dispatcher />
       <Mcp projects={projects} prefs={prefs} pending={pending} setFlag={setFlag} />
+      </div>}
+
+      {settingsTab === 'projects' && <div className="set-tab-panel" role="tabpanel" id="settings-projects">
       <Worktrees />
+      </div>}
+
+      {settingsTab === 'app' && <div className="set-tab-panel" role="tabpanel" id="settings-app">
       <Motion prefs={prefs} pending={pending} setPref={setPref} />
       <Storage prefs={prefs} pending={pending} setPref={setPref} />
+      <DemoPanel />
+      </div>}
 
+      {settingsTab === 'connections' && <div className="set-tab-panel" role="tabpanel" id="settings-runtimes">
       <Section title="Agents" hint="Resolved from your login shell's PATH, then from editor extension directories.">
         {providers.map((p) => (
           <div key={p.id} style={{ display: 'flex', gap: 11, alignItems: 'center', padding: '7px 0',
@@ -531,7 +572,9 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
           </div>
         ))}
       </Section>
+      </div>}
 
+      {settingsTab === 'projects' && <div className="set-tab-panel" role="tabpanel" id="settings-project-list">
       <Section title="Projects" hint="Shared by both views — an agent session and a batch run target the same repo."
                right={<button className="btn" onClick={onAddProject}>+ Add project</button>}>
         {!projects.length && <p className="dim">No projects yet.</p>}
@@ -545,6 +588,7 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
           </div>
         ))}
       </Section>
+      </div>}
     </div>
   );
 }
@@ -2166,6 +2210,17 @@ function Storage({ prefs, pending, setPref }: {
 
 const SHEET = `
 .set :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 5px; }
+
+.set-head { margin-bottom: -2px; }
+.set-kicker { color: var(--accent); font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 4px; }
+.set-tabs { display: flex; gap: 5px; padding: 5px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); scrollbar-width: thin; }
+.set-tabs button { flex: 0 0 auto; border-radius: 7px; padding: 7px 10px; color: var(--text-dim); font-size: 12px; font-weight: 650; white-space: nowrap; }
+.set-tabs button:hover { color: var(--text); background: var(--bg-soft); }
+.set-tabs button.on { color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.set-tab-summary { display: flex; gap: 9px; align-items: baseline; padding: 0 3px; color: var(--text-dim); font-size: var(--t-small); line-height: 1.45; }
+.set-tab-summary strong { color: var(--text); white-space: nowrap; }
+.set-tab-panel { display: flex; flex-direction: column; gap: var(--s-4); }
+@media (max-width: 580px) { .set-tab-summary { align-items: flex-start; flex-direction: column; gap: 1px; } }
 
 /* The motion setting is real on the surface that sets it. */
 .set[data-motion='off'] * { transition: none !important; animation: none !important; }

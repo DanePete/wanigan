@@ -613,6 +613,46 @@ function optionalLaunchValue(value: unknown, label: string): string | undefined 
   return value.trim();
 }
 
+/**
+ * The desktop terminal has an ANSI parser. The mobile view deliberately uses
+ * a plain, inert <pre>, so terminal escape sequences must never be sent to it
+ * verbatim. Apart from making colour codes visible as garbage, OSC sequences
+ * can contain arbitrary terminal metadata. This produces a readable snapshot
+ * while keeping the remote page incapable of interpreting terminal controls.
+ */
+function readableTerminal(value: string): string {
+  const withoutEscapes = value
+    // OSC: title, hyperlinks, clipboard, and other out-of-band terminal data.
+    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, '')
+    // CSI: colours, cursor movement, erase, etc.
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    // Charset selection and the small remaining two-byte escape forms.
+    .replace(/\x1b[()][0-2]?[ -/]*[@-~]/g, '')
+    .replace(/\x1b[ -/]*[@-~]/g, '');
+
+  const lines = [''];
+  let cursor = 0;
+  for (const char of withoutEscapes) {
+    const index = lines.length - 1;
+    if (char === '\n') { lines.push(''); cursor = 0; continue; }
+    if (char === '\r') { cursor = 0; continue; }
+    if (char === '\b') { cursor = Math.max(0, cursor - 1); continue; }
+    if (char === '\t') {
+      const spaces = 2 - (cursor % 2);
+      lines[index] += ' '.repeat(spaces);
+      cursor += spaces;
+      continue;
+    }
+    if (char < ' ' || char === '\x7f') continue;
+    const line = lines[index];
+    lines[index] = cursor < line.length
+      ? `${line.slice(0, cursor)}${char}${line.slice(cursor + 1)}`
+      : `${line}${' '.repeat(cursor - line.length)}${char}`;
+    cursor += 1;
+  }
+  return lines.join('\n').replace(/\n{4,}/g, '\n\n\n');
+}
+
 async function serveControl(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
   const source = controlSource;
   if (!controlAllowed() || !source) { json(res, 403, { error: 'Remote control is disabled in Wanigan Settings.' }); return; }
@@ -625,7 +665,11 @@ async function serveControl(req: http.IncomingMessage, res: http.ServerResponse,
     const sessionId = safeString(url.searchParams.get('session'), 160);
     if (!sessionId) { json(res, 400, { error: 'Choose a session.' }); return; }
     const terminal = await source.terminal(sessionId);
-    json(res, 200, { title: safeString(terminal.title, 200), running: terminal.running, text: terminal.text.slice(-MAX_TERMINAL_BYTES) });
+    json(res, 200, {
+      title: safeString(terminal.title, 200),
+      running: terminal.running,
+      text: readableTerminal(terminal.text).slice(-MAX_TERMINAL_BYTES),
+    });
     return;
   }
   if (req.method !== 'POST' || url.pathname !== '/api/action') {
@@ -688,6 +732,9 @@ function dashboardHtml(nonce: string): string {
     .stat span { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
     .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
     .card { padding:14px; min-width:0; }
+    .card.tap { cursor:pointer; touch-action:manipulation; }
+    .card.tap:active { transform:scale(.985); border-color:var(--accent); }
+    .tap-hint { color:var(--accent); font-size:11px; font-weight:700; margin-top:10px; }
     .card-top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
     .name { font-weight:720; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .provider { color:var(--dim); font-size:12px; margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -714,7 +761,7 @@ function dashboardHtml(nonce: string): string {
     button.secondary { color:var(--ink); background:transparent; border-color:var(--line); }
     button:disabled { opacity:.55; }
     .control-result { color:var(--dim); min-height:20px; font-size:12px; margin-top:8px; }
-    .terminal { margin-top:10px; max-height:58vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; padding:13px; border-radius:10px; background:#06080c; border:1px solid var(--line); color:#d9e1eb; font:12px/1.48 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .terminal { margin-top:10px; min-height:180px; max-height:58vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; padding:13px; border-radius:10px; background:#06080c; border:1px solid var(--line); color:#edf2f7; font:13px/1.58 ui-monospace,SFMono-Regular,Menlo,monospace; -webkit-text-size-adjust:100%; }
     .terminal-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
     footer { color:var(--faint); font-size:11px; margin-top:24px; text-align:center; }
     @media (max-width:680px) { .stats { grid-template-columns:repeat(2,minmax(0,1fr)); } .grid { grid-template-columns:1fr; } header { align-items:flex-start; flex-direction:column; gap:8px; } }
@@ -769,6 +816,7 @@ function dashboardHtml(nonce: string): string {
       let controlOptions = null;
       let visibleSessions = [];
       let terminalBusy = false;
+      let requestedSessionId = '';
       const control = byId('controls');
       const controlResult = byId('control-result');
 
@@ -804,6 +852,11 @@ function dashboardHtml(nonce: string): string {
         } catch (error) { output.textContent = error instanceof Error ? error.message : 'Could not read this terminal.'; }
         finally { terminalBusy = false; }
       }
+      function openSession(sessionId) {
+        requestedSessionId = sessionId;
+        void renderControls(visibleSessions);
+        control.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
       async function renderControls(sessions) {
         visibleSessions = sessions.filter((session) => session.status !== 'exited');
         try {
@@ -812,9 +865,10 @@ function dashboardHtml(nonce: string): string {
           project.replaceChildren(...(controlOptions.projects || []).map((value) => option(value.id, value.name + (value.branch ? ' · ' + value.branch : ''))));
           provider.replaceChildren(...(controlOptions.providers || []).filter((value) => value.available).map((value) => option(value.id, value.label)));
           renderLaunchChoices();
-          const selectedSession = session.value;
+          const selectedSession = requestedSessionId || session.value;
           session.replaceChildren(...visibleSessions.map((value) => option(value.id, value.title + ' · ' + value.projectName)));
           if ([...session.options].some((value) => value.value === selectedSession)) session.value = selectedSession;
+          requestedSessionId = '';
           byId('launch-form').querySelector('button').disabled = !project.value || !provider.value;
           byId('prompt-form').querySelector('button').disabled = !session.value;
           byId('interrupt').disabled = !session.value;
@@ -886,6 +940,12 @@ function dashboardHtml(nonce: string): string {
           metric('Requests', number(session.usage.requests)),
           metric('Output', number(session.usage.outTokens)));
         out.append(top, meta);
+        if (session.status !== 'exited') {
+          out.classList.add('tap'); out.setAttribute('role', 'button'); out.tabIndex = 0;
+          out.append(node('div', 'tap-hint', 'Tap to open terminal & reply'));
+          out.addEventListener('click', () => openSession(session.id));
+          out.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openSession(session.id); } });
+        }
         return out;
       }
 

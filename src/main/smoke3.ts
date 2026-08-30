@@ -811,7 +811,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       launch: async (input) => { remoteActions.push(`launch:${input.projectId}:${input.providerId}:${input.model ?? ''}:${input.effort ?? ''}:${input.prompt}`); return { id: 's_mobile', title: 'Codex · Mobile repo' }; },
       prompt: async (id, prompt) => { remoteActions.push(`prompt:${id}:${prompt}`); },
       interrupt: async (id) => { remoteActions.push(`interrupt:${id}`); return true; },
-      terminal: async (id) => ({ title: `Terminal ${id}`, running: true, text: `safe output for ${id}` }),
+      terminal: async (id) => ({ title: `Terminal ${id}`, running: true, text: `\x1b[38;5;214msafe output\x1b[0m for ${id}\x1b]8;;https://example.com\x07` }),
     });
     await mobile.setMobileConfig({ remoteControlEnabled: true });
     const controls = await fetch(controlUrl, { headers: { authorization: `Bearer ${token}` } });
@@ -833,8 +833,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(remotePrompt.ok && remoteInterrupt.ok && remoteActions.slice(1).join('|') === 'prompt:s_mobile:Continue|interrupt:s_mobile',
       'remote control allows instruction and interrupt while permission approval stays out of the action API');
     const terminal = await fetch(new URL('api/terminal?session=s_mobile', monitor.localUrl), { headers: { authorization: `Bearer ${token}` } });
-    check(terminal.ok && JSON.parse(await terminal.text()).text === 'safe output for s_mobile',
-      'a paired device can open the selected live terminal only through the authenticated control surface');
+    const terminalBody = JSON.parse(await terminal.text()) as { text?: string };
+    check(terminal.ok && terminalBody.text === 'safe output for s_mobile' && !terminalBody.text.includes('\x1b'),
+      'a paired device receives readable terminal text with ANSI and terminal metadata removed');
 
     const rotated = await mobile.regenerateMobileToken();
     const oldToken = await fetch(apiUrl, { headers: { authorization: `Bearer ${token}` } });
