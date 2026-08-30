@@ -641,7 +641,7 @@ function ExactCodexRecoveryDialog({ projects, defaultProjectId, onClose, onRecov
           <span className="label">Codex conversation UUID</span>
           <input className="field mono" style={{ width: '100%', marginTop: 6, boxSizing: 'border-box' }}
                  autoFocus value={threadId} onChange={(event) => setThreadId(event.target.value)}
-                 placeholder="01a04ecd-af7d-7120-ae71-7850a5b36dac" spellCheck={false}
+                 placeholder="00000000-0000-0000-0000-000000000000" spellCheck={false}
                  aria-describedby="recover-codex-help" />
         </label>
         <label style={{ display: 'block', marginTop: 14 }}>
