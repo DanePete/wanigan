@@ -793,8 +793,8 @@ function dashboardHtml(nonce: string): string {
           <form id="launch-form" class="fields"><select id="project" aria-label="Project"></select><select id="provider" aria-label="Provider"></select><select id="model" aria-label="Model"></select><select id="effort" aria-label="Reasoning effort"></select><textarea id="launch-prompt" maxlength="8000" placeholder="What should this agent do?"></textarea><button>Start session</button></form>
         </div>
         <div class="control-card">
-          <h3>Steer a running agent</h3><p>Send the next instruction or interrupt the current turn. Permission decisions still stay at the Mac.</p>
-          <form id="prompt-form" class="fields"><select id="session" aria-label="Running session"></select><textarea id="session-prompt" maxlength="8000" placeholder="Next instruction"></textarea><button>Send instruction</button><button id="interrupt" type="button" class="secondary">Interrupt turn</button></form>
+          <h3>Chat with this agent</h3><p>Type the next instruction for the selected session, or interrupt its current turn. Permission decisions still stay at the Mac.</p>
+          <form id="prompt-form" class="fields"><select id="session" aria-label="Running session"></select><textarea id="session-prompt" maxlength="8000" placeholder="Type a message to this agent…"></textarea><button>Send message</button><button id="interrupt" type="button" class="secondary">Interrupt turn</button></form>
         </div>
         <div class="control-card"><div class="terminal-head"><div><h3 id="terminal-title">Live terminal</h3><p>Latest terminal output from the selected session.</p></div><button id="terminal-refresh" type="button" class="secondary">Refresh</button></div><pre id="terminal" class="terminal">Choose a running session to open its terminal.</pre></div>
         <div id="control-result" class="control-result" role="status"></div>
@@ -854,8 +854,7 @@ function dashboardHtml(nonce: string): string {
       }
       function openSession(sessionId) {
         requestedSessionId = sessionId;
-        void renderControls(visibleSessions);
-        control.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        void renderControls(visibleSessions).then(() => byId('prompt-form').scrollIntoView({ behavior: 'smooth', block: 'start' }));
       }
       async function renderControls(sessions) {
         visibleSessions = sessions.filter((session) => session.status !== 'exited');
