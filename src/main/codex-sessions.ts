@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,6 +27,19 @@ export type CodexSessionCandidate = {
   startedAt: number;
 };
 
+/**
+ * A durable Codex thread that was verified against both of Codex's local
+ * records.  This is deliberately narrower than a Recent row: an explicit
+ * recovery must prove the exact UUID and its directory before a new writer is
+ * ever started.
+ */
+export type ExactCodexThread = {
+  id: string;
+  /** Canonical directory from both state_5.sqlite and session_meta. */
+  cwd: string;
+  rolloutPath: string;
+};
+
 type SessionRow = {
   id: string;
   conversation_id: string | null;
@@ -41,6 +55,19 @@ function codexHome(): string {
   return process.env.CODEX_HOME?.trim() || path.join(os.homedir(), '.codex');
 }
 
+/** A recovery id is data, never a CLI fragment. */
+export function normalizeCodexThreadId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const id = value.trim().toLowerCase();
+  return UUID.test(id) ? id : null;
+}
+
+/** Exact recovery requires an existing path; resolving a missing spelling is not proof of ownership. */
+function canonicalExistingPath(value: string): string | null {
+  try { return fs.realpathSync.native(value); }
+  catch { return null; }
+}
+
 function sameCwd(a: string, b: string): boolean {
   const canonical = (value: string): string => {
     try { return fs.realpathSync.native(value); }
@@ -50,6 +77,107 @@ function sameCwd(a: string, b: string): boolean {
     }
   };
   return canonical(a) === canonical(b);
+}
+
+function isInside(root: string, child: string): boolean {
+  const relative = path.relative(root, child);
+  return Boolean(relative) && !relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative);
+}
+
+/** Read exactly the trusted identity record, never an arbitrary later rollout event. */
+function rolloutSessionMeta(file: string): { id: string; cwd: string } | null {
+  const line = firstLine(file);
+  if (!line) return null;
+  try {
+    const raw = JSON.parse(line) as {
+      type?: string;
+      payload?: {
+        id?: string; session_id?: string; cwd?: string;
+        source?: string; thread_source?: string;
+      };
+    };
+    if (raw.type !== 'session_meta' || !raw.payload?.source?.trim()) return null;
+    if (raw.payload.thread_source && raw.payload.thread_source !== 'user') return null;
+    const id = normalizeCodexThreadId(raw.payload.id ?? raw.payload.session_id);
+    const cwd = raw.payload.cwd ? canonicalExistingPath(raw.payload.cwd) : null;
+    return id && cwd ? { id, cwd } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Validate a user-selected Codex UUID without modifying Codex state or Wanigan
+ * history.  State_5 is the local durable index; its rollout must then contain
+ * a matching session_meta record in the exact same canonical directory.
+ */
+export function validateExactCodexThread(threadId: unknown, selectedProjectPath: string): ExactCodexThread {
+  const id = normalizeCodexThreadId(threadId);
+  if (!id) throw new Error('Paste the complete Codex conversation UUID; Wanigan will not guess a recent thread.');
+  const projectCwd = canonicalExistingPath(selectedProjectPath);
+  if (!projectCwd) throw new Error('The selected project folder no longer exists. Choose its current folder first.');
+
+  const candidate = stateThreadByExactId(id);
+  if (!candidate?.rolloutPath) {
+    throw new Error('Codex did not confirm that UUID in its local state index. Wanigan did not open a different conversation.');
+  }
+  const stateCwd = canonicalExistingPath(candidate.cwd);
+  if (!stateCwd) {
+    throw new Error('Codex recorded a folder for that conversation which is no longer available. Wanigan did not resume it elsewhere.');
+  }
+  const sessionsRoot = canonicalExistingPath(path.join(codexHome(), 'sessions'));
+  const rolloutPath = canonicalExistingPath(candidate.rolloutPath);
+  if (!sessionsRoot || !rolloutPath || !isInside(sessionsRoot, rolloutPath)) {
+    throw new Error('Codex provided an invalid local rollout for that conversation. Wanigan left it untouched.');
+  }
+  try {
+    if (!fs.statSync(rolloutPath).isFile()) throw new Error('not a file');
+  } catch {
+    throw new Error('Codex’s saved rollout for that conversation is unavailable. Wanigan left it untouched.');
+  }
+  const meta = rolloutSessionMeta(rolloutPath);
+  if (!meta || meta.id !== id || meta.cwd !== stateCwd) {
+    throw new Error('Codex’s state index and saved session metadata disagree for that UUID. Wanigan will not resume it.');
+  }
+  if (stateCwd !== projectCwd) {
+    throw new Error('That Codex conversation belongs to a different folder. Select its exact project folder before recovering it.');
+  }
+  return { id, cwd: stateCwd, rolloutPath };
+}
+
+/**
+ * Codex leaves zero-byte lock files behind after a writer exits, so existence
+ * alone is meaningless.  lsof lets us distinguish a stale file from a file
+ * held open by a live Codex writer.  If that check cannot run, fail closed:
+ * launching a second writer is worse than asking the operator to retry.
+ */
+export function assertCodexThreadWriterUnlocked(threadId: unknown): void {
+  const id = normalizeCodexThreadId(threadId);
+  if (!id) throw new Error('The Codex conversation UUID is invalid.');
+  const lock = path.join(codexHome(), 'thread-writer-locks', `${id}.lock`);
+  if (!fs.existsSync(lock)) return;
+  const lsof = process.platform === 'darwin' ? '/usr/sbin/lsof' : '/usr/bin/lsof';
+  if (!fs.existsSync(lsof)) {
+    throw new Error('Wanigan could not verify Codex’s writer lock, so it did not start a second writer.');
+  }
+  try {
+    const output = execFileSync(lsof, ['-n', '-F', 'p', '--', lock], {
+      encoding: 'utf8', timeout: 2_000, maxBuffer: 64 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const pids = output.split(/\r?\n/)
+      .map((line) => /^p(\d+)$/.exec(line)?.[1] ?? null)
+      .filter((pid): pid is string => pid !== null);
+    if (pids.length) {
+      throw new Error('That Codex conversation already has an active writer. Keep using its existing session; Wanigan did not open a duplicate.');
+    }
+  } catch (error) {
+    const status = (error as { status?: number } | null)?.status;
+    // lsof exits 1 when no process has the path open. A stale lock file is safe.
+    if (status === 1) return;
+    if (error instanceof Error && error.message.includes('already has an active writer')) throw error;
+    throw new Error('Wanigan could not verify Codex’s writer lock, so it did not start a second writer.');
+  }
 }
 
 /**
@@ -143,6 +271,38 @@ function stateThreads(): CodexThreadCandidate[] | null {
         createdAt: Number(row.created_at_ms),
         rolloutPath: row.rollout_path || null,
       }));
+  } catch {
+    return null;
+  } finally {
+    try { state?.close(); } catch { /* read-only compatibility fallback */ }
+  }
+}
+
+/**
+ * Exact recovery is user-directed, so it may legitimately target a conversation
+ * first opened by the VS Code extension rather than a CLI-rooted Wanigan row.
+ * Unlike historical backfill, it does not infer anything by time: it reads one
+ * requested id from state_5, requires a top-level user thread, and then makes
+ * the rollout session_meta prove the same id and CWD below.
+ */
+function stateThreadByExactId(id: string): CodexThreadCandidate | null {
+  const file = path.join(codexHome(), 'state_5.sqlite');
+  let state: Database.Database | null = null;
+  try {
+    state = new Database(file, { readonly: true, fileMustExist: true, timeout: 1000 });
+    const columns = new Set((state.prepare('PRAGMA table_info(threads)').all() as { name: string }[])
+      .map((column) => column.name));
+    if (!['id', 'cwd', 'rollout_path', 'source'].every((name) => columns.has(name))) return null;
+    const topLevel = columns.has('thread_source') ? "AND thread_source = 'user'" : '';
+    const row = state.prepare(`
+      SELECT id, cwd, rollout_path, source
+        FROM threads
+       WHERE id = ? COLLATE NOCASE ${topLevel}
+    `).get(id) as {
+      id: string; cwd: string; rollout_path: string | null; source: string | null;
+    } | undefined;
+    if (!row || !UUID.test(row.id) || !row.cwd || !row.rollout_path || !row.source?.trim()) return null;
+    return { id: row.id, cwd: row.cwd, createdAt: 0, rolloutPath: row.rollout_path };
   } catch {
     return null;
   } finally {

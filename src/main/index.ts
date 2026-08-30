@@ -7,7 +7,7 @@ import {
 import {
   initSessions, listSessions, createSession, writeSession, resizeSession,
   killSession, closeSession, scrollback, markRead, shutdownAll, sessionBaseline, interruptSession,
-  pastSessions, forgetPastSession, setSessionExitObserver,
+  pastSessions, forgetPastSession, recoverExactCodexThread, setSessionExitObserver,
 } from './sessions';
 import { listProjects, addProject, removeProject, refreshBranches, projectById } from './store';
 import * as batch from './batch';
@@ -900,6 +900,11 @@ function registerIpc() {
 
   handle('sessions:list', () => listSessions());
   handle('sessions:create', (opts: LaunchOptions) => createSession(opts));
+  // Separate from sessions:create: only the exact UUID + selected project
+  // cross this boundary, so arbitrary launch flags cannot turn recovery into a
+  // broad Codex picker or a second writer.
+  handle('sessions:recoverExactCodex', (input: { threadId: unknown; projectId: unknown }) =>
+    recoverExactCodexThread(input));
   handle('sessions:scrollback', (id: string) => scrollback(id));
   handle('sessions:interrupt', (id: string, force?: boolean) => interruptSession(id, force === true));
   handle('sessions:kill', (id: string) => { killSession(id); return true; });

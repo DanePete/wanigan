@@ -68,6 +68,8 @@ const api = {
   sessions: {
     list: () => call<Session[]>('sessions:list'),
     create: (opts: LaunchOptions) => call<Session>('sessions:create', opts),
+    recoverExactCodex: (input: { threadId: string; projectId: string }) =>
+      call<Session>('sessions:recoverExactCodex', input),
     scrollback: (id: string) => call<string>('sessions:scrollback', id),
     interrupt: (id: string, force?: boolean) => call<boolean>('sessions:interrupt', id, force),
     kill: (id: string) => call<boolean>('sessions:kill', id),

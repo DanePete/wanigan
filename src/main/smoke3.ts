@@ -33,7 +33,9 @@ import { egressReport } from './egress';
 import { mobileFleetSnapshot } from './fleet-snapshot';
 import * as mobile from './mobile';
 import { forgetPastSession, pastSessions, reconcileAbandonedSessions, scanCodexNotifications } from './sessions';
-import { backfillCodexThreadIds, captureNewCodexThreadId, matchCodexThreads } from './codex-sessions';
+import {
+  backfillCodexThreadIds, captureNewCodexThreadId, matchCodexThreads, validateExactCodexThread,
+} from './codex-sessions';
 import { __test as codexUsageTest } from './codex-usage';
 import { getSetting, setSetting } from './settings';
 import { dataDir, db, resultsDir } from './db';
@@ -520,6 +522,22 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const startupReservedId = '88888888-8888-4888-8888-888888888888';
   const startupReservedCwd = path.join(tmp, 'startup-reserved-prompt');
   const startupReservedAt = deferredPromptAt - 7_000;
+  const exactRecoveryId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const exactRecoveryCwd = path.join(tmp, 'exact-recovery-project');
+  const wrongRecoveryCwd = path.join(tmp, 'wrong-recovery-project');
+  const exactRollout = path.join(fakeCodexHome, 'sessions', '2026', '08', '30', `rollout-smoke-${exactRecoveryId}.jsonl`);
+  fs.mkdirSync(identityCwd, { recursive: true });
+  fs.mkdirSync(orphanCwd, { recursive: true });
+  fs.mkdirSync(path.join(tmp, 'seconds-fallback'), { recursive: true });
+  fs.mkdirSync(deferredPromptCwd, { recursive: true });
+  fs.mkdirSync(startupReservedCwd, { recursive: true });
+  fs.mkdirSync(exactRecoveryCwd, { recursive: true });
+  fs.mkdirSync(wrongRecoveryCwd, { recursive: true });
+  fs.mkdirSync(path.dirname(exactRollout), { recursive: true });
+  fs.writeFileSync(exactRollout, `${JSON.stringify({
+    type: 'session_meta',
+    payload: { id: exactRecoveryId, cwd: exactRecoveryCwd, source: 'cli', thread_source: 'user' },
+  })}\n`);
   const secondsAt = Math.floor((identityAt + 5_000) / 1_000) * 1_000;
   stateInsert.run(discoveredId, identityCwd, identityAt + 51, 0, 'cli', 'user', null);
   stateInsert.run('55555555-5555-4555-8555-555555555555', orphanCwd,
@@ -528,6 +546,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     secondsAt / 1_000, 'cli', 'user', null);
   stateInsert.run(deferredPromptId, deferredPromptCwd, deferredPromptAt, 0, 'cli', 'user', null);
   stateInsert.run(startupReservedId, startupReservedCwd, startupReservedAt, 0, 'cli', 'user', null);
+  stateInsert.run(exactRecoveryId, exactRecoveryCwd, identityAt + 8_000, 0, 'cli', 'user', exactRollout);
   fakeState.close();
 
   const identityRows = [
@@ -555,6 +574,15 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const priorCodexHome = process.env.CODEX_HOME;
   try {
     process.env.CODEX_HOME = fakeCodexHome;
+    const exact = validateExactCodexThread(exactRecoveryId.toUpperCase(), exactRecoveryCwd);
+    check(exact.id === exactRecoveryId && exact.cwd === fs.realpathSync.native(exactRecoveryCwd)
+      && exact.rolloutPath === fs.realpathSync.native(exactRollout),
+    'an explicit Codex recovery UUID must agree across state_5, rollout session_meta and the selected canonical project');
+    let wrongProjectRejected = false;
+    try { validateExactCodexThread(exactRecoveryId, wrongRecoveryCwd); }
+    catch { wrongProjectRejected = true; }
+    check(wrongProjectRejected,
+      'an exact Codex recovery refuses a UUID when its saved canonical CWD does not match the selected project');
     backfillCodexThreadIds();
     const identity = (id: string) => (db().prepare(
       'SELECT conversation_id FROM session_log WHERE id = ?'
@@ -1534,6 +1562,16 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(/tui\.notifications=/.test(sessionManagerSrc) && /scanCodexNotifications/.test(sessionManagerSrc)
     && /recordProviderEvent/.test(sessionManagerSrc),
   'Codex interactive turns expose approval and completion transitions without editing global config');
+  check(/handle\(\s*'sessions:recoverExactCodex'/.test(mainSrc)
+    && /recoverExactCodex:\s*\(/.test(preloadSrc)
+    && sessionsSrc.includes('Recover exact Codex UUID…')
+    && sessionManagerSrc.includes('recoverExactCodexThread')
+    && sessionManagerSrc.includes('validateExactCodexThread(conversationId, project.path)')
+    && sessionManagerSrc.includes('assertCodexThreadWriterUnlocked(conversationId)')
+    && sessionManagerSrc.includes("JSON.stringify(['resume', conversationId])")
+    && sessionManagerSrc.includes('recoveryBootstrapReady')
+    && sessionManagerSrc.includes('if (!exactRecovery) {\n    try {\n      recordSessionHistory();'),
+  'exact Codex recovery has its own UUID/project IPC, validates state plus CWD, checks the live writer before spawn, and delays Recent history until bootstrap succeeds');
   check(/sandbox:\s*true/.test(mainSrc) && /will-navigate/.test(mainSrc) && /trustedSender/.test(mainSrc),
     'the desktop shell is sandboxed, refuses renderer navigation and validates IPC senders');
   check(/capabilitiesFor/.test(providerSrc) && /--help/.test(providerSrc),

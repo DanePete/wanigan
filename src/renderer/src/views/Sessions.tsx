@@ -104,6 +104,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, a
 }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [dialog, setDialog] = useState(false);
+  const [exactRecoveryDialog, setExactRecoveryDialog] = useState(false);
   // Loading is not empty. Until the first list() answers, "no sessions running"
   // would be a claim Wanigan has not checked.
   const [ready, setReady] = useState(false);
@@ -266,6 +267,12 @@ export default function Sessions({ providers, projects, onAddProject, onError, a
     select(s.id);
   }
 
+  async function recoverExactCodex(threadId: string, projectId: string) {
+    const s = await window.wanigan.sessions.recoverExactCodex({ threadId, projectId });
+    await refresh();
+    select(s.id);
+  }
+
   const byProject = useMemo(() => {
     const m = new Map<string, Session[]>();
     for (const s of sessions) m.set(s.projectId, [...(m.get(s.projectId) ?? []), s]);
@@ -391,6 +398,13 @@ export default function Sessions({ providers, projects, onAddProject, onError, a
 
             <FocusBtn className="btn" style={{ width: '100%', justifyContent: 'center', marginTop: 14 }}
                       onClick={onAddProject}>+ Add project</FocusBtn>
+            {projects.length > 0 && (
+              <FocusBtn className="faint" style={{ width: '100%', justifyContent: 'center', marginTop: 8,
+                                                     fontSize: 'var(--t-small)', borderRadius: 'var(--r-sm)' }}
+                        onClick={() => setExactRecoveryDialog(true)}>
+                Recover exact Codex UUID…
+              </FocusBtn>
+            )}
           </div>
 
           {/* Lives below the fold of the rail rather than in the terminal
@@ -578,9 +592,83 @@ export default function Sessions({ providers, projects, onAddProject, onError, a
         <NewSessionDialog providers={providers} projects={projects} defaultProjectId={active?.projectId}
                           onClose={() => setDialog(false)} onCreate={createSession} onAddProject={onAddProject} />
       )}
+      {exactRecoveryDialog && (
+        <ExactCodexRecoveryDialog projects={projects} defaultProjectId={active?.projectId}
+                                  onClose={() => setExactRecoveryDialog(false)} onRecover={recoverExactCodex} />
+      )}
       {teachSession && (
         <SessionTeachModal session={teachSession} onClose={() => setTeachSession(null)} onError={onError} />
       )}
+    </div>
+  );
+}
+
+function ExactCodexRecoveryDialog({ projects, defaultProjectId, onClose, onRecover }: {
+  projects: Project[];
+  defaultProjectId?: string;
+  onClose: () => void;
+  onRecover: (threadId: string, projectId: string) => Promise<void>;
+}) {
+  const [threadId, setThreadId] = useState('');
+  const [projectId, setProjectId] = useState(() =>
+    projects.some((project) => project.id === defaultProjectId) ? defaultProjectId! : projects[0]?.id ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async () => {
+    if (!threadId.trim() || !projectId || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onRecover(threadId.trim(), projectId);
+      onClose();
+    } catch (e) {
+      setError(msg(e));
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="recover-codex-title"
+               onMouseDown={(event) => event.stopPropagation()}>
+        <div className="label" style={{ color: 'var(--codex)', marginBottom: 4 }}>Safe recovery</div>
+        <h2 id="recover-codex-title" style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>Recover an exact Codex conversation</h2>
+        <p className="dim" style={{ marginTop: 7, fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
+          Use this for a known conversation — for example, your budgeting and investing thread. Wanigan checks the
+          exact UUID against Codex’s local index, rollout, saved folder and writer lock. It never guesses “latest.”
+        </p>
+
+        <label style={{ display: 'block', marginTop: 16 }}>
+          <span className="label">Codex conversation UUID</span>
+          <input className="field mono" style={{ width: '100%', marginTop: 6, boxSizing: 'border-box' }}
+                 autoFocus value={threadId} onChange={(event) => setThreadId(event.target.value)}
+                 placeholder="01a04ecd-af7d-7120-ae71-7850a5b36dac" spellCheck={false}
+                 aria-describedby="recover-codex-help" />
+        </label>
+        <label style={{ display: 'block', marginTop: 14 }}>
+          <span className="label">Project folder used by this conversation</span>
+          <select className="field" style={{ width: '100%', marginTop: 6, boxSizing: 'border-box' }}
+                  value={projectId} onChange={(event) => setProjectId(event.target.value)}>
+            {projects.map((project) => <option key={project.id} value={project.id}>{project.name} — {project.path}</option>)}
+          </select>
+        </label>
+        <p id="recover-codex-help" className="faint" style={{ marginTop: 9, fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>
+          Recovery launches only <span className="mono">codex resume &lt;UUID&gt;</span> through Wanigan’s normal terminal
+          harness. If Codex says another writer is active or bootstrap fails, Wanigan changes no Recent history.
+        </p>
+        {error && (
+          <div style={{ background: 'var(--bad-soft)', color: 'var(--bad)', border: '1px solid var(--bad)',
+                        borderRadius: 'var(--r-sm)', padding: '7px 10px', marginTop: 12,
+                        fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
+            <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>✕</span>{error}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
+          <FocusBtn className="btn" style={{ marginLeft: 'auto' }} disabled={busy} onClick={onClose}>Cancel</FocusBtn>
+          <FocusBtn className="btn btn-primary" disabled={!threadId.trim() || !projectId || busy} onClick={() => void submit()}>
+            {busy ? 'Verifying & opening…' : 'Recover exact thread'}
+          </FocusBtn>
+        </div>
+      </section>
     </div>
   );
 }

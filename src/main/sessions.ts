@@ -24,7 +24,8 @@ import { flags, learningSettings } from './settings';
 import { attachmentsDir, cleanupSessionAttachments, prepareAttachmentDir } from './attachments';
 import { buildBriefing } from './learning';
 import {
-  backfillCodexThreadIds, captureNewCodexThreadId, codexThreadIdForSession, discoverCodexThreadId,
+  assertCodexThreadWriterUnlocked, backfillCodexThreadIds, captureNewCodexThreadId,
+  codexThreadIdForSession, discoverCodexThreadId, normalizeCodexThreadId, validateExactCodexThread,
 } from './codex-sessions';
 
 const exec = promisify(execFile);
@@ -146,6 +147,18 @@ type Live = {
   providerFinished: boolean;
   /** A first prompt is in flight; wait for Codex to create its durable UUID. */
   codexCapturingIdentity: boolean;
+  /** A manually selected Codex thread gets no lasting Recent record if bootstrap fails. */
+  exactRecovery?: {
+    bootstrapConfirmed: boolean;
+    bootstrapFailure: string | null;
+    /** Kept false until the recovered Codex TUI has actually reached its prompt. */
+    historyRecorded: boolean;
+    settled: boolean;
+    ready: Promise<void>;
+    resolveReady: () => void;
+    rejectReady: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout> | null;
+  };
   /** Settles only after node-pty reports the child gone. */
   exited: Promise<void>;
   resolveExit: () => void;
@@ -155,6 +168,70 @@ const sessions = new Map<string, Live>();
 /** Covers the synchronous spawn boundary before the new Live row is visible. */
 const resumingConversations = new Set<string>();
 let broadcast: (channel: string, payload: unknown) => void = () => {};
+
+/** The only renderer input accepted by the explicit “recover exact UUID” flow. */
+export type ExactCodexRecoveryInput = { threadId: unknown; projectId: unknown };
+
+type ExactCodexRecovery = {
+  conversationId: string;
+  /** Canonical CWD validated before the slow normal-harness setup starts. */
+  cwd: string;
+  claimKey: string;
+};
+
+type CreateSessionInternal = { exactCodexRecovery?: ExactCodexRecovery };
+
+function codexConversationKey(conversationId: string): string {
+  return `codex:${conversationId}`;
+}
+
+/** Refuse to manufacture a second Wanigan record for a conversation it already knows. */
+function assertExactCodexRecoveryUnclaimed(conversationId: string, ownClaimKey: string | null = null): void {
+  const normalized = normalizeCodexThreadId(conversationId);
+  if (!normalized) throw new Error('The Codex conversation UUID is invalid.');
+  const key = codexConversationKey(normalized);
+  if (resumingConversations.has(key) && ownClaimKey !== key) {
+    throw new Error('That Codex conversation is already opening in Wanigan.');
+  }
+  const open = [...sessions.values()].find((value) =>
+    value.meta.harnessId === 'codex'
+    && normalizeCodexThreadId(value.meta.conversationId) === normalized,
+  );
+  if (open) {
+    throw new Error('That Codex conversation is already open in Wanigan. Use its existing tab.');
+  }
+  const known = db().prepare(`
+    SELECT id FROM session_log
+     WHERE conversation_id=?
+       AND (harness_id='codex' OR provider_id='codex')
+     LIMIT 1
+  `).get(normalized) as { id: string } | undefined;
+  if (known) {
+    throw new Error('Wanigan already has this exact Codex conversation in Recent. Resume that record instead of importing a duplicate.');
+  }
+}
+
+function recoveryBootstrapFailure(data: string): string | null {
+  const plain = data.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+  if (!/(thread\/resume failed|failed to resume session|already has an active writer|tui bootstrap)/i.test(plain)) return null;
+  return 'Codex could not bootstrap this selected conversation. Wanigan left Recent history unchanged.';
+}
+
+function recoveryBootstrapReady(data: string): boolean {
+  const plain = data.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+  return /(ask codex to do anything|type your message|press enter to send)/i.test(plain);
+}
+
+function settleExactRecovery(live: Live, error: Error | null = null): void {
+  const recovery = live.exactRecovery;
+  if (!recovery || recovery.settled) return;
+  recovery.settled = true;
+  if (recovery.timer) clearTimeout(recovery.timer);
+  recovery.timer = null;
+  if (error) recovery.rejectReady(error);
+  else recovery.resolveReady();
+}
+
 
 /**
  * Codex only creates an on-disk thread once it receives the first prompt.
@@ -378,7 +455,48 @@ async function resumeWorktree(
   return { existing: saved, needsFreshIsolation: false };
 }
 
-export async function createSession(opts: LaunchOptions): Promise<Session> {
+/**
+ * Explicit recovery is intentionally a separate entry point from arbitrary
+ * session creation. The renderer can supply exactly a UUID and a selected
+ * project id — no model, effort, flags, prompt, worktree, or historical row
+ * can be smuggled into `codex resume <uuid>`.
+ */
+export async function recoverExactCodexThread(input: ExactCodexRecoveryInput): Promise<Session> {
+  const threadId = normalizeCodexThreadId(input?.threadId);
+  if (!threadId) throw new Error('Paste the complete Codex conversation UUID; Wanigan will not guess a recent thread.');
+  const projectId = typeof input?.projectId === 'string' ? input.projectId.trim() : '';
+  const project = projectById(projectId);
+  if (!project) throw new Error('Choose the project folder that this Codex conversation used.');
+
+  // This is read-only against Codex state: state_5, rollout and session_meta
+  // must all say the same UUID/CWD before this path reserves anything.
+  const verified = validateExactCodexThread(threadId, project.path);
+  const claimKey = codexConversationKey(verified.id);
+  assertExactCodexRecoveryUnclaimed(verified.id);
+  resumingConversations.add(claimKey);
+  try {
+    const session = await createSession(
+      { providerId: 'codex', projectId: project.id },
+      { exactCodexRecovery: { conversationId: verified.id, cwd: verified.cwd, claimKey } },
+    );
+    const recovery = sessions.get(session.id)?.exactRecovery;
+    if (!recovery) throw new Error('Wanigan could not verify the recovered Codex bootstrap.');
+    await recovery.ready;
+    return session;
+  } catch (error) {
+    resumingConversations.delete(claimKey);
+    throw error;
+  }
+}
+
+export async function createSession(opts: LaunchOptions, internal: CreateSessionInternal = {}): Promise<Session> {
+  const exactRecovery = internal.exactCodexRecovery ?? null;
+  if (exactRecovery && (
+    opts.providerId !== 'codex' || opts.resumeFrom || opts.extraArgs || opts.initialPrompt || opts.isolate
+    || opts.model || opts.effort || opts.permissionMode || opts.providerOptions
+  )) {
+    throw new Error('Exact Codex recovery only launches codex resume with the selected UUID.');
+  }
   let def = providerById(opts.providerId);
   if (!def) throw new Error(`Unknown provider: ${opts.providerId}`);
   const project = projectById(opts.projectId);
@@ -405,17 +523,23 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
   const id0 = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const id = id0;
 
-  const resuming = opts.resumeFrom;
-  const resumeTree = resuming
-    ? await resumeWorktree(resuming.sessionId, opts.providerId, project)
+  const savedResume = opts.resumeFrom;
+  const isResuming = Boolean(savedResume || exactRecovery);
+  const resumeTree = savedResume
+    ? await resumeWorktree(savedResume.sessionId, opts.providerId, project)
     : { existing: null, needsFreshIsolation: false };
-  let conversationId = resuming?.conversationId ?? null;
+  let conversationId = exactRecovery?.conversationId ?? savedResume?.conversationId ?? null;
   let codexResumeNeedsPicker = false;
-  if (resuming && def.harness === 'codex') {
+  if (exactRecovery) {
+    // The UUID came through validateExactCodexThread above, never the renderer
+    // launch form or a saved Wanigan row. It is revalidated immediately before
+    // spawn after the normal harness has finished preparing its narrow files.
+    conversationId = exactRecovery.conversationId;
+  } else if (savedResume && def.harness === 'codex') {
     // Never let a stale renderer payload decide which Codex thread to open.
     // The durable row is backfilled from Codex's own index/rollout and becomes
     // the identity used for both duplicate-writer checks and argv.
-    conversationId = codexThreadIdForSession(resuming.sessionId);
+    conversationId = codexThreadIdForSession(savedResume.sessionId);
     if (!conversationId || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(conversationId)) {
       // Some historical rows were created before Wanigan saved Codex's UUID,
       // or were produced by an earlier native resume. There is no safe way to
@@ -435,11 +559,11 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
         );
       }
     }
-  } else if (!resuming && def.supports.resume && runsClaudeCli(def)) {
+  } else if (!isResuming && def.supports.resume && runsClaudeCli(def)) {
     conversationId = randomUUID();
   }
 
-  const idArgs = resuming
+  const idArgs = isResuming
     ? def.resumeArgs(conversationId)
     : conversationId ? ['--session-id', conversationId] : [];
 
@@ -458,7 +582,7 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
       createdWorktree = true;
     } catch (e) {
       throw new Error(
-        `Could not create an isolated ${resuming ? 'continuation ' : ''}worktree for ${project.name}: ` +
+        `Could not create an isolated ${isResuming ? 'continuation ' : ''}worktree for ${project.name}: ` +
         `${e instanceof Error ? e.message : String(e)}`
       );
     }
@@ -520,7 +644,7 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
   // its first prompt.
   const artifactDirs = [
     attachmentDir,
-    ...(resuming ? priorArtifactDirs(resuming.sessionId) : []),
+    ...(savedResume ? priorArtifactDirs(savedResume.sessionId) : []),
   ].filter((value, index, all) => all.indexOf(value) === index);
   const attachmentArgs = !harnessProven || (def.harness !== 'claude-code' && def.harness !== 'codex')
     ? []
@@ -572,7 +696,7 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
   // rejects the launch before `resume <uuid>` can run. New sessions still pass
   // the values the operator selected; only a durable Codex conversation owns
   // its own resume-time settings.
-  const resumeCodex = !!resuming && def.harness === 'codex';
+  const resumeCodex = isResuming && def.harness === 'codex';
   let args: string[];
   try {
     args = [
@@ -600,7 +724,7 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
     throw new Error(`${def.label} changed or was disabled before launch. Review the provider pack and try again.`);
   }
 
-  const resumeKey = resuming && conversationId
+  const resumeKey = isResuming && conversationId
     ? `${def.harness}:${conversationId}`
     : null;
   if (resumeKey) {
@@ -608,11 +732,15 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
       value.meta.harnessId === def.harness
       && value.meta.conversationId === conversationId
       && value.meta.status !== 'exited');
-    if (alreadyOpen || resumingConversations.has(resumeKey)) {
+    // Exact recovery reserves its own key before normal harness preparation;
+    // a second renderer request sees that reservation, while this owner may
+    // proceed to the final lock check below.
+    const ownsPreclaim = exactRecovery?.claimKey === resumeKey && resumingConversations.has(resumeKey);
+    if (alreadyOpen || (resumingConversations.has(resumeKey) && !ownsPreclaim)) {
       await rollbackLaunch();
       throw new Error('That conversation is already opening or open in Wanigan. Use its existing tab.');
     }
-    resumingConversations.add(resumeKey);
+    if (!ownsPreclaim) resumingConversations.add(resumeKey);
   }
 
   const meta: Session = {
@@ -661,6 +789,28 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
     unread: 0,
   };
 
+  // Keep the strict checks adjacent to the actual spawn. Everything above can
+  // take time (provider probing, worktree setup, attachment preparation); a
+  // thread can acquire a writer in that interval. This block has no await, and
+  // the very next operation is pty.spawn.
+  if (exactRecovery) {
+    try {
+      if (def.harness !== 'codex' || !conversationId || JSON.stringify(idArgs) !== JSON.stringify(['resume', conversationId])) {
+        throw new Error('The installed Codex profile cannot perform an exact UUID recovery. Wanigan did not use a fallback picker.');
+      }
+      const verified = validateExactCodexThread(conversationId, project.path);
+      if (verified.cwd !== exactRecovery.cwd) {
+        throw new Error('Codex’s saved directory changed while recovery was preparing. Wanigan did not resume it.');
+      }
+      assertExactCodexRecoveryUnclaimed(conversationId, exactRecovery.claimKey);
+      assertCodexThreadWriterUnlocked(conversationId);
+    } catch (error) {
+      if (resumeKey) resumingConversations.delete(resumeKey);
+      await rollbackLaunch();
+      throw error;
+    }
+  }
+
   let proc: IPty;
   try {
     proc = pty.spawn(resolvedBin, args, {
@@ -687,7 +837,10 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
   // `bin` is the binary that actually ran, resolved path and all. provider_id
   // cannot answer "which CLI produced this" on its own now that claude and glm
   // are the same program, and a reader six months from now has only this row.
-  try {
+  // Exact UUID recovery defers this write until Codex actually reaches its TUI
+  // prompt. A writer-lock/bootstrap refusal therefore leaves Recent entirely
+  // untouched rather than creating a failed duplicate record.
+  const recordSessionHistory = () => {
     const d = db();
     d.transaction(() => {
       d.prepare(`
@@ -699,7 +852,7 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(id, conversationId, opts.providerId, project.id, project.path, project.name,
              meta.model ?? null, meta.effort ?? null, meta.permissionMode ?? null,
-             meta.createdAt, resuming?.sessionId ?? null, worktree, trust, resolvedBin,
+             meta.createdAt, savedResume?.sessionId ?? null, worktree, trust, resolvedBin,
              detected?.capabilities ? JSON.stringify(detected.capabilities) : null,
              def.packId, def.packVersion, JSON.stringify(meta.providerProfile), def.backendId, def.harness);
       // A reused isolated checkout now belongs to this live continuation for
@@ -711,15 +864,32 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
         ).run(id, worktree);
       }
     })();
-  } catch (e) {
-    if (resumeKey) resumingConversations.delete(resumeKey);
-    try { proc.kill(); } catch { /* do not orphan an unrecorded writer */ }
-    await rollbackLaunch();
-    const detail = e instanceof Error ? e.message : String(e);
-    throw new Error(`The agent started, but Wanigan could not record its session (${detail}). It was stopped.`);
+  };
+  if (!exactRecovery) {
+    try {
+      recordSessionHistory();
+    } catch (e) {
+      if (resumeKey) resumingConversations.delete(resumeKey);
+      try { proc.kill(); } catch { /* do not orphan an unrecorded writer */ }
+      await rollbackLaunch();
+      const detail = e instanceof Error ? e.message : String(e);
+      throw new Error(`The agent started, but Wanigan could not record its session (${detail}). It was stopped.`);
+    }
   }
   let resolveExit = () => {};
   const exited = new Promise<void>((resolve) => { resolveExit = resolve; });
+  let resolveExactRecovery = () => {};
+  let rejectExactRecovery = (_error: Error) => {};
+  const exactRecoveryReady = exactRecovery
+    ? new Promise<void>((resolve, reject) => {
+        resolveExactRecovery = resolve;
+        rejectExactRecovery = reject;
+      })
+    : null;
+  // onData can arrive before recoverExactCodexThread reaches its await. Keep
+  // the rejection handled during that tiny handoff; the caller still receives
+  // the same rejection when it awaits the original promise.
+  void exactRecoveryReady?.catch(() => {});
   const live: Live = {
     meta,
     proc,
@@ -730,13 +900,32 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
     providerAwaitingApproval: false,
     providerFinished: false,
     codexCapturingIdentity: false,
+    exactRecovery: exactRecovery ? {
+      bootstrapConfirmed: false,
+      bootstrapFailure: null,
+      historyRecorded: false,
+      settled: false,
+      ready: exactRecoveryReady!,
+      resolveReady: resolveExactRecovery,
+      rejectReady: rejectExactRecovery,
+      timer: null,
+    } : undefined,
     exited,
     resolveExit,
   };
   sessions.set(id, live);
   if (resumeKey) resumingConversations.delete(resumeKey);
+  if (live.exactRecovery) {
+    live.exactRecovery.timer = setTimeout(() => {
+      if (!live.exactRecovery || live.exactRecovery.historyRecorded || live.meta.status === 'exited') return;
+      const message = 'Codex did not reach its ready prompt during recovery. Wanigan stopped the unrecorded writer and left Recent history unchanged.';
+      live.exactRecovery.bootstrapFailure = message;
+      settleExactRecovery(live, new Error(message));
+      try { live.proc.kill(); } catch { /* already gone */ }
+    }, 30_000);
+  }
 
-  if ((!resuming || codexResumeNeedsPicker) && def.harness === 'codex') {
+  if ((!isResuming || codexResumeNeedsPicker) && def.harness === 'codex') {
     void discoverCodexThreadId(id, cwd, meta.createdAt).then((threadId) => {
       if (!threadId) {
         console.warn(`[wanigan] exact Codex thread id was not discovered for session ${id}`);
@@ -756,6 +945,35 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
     if (live.buffer.length > SCROLLBACK_BYTES) {
       live.buffer = live.buffer.slice(-SCROLLBACK_BYTES);
     }
+    // This is intentionally before provider-event recording. Exact recovery
+    // owns no durable Wanigan row until the selected Codex TUI is demonstrably
+    // ready, so a rejected bootstrap cannot leave a session/event history.
+    if (live.exactRecovery && !live.exactRecovery.historyRecorded) {
+      const failure = recoveryBootstrapFailure(data);
+      if (failure) {
+        live.exactRecovery.bootstrapFailure = failure;
+        settleExactRecovery(live, new Error(failure));
+        // A failed bootstrap must never be allowed to limp on as an
+        // unrecorded, second writer.  Killing here also prevents trailing TUI
+        // output from being mistaken for a successful prompt below.
+        try { live.proc.kill(); } catch { /* process may already be exiting */ }
+      } else if (!live.exactRecovery.bootstrapFailure && recoveryBootstrapReady(data)) {
+        live.exactRecovery.bootstrapConfirmed = true;
+        try {
+          recordSessionHistory();
+          live.exactRecovery.historyRecorded = true;
+          settleExactRecovery(live);
+        } catch (error) {
+          live.exactRecovery.bootstrapFailure = 'Wanigan could not record this recovered session, so it stopped the unrecorded writer.';
+          const notice = `\r\n\x1b[38;5;214m${live.exactRecovery.bootstrapFailure}\x1b[0m\r\n`;
+          live.buffer = (live.buffer + notice).slice(-SCROLLBACK_BYTES);
+          broadcast('session:data', { sessionId: id, data: notice });
+          settleExactRecovery(live, new Error(live.exactRecovery.bootstrapFailure));
+          try { live.proc.kill(); } catch { /* process may already be exiting */ }
+          void error;
+        }
+      }
+    }
     // Idle means no hook event and no output. An agent streaming a long answer
     // fires no hooks at all, so without this the queue calls a session that is
     // visibly talking idle after ninety seconds — and sorts it above the one
@@ -772,11 +990,15 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
         if (signal === 'permission') {
           live.providerAwaitingApproval = true;
           live.providerFinished = false;
-          recordProviderEvent(id, 'PermissionRequest', 'Waiting for your approval.', now);
+          if (!live.exactRecovery || live.exactRecovery.historyRecorded) {
+            recordProviderEvent(id, 'PermissionRequest', 'Waiting for your approval.', now);
+          }
         } else {
           live.providerAwaitingApproval = false;
           live.providerFinished = true;
-          recordProviderEvent(id, 'Stop', 'Turn complete.', now);
+          if (!live.exactRecovery || live.exactRecovery.historyRecorded) {
+            recordProviderEvent(id, 'Stop', 'Turn complete.', now);
+          }
         }
       }
     }
@@ -790,10 +1012,19 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
     live.meta.status = 'exited';
     live.meta.exitCode = exitCode;
     live.meta.endedAt = Date.now();
-    try {
-      db().prepare('UPDATE session_log SET ended_at = ?, exit_code = ? WHERE id = ?')
-        .run(live.meta.endedAt, exitCode, id);
-    } catch { /* db closing during quit */ }
+    const unrecordedRecovery = Boolean(live.exactRecovery && !live.exactRecovery.historyRecorded);
+    if (unrecordedRecovery && !live.exactRecovery?.bootstrapFailure) {
+      live.exactRecovery!.bootstrapFailure = 'Codex exited before recovery reached its ready prompt. Wanigan left Recent history unchanged.';
+    }
+    if (unrecordedRecovery) {
+      settleExactRecovery(live, new Error(live.exactRecovery!.bootstrapFailure!));
+    }
+    if (!unrecordedRecovery) {
+      try {
+        db().prepare('UPDATE session_log SET ended_at = ?, exit_code = ? WHERE id = ?')
+          .run(live.meta.endedAt, exitCode, id);
+      } catch { /* db closing during quit */ }
+    }
 
     // The startup discovery window can elapse before a slow TUI accepts its
     // first prompt. Give the durable Codex index one final bounded pass after
@@ -811,7 +1042,7 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
     // Sessions are killed on quit by design; their transcripts should not die
     // with them. Archiving here is the only moment the file is guaranteed to
     // exist and be complete.
-    if (flags().archiveTranscripts) {
+    if (!unrecordedRecovery && flags().archiveTranscripts) {
       try { archiveSession(id, live.meta.projectPath, live.meta.conversationId ?? null); }
       catch { /* an unreadable transcript must never fail a session exit */ }
     }
@@ -822,6 +1053,12 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
     // and turns an intact saved conversation into a page of dead links.
     try { cleanupHookSettings(id); } catch { /* nothing to remove */ }
     try { cleanupMcpConfig(mcpFile, id); } catch { /* nothing to remove */ }
+    if (unrecordedRecovery) {
+      // This directory is Wanigan's fresh staging area, not an artifact from
+      // the selected historical Codex session. It is safe to remove because no
+      // recovered writer reached a usable prompt.
+      try { cleanupSessionAttachments(id); } catch { /* already absent */ }
+    }
     // An exited session is classified from its exit code, never from output
     // recency, so this stamp is dead the moment the process is. Left behind it
     // is one map entry per session for as long as the app stays open.
@@ -831,7 +1068,9 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
     // hooks (and abrupt process failures) have no other main-process event that
     // can tell the notification layer they ended. The shared dedupe in
     // notify.ts makes the hook + exit pair one alert rather than two.
-    try { exitObserver?.(live.meta); } catch { /* notification policy cannot fail PTY cleanup */ }
+    if (!unrecordedRecovery) {
+      try { exitObserver?.(live.meta); } catch { /* notification policy cannot fail PTY cleanup */ }
+    }
 
     // An isolated worktree with no changes is disk cost and nothing else.
     if (worktree) {
