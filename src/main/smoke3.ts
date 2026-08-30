@@ -370,6 +370,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(codexArgs.includes('--config') && codexArgs.includes('model_reasoning_effort="high"'),
     'a chosen Codex effort is passed as its typed config key, not a Claude flag');
   check(!codexArgs.includes('--effort'), 'Codex never receives Claude’s unsupported --effort flag');
+  const sessionLaunchSrc = sourceOf('src/main/sessions.ts');
+  check(/def\.harness === 'codex'[\s\S]{0,800}?--sandbox', 'workspace-write'[\s\S]{0,800}?--add-dir/.test(sessionLaunchSrc),
+    'Codex attachment roots explicitly use workspace-write, so a read-only user default cannot reject every new session');
   const exactCodexThread = '01a04e58-e0eb-7a41-82b7-ddcacf7a9038';
   const legacyResumeArgs = providers.providerById('codex')?.resumeArgs(exactCodexThread) ?? [];
   const packedResumeArgs = providers.providerPackRegistry

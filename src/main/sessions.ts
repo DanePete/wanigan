@@ -430,9 +430,16 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
     attachmentDir,
     ...(resuming ? priorArtifactDirs(resuming.sessionId) : []),
   ].filter((value, index, all) => all.indexOf(value) === index);
-  const attachmentArgs = harnessProven && (def.harness === 'claude-code' || def.harness === 'codex')
-    ? artifactDirs.flatMap((dir) => ['--add-dir', dir])
-    : [];
+  const attachmentArgs = !harnessProven || (def.harness !== 'claude-code' && def.harness !== 'codex')
+    ? []
+    : def.harness === 'codex'
+      // Codex treats every --add-dir as an additional writable root and
+      // refuses it under read-only sandboxing. Wanigan creates this directory
+      // before the terminal starts so an attachment added later can be read;
+      // explicitly select the least Codex sandbox that permits that narrow
+      // extra root instead of inheriting a read-only user default and exiting.
+      ? ['--sandbox', 'workspace-write', ...artifactDirs.flatMap((dir) => ['--add-dir', dir])]
+      : artifactDirs.flatMap((dir) => ['--add-dir', dir]);
   const learnedArgs: string[] = [];
   // Both built-in harnesses expose invocation-scoped additional instructions.
   // This works with Hooks disabled, avoids a fake first user turn, and leaves
