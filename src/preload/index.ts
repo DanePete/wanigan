@@ -27,6 +27,13 @@ async function call<T>(channel: string, ...args: unknown[]): Promise<T> {
 }
 
 const api = {
+  // This stays available even when the main process has deliberately opened
+  // the window in database-recovery mode. It contains no database content or
+  // credentials — only the startup phase and its actionable error text.
+  startup: {
+    status: () => call<{ phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }>('startup:status'),
+    retry: () => call<{ phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }>('startup:retry'),
+  },
   providers: {
     list: () => call<ProviderInfo[]>('providers:list'),
   },
@@ -489,6 +496,11 @@ const api = {
     report: () => call<EgressReport>('egress:report'),
   },
   on: {
+    startupChanged: (cb: (state: { phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }) => void) => {
+      const h = (_e: unknown, state: { phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }) => cb(state);
+      ipcRenderer.on('startup:changed', h);
+      return () => ipcRenderer.removeListener('startup:changed', h);
+    },
     batchChanged: (cb: () => void) => {
       const h = () => cb();
       ipcRenderer.on('batch:changed', h);

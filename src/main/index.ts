@@ -161,6 +161,69 @@ const SCHEDULED_TIMEOUT_MS = 15 * 60_000;
 let win: BrowserWindow | null = null;
 let uiInitialized = false;
 
+/**
+ * The database is deliberately opened lazily. That keeps a bad or half-updated
+ * legacy database from being able to prevent Electron from constructing a
+ * window at all: the shell can explain the problem and offer a retry instead
+ * of macOS making the launch look like it did nothing.
+ */
+type StartupState = {
+  phase: 'starting' | 'ready' | 'recovery';
+  stage: string | null;
+  message: string | null;
+};
+
+let startupState: StartupState = { phase: 'starting', stage: null, message: null };
+let attendedServicesStarted = false;
+let startupAttempt: Promise<StartupState> | null = null;
+
+function startupSnapshot(): StartupState {
+  return { ...startupState };
+}
+
+function publishStartupState(next: StartupState): StartupState {
+  startupState = next;
+  const w = win;
+  if (w && !w.isDestroyed()) w.webContents.send('startup:changed', startupSnapshot());
+  return startupSnapshot();
+}
+
+function startupErrorMessage(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.trim().slice(0, 1200) || 'Unknown startup error.';
+}
+
+function enterStartupRecovery(stage: string, error: unknown): StartupState {
+  // A partial service boot can leave timers/listeners behind. Stop only those
+  // ephemeral pieces; the database is left untouched for the migration repair
+  // path and the user can inspect it without Wanigan changing more rows.
+  attendedServicesStarted = false;
+  stopServices();
+  const message = startupErrorMessage(error);
+  console.error(`[wanigan] opening the UI in recovery mode after ${stage}:`, error);
+  return publishStartupState({ phase: 'recovery', stage, message });
+}
+
+function showStartupRecoveryNotice(state: StartupState = startupSnapshot()): void {
+  if (state.phase !== 'recovery') return;
+  const show = () => {
+    const w = win;
+    if (!w || w.isDestroyed()) return;
+    void dialog.showMessageBox(w, {
+      type: 'warning',
+      buttons: ['Keep Wanigan open'],
+      defaultId: 0,
+      title: 'Wanigan opened in recovery mode',
+      message: 'Local services are paused, but the Wanigan window is open.',
+      detail: `${state.stage ?? 'Startup'}: ${state.message ?? 'Unknown error.'}\n\nNo data was changed by this recovery screen. Fix the reported local-data problem, then use Retry in the banner or restart Wanigan.`,
+    }).catch((error) => console.warn('[wanigan] could not show startup recovery notice:', error));
+  };
+  const w = win;
+  if (!w || w.isDestroyed()) return;
+  if (w.isVisible()) show();
+  else w.once('ready-to-show', show);
+}
+
 /** Re-check persistent attention when the operator changes what is visible. */
 function announceCurrentAttention(): void {
   if (quitDraining || quitConfirmed) return;
@@ -269,56 +332,34 @@ app.whenReady().then(async () => {
     return;
   }
 
-  initSessions(() => win);
-  setSessionExitObserver((value) => notify.announceAttention(attention.attentionOf(value)));
-  mobile.configureSnapshotSource(() => {
-    const sessions = listSessions();
-    return mobileFleetSnapshot(
-      sessions,
-      attention.attentionFor(sessions),
-      otel.usageForMany(sessions.map((value) => value.id)),
-    );
-  });
-  mobile.configureMobileControlSource({
-    projects: async () => listProjects().map((project) => ({ id: project.id, name: project.name, branch: project.branch })),
-    providers: async () => {
-      const providers = await detectProviders();
-      const [glm, deepseek] = await Promise.all([glmModels().catch(() => null), deepseekModels().catch(() => null)]);
-      const staticModels: Record<string, { value: string; label: string }[]> = {
-        claude: [{ value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'haiku', label: 'Haiku' }, { value: 'fable', label: 'Fable' }],
-        codex: [{ value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' }, { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' }, { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' }],
-      };
-      return providers.map((provider) => ({
-        id: provider.id, label: provider.label, available: Boolean(provider.path),
-        models: provider.id === 'glm' ? (glm?.models ?? []).map((model) => ({ value: model.id, label: model.label }))
-          : provider.id === 'deepseek' ? (deepseek?.models ?? []).map((model) => ({ value: model.id, label: model.label }))
-          : (staticModels[provider.id] ?? []),
-        efforts: provider.supports.effort ? [...EFFORT_LEVELS, ...(provider.id === 'codex' ? ['ultra'] : [])] : [],
-      }));
-    },
-    launch: async ({ projectId, providerId, model, effort, prompt }) => {
-      const session = await createSession({ providerId, projectId, model, effort, initialPrompt: prompt });
-      return { id: session.id, title: session.title };
-    },
-    prompt: async (sessionId, prompt) => {
-      const session = listSessions().find((value) => value.id === sessionId && value.status !== 'exited');
-      if (!session) throw new Error('That session is no longer running.');
-      writeSession(sessionId, `${prompt}\r`);
-    },
-    interrupt: async (sessionId) => interruptSession(sessionId),
-    terminal: async (sessionId) => {
-      const session = listSessions().find((value) => value.id === sessionId);
-      if (!session) throw new Error('That session is no longer available.');
-      return { title: session.title, running: session.status !== 'exited', text: scrollback(sessionId) };
-    },
-  });
-  await startServices();
-  try { await mobile.startMobileMonitor(); }
-  catch (e) { console.warn('[wanigan] phone monitor did not start:', e); }
-  registerIpc();
-  createWindow();
-  uiInitialized = true;
-  startPoller();
+  // IPC registration never opens the database. Do it before service startup
+  // so a recovery window still has a truthful status endpoint when a legacy
+  // database cannot finish its first migration.
+  try {
+    registerIpc();
+  } catch (error) {
+    enterStartupRecovery('the renderer bridge', error);
+  }
+
+  // Construct the attended window before any path that can touch SQLite.
+  // `startAttendedServices()` may need to wait on another writer or report a
+  // corrupt/partial schema; neither outcome should look like an app that
+  // simply did not launch.
+  try {
+    createWindow();
+    uiInitialized = true;
+  } catch (error) {
+    console.error('[wanigan] could not create the attended window:', error);
+    dialog.showErrorBox('Wanigan could not open', startupErrorMessage(error));
+    return;
+  }
+
+  if (startupState.phase !== 'recovery') {
+    const state = await startAttendedServices();
+    if (state.phase === 'recovery') showStartupRecoveryNotice(state);
+  } else {
+    showStartupRecoveryNotice();
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -580,6 +621,95 @@ async function startServices() {
   learning.startConsolidator();
 }
 
+/** The mobile endpoint is configured independently of whether it is enabled.
+ * Replacing these callbacks on a recovery retry is safe and does not reopen a
+ * listener or mutate the database by itself. */
+function configureMobileSources(): void {
+  mobile.configureSnapshotSource(() => {
+    const sessions = listSessions();
+    return mobileFleetSnapshot(
+      sessions,
+      attention.attentionFor(sessions),
+      otel.usageForMany(sessions.map((value) => value.id)),
+    );
+  });
+  mobile.configureMobileControlSource({
+    projects: async () => listProjects().map((project) => ({ id: project.id, name: project.name, branch: project.branch })),
+    providers: async () => {
+      const providers = await detectProviders();
+      const [glm, deepseek] = await Promise.all([glmModels().catch(() => null), deepseekModels().catch(() => null)]);
+      const staticModels: Record<string, { value: string; label: string }[]> = {
+        claude: [{ value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'haiku', label: 'Haiku' }, { value: 'fable', label: 'Fable' }],
+        codex: [{ value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' }, { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' }, { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' }],
+      };
+      return providers.map((provider) => ({
+        id: provider.id, label: provider.label, available: Boolean(provider.path),
+        models: provider.id === 'glm' ? (glm?.models ?? []).map((model) => ({ value: model.id, label: model.label }))
+          : provider.id === 'deepseek' ? (deepseek?.models ?? []).map((model) => ({ value: model.id, label: model.label }))
+          : (staticModels[provider.id] ?? []),
+        efforts: provider.supports.effort ? [...EFFORT_LEVELS, ...(provider.id === 'codex' ? ['ultra'] : [])] : [],
+      }));
+    },
+    launch: async ({ projectId, providerId, model, effort, prompt }) => {
+      const session = await createSession({ providerId, projectId, model, effort, initialPrompt: prompt });
+      return { id: session.id, title: session.title };
+    },
+    prompt: async (sessionId, prompt) => {
+      const session = listSessions().find((value) => value.id === sessionId && value.status !== 'exited');
+      if (!session) throw new Error('That session is no longer running.');
+      writeSession(sessionId, `${prompt}\r`);
+    },
+    interrupt: async (sessionId) => interruptSession(sessionId),
+    terminal: async (sessionId) => {
+      const session = listSessions().find((value) => value.id === sessionId);
+      if (!session) throw new Error('That session is no longer available.');
+      return { title: session.title, running: session.status !== 'exited', text: scrollback(sessionId) };
+    },
+  });
+}
+
+/**
+ * Start only the attended-window services behind a failure boundary. SQLite
+ * migration, session reconciliation and service wiring all reach the same
+ * durable store; if any one sees a partially migrated legacy file, stop the
+ * partial service set and leave the already-created window usable for the
+ * recovery explanation instead of rejecting Electron's startup promise.
+ */
+async function startAttendedServices(): Promise<StartupState> {
+  if (attendedServicesStarted) return startupSnapshot();
+  if (startupAttempt) return startupAttempt;
+
+  publishStartupState({ phase: 'starting', stage: null, message: null });
+  let stage = 'session recovery';
+  const attempt = (async () => {
+    try {
+      initSessions(() => win);
+      setSessionExitObserver((value) => notify.announceAttention(attention.attentionOf(value)));
+
+      stage = 'mobile control setup';
+      configureMobileSources();
+
+      stage = 'background services';
+      await startServices();
+
+      try { await mobile.startMobileMonitor(); }
+      catch (error) { console.warn('[wanigan] phone monitor did not start:', error); }
+
+      attendedServicesStarted = true;
+      startPoller();
+      return publishStartupState({ phase: 'ready', stage: null, message: null });
+    } catch (error) {
+      return enterStartupRecovery(stage, error);
+    }
+  })();
+  startupAttempt = attempt;
+  try {
+    return await attempt;
+  } finally {
+    if (startupAttempt === attempt) startupAttempt = null;
+  }
+}
+
 function stopServices() {
   setSessionExitObserver(null);
   stopHookEventListener?.();
@@ -611,6 +741,12 @@ function registerIpc() {
       }
     });
   };
+
+  // This handler is intentionally database-free. It remains available when a
+  // failed migration has put the attended UI in recovery mode, so the renderer
+  // can explain why normal controls are paused and offer one bounded retry.
+  handle('startup:status', () => startupSnapshot());
+  handle('startup:retry', () => startAttendedServices());
 
   handle('demo:state', () => ({ on: demoOn(), map: demoMap() }));
   handle('demo:set', (on: boolean) => { setDemo(on); return { on: demoOn(), map: demoMap() }; });

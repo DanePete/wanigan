@@ -1520,7 +1520,15 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   'the phone setup panel has status and configuration IPC on both sides of the sandbox');
   check(/configureSnapshotSource/.test(mainSrc) && /startMobileMonitor/.test(mainSrc)
     && /stopMobileMonitor/.test(mainSrc),
-  'the phone monitor is attached to the GUI process that owns live PTYs and is stopped with its services');
+    'the phone monitor is attached to the GUI process that owns live PTYs and is stopped with its services');
+  const recoveryWindow = mainSrc.indexOf('createWindow();\n    uiInitialized = true;');
+  const recoveryServices = mainSrc.indexOf('const state = await startAttendedServices();');
+  check(/handle\(\s*'startup:status'/.test(mainSrc) && /handle\(\s*'startup:retry'/.test(mainSrc)
+    && recoveryWindow >= 0 && recoveryServices > recoveryWindow
+    && mainSrc.includes('enterStartupRecovery(stage, error)')
+    && /startup:\s*\{/.test(preloadSrc) && /startupChanged/.test(preloadSrc)
+    && /startup\.status\(\)/.test(appSrc) && /Wanigan is open in recovery mode/.test(appSrc),
+  'a partially migrated local database opens a recovery window with status and retry instead of rejecting startup before any UI exists');
   check(/setSessionExitObserver/.test(mainSrc) && /exitObserver\?\./.test(sessionManagerSrc),
     'PTY exits reach the notification classifier even for providers with no hook bus');
   check(/tui\.notifications=/.test(sessionManagerSrc) && /scanCodexNotifications/.test(sessionManagerSrc)

@@ -20,6 +20,12 @@ type CodexStatus = {
   secondary: { usedPercent: number; remainingPercent: number; resetsAt: number | null; windowMinutes: number | null } | null;
 };
 
+type StartupStatus = {
+  phase: 'starting' | 'ready' | 'recovery';
+  stage: string | null;
+  message: string | null;
+};
+
 /**
  * The shell: which surface is on screen, what the nav is allowed to shout
  * about, and the one piece of app-wide state the views share — the project you
@@ -90,6 +96,8 @@ export default function App() {
   const [needs, setNeeds] = useState<{ total: number; worst: AttentionKind | null; detail: string }>(
     { total: 0, worst: null, detail: '' });
   const [error, setError] = useState<string | null>(null);
+  const [startup, setStartup] = useState<StartupStatus | null>(null);
+  const [retryingStartup, setRetryingStartup] = useState(false);
   const [palette, setPalette] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
   // A session handing its changed files to a new batch run.
@@ -113,7 +121,31 @@ export default function App() {
     setProviders(pv); setProjects(pj); setHasKey(ks.present);
   }, []);
 
-  useEffect(() => { void loadShell(); }, [loadShell]);
+  useEffect(() => {
+    void loadShell().catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [loadShell]);
+
+  // The attended main process registers this channel before it touches the
+  // database. A corrupted or partially migrated legacy DB therefore produces
+  // a visible recovery banner instead of a window that looks empty or absent.
+  useEffect(() => {
+    let mounted = true;
+    void window.wanigan.startup.status()
+      .then((state) => { if (mounted) setStartup(state); })
+      .catch((e) => { if (mounted) setError(e instanceof Error ? e.message : String(e)); });
+    const off = window.wanigan.on.startupChanged((state) => {
+      if (mounted) setStartup(state);
+    });
+    return () => { mounted = false; off(); };
+  }, []);
+
+  const retryStartup = useCallback(() => {
+    setRetryingStartup(true);
+    void window.wanigan.startup.retry()
+      .then(setStartup)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setRetryingStartup(false));
+  }, []);
 
   // ── motion setting ─────────────────────────────────────────────────
   // Published on the root element so CSS can answer without asking React.
@@ -397,6 +429,18 @@ export default function App() {
 
   return (
     <div className="shell">
+      {startup?.phase === 'recovery' && (
+        <section className="startup-recovery" role="alert" aria-live="assertive">
+          <div>
+            <strong>Wanigan is open in recovery mode.</strong>
+            <span>{startup.stage ?? 'Startup'}: {startup.message ?? 'Unknown local-data error.'}</span>
+            <small>No data was changed by this recovery screen. Fix the local-data issue, then retry or restart Wanigan.</small>
+          </div>
+          <button className="btn" type="button" onClick={retryStartup} disabled={retryingStartup}>
+            {retryingStartup ? 'Retrying…' : 'Retry local services'}
+          </button>
+        </section>
+      )}
       <nav className="nav">
         <span className="brand">Wanigan</span>
         <div className="nav-tabs" ref={tabsRef}>
