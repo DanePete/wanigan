@@ -248,7 +248,7 @@ function worktreeRoots(): Map<string, string> {
       .prepare('SELECT path, repo_root FROM worktrees WHERE removed_at IS NULL')
       .all() as { path: string; repo_root: string }[];
     for (const r of rows) out.set(r.path, canon(r.repo_root));
-  } catch { /* the table is created by migrate(); its absence is a first run */ }
+  } catch { /* migrateSchema() creates the table; its absence is a first run */ }
   return out;
 }
 

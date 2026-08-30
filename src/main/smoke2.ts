@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import Database from 'better-sqlite3';
 import * as otel from './otel';
 import * as hooks from './hooks';
 import * as policy from './policy';
@@ -11,12 +12,81 @@ import * as attachments from './attachments';
 import * as instructions from './context/instructions';
 import * as memory from './context/memory';
 import * as config from './context/config';
-import { db } from './db';
+import { db, migrateSchema } from './db';
 import { getSetting, setSetting } from './settings';
 import type { HookInput, TrustLevel } from '../shared/types';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 type Say = (s: string) => void;
+
+/**
+ * Regression fixture for the database written before durable queue leases
+ * existed. SQLite's CREATE TABLE IF NOT EXISTS does not update the existing
+ * table, so the migration has to add both columns before it creates their
+ * index. Exercise a real standalone SQLite connection so startup upgrades
+ * cannot regress silently behind the already-current smoke database.
+ */
+function smokeLegacyQueueMigration(check: Check, say: Say): void {
+  say('── schema migration · legacy queue leases');
+  const legacy = new Database(':memory:');
+  try {
+    legacy.exec(`
+      CREATE TABLE queue (
+        id              TEXT PRIMARY KEY,
+        kind            TEXT NOT NULL,
+        state           TEXT NOT NULL DEFAULT 'waiting',
+        priority        INTEGER NOT NULL DEFAULT 100,
+        label           TEXT NOT NULL,
+        payload_json    TEXT NOT NULL,
+        blocked_by      TEXT,
+        attempts        INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at INTEGER,
+        created_at      INTEGER NOT NULL,
+        started_at      INTEGER,
+        ended_at        INTEGER,
+        error           TEXT
+      );
+      INSERT INTO queue (id, kind, state, priority, label, payload_json, created_at)
+      VALUES ('q_legacy_lease', 'headless', 'waiting', 100, 'legacy queue row', '{}', 1);
+    `);
+
+    migrateSchema(legacy);
+    const columns = new Set((legacy.prepare('PRAGMA table_info(queue)').all() as { name: string }[])
+      .map((column) => column.name));
+    check(
+      columns.has('lease_owner') && columns.has('lease_expires_at'),
+      'a pre-lease queue gains both durable lease columns before its index',
+    );
+    const leaseIndex = legacy.prepare(
+      "SELECT 1 AS present FROM sqlite_master WHERE type='index' AND name='idx_queue_lease'"
+    ).get() as { present: number } | undefined;
+    check(leaseIndex?.present === 1, 'a pre-lease queue receives its lease index after the columns exist');
+    const row = legacy.prepare(
+      'SELECT id, state, lease_owner, lease_expires_at FROM queue WHERE id=?'
+    ).get('q_legacy_lease') as {
+      id: string;
+      state: string;
+      lease_owner: string | null;
+      lease_expires_at: number | null;
+    } | undefined;
+    check(
+      row?.id === 'q_legacy_lease' && row.state === 'waiting' &&
+        row.lease_owner === null && row.lease_expires_at === null,
+      'a legacy queue row survives the lease schema upgrade unchanged',
+      JSON.stringify(row),
+    );
+
+    // An interrupted launch retries migrateSchema on the same database. The
+    // second pass must be just as safe as the first.
+    migrateSchema(legacy);
+    check(true, 'the legacy queue upgrade is idempotent on the next startup');
+  } catch (error) {
+    check(false, 'a pre-lease queue database upgrades without a startup error',
+      error instanceof Error ? error.message : String(error));
+  } finally {
+    legacy.close();
+  }
+}
 
 /**
  * The batch lifecycle smoke returns before startServices(), so nothing above
@@ -30,6 +100,8 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   // so a fixed session id makes the second run against the same database read
   // the first run's totals. Unique per run, and assert on the delta.
   const SID = `smoke-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+
+  smokeLegacyQueueMigration(check, say);
 
   /* ── phase 1 · the collector actually receives ─────────────────────── */
   say('── phase 1 · telemetry collector');

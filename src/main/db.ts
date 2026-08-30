@@ -61,7 +61,7 @@ export function db(): Database.Database {
   d.pragma('busy_timeout = 10000');
   d.pragma('journal_mode = WAL');
   d.pragma('foreign_keys = ON');
-  migrate(d);
+  migrateSchema(d);
   // SQLite's journal files carry the same rows as the primary database. The
   // private userData root is the durable boundary; tightening sidecars too
   // avoids relying on it if an older install had inherited broad permissions.
@@ -73,7 +73,13 @@ export function db(): Database.Database {
   return d;
 }
 
-function migrate(d: Database.Database) {
+/**
+ * Upgrade a Wanigan-owned connection in one atomic transaction.
+ *
+ * This is exported so the smoke suite can open a deliberately old schema and
+ * prove that an upgrade remains safe before a released build ever sees it.
+ */
+export function migrateSchema(d: Database.Database) {
   // `addColumn()` is necessarily a read-then-write operation because SQLite
   // lacks ADD COLUMN IF NOT EXISTS.  A deferred transaction lets two Wanigan
   // processes both read "missing" before either alters the table.  Taking the
@@ -328,7 +334,6 @@ function migratePhases(d: Database.Database) {
       lease_expires_at INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_queue_ready ON queue(state, priority, created_at);
-    CREATE INDEX IF NOT EXISTS idx_queue_lease ON queue(state, lease_expires_at);
 
     -- P12 · MCP ---------------------------------------------------------
     CREATE TABLE IF NOT EXISTS mcp_servers (
@@ -493,6 +498,9 @@ function migratePhases(d: Database.Database) {
   addColumn(d, 'session_log', 'origin', "TEXT NOT NULL DEFAULT 'wanigan'");
   addColumn(d, 'queue', 'lease_owner', 'TEXT');
   addColumn(d, 'queue', 'lease_expires_at', 'INTEGER');
+  // This must follow the additive columns above. `CREATE TABLE IF NOT
+  // EXISTS` leaves a pre-lease queue untouched, and attempting this index
+  // first makes SQLite abort the entire migration with "no such column".
   d.exec('CREATE INDEX IF NOT EXISTS idx_queue_lease ON queue(state, lease_expires_at)');
   d.exec("CREATE INDEX IF NOT EXISTS idx_runs_kind ON runs(kind, created_at DESC)");
   migrateLearning(d);

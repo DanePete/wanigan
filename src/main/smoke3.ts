@@ -1564,8 +1564,10 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && settingsSrc.includes('role="tablist"') && settingsSrc.includes('role="tabpanel"')
     && settingsSrc.includes('aria-controls={`settings-${tab.id}`}')
     && settingsSrc.includes('aria-labelledby={`settings-tab-${tab.id}`}')
-    && settingsSrc.includes('hidden={!active}') && settingsSrc.includes('moveSettingsTab'),
-  'Settings keeps every operator surface in six labelled persistent tab panels, with keyboard navigation and no draft-destroying unmount');
+    && settingsSrc.includes('hidden={!active}') && settingsSrc.includes('moveSettingsTab')
+    && settingsSrc.includes('.set.pane { width: 100%; max-width: none;')
+    && !settingsSrc.includes('<div className="pane set" style={{ maxWidth'),
+  'Settings keeps every operator surface in six labelled persistent full-width tab panels, with keyboard navigation and no draft-destroying unmount');
 
   const kindDecl = /type Kind = ([^;]+);/.exec(schedulesSrc)?.[1] ?? '';
   check(kindDecl.includes("'batch'") && !kindDecl.includes("'session'"),

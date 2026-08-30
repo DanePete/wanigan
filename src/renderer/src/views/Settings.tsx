@@ -505,7 +505,7 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
   }
 
   return (
-    <div className="pane set" style={{ maxWidth: 1100 }} data-motion={prefs?.motion ?? 'auto'}>
+    <div className="pane set" data-motion={prefs?.motion ?? 'auto'}>
       <style>{SHEET}</style>
 
       <header className="set-hero">
@@ -2371,7 +2371,7 @@ function Storage({ prefs, pending, setPref }: {
 const SHEET = `
 .set :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 5px; }
 
-.set { overscroll-behavior: contain; }
+.set.pane { width: 100%; max-width: none; box-sizing: border-box; overscroll-behavior: contain; }
 .set-kicker, .set-panel-kicker { color: var(--accent); font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .set-kicker { margin-bottom: 4px; }
 .set-hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(270px, .72fr); gap: var(--s-4); align-items: start; }
@@ -2380,7 +2380,7 @@ const SHEET = `
 .set-save-guide { padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
 .set-save-guide strong { display: block; color: var(--text); font-size: 12px; margin-bottom: 3px; }
 
-.set-layout { display: grid; grid-template-columns: 212px minmax(0, 1fr); gap: var(--s-4); align-items: start; }
+.set-layout { display: grid; grid-template-columns: 212px minmax(0, 1fr); gap: var(--s-4); align-items: start; flex: 0 0 auto; width: 100%; }
 .set-tabs { position: sticky; top: 0; display: flex; flex-direction: column; gap: 4px; padding: 7px; max-height: calc(100vh - 104px); overflow-y: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); scrollbar-width: thin; }
 .set-tabs-intro { padding: 5px 6px 8px; color: var(--text-dim); font-size: var(--t-micro); line-height: 1.45; border-bottom: 1px solid var(--line-soft); margin-bottom: 2px; }
 .set-tabs-intro strong { display: block; color: var(--text); font-size: 11px; margin-bottom: 2px; }
