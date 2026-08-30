@@ -10,15 +10,94 @@ import { Note, Section, Stat, ago, num } from '../components/bits';
 
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
 type ProviderKeyStatus = { present: boolean; fingerprint: string | null };
-type SettingsTab = 'connections' | 'projects' | 'automation' | 'visibility' | 'app';
+type SettingsTab = 'agents' | 'projects' | 'automation' | 'connections' | 'privacy' | 'app';
 
-const SETTINGS_TABS: { id: SettingsTab; label: string; detail: string }[] = [
-  { id: 'connections', label: 'Connections', detail: 'Provider credentials and the local agent runtimes Wanigan can launch.' },
-  { id: 'projects', label: 'Projects', detail: 'Repositories and isolated worktrees for safe parallel work.' },
-  { id: 'automation', label: 'Automation', detail: 'Budgets, trust, dispatching, and agent tools.' },
-  { id: 'visibility', label: 'Visibility', detail: 'What Wanigan observes, shares, and lets leave this Mac.' },
-  { id: 'app', label: 'App & data', detail: 'Appearance, local storage, and safe screenshot mode.' },
+type SettingsTabInfo = {
+  id: SettingsTab;
+  label: string;
+  eyebrow: string;
+  title: string;
+  detail: string;
+  help: string;
+  includes: string[];
+};
+
+const SETTINGS_TAB_STORAGE_KEY = 'wanigan.settings.tab';
+
+/**
+ * Settings are organised by the job someone is trying to do, not by the table
+ * that happened to hold the setting. A provider key, for example, belongs next
+ * to the runtime that uses it; an MCP server belongs beside the remote device
+ * that can observe the agent using it.
+ */
+const SETTINGS_TABS: SettingsTabInfo[] = [
+  {
+    id: 'agents', label: 'Agents', eyebrow: 'Accounts & runtime', title: 'Agents & providers',
+    detail: 'Add provider keys, check their status, and see which local agent runtimes Wanigan can launch.',
+    help: 'Keys are verified before Wanigan stores them in your macOS credential store. A new key is ready for the next session; a session already running keeps the launch configuration it started with.',
+    includes: ['Claude Platform', 'GLM Coding Plan', 'DeepSeek', 'installed runtimes'],
+  },
+  {
+    id: 'projects', label: 'Projects & safety', eyebrow: 'Repositories & guardrails', title: 'Projects & safety',
+    detail: 'Manage repositories, clean up isolated worktrees, and set the policy record that accompanies agent tools.',
+    help: 'Project and trust changes are saved as you make them. Trust is a visible policy and audit layer, not an operating-system sandbox; it never retroactively changes a command already running.',
+    includes: ['projects', 'worktrees', 'trust levels', 'policy ledger'],
+  },
+  {
+    id: 'automation', label: 'Automation', eyebrow: 'Cost & capacity', title: 'Automation',
+    detail: 'Set a spend ceiling and decide how many interactive, headless, and batch jobs may run at once.',
+    help: 'Save buttons apply the fields beside them. Lowering a queue limit prevents additional work from starting; it deliberately does not stop work that is already underway.',
+    includes: ['spending cap', 'concurrency limits', 'dispatch queue'],
+  },
+  {
+    id: 'connections', label: 'Connections', eyebrow: 'Tools & remote access', title: 'Connections',
+    detail: 'Configure MCP tool servers and the private iPad/phone monitor, alerts, and optional remote controls.',
+    help: 'External connections are opt-in. Wanigan keeps local services on loopback and says when a setting needs a new session or an app restart before it can take effect.',
+    includes: ['iPad & phone', 'Tailscale pairing', 'ntfy alerts', 'MCP servers'],
+  },
+  {
+    id: 'privacy', label: 'Privacy & data', eyebrow: 'Observation & retention', title: 'Privacy & data',
+    detail: 'Choose what Wanigan observes, inspect its own network boundaries, and remove locally retained data.',
+    help: 'Most switches save immediately for future activity. The descriptions distinguish aggregate telemetry, tool summaries, and the separate transcript archive that can retain conversation text on this Mac.',
+    includes: ['telemetry', 'egress report', 'transcripts', 'event retention'],
+  },
+  {
+    id: 'app', label: 'App', eyebrow: 'Appearance & sharing', title: 'App experience',
+    detail: 'Tune motion for comfort and prepare a safely masked view before sharing a screenshot or demo.',
+    help: 'These are local presentation preferences. Motion changes immediately; demo mode reloads the app so every view starts from the same masked state.',
+    includes: ['motion', 'demo mode', 'safe screenshots'],
+  },
 ];
+
+function savedSettingsTab(): SettingsTab {
+  try {
+    const saved = localStorage.getItem(SETTINGS_TAB_STORAGE_KEY);
+    const match = SETTINGS_TABS.find((tab) => tab.id === saved);
+    return match?.id ?? 'agents';
+  } catch {
+    return 'agents';
+  }
+}
+
+function settingsTabInfo(id: SettingsTab): SettingsTabInfo {
+  const tab = SETTINGS_TABS.find((entry) => entry.id === id);
+  if (!tab) throw new Error(`Unknown settings tab: ${id}`);
+  return tab;
+}
+
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() =>
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(query).matches);
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia(query);
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, [query]);
+  return matches;
+}
 
 /* ── formatting ──────────────────────────────────────────────────────── */
 
@@ -177,13 +256,31 @@ function Toggle({ on, title, busy, onChange, children }: {
 function Options<T extends string>({ label, value, options, onPick }: {
   label: string; value: T; options: { id: T; word: string; detail: string }[]; onPick: (v: T) => void;
 }) {
+  function move(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    const last = options.length - 1;
+    let next: number | null = null;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = index === last ? 0 : index + 1;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = index === 0 ? last : index - 1;
+    if (event.key === 'Home') next = 0;
+    if (event.key === 'End') next = last;
+    if (next === null) return;
+    event.preventDefault();
+    const group = event.currentTarget.parentElement;
+    onPick(options[next].id);
+    requestAnimationFrame(() => {
+      const choices = group?.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+      choices?.[next]?.focus({ preventScroll: true });
+    });
+  }
+
   return (
     <div role="radiogroup" aria-label={label} className="set-opts">
-      {options.map((o) => {
+      {options.map((o, index) => {
         const on = o.id === value;
         return (
           <button key={o.id} type="button" role="radio" aria-checked={on}
-                  className={`set-opt${on ? ' on' : ''}`} onClick={() => onPick(o.id)}>
+                  tabIndex={on ? 0 : -1} className={`set-opt${on ? ' on' : ''}`}
+                  onClick={() => onPick(o.id)} onKeyDown={(event) => move(event, index)}>
             <span className="set-opt-top">
               <span className="g" aria-hidden="true">{on ? '●' : '○'}</span>
               {o.word}
@@ -202,6 +299,30 @@ function Result({ r }: { r: { tone: 'ok' | 'error'; text: string } | null }) {
   if (!r) return null;
   if (r.tone === 'error') return <div style={{ marginTop: 10 }}><Callout level="critical" title={r.text} /></div>;
   return <div style={{ marginTop: 10 }}><Note tone="ok">{r.text}</Note></div>;
+}
+
+/** One persistent panel per tab: changing category must never discard a draft. */
+function SettingsTabPanel({ tab, active, children }: {
+  tab: SettingsTabInfo; active: boolean; children: React.ReactNode;
+}) {
+  return (
+    <div id={`settings-${tab.id}`} className="set-tab-panel" role="tabpanel"
+         aria-labelledby={`settings-tab-${tab.id}`} hidden={!active}>
+      <header className="set-panel-intro">
+        <div className="set-panel-kicker">{tab.eyebrow}</div>
+        <h2>{tab.title}</h2>
+        <p>{tab.detail}</p>
+        <div className="set-panel-help">
+          <span className="set-panel-help-mark" aria-hidden="true">?</span>
+          <div><strong>How changes apply</strong><p>{tab.help}</p></div>
+        </div>
+        <p className="set-panel-includes">
+          <strong>In this section</strong><span>{tab.includes.join(' · ')}</span>
+        </p>
+      </header>
+      {children}
+    </div>
+  );
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -230,7 +351,8 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
   const [deepseekStatus, setDeepseekStatus] = useState<ProviderKeyStatus | null>(null);
   const [deepseekBusy, setDeepseekBusy] = useState(false);
   const [deepseekMsg, setDeepseekMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>('connections');
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>(savedSettingsTab);
+  const compactSettingsLayout = useMediaQuery('(max-width: 900px)');
 
   const load = () => window.wanigan.key.status().then((st) => {
     setStatus(st);
@@ -334,6 +456,10 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
   }, []);
   useEffect(() => { loadPrefs(); }, [loadPrefs]);
 
+  useEffect(() => {
+    try { localStorage.setItem(SETTINGS_TAB_STORAGE_KEY, settingsTab); } catch { /* storage may be disabled */ }
+  }, [settingsTab]);
+
   const setPref = useCallback(async (k: string, v: string) => {
     setPending(k); setPrefsErr(null);
     try {
@@ -353,11 +479,17 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
     await setPref(k, on ? '1' : '0');
   }, [setPref]);
 
-  function chooseSettingsTab(next: SettingsTab) {
+  function chooseSettingsTab(next: SettingsTab, moveFocus = false) {
     setSettingsTab(next);
+    if (!moveFocus) return;
     // Roving focus keeps the compact tab row usable with a hardware keyboard
-    // on iPad as well as assistive technology on desktop.
-    requestAnimationFrame(() => document.getElementById(`settings-tab-${next}`)?.focus());
+    // on iPad as well as assistive technology on desktop. Scroll only the tab
+    // strip; switching sections must not throw the document to the top.
+    requestAnimationFrame(() => {
+      const control = document.getElementById(`settings-tab-${next}`);
+      control?.focus({ preventScroll: true });
+      control?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    });
   }
 
   function moveSettingsTab(event: KeyboardEvent<HTMLButtonElement>, index: number) {
@@ -369,247 +501,253 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
     if (event.key === 'End') next = last;
     if (next === null) return;
     event.preventDefault();
-    chooseSettingsTab(SETTINGS_TABS[next].id);
+    chooseSettingsTab(SETTINGS_TABS[next].id, true);
   }
 
   return (
-    <div className="pane set" style={{ maxWidth: 780 }} data-motion={prefs?.motion ?? 'auto'}>
+    <div className="pane set" style={{ maxWidth: 1100 }} data-motion={prefs?.motion ?? 'auto'}>
       <style>{SHEET}</style>
 
-      <div className="pane-head set-head">
-        <div><div className="set-kicker">Wanigan setup</div><h1>Settings</h1><p className="dim">Configure how Wanigan connects, works, and stays private on this Mac.</p></div>
-      </div>
-      <div className="set-tabs" role="tablist" aria-label="Settings sections">
-        {SETTINGS_TABS.map((tab, index) => (
-          <button id={`settings-tab-${tab.id}`} key={tab.id} type="button" role="tab" aria-selected={settingsTab === tab.id}
-                  tabIndex={settingsTab === tab.id ? 0 : -1}
-                  aria-controls={`settings-${tab.id}`} className={settingsTab === tab.id ? 'on' : ''}
-                  onClick={() => chooseSettingsTab(tab.id)} onKeyDown={(event) => moveSettingsTab(event, index)}>{tab.label}</button>
-        ))}
-      </div>
-      <div className="set-tab-summary" role="status">
-        <strong>{SETTINGS_TABS.find((tab) => tab.id === settingsTab)?.label}</strong>
-        <span>{SETTINGS_TABS.find((tab) => tab.id === settingsTab)?.detail}</span>
-      </div>
-
-      {settingsTab === 'connections' && <div className="set-tab-panel" role="tabpanel" id="settings-connections">
-
-      <Section title="Claude Platform API key"
-               hint="Needed for Batches — estimating, dry runs, and submitting. Agent sessions do not use it; they authenticate through their own CLI.">
-        {status?.fromEnv && (
-          <div style={{ marginBottom: 11 }}>
-            <Note tone="info">
-              <code className="mono">ANTHROPIC_API_KEY</code> is set in the environment and takes precedence
-              over anything stored here.
-            </Note>
-          </div>
-        )}
-
-        {status?.present ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 11 }}>
-            <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>key installed</span>
-            <span className="mono faint">{status.fingerprint}</span>
-            {status.workspaceId && (
-              <span className="pill mono" style={{ background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}
-                    title="anthropic-workspace-id sent on every request">{status.workspaceId}</span>
-            )}
-            <button className="btn" style={{ marginLeft: 'auto' }} onClick={verify} disabled={busy}>Verify</button>
-            <button className="btn btn-danger" onClick={clear} disabled={busy}>Remove</button>
-          </div>
-        ) : (
-          <div style={{ marginBottom: 11 }}>
-            <Note tone="warn">
-              No key stored. Batches cannot estimate or submit without one.
-            </Note>
-          </div>
-        )}
-
-        <label className="label">{status?.present ? 'Replace key' : 'Paste your key'}</label>
-        <div style={{ display: 'flex', gap: 7, marginTop: 4 }}>
-          <input className="field mono" type="password" placeholder="sk-ant-api03-…" value={input}
-                 autoComplete="off" spellCheck={false}
-                 onChange={(e) => setInput(e.target.value)}
-                 onKeyDown={(e) => { if (e.key === 'Enter' && input.trim()) void save(); }} />
-          <button className="btn btn-primary" onClick={save} disabled={busy || !input.trim()}>
-            {busy ? 'Verifying…' : 'Save'}
-          </button>
+      <header className="set-hero">
+        <div>
+          <div className="set-kicker">Wanigan control center</div>
+          <h1>Settings</h1>
+          <p>Everything is grouped by the job you are trying to do, so provider setup, remote access, and safety controls stay easy to find.</p>
         </div>
-
-        {showWorkspace ? (
-          <div style={{ marginTop: 11 }}>
-            <label className="label">
-              Workspace ID
-              <span className="faint" style={{ textTransform: 'none' }}> — required for identity-linked keys</span>
-            </label>
-            <input className="field mono" style={{ marginTop: 4 }} placeholder="wrkspc_…"
-                   value={workspaceId} spellCheck={false}
-                   onChange={(e) => setWorkspaceId(e.target.value)}
-                   onKeyDown={(e) => { if (e.key === 'Enter' && input.trim()) void save(); }} />
-            <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 4, lineHeight: 1.45 }}>
-              Console → Settings → Workspaces. Sent as the{' '}
-              <span className="mono">anthropic-workspace-id</span> header on every request.
-              Plain API keys ignore it, so leaving it set is harmless.
-            </p>
-          </div>
-        ) : (
-          <button className="faint" style={{ fontSize: 'var(--t-small)', marginTop: 8 }}
-                  onClick={() => setShowWorkspace(true)}>
-            + add a Workspace ID (needed for identity-linked keys)
-          </button>
-        )}
-
-        {msgState && <div style={{ marginTop: 11 }}><Note tone={msgState.tone === 'ok' ? 'ok' : 'error'}>{msgState.text}</Note></div>}
-
-        <div className="sunk" style={{ padding: '10px 12px', marginTop: 14, fontSize: 'var(--t-small)', lineHeight: 1.55 }}>
-          <p>
-            <strong>This is not your Claude Code subscription.</strong> The Batches API bills per token
-            against a Claude Platform account with its own credit balance. Get a key at{' '}
-            <button className="link" onClick={() => window.open('https://console.anthropic.com/settings/keys')}>
-              console.anthropic.com/settings/keys
-            </button>. A Claude Code OAuth token is rejected.
-          </p>
-          <p className="dim" style={{ marginTop: 8 }}>
-            The key is verified against the live API before it is saved, then encrypted with{' '}
-            {status?.encryptionAvailable ? 'your macOS Keychain' : 'the OS credential store'} — it is never
-            written to a plaintext file, never logged, and never sent to the renderer.
-          </p>
-          <p className="dim" style={{ marginTop: 8 }}>
-            <strong>Identity-linked keys need a Workspace ID.</strong> If your organisation issues keys
-            tied to an identity, the API returns a 400 until every request names the workspace it acts in.
-            Wanigan sends it as the <span className="mono">anthropic-workspace-id</span> header.
-            <br /><br />
-            <strong>Workload identity federation is a different thing</strong> and does not apply here: it
-            exchanges a short-lived JWT from a cloud or CI identity provider, so it only works on GCP, AWS,
-            Azure or GitHub Actions. A local desktop app has nothing to federate from.
-          </p>
-        </div>
-      </Section>
-
-      <Section title="GLM Coding Plan"
-               hint="Runs GLM through the installed Claude Code runtime, with the Z.ai Coding Plan endpoint and Wanigan’s normal sessions, attachments, code review, worktrees, MCP configuration and headless runs.">
-        {glmStatus?.present ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 11 }}>
-            <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>Coding Plan key installed</span>
-            <span className="mono faint">{glmStatus.fingerprint}</span>
-            <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => void verifyGlm()} disabled={glmBusy}>Verify live catalogue</button>
-            <button className="btn btn-danger" onClick={() => void clearGlm()} disabled={glmBusy}>Remove</button>
-          </div>
-        ) : <Note tone="warn">No Z.ai Coding Plan key stored. GLM sessions cannot authenticate until you add one.</Note>}
-        <label className="label" style={{ marginTop: 11 }}>{glmStatus?.present ? 'Replace Z.ai key' : 'Paste Z.ai Coding Plan API key'}</label>
-        <div style={{ display: 'flex', gap: 7, marginTop: 4 }}>
-          <input className="field mono" type="password" placeholder="Z.ai API key" value={glmKey} autoComplete="off" spellCheck={false}
-                 onChange={(e) => setGlmKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && glmKey.trim()) void saveGlm(); }} />
-          <button className="btn btn-primary" onClick={() => void saveGlm()} disabled={glmBusy || !glmKey.trim()}>{glmBusy ? 'Checking…' : 'Save & verify'}</button>
-        </div>
-        {glmMsg && <div style={{ marginTop: 10 }}><Note tone={glmMsg.tone === 'ok' ? 'ok' : 'error'}>{glmMsg.text}</Note></div>}
-        <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.45 }}>
-          The key is verified against <span className="mono">api.z.ai/api/coding/paas/v4/models</span> before Wanigan saves it, then encrypted in your macOS Keychain. Wanigan does not show or log the key.
-        </p>
-      </Section>
-
-      <Section title="DeepSeek"
-               hint="Runs DeepSeek through the installed Claude Code runtime using DeepSeek’s Anthropic-compatible endpoint. It gets the same Wanigan terminal, review, policy, worktree and headless-run controls as Claude and GLM.">
-        {deepseekStatus?.present ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 11 }}>
-            <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>DeepSeek key installed</span>
-            <span className="mono faint">{deepseekStatus.fingerprint}</span>
-            <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => void verifyDeepseek()} disabled={deepseekBusy}>Verify live catalogue</button>
-            <button className="btn btn-danger" onClick={() => void clearDeepseek()} disabled={deepseekBusy}>Remove</button>
-          </div>
-        ) : <Note tone="warn">No DeepSeek key stored. DeepSeek sessions cannot authenticate until you add one.</Note>}
-        <label className="label" style={{ marginTop: 11 }}>{deepseekStatus?.present ? 'Replace DeepSeek key' : 'Paste DeepSeek API key'}</label>
-        <div style={{ display: 'flex', gap: 7, marginTop: 4 }}>
-          <input className="field mono" type="password" placeholder="DeepSeek API key" value={deepseekKey} autoComplete="off" spellCheck={false}
-                 onChange={(e) => setDeepseekKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && deepseekKey.trim()) void saveDeepseek(); }} />
-          <button className="btn btn-primary" onClick={() => void saveDeepseek()} disabled={deepseekBusy || !deepseekKey.trim()}>{deepseekBusy ? 'Checking…' : 'Save & verify'}</button>
-        </div>
-        {deepseekMsg && <div style={{ marginTop: 10 }}><Note tone={deepseekMsg.tone === 'ok' ? 'ok' : 'error'}>{deepseekMsg.text}</Note></div>}
-        <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.45 }}>
-          Wanigan verifies the key against <span className="mono">api.deepseek.com/models</span>, then stores it encrypted in your macOS Keychain. The key is never shown, logged or sent to a renderer.
-        </p>
-      </Section>
-
-      </div>}
-
-      {settingsTab === 'automation' && <div className="set-tab-panel" role="tabpanel" id="settings-automation">
-      <Section title="Spending"
-               hint="A batch cannot be un-submitted. The cap is checked against the estimate at submit time — the last moment anything is preventable.">
-        <label className="label">Maximum estimated cost per run (USD)</label>
-        <div style={{ display: 'flex', gap: 7, marginTop: 4, maxWidth: 320 }}>
-          <input className="field mono" type="number" min={0} step="0.25" value={cap}
-                 onChange={(e) => setCap(e.target.value)} />
-          <button className="btn" onClick={async () => {
-            const v = await window.wanigan.settings.setSpendCap(Number(cap) || 0);
-            setCap(v.toFixed(2));
-            setMsg({ tone: 'ok', text: v > 0 ? `Runs estimated above $${v.toFixed(2)} will be blocked.` : 'Spend cap disabled.' });
-          }}>Save</button>
-        </div>
-        <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 5, lineHeight: 1.45 }}>
-          0 disables the cap. The estimate is a low-end figure that assumes caching engages, so
-          leave headroom — the builder shows the upper bound beside it.
-        </p>
-      </Section>
-
-      </div>}
+        <aside className="set-save-guide" aria-label="How settings are saved">
+          <strong>How settings work</strong>
+          <span>Most switches save immediately. A button labelled Save applies the fields beside it. Each section calls out anything that waits for a new session or restart.</span>
+        </aside>
+      </header>
 
       {prefsErr && <Callout level="critical" title="A preference did not save.">{prefsErr}</Callout>}
 
-      {settingsTab === 'visibility' && <div className="set-tab-panel" role="tabpanel" id="settings-visibility">
-      <Observation prefs={prefs} pending={pending} setFlag={setFlag} />
-      <PhoneMonitor />
-      <Egress />
-      </div>}
-
-      {settingsTab === 'automation' && <div className="set-tab-panel" role="tabpanel" id="settings-automation-tools">
-      <Trust projects={projects} onAddProject={onAddProject} />
-      <Dispatcher />
-      <Mcp projects={projects} prefs={prefs} pending={pending} setFlag={setFlag} />
-      </div>}
-
-      {settingsTab === 'projects' && <div className="set-tab-panel" role="tabpanel" id="settings-projects">
-      <Worktrees />
-      </div>}
-
-      {settingsTab === 'app' && <div className="set-tab-panel" role="tabpanel" id="settings-app">
-      <Motion prefs={prefs} pending={pending} setPref={setPref} />
-      <Storage prefs={prefs} pending={pending} setPref={setPref} />
-      <DemoPanel />
-      </div>}
-
-      {settingsTab === 'connections' && <div className="set-tab-panel" role="tabpanel" id="settings-runtimes">
-      <Section title="Agents" hint="Resolved from your login shell's PATH, then from editor extension directories.">
-        {providers.map((p) => (
-          <div key={p.id} style={{ display: 'flex', gap: 11, alignItems: 'center', padding: '7px 0',
-                                   borderTop: '1px solid var(--line-soft)' }}>
-            <span style={{ fontWeight: 600, minWidth: 110 }}>{p.label}</span>
-            {p.path ? (
-              <>
-                <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>{p.version ?? 'installed'}</span>
-                <span className="faint mono trunc" style={{ fontSize: 'var(--t-micro)', flex: 1 }} title={p.path}>{p.path}</span>
-              </>
-            ) : (
-              <span className="faint">not found — <code className="mono">{p.bin}</code> is not on PATH or in an editor extension</span>
-            )}
+      <div className="set-layout">
+        <nav className="set-tabs" role="tablist" aria-label="Settings sections"
+             aria-orientation={compactSettingsLayout ? 'horizontal' : 'vertical'}>
+          <div className="set-tabs-intro">
+            <strong>Settings areas</strong>
+            <span>Choose a category. Your unfinished form entries stay here while you move between tabs.</span>
           </div>
-        ))}
-      </Section>
-      </div>}
+          {SETTINGS_TABS.map((tab, index) => (
+            <button id={`settings-tab-${tab.id}`} key={tab.id} type="button" role="tab"
+                    aria-selected={settingsTab === tab.id} tabIndex={settingsTab === tab.id ? 0 : -1}
+                    aria-controls={`settings-${tab.id}`} className={settingsTab === tab.id ? 'on' : ''}
+                    onClick={() => chooseSettingsTab(tab.id)} onKeyDown={(event) => moveSettingsTab(event, index)}>
+              <span className="set-tab-label">{tab.label}</span>
+              <span className="set-tab-detail">{tab.eyebrow}</span>
+            </button>
+          ))}
+        </nav>
 
-      {settingsTab === 'projects' && <div className="set-tab-panel" role="tabpanel" id="settings-project-list">
-      <Section title="Projects" hint="Shared by both views — an agent session and a batch run target the same repo."
-               right={<button className="btn" onClick={onAddProject}>+ Add project</button>}>
-        {!projects.length && <p className="dim">No projects yet.</p>}
-        {projects.map((p) => (
-          <div key={p.id} style={{ display: 'flex', gap: 11, alignItems: 'center', padding: '7px 0',
-                                   borderTop: '1px solid var(--line-soft)' }}>
-            <span style={{ fontWeight: 500 }}>{p.name}</span>
-            {p.branch && <span className="pill mono" style={{ background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>{p.branch}</span>}
-            <span className="faint mono trunc" style={{ fontSize: 'var(--t-micro)', flex: 1 }} title={p.path}>{p.path}</span>
-            <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={() => onRemoveProject(p.id)}>remove</button>
-          </div>
-        ))}
-      </Section>
-      </div>}
+        <div className="set-panels">
+          <SettingsTabPanel tab={settingsTabInfo('agents')} active={settingsTab === 'agents'}>
+            <Section title="Claude Platform API key"
+                     hint="Needed for Batches — estimating, dry runs, and submitting. Agent sessions do not use it; they authenticate through their own CLI.">
+              {status?.fromEnv && (
+                <div style={{ marginBottom: 11 }}>
+                  <Note tone="info">
+                    <code className="mono">ANTHROPIC_API_KEY</code> is set in the environment and takes precedence
+                    over anything stored here.
+                  </Note>
+                </div>
+              )}
+
+              {status?.present ? (
+                <div className="set-key-status">
+                  <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>key installed</span>
+                  <span className="mono faint">{status.fingerprint}</span>
+                  {status.workspaceId && (
+                    <span className="pill mono" style={{ background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}
+                          title="anthropic-workspace-id sent on every request">{status.workspaceId}</span>
+                  )}
+                  <button className="btn" onClick={verify} disabled={busy}>Verify</button>
+                  <button className="btn btn-danger" onClick={clear} disabled={busy}>Remove</button>
+                </div>
+              ) : (
+                <div style={{ marginBottom: 11 }}>
+                  <Note tone="warn">No key stored. Batches cannot estimate or submit without one.</Note>
+                </div>
+              )}
+
+              <label className="label" htmlFor="anthropic-api-key">{status?.present ? 'Replace key' : 'Paste your key'}</label>
+              <div className="set-field-action">
+                <input id="anthropic-api-key" className="field mono" type="password" placeholder="sk-ant-api03-…" value={input}
+                       autoComplete="off" spellCheck={false}
+                       onChange={(e) => setInput(e.target.value)}
+                       onKeyDown={(e) => { if (e.key === 'Enter' && input.trim()) void save(); }} />
+                <button className="btn btn-primary" onClick={save} disabled={busy || !input.trim()}>
+                  {busy ? 'Verifying…' : 'Save'}
+                </button>
+              </div>
+
+              {showWorkspace ? (
+                <div style={{ marginTop: 11 }}>
+                  <label className="label" htmlFor="anthropic-workspace-id">
+                    Workspace ID
+                    <span className="faint" style={{ textTransform: 'none' }}> — required for identity-linked keys</span>
+                  </label>
+                  <input id="anthropic-workspace-id" className="field mono" style={{ marginTop: 4 }} placeholder="wrkspc_…"
+                         value={workspaceId} spellCheck={false}
+                         onChange={(e) => setWorkspaceId(e.target.value)}
+                         onKeyDown={(e) => { if (e.key === 'Enter' && input.trim()) void save(); }} />
+                  <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 4, lineHeight: 1.45 }}>
+                    Console → Settings → Workspaces. Sent as the{' '}
+                    <span className="mono">anthropic-workspace-id</span> header on every request.
+                    Plain API keys ignore it, so leaving it set is harmless.
+                  </p>
+                </div>
+              ) : (
+                <button className="faint" style={{ fontSize: 'var(--t-small)', marginTop: 8 }}
+                        onClick={() => setShowWorkspace(true)}>
+                  + add a Workspace ID (needed for identity-linked keys)
+                </button>
+              )}
+
+              {msgState && <div style={{ marginTop: 11 }}><Note tone={msgState.tone === 'ok' ? 'ok' : 'error'}>{msgState.text}</Note></div>}
+
+              <div className="sunk" style={{ padding: '10px 12px', marginTop: 14, fontSize: 'var(--t-small)', lineHeight: 1.55 }}>
+                <p>
+                  <strong>This is not your Claude Code subscription.</strong> The Batches API bills per token
+                  against a Claude Platform account with its own credit balance. Get a key at{' '}
+                  <button className="link" onClick={() => window.open('https://console.anthropic.com/settings/keys')}>
+                    console.anthropic.com/settings/keys
+                  </button>. A Claude Code OAuth token is rejected.
+                </p>
+                <p className="dim" style={{ marginTop: 8 }}>
+                  The key is verified against the live API before it is saved, then encrypted with{' '}
+                  {status?.encryptionAvailable ? 'your macOS Keychain' : 'the OS credential store'} — it is never
+                  written to a plaintext file, never logged, and never sent to the renderer.
+                </p>
+                <p className="dim" style={{ marginTop: 8 }}>
+                  <strong>Identity-linked keys need a Workspace ID.</strong> If your organisation issues keys
+                  tied to an identity, the API returns a 400 until every request names the workspace it acts in.
+                  Wanigan sends it as the <span className="mono">anthropic-workspace-id</span> header.
+                  <br /><br />
+                  <strong>Workload identity federation is a different thing</strong> and does not apply here: it
+                  exchanges a short-lived JWT from a cloud or CI identity provider, so it only works on GCP, AWS,
+                  Azure or GitHub Actions. A local desktop app has nothing to federate from.
+                </p>
+              </div>
+            </Section>
+
+            <Section title="GLM Coding Plan"
+                     hint="Runs GLM through the installed Claude Code runtime, with the Z.ai Coding Plan endpoint and Wanigan’s normal sessions, attachments, code review, worktrees, MCP configuration and headless runs.">
+              {glmStatus?.present ? (
+                <div className="set-key-status">
+                  <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>Coding Plan key installed</span>
+                  <span className="mono faint">{glmStatus.fingerprint}</span>
+                  <button className="btn" onClick={() => void verifyGlm()} disabled={glmBusy}>Verify live catalogue</button>
+                  <button className="btn btn-danger" onClick={() => void clearGlm()} disabled={glmBusy}>Remove</button>
+                </div>
+              ) : <Note tone="warn">No Z.ai Coding Plan key stored. GLM sessions cannot authenticate until you add one.</Note>}
+              <label className="label" htmlFor="glm-api-key" style={{ marginTop: 11 }}>{glmStatus?.present ? 'Replace Z.ai key' : 'Paste Z.ai Coding Plan API key'}</label>
+              <div className="set-field-action">
+                <input id="glm-api-key" className="field mono" type="password" placeholder="Z.ai API key" value={glmKey} autoComplete="off" spellCheck={false}
+                       onChange={(e) => setGlmKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && glmKey.trim()) void saveGlm(); }} />
+                <button className="btn btn-primary" onClick={() => void saveGlm()} disabled={glmBusy || !glmKey.trim()}>{glmBusy ? 'Checking…' : 'Save & verify'}</button>
+              </div>
+              {glmMsg && <div style={{ marginTop: 10 }}><Note tone={glmMsg.tone === 'ok' ? 'ok' : 'error'}>{glmMsg.text}</Note></div>}
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.45 }}>
+                The key is verified against <span className="mono">api.z.ai/api/coding/paas/v4/models</span> before Wanigan saves it, then encrypted in your macOS Keychain. Wanigan does not show or log the key.
+              </p>
+            </Section>
+
+            <Section title="DeepSeek"
+                     hint="Runs DeepSeek through the installed Claude Code runtime using DeepSeek’s Anthropic-compatible endpoint. It gets the same Wanigan terminal, review, policy, worktree and headless-run controls as Claude and GLM.">
+              {deepseekStatus?.present ? (
+                <div className="set-key-status">
+                  <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>DeepSeek key installed</span>
+                  <span className="mono faint">{deepseekStatus.fingerprint}</span>
+                  <button className="btn" onClick={() => void verifyDeepseek()} disabled={deepseekBusy}>Verify live catalogue</button>
+                  <button className="btn btn-danger" onClick={() => void clearDeepseek()} disabled={deepseekBusy}>Remove</button>
+                </div>
+              ) : <Note tone="warn">No DeepSeek key stored. DeepSeek sessions cannot authenticate until you add one.</Note>}
+              <label className="label" htmlFor="deepseek-api-key" style={{ marginTop: 11 }}>{deepseekStatus?.present ? 'Replace DeepSeek key' : 'Paste DeepSeek API key'}</label>
+              <div className="set-field-action">
+                <input id="deepseek-api-key" className="field mono" type="password" placeholder="DeepSeek API key" value={deepseekKey} autoComplete="off" spellCheck={false}
+                       onChange={(e) => setDeepseekKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && deepseekKey.trim()) void saveDeepseek(); }} />
+                <button className="btn btn-primary" onClick={() => void saveDeepseek()} disabled={deepseekBusy || !deepseekKey.trim()}>{deepseekBusy ? 'Checking…' : 'Save & verify'}</button>
+              </div>
+              {deepseekMsg && <div style={{ marginTop: 10 }}><Note tone={deepseekMsg.tone === 'ok' ? 'ok' : 'error'}>{deepseekMsg.text}</Note></div>}
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.45 }}>
+                Wanigan verifies the key against <span className="mono">api.deepseek.com/models</span>, then stores it encrypted in your macOS Keychain. The key is never shown, logged or sent to a renderer.
+              </p>
+            </Section>
+
+            <Section title="Installed agent runtimes" hint="Resolved from your login shell's PATH, then from editor extension directories.">
+              {providers.map((p) => (
+                <div className="set-runtime-row" key={p.id}>
+                  <span style={{ fontWeight: 600, minWidth: 110 }}>{p.label}</span>
+                  {p.path ? (
+                    <>
+                      <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>{p.version ?? 'installed'}</span>
+                      <span className="faint mono trunc" style={{ fontSize: 'var(--t-micro)', flex: 1 }} title={p.path}>{p.path}</span>
+                    </>
+                  ) : (
+                    <span className="faint">not found — <code className="mono">{p.bin}</code> is not on PATH or in an editor extension</span>
+                  )}
+                </div>
+              ))}
+            </Section>
+          </SettingsTabPanel>
+
+          <SettingsTabPanel tab={settingsTabInfo('projects')} active={settingsTab === 'projects'}>
+            <Section title="Projects" hint="Shared by both views — an agent session and a batch run target the same repo."
+                     right={<button className="btn" onClick={onAddProject}>+ Add project</button>}>
+              {!projects.length && <p className="dim">No projects yet.</p>}
+              {projects.map((p) => (
+                <div className="set-project-row" key={p.id}>
+                  <span style={{ fontWeight: 500 }}>{p.name}</span>
+                  {p.branch && <span className="pill mono" style={{ background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>{p.branch}</span>}
+                  <span className="faint mono trunc" style={{ fontSize: 'var(--t-micro)', flex: 1 }} title={p.path}>{p.path}</span>
+                  <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={() => onRemoveProject(p.id)}>remove</button>
+                </div>
+              ))}
+            </Section>
+            <Worktrees />
+            <Trust projects={projects} onAddProject={onAddProject} />
+          </SettingsTabPanel>
+
+          <SettingsTabPanel tab={settingsTabInfo('automation')} active={settingsTab === 'automation'}>
+            <Section title="Spending"
+                     hint="A batch cannot be un-submitted. The cap is checked against the estimate at submit time — the last moment anything is preventable.">
+              <label className="label" htmlFor="spend-cap">Maximum estimated cost per run (USD)</label>
+              <div className="set-field-action" style={{ maxWidth: 320 }}>
+                <input id="spend-cap" className="field mono" type="number" min={0} step="0.25" value={cap}
+                       onChange={(e) => setCap(e.target.value)} />
+                <button className="btn" onClick={async () => {
+                  const v = await window.wanigan.settings.setSpendCap(Number(cap) || 0);
+                  setCap(v.toFixed(2));
+                  setMsg({ tone: 'ok', text: v > 0 ? `Runs estimated above $${v.toFixed(2)} will be blocked.` : 'Spend cap disabled.' });
+                }}>Save</button>
+              </div>
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 5, lineHeight: 1.45 }}>
+                0 disables the cap. The estimate is a low-end figure that assumes caching engages, so
+                leave headroom — the builder shows the upper bound beside it.
+              </p>
+              {msgState && <div style={{ marginTop: 11 }}><Note tone={msgState.tone === 'ok' ? 'ok' : 'error'}>{msgState.text}</Note></div>}
+            </Section>
+            <Dispatcher active={settingsTab === 'automation'} />
+          </SettingsTabPanel>
+
+          <SettingsTabPanel tab={settingsTabInfo('connections')} active={settingsTab === 'connections'}>
+            <PhoneMonitor />
+            <Mcp projects={projects} prefs={prefs} pending={pending} setFlag={setFlag} />
+          </SettingsTabPanel>
+
+          <SettingsTabPanel tab={settingsTabInfo('privacy')} active={settingsTab === 'privacy'}>
+            <Observation prefs={prefs} pending={pending} setFlag={setFlag} />
+            <Egress />
+            <Storage prefs={prefs} pending={pending} setPref={setPref} />
+          </SettingsTabPanel>
+
+          <SettingsTabPanel tab={settingsTabInfo('app')} active={settingsTab === 'app'}>
+            <Motion prefs={prefs} pending={pending} setPref={setPref} />
+            <DemoPanel />
+          </SettingsTabPanel>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1448,7 +1586,7 @@ const KIND_COPY: { id: keyof QueueSlots; label: string; detail: string }[] = [
   { id: 'batch',    label: 'Batch submissions',    detail: 'Submissions in flight against the Batches API.' },
 ];
 
-function Dispatcher() {
+function Dispatcher({ active }: { active: boolean }) {
   const [draft, setDraft] = useState<QueueSlots | null>(null);
   const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [tick, setTick] = useState(0);
@@ -1459,10 +1597,11 @@ function Dispatcher() {
   // The queue moves on its own, so the table follows it rather than waiting for
   // the user to come back and reopen the page.
   useEffect(() => {
+    if (!active) return;
     const off = window.wanigan.on.queueChanged(() => setTick((t) => t + 1));
     const timer = setInterval(() => setTick((t) => t + 1), 5000);
     return () => { off(); clearInterval(timer); };
-  }, []);
+  }, [active]);
 
   const running = useMemo(() => {
     const by: Record<string, number> = { session: 0, headless: 0, batch: 0 };
@@ -2232,16 +2371,44 @@ function Storage({ prefs, pending, setPref }: {
 const SHEET = `
 .set :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 5px; }
 
-.set-head { margin-bottom: -2px; }
-.set-kicker { color: var(--accent); font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 4px; }
-.set-tabs { display: flex; gap: 5px; padding: 5px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); scrollbar-width: thin; }
-.set-tabs button { flex: 0 0 auto; border-radius: 7px; padding: 7px 10px; color: var(--text-dim); font-size: 12px; font-weight: 650; white-space: nowrap; }
+.set { overscroll-behavior: contain; }
+.set-kicker, .set-panel-kicker { color: var(--accent); font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.set-kicker { margin-bottom: 4px; }
+.set-hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(270px, .72fr); gap: var(--s-4); align-items: start; }
+.set-hero h1 { font-size: var(--t-title); font-weight: 600; letter-spacing: -.015em; }
+.set-hero > div > p { max-width: 640px; margin-top: 4px; color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
+.set-save-guide { padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
+.set-save-guide strong { display: block; color: var(--text); font-size: 12px; margin-bottom: 3px; }
+
+.set-layout { display: grid; grid-template-columns: 212px minmax(0, 1fr); gap: var(--s-4); align-items: start; }
+.set-tabs { position: sticky; top: 0; display: flex; flex-direction: column; gap: 4px; padding: 7px; max-height: calc(100vh - 104px); overflow-y: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); scrollbar-width: thin; }
+.set-tabs-intro { padding: 5px 6px 8px; color: var(--text-dim); font-size: var(--t-micro); line-height: 1.45; border-bottom: 1px solid var(--line-soft); margin-bottom: 2px; }
+.set-tabs-intro strong { display: block; color: var(--text); font-size: 11px; margin-bottom: 2px; }
+.set-tabs button { display: grid; gap: 2px; width: 100%; min-height: 48px; padding: 8px 10px; border-radius: 8px; color: var(--text-dim); text-align: left; font-size: 12px; font-weight: 650; touch-action: manipulation; }
 .set-tabs button:hover { color: var(--text); background: var(--bg-soft); }
 .set-tabs button.on { color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
-.set-tab-summary { display: flex; gap: 9px; align-items: baseline; padding: 0 3px; color: var(--text-dim); font-size: var(--t-small); line-height: 1.45; }
-.set-tab-summary strong { color: var(--text); white-space: nowrap; }
-.set-tab-panel { display: flex; flex-direction: column; gap: var(--s-4); }
-@media (max-width: 580px) { .set-tab-summary { align-items: flex-start; flex-direction: column; gap: 1px; } }
+.set-tab-label { line-height: 1.2; }
+.set-tab-detail { color: var(--text-faint); font-size: 10.5px; font-weight: 500; line-height: 1.25; }
+.set-tabs button.on .set-tab-detail { color: var(--accent); opacity: .82; }
+.set-panels { min-width: 0; }
+.set-tab-panel { display: flex; flex-direction: column; gap: var(--s-4); min-width: 0; }
+.set-tab-panel[hidden] { display: none; }
+.set-panel-intro { padding: 14px 15px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); }
+.set-panel-intro h2 { margin-top: 3px; font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
+.set-panel-intro > p:not(.set-panel-includes) { margin-top: 4px; color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
+.set-panel-help { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; margin-top: 12px; padding: 9px 10px; border-radius: 8px; background: var(--bg-soft); color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
+.set-panel-help-mark { width: 20px; height: 20px; display: grid; place-items: center; border: 1px solid var(--accent); border-radius: 999px; color: var(--accent); font-size: 11px; font-weight: 750; }
+.set-panel-help strong { color: var(--text); font-size: 12px; }
+.set-panel-help p { margin-top: 2px; }
+.set-panel-includes { display: flex; flex-wrap: wrap; gap: 5px 8px; margin-top: 10px; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.45; }
+.set-panel-includes strong { color: var(--text-dim); font-size: inherit; }
+
+.set-field-action { display: flex; gap: 7px; align-items: center; margin-top: 4px; }
+.set-field-action > .field { min-width: 0; flex: 1; }
+.set-field-action > .btn { flex: none; }
+.set-key-status { display: flex; gap: 8px 11px; align-items: center; flex-wrap: wrap; margin-bottom: 11px; }
+.set-key-status .btn:first-of-type { margin-left: auto; }
+.set-runtime-row, .set-project-row { display: flex; gap: 11px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line-soft); min-width: 0; }
 
 /* The motion setting is real on the surface that sets it. */
 .set[data-motion='off'] * { transition: none !important; animation: none !important; }
@@ -2250,7 +2417,7 @@ const SHEET = `
 }
 
 /* Wide tables scroll inside themselves. The page body never scrolls sideways. */
-.set-scroll { overflow-x: auto; overflow-y: hidden; }
+.set-scroll { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
 .set-scroll > table { min-width: 560px; }
 .set-scroll.wide > table { min-width: 700px; }
 
@@ -2319,6 +2486,39 @@ const SHEET = `
 .set-mini { padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 600; color: var(--text-dim); }
 .set-mini:hover { background: var(--bg-sunk); color: var(--text); }
 .set-mini.danger:hover { background: var(--critical-soft); color: var(--critical); }
+
+/* A full-width iPad has room for the navigation rail. In portrait or split
+   view the same controls become a scrollable touch tab strip rather than
+   forcing content to a narrow second column. */
+@media (max-width: 900px) {
+  .set-hero { grid-template-columns: 1fr; gap: 10px; }
+  .set-save-guide { max-width: none; }
+  .set-layout { display: flex; flex-direction: column; gap: var(--s-4); }
+  .set-tabs { position: relative; top: auto; flex-direction: row; width: 100%; max-height: none; overflow-x: auto; overflow-y: hidden; padding: 5px; scroll-snap-type: x proximity; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; touch-action: pan-x; }
+  .set-tabs-intro { display: none; }
+  .set-tabs button { flex: 0 0 auto; width: auto; min-height: 42px; padding: 8px 11px; white-space: nowrap; scroll-snap-align: start; }
+  .set-tab-detail { display: none; }
+  .set-panels { width: 100%; }
+}
+
+@media (pointer: coarse) {
+  .set-tabs button, .set-switch { min-height: 44px; touch-action: manipulation; }
+  .set-mini { min-height: 32px; touch-action: manipulation; }
+}
+
+@media (max-width: 640px) {
+  .set.pane { padding: 12px 12px calc(18px + env(safe-area-inset-bottom)); gap: 12px; }
+  .set-panel-intro { padding: 12px; }
+  .set .card { padding: 12px !important; }
+  .set .row2 { grid-template-columns: 1fr; }
+  .set-row { flex-direction: column; gap: 8px; }
+  .set-switch { align-self: flex-start; }
+  .set-field-action { flex-direction: column; align-items: stretch; }
+  .set-field-action > .btn { align-self: flex-start; }
+  .set-key-status .btn:first-of-type { margin-left: 0; }
+  .set-runtime-row, .set-project-row { align-items: flex-start; flex-wrap: wrap; }
+  .set-runtime-row .trunc, .set-project-row .trunc { flex-basis: 100%; }
+}
 `;
 
 

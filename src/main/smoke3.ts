@@ -1493,10 +1493,11 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const controlViewSrc = sourceOf('src/renderer/src/views/Control.tsx');
   const schedulesSrc = sourceOf('src/renderer/src/views/Schedules.tsx');
   const sessionsSrc = sourceOf('src/renderer/src/views/Sessions.tsx');
+  const settingsSrc = sourceOf('src/renderer/src/views/Settings.tsx');
   const appSrc = sourceOf('src/renderer/src/App.tsx');
   const sessionManagerSrc = sourceOf('src/main/sessions.ts');
   check(mainSrc.length > 1000 && preloadSrc.length > 500 && schedulesSrc.length > 500
-    && sessionsSrc.length > 500 && appSrc.length > 500 && sessionManagerSrc.length > 500,
+    && sessionsSrc.length > 500 && settingsSrc.length > 500 && appSrc.length > 500 && sessionManagerSrc.length > 500,
     'the sources these checks read are present, so a miss is a miss and not a bad path');
 
   check(/registerRunner\(\s*'batch'/.test(mainSrc),
@@ -1536,6 +1537,27 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(/handle\(\s*'control:create'/.test(mainSrc) && /control:\s*\{/.test(preloadSrc)
     && /<Control/.test(appSrc) && /Dockets/.test(controlViewSrc) && controlSrc.includes('work_dockets'),
     'the durable control plane has schema, IPC, renderer binding and a visible operator surface');
+
+  // Settings used to split a single tab across multiple `tabpanel` nodes, and
+  // switching categories unmounted whatever form was in the other one. This is
+  // a source contract because the Electron smoke process has no renderer: it
+  // protects the operator surfaces and the semantics that preserve an unsaved
+  // provider key, queue limit, phone configuration, or MCP draft mid-edit.
+  const settingsSurfaces = [
+    'Claude Platform API key', 'GLM Coding Plan', 'DeepSeek', 'Installed agent runtimes',
+    'Projects', 'Worktrees', 'Trust and the policy ledger', 'Spending', 'Dispatcher',
+    'Phone monitor', 'MCP servers', 'Observation', 'What leaves this machine', 'Storage',
+    'Motion', 'Demo mode',
+  ];
+  const settingsPanels = ['agents', 'projects', 'automation', 'connections', 'privacy', 'app'];
+  check(settingsSurfaces.every((surface) => settingsSrc.includes(surface))
+    && settingsPanels.every((panel) => settingsSrc.includes(`settingsTabInfo('${panel}')`))
+    && (settingsSrc.match(/<SettingsTabPanel\b/g) ?? []).length === settingsPanels.length
+    && settingsSrc.includes('role="tablist"') && settingsSrc.includes('role="tabpanel"')
+    && settingsSrc.includes('aria-controls={`settings-${tab.id}`}')
+    && settingsSrc.includes('aria-labelledby={`settings-tab-${tab.id}`}')
+    && settingsSrc.includes('hidden={!active}') && settingsSrc.includes('moveSettingsTab'),
+  'Settings keeps every operator surface in six labelled persistent tab panels, with keyboard navigation and no draft-destroying unmount');
 
   const kindDecl = /type Kind = ([^;]+);/.exec(schedulesSrc)?.[1] ?? '';
   check(kindDecl.includes("'batch'") && !kindDecl.includes("'session'"),
