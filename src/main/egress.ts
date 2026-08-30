@@ -311,7 +311,10 @@ const PROVENANCE =
 export function egressReport(): EgressReport {
   let keychainAvailable = false;
   try {
-    keychainAvailable = safeStorage.isEncryptionAvailable();
+    // A hermetic smoke profile must not probe the user's Keychain. Electron
+    // 44 can synchronously wait on Keychain access from a throwaway profile,
+    // which turns an offline report test into an unbounded UI wait.
+    keychainAvailable = process.env.WANIGAN_SMOKE !== '1' && safeStorage.isEncryptionAvailable();
   } catch {
     // Before app.whenReady, or on a machine with no credential store. False is
     // the honest answer: the panel then says Wanigan refuses to store a key.

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import type {
   WaniganSettings, EgressHost, LedgerEntry, McpServerConfig, MotionSetting,
   MobileMonitorConfig, MobileMonitorStatus, Project, ProviderInfo, QueueItem, QueueSlots, QueueState,
@@ -352,6 +353,25 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
     await setPref(k, on ? '1' : '0');
   }, [setPref]);
 
+  function chooseSettingsTab(next: SettingsTab) {
+    setSettingsTab(next);
+    // Roving focus keeps the compact tab row usable with a hardware keyboard
+    // on iPad as well as assistive technology on desktop.
+    requestAnimationFrame(() => document.getElementById(`settings-tab-${next}`)?.focus());
+  }
+
+  function moveSettingsTab(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    const last = SETTINGS_TABS.length - 1;
+    let next: number | null = null;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = index === last ? 0 : index + 1;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = index === 0 ? last : index - 1;
+    if (event.key === 'Home') next = 0;
+    if (event.key === 'End') next = last;
+    if (next === null) return;
+    event.preventDefault();
+    chooseSettingsTab(SETTINGS_TABS[next].id);
+  }
+
   return (
     <div className="pane set" style={{ maxWidth: 780 }} data-motion={prefs?.motion ?? 'auto'}>
       <style>{SHEET}</style>
@@ -360,10 +380,11 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
         <div><div className="set-kicker">Wanigan setup</div><h1>Settings</h1><p className="dim">Configure how Wanigan connects, works, and stays private on this Mac.</p></div>
       </div>
       <div className="set-tabs" role="tablist" aria-label="Settings sections">
-        {SETTINGS_TABS.map((tab) => (
-          <button key={tab.id} type="button" role="tab" aria-selected={settingsTab === tab.id}
+        {SETTINGS_TABS.map((tab, index) => (
+          <button id={`settings-tab-${tab.id}`} key={tab.id} type="button" role="tab" aria-selected={settingsTab === tab.id}
+                  tabIndex={settingsTab === tab.id ? 0 : -1}
                   aria-controls={`settings-${tab.id}`} className={settingsTab === tab.id ? 'on' : ''}
-                  onClick={() => setSettingsTab(tab.id)}>{tab.label}</button>
+                  onClick={() => chooseSettingsTab(tab.id)} onKeyDown={(event) => moveSettingsTab(event, index)}>{tab.label}</button>
         ))}
       </div>
       <div className="set-tab-summary" role="status">

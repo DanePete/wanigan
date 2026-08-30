@@ -136,12 +136,15 @@ function secretsFile(): string {
 }
 
 function persistSecrets(value: MobileSecrets): void {
+  // Smoke runs must be hermetic: probing the real macOS keychain from a
+  // temporary Electron profile can block on Keychain UI and never exercises
+  // the production encrypted-file path. Test secrets live only in memory.
+  if (process.env.WANIGAN_SMOKE === '1') {
+    memorySecrets = { ...value };
+    secretsError = null;
+    return;
+  }
   if (!safeStorage.isEncryptionAvailable()) {
-    if (process.env.WANIGAN_SMOKE === '1') {
-      memorySecrets = { ...value };
-      secretsError = null;
-      return;
-    }
     throw new Error('OS credential encryption is unavailable.');
   }
 
@@ -153,11 +156,16 @@ function persistSecrets(value: MobileSecrets): void {
   const next = `${file}.next-${process.pid}-${randomBytes(6).toString('hex')}`;
   const encrypted = safeStorage.encryptString(JSON.stringify(value));
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  let fd: number | null = null;
   try {
-    fs.writeFileSync(next, encrypted, { mode: 0o600, flag: 'wx' });
+    fd = fs.openSync(next, 'wx', 0o600);
+    fs.writeFileSync(fd, encrypted);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd); fd = null;
     try { fs.chmodSync(next, 0o600); } catch { /* best effort on odd filesystems */ }
     fs.renameSync(next, file);
   } finally {
+    if (fd !== null) try { fs.closeSync(fd); } catch { /* best effort */ }
     try { fs.rmSync(next, { force: true }); } catch { /* rename already consumed it */ }
   }
   memorySecrets = { ...value };
@@ -165,12 +173,12 @@ function persistSecrets(value: MobileSecrets): void {
 }
 
 function mobileSecrets(): MobileSecrets {
+  if (process.env.WANIGAN_SMOKE === '1') {
+    memorySecrets ??= { token: generateToken(), topic: generateTopic() };
+    secretsError = null;
+    return memorySecrets;
+  }
   if (!safeStorage.isEncryptionAvailable()) {
-    if (process.env.WANIGAN_SMOKE === '1') {
-      memorySecrets ??= { token: generateToken(), topic: generateTopic() };
-      secretsError = null;
-      return memorySecrets;
-    }
     secretsError = 'OS credential encryption is unavailable, so phone monitoring is paused.';
     memorySecrets ??= { token: generateToken(), topic: generateTopic() };
     return memorySecrets;

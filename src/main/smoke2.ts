@@ -159,6 +159,8 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   const attachmentSession = `${SID}-attachment`;
   const staged = attachments.attachBufferToSession(attachmentSession, fs.readFileSync(png), 'shot.png');
   check(fs.statSync(staged.storedPath).isFile(), 'a pasted image is durably staged before it is recorded');
+  check((fs.statSync(path.dirname(staged.storedPath)).mode & 0o077) === 0,
+    'each staged attachment directory is private to its local user session');
   check(attachments.promptableSessionAttachments(attachmentSession).length === 1,
     'only an on-disk attachment can be named in a prompt');
   fs.rmSync(staged.storedPath, { force: true });

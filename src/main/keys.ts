@@ -1,6 +1,7 @@
 import { safeStorage, app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 
 /**
  * The Claude Platform API key, encrypted at rest by the OS keychain.
@@ -23,6 +24,30 @@ export function encryptionAvailable(): boolean {
 }
 
 type Creds = { key: string; workspaceId?: string };
+
+/**
+ * A credential replacement must not leave a zero-byte or half-written blob if
+ * the app, disk, or machine stops midway through saving it. The old encrypted
+ * secret remains authoritative until the new file is fully flushed and renamed
+ * into place. This mirrors the mobile-pairing credential path.
+ */
+function writeEncryptedCredential(file: string, encrypted: Buffer): void {
+  const parent = path.dirname(file);
+  fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const next = `${file}.next-${process.pid}-${randomBytes(6).toString('hex')}`;
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(next, 'wx', 0o600);
+    fs.writeFileSync(fd, encrypted);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd); fd = null;
+    try { fs.chmodSync(next, 0o600); } catch { /* best effort on unusual filesystems */ }
+    fs.renameSync(next, file);
+  } finally {
+    if (fd !== null) try { fs.closeSync(fd); } catch { /* best effort */ }
+    try { fs.rmSync(next, { force: true }); } catch { /* rename consumed it */ }
+  }
+}
 
 function readCreds(): Creds | null {
   if (!hasKey()) return null;
@@ -73,11 +98,10 @@ export function setKey(key: string, workspaceId?: string) {
   if (!safeStorage.isEncryptionAvailable()) {
     throw new Error('OS encryption is unavailable, so the key cannot be stored safely. Set ANTHROPIC_API_KEY instead.');
   }
-  fs.mkdirSync(path.dirname(keyFile()), { recursive: true });
   const creds: Creds = { key: trimmed };
   const ws = workspaceId?.trim();
   if (ws) creds.workspaceId = ws;
-  fs.writeFileSync(keyFile(), safeStorage.encryptString(JSON.stringify(creds)), { mode: 0o600 });
+  writeEncryptedCredential(keyFile(), safeStorage.encryptString(JSON.stringify(creds)));
 }
 
 export function clearKey() {
@@ -233,7 +257,7 @@ export function setProviderKey(id: string, key: string) {
       'Wanigan will not write a credential to disk in plaintext.'
     );
   }
-  fs.writeFileSync(providerKeyFile(id), safeStorage.encryptString(trimmed), { mode: 0o600 });
+  writeEncryptedCredential(providerKeyFile(id), safeStorage.encryptString(trimmed));
 }
 
 export function clearProviderKey(id: string) {

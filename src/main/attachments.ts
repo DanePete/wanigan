@@ -251,7 +251,11 @@ export function attachmentsDir(sessionId: string): string {
 export function prepareAttachmentDir(sessionId: string): string {
   const dir = attachmentsDir(sessionId);
   try {
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    // mkdir's mode is filtered by umask and an existing directory retains its
+    // prior mode. Attached files can be private screenshots or documents, so
+    // correct both cases before the CLI gains access to this per-session root.
+    fs.chmodSync(dir, 0o700);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(`Wanigan could not prepare the attachment folder ${dir} (${msg}).`);
