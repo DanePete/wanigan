@@ -15,82 +15,155 @@
 @import './styles/git.css';
 @import './styles/control.css';
 
-/* Same tokens as BatchStudio, so the two tools read as one stack. */
+/*
+ * Semantic palette. Themes exchange values here, not per-feature rules, so
+ * Cards, plots, dialogs, code reviews, and the terminal stay recognisably one
+ * product in either mode. `data-theme` is the resolved answer (light/dark);
+ * `data-theme-preference` records whether that answer came from the system.
+ *
+ * Contrast contract (small text against its usual --bg-soft/--bg-sunk surface):
+ * text, dim, faint, accent, good, warning, serious and critical all clear 4.5:1
+ * in both palettes. Status still ships with words/glyphs — colour reinforces a
+ * state but never carries it alone. The explicit palette is intentional: a
+ * naive filter or colour inversion breaks data-series separation and terminal
+ * ANSI colours far more visibly than it helps.
+ */
 :root {
-  /* The app is the ink half of the Dead North system, not the paper half: the
-     poster is ink on newsprint, so the app is newsprint on ink. Every neutral
-     below is warm, pulled off the mark's #171310 rather than a cool blue-black,
-     because the icon in the Dock and the window behind it have to read as one
-     product. */
+  color-scheme: dark;
   --bg: #14100d;
   --bg-soft: #1b1714;
-  --bg-sunk: #221d19;
-  --line: #302823;
-  --line-soft: #241f1a;
-  --text: #ece4d0;        /* the newsprint, inverted into type */
-  --text-dim: #a99e8c;
-  --text-faint: #8a7f70;
-  /* The two plates. Signal red and bolt blue are the mark's, lifted for
-     legibility on a dark ground — #b32408 and #0e3fbf go muddy below 4.5:1. */
-  --accent: #e0552c;
-  --accent-soft: #2d1710;
-  --plate-red: #e0552c;
-  --plate-blue: #4a7ffc;
+  --bg-raised: #201b17;
+  --bg-sunk: #27211d;
+  --line: #473b33;
+  --line-soft: #332b26;
+  --text: #f6eedf;
+  --text-dim: #c5b9a6;
+  --text-faint: #b4a895;
+  --accent: #fa7650;
+  --accent-ink: #1a100c;
+  --accent-soft: #3b1c13;
+  --plate-red: #fa7650;
+  --plate-blue: #80a9ff;
 
-  /* DIN is the face on machinery plates, crate stencils and signage — the
-     lettering that turns up on a working shack rather than in a magazine. It
-     ships with macOS, so this costs no webfont and no binary in the repo.
-     Used only for the nameplate and the small-caps labels: the plate split is
-     where this system spends its boldness, and two loud things is one too many. */
   --font-stencil: 'DIN Condensed', 'Avenir Next Condensed', 'Arial Narrow', ui-sans-serif, sans-serif;
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
 
-  /* Three scales, because there were none. The shell had ten distinct font
-     sizes with eight of them inside a 3.5px band — 10, 10.5, 11, 11.5, 12,
-     12.5, 13, 14 — which is not a scale, it is noise. Everything read as
-     "small text", so nothing ranked against anything and the eye got no help.
-     Same for spacing (3/4/5/6/7/9/18/40) and radius (seven values).
-     Steps below are far enough apart that a size difference MEANS something. */
-  --t-micro: 11px;      /* badges, dot labels */
-  --t-small: 12px;      /* secondary text, captions, status bar */
-  --t-body: 13.5px;     /* default reading size */
-  --t-lead: 15px;       /* emphasised row, sub-heading */
-  --t-title: 20px;      /* pane title */
-  --t-display: 28px;    /* the one big number on a card */
+  --t-micro: 11px;
+  --t-small: 12px;
+  --t-body: 13.5px;
+  --t-lead: 15px;
+  --t-title: 20px;
+  --t-display: 28px;
 
-  /* 4px grid. */
   --s-1: 4px;  --s-2: 8px;  --s-3: 12px;
   --s-4: 16px; --s-5: 24px; --s-6: 32px;
-
-  /* Three radii: control, container, pill. */
   --r-sm: 5px; --r-md: 9px; --r-pill: 999px;
-  --ok: #4ade80;
-  --ok-soft: #12291c;
-  --warn: #fbbf24;
-  --bad: #f87171;
-  --bad-soft: #2e1616;
-  --claude: #d97757;
-  --codex: #74aa9c;
-  --glm: #9b8cf0;
 
-  /* Data-viz palette. Dark steps, validated against the card surface #1b1714:
-     categorical slots 1-4 pass the lightness band, chroma floor, adjacent-pair
-     CVD separation (worst 8.4), normal-vision floor (19.8) and 3:1 contrast.
-     The slot ORDER is the CVD-safety mechanism — assign by slot, never reorder
-     to suit meaning, or yellow lands beside orange and the pair fails. */
-  --series-1: #3987e5;   /* blue   */
-  --series-2: #d95926;   /* orange */
-  --series-3: #199e70;   /* aqua   */
-  --series-4: #c98500;   /* yellow */
+  --ok: #7be3a2;         --ok-soft: #123524;
+  --warn: #ffd16d;       --warn-soft: #382b12;
+  --bad: #ff9188;        --bad-soft: #421d1d;
+  --dead: #b4a895;       --dead-soft: #302a25;
+  --claude: #f29a7a;
+  --codex: #7fd0ba;
+  --glm: #c1a9ff;
 
-  /* Status roles are reserved and never used as "series 5". green-vs-red fails
-     CVD separation on its own (ΔE 4.1 deutan), so every status mark ships with
-     an icon and a text label — hue never carries the meaning alone. */
-  --good: #0ca30c;      --good-soft: #12291c;
-  --warning: #fab219;   --warning-soft: #2c2210;
-  --serious: #ec835a;   --serious-soft: #2e1d15;
-  --critical: #d03b3b;  --critical-soft: #2e1616;
+  --series-1: #69adff;
+  --series-2: #fb8756;
+  --series-3: #52c89b;
+  --series-4: #f1c557;
 
-  --grid: #222831;
+  --good: #7be3a2;       --good-soft: #123524;
+  --warning: #ffd16d;    --warning-soft: #382b12;
+  --serious: #ffad7b;    --serious-soft: #432719;
+  --critical: #ff938c;   --critical-soft: #421d1d;
+  --grid: #403730;
+
+  --code-bg: #0f0c0a;
+  --scrim: rgba(8, 6, 5, .58);
+  --scrim-strong: rgba(8, 6, 5, .74);
+  --shadow-popover: 0 20px 70px rgba(0, 0, 0, .50);
+  --shadow-modal: 0 28px 100px rgba(0, 0, 0, .62);
+  --diff-hunk-bg: rgba(105, 173, 255, .12);
+  --diff-add: #9ae9b6;
+  --diff-add-bg: rgba(56, 181, 111, .16);
+  --diff-del: #ffafa8;
+  --diff-del-bg: rgba(234, 81, 73, .16);
+  --diff-match-bg: rgba(255, 209, 109, .18);
+
+  --terminal-bg: #14100d;
+  --terminal-fg: #f6eedf;
+  --terminal-cursor: #fa7650;
+  --terminal-selection: #4a3328;
+  --terminal-black: #18120f;          --terminal-bright-black: #b4a895;
+  --terminal-red: #ff9188;            --terminal-bright-red: #ffb7b1;
+  --terminal-green: #7be3a2;          --terminal-bright-green: #a6f1be;
+  --terminal-yellow: #ffd16d;         --terminal-bright-yellow: #ffe29b;
+  --terminal-blue: #80a9ff;           --terminal-bright-blue: #aac5ff;
+  --terminal-magenta: #c1a9ff;        --terminal-bright-magenta: #dccdff;
+  --terminal-cyan: #79d5d1;           --terminal-bright-cyan: #a7e9e5;
+  --terminal-white: #f6eedf;          --terminal-bright-white: #fffaf0;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f7f3ec;
+  --bg-soft: #fffdfa;
+  --bg-raised: #faf6ef;
+  --bg-sunk: #eee6dc;
+  --line: #d4c9bc;
+  --line-soft: #e5ddd3;
+  --text: #25201b;
+  --text-dim: #5f554b;
+  --text-faint: #706459;
+  --accent: #ae401e;
+  --accent-ink: #fffdfa;
+  --accent-soft: #f7dcd2;
+  --plate-red: #ae401e;
+  --plate-blue: #245fbd;
+
+  --ok: #127247;         --ok-soft: #d8f1e0;
+  --warn: #8f5b00;       --warn-soft: #faebc8;
+  --bad: #ae332e;        --bad-soft: #f8dddb;
+  --dead: #706459;       --dead-soft: #e8e0d6;
+  --claude: #a54a31;
+  --codex: #197263;
+  --glm: #6949ad;
+
+  --series-1: #1e62bd;
+  --series-2: #ad431d;
+  --series-3: #087359;
+  --series-4: #8f5b00;
+
+  --good: #127247;       --good-soft: #d8f1e0;
+  --warning: #8f5b00;    --warning-soft: #faebc8;
+  --serious: #a74420;    --serious-soft: #f8e0d3;
+  --critical: #ae332e;   --critical-soft: #f8dddb;
+  --grid: #d7cec3;
+
+  --code-bg: #f2ede5;
+  --scrim: rgba(56, 43, 31, .34);
+  --scrim-strong: rgba(47, 35, 25, .48);
+  --shadow-popover: 0 20px 70px rgba(61, 45, 31, .20);
+  --shadow-modal: 0 28px 100px rgba(61, 45, 31, .27);
+  --diff-hunk-bg: rgba(30, 98, 189, .11);
+  --diff-add: #176b45;
+  --diff-add-bg: rgba(19, 120, 74, .11);
+  --diff-del: #9f2f2b;
+  --diff-del-bg: rgba(174, 51, 46, .11);
+  --diff-match-bg: rgba(150, 96, 0, .12);
+
+  --terminal-bg: #fbf7f0;
+  --terminal-fg: #25201b;
+  --terminal-cursor: #ae401e;
+  --terminal-selection: #ebcabe;
+  --terminal-black: #25201b;          --terminal-bright-black: #706459;
+  --terminal-red: #b43732;            --terminal-bright-red: #8e211e;
+  --terminal-green: #177248;          --terminal-bright-green: #0c5b38;
+  --terminal-yellow: #906000;         --terminal-bright-yellow: #704800;
+  --terminal-blue: #245fbd;           --terminal-bright-blue: #17498f;
+  --terminal-magenta: #744eaa;        --terminal-bright-magenta: #593784;
+  --terminal-cyan: #0b6e6c;           --terminal-bright-cyan: #075453;
+  --terminal-white: #5f554b;          --terminal-bright-white: #25201b;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -105,7 +178,7 @@ body {
   overflow: hidden;
 }
 
-.mono { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace; }
+.mono { font-family: var(--mono); }
 .dim { color: var(--text-dim); }
 .faint { color: var(--text-faint); }
 
@@ -120,7 +193,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 }
 .btn:hover:not(:disabled) { background: var(--bg-sunk); border-color: var(--text-faint); }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
-.btn-primary { background: var(--accent); border-color: var(--accent); color: #14100d; font-weight: 600; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .btn-primary:hover:not(:disabled) { filter: brightness(1.1); background: var(--accent); }
 .btn-danger { color: var(--bad); }
 .btn-danger:hover:not(:disabled) { background: var(--bad-soft); border-color: var(--bad); }
@@ -144,8 +217,43 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   font-size: var(--t-micro); font-weight: 600; white-space: nowrap;
 }
 
-/* ── shell ───────────────────────────────────────────────────────────── */
-.shell { display: flex; flex-direction: column; height: 100%; }
+/* Native select keeps this useful with touch, keyboard, and VoiceOver. The
+   label stays compact in the title row instead of hiding the setting in a
+   second preference screen. */
+.theme-control {
+  position: relative; display: inline-flex; align-items: center; gap: 5px;
+  min-height: 38px; padding: 0 7px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--bg-sunk); color: var(--text-dim); font-size: var(--t-small); white-space: nowrap;
+}
+.theme-control:hover { border-color: var(--text-faint); color: var(--text); }
+.theme-control-glyph { color: var(--accent); font-size: var(--t-lead); line-height: 1; }
+.theme-control-label { font-weight: 650; }
+.theme-control select {
+  min-height: 30px; max-width: 116px; padding: 0 18px 0 0; border: 0; border-radius: 0;
+  background: transparent; color: var(--text); font: inherit; cursor: pointer;
+}
+.theme-control select:focus-visible { outline-offset: 1px; }
+.theme-control-card {
+  min-width: min(100%, 232px); min-height: 44px; justify-content: flex-start;
+  padding-inline: 10px; background: var(--bg-soft);
+}
+.theme-control-card select { flex: 1; max-width: none; }
+.theme-control-error {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 120; width: min(300px, 80vw);
+  padding: 7px 9px; border: 1px solid var(--bad); border-radius: var(--r-sm);
+  background: var(--bad-soft); color: var(--bad); box-shadow: var(--shadow-popover); line-height: 1.35;
+}
+@media (max-width: 620px) {
+  .theme-control-label { display: none; }
+  .theme-control select { max-width: 96px; }
+}
+
+/* ── application shell ─────────────────────────────────────────────────
+   The header is deliberately two rows. The old single line had to choose
+   between the Mac traffic lights, eleven destinations, live status, and an
+   action — at tablet widths it chose tiny, unreadable tabs. A calm title/action
+   row plus a dedicated route rail gives each of those jobs enough room. */
+.shell { display: flex; flex-direction: column; height: 100%; min-width: 0; }
 
 .startup-recovery {
   display: flex; align-items: center; justify-content: space-between; gap: var(--s-4);
@@ -161,39 +269,51 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   .startup-recovery { align-items: flex-start; padding-left: 14px; }
 }
 
-.nav {
-  display: flex; align-items: flex-end; gap: 16px;
-  height: 46px; padding: 0 14px 0 84px;   /* 84px clears the traffic lights */
-  border-bottom: 1px solid var(--line);
-  background: var(--bg-soft);
+.app-header {
+  flex: none; position: relative; z-index: 20;
+  border-bottom: 1px solid var(--line); background: var(--bg-soft);
+}
+.nav-titlebar {
+  display: flex; align-items: center; gap: var(--s-4);
+  min-height: 52px; padding: 0 var(--s-4) 0 84px; /* clears the traffic lights */
+  border-bottom: 1px solid var(--line-soft);
   -webkit-app-region: drag;
 }
-.nav > * { -webkit-app-region: no-drag; }
+.brand-lockup { display: flex; align-items: baseline; gap: var(--s-3); min-width: 0; }
 .brand {
-  font-family: var(--font-stencil);
-  font-weight: 700; font-size: var(--t-title); letter-spacing: .055em;
-  text-transform: uppercase; padding-bottom: 9px; color: var(--text);
-  /* DIN Condensed ships in one weight; the fallbacks are proportionally wider,
-     so cap the width to stop the nameplate shoving the tabs when it is absent. */
-  max-width: 11ch; overflow: hidden;
+  flex: none; font-family: var(--font-stencil); font-weight: 700; font-size: var(--t-title);
+  letter-spacing: .055em; text-transform: uppercase; color: var(--text); white-space: nowrap;
 }
-.nav-tabs { display: flex; flex: 1 1 auto; min-width: 0; gap: 2px; }
-.nav-codex-status {
-  flex: none; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--r-pill);
-  background: var(--bg-sunk); color: var(--text-dim); font-size: var(--t-micro);
-  font-variant-numeric: tabular-nums;
+.brand-context {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-faint); font-size: var(--t-small);
 }
-.nav-codex-status:hover { border-color: var(--accent); color: var(--text); }
-.nav-codex-status.low { border-color: var(--warning); color: var(--warning); }
-.nav-codex-week { margin-left: 4px; }
-@media (max-width: 1180px) { .nav-codex-week { display: none; } .nav-codex-status { max-width: 138px; } }
+.nav-actions {
+  display: flex; align-items: center; justify-content: flex-end; gap: var(--s-2);
+  min-width: 0; margin-left: auto; -webkit-app-region: no-drag;
+}
+.nav-actions button, .nav-actions select, .nav-actions label { -webkit-app-region: no-drag; }
+.nav {
+  display: flex; align-items: stretch; min-height: 48px; padding: 0 var(--s-3);
+  background: var(--bg-soft); -webkit-app-region: drag;
+}
+.nav > * { -webkit-app-region: no-drag; }
+.nav-tabs {
+  display: flex; flex: 1 1 auto; align-items: stretch; min-width: 0; gap: 2px;
+  overflow-x: auto; overflow-y: hidden; overscroll-behavior-inline: contain;
+  scroll-padding-inline: var(--s-2); scroll-snap-type: inline proximity;
+  scrollbar-gutter: stable both-edges; scrollbar-width: thin; -webkit-overflow-scrolling: touch;
+}
+.nav-tabs::-webkit-scrollbar { display: block; height: 5px; }
+.nav-tabs::-webkit-scrollbar-thumb { background: var(--line); border-radius: var(--r-pill); }
+.nav-tabs:focus-visible { outline: none; }
 .nav-tab {
-  display: flex; align-items: center; gap: 6px;
-  padding: 6px 11px 10px; font-size: var(--t-body); font-weight: 500;
-  color: var(--text-dim); border-bottom: 2px solid transparent;
+  display: inline-flex; flex: 0 0 auto; align-items: center; align-self: stretch; gap: 6px;
+  min-height: 44px; padding: 0 14px; font-size: var(--t-body); font-weight: 600;
+  color: var(--text-dim); border-bottom: 2px solid transparent; white-space: nowrap;
+  scroll-snap-align: start; touch-action: manipulation;
 }
-.nav-tab:hover { color: var(--text); }
+.nav-tab:hover { color: var(--text); background: var(--bg-sunk); }
 /* The plate split, doing a real job rather than decorating: the active tab is
    the one printed twice, one plate off register under the other. Colour is an
    event in this system and happens twice — here, and the lamp in the mark. */
@@ -202,26 +322,103 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   content: ''; position: absolute; left: 2px; right: -2px; bottom: -2px; height: 2px;
   background: var(--plate-blue); opacity: .55; z-index: -1;
 }
-.nav-quick-run {
-  flex: none; align-self: center; margin-bottom: 3px;
-  padding: 4px 7px; border: 1px solid var(--line); border-radius: var(--r-sm);
-  color: var(--accent); background: var(--accent-soft); font-size: var(--t-small); font-weight: 650;
-  white-space: nowrap;
+.nav-views { position: relative; flex: none; }
+.nav-new-session, .nav-views-button, .nav-quick-run {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 38px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--bg-sunk); color: var(--text); font-size: var(--t-small); font-weight: 650;
+  white-space: nowrap; touch-action: manipulation;
 }
-.nav-quick-run:hover { background: var(--bg-sunk); color: var(--text); }
-.nav-quick-run span { color: var(--text-faint); font-size: var(--t-micro); margin-left: 2px; }
+.nav-new-session {
+  border-color: var(--accent); background: var(--accent); color: var(--accent-ink);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .15);
+}
+.nav-new-session:hover { filter: brightness(1.08); }
+.nav-new-session-plus { font-size: var(--t-lead); line-height: 1; font-weight: 750; }
+.nav-views-button:hover, .nav-views-button[aria-expanded='true'], .nav-views-button.on {
+  border-color: var(--accent); background: var(--accent-soft); color: var(--text);
+}
+.nav-quick-run { background: var(--bg-raised); color: var(--text-dim); }
+.nav-quick-run:hover { border-color: var(--text-faint); background: var(--bg-sunk); color: var(--text); }
+.nav-quick-run-plus { font-size: var(--t-lead); line-height: 1; }
+.nav-views-shortcut, .nav-shortcut, .nav-views-caret {
+  color: var(--text-faint); font-size: var(--t-micro); font-weight: 600;
+}
+.nav-views-caret { font-size: var(--t-body); line-height: 1; transform: translateY(-1px); }
+.nav-menu {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 130;
+  width: min(280px, calc(100vw - 24px)); max-height: min(70vh, 560px); overflow-y: auto;
+  padding: var(--s-2); border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--bg-soft); box-shadow: var(--shadow-popover);
+}
+.nav-menu-group { display: grid; gap: 2px; padding: var(--s-2) 0; }
+.nav-menu-group + .nav-menu-group { border-top: 1px solid var(--line-soft); }
+.nav-menu-group-label {
+  padding: 0 var(--s-2) var(--s-1); color: var(--text-faint); font-family: var(--font-stencil);
+  font-size: var(--t-micro); font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+}
+.nav-menu-item {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); width: 100%; min-height: 40px;
+  padding: 0 var(--s-2); border-radius: var(--r-sm); color: var(--text-dim); font-size: var(--t-body); text-align: left;
+}
+.nav-menu-item:hover, .nav-menu-item:focus-visible, .nav-menu-item.on { background: var(--accent-soft); color: var(--text); }
+.nav-menu-item.on { box-shadow: inset 2px 0 0 var(--plate-red); }
+.nav-menu-shortcut { color: var(--text-faint); font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace; font-size: var(--t-micro); }
+.nav-codex-status {
+  flex: none; min-height: 38px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--bg-sunk); color: var(--text-dim); font-size: var(--t-micro); font-variant-numeric: tabular-nums;
+}
+.nav-codex-status:hover { border-color: var(--accent); color: var(--text); }
+.nav-codex-status.low { border-color: var(--warning); color: var(--warning); }
+.nav-codex-week { margin-left: 4px; }
+@media (max-width: 1180px) { .nav-codex-week { display: none; } .nav-codex-status { max-width: 138px; } }
+@media (max-width: 920px) {
+  .brand-context { display: none; }
+  .nav-codex-status { display: none; }
+}
+@media (max-width: 700px) {
+  .nav-titlebar { min-height: 50px; gap: var(--s-2); padding-right: var(--s-2); }
+  .nav-actions { gap: 4px; }
+  .nav-project .label, .nav-views-shortcut, .nav-shortcut { display: none; }
+  .nav-project .field { max-width: 118px; }
+  .nav-quick-run { padding-inline: var(--s-2); }
+}
+@media (max-width: 620px) {
+  /* Starting an interactive session stays visible on a compact titlebar;
+     headless runs remain one tap away in Views/⌘K instead of competing for
+     the same narrow row. */
+  .nav-quick-run { display: none; }
+}
+@media (max-width: 520px) {
+  .nav-titlebar { padding-left: 68px; }
+  .nav-tab { padding-inline: 12px; }
+  .nav-quick-run-headless { display: none; }
+}
+@media (pointer: coarse) {
+  .nav-titlebar { padding-left: var(--s-4); }
+  .nav-new-session, .nav-views-button, .nav-quick-run, .nav-codex-status, .theme-control { min-height: 44px; }
+  .theme-control select { min-height: 38px; }
+  .nav-menu-item { min-height: 44px; }
+}
 .command-backdrop {
   position: fixed; inset: 0; z-index: 110; display: grid; place-items: start center; padding-top: min(20vh, 180px);
-  background: rgba(10, 12, 17, .56); backdrop-filter: blur(3px);
+  background: var(--scrim); backdrop-filter: blur(3px);
 }
 .command-palette {
   width: min(540px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--line);
-  border-radius: var(--r-md); background: var(--bg-soft); box-shadow: 0 20px 70px rgba(0, 0, 0, .5);
+  border-radius: var(--r-md); background: var(--bg-soft); box-shadow: var(--shadow-popover);
 }
 .command-palette > .field { width: 100%; }
 .command-results { display: grid; gap: 3px; margin-top: 10px; max-height: min(52vh, 420px); overflow: auto; }
 .command-item { display: flex; justify-content: space-between; padding: 9px 10px; border-radius: var(--r-sm); text-align: left; }
 .command-item:hover, .command-item:focus-visible { background: var(--accent-soft); color: var(--text); }
+.command-item-primary { align-items: center; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--text); }
+.command-item-primary:hover, .command-item-primary:focus-visible { background: var(--accent); color: var(--accent-ink); }
+.command-item-copy { display: grid; gap: 2px; }
+.command-item-copy strong { font-size: var(--t-body); }
+.command-item-copy small { color: var(--text-dim); font-size: var(--t-small); }
+.command-item-primary:hover .command-item-copy small, .command-item-primary:focus-visible .command-item-copy small { color: inherit; opacity: .82; }
 .nav-badge {
   min-width: 18px; padding: 0 5px; border-radius: var(--r-pill);
   background: var(--accent-soft); color: var(--accent);
@@ -367,14 +564,14 @@ table.grid tr.clickable:hover { background: var(--bg-sunk); }
 
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 50;
-  background: rgba(0,0,0,.55);
+  background: var(--scrim);
   display: flex; align-items: center; justify-content: center; padding: 24px;
 }
 .modal {
   width: 100%; max-width: 520px;
   background: var(--bg-soft); border: 1px solid var(--line);
   border-radius: var(--r-md); padding: var(--s-5);
-  box-shadow: 0 24px 60px rgba(0,0,0,.5);
+  box-shadow: var(--shadow-popover);
   max-height: 90vh; overflow-y: auto;
 }
 
@@ -386,6 +583,7 @@ table.grid tr.clickable:hover { background: var(--bg-sunk); }
   border: 1px solid var(--bad); font-size: var(--t-small);
 }
 
+html { scrollbar-color: var(--line) transparent; }
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: var(--r-sm); }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -464,10 +662,10 @@ table.grid tr.clickable:hover { background: var(--bg-sunk); }
 }
 .dl { padding: 0 10px; white-space: pre; }
 .dl.meta { color: var(--text-faint); }
-.dl.hunk { color: var(--series-1); background: rgba(57,135,229,.08); }
+.dl.hunk { color: var(--series-1); background: var(--diff-hunk-bg); }
 /* The +/- prefix carries the meaning; colour is reinforcement, never the signal. */
-.dl.add  { color: #7ee2a8; background: rgba(12,163,12,.12); }
-.dl.del  { color: #f5a3a3; background: rgba(208,59,59,.12); }
+.dl.add  { color: var(--diff-add); background: var(--diff-add-bg); }
+.dl.del  { color: var(--diff-del); background: var(--diff-del-bg); }
 .dl.ctx  { color: var(--text-dim); }
 
 .fl { display: flex; white-space: pre; }
@@ -481,12 +679,12 @@ table.grid tr.clickable:hover { background: var(--bg-sunk); }
    needs reliable scrolling without handing control to a second editor. */
 .code-inspector-backdrop {
   position: fixed; inset: 0; z-index: 100; display: grid; place-items: center;
-  padding: 24px; background: rgba(10, 12, 17, .76); backdrop-filter: blur(3px);
+  padding: 24px; background: var(--scrim-strong); backdrop-filter: blur(3px);
 }
 .code-inspector {
   display: flex; flex-direction: column; width: min(1500px, 100%); height: min(900px, 100%);
   border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden;
-  background: var(--bg-soft); box-shadow: 0 20px 70px rgba(0, 0, 0, .5);
+  background: var(--bg-soft); box-shadow: var(--shadow-popover);
 }
 .code-inspector-head {
   display: flex; align-items: center; gap: 10px; padding: 10px 12px;
@@ -503,11 +701,11 @@ table.grid tr.clickable:hover { background: var(--bg-sunk); }
 .code-inspector-line { display: flex; min-width: max-content; white-space: pre; padding-right: 18px; }
 .code-inspector-body.wrap .code-inspector-line { min-width: 0; white-space: pre-wrap; }
 .code-inspector-line .ln { flex: none; width: 58px; padding: 0 12px 0 8px; color: var(--text-faint); text-align: right; user-select: none; }
-.code-inspector-line.add { color: #7ee2a8; background: rgba(12,163,12,.12); }
-.code-inspector-line.del { color: #f5a3a3; background: rgba(208,59,59,.12); }
-.code-inspector-line.hunk { color: var(--series-1); background: rgba(57,135,229,.08); }
+.code-inspector-line.add { color: var(--diff-add); background: var(--diff-add-bg); }
+.code-inspector-line.del { color: var(--diff-del); background: var(--diff-del-bg); }
+.code-inspector-line.hunk { color: var(--series-1); background: var(--diff-hunk-bg); }
 .code-inspector-line.meta { color: var(--text-faint); }
-.code-inspector-line.match { outline: 1px solid var(--warning); outline-offset: -1px; background: rgba(224, 170, 40, .16); }
+.code-inspector-line.match { outline: 1px solid var(--warning); outline-offset: -1px; background: var(--diff-match-bg); }
 @media (max-width: 760px) {
   .code-inspector-backdrop { padding: 8px; }
   .code-inspector { height: 100%; }
@@ -544,10 +742,9 @@ table.grid tr.clickable:hover { background: var(--bg-sunk); }
 .nav-mark.tone-warn    { background: var(--warning-soft);  color: var(--warning); }
 
 .nav-project {
-  display: flex; align-items: center; gap: 7px;
-  margin-left: auto; padding-bottom: 8px; min-width: 0;
+  display: flex; align-items: center; gap: 7px; flex: none; min-width: 0;
 }
-.nav-project .field { width: auto; max-width: 190px; padding: 3px 6px; font-size: var(--t-small); }
+.nav-project .field { width: auto; min-height: 38px; max-width: 190px; padding: 3px 8px; font-size: var(--t-small); }
 
 /* Every interactive element gets a visible focus ring. Zero-specificity
    selector so a feature sheet can still style its own. The terminal is

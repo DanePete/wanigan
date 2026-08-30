@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type {
-  WaniganSettings, EgressHost, LedgerEntry, McpServerConfig, MotionSetting,
+  WaniganSettings, EgressHost, LedgerEntry, McpServerConfig, MotionSetting, ThemeSetting,
   MobileMonitorConfig, MobileMonitorStatus, Project, ProviderInfo, QueueItem, QueueSlots, QueueState,
   TrustLevel, UploadedFile, WorktreeInfo,
 } from '@shared/types';
 import { TRUST_COPY, TRUST_LEVELS } from '@shared/types';
 import { Note, Section, Stat, ago, num } from '../components/bits';
+import ThemeControl from '../components/ThemeControl';
+import type { ResolvedTheme } from '../theme-boot';
 
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
 type ProviderKeyStatus = { present: boolean; fingerprint: string | null };
@@ -65,7 +67,7 @@ const SETTINGS_TABS: SettingsTabInfo[] = [
     id: 'app', label: 'App', eyebrow: 'Appearance & sharing', title: 'App experience',
     detail: 'Tune motion for comfort and prepare a safely masked view before sharing a screenshot or demo.',
     help: 'These are local presentation preferences. Motion changes immediately; demo mode reloads the app so every view starts from the same masked state.',
-    includes: ['motion', 'demo mode', 'safe screenshots'],
+    includes: ['appearance', 'motion', 'demo mode', 'safe screenshots'],
   },
 ];
 
@@ -159,10 +161,9 @@ const DECISION: Record<LedgerEntry['decision'], MarkSpec> = {
 };
 
 /**
- * bits.tsx's <Note tone="warn"> reaches for --warn-soft, a token the sheet does
- * not define, so a warning would render on a transparent ground. The warnings
- * on this page are the load-bearing part, so they use the --warning /
- * --critical tokens that do exist. Info and ok still reuse <Note>.
+ * Warnings use semantic roles rather than feature-specific colours. The global
+ * palette now supplies both compact (--warn) and long-form (--warning) aliases
+ * so Notes, status pills, and these load-bearing callouts stay coherent.
  */
 function Callout({ level = 'warning', title, children }: {
   level?: 'warning' | 'critical'; title: React.ReactNode; children?: React.ReactNode;
@@ -329,12 +330,18 @@ function SettingsTabPanel({ tab, active, children }: {
    The page
    ════════════════════════════════════════════════════════════════════════ */
 
-export default function Settings({ providers, projects, onKeyChange, onRemoveProject, onAddProject }: {
+export default function Settings({
+  providers, projects, onKeyChange, onRemoveProject, onAddProject,
+  themePreference, resolvedTheme, onThemeChange,
+}: {
   providers: ProviderInfo[];
   projects: Project[];
   onKeyChange: () => void;
   onRemoveProject: (id: string) => void;
   onAddProject: () => void;
+  themePreference: ThemeSetting;
+  resolvedTheme: ResolvedTheme;
+  onThemeChange: (preference: ThemeSetting) => Promise<ThemeSetting>;
 }) {
   const [status, setStatus] = useState<KeyStatus | null>(null);
   const [input, setInput] = useState('');
@@ -743,6 +750,7 @@ export default function Settings({ providers, projects, onKeyChange, onRemovePro
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('app')} active={settingsTab === 'app'}>
+            <Appearance preference={themePreference} resolved={resolvedTheme} onChange={onThemeChange} />
             <Motion prefs={prefs} pending={pending} setPref={setPref} />
             <DemoPanel />
           </SettingsTabPanel>
@@ -2130,8 +2138,34 @@ function Worktrees() {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   6 · Motion
+   6 · Appearance and motion
    ════════════════════════════════════════════════════════════════════════ */
+
+function Appearance({ preference, resolved, onChange }: {
+  preference: ThemeSetting;
+  resolved: ResolvedTheme;
+  onChange: (preference: ThemeSetting) => Promise<ThemeSetting>;
+}) {
+  return (
+    <Section title="Appearance"
+             hint="Choose a colour mode once. It stays local to Wanigan and changes the whole working surface, including code and terminals.">
+      <div className="set-appearance">
+        <div>
+          <h3>Colour mode</h3>
+          <p>
+            System follows your Mac’s Light/Dark appearance as it changes. Light and Dark stay fixed
+            until you choose System again.
+          </p>
+        </div>
+        <ThemeControl variant="card" preference={preference} resolved={resolved} onChange={onChange} />
+      </div>
+      <p className="faint set-appearance-note">
+        This is saved on this Mac. Your paired iPad/phone view uses the same mode after it refreshes,
+        so the control surface remains readable when you move between devices.
+      </p>
+    </Section>
+  );
+}
 
 function Motion({ prefs, pending, setPref }: {
   prefs: WaniganSettings | null; pending: string | null; setPref: (k: string, v: string) => Promise<void>;
@@ -2443,6 +2477,13 @@ const SHEET = `
 .set-row h4 { font-size: 12.5px; font-weight: 600; }
 .set-row p { font-size: 12px; line-height: 1.5; color: var(--text-dim); margin-top: 3px; }
 
+.set-appearance { display: flex; align-items: center; justify-content: space-between; gap: var(--s-4); padding: 11px 2px; }
+.set-appearance > div { min-width: 0; }
+.set-appearance h3 { font-size: 12.5px; font-weight: 600; }
+.set-appearance p, .set-appearance-note { font-size: var(--t-small); line-height: 1.5; }
+.set-appearance p { margin-top: 3px; color: var(--text-dim); max-width: 680px; }
+.set-appearance-note { margin-top: 3px; }
+
 .set-switch { flex: none; display: flex; align-items: center; gap: 9px; padding: 3px; border-radius: 8px; }
 .set-switch:disabled { opacity: .5; cursor: not-allowed; }
 .set-state { width: 42px; text-align: right; font-size: 11px; font-weight: 700; }
@@ -2512,6 +2553,8 @@ const SHEET = `
   .set .card { padding: 12px !important; }
   .set .row2 { grid-template-columns: 1fr; }
   .set-row { flex-direction: column; gap: 8px; }
+  .set-appearance { flex-direction: column; align-items: stretch; gap: 10px; }
+  .set-appearance .theme-control-card { align-self: flex-start; }
   .set-switch { align-self: flex-start; }
   .set-field-action { flex-direction: column; align-items: stretch; }
   .set-field-action > .btn { align-self: flex-start; }

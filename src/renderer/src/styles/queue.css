@@ -53,7 +53,7 @@
                  -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .pg-yes { font-size: 10px; color: var(--good); flex: none; margin-left: auto; }
 
-.pg-reader { position: fixed; inset: 0; background: #0009; display: grid; place-items: center;
+.pg-reader { position: fixed; inset: 0; background: var(--scrim-strong); display: grid; place-items: center;
              padding: 5vh 6vw; z-index: 60; }
 .pg-reader-in { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 12px;
                 width: min(880px, 100%); max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }

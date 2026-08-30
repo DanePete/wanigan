@@ -4,7 +4,7 @@ import type {
   SessionUsage, ApiEvent, SessionEvent, Attention, TranscriptHit, TranscriptTurn,
   WorktreeInfo, HeadlessConfig, HeadlessRow, HeadlessRun, QueueItem, QueueKind, QueueSlots, QueueState,
   McpServerConfig, McpServerStatus, BudgetState, Reconciliation, TrustLevel, LedgerEntry,
-  WaniganSettings, UploadedFile, EvalPair, GoldenSet,
+  WaniganSettings, ThemeSetting, UploadedFile, EvalPair, GoldenSet,
   EgressReport, ObservedSession, ObservedState,
   MobileMonitorConfig, MobileMonitorStatus,
   ReviewRecipe, ReviewRun,
@@ -427,6 +427,7 @@ const api = {
   prefs: {
     all: () => call<WaniganSettings>('settings:all'),
     set: (k: string, v: string) => call<WaniganSettings>('settings:set', k, v),
+    setTheme: (theme: ThemeSetting) => call<WaniganSettings>('settings:setTheme', theme),
   },
   // ── Wanigan Compound · provider-neutral learning ───────────────────
   learning: {

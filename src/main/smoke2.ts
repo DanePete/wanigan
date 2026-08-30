@@ -13,7 +13,7 @@ import * as instructions from './context/instructions';
 import * as memory from './context/memory';
 import * as config from './context/config';
 import { db, migrateSchema } from './db';
-import { getSetting, setSetting } from './settings';
+import { allSettings, getSetting, setSetting, setTheme, theme } from './settings';
 import type { HookInput, TrustLevel } from '../shared/types';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
@@ -102,6 +102,30 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   const SID = `smoke-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
   smokeLegacyQueueMigration(check, say);
+
+  /* ── shell appearance preference ─────────────────────────────────── */
+  say('── shell appearance');
+  const previousTheme = getSetting('theme', '__wanigan_smoke_theme_missing__');
+  try {
+    setSetting('theme', 'light');
+    check(theme() === 'light' && allSettings().theme === 'light',
+      'a persisted light appearance is returned through the complete settings snapshot');
+    setTheme('dark');
+    check(theme() === 'dark' && allSettings().theme === 'dark',
+      'the typed appearance setter persists a valid explicit dark choice');
+    setSetting('theme', 'not-a-theme');
+    check(theme() === 'system',
+      'a malformed persisted appearance fails closed to the OS preference');
+    let refused = false;
+    try { setTheme('neon'); } catch { refused = true; }
+    check(refused, 'the privileged theme setter rejects values outside system, light, and dark');
+  } finally {
+    if (previousTheme === '__wanigan_smoke_theme_missing__') {
+      db().prepare("DELETE FROM settings WHERE k='theme'").run();
+    } else {
+      setSetting('theme', previousTheme);
+    }
+  }
 
   /* ── phase 1 · the collector actually receives ─────────────────────── */
   say('── phase 1 · telemetry collector');

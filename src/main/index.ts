@@ -13,12 +13,12 @@ import {
 import { listProjects, addProject, removeProject, refreshBranches, projectById } from './store';
 import * as batch from './batch';
 import * as code from './code';
-import { getSetting, setSetting, spendCap } from './settings';
+import { getSetting, setSetting, setTheme, spendCap } from './settings';
 import { hasKey, getKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailable, getWorkspaceId,
          hasProviderKey, setProviderKey, clearProviderKey, providerKeyFingerprint } from './keys';
 import type {
   LaunchOptions, RunConfig, SourceConfig, HeadlessConfig, HookInput,
-  McpServerConfig, ProviderManifestInspection, QueueKind, QueueSlots, TrustLevel,
+  McpServerConfig, ProviderManifestInspection, QueueKind, QueueSlots, ThemeSetting, TrustLevel,
 } from '../shared/types';
 import { EFFORT_LEVELS } from '../shared/types';
 
@@ -1450,7 +1450,14 @@ function registerIpc() {
 
   // ══ settings ════════════════════════════════════════════════════════
   handle('settings:all', () => allSettings());
-  handle('settings:set', (k: string, v: string) => { setSetting(k, v); return allSettings(); });
+  handle('settings:set', (k: string, v: string) => {
+    // Appearance has a typed, validated path below. Keep the legacy generic
+    // bridge from becoming a bypass for arbitrary persisted theme text.
+    if (k === 'theme') throw new Error('Use the typed theme setting.');
+    setSetting(k, v);
+    return allSettings();
+  });
+  handle('settings:setTheme', (value: ThemeSetting) => { setTheme(value); return allSettings(); });
 
   // Hot-path traffic: fire-and-forget, no round trip.
   ipcMain.on('sessions:write', (event, id: string, data: string) => {

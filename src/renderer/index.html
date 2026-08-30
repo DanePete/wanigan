@@ -6,6 +6,10 @@
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'" />
     <title>Wanigan</title>
+    <!-- A tiny external module runs before React. CSP intentionally forbids
+         inline script, so this keeps the first painted frame in the saved
+         colour mode without weakening the renderer's policy. -->
+    <script type="module" src="/src/theme-boot.ts"></script>
   </head>
   <body>
     <div id="root"></div>

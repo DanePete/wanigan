@@ -344,14 +344,14 @@ export default function NewSessionDialog({
             <div style={{ display: 'flex', gap: 5, margin: '6px 0 14px', flexWrap: 'wrap' }}>
               {!manifestModelField?.required && genericHarness && (
                 <FocusBtn className="pill" onClick={() => setModel('')} aria-pressed={model === ''}
-                          style={model === '' ? { background: 'var(--accent)', color: '#14100d' } : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
+                          style={model === '' ? { background: 'var(--accent)', color: 'var(--accent-ink)' } : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
                   Provider default
                 </FocusBtn>
               )}
               {modelChoices.map((choice) => (
                 <FocusBtn key={choice.value || 'default'} className="pill" onClick={() => setModel(choice.value)}
                           aria-pressed={model === choice.value}
-                          style={model === choice.value ? { background: 'var(--accent)', color: '#14100d' }
+                          style={model === choice.value ? { background: 'var(--accent)', color: 'var(--accent-ink)' }
                                              : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
                   <span title={(choice as { description?: string | null }).description ?? undefined}>{choice.label}</span>
                 </FocusBtn>
@@ -367,7 +367,7 @@ export default function NewSessionDialog({
               {['', ...effortChoices].map((l) => (
                 <FocusBtn key={l || 'default'} className="pill" onClick={() => setEffort(l)}
                           aria-pressed={effort === l}
-                          style={effort === l ? { background: 'var(--accent)', color: '#14100d' }
+                          style={effort === l ? { background: 'var(--accent)', color: 'var(--accent-ink)' }
                                               : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
                   {l || 'default'}
                 </FocusBtn>

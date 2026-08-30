@@ -4,7 +4,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, safeStorage } from 'electron';
-import { getSetting, setSetting } from './settings';
+import { getSetting, setSetting, theme } from './settings';
 import type {
   MobileFleetSession,
   MobileFleetSnapshot,
@@ -20,7 +20,9 @@ export type {
 } from '../shared/types';
 
 /**
- * A read-only phone-sized view of the fleet.
+ * A private phone- and iPad-sized companion for the fleet. It is a monitor by
+ * default; when the separately opt-in remote-control setting is enabled it
+ * also provides an explicitly labeled, rate-limited agent console.
  *
  * This listener intentionally binds to loopback. Reach it from a phone through
  * an operator-owned private reverse proxy (for example Tailscale Serve), not by
@@ -556,7 +558,10 @@ async function serveStatus(res: http.ServerResponse): Promise<void> {
   }
   try {
     const snapshot = privacyFilterSnapshot(await withTimeout(Promise.resolve().then(source), SNAPSHOT_TIMEOUT_MS));
-    const body = JSON.stringify(snapshot);
+    // Appearance and the capability flag carry no repo/session secret, but
+    // keeping them on the same poll lets an already-installed PWA follow a
+    // desktop appearance/control change without a manual refresh.
+    const body = JSON.stringify({ ...snapshot, appearance: theme(), remoteControl: controlAllowed() });
     if (Buffer.byteLength(body) > MAX_JSON_BYTES) {
       json(res, 503, { error: 'The mobile fleet snapshot is too large to serve safely.' });
       return;
@@ -776,13 +781,13 @@ async function serveControl(req: http.IncomingMessage, res: http.ServerResponse,
   }
 }
 
-function dashboardHtml(nonce: string): string {
+function dashboardHtml(nonce: string, appearance = theme(), remoteControl = controlAllowed()): string {
   return `<!doctype html>
-<html lang="en">
+<html lang="en" data-theme="${appearance}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="mobile-web-app-capable" content="yes">
@@ -790,10 +795,13 @@ function dashboardHtml(nonce: string): string {
   <link rel="apple-touch-icon" href="icon.svg">
   <title>Wanigan Mobile</title>
   <style nonce="${nonce}">
-    :root { color-scheme: dark; --bg:#090b0f; --panel:#11151c; --line:#252b35; --ink:#edf0f4; --dim:#929cab; --faint:#667080; --accent:#e1a651; --critical:#ff7167; --serious:#ef9b6b; --good:#70ca91; --blue:#73a8e8; }
+    :root { color-scheme:dark; --bg:#14100d; --glow:#312117; --panel:#1b1714; --panel-raised:#241e19; --input:#14100d; --line:#382e28; --ink:#f0e8db; --dim:#b0a494; --faint:#82776a; --accent:#e3643b; --accent-soft:#412116; --accent-ink:#22110a; --critical:#f07068; --critical-soft:#411b1a; --serious:#f0a06d; --good:#75ce94; --good-soft:#193322; --blue:#7ea7fa; --blue-soft:#1a2c4b; --terminal:#0e0c0a; --terminal-ink:#f5efe5; --shadow:#160f0991; }
+    :root[data-theme="light"] { color-scheme:light; --bg:#f8f3ea; --glow:#f5dfc4; --panel:#fffdf9; --panel-raised:#f2ebe0; --input:#fffdfa; --line:#d9cebf; --ink:#29221c; --dim:#655b50; --faint:#82766a; --accent:#b84620; --accent-soft:#f8dfd3; --accent-ink:#fffaf5; --critical:#b3261e; --critical-soft:#fbe0dd; --serious:#a84716; --good:#14743a; --good-soft:#dff5e5; --blue:#285fa8; --blue-soft:#e0ecff; --terminal:#251f1a; --terminal-ink:#f7f1e8; --shadow:#5a46301f; }
+    :root[data-theme="system"] { color-scheme:light dark; }
+    @media (prefers-color-scheme:light) { :root[data-theme="system"] { color-scheme:light; --bg:#f8f3ea; --glow:#f5dfc4; --panel:#fffdf9; --panel-raised:#f2ebe0; --input:#fffdfa; --line:#d9cebf; --ink:#29221c; --dim:#655b50; --faint:#82766a; --accent:#b84620; --accent-soft:#f8dfd3; --accent-ink:#fffaf5; --critical:#b3261e; --critical-soft:#fbe0dd; --serious:#a84716; --good:#14743a; --good-soft:#dff5e5; --blue:#285fa8; --blue-soft:#e0ecff; --terminal:#251f1a; --terminal-ink:#f7f1e8; --shadow:#5a46301f; } }
     * { box-sizing:border-box; }
     html { background:var(--bg); }
-    body { margin:0; min-height:100vh; color:var(--ink); background:radial-gradient(circle at 80% -10%,#252015 0,transparent 34rem),var(--bg); font:15px/1.45 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    body { margin:0; min-height:100vh; color:var(--ink); background:radial-gradient(circle at 80% -10%,var(--glow) 0,transparent 34rem),var(--bg); font:15px/1.45 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
     main { width:min(980px,100%); margin:0 auto; padding:max(20px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(30px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left)); }
     header { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin:2px 0 20px; }
     h1 { margin:0; font-size:clamp(25px,7vw,40px); letter-spacing:-.04em; font-weight:760; }
@@ -801,27 +809,29 @@ function dashboardHtml(nonce: string): string {
     p { margin:0; }
     .eyebrow { color:var(--accent); font-size:11px; letter-spacing:.18em; text-transform:uppercase; font-weight:750; }
     .connection { display:flex; align-items:center; gap:7px; color:var(--dim); font-size:12px; white-space:nowrap; }
-    .dot { width:8px; height:8px; border-radius:50%; background:var(--faint); box-shadow:0 0 0 3px #ffffff0a; }
+    .dot { width:8px; height:8px; border-radius:50%; background:var(--faint); box-shadow:0 0 0 3px color-mix(in srgb,var(--ink) 7%,transparent); }
     .dot.live { background:var(--good); }
     .dot.bad { background:var(--critical); }
     .stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:9px; }
-    .stat,.card,.notice { border:1px solid var(--line); background:linear-gradient(145deg,#151a22,#0e1218); border-radius:13px; box-shadow:0 12px 35px #0003; }
+    .stat,.card,.notice { border:1px solid var(--line); background:linear-gradient(145deg,var(--panel),var(--panel-raised)); border-radius:13px; box-shadow:0 12px 35px var(--shadow); }
     .stat { padding:13px; min-height:82px; }
     .stat strong { display:block; font-size:clamp(19px,5vw,28px); letter-spacing:-.03em; font-variant-numeric:tabular-nums; }
     .stat span { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
     .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
     .card { padding:14px; min-width:0; }
-    .card.tap { cursor:pointer; touch-action:manipulation; }
-    .card.tap:active { transform:scale(.985); border-color:var(--accent); }
+    .session-card { width:100%; color:var(--ink); text-align:left; font-weight:400; cursor:pointer; touch-action:manipulation; }
+    .session-card:active { transform:scale(.985); border-color:var(--accent); }
+    .session-card:focus-visible,button:focus-visible,select:focus-visible,textarea:focus-visible,input:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
     .tap-hint { color:var(--accent); font-size:11px; font-weight:700; margin-top:10px; }
+    .monitor-note { margin-top:10px; font-size:12px; }
     .card-top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
     .name { font-weight:720; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .provider { color:var(--dim); font-size:12px; margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .badge { flex:none; border-radius:999px; padding:3px 8px; font-size:11px; font-weight:760; border:1px solid currentColor; }
-    .badge.permission,.badge.error { color:var(--critical); background:#ff716714; }
-    .badge.finished { color:var(--good); background:#70ca9112; }
-    .badge.working { color:var(--blue); background:#73a8e812; }
-    .badge.idle { color:var(--dim); background:#929cab0d; }
+    .badge.permission,.badge.error { color:var(--critical); background:var(--critical-soft); }
+    .badge.finished { color:var(--good); background:var(--good-soft); }
+    .badge.working { color:var(--blue); background:var(--blue-soft); }
+    .badge.idle { color:var(--dim); background:var(--panel-raised); }
     .meta { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; border-top:1px solid var(--line); margin-top:12px; padding-top:10px; }
     .metric strong { display:block; font-size:13px; font-variant-numeric:tabular-nums; }
     .metric span { display:block; color:var(--faint); font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
@@ -829,28 +839,33 @@ function dashboardHtml(nonce: string): string {
     .notice strong { color:var(--ink); display:block; margin-bottom:4px; }
     .hidden { display:none; }
     .controls { margin-top:20px; }
-    .control-card { border:1px solid var(--line); border-radius:13px; background:linear-gradient(145deg,#151a22,#0e1218); padding:14px; margin-top:10px; }
+    .control-card { border:1px solid var(--line); border-radius:13px; background:linear-gradient(145deg,var(--panel),var(--panel-raised)); padding:14px; margin-top:10px; }
     .control-card h3 { margin:0 0 4px; font-size:15px; }
     .control-card p { color:var(--dim); font-size:12px; margin-bottom:10px; }
+    .agent-console { scroll-margin-top:16px; border-color:color-mix(in srgb,var(--accent) 45%,var(--line)); }
+    .console-kicker { color:var(--accent); font-size:11px; font-weight:760; letter-spacing:.12em; text-transform:uppercase; margin-bottom:3px; }
     .fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
-    select,textarea,button { font:inherit; }
-    select,textarea { width:100%; color:var(--ink); background:#0a0e14; border:1px solid var(--line); border-radius:9px; padding:10px; font-size:16px; }
+    .field-label { display:grid; gap:4px; min-width:0; }
+    .field-label > span { color:var(--dim); font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; }
+    select,textarea,button,input { font:inherit; }
+    select,textarea,input { width:100%; color:var(--ink); background:var(--input); border:1px solid var(--line); border-radius:9px; padding:10px; font-size:16px; }
     textarea { min-height:78px; resize:vertical; grid-column:1 / -1; }
-    button { border:1px solid #d89b43; background:#e1a651; color:#17110a; font-weight:760; border-radius:9px; min-height:42px; padding:8px 12px; touch-action:manipulation; }
+    button { border:1px solid var(--accent); background:var(--accent); color:var(--accent-ink); font-weight:760; border-radius:9px; min-height:44px; padding:8px 12px; touch-action:manipulation; }
     button.secondary { color:var(--ink); background:transparent; border-color:var(--line); }
     button:disabled { opacity:.55; }
     .control-result { color:var(--dim); min-height:20px; font-size:12px; margin-top:8px; }
-    .terminal { margin-top:10px; min-height:180px; max-height:58vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; padding:13px; border-radius:10px; background:#06080c; border:1px solid var(--line); color:#edf2f7; font:13px/1.58 ui-monospace,SFMono-Regular,Menlo,monospace; -webkit-text-size-adjust:100%; }
+    .terminal { margin-top:10px; min-height:210px; max-height:58vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; padding:13px; border-radius:10px; background:var(--terminal); border:1px solid var(--line); color:var(--terminal-ink); font:15px/1.58 ui-monospace,SFMono-Regular,Menlo,monospace; -webkit-text-size-adjust:100%; }
     .terminal-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .terminal-head p { margin-bottom:0; }
     footer { color:var(--faint); font-size:11px; margin-top:24px; text-align:center; }
-    @media (max-width:680px) { .stats { grid-template-columns:repeat(2,minmax(0,1fr)); } .grid { grid-template-columns:1fr; } header { align-items:flex-start; flex-direction:column; gap:8px; } }
+    @media (max-width:680px) { .stats { grid-template-columns:repeat(2,minmax(0,1fr)); } .grid { grid-template-columns:1fr; } header { align-items:flex-start; flex-direction:column; gap:8px; } .fields { grid-template-columns:1fr; } .terminal { min-height:46vh; max-height:62vh; } }
     @media (prefers-reduced-motion:no-preference) { .dot.live { animation:pulse 2.4s ease-in-out infinite; } @keyframes pulse { 50% { box-shadow:0 0 0 6px #70ca9114; } } }
   </style>
 </head>
 <body>
   <main>
     <header>
-      <div><div class="eyebrow">Read-only fleet monitor</div><h1 id="host">Wanigan</h1></div>
+      <div><div id="mode-label" class="eyebrow">${remoteControl ? 'Private remote control' : 'Private fleet monitor'}</div><h1 id="host">Wanigan</h1></div>
       <div class="connection"><span id="dot" class="dot"></span><span id="connection">Connecting…</span></div>
     </header>
     <section id="pair" class="notice hidden"><strong>This Wanigan app is not paired yet.</strong><p style="margin-top:6px">On the Mac, open Wanigan Settings → Phone monitor and type its ten-character pairing code here.</p><form id="pair-form" style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><input id="pair-token" aria-label="Pairing code" autocomplete="one-time-code" autocapitalize="characters" placeholder="Pairing code" maxlength="12" style="flex:1;min-width:220px"><button>Pair this app</button></form></section>
@@ -865,17 +880,18 @@ function dashboardHtml(nonce: string): string {
       <h2>Sessions</h2>
       <div id="sessions" class="grid"></div>
       <div id="empty" class="notice hidden"><strong>No session panes are open.</strong>Start one in Wanigan and it will appear on the next poll.</div>
+      <div id="monitor-note" class="notice monitor-note hidden"><strong>Read-only monitor</strong>Enable remote control in Wanigan Settings → Phone monitor to open a terminal, send a message, or start an agent from this device.</div>
       <section id="controls" class="controls hidden">
-        <h2>iPad control</h2>
-        <div class="control-card">
-          <h3>Start an agent</h3><p>Launches a normal Wanigan session on your Mac. The prompt is sent to the selected provider.</p>
-          <form id="launch-form" class="fields"><select id="project" aria-label="Project"></select><select id="provider" aria-label="Provider"></select><select id="model" aria-label="Model"></select><select id="effort" aria-label="Reasoning effort"></select><textarea id="launch-prompt" aria-label="Task for the new agent" maxlength="8000" required placeholder="What should this agent do?"></textarea><button>Start session</button></form>
+        <h2>Agent console</h2>
+        <div id="agent-console" class="control-card agent-console" tabindex="-1">
+          <div class="console-kicker">Selected agent</div>
+          <div class="terminal-head"><div><h3 id="terminal-title">Live terminal output</h3><p>Readable live output from the selected session. Send the next instruction below; permission decisions stay at the Mac.</p></div><button id="terminal-refresh" type="button" class="secondary">Refresh</button></div><pre id="terminal" class="terminal">Choose a running session to open its terminal.</pre>
+          <form id="prompt-form" class="fields"><label class="field-label"><span>Session</span><select id="session" aria-label="Running session"></select></label><div></div><textarea id="session-prompt" aria-label="Message for the selected agent" maxlength="8000" required placeholder="Type the next instruction for this agent…"></textarea><button>Send message</button><button id="interrupt" type="button" class="secondary">Interrupt turn</button></form>
         </div>
         <div class="control-card">
-          <h3>Chat with this agent</h3><p>Type the next instruction for the selected session, or interrupt its current turn. Permission decisions still stay at the Mac.</p>
-          <form id="prompt-form" class="fields"><select id="session" aria-label="Running session"></select><textarea id="session-prompt" aria-label="Message for the selected agent" maxlength="8000" required placeholder="Type a message to this agent…"></textarea><button>Send message</button><button id="interrupt" type="button" class="secondary">Interrupt turn</button></form>
+          <div class="console-kicker">New work</div><h3>Start an agent</h3><p>Launches a normal Wanigan session on your Mac with the model and reasoning effort you choose.</p>
+          <form id="launch-form" class="fields"><label class="field-label"><span>Project</span><select id="project" aria-label="Project"></select></label><label class="field-label"><span>Provider</span><select id="provider" aria-label="Provider"></select></label><label class="field-label"><span>Model</span><select id="model" aria-label="Model"></select></label><label class="field-label"><span>Reasoning effort</span><select id="effort" aria-label="Reasoning effort"></select></label><textarea id="launch-prompt" aria-label="Task for the new agent" maxlength="8000" required placeholder="What should this agent do?"></textarea><button>Start session</button></form>
         </div>
-        <div class="control-card"><div class="terminal-head"><div><h3 id="terminal-title">Live terminal</h3><p>Latest terminal output from the selected session.</p></div><button id="terminal-refresh" type="button" class="secondary">Refresh</button></div><pre id="terminal" class="terminal">Choose a running session to open its terminal.</pre></div>
         <div id="control-result" class="control-result" role="status"></div>
       </section>
     </section>
@@ -891,6 +907,8 @@ function dashboardHtml(nonce: string): string {
       const dashboard = byId('dashboard');
       const dot = byId('dot');
       const connection = byId('connection');
+      const modeLabel = byId('mode-label');
+      let remoteControlEnabled = ${remoteControl ? 'true' : 'false'};
       let busy = false;
       // Remote actions start real local processes. A mobile browser can emit
       // two taps before the first request returns, so never turn one intended
@@ -902,6 +920,13 @@ function dashboardHtml(nonce: string): string {
       let requestedSessionId = '';
       const control = byId('controls');
       const controlResult = byId('control-result');
+      const monitorNote = byId('monitor-note');
+
+      function setRemoteMode(next) {
+        remoteControlEnabled = next === true;
+        modeLabel.textContent = remoteControlEnabled ? 'Private remote control' : 'Private fleet monitor';
+        monitorNote.classList.toggle('hidden', remoteControlEnabled);
+      }
 
       function syncActionButtons() {
         const launch = byId('launch-form').querySelector('button');
@@ -944,7 +969,7 @@ function dashboardHtml(nonce: string): string {
         const select = byId('session'); const sessionId = select.value;
         const output = byId('terminal');
         if (!sessionId) {
-          byId('terminal-title').textContent = 'Live terminal';
+          byId('terminal-title').textContent = 'Live terminal output';
           output.textContent = 'Choose a running session to open its terminal.';
           return;
         }
@@ -960,10 +985,19 @@ function dashboardHtml(nonce: string): string {
         finally { terminalBusy = false; }
       }
       function openSession(sessionId) {
+        if (!remoteControlEnabled) return;
         requestedSessionId = sessionId;
-        void renderControls(visibleSessions).then(() => byId('prompt-form').scrollIntoView({ behavior: 'smooth', block: 'start' }));
+        void renderControls(visibleSessions).then(() => {
+          const console = byId('agent-console');
+          console.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          console.focus({ preventScroll: true });
+        });
       }
       async function renderControls(sessions) {
+        if (!remoteControlEnabled) {
+          control.classList.add('hidden');
+          return;
+        }
         visibleSessions = sessions.filter((session) => session.status !== 'exited');
         try {
           if (!controlOptions) controlOptions = await api('api/control');
@@ -988,9 +1022,11 @@ function dashboardHtml(nonce: string): string {
           }
           syncActionButtons();
           control.classList.remove('hidden');
-          void loadTerminal();
+          setRemoteMode(true);
+          await loadTerminal();
         } catch (error) {
           control.classList.add('hidden');
+          setRemoteMode(false);
           if (error instanceof Error && !/disabled/.test(error.message)) controlResult.textContent = error.message;
         }
       }
@@ -1038,7 +1074,9 @@ function dashboardHtml(nonce: string): string {
       }
 
       function card(session) {
-        const out = node('article', 'card');
+        const interactive = remoteControlEnabled && session.status !== 'exited';
+        const out = node(interactive ? 'button' : 'article', interactive ? 'card session-card' : 'card');
+        if (interactive) out.type = 'button';
         const top = node('div', 'card-top');
         const identity = node('div', '');
         const title = session.title || session.projectName || 'Agent session';
@@ -1055,11 +1093,9 @@ function dashboardHtml(nonce: string): string {
           metric('Requests', number(session.usage.requests)),
           metric('Output', number(session.usage.outTokens)));
         out.append(top, meta);
-        if (session.status !== 'exited') {
-          out.classList.add('tap'); out.setAttribute('role', 'button'); out.tabIndex = 0;
+        if (interactive) {
           out.append(node('div', 'tap-hint', 'Tap to open terminal & reply'));
           out.addEventListener('click', () => openSession(session.id));
-          out.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openSession(session.id); } });
         }
         return out;
       }
@@ -1067,6 +1103,8 @@ function dashboardHtml(nonce: string): string {
       function render(snapshot) {
         const totals = snapshot.totals || {};
         const sessions = Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
+        if (['system', 'light', 'dark'].includes(snapshot.appearance)) document.documentElement.dataset.theme = snapshot.appearance;
+        setRemoteMode(snapshot.remoteControl === true);
         text('host', snapshot.host || 'Wanigan');
         text('needs', number((totals.permission || 0) + (totals.error || 0) + (totals.finished || 0)));
         text('running', number(totals.running));
@@ -1077,7 +1115,8 @@ function dashboardHtml(nonce: string): string {
         byId('empty').classList.toggle('hidden', sessions.length !== 0);
         text('updated', 'Updated ' + new Date(snapshot.generatedAt || Date.now()).toLocaleTimeString() +
           (snapshot.version ? ' · Wanigan ' + snapshot.version : ''));
-        void renderControls(sessions);
+        if (remoteControlEnabled) void renderControls(sessions);
+        else control.classList.add('hidden');
       }
 
       function state(kind, label) {
@@ -1173,8 +1212,9 @@ function dashboardHtml(nonce: string): string {
 </html>`;
 }
 
-function dashboardManifest(): string {
-  return JSON.stringify({ name: 'Wanigan Remote', short_name: 'Wanigan', display: 'standalone', start_url: './', background_color: '#090b0f', theme_color: '#090b0f', icons: [{ src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }] });
+function dashboardManifest(appearance = theme()): string {
+  const light = appearance === 'light';
+  return JSON.stringify({ name: 'Wanigan Remote', short_name: 'Wanigan', display: 'standalone', start_url: './', background_color: light ? '#f8f3ea' : '#14100d', theme_color: light ? '#f8f3ea' : '#14100d', icons: [{ src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }] });
 }
 
 function dashboardIcon(): string {
@@ -1194,13 +1234,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     // navigation: URL fragments are deliberately never sent over HTTP. The
     // bearer-protected API below is the authenticated dashboard boundary.
     const nonce = randomBytes(18).toString('base64');
-    send(res, 200, 'text/html; charset=utf-8', dashboardHtml(nonce), nonce);
+    send(res, 200, 'text/html; charset=utf-8', dashboardHtml(nonce, theme(), controlAllowed()), nonce);
     return;
   }
 
   if (url.pathname === '/manifest.webmanifest') {
     if (req.method !== 'GET') { json(res, 405, { error: 'Method not allowed.' }, { allow: 'GET' }); return; }
-    send(res, 200, 'application/manifest+json; charset=utf-8', dashboardManifest());
+    send(res, 200, 'application/manifest+json; charset=utf-8', dashboardManifest(theme()));
     return;
   }
   if (url.pathname === '/icon.svg') {

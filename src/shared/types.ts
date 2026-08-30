@@ -1009,11 +1009,19 @@ export type LedgerEntry = {
 /** Off honours the OS setting; the explicit values override it either way. */
 export type MotionSetting = 'auto' | 'full' | 'off';
 
+/**
+ * Colour is a presentation preference, never a guess based on ambient light.
+ * `system` follows macOS (and changes with it); the other values deliberately
+ * win until the operator switches back.
+ */
+export type ThemeSetting = 'system' | 'light' | 'dark';
+
 /* ── shell settings ─────────────────────────────────────────────────── */
 
 export type WaniganSettings = {
   spendCapUsd: number;
   motion: MotionSetting;
+  theme: ThemeSetting;
   telemetry: boolean;
   hooks: boolean;
   archiveTranscripts: boolean;

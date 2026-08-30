@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   LaunchOptions, PastSession, Project, ProviderId, ProviderInfo, Session, TrustLevel, WorktreeInfo,
 } from '@shared/types';
@@ -10,6 +10,7 @@ import AttentionQueue from '../components/AttentionQueue';
 import Timeline from '../components/Timeline';
 import Pet from '../components/Pet';
 import { Note, ago, num, usd } from '../components/bits';
+import '../styles/sessions.css';
 
 const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)', glm: 'var(--glm)' };
 
@@ -63,7 +64,29 @@ const TRUST_GLYPH: Record<TrustLevel, string> = { readonly: '◇', project: '◈
 
 const rank = (t: TrustLevel) => TRUST_LEVELS.indexOf(t);
 
+// The session picker has a different breakpoint from the code/timeline rail.
+// A 960px coarse-pointer viewport includes iPad portrait without hiding the
+// picker on a roomy desktop, while 860px keeps ordinary narrow windows from
+// spending a third of their width on a list.
+const SESSION_PICKER_COMPACT_QUERY = '(max-width: 860px), (pointer: coarse) and (max-width: 960px)';
+const CODE_RAIL_COMPACT_QUERY = '(max-width: 900px), (pointer: coarse) and (max-width: 960px)';
+
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/**
+ * Selecting the already-active session is still a useful action on a tablet:
+ * it closes the picker and returns the keyboard to xterm. TerminalPane does
+ * this itself when the active id changes; this covers the same-id case without
+ * rebuilding the terminal or touching its PTY.
+ */
+function focusVisibleSessionTerminal() {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const input = Array.from(document.querySelectorAll<HTMLTextAreaElement>(
+      '.sessions-view .terminal-host .xterm-helper-textarea',
+    )).find((element) => element.offsetParent !== null);
+    input?.focus();
+  }));
+}
 
 const KB = 1024;
 /** Bytes are never printed bare — a lone 320128 is a puzzle. */
@@ -81,10 +104,14 @@ const plural = (n: number, one: string) => `${num(n)} ${one}${n === 1 ? '' : 's'
  * it hand-styles therefore carries its own ring. :focus-visible is asked of the
  * element rather than tracked, so a mouse click never draws one and a Tab does.
  */
-function FocusBtn({ style, onFocus, onBlur, children, ...rest }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+const FocusBtn = forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement>>(function FocusBtn(
+  { style, onFocus, onBlur, children, ...rest },
+  ref,
+) {
   const [ring, setRing] = useState(false);
   return (
     <button
+      ref={ref}
       {...rest}
       onFocus={(e) => { setRing(e.currentTarget.matches(':focus-visible')); onFocus?.(e); }}
       onBlur={(e) => { setRing(false); onBlur?.(e); }}
@@ -93,13 +120,19 @@ function FocusBtn({ style, onFocus, onBlur, children, ...rest }: React.ButtonHTM
       {children}
     </button>
   );
-}
+});
+FocusBtn.displayName = 'FocusBtn';
 
-export default function Sessions({ providers, projects, onAddProject, onError, activeId, onActiveChange, onSendToBatch }: {
+export default function Sessions({
+  providers, projects, onAddProject, onError, activeId, onActiveChange,
+  newSessionRequest, onNewSessionRequestConsumed, onSendToBatch,
+}: {
   providers: ProviderInfo[]; projects: Project[];
   onAddProject: () => Promise<void>; onError: (m: string) => void;
   activeId: string | null;
   onActiveChange: (id: string, projectId?: string) => void;
+  newSessionRequest: number | null;
+  onNewSessionRequestConsumed: () => void;
   onSendToBatch: (seed: { projectId: string; root: string; paths: string[] }) => void;
 }) {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -112,17 +145,32 @@ export default function Sessions({ providers, projects, onAddProject, onError, a
   // Remembered per machine: whether the side rail is open is a working
   // preference, not session state.
   const [showRail, setShowRail] = useState(() => localStorage.getItem('wanigan.code') === '1');
-  const [compactLayout, setCompactLayout] = useState(() => window.matchMedia('(max-width: 900px)').matches);
+  const [compactLayout, setCompactLayout] = useState(() => window.matchMedia(CODE_RAIL_COMPACT_QUERY).matches);
+  const [sessionPickerCompact, setSessionPickerCompact] = useState(() =>
+    window.matchMedia(SESSION_PICKER_COMPACT_QUERY).matches,
+  );
+  const [sessionPickerOpen, setSessionPickerOpen] = useState(false);
   const [railPane, setRailPane] = useState<Record<string, 'code' | 'timeline'>>(readPanes);
   const [defaultTrust, setDefaultTrust] = useState<TrustLevel | null>(null);
   const [past, setPast] = useState<PastSession[]>([]);
   const [resuming, setResuming] = useState<string | null>(null);
   const [teachSession, setTeachSession] = useState<Session | null>(null);
   const activeRef = useRef<string | null>(null);
+  const sessionPickerRef = useRef<HTMLElement | null>(null);
+  const sessionPickerButtonRef = useRef<HTMLButtonElement | null>(null);
   // React state does not change until the next render. The ref closes the
   // same-tick gap so a double click cannot launch two writers for one thread.
   const resumePendingRef = useRef(false);
   activeRef.current = activeId;
+
+  // The shell can ask for a new interactive session from any route. Consume
+  // the request immediately after opening the dialog: returning to Sessions
+  // later must not resurrect a dialog that the person already dismissed.
+  useEffect(() => {
+    if (newSessionRequest === null) return;
+    setDialog(true);
+    onNewSessionRequestConsumed();
+  }, [newSessionRequest, onNewSessionRequestConsumed]);
 
   const refresh = useCallback(async () => {
     try {
@@ -142,12 +190,46 @@ export default function Sessions({ providers, projects, onAddProject, onError, a
   // collapse the secondary pane below tablet width so the live conversation is
   // always the full working surface.
   useEffect(() => {
-    const media = window.matchMedia('(max-width: 900px)');
+    const media = window.matchMedia(CODE_RAIL_COMPACT_QUERY);
     const sync = () => setCompactLayout(media.matches);
     sync();
     media.addEventListener('change', sync);
     return () => media.removeEventListener('change', sync);
   }, []);
+
+  // On a tablet or a narrow window, the session list becomes an overlay. That
+  // makes the terminal the full working surface instead of a column squeezed
+  // between two persistent rails. The state is deliberately local: it is a
+  // momentary switcher, not a preference the next launch should surprise you
+  // with.
+  useEffect(() => {
+    const media = window.matchMedia(SESSION_PICKER_COMPACT_QUERY);
+    const sync = () => {
+      setSessionPickerCompact(media.matches);
+      if (!media.matches) setSessionPickerOpen(false);
+    };
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
+
+  useEffect(() => {
+    if (!sessionPickerCompact || !sessionPickerOpen) return;
+    const focus = requestAnimationFrame(() => {
+      sessionPickerRef.current?.querySelector<HTMLElement>('[data-session-picker-initial]')?.focus();
+    });
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setSessionPickerOpen(false);
+      requestAnimationFrame(() => sessionPickerButtonRef.current?.focus());
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      cancelAnimationFrame(focus);
+      window.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [sessionPickerCompact, sessionPickerOpen]);
 
   // The banner compares against the default, so the default is read once and
   // kept; a session above it is the exception worth shouting about.
@@ -199,8 +281,12 @@ export default function Sessions({ providers, projects, onAddProject, onError, a
   const select = useCallback((id: string) => {
     onActiveChange(id, sessions.find((session) => session.id === id)?.projectId);
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, unread: 0 } : s)));
+    if (sessionPickerCompact) {
+      setSessionPickerOpen(false);
+      focusVisibleSessionTerminal();
+    }
     window.wanigan.sessions.markRead(id).catch(() => {});
-  }, [onActiveChange, sessions]);
+  }, [onActiveChange, sessionPickerCompact, sessions]);
 
   // Fleet/Control and the session rail now share one selected id in App. This
   // local guard covers the first list response as well as a tab that vanished
@@ -309,13 +395,31 @@ export default function Sessions({ providers, projects, onAddProject, onError, a
   const att = useAttachments(active?.id ?? null);
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, minHeight: 0 }}>
+    <div className="sessions-view" style={{ flex: 1, display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, minHeight: 0 }}>
       {/* P3 · who is blocked, worst wait first. Above everything, because the
           answer to "where do I go next" outranks the rail and the terminal. */}
       <AttentionQueue onJump={select} />
 
-      <div className="sessions" style={{ flex: 1, minHeight: 0 }}>
-        <aside className="session-rail">
+      <div className={`sessions${sessionPickerCompact ? ' sessions--compact-picker' : ''}${sessionPickerOpen ? ' sessions--picker-open' : ''}`} style={{ flex: 1, minHeight: 0 }}>
+        <aside ref={sessionPickerRef} id="wanigan-session-picker"
+               className="session-rail" aria-label="Session picker"
+               aria-hidden={sessionPickerCompact && !sessionPickerOpen ? true : undefined}>
+          <div className="session-picker-heading">
+            <div style={{ minWidth: 0 }}>
+              <span className="label">Session switcher</span>
+              <span className="session-picker-current mono">
+                {active ? `Viewing ${active.projectName}` : `${sessions.length} open session${sessions.length === 1 ? '' : 's'}`}
+              </span>
+            </div>
+            <FocusBtn className="session-picker-close" data-session-picker-initial
+                      title="Close session switcher" aria-label="Close session switcher"
+                      onClick={() => {
+                        setSessionPickerOpen(false);
+                        focusVisibleSessionTerminal();
+                      }}>
+              ×
+            </FocusBtn>
+          </div>
           <div className="rail-scroll">
             {projects.length === 0 && (
               <p className="faint" style={{ padding: '10px 6px', lineHeight: 1.5 }}>
@@ -335,6 +439,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, a
                   {list.length === 0 && <p className="faint" style={{ padding: '2px 8px 4px', fontSize: 'var(--t-small)' }}>no sessions</p>}
                   {list.map((s) => (
                     <FocusBtn key={s.id} className={`session-item${s.id === activeId ? ' active' : ''}`}
+                              aria-current={s.id === activeId ? 'page' : undefined}
                               onClick={() => select(s.id)}>
                       <span className="dot" style={{ background: s.status === 'running' ? TINT[s.providerId] : 'var(--text-faint)' }} />
                       <span style={{ minWidth: 0, flex: 1 }}>
@@ -413,10 +518,33 @@ export default function Sessions({ providers, projects, onAddProject, onError, a
           <Pet />
         </aside>
 
+        {sessionPickerCompact && sessionPickerOpen && (
+          <button type="button" className="session-picker-scrim" aria-label="Close session switcher"
+                  onClick={() => {
+                    setSessionPickerOpen(false);
+                    focusVisibleSessionTerminal();
+                  }} />
+        )}
+
         <div className="session-main">
           <div className="tabbar">
+            <FocusBtn ref={sessionPickerButtonRef} className={`tab session-picker-trigger${sessionPickerOpen ? ' active' : ''}`}
+                      aria-controls="wanigan-session-picker" aria-expanded={sessionPickerCompact ? sessionPickerOpen : undefined}
+                      aria-label={active
+                        ? `Choose a session. Current session: ${active.projectName}`
+                        : 'Choose a session'}
+                      title={active
+                        ? `Choose a session — currently ${active.projectName}`
+                        : 'Choose a session'}
+                      onClick={() => setSessionPickerOpen((open) => !open)}>
+              <span aria-hidden="true" className="session-picker-glyph">☰</span>
+              <span>Sessions</span>
+              {active && <span className="session-picker-trigger-current">{active.projectName}</span>}
+              <span className="session-picker-count" aria-hidden="true">{sessions.length}</span>
+            </FocusBtn>
             {sessions.map((s, i) => (
-              <FocusBtn key={s.id} className={`tab${s.id === activeId ? ' active' : ''}`} onClick={() => select(s.id)}>
+              <FocusBtn key={s.id} className={`tab session-tab${s.id === activeId ? ' active' : ''}`} onClick={() => select(s.id)}
+                        aria-current={s.id === activeId ? 'page' : undefined}>
                 <span className="dot" style={{ width: 6, height: 6, borderRadius: 'var(--r-pill)',
                                                background: s.status === 'running' ? (TINT[s.providerId] ?? 'var(--accent)') : 'var(--text-faint)' }} />
                 {s.projectName}
@@ -427,8 +555,9 @@ export default function Sessions({ providers, projects, onAddProject, onError, a
                 )}
               </FocusBtn>
             ))}
-            <FocusBtn className="tab faint" onClick={() => setDialog(true)} title="New session (⌘T)">+</FocusBtn>
-            <FocusBtn className={`tab faint${railOpen ? ' active' : ''}`} style={{ marginLeft: 'auto' }}
+            <FocusBtn className="tab tab-new-session faint" onClick={() => setDialog(true)} title="New session (⌘T)"
+                      aria-label="New session (Command T)">+<span className="tab-new-session-text"> New</span></FocusBtn>
+            <FocusBtn className={`tab session-side-panel-toggle faint${railOpen ? ' active' : ''}`} style={{ marginLeft: 'auto' }}
                       title={compactLayout ? 'The side panel is collapsed on tablets so the terminal stays readable.' : 'Toggle the side panel (⌘B)'}
                       disabled={compactLayout}
                       onClick={() => setShowRail((v) => { localStorage.setItem('wanigan.code', v ? '0' : '1'); return !v; })}>
@@ -558,27 +687,27 @@ export default function Sessions({ providers, projects, onAddProject, onError, a
                 <span style={{ fontVariantNumeric: 'tabular-nums' }}>
                   {active.status === 'running' ? `pid ${active.pid}` : `exited ${active.exitCode}`}
                 </span>
-                <FocusBtn className="faint" style={{ marginLeft: 'auto', fontSize: 'var(--t-small)', borderRadius: 'var(--r-sm)' }}
+                <FocusBtn className="faint session-status-action" style={{ marginLeft: 'auto', fontSize: 'var(--t-small)', borderRadius: 'var(--r-sm)' }}
                           onClick={() => window.wanigan.sessions.reveal(active.worktree ?? active.projectPath)}
                           title={active.worktree
                             ? `Open the worktree this session runs in: ${active.worktree}`
                             : `Open ${active.projectPath}`}>
                   open folder
                 </FocusBtn>
-                <FocusBtn className="faint" style={{ fontSize: 'var(--t-small)', color: 'var(--accent)', borderRadius: 'var(--r-sm)' }}
+                <FocusBtn className="faint session-status-action" style={{ fontSize: 'var(--t-small)', color: 'var(--accent)', borderRadius: 'var(--r-sm)' }}
                           title="Turn an outcome, correction, preference, or reusable fact from this session into a reviewable Learning Inbox proposal"
                           onClick={() => setTeachSession(active)}>
                   ◇ teach Wanigan
                 </FocusBtn>
                 {active.status === 'running' && (
-                  <FocusBtn className="faint" style={{ fontSize: 'var(--t-small)', color: 'var(--warning)', borderRadius: 'var(--r-sm)' }}
+                  <FocusBtn className="faint session-status-action" style={{ fontSize: 'var(--t-small)', color: 'var(--warning)', borderRadius: 'var(--r-sm)' }}
                             title="Stop the current turn. The session stays open — this is the Escape key Claude Code listens for. ⌘."
                             onClick={() => void window.wanigan.sessions.interrupt(active.id)}>
                     ⎋ interrupt
                   </FocusBtn>
                 )}
                 {active.status === 'running' && (
-                  <FocusBtn className="faint" style={{ fontSize: 'var(--t-small)', color: 'var(--bad)', borderRadius: 'var(--r-sm)' }}
+                  <FocusBtn className="faint session-status-action" style={{ fontSize: 'var(--t-small)', color: 'var(--bad)', borderRadius: 'var(--r-sm)' }}
                             title="End the session entirely. The conversation goes with it."
                             onClick={() => window.wanigan.sessions.kill(active.id)}>end session</FocusBtn>
                 )}
@@ -1326,7 +1455,7 @@ function AttachStrip({ session, att }: { session: Session; att: AttachState }) {
   const priced = images.reduce((n, a) => n + (att.cost[a.id] ?? 0), 0);
 
   return (
-    <div style={{ borderTop: '1px solid var(--line)', background: 'var(--bg-soft)',
+    <div className="session-attachments" style={{ borderTop: '1px solid var(--line)', background: 'var(--bg-soft)',
                   padding: '6px 10px 7px', display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="label" style={{ flex: 'none' }}>Attachments</span>

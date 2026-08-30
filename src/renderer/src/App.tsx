@@ -12,7 +12,11 @@ import Schedules from './views/Schedules';
 import Git from './views/Git';
 import HeadlessRuns from './views/HeadlessRuns';
 import SettingsView from './views/Settings';
+import Skills from './views/Skills';
+import Context from './views/Context';
 import { num } from './components/bits';
+import ThemeControl from './components/ThemeControl';
+import { useThemePreference } from './theme';
 
 type CodexStatus = {
   fetchedAt: number; plan: string | null; spendControlReached: boolean | null;
@@ -42,20 +46,33 @@ type StartupStatus = {
  */
 
 const TABS = [
-  { id: 'sessions', label: 'Sessions' },
-  { id: 'fleet',    label: 'Fleet' },
-  { id: 'control',  label: 'Control' },
-  { id: 'batches',  label: 'Batches' },
-  { id: 'insights', label: 'Insights' },
-  { id: 'learning', label: 'Learning' },
-  { id: 'plugins',  label: 'Plugins' },
-  { id: 'schedules', label: 'Schedules' },
-  { id: 'git',      label: 'Git' },
-  { id: 'runs',     label: 'Runs' },
-  { id: 'settings', label: 'Settings' },
+  { id: 'sessions',  label: 'Sessions',  group: 'Work',    keywords: 'agent terminal conversation interactive' },
+  { id: 'fleet',     label: 'Fleet',     group: 'Work',    keywords: 'monitor activity status' },
+  { id: 'control',   label: 'Control',   group: 'Work',    keywords: 'goals goal dockets tasks work graph' },
+  { id: 'batches',   label: 'Batches',   group: 'Work',    keywords: 'batch api bulk fan-out' },
+  { id: 'insights',  label: 'Insights',  group: 'Explore', keywords: 'spend costs usage analytics' },
+  { id: 'learning',  label: 'Learning',  group: 'Explore', keywords: 'knowledge memory improvement' },
+  { id: 'plugins',   label: 'Plugins',   group: 'Explore', keywords: 'extensions integrations' },
+  { id: 'schedules', label: 'Schedules', group: 'Explore', keywords: 'automation cron recurring' },
+  { id: 'git',       label: 'Git',       group: 'Manage',  keywords: 'worktrees commits review' },
+  { id: 'runs',      label: 'Runs',      group: 'Manage',  keywords: 'headless fan-out automation' },
+  { id: 'settings',  label: 'Settings',  group: 'Manage',  keywords: 'preferences providers connections appearance' },
+  { id: 'skills',    label: 'Skills',    group: 'Explore', keywords: 'agent skills instructions workflows' },
+  { id: 'context',   label: 'Context',   group: 'Explore', keywords: 'instructions memory configuration' },
 ] as const;
 
 type Tab = (typeof TABS)[number]['id'];
+type TabGroup = (typeof TABS)[number]['group'];
+
+const TAB_GROUPS: readonly TabGroup[] = ['Work', 'Explore', 'Manage'];
+
+// The wide rail prioritises the surfaces used continuously while an agent is
+// running. Skills and Context stay one keypress away in Views/⌘K without
+// changing the long-standing ⌘1–9 map or turning the rail into a ticker.
+const NAV_RAIL_TABS: readonly Tab[] = [
+  'sessions', 'fleet', 'control', 'batches', 'insights', 'learning',
+  'plugins', 'schedules', 'git', 'runs', 'settings',
+];
 
 /** The kinds that mean a human is the blocker, worst first. */
 const NEEDS_YOU: AttentionKind[] = ['permission', 'error', 'finished'];
@@ -100,12 +117,23 @@ export default function App() {
   const [retryingStartup, setRetryingStartup] = useState(false);
   const [palette, setPalette] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
+  // The palette is a real modal. Remember where it came from so Escape and a
+  // backdrop click put a keyboard user straight back where they started.
+  const paletteOpenerRef = useRef<HTMLElement | null>(null);
+  // The horizontal rail stays finger-scrollable at every width. This menu is
+  // its explicit, keyboard-friendly companion: no destination becomes a
+  // mystery just because it sits beyond the current slice of the rail.
+  const [navMenuOpen, setNavMenuOpen] = useState(false);
+  // A request is deliberately one-shot. The Sessions view consumes it after
+  // it mounts, so a later visit to Sessions never reopens an old dialog.
+  const [newSessionRequest, setNewSessionRequest] = useState<number | null>(null);
   // A session handing its changed files to a new batch run.
   const [batchSeed, setBatchSeed] = useState<{ projectId: string; root: string; paths: string[] } | null>(null);
   // Which session the keyboard-less surfaces should talk to.
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   // The project the user last chose or last worked in, remembered per machine.
   const [picked, setPicked] = useState<string | null>(() => localStorage.getItem('wanigan.project'));
+  const theme = useThemePreference();
 
   const tabRef = useRef<Tab>(tab); tabRef.current = tab;
   const sessionsRef = useRef<Session[]>(sessions); sessionsRef.current = sessions;
@@ -272,6 +300,7 @@ export default function App() {
 
   // ── view switching ─────────────────────────────────────────────────
   const go = useCallback((next: Tab) => {
+    setNavMenuOpen(false);
     if (next === tabRef.current) return;
     const swap = () => setTab(next);
     const doc = document as ViewTransitionDoc;
@@ -280,6 +309,30 @@ export default function App() {
       (next === 'sessions' || tabRef.current === 'sessions') && sessionsRef.current.length > 0;
     if (touchesPty || !motionOn() || typeof doc.startViewTransition !== 'function') { swap(); return; }
     doc.startViewTransition(() => { flushSync(swap); });
+  }, []);
+
+  const requestNewSession = useCallback(() => {
+    setNewSessionRequest((previous) => (previous ?? 0) + 1);
+    go('sessions');
+  }, [go]);
+
+  const consumeNewSessionRequest = useCallback(() => {
+    setNewSessionRequest(null);
+  }, []);
+
+  const openPalette = useCallback(() => {
+    const active = document.activeElement;
+    paletteOpenerRef.current = active instanceof HTMLElement ? active : null;
+    setPaletteQuery('');
+    setPalette(true);
+  }, []);
+
+  const closePalette = useCallback((restoreFocus = true) => {
+    setPalette(false);
+    setPaletteQuery('');
+    if (!restoreFocus) return;
+    const opener = paletteOpenerRef.current;
+    requestAnimationFrame(() => opener?.focus());
   }, []);
 
   const openSession = useCallback((id: string) => {
@@ -303,7 +356,16 @@ export default function App() {
       if (e.key.length !== 1) return;
       const el = document.activeElement as HTMLElement | null;
       if (el?.closest('.terminal-host')) return;          // the PTY owns its keystrokes
-      if (document.querySelector('.modal-backdrop')) return;  // a dialog owns the keyboard
+      if (document.querySelector('.modal-backdrop, .command-backdrop')) return;  // a dialog owns the keyboard
+      // New work should be available from every surface, not only after a
+      // detour back to Sessions. The terminal still owns this shortcut while
+      // it has focus, just as it owns the number keys below.
+      if (e.key.toLowerCase() === 't') {
+        e.preventDefault();
+        e.stopPropagation();
+        requestNewSession();
+        return;
+      }
       // Runs is the tenth surface. It deserves a direct route rather than
       // being the only tab that disappears once the header overflows.
       if (e.key === '0') {
@@ -320,7 +382,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [go]);
+  }, [go, requestNewSession]);
 
   // A tab strip has a finite width; the command palette does not. It is the
   // keyboard route to every surface, not a second hidden navigation system.
@@ -330,12 +392,12 @@ export default function App() {
       const el = document.activeElement as HTMLElement | null;
       if (el?.closest('.terminal-host') || document.querySelector('.modal-backdrop')) return;
       e.preventDefault();
-      setPaletteQuery('');
-      setPalette((open) => !open);
+      if (palette) closePalette();
+      else openPalette();
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, []);
+  }, [closePalette, openPalette, palette]);
 
   const addProject = useCallback(async () => {
     try {
@@ -351,10 +413,84 @@ export default function App() {
   // ── nav chrome ─────────────────────────────────────────────────────
   const tabsRef = useRef<HTMLDivElement>(null);
   const inkRef = useRef<HTMLSpanElement>(null);
+  const navMenuRef = useRef<HTMLDivElement>(null);
+  const navMenuButtonRef = useRef<HTMLButtonElement>(null);
   const placed = useRef(false);
   const runBadge = useRef<HTMLSpanElement>(null);
   const needBadge = useRef<HTMLSpanElement>(null);
   const lastNeeds = useRef(0);
+
+  const closeNavMenu = useCallback((restoreFocus = false) => {
+    setNavMenuOpen(false);
+    if (restoreFocus) requestAnimationFrame(() => navMenuButtonRef.current?.focus());
+  }, []);
+
+  const focusMenuItem = useCallback((edge: 'first' | 'last') => {
+    requestAnimationFrame(() => {
+      const items = Array.from(navMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+      items[edge === 'first' ? 0 : items.length - 1]?.focus();
+    });
+  }, []);
+
+  // The visible strip behaves like a compact toolbar. Tab enters the active
+  // route once, and Left/Right (or Home/End) walks every visible route without
+  // asking a keyboard user to tab through eleven tiny controls.
+  const onNavTabKeyDown = useCallback((event: React.KeyboardEvent<HTMLButtonElement>, current: Tab) => {
+    const currentIndex = NAV_RAIL_TABS.indexOf(current);
+    if (currentIndex < 0) return;
+    let nextIndex: number | null = null;
+    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % NAV_RAIL_TABS.length;
+    if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + NAV_RAIL_TABS.length) % NAV_RAIL_TABS.length;
+    if (event.key === 'Home') nextIndex = 0;
+    if (event.key === 'End') nextIndex = NAV_RAIL_TABS.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const next = NAV_RAIL_TABS[nextIndex];
+    go(next);
+    requestAnimationFrame(() => {
+      tabsRef.current?.querySelector<HTMLButtonElement>(`[data-nav-tab="${next}"]`)?.focus();
+    });
+  }, [go]);
+
+  const onNavMenuKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(navMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+    const activeIndex = items.findIndex((item) => item === document.activeElement);
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeNavMenu(true);
+      return;
+    }
+    if (event.key === 'Home') {
+      event.preventDefault();
+      items[0]?.focus();
+      return;
+    }
+    if (event.key === 'End') {
+      event.preventDefault();
+      items[items.length - 1]?.focus();
+      return;
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      const next = activeIndex < 0
+        ? (direction > 0 ? 0 : items.length - 1)
+        : (activeIndex + direction + items.length) % items.length;
+      items[next]?.focus();
+    }
+  }, [closeNavMenu]);
+
+  useEffect(() => {
+    if (!navMenuOpen) return;
+    const dismiss = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (navMenuRef.current?.contains(target) || navMenuButtonRef.current?.contains(target)) return;
+      closeNavMenu();
+    };
+    document.addEventListener('pointerdown', dismiss, true);
+    return () => document.removeEventListener('pointerdown', dismiss, true);
+  }, [navMenuOpen, closeNavMenu]);
 
   // The underline is placed from measured geometry, so it can slide on the
   // compositor instead of the browser re-laying out a border every frame.
@@ -411,6 +547,7 @@ export default function App() {
   }, [needs.total]);
 
   const mark = needs.worst ? NEED_MARK[needs.worst] : null;
+  const railHasActiveTab = NAV_RAIL_TABS.includes(tab);
 
   // ⌘⇧D from anywhere: a demo toggle you have to go and find is one you forget
   // to turn on until after the screenshot.
@@ -441,77 +578,137 @@ export default function App() {
           </button>
         </section>
       )}
-      <nav className="nav">
-        <span className="brand">Wanigan</span>
-        <div className="nav-tabs" ref={tabsRef}>
-          <NavTab id="sessions" n={1} tab={tab} go={go} label="Sessions">
-            {running > 0 && (
-              <span className="nav-badge mo-breathe" ref={runBadge}
-                    title={`${running} session${running === 1 ? '' : 's'} running`}>{running}</span>
+      <header className="app-header">
+        <div className="nav-titlebar">
+          <div className="brand-lockup">
+            <span className="brand">Wanigan</span>
+            <span className="brand-context">Agent control center</span>
+          </div>
+
+          <div className="nav-actions">
+            {tab === 'learning' && projects.length > 1 && (
+              <label className="nav-project">
+                <span className="label">Project</span>
+                <select className="field" value={projectId ?? ''} onChange={(e) => choose(e.target.value)}
+                        title="Which project's learning, skills, and context to read">
+                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </label>
             )}
-          </NavTab>
-          <NavTab id="fleet" n={2} tab={tab} go={go} label="Fleet">
-            {mark && (
-              <span className={`nav-mark tone-${mark.tone}`} ref={needBadge}
-                    title={`${needs.detail} — open Fleet (⌘2)`}>
-                <span aria-hidden="true">{mark.glyph}</span>{needs.total} need you
-              </span>
-            )}
-          </NavTab>
-          <NavTab id="control" n={3} tab={tab} go={go} label="Control" />
-          <NavTab id="batches" n={4} tab={tab} go={go} label="Batches">
-            {activeRuns > 0 && (
-              <span className="nav-badge"
-                    title={`${activeRuns} batch run${activeRuns === 1 ? '' : 's'} in flight`}>{activeRuns}</span>
-            )}
-            {batchWork && (
-              <span className="nav-progress" role="progressbar" aria-valuemin={0} aria-valuemax={batchWork.total}
-                    aria-valuenow={batchWork.done}
-                    title={`${num(batchWork.done)} of ${num(batchWork.total)} requests returned`}>
-                <span className="mo-fill"
-                      style={{ '--mo-p': batchWork.done / batchWork.total } as React.CSSProperties} />
-              </span>
-            )}
-          </NavTab>
-          <NavTab id="insights" n={5} tab={tab} go={go} label="Insights" />
-          <NavTab id="learning" n={6} tab={tab} go={go} label="Learning" />
-          <NavTab id="plugins"  n={7} tab={tab} go={go} label="Plugins" />
-          <NavTab id="schedules" n={8} tab={tab} go={go} label="Schedules" />
-          <NavTab id="git"      n={9} tab={tab} go={go} label="Git" />
-          <NavTab id="runs"     n={0} tab={tab} go={go} label="Runs" />
-          <NavTab id="settings" tab={tab} go={go} label="Settings">
-            {!hasKey && (
-              <span className="nav-mark tone-warn" title="No API key set — add one in Settings before submitting a batch">
-                <span aria-hidden="true">!</span>no key
-              </span>
-            )}
-          </NavTab>
-          <span className="nav-ink" ref={inkRef} aria-hidden="true" />
+
+            <button className="nav-new-session" type="button" onClick={requestNewSession}
+                    title="Start a new interactive agent session (⌘T)"
+                    aria-label="Start a new interactive agent session (Command T)">
+              <span className="nav-new-session-plus" aria-hidden="true">+</span>
+              <span className="nav-new-session-label">New session</span>
+              <span className="nav-shortcut" aria-hidden="true">⌘T</span>
+            </button>
+
+            <div className="nav-views">
+              <button ref={navMenuButtonRef} className={`nav-views-button${railHasActiveTab ? '' : ' on'}`} type="button"
+                      aria-expanded={navMenuOpen} aria-controls="wanigan-view-menu" aria-haspopup="menu"
+                      aria-current={railHasActiveTab ? undefined : 'page'}
+                      title="Browse every view (⌘K)"
+                      onClick={() => setNavMenuOpen((open) => !open)}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Escape') return;
+                        event.preventDefault();
+                        if (event.key === 'Escape') { closeNavMenu(true); return; }
+                        setNavMenuOpen(true);
+                        focusMenuItem(event.key === 'ArrowDown' ? 'first' : 'last');
+                      }}>
+                <span>Views</span>
+                <span className="nav-views-shortcut" aria-hidden="true">⌘K</span>
+                <span className="nav-views-caret" aria-hidden="true">⌄</span>
+              </button>
+              {navMenuOpen && (
+                <div ref={navMenuRef} id="wanigan-view-menu" className="nav-menu" role="menu"
+                     aria-label="All Wanigan views" onKeyDown={onNavMenuKeyDown}>
+                  {TAB_GROUPS.map((group) => (
+                    <div className="nav-menu-group" role="group" aria-label={`${group} views`} key={group}>
+                      <span className="nav-menu-group-label">{group}</span>
+                      {TABS.filter((item) => item.group === group).map((item) => (
+                        <button className={`nav-menu-item${tab === item.id ? ' on' : ''}`} type="button" role="menuitem"
+                                aria-current={tab === item.id ? 'page' : undefined} key={item.id}
+                                onClick={() => go(item.id)}>
+                          <span>{item.label}</span>
+                          <span className="nav-menu-shortcut" aria-hidden="true">{shortcutForTab(item.id)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <button className="nav-quick-run" type="button" onClick={() => go('runs')}
+                    title="Open headless Runs (⌘0)">
+              <span className="nav-quick-run-plus" aria-hidden="true">+</span>
+              <span className="nav-quick-run-headless">Headless</span>
+              <span>runs</span>
+              <span className="nav-shortcut" aria-hidden="true">⌘0</span>
+            </button>
+
+            {providers.some((p) => p.id === 'codex' && p.path) && <CodexStatusBadge />}
+            <ThemeControl preference={theme.preference} resolved={theme.resolved} onChange={theme.setTheme} />
+          </div>
         </div>
 
-        <button className="nav-quick-run" onClick={() => go('runs')}
-                title="Open headless Runs (⌘0)">
-          Runs <span aria-hidden="true">⌘0</span>
-        </button>
-
-        {providers.some((p) => p.id === 'codex' && p.path) && <CodexStatusBadge />}
-
-        {tab === 'learning' && projects.length > 1 && (
-          <label className="nav-project">
-            <span className="label">Project</span>
-            <select className="field" value={projectId ?? ''} onChange={(e) => choose(e.target.value)}
-                    title="Which project's learning, skills, and context to read">
-              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </label>
-        )}
-      </nav>
+        <nav className="nav" aria-label="Primary navigation">
+          <div className="nav-tabs" ref={tabsRef} role="toolbar" aria-label="Wanigan views">
+            <NavTab id="sessions" n={1} tab={tab} go={go} label="Sessions" tabStop={!railHasActiveTab} onKeyDown={onNavTabKeyDown}>
+              {running > 0 && (
+                <span className="nav-badge mo-breathe" ref={runBadge}
+                      title={`${running} session${running === 1 ? '' : 's'} running`}>{running}</span>
+              )}
+            </NavTab>
+            <NavTab id="fleet" n={2} tab={tab} go={go} label="Fleet" onKeyDown={onNavTabKeyDown}>
+              {mark && (
+                <span className={`nav-mark tone-${mark.tone}`} ref={needBadge}
+                      title={`${needs.detail} — open Fleet (⌘2)`}>
+                  <span aria-hidden="true">{mark.glyph}</span>{needs.total} need you
+                </span>
+              )}
+            </NavTab>
+            <NavTab id="control" n={3} tab={tab} go={go} label="Control" onKeyDown={onNavTabKeyDown} />
+            <NavTab id="batches" n={4} tab={tab} go={go} label="Batches" onKeyDown={onNavTabKeyDown}>
+              {activeRuns > 0 && (
+                <span className="nav-badge"
+                      title={`${activeRuns} batch run${activeRuns === 1 ? '' : 's'} in flight`}>{activeRuns}</span>
+              )}
+              {batchWork && (
+                <span className="nav-progress" role="progressbar" aria-valuemin={0} aria-valuemax={batchWork.total}
+                      aria-valuenow={batchWork.done}
+                      title={`${num(batchWork.done)} of ${num(batchWork.total)} requests returned`}>
+                  <span className="mo-fill"
+                        style={{ '--mo-p': batchWork.done / batchWork.total } as React.CSSProperties} />
+                </span>
+              )}
+            </NavTab>
+            <NavTab id="insights" n={5} tab={tab} go={go} label="Insights" onKeyDown={onNavTabKeyDown} />
+            <NavTab id="learning" n={6} tab={tab} go={go} label="Learning" onKeyDown={onNavTabKeyDown} />
+            <NavTab id="plugins"  n={7} tab={tab} go={go} label="Plugins" onKeyDown={onNavTabKeyDown} />
+            <NavTab id="schedules" n={8} tab={tab} go={go} label="Schedules" onKeyDown={onNavTabKeyDown} />
+            <NavTab id="git"      n={9} tab={tab} go={go} label="Git" onKeyDown={onNavTabKeyDown} />
+            <NavTab id="runs"     n={0} tab={tab} go={go} label="Runs" onKeyDown={onNavTabKeyDown} />
+            <NavTab id="settings" tab={tab} go={go} label="Settings" onKeyDown={onNavTabKeyDown}>
+              {!hasKey && (
+                <span className="nav-mark tone-warn" title="No API key set — add one in Settings before submitting a batch">
+                  <span aria-hidden="true">!</span>no key
+                </span>
+              )}
+            </NavTab>
+            <span className="nav-ink" ref={inkRef} aria-hidden="true" />
+          </div>
+        </nav>
+      </header>
 
       <div className="body">
         {tab === 'sessions' && (
           <Sessions providers={providers} projects={projects}
                     onAddProject={addProject} onError={setError}
                     activeId={activeSessionId} onActiveChange={focusSession}
+                    newSessionRequest={newSessionRequest} onNewSessionRequestConsumed={consumeNewSessionRequest}
                     onSendToBatch={(seed) => { setBatchSeed(seed); go('batches'); }} />
         )}
         {tab === 'fleet' && <Fleet projects={projects} onOpenSession={openSession} />}
@@ -522,13 +719,16 @@ export default function App() {
         )}
         {tab === 'insights' && <InsightsView />}
         {tab === 'learning' && <Learning projectId={projectId} projects={projects} providers={providers} />}
+        {tab === 'skills' && <Skills projectId={projectId} activeSessionId={activeSessionId} />}
+        {tab === 'context' && <Context projectId={projectId} projects={projects} />}
         {tab === 'plugins' && <Plugins />}
         {tab === 'schedules' && <Schedules projects={projects} />}
         {tab === 'git' && <Git projects={projects} />}
         {tab === 'runs' && <HeadlessRuns projects={projects} providers={providers} />}
         {tab === 'settings' && (
           <SettingsView providers={providers} projects={projects}
-                        onKeyChange={loadShell} onRemoveProject={removeProject} onAddProject={addProject} />
+                        onKeyChange={loadShell} onRemoveProject={removeProject} onAddProject={addProject}
+                        themePreference={theme.preference} resolvedTheme={theme.resolved} onThemeChange={theme.setTheme} />
         )}
       </div>
 
@@ -541,8 +741,9 @@ export default function App() {
         <CommandPalette
           query={paletteQuery}
           onQuery={setPaletteQuery}
-          onClose={() => setPalette(false)}
-          onChoose={(id) => { go(id); setPalette(false); }}
+          onClose={closePalette}
+          onChoose={(id) => { closePalette(false); go(id); }}
+          onNewSession={() => { closePalette(false); requestNewSession(); }}
         />
       )}
     </div>
@@ -594,28 +795,58 @@ function relativeReset(at: number): string {
   return new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function CommandPalette({ query, onQuery, onClose, onChoose }: {
+function shortcutForTab(id: Tab): string {
+  const index = TABS.findIndex((item) => item.id === id);
+  if (index >= 0 && index < 9) return `⌘${index + 1}`;
+  return id === 'runs' ? '⌘0' : '';
+}
+
+function CommandPalette({ query, onQuery, onClose, onChoose, onNewSession }: {
   query: string; onQuery: (value: string) => void; onClose: () => void; onChoose: (id: Tab) => void;
+  onNewSession: () => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
-  const shown = TABS.filter((item) => item.label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  const dialog = useRef<HTMLElement>(null);
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const shown = TABS.filter((item) => `${item.label} ${item.keywords}`.toLocaleLowerCase().includes(normalizedQuery));
+  const showNewSession = !normalizedQuery
+    || 'new session'.includes(normalizedQuery)
+    || 'start agent'.includes(normalizedQuery)
+    || 'interactive'.includes(normalizedQuery);
   useEffect(() => { input.current?.focus(); }, []);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
+      if (e.key !== 'Tab') return;
+      const focusable = Array.from(dialog.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      ) ?? []).filter((item) => item.getClientRects().length > 0);
+      if (focusable.length === 0) { e.preventDefault(); return; }
+      const active = document.activeElement;
+      const index = active instanceof HTMLElement ? focusable.indexOf(active) : -1;
+      if (e.shiftKey && index <= 0) { e.preventDefault(); focusable[focusable.length - 1]?.focus(); }
+      if (!e.shiftKey && (index < 0 || index === focusable.length - 1)) { e.preventDefault(); focusable[0]?.focus(); }
+    };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
   return (
     <div className="command-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="command-palette" role="dialog" aria-modal="true" aria-label="Go to a Wanigan view"
+      <section ref={dialog} className="command-palette" role="dialog" aria-modal="true" aria-label="Go to a Wanigan view"
                onMouseDown={(e) => e.stopPropagation()}>
         <input ref={input} className="field" value={query} onChange={(e) => onQuery(e.target.value)}
-               placeholder="Go to a view…" aria-label="Search views" />
+               placeholder="Go to a view or start a session…" aria-label="Search views and actions" />
         <div className="command-results">
-          {shown.length === 0 ? <p className="faint">No matching view.</p> : shown.map((item, index) => (
+          {showNewSession && (
+            <button className="command-item command-item-primary" type="button" onClick={onNewSession}>
+              <span className="command-item-copy"><strong>New session</strong><small>Start an interactive agent</small></span>
+              <span className="faint mono">⌘T</span>
+            </button>
+          )}
+          {shown.length === 0 && !showNewSession ? <p className="faint">No matching view or action.</p> : shown.map((item) => (
             <button key={item.id} className="command-item" onClick={() => onChoose(item.id)}>
               <span>{item.label}</span>
-              <span className="faint mono">{index < 9 ? `⌘${index + 1}` : item.id === 'runs' ? '⌘0' : ''}</span>
+              <span className="faint mono">{shortcutForTab(item.id)}</span>
             </button>
           ))}
         </div>
@@ -625,13 +856,18 @@ function CommandPalette({ query, onQuery, onClose, onChoose }: {
   );
 }
 
-function NavTab({ id, n, tab, go, label, children }: {
+function NavTab({ id, n, tab, go, label, children, onKeyDown, tabStop = false }: {
   id: Tab; n?: number; tab: Tab; go: (t: Tab) => void; label: string; children?: React.ReactNode;
+  onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>, current: Tab) => void;
+  tabStop?: boolean;
 }) {
   const on = tab === id;
   return (
-    <button className={`nav-tab${on ? ' on' : ''}`} onClick={() => go(id)}
-            aria-current={on ? 'page' : undefined} title={n ? `${label} (⌘${n})` : label}>
+    <button className={`nav-tab${on ? ' on' : ''}`} type="button" data-nav-tab={id}
+            tabIndex={on || tabStop ? 0 : -1} onClick={() => go(id)} onKeyDown={(event) => onKeyDown(event, id)}
+            aria-current={on ? 'page' : undefined}
+            aria-keyshortcuts={n === undefined ? undefined : n === 0 ? 'Meta+0 Control+0' : `Meta+${n} Control+${n}`}
+            title={n === undefined ? label : `${label} (⌘${n})`}>
       {label}
       {children}
     </button>

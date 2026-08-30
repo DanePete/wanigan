@@ -893,8 +893,11 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const shellText = await shell.text();
     check(shell.ok && shell.headers.get('cache-control')?.includes('no-store') === true
       && shell.headers.get('x-frame-options') === 'DENY',
-    'the content-free mobile shell is no-store and cannot be framed');
+      'the content-free mobile shell is no-store and cannot be framed');
     check(!shellText.includes(privateMarker), 'the unauthenticated shell contains no fleet data');
+    check(shellText.includes('Private fleet monitor') && !shellText.includes('Read-only fleet monitor')
+      && shellText.includes('Live terminal output') && shellText.includes('data-theme='),
+    'the iPad shell labels its monitor state honestly, prepares a focused agent console, and carries an appearance mode');
     const manifest = await fetch(new URL('manifest.webmanifest', monitor.localUrl));
     check(manifest.ok && JSON.parse(await manifest.text()).display === 'standalone',
       'the paired dashboard is installable as an iPad Home Screen web app');
@@ -913,7 +916,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       'a time-limited desktop pairing code exchanges for the same browser credential without copying a URL');
     const accepted = await fetch(apiUrl, { headers: { authorization: `Bearer ${token}` } });
     const body = await accepted.text();
-    check(accepted.ok && JSON.parse(body).sessions?.[0]?.attention?.kind === 'permission',
+    const acceptedSnapshot = JSON.parse(body) as { sessions?: { attention?: { kind?: string } }[]; appearance?: string; remoteControl?: boolean };
+    check(accepted.ok && acceptedSnapshot.sessions?.[0]?.attention?.kind === 'permission'
+      && ['system', 'light', 'dark'].includes(acceptedSnapshot.appearance ?? '') && acceptedSnapshot.remoteControl === false,
       'the paired phone receives the current privacy-filtered fleet');
     check(!body.includes(privateMarker) && !body.includes('42424'),
       'the HTTP allow-list drops extra paths, commands, transcripts and pids even if its source grows', body);
@@ -935,6 +940,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       terminal: async (id) => ({ title: `Terminal ${id}`, running: true, text: `\x1b[38;5;214msafe output\x1b[0m for ${id}\x1b]8;;https://example.com\x07` }),
     });
     await mobile.setMobileConfig({ remoteControlEnabled: true });
+    const controlShell = await fetch(monitor.localUrl);
+    check((await controlShell.text()).includes('Private remote control'),
+      'the iPad shell labels its remote-control capability directly when the opt-in is enabled');
     const controls = await fetch(controlUrl, { headers: { authorization: `Bearer ${token}` } });
     const launch = await fetch(new URL('api/action', monitor.localUrl), {
       method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -1523,6 +1531,13 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const sessionsSrc = sourceOf('src/renderer/src/views/Sessions.tsx');
   const settingsSrc = sourceOf('src/renderer/src/views/Settings.tsx');
   const appSrc = sourceOf('src/renderer/src/App.tsx');
+  const themeSrc = sourceOf('src/renderer/src/theme.ts');
+  const themeBootSrc = sourceOf('src/renderer/src/theme-boot.ts');
+  const terminalPaneSrc = sourceOf('src/renderer/src/components/TerminalPane.tsx');
+  const mobileSrc = sourceOf('src/main/mobile.ts');
+  const cssSrc = sourceOf('src/renderer/src/index.css');
+  const sessionsCssSrc = sourceOf('src/renderer/src/styles/sessions.css');
+  const compactCssSrc = sourceOf('src/renderer/src/styles/compact.css');
   const sessionManagerSrc = sourceOf('src/main/sessions.ts');
   check(mainSrc.length > 1000 && preloadSrc.length > 500 && schedulesSrc.length > 500
     && sessionsSrc.length > 500 && settingsSrc.length > 500 && appSrc.length > 500 && sessionManagerSrc.length > 500,
@@ -1557,6 +1572,47 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && /startup:\s*\{/.test(preloadSrc) && /startupChanged/.test(preloadSrc)
     && /startup\.status\(\)/.test(appSrc) && /Wanigan is open in recovery mode/.test(appSrc),
   'a partially migrated local database opens a recovery window with status and retry instead of rejecting startup before any UI exists');
+  check(/handle\(\s*'settings:setTheme'/.test(mainSrc)
+    && mainSrc.includes("if (k === 'theme') throw new Error('Use the typed theme setting.')")
+    && /setTheme:\s*\(theme: ThemeSetting\).*settings:setTheme/.test(preloadSrc)
+    && appSrc.includes('useThemePreference') && appSrc.includes('<ThemeControl')
+    && themeSrc.includes("window.wanigan.prefs.setTheme(next)")
+    && themeSrc.includes("window.matchMedia('(prefers-color-scheme: dark)')")
+    && themeBootSrc.includes("root.dataset.theme = resolved")
+    && cssSrc.includes(":root[data-theme='light']")
+    && cssSrc.includes('--terminal-bg')
+    && terminalPaneSrc.includes("window.addEventListener('wanigan:theme-changed'")
+    && terminalPaneSrc.includes('term.options.theme = next')
+    && terminalPaneSrc.includes("'(pointer: coarse)'")
+    && terminalPaneSrc.includes('term.options.fontSize = next')
+    && settingsSrc.includes('<Appearance preference={themePreference}'),
+  'the shell has a validated durable system/light/dark preference, semantic palette tokens, and terminal repaint/readable touch sizing without replacing a live session');
+  check(appSrc.includes('const requestNewSession')
+    && appSrc.includes('className="nav-new-session"')
+    && appSrc.includes('newSessionRequest={newSessionRequest}')
+    && appSrc.includes('onNewSessionRequestConsumed={consumeNewSessionRequest}')
+    && appSrc.includes('onNewSession={() => { closePalette(false); requestNewSession(); }}')
+    && sessionsSrc.includes('onNewSessionRequestConsumed')
+    && sessionsSrc.includes('setDialog(true);')
+    && cssSrc.includes('.nav-new-session') && cssSrc.includes('.command-item-primary'),
+  'the header and command palette start one explicit interactive session from any view without leaving an old dialog request behind');
+  check(appSrc.includes('aria-modal="true"')
+    && appSrc.includes('const focusable = Array.from(dialog.current')
+    && appSrc.includes('tabStop={!railHasActiveTab}')
+    && appSrc.includes("aria-current={railHasActiveTab ? undefined : 'page'}")
+    && appSrc.includes('shortcutForTab(item.id)'),
+  'the keyboard palette traps focus and restores its opener, while navigation remains reachable and truthful on Views-only routes');
+  check(sessionsSrc.includes("import '../styles/sessions.css'")
+    && sessionsSrc.includes('SESSION_PICKER_COMPACT_QUERY')
+    && sessionsSrc.includes('sessions--picker-open')
+    && sessionsCssSrc.includes('sessions--picker-open .session-rail')
+    && sessionsCssSrc.includes('.session-picker-scrim')
+    && sessionsCssSrc.includes('@media (pointer: coarse)')
+    && compactCssSrc.includes('@media (max-width: 720px)')
+    && mobileSrc.includes('const interactive = remoteControlEnabled && session.status !== \'exited\';')
+    && mobileSrc.includes('id="monitor-note"')
+    && mobileSrc.includes('if (!remoteControlEnabled) {'),
+  'tablet sessions keep the terminal full width behind an accessible picker while document surfaces reflow instead of clipping or silently offering unavailable remote controls');
   check(/setSessionExitObserver/.test(mainSrc) && /exitObserver\?\./.test(sessionManagerSrc),
     'PTY exits reach the notification classifier even for providers with no hook bus');
   check(/tui\.notifications=/.test(sessionManagerSrc) && /scanCodexNotifications/.test(sessionManagerSrc)
@@ -1593,7 +1649,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'Claude Platform API key', 'GLM Coding Plan', 'DeepSeek', 'Installed agent runtimes',
     'Projects', 'Worktrees', 'Trust and the policy ledger', 'Spending', 'Dispatcher',
     'Phone monitor', 'MCP servers', 'Observation', 'What leaves this machine', 'Storage',
-    'Motion', 'Demo mode',
+    'Appearance', 'Motion', 'Demo mode',
   ];
   const settingsPanels = ['agents', 'projects', 'automation', 'connections', 'privacy', 'app'];
   check(settingsSurfaces.every((surface) => settingsSrc.includes(surface))

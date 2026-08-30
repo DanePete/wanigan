@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Terminal } from '@xterm/xterm';
+import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 
@@ -20,6 +20,84 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
  * and mounting only ever moves that container into whatever host is current.
  */
 const pool = new Map<string, { term: Terminal; fit: FitAddon; container: HTMLDivElement; primed: boolean }>();
+
+/** Touch-first surfaces need a reading size, not a desktop-density compromise. */
+function terminalFontSize(): number {
+  try { return window.matchMedia?.('(pointer: coarse)').matches ? 15.5 : 12.5; }
+  catch { return 12.5; }
+}
+
+const terminalFallback: Required<ITheme> = {
+  background: '#14100d', foreground: '#f6eedf', cursor: '#fa7650', cursorAccent: '#1a100c',
+  selectionBackground: '#4a3328', selectionForeground: '', selectionInactiveBackground: '#3b2a22',
+  black: '#18120f', brightBlack: '#b4a895', red: '#ff9188', brightRed: '#ffb7b1',
+  green: '#7be3a2', brightGreen: '#a6f1be', yellow: '#ffd16d', brightYellow: '#ffe29b',
+  blue: '#80a9ff', brightBlue: '#aac5ff', magenta: '#c1a9ff', brightMagenta: '#dccdff',
+  cyan: '#79d5d1', brightCyan: '#a7e9e5', white: '#f6eedf', brightWhite: '#fffaf0',
+  extendedAnsi: [],
+};
+
+/** Read the semantic CSS palette so xterm follows the rest of the app. */
+function terminalTheme(): ITheme {
+  if (typeof document === 'undefined') return terminalFallback;
+  const css = getComputedStyle(document.documentElement);
+  const token = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
+  return {
+    background: token('--terminal-bg', terminalFallback.background),
+    foreground: token('--terminal-fg', terminalFallback.foreground),
+    cursor: token('--terminal-cursor', terminalFallback.cursor),
+    cursorAccent: token('--accent-ink', terminalFallback.cursorAccent),
+    selectionBackground: token('--terminal-selection', terminalFallback.selectionBackground),
+    selectionInactiveBackground: token('--terminal-selection', terminalFallback.selectionInactiveBackground),
+    black: token('--terminal-black', terminalFallback.black),
+    brightBlack: token('--terminal-bright-black', terminalFallback.brightBlack),
+    red: token('--terminal-red', terminalFallback.red),
+    brightRed: token('--terminal-bright-red', terminalFallback.brightRed),
+    green: token('--terminal-green', terminalFallback.green),
+    brightGreen: token('--terminal-bright-green', terminalFallback.brightGreen),
+    yellow: token('--terminal-yellow', terminalFallback.yellow),
+    brightYellow: token('--terminal-bright-yellow', terminalFallback.brightYellow),
+    blue: token('--terminal-blue', terminalFallback.blue),
+    brightBlue: token('--terminal-bright-blue', terminalFallback.brightBlue),
+    magenta: token('--terminal-magenta', terminalFallback.magenta),
+    brightMagenta: token('--terminal-bright-magenta', terminalFallback.brightMagenta),
+    cyan: token('--terminal-cyan', terminalFallback.cyan),
+    brightCyan: token('--terminal-bright-cyan', terminalFallback.brightCyan),
+    white: token('--terminal-white', terminalFallback.white),
+    brightWhite: token('--terminal-bright-white', terminalFallback.brightWhite),
+  };
+}
+
+/** Theme changes must repaint the existing terminal, never recreate its PTY. */
+function refreshTerminalThemes() {
+  const next = terminalTheme();
+  for (const { term } of pool.values()) {
+    term.options.theme = next;
+    if (term.rows > 0) term.refresh(0, term.rows - 1);
+  }
+}
+
+/** A media change updates the existing xterm canvas and preserves its buffer. */
+function refreshTerminalFontSizes() {
+  const next = terminalFontSize();
+  for (const [sessionId, entry] of pool) {
+    if (entry.term.options.fontSize === next) continue;
+    entry.term.options.fontSize = next;
+    if (!entry.container.isConnected || entry.container.clientWidth < 2 || entry.container.clientHeight < 2) continue;
+    try {
+      entry.fit.fit();
+      window.wanigan.sessions.resize(sessionId, entry.term.cols, entry.term.rows);
+      if (entry.term.rows > 0) entry.term.refresh(0, entry.term.rows - 1);
+    } catch { /* a hidden tab gets a normal fit when it becomes visible */ }
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('wanigan:theme-changed', refreshTerminalThemes);
+  const coarsePointer = window.matchMedia?.('(pointer: coarse)');
+  if (coarsePointer?.addEventListener) coarsePointer.addEventListener('change', refreshTerminalFontSizes);
+  else coarsePointer?.addListener?.(refreshTerminalFontSizes);
+}
 
 export function disposePane(sessionId: string) {
   const p = pool.get(sessionId);
@@ -42,26 +120,16 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
     if (!entry) {
       const term = new Terminal({
         fontFamily: "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace",
-        fontSize: 12.5,
+        fontSize: terminalFontSize(),
         lineHeight: 1.32,
         cursorBlink: true,
         scrollback: 20_000,
         allowProposedApi: true,
         // The terminal is the largest surface in the app, so it takes the same
-        // warm ink ground as the chrome — a cool-black rectangle inside warm
-        // chrome reads as a bug. ANSI slots stay recognisably themselves:
-        // scripts colour their own output and nobody's red should look orange.
+        // semantic palette as chrome. Its pool survives theme changes: only
+        // xterm's paint options update, never the session, DOM host, or buffer.
         theme: {
-          background: '#14100d', foreground: '#ece4d0', cursor: '#e0552c',
-          selectionBackground: '#3d2f26',
-          black: '#14100d',   brightBlack: '#8a7f70',
-          red: '#f0705a',     brightRed: '#f8a08f',
-          green: '#6cc98c',   brightGreen: '#96e0ae',
-          yellow: '#d9a441',  brightYellow: '#eec46e',
-          blue: '#7fa2fc',    brightBlue: '#a8c0fd',
-          magenta: '#c2a0ee', brightMagenta: '#dcc4f5',
-          cyan: '#68c9c4',    brightCyan: '#96dedb',
-          white: '#ece4d0',   brightWhite: '#fdf8ec',
+          ...terminalTheme(),
         },
       });
       const fit = new FitAddon();

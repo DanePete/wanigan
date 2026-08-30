@@ -19,6 +19,15 @@ directories:
 files:
   - out/**
 
+# electron-builder delegates native rebuilds to @electron/rebuild. Its cache
+# marker for node-pty records only the target architecture and Electron ABI;
+# it does not record node-pty's separate macOS `spawn-helper` executable. If a
+# partial prior rebuild leaves that helper out, the marker can make the next
+# package silently reuse the incomplete build. Clear just that marker before
+# each macOS target so node-gyp rebuilds both native targets for that arch.
+beforeBuild: ./scripts/prepare-node-pty-build.cjs
+afterPack: ./scripts/prepare-node-pty-build.cjs
+
 # ── The step that costs a day ───────────────────────────────────────────────
 #
 # node-pty and better-sqlite3 are external to the Vite bundle on purpose (see

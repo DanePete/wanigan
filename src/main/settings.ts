@@ -5,6 +5,7 @@ import {
   type WaniganSettings,
   type MotionSetting,
   type QueueSlots,
+  type ThemeSetting,
   type TrustLevel,
 } from '../shared/types';
 
@@ -60,6 +61,27 @@ export function motion(): MotionSetting {
   return v === 'full' || v === 'off' ? v : 'auto';
 }
 
+/** A narrow guard at the privileged boundary; renderer text is never trusted. */
+export function isThemeSetting(value: unknown): value is ThemeSetting {
+  return value === 'system' || value === 'light' || value === 'dark';
+}
+
+/** Defaults to the OS so a new install does not silently force a colour mode. */
+export function theme(): ThemeSetting {
+  const value = getSetting('theme', 'system');
+  return isThemeSetting(value) ? value : 'system';
+}
+
+/**
+ * Theme is set through a typed IPC path instead of the generic settings
+ * bridge. This keeps malformed renderer input from becoming a durable value.
+ */
+export function setTheme(value: unknown): ThemeSetting {
+  if (!isThemeSetting(value)) throw new Error('Theme must be system, light, or dark.');
+  setSetting('theme', value);
+  return value;
+}
+
 export function slotsSetting(): QueueSlots {
   try {
     const parsed = JSON.parse(getSetting('slots', JSON.stringify(DEFAULT_SLOTS))) as Partial<QueueSlots>;
@@ -102,6 +124,7 @@ export function allSettings(): WaniganSettings {
   return {
     spendCapUsd: spendCap(),
     motion: motion(),
+    theme: theme(),
     telemetry: f.telemetry,
     hooks: f.hooks,
     archiveTranscripts: f.archiveTranscripts,

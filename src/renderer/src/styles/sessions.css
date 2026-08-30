@@ -1,0 +1,263 @@
+/* Sessions owns its narrow-screen behavior.  The rest of the application may
+   use a document layout, but this view contains a live terminal: the active
+   conversation must retain the available width and never be squeezed merely
+   because the user needs to switch sessions. */
+
+.sessions-view .session-picker-heading,
+.sessions-view .session-picker-trigger,
+.sessions-view .session-picker-scrim {
+  display: none;
+}
+
+.sessions-view .session-picker-trigger-current {
+  max-width: min(26vw, 190px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.sessions-view .session-picker-count {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  padding-inline: 4px;
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--t-micro);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Below this point the session list is a true overlay, not a narrower first
+   column. A coarse pointer gets the same treatment through 960px so iPad
+   portrait has a calm, readable terminal. */
+@media (max-width: 860px), (pointer: coarse) and (max-width: 960px) {
+  .sessions-view .sessions {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .sessions-view .session-main {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .sessions-view .session-rail {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 31;
+    width: min(360px, calc(100% - 30px));
+    max-width: 100%;
+    border-right: 1px solid var(--line);
+    box-shadow: var(--shadow-popover);
+    transform: translateX(-104%);
+    visibility: hidden;
+    pointer-events: none;
+    /* The terminal is never moved or resized as the switcher opens. */
+    transition: transform 140ms ease, visibility 0s linear 140ms;
+  }
+
+  .sessions-view .sessions--picker-open .session-rail {
+    transform: translateX(0);
+    visibility: visible;
+    pointer-events: auto;
+    transition: transform 140ms ease;
+  }
+
+  .sessions-view .session-picker-heading {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 56px;
+    padding: 8px 10px 8px 14px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-soft);
+  }
+
+  .sessions-view .session-picker-heading .label {
+    display: block;
+    margin: 0;
+  }
+
+  .sessions-view .session-picker-current {
+    display: block;
+    max-width: 270px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-dim);
+    font-size: var(--t-small);
+  }
+
+  .sessions-view .session-picker-close {
+    display: grid;
+    width: 40px;
+    height: 40px;
+    flex: none;
+    place-items: center;
+    border-radius: var(--r-sm);
+    color: var(--text-dim);
+    font-size: 25px;
+    line-height: 1;
+  }
+
+  .sessions-view .session-picker-close:hover {
+    background: var(--bg-sunk);
+    color: var(--text);
+  }
+
+  .sessions-view .session-picker-scrim {
+    position: absolute;
+    z-index: 30;
+    inset: 0;
+    display: block;
+    border: 0;
+    background: var(--scrim);
+    cursor: default;
+  }
+
+  .sessions-view .tabbar {
+    min-height: 52px;
+    height: auto;
+    gap: 6px;
+    padding-inline: 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .sessions-view .tabbar::-webkit-scrollbar { display: none; }
+
+  /* One persistent, named switcher is easier to find than a row of truncated
+     project tabs. The active project appears inside it; the full list is one
+     tap away. */
+  .sessions-view .session-picker-trigger {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    display: inline-flex;
+    min-height: 42px;
+    padding-inline: 11px;
+    box-shadow: 8px 0 12px var(--bg-soft);
+    background: var(--bg-soft);
+    color: var(--text);
+    font-weight: 650;
+  }
+
+  .sessions-view .session-picker-trigger.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .sessions-view .session-picker-glyph {
+    font-size: 16px;
+    line-height: 1;
+  }
+
+  .sessions-view .session-tab,
+  .sessions-view .session-side-panel-toggle {
+    display: none;
+  }
+
+  .sessions-view .tab-new-session {
+    min-height: 42px;
+    margin-left: auto;
+  }
+
+  .sessions-view .term-full,
+  .sessions-view .term-split {
+    min-width: 0;
+  }
+
+  .sessions-view .terminal-host .xterm {
+    padding: 13px 14px;
+  }
+
+  .sessions-view .statusbar {
+    min-height: 42px;
+    height: auto;
+    padding-block: 4px;
+    gap: 5px 9px;
+    flex-wrap: wrap;
+    align-content: center;
+  }
+
+  .sessions-view .statusbar > .mono:first-child {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sessions-view .session-status-action {
+    min-height: 36px;
+    padding-inline: 7px;
+  }
+
+  .sessions-view .session-attachments > div:first-child {
+    align-items: flex-start !important;
+    flex-wrap: wrap;
+    gap: 7px !important;
+  }
+
+  .sessions-view .session-attachments > div:first-child > div:last-child {
+    width: 100%;
+    margin-left: 0 !important;
+  }
+
+  .sessions-view .session-attachments > div:first-child > div:last-child .btn {
+    flex: 1 1 140px;
+  }
+}
+
+/* iPad and other coarse pointers need controls that do not demand a precise
+   mouse target. xterm has its own input surface, so this only touches app UI. */
+@media (pointer: coarse) {
+  .sessions-view button,
+  .sessions-view .btn,
+  .sessions-view select,
+  .sessions-view input:not(.xterm-helper-textarea) {
+    min-height: 44px;
+  }
+
+  .sessions-view .session-item,
+  .sessions-view .past-main {
+    min-height: 48px;
+  }
+
+  .sessions-view .session-item {
+    padding-block: 8px;
+  }
+
+  .sessions-view .past-x {
+    min-width: 44px;
+  }
+
+  .sessions-view .session-picker-close,
+  .sessions-view .tab-new-session {
+    min-width: 44px;
+  }
+
+  .sessions-view .terminal-host .xterm {
+    padding: 14px 16px;
+  }
+}
+
+@media (max-width: 520px) {
+  .sessions-view .session-picker-trigger-current { display: none; }
+  .sessions-view .tab-new-session-text { display: none; }
+  .sessions-view .session-picker-trigger { padding-inline: 9px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sessions-view .session-rail,
+  .sessions-view .sessions--picker-open .session-rail {
+    transition: none;
+  }
+}

@@ -1,0 +1,72 @@
+/* Cross-surface compact layouts. Individual views keep their desktop character;
+   this layer prevents a narrow window or an iPad from turning the app into a
+   collection of clipped columns and undersized controls. */
+
+@media (max-width: 980px) {
+  .pane { padding: var(--s-4); }
+  .builder { grid-template-columns: minmax(0, 1fr); }
+  .builder-side { position: static; }
+  .chart-grid { grid-template-columns: minmax(0, 1fr); }
+  .stat-grid-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .fleet-controls { align-items: flex-start; width: 100%; }
+  .fleet-seg { max-width: 100%; overflow-x: auto; }
+  .fleet-grid { grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); }
+  .gt { grid-template-columns: minmax(0, 1fr); }
+  .gt-col + .gt-col { border-left: 0; border-top: 1px solid var(--line); }
+  .gt-col:last-child { min-height: min(52vh, 560px); }
+  .skills-view.reading { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(220px, 42vh); }
+  .skills-reader { border-left: 0; border-top: 1px solid var(--line); }
+  .pg-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  .pane { padding: var(--s-3); gap: var(--s-3); }
+  .pane-head { align-items: flex-start; }
+  .pane-head > div:last-child { margin-left: 0; }
+  .stat-grid, .stat-grid-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .row2, .row3 { grid-template-columns: minmax(0, 1fr); }
+  .preset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fleet-grid { grid-template-columns: minmax(0, 1fr); }
+  .fleet-controls, .fleet-seg { align-items: flex-start; flex-wrap: wrap; }
+  .fleet-updated { align-self: flex-start; }
+  .fleet-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .sc-wrap, .pg-wrap { padding: var(--s-3) var(--s-3) calc(var(--s-5) + env(safe-area-inset-bottom)); }
+  .sc-row > .sc-f { flex: 1 1 100% !important; min-width: 0 !important; }
+  .sc-item, .pg-card { padding: var(--s-3); }
+  .pg-grid { grid-template-columns: minmax(0, 1fr); }
+  .pg-reader { padding: var(--s-2); }
+  .pg-reader-in { max-height: calc(100vh - var(--s-4)); }
+  .gt-row { min-height: 42px; height: auto; }
+  .gt-graph { width: 72px; }
+  .gt-who { display: none; }
+  .gt-file { min-height: 40px; }
+  .skills-view.reading { grid-template-rows: minmax(0, 1fr) minmax(260px, 48vh); }
+  .skills-reader-body { padding-bottom: calc(var(--s-5) + env(safe-area-inset-bottom)); }
+  .ctx-slot { grid-template-columns: 20px minmax(0, 1fr); gap: var(--s-2); }
+  .ctx-slot .how { grid-column: 2; }
+}
+
+@media (max-width: 460px) {
+  .stat-grid, .stat-grid-5, .stat-2 { grid-template-columns: minmax(0, 1fr); }
+  .preset-grid { grid-template-columns: minmax(0, 1fr); }
+  .fleet-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fleet-metric:last-child { grid-column: 1 / -1; }
+  .fleet-foot { align-items: flex-start; flex-direction: column; }
+  .fleet-open { margin-left: 0; }
+  .gt-graph { display: none; }
+  .gt-row { grid-template-columns: minmax(0, 1fr); padding: var(--s-2) var(--s-3); }
+  .gt-msg { white-space: normal; }
+  .pg-item { align-items: flex-start; min-height: 36px; }
+  .pg-item .k { width: 46px; }
+}
+
+/* A mouse can happily hit a compact toolbar; a finger needs deliberate space.
+   This only expands controls on coarse-pointer devices, preserving desktop
+   density while meeting the iPad's 44pt comfort target. */
+@media (pointer: coarse) {
+  .btn, .field { min-height: 44px; }
+  .pill { min-height: 32px; align-items: center; }
+  .tabs button, .fleet-chip, .fleet-segbtn, .sc-preset, .gt-chip, .skills-chip, .skills-chip-clear, .pg-expand { min-height: 40px; }
+  .fleet-card, .pg-item, .sc-actions .btn { min-height: 44px; }
+  .table-scroll, .scroll-x, .fleet-scroll, .ctx-scroll, .skills-roots-wrap { -webkit-overflow-scrolling: touch; }
+}

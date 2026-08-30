@@ -113,10 +113,9 @@
    as a transform. The base element is 1px wide and scaled to the real width;
    .has-ink is only added once a measurement succeeded, so the CSS border
    underneath stays the fallback if it never does. */
-.nav-tabs { position: relative; overflow-x: auto; }
-.nav-tabs::-webkit-scrollbar { display: none; }
-/* Seven tabs in a narrow window scroll in their own container; the shell never
-   scrolls sideways, and a tab never squeezes its label. */
+.nav-tabs { position: relative; }
+/* The route rail owns its overflow. It stays horizontally scrollable at every
+   width rather than letting labels compress into unusable hit targets. */
 .nav-tabs > .nav-tab { flex: none; }
 
 .nav-ink {

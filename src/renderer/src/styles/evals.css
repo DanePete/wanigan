@@ -51,7 +51,7 @@
   max-height: 264px; overflow-y: auto; overflow-x: hidden;
   padding: 4px; list-style: none;
   background: var(--bg-soft); border: 1px solid var(--line); border-radius: 9px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, .5);
+  box-shadow: var(--shadow-popover);
 }
 .skills-pop[hidden] { display: none; }
 .skills-opt {
