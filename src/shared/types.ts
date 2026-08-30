@@ -216,6 +216,8 @@ export type PastSession = {
   projectId: string | null;
   projectPath: string;
   projectName: string;
+  /** Original isolated checkout, when this conversation has one. */
+  worktree: string | null;
   model: string | null;
   effort: string | null;
   permissionMode: string | null;

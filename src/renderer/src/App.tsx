@@ -255,18 +255,13 @@ export default function App() {
     const s = sessionsRef.current.find((x) => x.id === id);
     if (s) choose(s.projectId);
     go('sessions');
-    // Sessions owns its own tab selection; this is the request to focus one.
-    window.dispatchEvent(new CustomEvent('wanigan:open-session', { detail: { sessionId: id } }));
   }, [choose, go]);
 
-  useEffect(() => {
-    const onFocused = (e: Event) => {
-      const id = (e as CustomEvent<{ sessionId?: string }>).detail?.sessionId;
-      if (id) setActiveSessionId(id);
-    };
-    window.addEventListener('wanigan:session-focused', onFocused);
-    return () => window.removeEventListener('wanigan:session-focused', onFocused);
-  }, []);
+  const focusSession = useCallback((id: string, projectId?: string) => {
+    setActiveSessionId(id);
+    const project = projectId ?? sessionsRef.current.find((x) => x.id === id)?.projectId;
+    if (project) choose(project);
+  }, [choose]);
 
   // ⌘1–9. Capture phase, because Sessions binds ⌘1–9 to its own tabs and only
   // one of us can win; inside a terminal neither of us takes the key.
@@ -472,6 +467,7 @@ export default function App() {
         {tab === 'sessions' && (
           <Sessions providers={providers} projects={projects}
                     onAddProject={addProject} onError={setError}
+                    activeId={activeSessionId} onActiveChange={focusSession}
                     onSendToBatch={(seed) => { setBatchSeed(seed); go('batches'); }} />
         )}
         {tab === 'fleet' && <Fleet projects={projects} onOpenSession={openSession} />}

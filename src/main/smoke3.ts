@@ -6,6 +6,8 @@ import { execFileSync } from 'node:child_process';
 import { createServer as createNetServer } from 'node:net';
 import Database from 'better-sqlite3';
 import * as worktrees from './worktrees';
+import * as code from './code';
+import { loadSource } from './batch/sources';
 import * as transcripts from './transcripts';
 import * as notify from './notify';
 import * as spend from './spend';
@@ -34,7 +36,7 @@ import { forgetPastSession, pastSessions, reconcileAbandonedSessions, scanCodexN
 import { backfillCodexThreadIds, captureNewCodexThreadId, matchCodexThreads } from './codex-sessions';
 import { __test as codexUsageTest } from './codex-usage';
 import { getSetting, setSetting } from './settings';
-import { db } from './db';
+import { dataDir, db, resultsDir } from './db';
 import { addProject } from './store';
 import { EMPTY_USAGE, type HookInput, type RunConfig, type Session } from '../shared/types';
 
@@ -67,6 +69,10 @@ function appRoot(): string {
 
 function sourceOf(rel: string): string {
   try { return fs.readFileSync(path.join(appRoot(), rel), 'utf8'); } catch { return ''; }
+}
+
+function permissionBits(file: string): number {
+  return fs.statSync(file).mode & 0o777;
 }
 
 /** Every file under a directory, so a check cannot pass by looking at nothing. */
@@ -223,6 +229,36 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(!threw, `search survives the query ${JSON.stringify(q)}`);
   }
 
+  /* ── Files panel · symlinks never escape the project ──────────────── */
+  say('── Files panel confinement');
+  try {
+    const filesRoot = path.join(tmp, 'files-panel');
+    const outside = path.join(tmp, 'not-in-project.txt');
+    fs.mkdirSync(filesRoot, { recursive: true });
+    fs.writeFileSync(path.join(filesRoot, 'inside.txt'), 'inside the project\n');
+    fs.writeFileSync(outside, 'this must not appear in the Files panel\n');
+    fs.symlinkSync(outside, path.join(filesRoot, 'escape.txt'), 'file');
+
+    const listed = code.listDir(filesRoot, '');
+    check(listed.some((entry) => entry.name === 'inside.txt') && !listed.some((entry) => entry.name === 'escape.txt'),
+      'the Files panel lists ordinary project files but omits symlinks');
+    check(code.readProjectFile(filesRoot, 'inside.txt').text.includes('inside the project'),
+      'the Files panel still reads an ordinary in-project file');
+    let rejected = false;
+    try { code.readProjectFile(filesRoot, 'escape.txt'); }
+    catch (error) { rejected = /symlink|outside the project/i.test(error instanceof Error ? error.message : String(error)); }
+    check(rejected,
+      'a direct Files-panel read through a repository symlink is rejected rather than following it');
+
+    const globRows = await loadSource({ kind: 'glob', root: filesRoot, pattern: '**/*', maxBytes: 1024 });
+    const listedRows = await loadSource({ kind: 'files', root: filesRoot, paths: ['inside.txt', 'escape.txt'], maxBytes: 1024 });
+    check(globRows.rows.length === 1 && listedRows.rows.length === 1
+      && !JSON.stringify([...globRows.rows, ...listedRows.rows]).includes('must not appear'),
+    'batch file and glob sources also refuse repository symlinks outside their root');
+  } catch (error) {
+    check(false, `Files-panel confinement suite threw: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
   /* ── phase 4 · archiving follows the CLI, not the provider label ───── */
   // GLM is the Claude Code binary pointed at Z.ai, so it fills ~/.claude/projects
   // exactly as Claude does. Testing the provider id here refused every GLM
@@ -248,6 +284,14 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       }) + '\n'
     );
 
+    // A permissive directory/file can survive an older version or a changed
+    // umask. Archiving must correct both before leaving a new transcript copy.
+    fs.mkdirSync(transcripts.transcriptsDir(), { recursive: true, mode: 0o755 });
+    fs.chmodSync(transcripts.transcriptsDir(), 0o755);
+    const staleArchive = path.join(transcripts.transcriptsDir(), 's_smoke_glm.jsonl');
+    fs.writeFileSync(staleArchive, 'stale transcript\n', { mode: 0o644 });
+    fs.chmodSync(staleArchive, 0o644);
+
     const logRow = db().prepare(`
       INSERT INTO session_log (id, conversation_id, provider_id, project_id, project_path,
                                project_name, started_at, bin, harness_id, provider_profile_json)
@@ -267,6 +311,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(glm.ok, 'a GLM session is archived — it runs the claude CLI and writes the same file', glm.note);
     check(fs.existsSync(path.join(transcripts.transcriptsDir(), 's_smoke_glm.jsonl')),
       'the bytes are copied into Wanigan’s own directory, which is the record of truth');
+    check(permissionBits(transcripts.transcriptsDir()) === 0o700 && permissionBits(staleArchive) === 0o600,
+      'archived transcript directories and overwritten transcript files are owner-only');
     const hits = transcripts.searchTranscripts('zeppelin', 10);
     const mine = hits.find((h) => h.sessionId === 's_smoke_glm');
     check(mine !== undefined, 'and its turns are searchable', hits.length);
@@ -293,6 +339,25 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     if (prevConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
     else process.env.CLAUDE_CONFIG_DIR = prevConfigDir;
     fs.rmSync(claudeHome, { recursive: true, force: true });
+  }
+
+  /* ── local storage permissions ────────────────────────────────────── */
+  say('── private local storage');
+  try {
+    const database = path.join(dataDir(), 'wanigan.db');
+    check(permissionBits(dataDir()) === 0o700 && permissionBits(database) === 0o600,
+      'Wanigan user data and its SQLite database are owner-only');
+    const sqliteSidecars = ['-wal', '-shm']
+      .map((suffix) => `${database}${suffix}`)
+      .filter((file) => fs.existsSync(file));
+    check(sqliteSidecars.every((file) => permissionBits(file) === 0o600),
+      'SQLite journal sidecars are owner-only when present', sqliteSidecars);
+    const resultFiles = fs.readdirSync(resultsDir()).filter((name) => /\.(?:jsonl|mock\.json)$/.test(name));
+    check(permissionBits(resultsDir()) === 0o700 && resultFiles.length > 0 &&
+      resultFiles.every((name) => permissionBits(path.join(resultsDir(), name)) === 0o600),
+    'batch result archives and their directory are owner-only', resultFiles);
+  } catch (error) {
+    check(false, `private local storage suite threw: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   /* ── phase 14 · the polling curve ──────────────────────────────────── */
@@ -580,6 +645,19 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   /* ── phase 2 · the file a session is launched with ─────────────────── */
   say('── phase 2 · hook settings');
   const hs = await hooks.startHookServer();
+  type GeneratedHookHandler = { url: string; authorization: string };
+  const handlerFromSettings = (file: string | null): GeneratedHookHandler | null => {
+    if (!file) return null;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as {
+        hooks?: { PreToolUse?: Array<{ hooks?: Array<{ url?: unknown; headers?: { Authorization?: unknown } }> }> };
+      };
+      const handler = parsed.hooks?.PreToolUse?.[0]?.hooks?.[0];
+      return typeof handler?.url === 'string' && typeof handler.headers?.Authorization === 'string'
+        ? { url: handler.url, authorization: handler.headers.Authorization }
+        : null;
+    } catch { return null; }
+  };
   const hookedId = 's_smoke_hooked';
   const settingsFile = hooks.writeHookSettings(hookedId, tmp);
   check(settingsFile !== null && fs.existsSync(settingsFile),
@@ -593,8 +671,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // tracked files to instrument itself turns up in their next commit.
     check(!path.resolve(settingsFile).startsWith(path.resolve(tmp) + path.sep),
       'and it is written outside the project, never into .claude/settings.json');
-    check(raw.includes(`?s=${hookedId}`),
-      'the session id rides the callback URL — the only thing that attributes an event to a pane');
+    const handler = handlerFromSettings(settingsFile);
+    check(handler?.url === `http://127.0.0.1:${hs.port}/hook` && /^Bearer [A-Za-z0-9_-]{43}$/.test(handler?.authorization ?? ''),
+      'the callback carries an opaque per-session capability, never a session id in its URL');
     hooks.cleanupHookSettings(hookedId);
     check(!fs.existsSync(settingsFile), 'it is deleted when the session ends; it holds a bearer token');
   }
@@ -603,14 +682,11 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   say('── phase 19 · unattended policy');
   const fanRun = 'r_smokefanout';
   const fanProject = 'prj_smokefanout';
-  // Exactly what headless.ts builds. If this string does not survive the URL
-  // query and the listener's 128-character clip unchanged, contextForSession
-  // returns null, the call falls through to the interactive resolver, and the
-  // fan-out silently reverts to being judged at the default trust with a null
-  // root — the bug the registration exists to remove, with no visible symptom.
+  // Exactly what headless.ts builds. It is now bound server-side by an opaque
+  // capability rather than sent back by the agent in the callback URL/body.
   const fanId = `h_${fanRun}__${fanProject}`;
-  check(encodeURIComponent(fanId) === fanId && fanId.length <= 128,
-    'the fan-out session id survives a URL query and the id clip unchanged', fanId);
+  check(fanId.length <= 128,
+    'the fan-out id remains a compact key for its server-side hook capability', fanId);
 
   const fanRepo = path.join(tmp, 'fanout');
   fs.mkdirSync(fanRepo, { recursive: true });
@@ -636,16 +712,25 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'the identical call on an attended session is still asked, not denied');
 
   // End to end through the live listener, because the unit test above proves
-  // nothing about whether the id actually arrives.
-  const hookPost = (sessionId: string, body: unknown) =>
-    fetch(`http://127.0.0.1:${hs.port}/hook?s=${encodeURIComponent(sessionId)}`, {
+  // nothing about whether a headless config resolves back to its exact context.
+  const fanHookFile = hooks.writeHookSettings(fanId, fanRepo);
+  const fanHandler = handlerFromSettings(fanHookFile);
+  check(fanHandler !== null, 'a headless row receives the same per-session hook capability as a pane');
+  const anonymousHookId = 's_smoke_unregistered';
+  const anonymousHookFile = hooks.writeHookSettings(anonymousHookId, tmp);
+  const anonymousHandler = handlerFromSettings(anonymousHookFile);
+  check(anonymousHandler !== null, 'an unregistered session can still authenticate without receiving a guessed policy context');
+  const hookPost = (handler: GeneratedHookHandler | null, body: unknown) => {
+    if (!handler) throw new Error('The smoke hook settings did not contain an HTTP capability.');
+    return fetch(handler.url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${hs.token}` },
+      headers: { 'content-type': 'application/json', authorization: handler.authorization },
       body: JSON.stringify(body),
     });
+  };
 
   const ledgerBefore = policy.ledger(200).length;
-  const wire = await hookPost(fanId, {
+  const wire = await hookPost(fanHandler, {
     hook_event_name: 'PreToolUse', tool_name: 'Write',
     tool_input: { file_path: path.join(tmp, 'not-in-the-worktree.txt') },
   });
@@ -659,7 +744,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(policy.ledger(200).length > ledgerBefore && entry?.projectId === fanProject,
     'and the ledger names the project it was registered against, not the default', entry?.projectId);
 
-  const started = await hookPost(fanId, { hook_event_name: 'SessionStart' });
+  const started = await hookPost(fanHandler, { hook_event_name: 'SessionStart' });
   const brief = ((await started.json()) as { hookSpecificOutput?: { additionalContext?: string } })
     .hookSpecificOutput?.additionalContext ?? '';
   check(brief.includes(fanRepo),
@@ -668,7 +753,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(/nobody is watching/i.test(brief),
     'and, only for an unattended run, that an unevaluable call is denied rather than queued');
 
-  const anon = await hookPost('s_smoke_unregistered', { hook_event_name: 'SessionStart' });
+  const anon = await hookPost(anonymousHandler, { hook_event_name: 'SessionStart' });
   check(Object.keys((await anon.json()) as Record<string, unknown>).length === 0,
     'a session with no registered context is told nothing rather than handed a guessed trust level');
 
@@ -682,6 +767,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'and an attended session is not told it is alone');
 
   policy.releasePolicyContext(fanId);
+  hooks.cleanupHookSettings(fanId);
+  hooks.cleanupHookSettings(anonymousHookId);
   check(policy.contextForSession(fanId) === null,
     'the context is released with the run, so a later run reusing the id cannot inherit it');
 
@@ -752,6 +839,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'the phone snapshot carries attention and aggregate usage');
   check(!remoteJson.includes(privateMarker) && !remoteJson.includes('conversation-') && !remoteJson.includes('42424'),
     'and omits paths, commands, pids, worktrees and conversation ids', remoteJson);
+  const redrawnTerminal = mobile.readableTerminal('building 100%\rDone\x1b[K\nvisible\x1bPprivate-control-data\x1b\\ text');
+  check(redrawnTerminal === 'Done\nvisible text',
+    'the mobile terminal renderer applies carriage-return/erase redraws and removes opaque control strings', redrawnTerminal);
 
   say('── phone fleet · authenticated loopback transport');
   const mobilePort = await unusedLoopbackPort();
@@ -988,12 +1078,13 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // Connection state genuinely is unknowable here (the CLI spawns these inside
   // the session's own process tree and reports nothing back), but use is not:
   // every MCP call arrives on the hook bus as mcp__<server>__<tool>.
-  const mcpCall = (tool: string, event = 'PostToolUse') =>
-    fetch(`http://127.0.0.1:${hs.port}/hook?s=s_smoke_mcp`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${hs.token}` },
-      body: JSON.stringify({ hook_event_name: event, tool_name: tool, tool_use_id: `t_${Math.random()}` }),
-    });
+  const mcpHookId = 's_smoke_mcp';
+  const mcpHookFile = hooks.writeHookSettings(mcpHookId, tmp);
+  const mcpHandler = handlerFromSettings(mcpHookFile);
+  check(mcpHandler !== null, 'MCP-use telemetry is carried by a scoped hook capability');
+  const mcpCall = (tool: string, event = 'PostToolUse') => hookPost(mcpHandler, {
+    hook_event_name: event, tool_name: tool, tool_use_id: `t_${Math.random()}`,
+  });
   await mcpCall('mcp__smoke-fs__read_file');
   await mcpCall('mcp__smoke-fs__read_file');
   await mcpCall('mcp__smoke-fs__write_file', 'PostToolUseFailure');
@@ -1001,6 +1092,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // hooks.ts clips a tool name at 64 characters, so a clipped id can lose its
   // second separator. Dropped rather than credited to a server that never ran.
   await mcpCall('mcp__smoke-fs');
+  hooks.cleanupHookSettings(mcpHookId);
 
   const use = mcpRegistry.serverStatuses().find((x) => x.id === srv.id);
   check(use?.toolCalls === 3, 'MCP use is counted from the calls the agents actually made', use?.toolCalls);
@@ -1076,6 +1168,35 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(off?.enabled === false && off?.nextAt === null, 'disabling disarms it rather than leaving it primed');
   const on = schedule.setScheduleEnabled(sch.id, true);
   check(on?.nextAt !== null && (on?.nextAt ?? 0) > Date.now(), 're-enabling re-arms from now, not from the backlog');
+
+  // An attended window and the background service can both retain the same
+  // due row from their initial SELECT. Claim that deliberately stale snapshot
+  // twice, then run a normal later tick: only the first may enqueue or record
+  // a firing. This reaches the cross-process CAS, not just the local guard.
+  const atomicName = `smoke atomic once ${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const atomic = schedule.createSchedule({
+    name: atomicName, cron: '* * * * *', kind: 'headless', payload: { prompt: 'run once' }, projectId: null,
+  });
+  db().prepare('UPDATE schedules SET next_at=? WHERE id=?').run(Date.now() - 1, atomic.id);
+  try {
+    const stale = db().prepare('SELECT * FROM schedules WHERE id=?').get(atomic.id) as
+      Parameters<typeof schedule.__test.claimDueSnapshot>[0];
+    const claimAt = Date.now();
+    const first = schedule.__test.claimDueSnapshot(stale, claimAt);
+    const concurrent = schedule.__test.claimDueSnapshot(stale, claimAt);
+    const repeated = await schedule.tickSchedules();
+    const queued = db().prepare('SELECT COUNT(*) AS n FROM queue WHERE label=?').get(atomicName) as { n: number };
+    const fired = schedule.listSchedules().find((row) => row.id === atomic.id);
+    const history = schedule.scheduleHistory(atomic.id);
+    check(first && !concurrent && repeated === 0,
+      'stale concurrent and repeated ticks cannot fire one due schedule twice', JSON.stringify({ first, concurrent, repeated }));
+    check(queued.n === 1 && fired?.runs === 1 && history.length === 1,
+      'an atomic schedule claim makes exactly one queue item and history row',
+      JSON.stringify({ queued: queued.n, runs: fired?.runs, history: history.length }));
+  } finally {
+    db().prepare('DELETE FROM queue WHERE label=?').run(atomicName);
+    schedule.deleteSchedule(atomic.id);
+  }
 
   let rejected = false;
   try { schedule.createSchedule({ name: 'bad', cron: '0 0 31 2 *', kind: 'headless', payload: {} }); }
@@ -1300,30 +1421,59 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(listGoalTrace(docket.id).some((trace) => trace.sessionId === receiptSession && trace.toolName === 'Read'),
       'content-free hook evidence is correlated to its durable Goal task');
     const goalMcp = await mcpServer.startMcpServer();
-    const rpc = async (method: string, params: Record<string, unknown> = {}, sessionId?: string) => {
+    const otherSession = `s_other_${Date.now().toString(36)}`;
+    db().prepare(`INSERT INTO session_log (id,conversation_id,provider_id,project_id,project_path,project_name,started_at)
+      VALUES (?,?,?,?,?,?,?)`).run(otherSession, null, 'codex', controlProject.id, controlRepo, 'control', Date.now());
+    const ownConfig = mcpRegistry.writeMcpConfig(controlProject.id, controlRepo, receiptSession);
+    const otherConfig = mcpRegistry.writeMcpConfig(controlProject.id, controlRepo, otherSession);
+    const capability = (file: string | null) => {
+      if (!file) return '';
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { mcpServers?: { wanigan?: { headers?: { Authorization?: string; 'X-Wanigan-Session'?: string } } } };
+      return parsed.mcpServers?.wanigan?.headers?.Authorization?.replace(/^Bearer\s+/, '') ?? '';
+    };
+    const ownToken = capability(ownConfig);
+    const otherToken = capability(otherConfig);
+    const rpc = async (token: string, method: string, params: Record<string, unknown> = {}, spoofedSessionId?: string) => {
       const response = await fetch(goalMcp.url, { method: 'POST', headers: {
-        'content-type': 'application/json', authorization: `Bearer ${goalMcp.token}`,
-        ...(sessionId ? { 'x-wanigan-session': sessionId } : {}),
+        'content-type': 'application/json', authorization: `Bearer ${token}`,
+        ...(spoofedSessionId ? { 'x-wanigan-session': spoofedSessionId } : {}),
       }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
-      return response.json() as Promise<{ result?: any }>;
+      return { status: response.status, body: await response.json() as { result?: any } };
     };
     try {
-      const listedTools = await rpc('tools/list');
-      check(listedTools.result?.tools?.some((tool: { name?: string }) => tool.name === 'wanigan_get_goal'),
+      check(ownConfig !== null && otherConfig !== null && ownConfig !== otherConfig,
+        'concurrent sessions receive separate MCP config files');
+      check(ownToken.length > 40 && otherToken.length > 40 && ownToken !== otherToken,
+        'each generated MCP config carries a distinct opaque session capability');
+      if (ownConfig) {
+        const ownJson = fs.readFileSync(ownConfig, 'utf8');
+        check(!ownJson.includes('X-Wanigan-Session') && (fs.statSync(ownConfig).mode & 0o077) === 0,
+          'MCP configs do not expose a forgeable session header and remain owner-readable only');
+      }
+      check(!('token' in goalMcp), 'MCP server status returned to callers contains no bearer token');
+      const listedTools = await rpc(ownToken, 'tools/list');
+      check(listedTools.body.result?.tools?.some((tool: { name?: string }) => tool.name === 'wanigan_get_goal'),
         'Wanigan MCP advertises durable Goal tools to supported sessions');
-      const readGoal = await rpc('tools/call', { name: 'wanigan_get_goal', arguments: { goalId: docket.id } });
-      check(readGoal.result?.structuredContent?.goal?.id === docket.id,
+      const readGoal = await rpc(ownToken, 'tools/call', { name: 'wanigan_get_goal', arguments: { goalId: docket.id } });
+      check(readGoal.body.result?.structuredContent?.goal?.id === docket.id,
         'Wanigan MCP returns a Goal contract as structured content');
-      const deniedClaim = await rpc('tools/call', { name: 'wanigan_goal_claim', arguments: { nodeId: planNode.id, path: 'other.ts' } }, 's_someone_else');
-      check(deniedClaim.result?.isError === true,
-        'a copied MCP config cannot mutate a different session’s Goal task');
-      const ownCheckpoint = await rpc('tools/call', { name: 'wanigan_goal_checkpoint', arguments: { nodeId: planNode.id, note: 'MCP checkpoint.' } }, receiptSession);
-      check(ownCheckpoint.result?.structuredContent?.checkpoint?.nodeId === planNode.id,
-        'the owning session can record a scoped Goal checkpoint through MCP');
-      const resource = await rpc('resources/read', { uri: 'ui://wanigan/goal-inspector' });
-      check(typeof resource.result?.contents?.[0]?.text === 'string',
+      const ownCheckpoint = await rpc(ownToken, 'tools/call', { name: 'wanigan_goal_checkpoint', arguments: { nodeId: planNode.id, note: 'MCP checkpoint.' } }, otherSession);
+      check(ownCheckpoint.body.result?.structuredContent?.checkpoint?.nodeId === planNode.id,
+        'the owning capability still works when a forged session header is supplied');
+      const deniedClaim = await rpc(otherToken, 'tools/call', { name: 'wanigan_goal_claim', arguments: { nodeId: planNode.id, path: 'other.ts' } }, receiptSession);
+      check(deniedClaim.body.result?.isError === true,
+        'another valid session capability cannot mutate this session’s Goal task');
+      const resource = await rpc(ownToken, 'resources/read', { uri: 'ui://wanigan/goal-inspector' });
+      check(typeof resource.body.result?.contents?.[0]?.text === 'string',
         'the Goal inspector MCP App resource is available without network access');
-    } finally { mcpServer.stopMcpServer(); }
+      db().prepare('UPDATE session_log SET ended_at=? WHERE id=?').run(Date.now(), receiptSession);
+      const expired = await rpc(ownToken, 'ping');
+      check(expired.status === 401, 'an ended session’s MCP capability is rejected even if its config remains on disk');
+    } finally {
+      mcpRegistry.cleanupMcpConfig(ownConfig, receiptSession);
+      mcpRegistry.cleanupMcpConfig(otherConfig, otherSession);
+      mcpServer.stopMcpServer();
+    }
   } catch (error) {
     check(false, `durable work control suite threw: ${error instanceof Error ? error.message : String(error)}`);
   }

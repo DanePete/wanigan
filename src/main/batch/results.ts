@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { db, logEvent, resultsDir } from '../db';
+import { finished } from 'node:stream/promises';
+import { db, ensurePrivateDir, ensurePrivateFile, logEvent, PRIVATE_FILE_MODE, resultsDir } from '../db';
 import { client, isMock } from './anthropic';
 import { costOf } from './pricing';
 import type { CacheTtl } from '../../shared/types';
@@ -23,8 +24,14 @@ type ResultLine = {
 export async function ingestResults(runId: string, batchId: string, model: string): Promise<{ ingested: number }> {
   const d = db();
   const archive = path.join(resultsDir(), `${batchId}.jsonl`);
-  fs.mkdirSync(resultsDir(), { recursive: true });
-  const out = fs.createWriteStream(archive, { flags: 'w' });
+  ensurePrivateDir(resultsDir());
+  // Correct an archive left by an older version before truncating it; the mode
+  // option below only applies when the file did not already exist.
+  if (fs.existsSync(archive)) ensurePrivateFile(archive);
+  const out = fs.createWriteStream(archive, { flags: 'w', mode: PRIVATE_FILE_MODE });
+  // Attach before the first write so an asynchronous open/write failure is
+  // observed rather than becoming an unhandled stream error.
+  const outputFinished = finished(out);
 
   const update = d.prepare(`
     UPDATE requests SET status=@status, output_text=@text, output_json=@json, stop_reason=@stop,
@@ -57,6 +64,8 @@ export async function ingestResults(runId: string, batchId: string, model: strin
   }
   if (buffer.length) flush(buffer);
   out.end();
+  await outputFinished;
+  ensurePrivateFile(archive);
 
   if (unmatched) {
     logEvent(runId, 'warn', `${unmatched} result line(s) had a custom_id not present in this run.`);

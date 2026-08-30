@@ -32,6 +32,15 @@ const RETRY_BASE_MS = 15_000;
 const RETRY_FACTOR = 2;
 const RETRY_CAP_MS = 10 * 60_000;
 
+// The desktop window and launchd service intentionally share one queue
+// database. A process-local `inFlight` map cannot prove a row belongs to a
+// crashed worker, so a claim has a durable owner and a renewable lease instead.
+// Two minutes tolerates a briefly blocked event loop without spuriously
+// launching a second paid worker; a crashed worker is still recovered promptly.
+const LEASE_MS = 120_000;
+const LEASE_RENEW_MS = 30_000;
+const DISPATCHER_OWNER = `queue-${process.pid}-${randomUUID()}`;
+
 /**
  * A 429 gets a much longer first pause than an ordinary failure.
  *
@@ -61,7 +70,6 @@ const inFlight = new Map<string, Promise<void>>();
 let ticking = false;
 let timer: NodeJS.Timeout | null = null;
 let onChangeCb: (() => void) | null = null;
-let recovered = false;
 let tickCount = 0;
 
 type QueueRow = {
@@ -78,6 +86,8 @@ type QueueRow = {
   started_at: number | null;
   ended_at: number | null;
   error: string | null;
+  lease_owner: string | null;
+  lease_expires_at: number | null;
 };
 
 /**
@@ -132,6 +142,8 @@ export function enqueue(kind: QueueKind, label: string, payload: unknown, priori
     started_at: null,
     ended_at: null,
     error: null,
+    lease_owner: null,
+    lease_expires_at: null,
   };
 
   db().prepare(`
@@ -295,7 +307,7 @@ export async function drain(): Promise<void> {
 async function dispatch(): Promise<void> {
   const d = db();
   const now = Date.now();
-  let moved = recoverOrphans();
+  let moved = recoverExpiredLeases(now);
 
   const limits = slots();
   const used: Record<QueueKind, number> = { session: 0, headless: 0, batch: 0 };
@@ -343,16 +355,25 @@ async function dispatch(): Promise<void> {
       continue;
     }
 
-    // Atomic claim: the WHERE clause is what stops a concurrent tick, or a
-    // second window on the same database file, from running this item twice.
+    // Atomic claim: the WHERE clause is what stops a concurrent tick or
+    // process from running this item twice. The durable lease prevents a new
+    // process from mistaking another process's in-memory work for an orphan.
     const claimed = d.prepare(
-      "UPDATE queue SET state='running', started_at=?, blocked_by=NULL, error=NULL WHERE id=? AND state='waiting'"
-    ).run(now, row.id);
+      "UPDATE queue SET state='running', started_at=?, blocked_by=NULL, error=NULL, lease_owner=?, lease_expires_at=? WHERE id=? AND state='waiting'"
+    ).run(now, DISPATCHER_OWNER, now + LEASE_MS, row.id);
     if (claimed.changes !== 1) continue;
 
     used[kind]++;
     moved = true;
-    const item = mapRow({ ...row, state: 'running', started_at: now, blocked_by: null, error: null });
+    const item = mapRow({
+      ...row,
+      state: 'running',
+      started_at: now,
+      blocked_by: null,
+      error: null,
+      lease_owner: DISPATCHER_OWNER,
+      lease_expires_at: now + LEASE_MS,
+    });
     const p = runItem(run, item, payload);
     inFlight.set(item.id, p);
   }
@@ -367,35 +388,62 @@ async function dispatch(): Promise<void> {
  * Completion is finalised here instead.
  */
 async function runItem(run: QueueRunner, item: QueueItem, payload: unknown): Promise<void> {
+  const stopHeartbeat = startLeaseHeartbeat(item.id);
   try {
     await run(payload, item);
     finish(item.id);
   } catch (e) {
     failOrRetry(item.id, e);
   } finally {
+    stopHeartbeat();
     inFlight.delete(item.id);
     emit();
   }
 }
 
+function startLeaseHeartbeat(id: string): () => void {
+  const heartbeat = setInterval(() => {
+    try {
+      // If this ever affects zero rows, another process has legitimately
+      // recovered the expired row. The stale runner may finish its own cleanup,
+      // but it can no longer alter the queue's authoritative state.
+      db().prepare(
+        "UPDATE queue SET lease_expires_at=? WHERE id=? AND state='running' AND lease_owner=?"
+      ).run(Date.now() + LEASE_MS, id, DISPATCHER_OWNER);
+    } catch (error) {
+      // The next heartbeat normally recovers a transient lock. Do not turn a
+      // worker's real result into an unhandled exception because SQLite was
+      // briefly busy with another Wanigan process.
+      console.warn('[wanigan] queue lease heartbeat failed:', error);
+    }
+  }, LEASE_RENEW_MS);
+  heartbeat.unref?.();
+  return () => clearInterval(heartbeat);
+}
+
 function finish(id: string) {
-  db().prepare("UPDATE queue SET state='done', ended_at=?, blocked_by=NULL, error=NULL WHERE id=? AND state='running'")
-    .run(Date.now(), id);
+  db().prepare(
+    "UPDATE queue SET state='done', ended_at=?, blocked_by=NULL, error=NULL, lease_owner=NULL, lease_expires_at=NULL WHERE id=? AND state='running' AND lease_owner=?"
+  ).run(Date.now(), id, DISPATCHER_OWNER);
 }
 
 function failOrRetry(id: string, e: unknown) {
   const d = db();
-  const row = d.prepare('SELECT * FROM queue WHERE id=?').get(id) as QueueRow | undefined;
-  // Gone or already resolved elsewhere — do not resurrect it.
-  if (!row || row.state !== 'running') return;
+  const row = d.prepare(
+    "SELECT * FROM queue WHERE id=? AND state='running' AND lease_owner=?"
+  ).get(id, DISPATCHER_OWNER) as QueueRow | undefined;
+  // Gone, resolved, or reclaimed after this worker stopped reporting — do not
+  // let a stale process resurrect or complete somebody else's queue row.
+  if (!row) return;
 
   const message = e instanceof Error ? e.message : String(e);
   const attempts = row.attempts + 1;
   const now = Date.now();
 
   if (attempts >= MAX_ATTEMPTS) {
-    d.prepare("UPDATE queue SET state='failed', attempts=?, ended_at=?, next_attempt_at=NULL, blocked_by=NULL, error=? WHERE id=?")
-      .run(attempts, now, `${message} (gave up after ${attempts} attempts)`, id);
+    d.prepare(
+      "UPDATE queue SET state='failed', attempts=?, ended_at=?, next_attempt_at=NULL, blocked_by=NULL, error=?, lease_owner=NULL, lease_expires_at=NULL WHERE id=? AND state='running' AND lease_owner=?"
+    ).run(attempts, now, `${message} (gave up after ${attempts} attempts)`, id, DISPATCHER_OWNER);
     return;
   }
 
@@ -406,8 +454,9 @@ function failOrRetry(id: string, e: unknown) {
     ? `Rate limited by the API — waiting ${Math.round(delay / 1000)}s before attempt ${attempts + 1} of ${MAX_ATTEMPTS}.`
     : `Attempt ${attempts} failed — retrying in ${Math.round(delay / 1000)}s.`;
 
-  d.prepare("UPDATE queue SET state='waiting', attempts=?, next_attempt_at=?, started_at=NULL, blocked_by=?, error=? WHERE id=?")
-    .run(attempts, at, blocked, message, id);
+  d.prepare(
+    "UPDATE queue SET state='waiting', attempts=?, next_attempt_at=?, started_at=NULL, blocked_by=?, error=?, lease_owner=NULL, lease_expires_at=NULL WHERE id=? AND state='running' AND lease_owner=?"
+  ).run(attempts, at, blocked, message, id, DISPATCHER_OWNER);
 }
 
 /**
@@ -442,24 +491,21 @@ function setBlocked(row: QueueRow, reason: string): boolean {
 }
 
 /**
- * A row left 'running' by a process that died is not running anything. Reclaim
- * once per process, before the first dispatch: leaving it would burn a slot
- * forever, and the user would see work that no longer exists.
+ * A row is reclaimable only after its durable lease expires. This is the
+ * distinction that a fresh desktop process needs: a live launchd worker is not
+ * an orphan merely because its in-memory map lives in another process.
+ *
+ * Pre-lease rows from older Wanigan builds have NULL expiry and are deliberately
+ * recovered once; the conditional UPDATE makes concurrent upgrade starts safe.
  */
-function recoverOrphans(): boolean {
-  if (recovered) return false;
-  recovered = true;
-  const ids = db().prepare("SELECT id FROM queue WHERE state='running'").all() as { id: string }[];
-  const orphans = ids.filter((r) => !inFlight.has(r.id));
-  if (!orphans.length) return false;
-
-  const stmt = db().prepare(
-    "UPDATE queue SET state='waiting', started_at=NULL, blocked_by=? WHERE id=? AND state='running'"
+function recoverExpiredLeases(now: number): boolean {
+  const result = db().prepare(
+    "UPDATE queue SET state='waiting', started_at=NULL, blocked_by=?, lease_owner=NULL, lease_expires_at=NULL WHERE state='running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?)"
+  ).run(
+    'The prior Wanigan worker stopped reporting before this completed — it is queued again from the start.',
+    now
   );
-  for (const o of orphans) {
-    stmt.run('Wanigan restarted while this was running — it is queued again from the start.', o.id);
-  }
-  return true;
+  return result.changes > 0;
 }
 
 /** Keeps the table from growing without bound across months of use. */

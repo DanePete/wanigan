@@ -1218,3 +1218,57 @@ export function cancelHeadless(runId: string): number {
   finalize(runId);
   return signaled + marked;
 }
+
+/** Number of actual agent process trees this main process currently owns. */
+export function liveHeadlessCount(): number {
+  let count = 0;
+  for (const child of liveChildren.values()) {
+    if (child.exitCode === null && child.signalCode === null) count++;
+  }
+  return count;
+}
+
+function waitForChildren(children: ChildProcess[], timeoutMs: number): Promise<void> {
+  const active = children.filter((child) => child.exitCode === null && child.signalCode === null);
+  if (!active.length) return Promise.resolve();
+  return new Promise((resolve) => {
+    let left = active.length;
+    const done = () => {
+      left--;
+      if (left <= 0) {
+        clearTimeout(timeout);
+        resolve();
+      }
+    };
+    const timeout = setTimeout(resolve, timeoutMs);
+    timeout.unref?.();
+    for (const child of active) child.once('exit', done);
+  });
+}
+
+/**
+ * A detached headless CLI owns its own process group, so closing Electron does
+ * not stop it by accident. That is exactly why attended quit must stop it on
+ * purpose: otherwise a no-window agent can continue spending with no way for
+ * the user to see or cancel it. Pending rows are cancelled first to close the
+ * pre-spawn race; TERM then bounded KILL reaches every live group.
+ */
+export async function shutdownHeadless(graceMs = KILL_GRACE_MS): Promise<number> {
+  const runIds = db().prepare(`
+    SELECT DISTINCT run_id FROM headless_rows
+     WHERE status IN ('pending','running')
+  `).all() as { run_id: string }[];
+  let stopped = 0;
+  for (const { run_id } of runIds) stopped += cancelHeadless(run_id);
+
+  const initial = [...liveChildren.values()];
+  await waitForChildren(initial, Math.max(0, graceMs));
+
+  // `cancelHeadless` schedules its own escalation, but an attended quit needs
+  // a bounded, awaited boundary rather than relying on an unref'd future timer.
+  const stubborn = [...liveChildren.values()]
+    .filter((child) => child.exitCode === null && child.signalCode === null);
+  for (const child of stubborn) killTree(child, 'SIGKILL');
+  await waitForChildren(stubborn, Math.min(2_000, Math.max(500, graceMs)));
+  return stopped;
+}

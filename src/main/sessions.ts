@@ -8,6 +8,7 @@ import { projectById } from './store';
 import { db } from './db';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import path from 'node:path';
 import type { PastSession } from '../shared/types';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -15,9 +16,9 @@ import type { Baseline, TrustLevel } from '../shared/types';
 import { otelEnv } from './otel';
 import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './hooks';
 import { archiveSession } from './transcripts';
-import { createWorktree, removeWorktree } from './worktrees';
+import { createWorktree, removeWorktree, repoRootFor } from './worktrees';
 import { trustFor } from './policy';
-import { writeMcpConfig } from './mcp/registry';
+import { cleanupMcpConfig, writeMcpConfig } from './mcp/registry';
 import { noteOutput, forgetSession } from './attention';
 import { flags, learningSettings } from './settings';
 import { attachmentsDir, cleanupSessionAttachments, prepareAttachmentDir } from './attachments';
@@ -167,7 +168,10 @@ function captureCodexIdentityAfterPrompt(live: Live, cwd: string): void {
   const promptAt = Date.now();
   const deadline = promptAt + 10_000;
   const tryCapture = () => {
-    if (live.meta.status === 'exited' || live.meta.conversationId) {
+    // Codex can write its durable thread record just after a short task exits.
+    // The PTY is gone, but the row is still safely attributable by the narrow
+    // same-CWD/time-window matcher, so keep this bounded poll alive.
+    if (live.meta.conversationId) {
       live.codexCapturingIdentity = false;
       return;
     }
@@ -217,7 +221,16 @@ function submitInitialCodexPrompt(live: Live, cwd: string, prompt: string): void
         return;
       }
     }
-    if (now < deadline) setTimeout(trySubmit, 150);
+    if (now < deadline) {
+      setTimeout(trySubmit, 150);
+      return;
+    }
+    // A changed Codex welcome screen must not silently turn a requested agent
+    // task into an empty terminal. Do not type blindly into an unknown redraw;
+    // make the fallback explicit and leave the user in control of the prompt.
+    const notice = '\r\n\x1b[38;5;214mWanigan could not confirm Codex\'s ready prompt, so it did not send the initial task automatically. Paste or type it here, then press Enter.\x1b[0m\r\n';
+    live.buffer = (live.buffer + notice).slice(-SCROLLBACK_BYTES);
+    broadcast('session:data', { sessionId: live.meta.id, data: notice });
   };
   setTimeout(trySubmit, 150);
 }
@@ -318,6 +331,53 @@ function priorArtifactDirs(sessionId: string): string[] {
   return out;
 }
 
+type ResumeRow = {
+  provider_id: string;
+  project_id: string | null;
+  project_path: string;
+  worktree: string | null;
+};
+
+/**
+ * Resume ownership is verified in the main process, not taken from the
+ * renderer's project picker. An isolated conversation must never silently
+ * continue in the primary checkout: reuse its viable worktree, or create a
+ * fresh isolated continuation when the clean old one has gone away.
+ */
+async function resumeWorktree(
+  sessionId: string,
+  providerId: ProviderId,
+  project: { id: string; path: string },
+): Promise<{ existing: string | null; needsFreshIsolation: boolean }> {
+  const row = db().prepare(`
+    SELECT provider_id, project_id, project_path, worktree
+      FROM session_log
+     WHERE id=? AND origin='wanigan'
+  `).get(sessionId) as ResumeRow | undefined;
+  if (!row) throw new Error('This saved conversation no longer exists. Refresh Recent and choose another one.');
+  if (row.provider_id !== providerId) {
+    throw new Error('A saved conversation must resume with the provider that created it.');
+  }
+  if (row.project_id !== project.id || path.resolve(row.project_path) !== path.resolve(project.path)) {
+    throw new Error('This saved conversation belongs to a different project. Resume it from that project instead.');
+  }
+
+  const saved = row.worktree?.trim() || null;
+  if (!saved) return { existing: null, needsFreshIsolation: false };
+  if (!fs.existsSync(saved)) return { existing: null, needsFreshIsolation: true };
+
+  // A path merely existing is not enough: it could have been recycled or
+  // replaced since the session ended. Both roots must resolve to the same git
+  // repository before a historical agent context is pointed at it again.
+  const [projectRoot, worktreeRoot] = await Promise.all([repoRootFor(project.path), repoRootFor(saved)]);
+  if (!projectRoot || !worktreeRoot || path.resolve(projectRoot) !== path.resolve(worktreeRoot)) {
+    throw new Error(
+      'The saved isolated checkout no longer belongs to this project. Wanigan will not resume this conversation in the main checkout.'
+    );
+  }
+  return { existing: saved, needsFreshIsolation: false };
+}
+
 export async function createSession(opts: LaunchOptions): Promise<Session> {
   let def = providerById(opts.providerId);
   if (!def) throw new Error(`Unknown provider: ${opts.providerId}`);
@@ -346,6 +406,9 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
   const id = id0;
 
   const resuming = opts.resumeFrom;
+  const resumeTree = resuming
+    ? await resumeWorktree(resuming.sessionId, opts.providerId, project)
+    : { existing: null, needsFreshIsolation: false };
   let conversationId = resuming?.conversationId ?? null;
   let codexResumeNeedsPicker = false;
   if (resuming && def.harness === 'codex') {
@@ -386,41 +449,70 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
 
   // A worktree keeps parallel agents off each other's working tree. It lives
   // outside the repo so the agent never trips over it in its own file listings.
-  let worktree: string | null = null;
-  if (opts.isolate) {
+  let worktree: string | null = resumeTree.existing;
+  let createdWorktree = false;
+  if (!worktree && (opts.isolate || resumeTree.needsFreshIsolation)) {
     try {
       const wt = await createWorktree(project.path, project.name, id0);
       worktree = wt.path;
+      createdWorktree = true;
     } catch (e) {
       throw new Error(
-        `Could not create an isolated worktree for ${project.name}: ` +
+        `Could not create an isolated ${resuming ? 'continuation ' : ''}worktree for ${project.name}: ` +
         `${e instanceof Error ? e.message : String(e)}`
       );
     }
   }
   const cwd = worktree ?? project.path;
+  let mcpFile: string | null = null;
+
+  // A launch has several filesystem side effects before the PTY exists. Keep
+  // their rollback in one place so a provider change, duplicate-resume guard,
+  // spawn failure or database failure cannot strand a clean worktree or a live
+  // hook credential. A reused historical worktree is never removed here: it
+  // may contain the only copy of prior work.
+  const rollbackLaunch = async () => {
+    try { cleanupMcpConfig(mcpFile, id); } catch { /* no MCP config was written */ }
+    try { cleanupHookSettings(id); } catch { /* no hook file was written */ }
+    try { cleanupSessionAttachments(id); } catch { /* no attachment dir was written */ }
+    if (createdWorktree && worktree) {
+      try { await removeWorktree(worktree, false); }
+      catch { /* git refused a non-clean tree; preserve work over disk tidiness */ }
+    }
+  };
 
   // Attachments arrive after a session has started, so the directory must
   // exist and be granted to the CLI before its sandbox is created. Granting
   // this one session directory is deliberately narrower than granting all of
   // Wanigan's user-data directory.
-  const attachmentDir = prepareAttachmentDir(id);
+  let attachmentDir: string;
+  try {
+    attachmentDir = prepareAttachmentDir(id);
+  } catch (error) {
+    await rollbackLaunch();
+    throw error;
+  }
 
   // Hook config and MCP servers are injected with --settings / --mcp-config,
   // which take a path. That is what keeps Wanigan out of the user's repository:
   // nothing is written into .claude/, and nothing the user shares in git changes.
   const injected: string[] = [];
-  if (runsClaudeCli(def) && harnessProven) {
-    if (flags().hooks && detected.capabilities.hooks) {
-      // Learning is injected directly below. Keeping it out of SessionStart
-      // avoids duplicate context while preserving trust/policy hook output.
-      const settingsFile = writeHookSettings(id0, cwd);
-      if (settingsFile) injected.push('--settings', settingsFile);
+  try {
+    if (runsClaudeCli(def) && harnessProven) {
+      if (flags().hooks && detected.capabilities.hooks) {
+        // Learning is injected directly below. Keeping it out of SessionStart
+        // avoids duplicate context while preserving trust/policy hook output.
+        const settingsFile = writeHookSettings(id0, cwd);
+        if (settingsFile) injected.push('--settings', settingsFile);
+      }
+      if (detected.capabilities.mcp) {
+        mcpFile = writeMcpConfig(project.id, cwd, id0);
+        if (mcpFile) injected.push('--mcp-config', mcpFile);
+      }
     }
-    if (detected.capabilities.mcp) {
-      const mcpFile = writeMcpConfig(project.id, cwd, id0);
-      if (mcpFile) injected.push('--mcp-config', mcpFile);
-    }
+  } catch (error) {
+    await rollbackLaunch();
+    throw error;
   }
 
   // Attachment directory flags belong to harnesses, not provider ids. A
@@ -481,15 +573,21 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
   // the values the operator selected; only a durable Codex conversation owns
   // its own resume-time settings.
   const resumeCodex = !!resuming && def.harness === 'codex';
-  const args = [
-    ...idArgs, ...injected, ...attachmentArgs, ...learnedArgs, ...lifecycleArgs,
-    ...def.launchArgs(extra, {
-    ...opts.providerOptions,
-    model: resumeCodex ? undefined : opts.model || undefined,
-    effort: resumeCodex ? undefined : def.supports.effort ? opts.effort || undefined : undefined,
-    permissionMode: def.supports.permissionMode ? opts.permissionMode || undefined : undefined,
-    }),
-  ];
+  let args: string[];
+  try {
+    args = [
+      ...idArgs, ...injected, ...attachmentArgs, ...learnedArgs, ...lifecycleArgs,
+      ...def.launchArgs(extra, {
+        ...opts.providerOptions,
+        model: resumeCodex ? undefined : opts.model || undefined,
+        effort: resumeCodex ? undefined : def.supports.effort ? opts.effort || undefined : undefined,
+        permissionMode: def.supports.permissionMode ? opts.permissionMode || undefined : undefined,
+      }),
+    ];
+  } catch (error) {
+    await rollbackLaunch();
+    throw error;
+  }
   const baseline = await captureBaseline(cwd);
 
   // No await occurs between this digest/trust revalidation and pty.spawn.
@@ -498,7 +596,7 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
   refreshProviderPacks();
   const finalDef = providerById(opts.providerId);
   if (!finalDef || finalDef.profileFingerprint !== def.profileFingerprint) {
-    try { cleanupSessionAttachments(id); } catch { /* launch never started */ }
+    await rollbackLaunch();
     throw new Error(`${def.label} changed or was disabled before launch. Review the provider pack and try again.`);
   }
 
@@ -511,7 +609,7 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
       && value.meta.conversationId === conversationId
       && value.meta.status !== 'exited');
     if (alreadyOpen || resumingConversations.has(resumeKey)) {
-      try { cleanupSessionAttachments(id); } catch { /* launch never started */ }
+      await rollbackLaunch();
       throw new Error('That conversation is already opening or open in Wanigan. Use its existing tab.');
     }
     resumingConversations.add(resumeKey);
@@ -574,7 +672,7 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
     });
   } catch (e) {
     if (resumeKey) resumingConversations.delete(resumeKey);
-    try { cleanupSessionAttachments(id); } catch { /* launch never started */ }
+    await rollbackLaunch();
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(
       `Could not start "${def.bin}". Is it installed and on your PATH? (${msg})`
@@ -590,22 +688,33 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
   // cannot answer "which CLI produced this" on its own now that claude and glm
   // are the same program, and a reader six months from now has only this row.
   try {
-    db().prepare(`
-      INSERT INTO session_log (id, conversation_id, provider_id, project_id, project_path,
-                               project_name, model, effort, permission_mode, started_at,
-                               resumed_from, worktree, trust, bin, capabilities_json,
-                               provider_pack_id,provider_pack_version,provider_profile_json,
-                               backend_id,harness_id)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    `).run(id, conversationId, opts.providerId, project.id, project.path, project.name,
-           meta.model ?? null, meta.effort ?? null, meta.permissionMode ?? null,
-           meta.createdAt, resuming?.sessionId ?? null, worktree, trust, resolvedBin,
-           detected?.capabilities ? JSON.stringify(detected.capabilities) : null,
-           def.packId, def.packVersion, JSON.stringify(meta.providerProfile), def.backendId, def.harness);
+    const d = db();
+    d.transaction(() => {
+      d.prepare(`
+        INSERT INTO session_log (id, conversation_id, provider_id, project_id, project_path,
+                                 project_name, model, effort, permission_mode, started_at,
+                                 resumed_from, worktree, trust, bin, capabilities_json,
+                                 provider_pack_id,provider_pack_version,provider_profile_json,
+                                 backend_id,harness_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).run(id, conversationId, opts.providerId, project.id, project.path, project.name,
+             meta.model ?? null, meta.effort ?? null, meta.permissionMode ?? null,
+             meta.createdAt, resuming?.sessionId ?? null, worktree, trust, resolvedBin,
+             detected?.capabilities ? JSON.stringify(detected.capabilities) : null,
+             def.packId, def.packVersion, JSON.stringify(meta.providerProfile), def.backendId, def.harness);
+      // A reused isolated checkout now belongs to this live continuation for
+      // reconciliation purposes. Its historical session_log rows retain the
+      // original path, so moving this liveness pointer loses no provenance.
+      if (worktree && !createdWorktree) {
+        d.prepare(
+          'UPDATE worktrees SET session_id=?, removed_at=NULL WHERE path=? AND removed_at IS NULL'
+        ).run(id, worktree);
+      }
+    })();
   } catch (e) {
     if (resumeKey) resumingConversations.delete(resumeKey);
     try { proc.kill(); } catch { /* do not orphan an unrecorded writer */ }
-    try { cleanupSessionAttachments(id); } catch { /* launch was not recorded */ }
+    await rollbackLaunch();
     const detail = e instanceof Error ? e.message : String(e);
     throw new Error(`The agent started, but Wanigan could not record its session (${detail}). It was stopped.`);
   }
@@ -686,6 +795,19 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
         .run(live.meta.endedAt, exitCode, id);
     } catch { /* db closing during quit */ }
 
+    // The startup discovery window can elapse before a slow TUI accepts its
+    // first prompt. Give the durable Codex index one final bounded pass after
+    // exit so a fast successful task still lands in exact Recent history.
+    if (live.meta.harnessId === 'codex' && !live.meta.conversationId
+        && (live.codexCapturingIdentity || Boolean(opts.initialPrompt?.trim()))) {
+      captureCodexIdentityAfterPrompt(live, cwd);
+      void discoverCodexThreadId(id, cwd, meta.createdAt).then((threadId) => {
+        if (!threadId) return;
+        live.meta.conversationId = threadId;
+        broadcast('session:list', listSessions());
+      }).catch(() => {});
+    }
+
     // Sessions are killed on quit by design; their transcripts should not die
     // with them. Archiving here is the only moment the file is guaranteed to
     // exist and be complete.
@@ -699,6 +821,7 @@ export async function createSession(opts: LaunchOptions): Promise<Session> {
     // them from their final answer. Deleting it on exit destroys those results
     // and turns an intact saved conversation into a page of dead links.
     try { cleanupHookSettings(id); } catch { /* nothing to remove */ }
+    try { cleanupMcpConfig(mcpFile, id); } catch { /* nothing to remove */ }
     // An exited session is classified from its exit code, never from output
     // recency, so this stamp is dead the moment the process is. Left behind it
     // is one map entry per session for as long as the app stays open.
@@ -789,7 +912,14 @@ export function reconcileAbandonedSessions(now = Date.now()): number {
 export function pastSessions(limit = 40): PastSession[] {
   try { backfillCodexThreadIds(); }
   catch (e) { console.warn('[wanigan] Codex session identity backfill skipped:', e); }
-  const openIds = new Set(sessions.keys());
+  // Exited tabs can remain open for inspection, but they have no writer. Hiding
+  // them from Recent made a completed conversation disappear until the person
+  // manually closed its tab, despite being perfectly safe to resume.
+  const openIds = new Set(
+    [...sessions.values()]
+      .filter((value) => value.meta.status !== 'exited')
+      .map((value) => value.meta.id)
+  );
   const rows = db().prepare(
     "SELECT * FROM session_log WHERE origin = 'wanigan' ORDER BY started_at DESC"
   ).all() as SessionLogRow[];
@@ -817,6 +947,7 @@ export function pastSessions(limit = 40): PastSession[] {
       projectId: r.project_id ? String(r.project_id) : null,
       projectPath: String(r.project_path),
       projectName: String(r.project_name),
+      worktree: r.worktree ? String(r.worktree) : null,
       model: r.model ? String(r.model) : null,
       effort: r.effort ? String(r.effort) : null,
       permissionMode: r.permission_mode ? String(r.permission_mode) : null,

@@ -628,35 +628,106 @@ function optionalLaunchValue(value: unknown, label: string): string | undefined 
  * can contain arbitrary terminal metadata. This produces a readable snapshot
  * while keeping the remote page incapable of interpreting terminal controls.
  */
-function readableTerminal(value: string): string {
-  const withoutEscapes = value
-    // OSC: title, hyperlinks, clipboard, and other out-of-band terminal data.
+export function readableTerminal(value: string): string {
+  // This is deliberately a small *display* parser, not an xterm replacement.
+  // Stripping every CSI sequence made carriage-return redraws leave the old
+  // characters behind ("working…\rDone" became "Doneing…" on iPad). Handling
+  // the common cursor and erase controls keeps normal CLI output legible while
+  // the remote page remains an inert `<pre>` with no terminal escape handling.
+  const input = value
+    // OSC may carry titles, hyperlinks, or clipboard data; DCS/APC/PM/SOS are
+    // equally out-of-band control strings. None belongs in a remote plain-text
+    // transcript, even as harmless-looking printable payload.
     .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, '')
-    // CSI: colours, cursor movement, erase, etc.
-    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
-    // Charset selection and the small remaining two-byte escape forms.
-    .replace(/\x1b[()][0-2]?[ -/]*[@-~]/g, '')
-    .replace(/\x1b[ -/]*[@-~]/g, '');
-
+    .replace(/\x1b[P_^X][\s\S]*?\x1b\\/g, '');
   const lines = [''];
-  let cursor = 0;
-  for (const char of withoutEscapes) {
-    const index = lines.length - 1;
-    if (char === '\n') { lines.push(''); cursor = 0; continue; }
-    if (char === '\r') { cursor = 0; continue; }
-    if (char === '\b') { cursor = Math.max(0, cursor - 1); continue; }
-    if (char === '\t') {
-      const spaces = 2 - (cursor % 2);
-      lines[index] += ' '.repeat(spaces);
-      cursor += spaces;
+  const MAX_ROWS = 10_000;
+  const MAX_COLUMNS = 2_000;
+  let row = 0;
+  let column = 0;
+  let saved: { row: number; column: number } | null = null;
+
+  const setRow = (next: number) => {
+    row = Math.max(0, Math.min(MAX_ROWS, Math.round(next) || 0));
+    while (lines.length <= row) lines.push('');
+  };
+  const setColumn = (next: number) => { column = Math.max(0, Math.min(MAX_COLUMNS, Math.round(next) || 0)); };
+  const number = (params: string[], index: number, fallback = 1) => {
+    const raw = params[index] ?? '';
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.min(10_000, Math.floor(parsed)) : fallback;
+  };
+  const put = (char: string) => {
+    const line = lines[row] ?? '';
+    lines[row] = column < line.length
+      ? `${line.slice(0, column)}${char}${line.slice(column + 1)}`
+      : `${line}${' '.repeat(Math.max(0, column - line.length))}${char}`;
+    setColumn(column + 1);
+  };
+  const eraseLine = (mode: number) => {
+    const line = lines[row] ?? '';
+    if (mode === 2) { lines[row] = ''; column = 0; return; }
+    if (mode === 1) { lines[row] = `${' '.repeat(column)}${line.slice(column)}`; return; }
+    lines[row] = line.slice(0, column);
+  };
+
+  for (let i = 0; i < input.length;) {
+    const char = input[i++];
+    if (char === '\x1b') {
+      const next = input[i];
+      if (next === ']' || next === 'P' || next === '_' || next === '^' || next === 'X') {
+        // A complete OSC was stripped above. An incomplete one must not leak
+        // opaque terminal metadata into the remote display.
+        break;
+      }
+      if (next === '[') {
+        i++;
+        const begin = i;
+        while (i < input.length && !/[@-~]/.test(input[i])) i++;
+        if (i >= input.length) break;
+        const command = input[i++];
+        const raw = input.slice(begin, i - 1).replace(/^[?>!]/, '');
+        const params = raw ? raw.split(/[;:]/) : [];
+        const n = number(params, 0);
+        switch (command) {
+          case 'A': setRow(row - n); break;
+          case 'B': setRow(row + n); break;
+          case 'C': setColumn(column + n); break;
+          case 'D': setColumn(column - n); break;
+          case 'E': setRow(row + n); column = 0; break;
+          case 'F': setRow(row - n); column = 0; break;
+          case 'G': setColumn(n - 1); break;
+          case 'H':
+          case 'f': setRow(number(params, 0) - 1); setColumn(number(params, 1) - 1); break;
+          case 'J': {
+            const mode = Number(params[0] || '0');
+            if (mode === 2 || mode === 3) { lines.splice(0, lines.length, ''); row = 0; column = 0; }
+            else if (mode === 0) { lines.splice(row + 1); eraseLine(0); }
+            else if (mode === 1) { lines.splice(0, row); row = 0; eraseLine(1); }
+            break;
+          }
+          case 'K': eraseLine(Number(params[0] || '0')); break;
+          case 's': saved = { row, column }; break;
+          case 'u': if (saved) { setRow(saved.row); setColumn(saved.column); } break;
+          // SGR and the remaining terminal controls are styling, reports, or
+          // private mode switches. They are deliberately discarded.
+          default: break;
+        }
+        continue;
+      }
+      if (next === '7') { saved = { row, column }; i++; continue; }
+      if (next === '8') { if (saved) { setRow(saved.row); setColumn(saved.column); } i++; continue; }
+      if (next === 'c') { lines.splice(0, lines.length, ''); row = 0; column = 0; i++; continue; }
+      // Charset selectors and all remaining two-byte escape forms.
+      if (next !== undefined) i++;
       continue;
     }
+    if (char === '\n') { setRow(row + 1); column = 0; continue; }
+    if (char === '\r') { column = 0; continue; }
+    if (char === '\b') { setColumn(column - 1); continue; }
+    if (char === '\t') { setColumn(column + (2 - (column % 2))); continue; }
     if (char < ' ' || char === '\x7f') continue;
-    const line = lines[index];
-    lines[index] = cursor < line.length
-      ? `${line.slice(0, cursor)}${char}${line.slice(cursor + 1)}`
-      : `${line}${' '.repeat(cursor - line.length)}${char}`;
-    cursor += 1;
+    put(char);
   }
   return lines.join('\n').replace(/\n{4,}/g, '\n\n\n');
 }
@@ -798,11 +869,11 @@ function dashboardHtml(nonce: string): string {
         <h2>iPad control</h2>
         <div class="control-card">
           <h3>Start an agent</h3><p>Launches a normal Wanigan session on your Mac. The prompt is sent to the selected provider.</p>
-          <form id="launch-form" class="fields"><select id="project" aria-label="Project"></select><select id="provider" aria-label="Provider"></select><select id="model" aria-label="Model"></select><select id="effort" aria-label="Reasoning effort"></select><textarea id="launch-prompt" maxlength="8000" placeholder="What should this agent do?"></textarea><button>Start session</button></form>
+          <form id="launch-form" class="fields"><select id="project" aria-label="Project"></select><select id="provider" aria-label="Provider"></select><select id="model" aria-label="Model"></select><select id="effort" aria-label="Reasoning effort"></select><textarea id="launch-prompt" aria-label="Task for the new agent" maxlength="8000" required placeholder="What should this agent do?"></textarea><button>Start session</button></form>
         </div>
         <div class="control-card">
           <h3>Chat with this agent</h3><p>Type the next instruction for the selected session, or interrupt its current turn. Permission decisions still stay at the Mac.</p>
-          <form id="prompt-form" class="fields"><select id="session" aria-label="Running session"></select><textarea id="session-prompt" maxlength="8000" placeholder="Type a message to this agent…"></textarea><button>Send message</button><button id="interrupt" type="button" class="secondary">Interrupt turn</button></form>
+          <form id="prompt-form" class="fields"><select id="session" aria-label="Running session"></select><textarea id="session-prompt" aria-label="Message for the selected agent" maxlength="8000" required placeholder="Type a message to this agent…"></textarea><button>Send message</button><button id="interrupt" type="button" class="secondary">Interrupt turn</button></form>
         </div>
         <div class="control-card"><div class="terminal-head"><div><h3 id="terminal-title">Live terminal</h3><p>Latest terminal output from the selected session.</p></div><button id="terminal-refresh" type="button" class="secondary">Refresh</button></div><pre id="terminal" class="terminal">Choose a running session to open its terminal.</pre></div>
         <div id="control-result" class="control-result" role="status"></div>
@@ -821,12 +892,30 @@ function dashboardHtml(nonce: string): string {
       const dot = byId('dot');
       const connection = byId('connection');
       let busy = false;
+      // Remote actions start real local processes. A mobile browser can emit
+      // two taps before the first request returns, so never turn one intended
+      // launch or instruction into duplicate agents or duplicate prompts.
+      let actionBusy = false;
       let controlOptions = null;
       let visibleSessions = [];
       let terminalBusy = false;
       let requestedSessionId = '';
       const control = byId('controls');
       const controlResult = byId('control-result');
+
+      function syncActionButtons() {
+        const launch = byId('launch-form').querySelector('button');
+        const prompt = byId('prompt-form').querySelector('button');
+        const interrupt = byId('interrupt');
+        launch.disabled = actionBusy || !byId('project').value || !byId('provider').value || !byId('launch-prompt').value.trim();
+        prompt.disabled = actionBusy || !byId('session').value || !byId('session-prompt').value.trim();
+        interrupt.disabled = actionBusy || !byId('session').value;
+      }
+
+      function setActionBusy(next) {
+        actionBusy = next;
+        syncActionButtons();
+      }
 
       async function api(path, init) {
         const token = localStorage.getItem(KEY);
@@ -838,19 +927,29 @@ function dashboardHtml(nonce: string): string {
         return data;
       }
       function option(value, label) { const out = node('option', '', label); out.value = value; return out; }
-      function renderLaunchChoices() {
+      function restoreValue(select, value) {
+        if ([...select.options].some((item) => item.value === value)) select.value = value;
+      }
+      function renderLaunchChoices(previous) {
         const provider = (controlOptions && controlOptions.providers || []).find((value) => value.id === byId('provider').value);
         const model = byId('model'), effort = byId('effort');
         model.replaceChildren(option('', 'Provider default model'), ...((provider && provider.models) || []).map((value) => option(value.value, value.label)));
         effort.replaceChildren(option('', 'Provider default effort'), ...((provider && provider.efforts) || []).map((value) => option(value, value)));
+        restoreValue(model, previous && previous.model || model.value);
+        restoreValue(effort, previous && previous.effort || effort.value);
         model.disabled = !provider || !(provider.models || []).length;
         effort.disabled = !provider || !(provider.efforts || []).length;
       }
       async function loadTerminal() {
         const select = byId('session'); const sessionId = select.value;
-        if (terminalBusy || !sessionId) return;
-        terminalBusy = true;
         const output = byId('terminal');
+        if (!sessionId) {
+          byId('terminal-title').textContent = 'Live terminal';
+          output.textContent = 'Choose a running session to open its terminal.';
+          return;
+        }
+        if (terminalBusy) return;
+        terminalBusy = true;
         const follow = output.scrollTop + output.clientHeight >= output.scrollHeight - 24;
         try {
           const detail = await api('api/terminal?session=' + encodeURIComponent(sessionId));
@@ -869,16 +968,25 @@ function dashboardHtml(nonce: string): string {
         try {
           if (!controlOptions) controlOptions = await api('api/control');
           const project = byId('project'), provider = byId('provider'), session = byId('session');
+          const selected = {
+            project: project.value,
+            provider: provider.value,
+            model: byId('model').value,
+            effort: byId('effort').value,
+            session: session.value,
+          };
           project.replaceChildren(...(controlOptions.projects || []).map((value) => option(value.id, value.name + (value.branch ? ' · ' + value.branch : ''))));
           provider.replaceChildren(...(controlOptions.providers || []).filter((value) => value.available).map((value) => option(value.id, value.label)));
-          renderLaunchChoices();
-          const selectedSession = requestedSessionId || session.value;
+          restoreValue(project, selected.project);
+          restoreValue(provider, selected.provider);
+          renderLaunchChoices(selected);
+          const selectedSession = requestedSessionId || selected.session;
           session.replaceChildren(...visibleSessions.map((value) => option(value.id, value.title + ' · ' + value.projectName)));
-          if ([...session.options].some((value) => value.value === selectedSession)) session.value = selectedSession;
-          requestedSessionId = '';
-          byId('launch-form').querySelector('button').disabled = !project.value || !provider.value;
-          byId('prompt-form').querySelector('button').disabled = !session.value;
-          byId('interrupt').disabled = !session.value;
+          if ([...session.options].some((value) => value.value === selectedSession)) {
+            session.value = selectedSession;
+            requestedSessionId = '';
+          }
+          syncActionButtons();
           control.classList.remove('hidden');
           void loadTerminal();
         } catch (error) {
@@ -1022,25 +1130,38 @@ function dashboardHtml(nonce: string): string {
           .then(({ response, body }) => { if (!response.ok || !body.token) throw new Error(body.error || 'Pairing failed.'); localStorage.setItem(KEY, body.token); byId('pair-token').value = ''; void poll(); })
           .catch((error) => { byId('pair-token').setCustomValidity(error instanceof Error ? error.message : 'Pairing failed.'); byId('pair-token').reportValidity(); });
       });
-      byId('provider').addEventListener('change', renderLaunchChoices);
-      byId('session').addEventListener('change', () => { byId('terminal').textContent = 'Loading terminal…'; void loadTerminal(); });
+      byId('provider').addEventListener('change', () => { renderLaunchChoices(); syncActionButtons(); });
+      byId('project').addEventListener('change', syncActionButtons);
+      byId('launch-prompt').addEventListener('input', syncActionButtons);
+      byId('session-prompt').addEventListener('input', syncActionButtons);
+      byId('session').addEventListener('change', () => { syncActionButtons(); byId('terminal').textContent = 'Loading terminal…'; void loadTerminal(); });
       byId('terminal-refresh').addEventListener('click', () => void loadTerminal());
       byId('launch-form').addEventListener('submit', async (event) => {
         event.preventDefault(); controlResult.textContent = 'Starting session…';
+        if (actionBusy) return;
+        setActionBusy(true);
         try {
           const result = await api('api/action', { method:'POST', headers:{ 'content-type':'application/json', authorization:'Bearer ' + localStorage.getItem(KEY) }, body:JSON.stringify({ action:'launch', projectId:byId('project').value, providerId:byId('provider').value, model:byId('model').value, effort:byId('effort').value, prompt:byId('launch-prompt').value }) });
-          byId('launch-prompt').value = ''; controlResult.textContent = 'Started ' + result.session.title + '.'; void poll();
+          byId('launch-prompt').value = ''; syncActionButtons(); controlResult.textContent = 'Started ' + result.session.title + '.';
+          requestedSessionId = result.session.id; await poll(); openSession(result.session.id);
         } catch (error) { controlResult.textContent = error instanceof Error ? error.message : 'Could not start the session.'; }
+        finally { setActionBusy(false); }
       });
       byId('prompt-form').addEventListener('submit', async (event) => {
         event.preventDefault(); controlResult.textContent = 'Sending instruction…';
-        try { await api('api/action', { method:'POST', headers:{ 'content-type':'application/json', authorization:'Bearer ' + localStorage.getItem(KEY) }, body:JSON.stringify({ action:'prompt', sessionId:byId('session').value, prompt:byId('session-prompt').value }) }); byId('session-prompt').value = ''; controlResult.textContent = 'Instruction sent.'; }
+        if (actionBusy) return;
+        setActionBusy(true);
+        try { await api('api/action', { method:'POST', headers:{ 'content-type':'application/json', authorization:'Bearer ' + localStorage.getItem(KEY) }, body:JSON.stringify({ action:'prompt', sessionId:byId('session').value, prompt:byId('session-prompt').value }) }); byId('session-prompt').value = ''; syncActionButtons(); controlResult.textContent = 'Instruction sent.'; void loadTerminal(); }
         catch (error) { controlResult.textContent = error instanceof Error ? error.message : 'Could not send instruction.'; }
+        finally { setActionBusy(false); }
       });
       byId('interrupt').addEventListener('click', async () => {
         controlResult.textContent = 'Interrupting…';
-        try { await api('api/action', { method:'POST', headers:{ 'content-type':'application/json', authorization:'Bearer ' + localStorage.getItem(KEY) }, body:JSON.stringify({ action:'interrupt', sessionId:byId('session').value }) }); controlResult.textContent = 'Interrupt sent.'; }
+        if (actionBusy) return;
+        setActionBusy(true);
+        try { await api('api/action', { method:'POST', headers:{ 'content-type':'application/json', authorization:'Bearer ' + localStorage.getItem(KEY) }, body:JSON.stringify({ action:'interrupt', sessionId:byId('session').value }) }); controlResult.textContent = 'Interrupt sent.'; void loadTerminal(); }
         catch (error) { controlResult.textContent = error instanceof Error ? error.message : 'Could not interrupt the session.'; }
+        finally { setActionBusy(false); }
       });
       void poll();
       setInterval(() => { void poll(); }, 3000);

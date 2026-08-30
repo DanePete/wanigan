@@ -347,21 +347,29 @@ app.on('before-quit', (event) => {
   if (quitDraining) return;
 
   // A macOS window close is not a quit, but ⌘Q is. Make the irreversible
-  // boundary explicit when Wanigan still owns live terminals: their saved
-  // history survives, their actual PTYs do not.
+  // boundary explicit when Wanigan still owns live work: saved history
+  // survives, but neither interactive PTYs nor detached headless agents do.
   if (!quitConfirmed) {
     const live = listSessions().filter((s) => s.status === 'starting' || s.status === 'running');
-    if (live.length) {
+    const headlessLive = headless.liveHeadlessCount();
+    if (live.length || headlessLive) {
       const named = live.slice(0, 3).map((s) => s.title).join(', ');
       const remainder = live.length > 3 ? ` and ${live.length - 3} more` : '';
+      const interactive = live.length
+        ? `${live.length} interactive agent${live.length === 1 ? '' : 's'} (${named}${remainder})`
+        : '';
+      const background = headlessLive
+        ? `${headlessLive} headless agent${headlessLive === 1 ? '' : 's'}`
+        : '';
+      const summary = [interactive, background].filter(Boolean).join(' and ');
       const choice = dialog.showMessageBoxSync({
         type: 'warning',
         buttons: ['Keep Wanigan open', 'Stop agents and quit'],
         defaultId: 0,
         cancelId: 0,
         title: 'Stop live agents?',
-        message: `${live.length} live agent${live.length === 1 ? '' : 's'} will be stopped.`,
-        detail: `${named}${remainder}. Projects, settings and saved transcripts remain, but a live terminal cannot survive a full app quit.`,
+        message: `${summary} will be stopped.`,
+        detail: 'Projects, settings and saved transcripts remain, but a live agent cannot survive a full app quit.',
       });
       if (choice !== 1) return;
       quitConfirmed = true;
@@ -373,7 +381,7 @@ app.on('before-quit', (event) => {
   // as a fresh failure on the user's phone.
   setSessionExitObserver(null);
   stopServices();
-  void shutdownAll().finally(() => {
+  void Promise.allSettled([shutdownAll(), headless.shutdownHeadless()]).finally(() => {
     quitReady = true;
     app.quit();
   });

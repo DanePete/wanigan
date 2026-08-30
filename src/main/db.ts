@@ -5,6 +5,27 @@ import { app } from 'electron';
 
 let _db: Database.Database | null = null;
 
+/** App data holds prompts, transcript indexes, result payloads, and credentials.
+ * Keep every Wanigan-owned directory private even when it already existed with a
+ * permissive umask or was carried forward from an older install. */
+export const PRIVATE_DIR_MODE = 0o700;
+export const PRIVATE_FILE_MODE = 0o600;
+
+export function ensurePrivateDir(dir: string): string {
+  fs.mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
+  // mkdir's mode applies only to a new leaf and is filtered by umask. Existing
+  // directories retain their previous mode, so correct both cases explicitly.
+  fs.chmodSync(dir, PRIVATE_DIR_MODE);
+  return dir;
+}
+
+export function ensurePrivateFile(file: string): string {
+  // writeFile/createWriteStream's mode only applies when creating a file. A
+  // rerun must not leave an older, wider file readable by another local user.
+  fs.chmodSync(file, PRIVATE_FILE_MODE);
+  return file;
+}
+
 export function dataDir(): string {
   return app.getPath('userData');
 }
@@ -19,10 +40,13 @@ export function resultsDir(): string {
  */
 export function db(): Database.Database {
   if (_db) return _db;
-  fs.mkdirSync(resultsDir(), { recursive: true });
+  const root = ensurePrivateDir(dataDir());
+  ensurePrivateDir(resultsDir());
+  const file = path.join(root, 'wanigan.db');
   let d: Database.Database;
   try {
-    d = new Database(path.join(dataDir(), 'wanigan.db'));
+    d = new Database(file);
+    ensurePrivateFile(file);
   } catch (e) {
     if ((e as { code?: string }).code === 'ERR_DLOPEN_FAILED') {
       throw new Error(
@@ -31,15 +55,33 @@ export function db(): Database.Database {
     }
     throw e;
   }
+  // Wanigan's attended app, launchd scheduler and CLI can open the same file
+  // at the same time. Let a short schema/write lock settle instead of failing
+  // a whole process with SQLITE_BUSY on startup.
+  d.pragma('busy_timeout = 10000');
   d.pragma('journal_mode = WAL');
   d.pragma('foreign_keys = ON');
   migrate(d);
+  // SQLite's journal files carry the same rows as the primary database. The
+  // private userData root is the durable boundary; tightening sidecars too
+  // avoids relying on it if an older install had inherited broad permissions.
+  for (const suffix of ['', '-wal', '-shm']) {
+    const candidate = `${file}${suffix}`;
+    if (fs.existsSync(candidate)) ensurePrivateFile(candidate);
+  }
   _db = d;
   return d;
 }
 
 function migrate(d: Database.Database) {
-  d.exec(`
+  // `addColumn()` is necessarily a read-then-write operation because SQLite
+  // lacks ADD COLUMN IF NOT EXISTS.  A deferred transaction lets two Wanigan
+  // processes both read "missing" before either alters the table.  Taking the
+  // write reservation first makes migrations one ordered, all-or-nothing
+  // operation across the desktop app, daemon and CLI.
+  d.exec('BEGIN IMMEDIATE');
+  try {
+    d.exec(`
     CREATE TABLE IF NOT EXISTS projects (
       id       TEXT PRIMARY KEY,
       path     TEXT NOT NULL UNIQUE,
@@ -145,8 +187,13 @@ function migrate(d: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_events_run   ON events(run_id, at DESC);
     CREATE INDEX IF NOT EXISTS idx_runs_created ON runs(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id);
-  `);
-  migratePhases(d);
+    `);
+    migratePhases(d);
+    d.exec('COMMIT');
+  } catch (error) {
+    try { d.exec('ROLLBACK'); } catch { /* the BEGIN itself may have failed */ }
+    throw error;
+  }
 }
 
 /** Idempotent ALTER TABLE — SQLite has no "ADD COLUMN IF NOT EXISTS". */
@@ -273,9 +320,15 @@ function migratePhases(d: Database.Database) {
       created_at     INTEGER NOT NULL,
       started_at     INTEGER,
       ended_at       INTEGER,
-      error          TEXT
+      error          TEXT,
+      -- A durable owner is essential because the UI and daemon are separate
+      -- processes.  A local in-memory map cannot tell a live daemon worker
+      -- from a crashed one.
+      lease_owner    TEXT,
+      lease_expires_at INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_queue_ready ON queue(state, priority, created_at);
+    CREATE INDEX IF NOT EXISTS idx_queue_lease ON queue(state, lease_expires_at);
 
     -- P12 · MCP ---------------------------------------------------------
     CREATE TABLE IF NOT EXISTS mcp_servers (
@@ -438,6 +491,9 @@ function migratePhases(d: Database.Database) {
   // from outside Wanigan without declaring it foreign, and history, spend and
   // resume exclude it by the shape of the query rather than by remembering.
   addColumn(d, 'session_log', 'origin', "TEXT NOT NULL DEFAULT 'wanigan'");
+  addColumn(d, 'queue', 'lease_owner', 'TEXT');
+  addColumn(d, 'queue', 'lease_expires_at', 'INTEGER');
+  d.exec('CREATE INDEX IF NOT EXISTS idx_queue_lease ON queue(state, lease_expires_at)');
   d.exec("CREATE INDEX IF NOT EXISTS idx_runs_kind ON runs(kind, created_at DESC)");
   migrateLearning(d);
   migrateControl(d);

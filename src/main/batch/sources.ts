@@ -10,6 +10,27 @@ const exec = promisify(execFile);
 
 export type Dataset = { rows: Row[]; columns: string[]; note?: string };
 
+function inside(root: string, target: string): boolean {
+  return target === root || target.startsWith(root + path.sep);
+}
+
+/**
+ * Batch source loading runs in Wanigan's main process, so it must not turn a
+ * repository-controlled symlink into a read of an arbitrary local file.  Keep
+ * this check close to the file reads instead of assuming the caller performed
+ * it: saved presets and normal desktop batch runs use this module too.
+ */
+function ordinaryFileInside(root: string, file: string): boolean {
+  try {
+    if (!inside(root, file)) return false;
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.isSymbolicLink()) return false;
+    return inside(root, fs.realpathSync(file));
+  } catch {
+    return false;
+  }
+}
+
 export async function loadSource(src: SourceConfig): Promise<Dataset> {
   // The upload flag is additive and not part of SourceConfig, so it is read
   // defensively: a source saved before uploads existed must behave exactly as
@@ -106,8 +127,12 @@ export function fromJsonl(text: string): Dataset {
  * whole-repo audit under the 256 MB batch ceiling.
  */
 async function fromGlob(root: string, pattern: string, maxBytes: number, upload = false): Promise<Dataset> {
-  const abs = path.resolve(root);
-  if (!fs.existsSync(abs)) throw new Error(`Source root does not exist: ${abs}`);
+  const requested = path.resolve(root);
+  if (!fs.existsSync(requested)) throw new Error(`Source root does not exist: ${requested}`);
+  // Use a canonical root for all prefix comparisons. `/tmp` is `/private/tmp`
+  // on macOS, and comparing one real path to one lexical path is not a safe
+  // containment check.
+  const abs = fs.realpathSync(requested);
 
   const re = globToRegExp(pattern);
   const found: string[] = [];
@@ -119,9 +144,14 @@ async function fromGlob(root: string, pattern: string, maxBytes: number, upload 
     for (const e of entries) {
       if (e.name.startsWith('.') && e.name !== '.env.example') continue;
       const full = path.join(dir, e.name);
+      // Never traverse or read through a repo-controlled link. This includes
+      // links to an in-root target: preserving a simple, auditable boundary is
+      // safer than trying to reason about a link that can change after listing.
+      if (e.isSymbolicLink()) continue;
       if (e.isDirectory()) { if (!SKIP.has(e.name)) walk(full); continue; }
+      if (!e.isFile()) continue;
       const rel = path.relative(abs, full);
-      if (re.test(rel)) found.push(full);
+      if (re.test(rel) && ordinaryFileInside(abs, full)) found.push(full);
     }
   })(abs);
 
@@ -129,18 +159,26 @@ async function fromGlob(root: string, pattern: string, maxBytes: number, upload 
   const notes: string[] = [];
   const uploads = upload ? await uploadPass(found, notes) : null;
   let truncated = 0;
-  const rows: Row[] = found.map((f) => {
+  const rows: Row[] = [];
+  for (const f of found) {
+    // A file can change after the directory walk. Revalidate immediately
+    // before opening it, and skip it rather than accidentally following a
+    // newly swapped symlink.
+    if (!ordinaryFileInside(abs, f)) {
+      continue;
+    }
     const size = fs.statSync(f).size;
     const ref = uploads?.get(f);
     // An uploaded file is never read here: reading it would undo the point of
     // uploading it, and for a PDF or a PNG the utf8 decode is meaningless.
     if (ref) {
-      return { path: f, relpath: path.relative(abs, f), ext: path.extname(f).slice(1), size, content: '', [FILE_REF_COLUMN]: ref };
+      rows.push({ path: f, relpath: path.relative(abs, f), ext: path.extname(f).slice(1), size, content: '', [FILE_REF_COLUMN]: ref });
+      continue;
     }
     let content = fs.readFileSync(f, 'utf8');
     if (content.length > maxBytes) { content = content.slice(0, maxBytes) + `\n\n[... truncated at ${maxBytes} chars of ${size} bytes ...]`; truncated++; }
-    return { path: f, relpath: path.relative(abs, f), ext: path.extname(f).slice(1), size, content };
-  });
+    rows.push({ path: f, relpath: path.relative(abs, f), ext: path.extname(f).slice(1), size, content });
+  }
 
   if (truncated) notes.push(`${truncated} file(s) truncated at ${maxBytes} chars`);
   return {
@@ -177,7 +215,9 @@ async function fromCommand(cwd: string, command: string, format: 'csv' | 'jsonl'
  * inlined, exactly as in the glob source.
  */
 async function fromFileList(root: string, paths: string[], maxBytes: number, upload = false): Promise<Dataset> {
-  const abs = path.resolve(root);
+  const requested = path.resolve(root);
+  if (!fs.existsSync(requested)) throw new Error(`Source root does not exist: ${requested}`);
+  const abs = fs.realpathSync(requested);
   const rows: Row[] = [];
   const extra: string[] = [];
   let missing = 0, truncated = 0;
@@ -188,13 +228,14 @@ async function fromFileList(root: string, paths: string[], maxBytes: number, upl
   const uploads = upload ? await uploadPass(paths.reduce<string[]>((acc, rel) => {
     const full = path.resolve(abs, rel);
     if (full !== abs && !full.startsWith(abs + path.sep)) return acc;
-    if (fs.existsSync(full)) acc.push(full);
+    if (ordinaryFileInside(abs, full)) acc.push(full);
     return acc;
   }, []), extra) : null;
 
   for (const rel of paths) {
     const full = path.resolve(abs, rel);
     if (full !== abs && !full.startsWith(abs + path.sep)) continue;
+    if (!ordinaryFileInside(abs, full)) { missing++; continue; }
     let size: number;
     try { size = fs.statSync(full).size; } catch { missing++; continue; }
     const ref = uploads?.get(full);

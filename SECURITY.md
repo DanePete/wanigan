@@ -10,7 +10,7 @@ Wanigan deliberately runs coding agents with access to local repositories. Its t
 
 Phone monitoring is off by default. Its dashboard is a separate read-only HTTP
 service bound to `127.0.0.1`; none of Wanigan's hook, telemetry, MCP, renderer
-IPC, PTY input, transcripts, terminal scrollback or file APIs are exposed. A
+IPC, transcripts or file APIs are exposed. A
 private reverse proxy such as Tailscale Serve is required to carry it off the
 machine. Fleet data is behind a random bearer credential passed in the pairing
 URL fragment, stored by the paired browser, and revocable from Settings. The
@@ -26,3 +26,10 @@ hook summaries, commands, paths, transcript content or terminal output. The
 configured host is included in Settings' egress report. Remote approval and
 arbitrary terminal input are intentionally not implemented. Replacing the
 local ntfy topic does not revoke the old topic at the configured ntfy service.
+
+Opt-in paired iPad control additionally exposes the selected session's terminal
+scrollback and allows a bounded next-instruction/interrupt action. Terminal
+output is not redacted and can contain repository paths, prompt text, command
+output, or secrets printed by an agent; pair only devices you trust. It cannot
+approve permissions, browse files, change settings, or receive arbitrary PTY
+keystrokes.

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { db, dataDir } from './db';
+import { db, dataDir, ensurePrivateDir, ensurePrivateFile } from './db';
 import { runsClaudeCli } from './providers';
 import type { ProviderId, TranscriptHit, TranscriptTurn } from '../shared/types';
 
@@ -356,8 +356,9 @@ export function archiveSession(
     // with "now", and that timestamp is what dates any turn whose own line
     // carries none.
     mtimeMs = fs.statSync(found.path).mtimeMs;
-    fs.mkdirSync(transcriptsDir(), { recursive: true });
+    ensurePrivateDir(transcriptsDir());
     fs.copyFileSync(found.path, dest);
+    ensurePrivateFile(dest);
     bytes = fs.statSync(dest).size;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

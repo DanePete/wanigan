@@ -1,9 +1,12 @@
 import http from 'node:http';
 import type { Socket } from 'node:net';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { app } from 'electron';
+import { db } from '../db';
 import * as batch from '../batch';
-import { addProject, listProjects, projectById } from '../store';
+import { projectById } from '../store';
 import { createSession, listSessions } from '../sessions';
 import { findRepos } from '../browse';
 import { trustFor } from '../policy';
@@ -41,15 +44,22 @@ const MAX_PAGE_SIZE = 200;
  */
 const CONFIRM_TIMEOUT_MS = 5 * 60_000;
 
-type ServerInfo = { port: number; token: string; url: string };
+/** Safe to expose to the renderer: this contains no credential. */
+export type McpServerInfo = { port: number; url: string };
+/** Issued only into one generated session config; never sent over IPC. */
+export type McpSessionCapability = McpServerInfo & { token: string };
+type McpCapabilityBinding = { sessionId: string; projectId: string };
+type McpCaller = McpCapabilityBinding & { projectPath: string; worktree: string | null };
 type ConfirmRequest = { tool: string; summary: string; costUsd: number };
 type Pending = { id: string; tool: string; summary: string; costUsd: number; at: number };
 
 let server: http.Server | null = null;
-let info: ServerInfo | null = null;
+let info: McpServerInfo | null = null;
 let confirmHandler: ((req: ConfirmRequest) => Promise<boolean>) | null = null;
 const sockets = new Set<Socket>();
 const pending = new Map<string, Pending>();
+/** Opaque per-session capabilities; process memory makes them die on restart. */
+const sessionCapabilities = new Map<string, McpCapabilityBinding>();
 
 /* ── JSON-RPC ────────────────────────────────────────────────────────── */
 
@@ -543,10 +553,59 @@ function toolError(message: string): ToolResult {
   return { content: [{ type: 'text', text: message }], isError: true };
 }
 
-async function callTool(name: string, args: Record<string, unknown>, callerSessionId: string | null): Promise<ToolResult> {
+function callerProject(caller: McpCaller) {
+  const project = projectById(caller.projectId);
+  if (!project) throw new Error('This session’s project is no longer available in Wanigan.');
+  return project;
+}
+
+function insideProject(root: string, target: string): boolean {
+  try {
+    const base = fs.realpathSync(root);
+    const requested = path.resolve(root, target);
+    // A source root that is itself a link can point the batch worker outside a
+    // project even though its spelling has the right prefix. Batch file reads
+    // are intentionally no-follow too, so reject it at the authorization
+    // boundary rather than relying on every downstream loader to remember.
+    if (fs.lstatSync(requested).isSymbolicLink()) return false;
+    const full = fs.realpathSync(requested);
+    return full === base || full.startsWith(base + path.sep);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * MCP is launched from a session, but batch source loading happens in
+ * Wanigan's main process. Bind config/project/source roots to that caller so a
+ * session cannot use the batch engine as a cross-project file reader.
+ */
+function scopedRunConfig(args: Record<string, unknown>, caller: McpCaller): RunConfig {
+  const cfg = runConfigFrom(args);
+  if (cfg.projectId && cfg.projectId !== caller.projectId) {
+    throw new Error('This MCP session can only create runs for its own project.');
+  }
+  cfg.projectId = caller.projectId;
+  const project = callerProject(caller);
+  const permittedRoots = [project.path, caller.worktree].filter((value): value is string => Boolean(value));
+  const source = cfg.source;
+  if ((source.kind === 'glob' || source.kind === 'files')
+      && !permittedRoots.some((root) => insideProject(root, source.root))) {
+    throw new Error('File and glob sources must resolve inside this session’s project or isolated worktree.');
+  }
+  return cfg;
+}
+
+function requireRunProject(run: { project_id: string | null }, caller: McpCaller): void {
+  if (run.project_id !== caller.projectId) {
+    throw new Error('That run belongs to a different project and is not available to this session.');
+  }
+}
+
+async function callTool(name: string, args: Record<string, unknown>, caller: McpCaller): Promise<ToolResult> {
   switch (name) {
     case 'wanigan_estimate_run': {
-      const cfg = runConfigFrom(args);
+      const cfg = scopedRunConfig(args, caller);
       const observed = optNum(args.observedOutputTokens, 'observedOutputTokens');
       const r = await batch.estimateRun(cfg, observed);
       if (!r.estimate) return toolError(`This run cannot be estimated: ${r.errors.join(' ')}`);
@@ -554,7 +613,7 @@ async function callTool(name: string, args: Record<string, unknown>, callerSessi
     }
 
     case 'wanigan_dry_run': {
-      const cfg = runConfigFrom(args);
+      const cfg = scopedRunConfig(args, caller);
       const rowIndex = optNum(args.rowIndex, 'rowIndex');
       const r = await batch.dryRunOne(cfg, rowIndex);
       if (!r.result) return toolError(`This run cannot be built: ${r.errors.join(' ')}`);
@@ -564,7 +623,7 @@ async function callTool(name: string, args: Record<string, unknown>, callerSessi
     }
 
     case 'wanigan_submit_run': {
-      const cfg = runConfigFrom(args);
+      const cfg = scopedRunConfig(args, caller);
 
       // createAndSubmitRun only enforces the spend cap against an estimate it is
       // handed — submitting without one silently makes the cap a no-op. So the
@@ -600,6 +659,7 @@ async function callTool(name: string, args: Record<string, unknown>, callerSessi
     case 'wanigan_run_status': {
       const runId = str(args.runId, 'runId');
       const d = batch.runDetail(runId);
+      requireRunProject(d.run, caller);
       // config and config_json carry the system prompt and the whole dataset
       // template. Any session could otherwise read every other run's prompts.
       return ok({
@@ -621,6 +681,7 @@ async function callTool(name: string, args: Record<string, unknown>, callerSessi
       // A whole 10,000-row result set poured into a context window spends back
       // everything the batch just saved.
       const pageSize = Math.min(optNum(args.pageSize, 'pageSize') ?? 50, MAX_PAGE_SIZE);
+      requireRunProject(batch.runDetail(runId).run, caller);
       const r = batch.runResults(runId, status, q, offset, pageSize);
       return ok({
         total: r.total,
@@ -633,15 +694,19 @@ async function callTool(name: string, args: Record<string, unknown>, callerSessi
       });
     }
 
-    case 'wanigan_list_projects':
-      return ok({ projects: listProjects().map((p) => ({ id: p.id, name: p.name, path: p.path, branch: p.branch })) });
+    case 'wanigan_list_projects': {
+      const project = callerProject(caller);
+      return ok({ projects: [{ id: project.id, name: project.name, path: project.path, branch: project.branch }] });
+    }
 
     case 'wanigan_find_repos': {
       const q = str(args.query, 'query');
       const limit = typeof args.limit === 'number' ? Math.min(50, Math.max(1, args.limit)) : 20;
-      const roots = Array.isArray(args.roots) ? args.roots.filter((r): r is string => typeof r === 'string') : undefined;
-      const r = findRepos(q, { limit, roots });
-      const known = new Set(listProjects().map((p) => p.path));
+      const project = callerProject(caller);
+      // Repo discovery is useful for a monorepo, but letting a session supply
+      // arbitrary roots turns the MCP server into a machine-wide path index.
+      const r = findRepos(q, { limit, roots: [project.path] });
+      const known = new Set([project.path]);
       return ok({
         repos: r.repos.map((x) => ({ name: x.name, path: x.path, alreadyAdded: known.has(x.path) })),
         searched: r.roots,
@@ -656,24 +721,12 @@ async function callTool(name: string, args: Record<string, unknown>, callerSessi
     }
 
     case 'wanigan_add_project': {
-      const dir = str(args.path, 'path');
-      const existing = listProjects().find((p) => p.path === dir);
-      if (existing) return ok({ project: existing, alreadyExisted: true });
-
-      const approved = await confirmSpend('wanigan_add_project', `Add ${dir} to Wanigan's projects.`, 0);
-      if (!approved) {
-        return toolError(
-          confirmHandler
-            ? `A human declined adding ${dir}. Nothing was changed.`
-            : 'Confirmation is unavailable: the Wanigan window has to be open to approve this.'
-        );
-      }
-      return ok({ project: await addProject(dir), alreadyExisted: false });
+      return toolError('Adding projects is available only from Wanigan’s desktop Projects flow, not from a session-scoped MCP capability.');
     }
 
     case 'wanigan_list_sessions':
       return ok({
-        sessions: listSessions().map((x) => ({
+        sessions: listSessions().filter((x) => x.id === caller.sessionId).map((x) => ({
           id: x.id, provider: x.providerId, project: x.projectName, path: x.projectPath,
           model: x.model ?? null, effort: x.effort ?? null, status: x.status,
           trust: x.trust ?? null, worktree: x.worktree ?? null,
@@ -682,6 +735,9 @@ async function callTool(name: string, args: Record<string, unknown>, callerSessi
 
     case 'wanigan_start_session': {
       const projectId = str(args.projectId, 'projectId');
+      if (projectId !== caller.projectId) {
+        return toolError('This MCP session can start an agent only in its own project.');
+      }
       const project = projectById(projectId);
       if (!project) return toolError(`No project ${projectId}. Call wanigan_list_projects for the current list.`);
 
@@ -716,33 +772,33 @@ async function callTool(name: string, args: Record<string, unknown>, callerSessi
     }
 
     case 'wanigan_list_runs': {
-      const runs = batch.listRuns().map((r) => pick(r, [
+      const runs = batch.listRuns()
+        .filter((run) => (run as { project_id?: string | null }).project_id === caller.projectId)
+        .map((r) => pick(r, [
         'id', 'name', 'model', 'status', 'total_requests', 'succeeded', 'failed', 'pending',
         'cost_usd', 'est_cost_usd', 'project_name', 'created_at', 'submitted_at', 'ended_at',
-      ]));
+        ]));
       return ok({ runs });
     }
 
     case 'wanigan_list_goals': {
-      const projectId = optStr(args.projectId, 'projectId');
       const limit = optNum(args.limit, 'limit');
-      return ok({ goals: control.listDockets(projectId, limit ?? 80) });
+      return ok({ goals: control.listDockets(caller.projectId, limit ?? 80) });
     }
 
     case 'wanigan_get_goal': {
       const goal = control.docket(str(args.goalId, 'goalId'));
+      if (goal.projectId !== caller.projectId) return toolError('That Goal belongs to a different project.');
       return ok({ goal });
     }
 
     case 'wanigan_goal_checkpoint': {
-      if (!callerSessionId) return toolError('Goal checkpoints require a Wanigan-generated per-session MCP config. This caller can read Goals but cannot mutate them.');
-      const checkpoint = control.checkpointForSession(callerSessionId, str(args.nodeId, 'nodeId'), str(args.note, 'note'));
+      const checkpoint = control.checkpointForSession(caller.sessionId, str(args.nodeId, 'nodeId'), str(args.note, 'note'));
       return ok({ checkpoint, note: 'Checkpoint recorded. Completing or approving a Goal remains an operator-controlled Control action.' });
     }
 
     case 'wanigan_goal_claim': {
-      if (!callerSessionId) return toolError('Goal claims require a Wanigan-generated per-session MCP config. This caller can read Goals but cannot mutate them.');
-      const claim = control.claimForSession(callerSessionId, str(args.nodeId, 'nodeId'), str(args.path, 'path'));
+      const claim = control.claimForSession(caller.sessionId, str(args.nodeId, 'nodeId'), str(args.path, 'path'));
       return ok({ claim });
     }
 
@@ -753,7 +809,7 @@ async function callTool(name: string, args: Record<string, unknown>, callerSessi
 
 /* ── protocol ────────────────────────────────────────────────────────── */
 
-async function dispatch(msg: JsonRpcMessage, callerSessionId: string | null): Promise<JsonRpcResponse | null> {
+async function dispatch(msg: JsonRpcMessage, caller: McpCaller): Promise<JsonRpcResponse | null> {
   const id: JsonRpcId = msg.id ?? null;
 
   // A message with no id is a notification: it gets no response, and it is not
@@ -796,7 +852,7 @@ async function dispatch(msg: JsonRpcMessage, callerSessionId: string | null): Pr
       if (!name) return failure(id, INVALID_PARAMS, 'tools/call needs a "name".');
       const args = isRecord(params.arguments) ? params.arguments : {};
       try {
-        return result(id, await callTool(name, args, callerSessionId));
+        return result(id, await callTool(name, args, caller));
       } catch (e) {
         // A bad argument or a rejected run is the tool's answer, not a
         // protocol failure — reported inside the result so the model reads it
@@ -831,8 +887,8 @@ function isLoopback(addr: string | undefined): boolean {
 
 /**
  * A page in the user's browser can POST to a loopback port and, without an
- * Origin check, that request looks local. The bearer token already stops it,
- * but a listener that only has one lock is a listener one bug away from open.
+ * Origin check, that request looks local. The session capability already stops
+ * it, but a listener that only has one lock is a listener one bug away from open.
  */
 function originAllowed(req: http.IncomingMessage): boolean {
   const origin = req.headers.origin;
@@ -845,15 +901,30 @@ function originAllowed(req: http.IncomingMessage): boolean {
   }
 }
 
-function authorized(req: http.IncomingMessage): boolean {
-  if (!info) return false;
+function authenticate(req: http.IncomingMessage): McpCaller | null {
+  if (!info) return null;
   const header = req.headers.authorization;
-  if (typeof header !== 'string') return false;
+  if (typeof header !== 'string') return null;
   const m = /^Bearer\s+(\S+)$/i.exec(header.trim());
-  if (!m) return false;
-  const given = Buffer.from(m[1]);
-  const want = Buffer.from(info.token);
-  return given.length === want.length && timingSafeEqual(given, want);
+  if (!m) return null;
+  const caller = sessionCapabilities.get(m[1]);
+  if (!caller) return null;
+
+  // A copied config is not an enduring identity. The capability is valid only
+  // while its exact Wanigan session is live and still tied to the same project.
+  const row = db().prepare(`
+    SELECT project_id, project_path, worktree FROM session_log
+     WHERE id=? AND origin='wanigan' AND ended_at IS NULL
+  `).get(caller.sessionId) as { project_id: string | null; project_path: string; worktree: string | null } | undefined;
+  if (!row || row.project_id !== caller.projectId) {
+    sessionCapabilities.delete(m[1]);
+    return null;
+  }
+  return {
+    ...caller,
+    projectPath: row.project_path,
+    worktree: row.worktree,
+  };
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
@@ -896,8 +967,9 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     return;
   }
 
-  if (!authorized(req)) {
-    send(res, 401, failure(null, INVALID_REQUEST, 'Missing or invalid bearer token. Wanigan writes the token into the MCP config it generates for a session.'),
+  const caller = authenticate(req);
+  if (!caller) {
+    send(res, 401, failure(null, INVALID_REQUEST, 'Missing, expired, or invalid session capability. Restart the session from Wanigan to obtain a fresh MCP config.'),
       { 'www-authenticate': 'Bearer realm="wanigan"' });
     return;
   }
@@ -952,10 +1024,9 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   }
 
   try {
-    const sessionHeader = req.headers['x-wanigan-session'];
-    const callerSessionId = typeof sessionHeader === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(sessionHeader)
-      ? sessionHeader : null;
-    const answer = await dispatch(parsed, callerSessionId);
+    // Session identity comes only from the opaque capability. In particular,
+    // never trust a caller-controlled X-Wanigan-Session header here.
+    const answer = await dispatch(parsed, caller);
     // A notification has no reply: 202 with an empty body is the whole answer.
     if (!answer) { send(res, 202, null); return; }
     send(res, 200, answer);
@@ -966,10 +1037,9 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
 /* ── lifecycle ───────────────────────────────────────────────────────── */
 
-export async function startMcpServer(): Promise<ServerInfo> {
+export async function startMcpServer(): Promise<McpServerInfo> {
   if (info && server) return info;
 
-  const token = randomBytes(32).toString('base64url');
   const s = http.createServer((req, res) => {
     void handle(req, res).catch(() => {
       // Nothing about a failed request is worth crashing the app for, and the
@@ -1016,7 +1086,7 @@ export async function startMcpServer(): Promise<ServerInfo> {
   s.on('error', (e) => { console.warn('[wanigan] MCP server socket error (ignored):', e); });
 
   server = s;
-  info = { port: addr.port, token, url: `http://127.0.0.1:${addr.port}/mcp` };
+  info = { port: addr.port, url: `http://127.0.0.1:${addr.port}/mcp` };
   return info;
 }
 
@@ -1026,13 +1096,33 @@ export function stopMcpServer(): void {
   for (const sock of sockets) sock.destroy();
   sockets.clear();
   pending.clear();
+  sessionCapabilities.clear();
   server?.close();
   server = null;
   info = null;
 }
 
-export function mcpServerInfo(): ServerInfo | null {
+export function mcpServerInfo(): McpServerInfo | null {
   return info ? { ...info } : null;
+}
+
+/**
+ * Creates an unguessable capability for one generated session config. The
+ * server validates the session row on every request, so an old copied config
+ * dies at exit even if the process is otherwise still listening.
+ */
+export function issueMcpSessionCapability(sessionId: string, projectId: string): McpSessionCapability | null {
+  if (!info || !server || !sessionId || !projectId) return null;
+  const token = randomBytes(32).toString('base64url');
+  sessionCapabilities.set(token, { sessionId, projectId });
+  return { ...info, token };
+}
+
+/** Revokes every in-memory capability for an ended or failed launch. */
+export function revokeMcpSessionCapabilities(sessionId: string): void {
+  for (const [token, caller] of sessionCapabilities) {
+    if (caller.sessionId === sessionId) sessionCapabilities.delete(token);
+  }
 }
 
 export function setConfirmHandler(fn: ((req: ConfirmRequest) => Promise<boolean>) | null): void {

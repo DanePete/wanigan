@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { db, dataDir } from '../db';
-import { mcpServerInfo } from './server';
+import { issueMcpSessionCapability, revokeMcpSessionCapabilities } from './server';
 import type { McpServerConfig, McpServerStatus } from '../../shared/types';
 
 /**
@@ -279,34 +279,53 @@ export function writeMcpConfig(projectId: string | null, projectPath: string, se
   // Wanigan's own server, when it is running. This is the point of the whole
   // phase: a session that finds itself facing ten thousand rows can hand them
   // to the batch engine instead of grinding through them at full price.
-  const self = mcpServerInfo();
-  if (self) {
-    // The bearer token authenticates Wanigan to the local listener. The
-    // per-launch session id is not a secret, but it binds a Goal mutation to
-    // the session that owns that Goal node. A copied config can still read
-    // Control data; it cannot checkpoint or claim work on another session.
+  const capability = sessionId && projectId
+    ? issueMcpSessionCapability(sessionId, projectId)
+    : null;
+  if (capability) {
+    // The opaque bearer maps to one session/project only in the local server.
+    // There is deliberately no X-Wanigan-Session header for a client to edit:
+    // changing a config cannot turn one agent into another agent's owner.
     entries.wanigan = {
-      type: 'http', url: self.url,
-      headers: { Authorization: `Bearer ${self.token}`, ...(sessionId ? { 'X-Wanigan-Session': sessionId } : {}) },
+      type: 'http', url: capability.url,
+      headers: { Authorization: `Bearer ${capability.token}` },
     };
   }
 
   const dir = path.join(dataDir(), 'mcp');
-  // The id is Wanigan's own, but a filename built from an id is a path
-  // traversal waiting for the one caller that passes something else.
-  const safe = (projectId ?? 'global').replace(/[^A-Za-z0-9_-]/g, '_');
-  const file = path.join(dir, `${safe}.mcp.json`);
 
   if (!Object.keys(entries).length) {
-    // A stale file keeps injecting servers the user has just turned off.
-    try { fs.unlinkSync(file); } catch { /* nothing to remove */ }
+    if (sessionId) revokeMcpSessionCapabilities(sessionId);
     return null;
   }
 
-  fs.mkdirSync(dir, { recursive: true });
-  // 0600: the file carries the loopback bearer token for Wanigan's own server.
-  // That token is not the API key and buys nothing off this machine, but it
-  // does let anything that reads it submit batches, so it is not world-readable.
-  fs.writeFileSync(file, `${JSON.stringify({ mcpServers: entries }, null, 2)}\n`, { mode: 0o600 });
-  return file;
+  // One config per launch. A project-wide name meant two simultaneous sessions
+  // overwrote each other's capability before their CLIs necessarily read it.
+  // Every dynamic fragment is constrained even though all callers are local.
+  const safeProject = (projectId ?? 'global').replace(/[^A-Za-z0-9_-]/g, '_');
+  const safeSession = (sessionId ?? 'manual').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 160) || 'manual';
+  const file = path.join(dir, `${safeProject}-${safeSession}-${randomUUID().slice(0, 10)}.mcp.json`);
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(dir, 0o700); } catch { /* a read-only inherited dir fails safely below */ }
+    // 0600 is enforced even when a pre-existing umask or a filesystem default
+    // is permissive. `wx` makes a UUID collision fail rather than overwrite a
+    // concurrent session config.
+    fs.writeFileSync(file, `${JSON.stringify({ mcpServers: entries }, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+    try { fs.chmodSync(file, 0o600); } catch { /* write succeeded; caller can still launch */ }
+    return file;
+  } catch (error) {
+    if (sessionId) revokeMcpSessionCapabilities(sessionId);
+    throw error;
+  }
+}
+
+/** Remove only the exact per-session config; never touch another live agent's. */
+export function cleanupMcpConfig(file: string | null | undefined, sessionId?: string): void {
+  if (sessionId) revokeMcpSessionCapabilities(sessionId);
+  if (!file) return;
+  const dir = path.resolve(dataDir(), 'mcp');
+  const target = path.resolve(file);
+  if (!target.startsWith(dir + path.sep) || !target.endsWith('.mcp.json')) return;
+  try { fs.unlinkSync(target); } catch { /* already removed or never created */ }
 }

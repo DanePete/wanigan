@@ -214,29 +214,90 @@ export async function tickSchedules(onChange?: () => void): Promise<number> {
       .all(now) as Row[];
 
     for (const r of due) {
-      const s = toSchedule(r);
-      const label = s.projectId
-        ? `${projectById(s.projectId)?.name ?? s.projectId} · ${s.name}`
-        : s.name;
-      let status = 'queued';
-      let detail: string | null = null;
-      try {
-        enqueue(s.kind, label, { ...(s.payload as Record<string, unknown>), scheduleId: s.id, projectId: s.projectId });
-        fired++;
-      } catch (e) {
-        status = 'failed';
-        detail = e instanceof Error ? e.message : String(e);
-      }
-      const next = nextFire(s.cron, now);
-      db().prepare('UPDATE schedules SET last_at=?, last_status=?, last_detail=?, runs=runs+1, next_at=? WHERE id=?')
-        .run(now, status, detail, next, s.id);
-      db().prepare('INSERT INTO schedule_runs (schedule_id, at, status, detail) VALUES (?,?,?,?)')
-        .run(s.id, now, status, detail);
+      if (claimAndQueue(r, now)) fired++;
     }
     if (fired && onChange) onChange();
   } finally { ticking = false; }
   return fired;
 }
+
+/**
+ * Advance a due schedule and insert its queue item in one SQLite transaction.
+ *
+ * The attended app and the launchd service intentionally tick the same table.
+ * A read followed by an unconditional enqueue lets both see one due row and
+ * both spend it. The conditional `next_at` update is the cross-process claim;
+ * the transaction means a crash either leaves the fire entirely pending or
+ * commits both the schedule history and exactly one queue row.
+ */
+function claimAndQueue(row: Row, now: number): boolean {
+  const d = db();
+  const s = toSchedule(row);
+  const label = s.projectId
+    ? `${projectById(s.projectId)?.name ?? s.projectId} · ${s.name}`
+    : s.name;
+
+  let next: number | null;
+  try {
+    next = nextFire(s.cron, now);
+  } catch (error) {
+    // A manually-corrupted schedule must not spin and repeatedly attempt to
+    // spend. Disable it with a durable history row so the operator can repair
+    // the expression rather than discover it as a silent frozen queue.
+    const detail = error instanceof Error ? error.message : String(error);
+    const disabled = d.prepare(`
+      UPDATE schedules
+         SET enabled=0, next_at=NULL, last_at=?, last_status='failed', last_detail=?
+       WHERE id=? AND enabled=1 AND next_at=?
+    `).run(now, `Schedule disabled: ${detail}`, s.id, row.next_at);
+    if (disabled.changes) {
+      d.prepare('INSERT INTO schedule_runs (schedule_id, at, status, detail) VALUES (?,?,?,?)')
+        .run(s.id, now, 'failed', `Schedule disabled: ${detail}`);
+    }
+    return false;
+  }
+
+  const fire = d.transaction(() => {
+    // `next_at` is the durable compare-and-swap token. A second process that
+    // read this same due row before the first transaction commits updates zero
+    // rows and must not enqueue a duplicate.
+    const claimed = d.prepare(`
+      UPDATE schedules
+         SET last_at=?, last_status='dispatching', last_detail=NULL, runs=runs+1, next_at=?
+       WHERE id=? AND enabled=1 AND next_at=?
+    `).run(now, next, s.id, row.next_at);
+    if (claimed.changes !== 1) return false;
+
+    let status = 'queued';
+    let detail: string | null = null;
+    try {
+      enqueue(s.kind, label, {
+        ...(s.payload as Record<string, unknown>),
+        scheduleId: s.id,
+        projectId: s.projectId,
+      });
+    } catch (error) {
+      status = 'failed';
+      detail = error instanceof Error ? error.message : String(error);
+    }
+
+    d.prepare('UPDATE schedules SET last_status=?, last_detail=? WHERE id=?')
+      .run(status, detail, s.id);
+    d.prepare('INSERT INTO schedule_runs (schedule_id, at, status, detail) VALUES (?,?,?,?)')
+      .run(s.id, now, status, detail);
+    return status === 'queued';
+  });
+
+  return fire();
+}
+
+/**
+ * Test-only access to the cross-process race boundary. Two scheduler processes
+ * can each retain the same Row returned by their initial due query; exercising
+ * that stale snapshot twice verifies the durable `next_at` compare-and-swap,
+ * which the single-process `ticking` guard cannot cover.
+ */
+export const __test = { claimDueSnapshot: claimAndQueue };
 
 export function startScheduler(onChange?: () => void) {
   if (timer) return;

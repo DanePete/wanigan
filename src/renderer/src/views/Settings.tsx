@@ -1055,8 +1055,8 @@ function PhoneMonitor() {
       <Callout title="The dashboard is read-only until you explicitly enable iPad control.">
         Read-only monitoring receives the Mac hostname, Wanigan version, an internal session id, project/session
         names, provider/model, state, timestamps, spend and aggregate usage. With paired iPad control enabled,
-        the selected session’s terminal bytes are also shown. It still does not expose repository paths, worktrees,
-        process ids, conversation ids, or permission approval.
+        the selected session’s terminal output is also shown and may contain paths, prompt text, or other sensitive
+        text printed by an agent. Treat every paired device as trusted. It does not expose permission approval.
       </Callout>
 
       {!status ? (

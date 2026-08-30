@@ -95,13 +95,14 @@ function FocusBtn({ style, onFocus, onBlur, children, ...rest }: React.ButtonHTM
   );
 }
 
-export default function Sessions({ providers, projects, onAddProject, onError, onSendToBatch }: {
+export default function Sessions({ providers, projects, onAddProject, onError, activeId, onActiveChange, onSendToBatch }: {
   providers: ProviderInfo[]; projects: Project[];
   onAddProject: () => Promise<void>; onError: (m: string) => void;
+  activeId: string | null;
+  onActiveChange: (id: string, projectId?: string) => void;
   onSendToBatch: (seed: { projectId: string; root: string; paths: string[] }) => void;
 }) {
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
   const [dialog, setDialog] = useState(false);
   // Loading is not empty. Until the first list() answers, "no sessions running"
   // would be a claim Wanigan has not checked.
@@ -110,6 +111,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
   // Remembered per machine: whether the side rail is open is a working
   // preference, not session state.
   const [showRail, setShowRail] = useState(() => localStorage.getItem('wanigan.code') === '1');
+  const [compactLayout, setCompactLayout] = useState(() => window.matchMedia('(max-width: 900px)').matches);
   const [railPane, setRailPane] = useState<Record<string, 'code' | 'timeline'>>(readPanes);
   const [defaultTrust, setDefaultTrust] = useState<TrustLevel | null>(null);
   const [past, setPast] = useState<PastSession[]>([]);
@@ -133,6 +135,18 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
     }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // An iPad-sized terminal beside a persistent 340px code rail becomes an
+  // unreadable sliver. Keep the saved desktop preference, but deliberately
+  // collapse the secondary pane below tablet width so the live conversation is
+  // always the full working surface.
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 900px)');
+    const sync = () => setCompactLayout(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
 
   // The banner compares against the default, so the default is read once and
   // kept; a session above it is the exception worth shouting about.
@@ -182,10 +196,21 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
   }, []);
 
   const select = useCallback((id: string) => {
-    setActiveId(id);
+    onActiveChange(id, sessions.find((session) => session.id === id)?.projectId);
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, unread: 0 } : s)));
     window.wanigan.sessions.markRead(id).catch(() => {});
-  }, []);
+  }, [onActiveChange, sessions]);
+
+  // Fleet/Control and the session rail now share one selected id in App. This
+  // local guard covers the first list response as well as a tab that vanished
+  // while the shell was on another view, so Sessions never opens to a blank
+  // terminal column merely because selection arrived a render later.
+  useEffect(() => {
+    if (!sessions.length || sessions.some((session) => session.id === activeId)) return;
+    const running = sessions.filter((session) => session.status === 'running');
+    const fallback = running[running.length - 1] ?? sessions[sessions.length - 1];
+    if (fallback) onActiveChange(fallback.id, fallback.projectId);
+  }, [activeId, onActiveChange, sessions]);
 
   const closeTab = useCallback(async (id: string) => {
     try {
@@ -193,15 +218,21 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
       disposePane(id);
       setSessions((prev) => {
         const next = prev.filter((s) => s.id !== id);
-        if (activeRef.current === id) setActiveId(next[next.length - 1]?.id ?? null);
+        if (activeRef.current === id && next[next.length - 1]) {
+          onActiveChange(next[next.length - 1].id, next[next.length - 1].projectId);
+        }
         return next;
       });
     } catch (e) { onError(msg(e)); }
-  }, [onError]);
+  }, [onActiveChange, onError]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
+      const el = document.activeElement as HTMLElement | null;
+      // The terminal and an open dialog own their keystrokes. In particular
+      // Ctrl+B/Ctrl+W are ordinary readline shortcuts, not app navigation.
+      if (el?.closest('.terminal-host') || document.querySelector('.modal-backdrop, [role="dialog"][aria-modal="true"]')) return;
       if (e.key === 't') { e.preventDefault(); setDialog(true); return; }
       if (e.key === 'b') {
         e.preventDefault();
@@ -260,6 +291,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
   }, [active]);
   const anyInstalled = providers.some((p) => p.path);
   const pane = (active && railPane[active.id]) || 'code';
+  const railOpen = showRail && !compactLayout;
 
   const setPane = useCallback((sessionId: string, next: 'code' | 'timeline') => {
     const merged = { ...railPane, [sessionId]: next };
@@ -382,10 +414,11 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
               </FocusBtn>
             ))}
             <FocusBtn className="tab faint" onClick={() => setDialog(true)} title="New session (⌘T)">+</FocusBtn>
-            <FocusBtn className={`tab faint${showRail ? ' active' : ''}`} style={{ marginLeft: 'auto' }}
-                      title="Toggle the side panel (⌘B)"
+            <FocusBtn className={`tab faint${railOpen ? ' active' : ''}`} style={{ marginLeft: 'auto' }}
+                      title={compactLayout ? 'The side panel is collapsed on tablets so the terminal stays readable.' : 'Toggle the side panel (⌘B)'}
+                      disabled={compactLayout}
                       onClick={() => setShowRail((v) => { localStorage.setItem('wanigan.code', v ? '0' : '1'); return !v; })}>
-              {showRail ? '⟨ hide' : `${pane} ⟩`}
+              {compactLayout ? 'terminal full width' : railOpen ? '⟨ hide' : `${pane} ⟩`}
             </FocusBtn>
           </div>
 
@@ -438,7 +471,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
               )}
             </div>
           ) : (
-            <div className={showRail && active ? 'term-split' : 'term-full'}>
+            <div className={railOpen && active ? 'term-split' : 'term-full'}>
               <div className="term-col">
                 {/* P21 · the terminal is the drop target: the file is for the
                     agent you are looking at, so it lands where you are looking. */}
@@ -472,7 +505,7 @@ export default function Sessions({ providers, projects, onAddProject, onError, o
                 {active && <AttachStrip session={active} att={att} />}
               </div>
 
-              {showRail && active && (
+              {railOpen && active && (
                 <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
                   {/* P8 · one rail, two readings of the same session: what the
                       repo looks like now, and what the agent actually did. */}

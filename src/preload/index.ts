@@ -205,7 +205,7 @@ const api = {
     upsert: (cfg: Omit<McpServerConfig, 'id'> & { id?: string }) => call<McpServerConfig>('mcp:upsert', cfg),
     remove: (id: string) => call<boolean>('mcp:remove', id),
     status: () => call<McpServerStatus[]>('mcp:status'),
-    server: () => call<{ port: number; token: string; url: string } | null>('mcp:server'),
+    server: () => call<{ port: number; url: string } | null>('mcp:server'),
     pending: () => call<{ id: string; tool: string; summary: string; costUsd: number; at: number }[]>('mcp:pending'),
   },
   // ── phases 5/18 · spend and budgets ──────────────────────────────────

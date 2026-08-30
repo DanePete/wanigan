@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { resultsDir } from '../db';
+import { ensurePrivateDir, ensurePrivateFile, PRIVATE_FILE_MODE, resultsDir } from '../db';
 
 /**
  * Local stand-in for the Batches API. Same object shapes, same lifecycle
@@ -20,8 +20,10 @@ const store = new Map<string, MockBatch>();
 function file(id: string) { return path.join(resultsDir(), `${id}.mock.json`); }
 
 function save(b: MockBatch) {
-  fs.mkdirSync(resultsDir(), { recursive: true });
-  fs.writeFileSync(file(b.id), JSON.stringify(b));
+  ensurePrivateDir(resultsDir());
+  const target = file(b.id);
+  fs.writeFileSync(target, JSON.stringify(b), { mode: PRIVATE_FILE_MODE });
+  ensurePrivateFile(target);
   store.set(b.id, b);
 }
 function load(id: string): MockBatch | null {

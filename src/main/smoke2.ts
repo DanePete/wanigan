@@ -11,6 +11,8 @@ import * as attachments from './attachments';
 import * as instructions from './context/instructions';
 import * as memory from './context/memory';
 import * as config from './context/config';
+import { db } from './db';
+import { getSetting, setSetting } from './settings';
 import type { HookInput, TrustLevel } from '../shared/types';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
@@ -96,28 +98,69 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   /* ── phase 2 · the hook bus ────────────────────────────────────────── */
   say('── phase 2 · hook bus');
   const hs = await hooks.startHookServer();
-  check(hs.port > 0 && hs.token.length > 8, `hook bus bound on 127.0.0.1:${hs.port} with a token`);
+  check(hs.port > 0, `hook bus bound on 127.0.0.1:${hs.port}`);
 
-  const unauth = await fetch(`http://127.0.0.1:${hs.port}/hook?s=${SID}`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }),
-  });
-  check(unauth.status === 401, 'an unauthenticated hook post is rejected', unauth.status);
+  const hookFile = hooks.writeHookSettings(SID, tmp);
+  check(hookFile !== null, 'a hook-enabled session receives an opaque capability config');
+  if (hookFile) {
+    const settings = JSON.parse(fs.readFileSync(hookFile, 'utf8')) as {
+      hooks: { PreToolUse?: Array<{ hooks?: Array<{ url?: string; headers?: { Authorization?: string } }> }> };
+    };
+    const handler = settings.hooks.PreToolUse?.[0]?.hooks?.[0];
+    const callbackUrl = handler?.url;
+    const authorization = handler?.headers?.Authorization;
+    const peerSessionId = `${SID}-peer`;
+    const peerFile = hooks.writeHookSettings(peerSessionId, tmp);
+    const peerHandler = peerFile ? (JSON.parse(fs.readFileSync(peerFile, 'utf8')) as {
+      hooks: { PreToolUse?: Array<{ hooks?: Array<{ headers?: { Authorization?: string } }> }> };
+    }).hooks.PreToolUse?.[0]?.hooks?.[0] : null;
+    const peerAuthorization = peerHandler?.headers?.Authorization;
+    check(typeof callbackUrl === 'string' && typeof authorization === 'string' && /^Bearer [A-Za-z0-9_-]{43}$/.test(authorization ?? ''),
+      'each hook settings file carries its own 256-bit opaque bearer capability');
+    check(typeof peerAuthorization === 'string' && peerAuthorization !== authorization,
+      'two concurrent sessions receive distinct hook capabilities');
+    check(!callbackUrl?.includes('?s=') && !callbackUrl?.includes(encodeURIComponent(SID)),
+      'the callback URL does not expose or select a Wanigan session id');
 
-  const authed = await fetch(`http://127.0.0.1:${hs.port}/hook?s=${SID}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${hs.token}` },
-    body: JSON.stringify({
-      hook_event_name: 'PreToolUse', tool_name: 'Bash',
-      tool_input: { command: 'npm test' }, tool_use_id: 'toolu_smoke',
-    }),
-  });
-  check(authed.ok, 'an authenticated hook post is accepted');
+    if (callbackUrl && authorization) {
+      const forgedSessionId = `${SID}-forged`;
+      const spoofedUrl = new URL(callbackUrl);
+      // Query and body ids are deliberately hostile input now: the capability,
+      // not either field, chooses which timeline and policy context receive it.
+      spoofedUrl.searchParams.set('s', forgedSessionId);
+      const unauth = await fetch(spoofedUrl, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }),
+      });
+      check(unauth.status === 401, 'an unauthenticated hook post is rejected', unauth.status);
 
-  const evs = hooks.sessionEvents(SID, 10);
-  check(evs.length > 0, `${evs.length} session event(s) stored`);
-  check(evs.some((e) => e.toolName === 'Bash'), 'the tool name survived into the timeline');
-  check(hooks.liveState(SID).tool === 'Bash', 'live state reports the tool in flight');
+      const authed = await fetch(spoofedUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization },
+        body: JSON.stringify({
+          hook_event_name: 'PreToolUse', tool_name: 'Bash',
+          tool_input: { command: 'npm test' }, tool_use_id: 'toolu_smoke',
+          wanigan_session_id: forgedSessionId,
+        }),
+      });
+      check(authed.ok, 'an authenticated hook post is accepted');
+
+      const evs = hooks.sessionEvents(SID, 10);
+      check(evs.length > 0, `${evs.length} session event(s) stored`);
+      check(evs.some((e) => e.toolName === 'Bash'), 'the tool name survived into the timeline');
+      check(hooks.liveState(SID).tool === 'Bash', 'live state reports the tool in flight');
+      check(hooks.sessionEvents(forgedSessionId, 10).length === 0,
+        'a forged query/body session id cannot redirect an authenticated hook event');
+
+      hooks.cleanupHookSettings(SID);
+      const revoked = await fetch(callbackUrl, {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization },
+        body: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }),
+      });
+      check(revoked.status === 401, 'cleaning a session hook config revokes its capability', revoked.status);
+    }
+    hooks.cleanupHookSettings(peerSessionId);
+  }
 
   /* ── phase 19 · the policy gate decides ────────────────────────────── */
   say('── phase 19 · trust and policy');
@@ -145,6 +188,67 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   const item = queue.enqueue('headless', 'smoke item', { runId: 'r', projectId: 'p' }, 50);
   check(queue.listQueue(50).some((q) => q.id === item.id), 'work is queued and readable back');
   check(queue.cancelQueued(item.id), 'a queued item can be cancelled');
+
+  // The app window and scheduled service have separate in-memory maps but one
+  // SQLite queue.  A fresh process must leave a live foreign worker alone,
+  // while an expired worker must become safely dispatchable again.
+  const leaseDb = db();
+  const leaseNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const liveLeaseId = `q_smoke_live_lease_${leaseNonce}`;
+  const expiredLeaseId = `q_smoke_expired_lease_${leaseNonce}`;
+  const leaseNow = Date.now();
+  const liveExpiry = leaseNow + 60_000;
+  const previousSlots = getSetting('slots', '__wanigan_smoke_slots_missing__');
+  try {
+    const insertLease = leaseDb.prepare(`
+      INSERT INTO queue (
+        id, kind, state, priority, label, payload_json, blocked_by, attempts,
+        next_attempt_at, created_at, started_at, ended_at, error, lease_owner, lease_expires_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `);
+    insertLease.run(
+      liveLeaseId, 'headless', 'running', 50, 'smoke live foreign lease', '{}', null, 0,
+      null, leaseNow, leaseNow, null, null, 'foreign-live-worker', liveExpiry,
+    );
+    insertLease.run(
+      expiredLeaseId, 'headless', 'running', 50, 'smoke expired foreign lease', '{}', null, 0,
+      null, leaseNow, leaseNow, null, null, 'foreign-crashed-worker', leaseNow - 1,
+    );
+
+    // Keep the recovered row waiting long enough to inspect its durable state;
+    // a registered runner in a future smoke setup must not consume it first.
+    setSetting('slots', JSON.stringify({ session: 0, headless: 0, batch: 0 }));
+    await queue.tick();
+
+    const leases = leaseDb.prepare(`
+      SELECT id, state, started_at, lease_owner, lease_expires_at
+      FROM queue WHERE id IN (?, ?)
+    `).all(liveLeaseId, expiredLeaseId) as {
+      id: string;
+      state: string;
+      started_at: number | null;
+      lease_owner: string | null;
+      lease_expires_at: number | null;
+    }[];
+    const live = leases.find((row) => row.id === liveLeaseId);
+    const expired = leases.find((row) => row.id === expiredLeaseId);
+    check(
+      live?.state === 'running' && live.lease_owner === 'foreign-live-worker' && live.lease_expires_at === liveExpiry,
+      'a non-expired foreign queue lease is never reclaimed', JSON.stringify(live),
+    );
+    check(
+      expired?.state === 'waiting' && expired.started_at === null &&
+        expired.lease_owner === null && expired.lease_expires_at === null,
+      'an expired foreign queue lease is requeued with its stale ownership cleared', JSON.stringify(expired),
+    );
+  } finally {
+    leaseDb.prepare('DELETE FROM queue WHERE id IN (?, ?)').run(liveLeaseId, expiredLeaseId);
+    if (previousSlots === '__wanigan_smoke_slots_missing__') {
+      leaseDb.prepare("DELETE FROM settings WHERE k='slots'").run();
+    } else {
+      setSetting('slots', previousSlots);
+    }
+  }
 
   /* ── phase 21 · attachments reject what Claude cannot read ─────────── */
   say('── phase 21 · attachments');

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LaunchOptions, Project, ProviderId, ProviderInfo, TrustLevel } from '@shared/types';
 import { EFFORT_LEVELS, PERMISSION_MODES, TRUST_COPY, TRUST_LEVELS } from '@shared/types';
 
@@ -61,6 +61,7 @@ export default function NewSessionDialog({
   const [trustErr, setTrustErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [codexModels, setCodexModels] = useState([
     { value: '', label: 'Auto (default)', description: 'Codex current default', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
     { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', description: 'Latest frontier agentic coding model', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
@@ -143,9 +144,31 @@ export default function NewSessionDialog({
   }, [codexHarness, model, codexModels]);
 
   useEffect(() => {
+    const priorFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = requestAnimationFrame(() => {
+      dialogRef.current?.querySelector<HTMLElement>('button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled)')?.focus();
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      priorFocus?.focus?.();
+    };
+  }, []);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void go();
+      if (e.key === 'Tab') {
+        const dialog = dialogRef.current;
+        if (!dialog) return;
+        const focusable = [...dialog.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'
+        )].filter((node) => !node.hasAttribute('hidden'));
+        if (!focusable.length) return;
+        const first = focusable[0], last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -193,8 +216,9 @@ export default function NewSessionDialog({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2 style={{ fontSize: 'var(--t-lead)', fontWeight: 600, marginBottom: 14 }}>New session</h2>
+      <div className="modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="new-session-title"
+           onClick={(e) => e.stopPropagation()}>
+        <h2 id="new-session-title" style={{ fontSize: 'var(--t-lead)', fontWeight: 600, marginBottom: 14 }}>New session</h2>
 
         <div className="label">Agent</div>
         <div style={{ display: 'flex', gap: 8, margin: '6px 0 14px' }}>

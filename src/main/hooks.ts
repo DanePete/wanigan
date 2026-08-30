@@ -15,17 +15,15 @@ import type { HookEventName, HookInput, PolicyDecision, SessionEvent } from '../
  * when, and whether it is stuck waiting on a human.
  *
  * Claude Code posts each hook event to an http endpoint we hand it at launch.
- * The listener is bound to 127.0.0.1 and requires a bearer token generated per
- * app start: an unauthenticated endpoint on loopback lets any process on the
- * machine — a stray npm postinstall, a webpage's fetch to localhost — forge
- * session events, and worse, receive our PreToolUse allow/deny answers.
+ * The listener is bound to 127.0.0.1 and each generated settings file carries
+ * its own opaque bearer capability. A process-wide bearer plus a caller-owned
+ * session id would let one agent forge events for another pane; the capability
+ * is the server-side binding between this request and its Wanigan session.
  */
 
 /** Anything longer than this is a paste, not a summary. */
 const MAX_SUMMARY = 160;
 const MAX_PATH = 300;
-/** Session ids are ours, but this one arrives over the wire; keep rows sane. */
-const MAX_ID = 128;
 /**
  * A PostToolUse body can carry a whole file in tool_response. We never store it,
  * but we must not buffer it either — an agent reading a 200MB log would take the
@@ -40,7 +38,7 @@ const LIVE_WINDOW = 200;
 type Listener = (e: SessionEvent) => void;
 
 let server: http.Server | null = null;
-let info: { port: number; token: string } | null = null;
+let info: { port: number } | null = null;
 /**
  * Returns null for "no answer", which is not the same as an allow: the CLI falls
  * back to its own permission prompt, and a human decides. Only ever a safe thing
@@ -63,20 +61,23 @@ let learningBriefing: ((
 ) => string | null | Promise<string | null>) | null = null;
 const listeners = new Set<Listener>();
 const sockets = new Set<Socket>();
-/** sessionId → the settings file written for it, so cleanup is exact. */
+/** sessionId → the settings file and opaque capability written for it. */
 const registered = new Map<string, {
   file: string;
   projectPath: string;
+  capability: string;
   learningContext?: LearningBriefingContext;
 }>();
+/** Capability → session id. This is intentionally process-local and revocable. */
+const capabilitySessions = new Map<string, string>();
+const CAPABILITY_RE = /^[A-Za-z0-9_-]{43}$/;
 
 /* ── server ──────────────────────────────────────────────────────────── */
 
-export async function startHookServer(): Promise<{ port: number; token: string }> {
+export async function startHookServer(): Promise<{ port: number }> {
   if (info && server) return info;
 
-  const token = randomBytes(24).toString('hex');
-  const srv = http.createServer((req, res) => { void onRequest(req, res, token); });
+  const srv = http.createServer((req, res) => { void onRequest(req, res); });
 
   // Keep-alive sockets outlive their request. Without these two the app waits
   // on an idle agent connection at quit instead of closing.
@@ -109,7 +110,7 @@ export async function startHookServer(): Promise<{ port: number; token: string }
   srv.on('error', () => {});
 
   server = srv;
-  info = { port: addr.port, token };
+  info = { port: addr.port };
   sweepStaleSettings();
   return info;
 }
@@ -119,6 +120,11 @@ export function stopHookServer(): void {
   server = null;
   info = null;
   pending.clear();
+  // A stopped listener cannot honour any of these capabilities. Drop their
+  // credentials from disk too: retaining a live session's settings file after
+  // its endpoint disappeared is both misleading and an unnecessary secret.
+  for (const sessionId of [...registered.keys()]) cleanupHookSettings(sessionId);
+  capabilitySessions.clear();
   if (!srv) return;
   srv.close();
   // close() only stops new connections; an established one keeps the loop alive.
@@ -126,8 +132,8 @@ export function stopHookServer(): void {
   sockets.clear();
 }
 
-export function hookServerInfo(): { port: number; token: string } | null {
-  return info;
+export function hookServerInfo(): { port: number } | null {
+  return info ? { ...info } : null;
 }
 
 /* ── settings file ───────────────────────────────────────────────────── */
@@ -163,10 +169,9 @@ function hooksDir(): string {
  * .json, not .claude/settings.local.json. A tool that edits tracked files to
  * instrument itself shows up in the user's next diff, and in their next commit.
  *
- * Wanigan's session id has no home in the hook payload, so it is carried in the
- * URL query string and read back off the request. Without it every event would
- * arrive with only the agent's own id, and nothing could be attributed to the
- * pane it belongs to.
+ * Attribution is not taken from the URL or hook payload: both are agent-owned
+ * input. The generated bearer is a random, per-session capability and the
+ * listener resolves it back to the session id it registered here.
  */
 export function writeHookSettings(
   waniganSessionId: string,
@@ -177,8 +182,10 @@ export function writeHookSettings(
   const live = info;
   if (!live) return null;
 
-  const url = `http://127.0.0.1:${live.port}/hook?s=${encodeURIComponent(waniganSessionId)}`;
-  const handler = { type: 'http', url, headers: { Authorization: `Bearer ${live.token}` } };
+  let capability = randomBytes(32).toString('base64url');
+  while (capabilitySessions.has(capability)) capability = randomBytes(32).toString('base64url');
+  const url = `http://127.0.0.1:${live.port}/hook`;
+  const handler = { type: 'http', url, headers: { Authorization: `Bearer ${capability}` } };
 
   const hooks: Record<string, unknown[]> = {};
   for (const ev of SETTINGS_EVENTS) {
@@ -187,19 +194,24 @@ export function writeHookSettings(
 
   const dir = hooksDir();
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try { fs.chmodSync(dir, 0o700); } catch { /* best effort on odd filesystems */ }
   const file = path.join(dir, `${safeName(waniganSessionId)}.json`);
   fs.writeFileSync(file, JSON.stringify({ hooks }, null, 2), { mode: 0o600 });
   // writeFileSync honours mode only when it creates the file; an overwrite keeps
   // whatever the old one had. This file is a bearer credential.
   try { fs.chmodSync(file, 0o600); } catch { /* best effort on odd filesystems */ }
 
-  registered.set(waniganSessionId, { file, projectPath, learningContext });
+  const previous = registered.get(waniganSessionId);
+  if (previous) capabilitySessions.delete(previous.capability);
+  registered.set(waniganSessionId, { file, projectPath, capability, learningContext });
+  capabilitySessions.set(capability, waniganSessionId);
   return file;
 }
 
 export function cleanupHookSettings(waniganSessionId: string): void {
   const reg = registered.get(waniganSessionId);
   registered.delete(waniganSessionId);
+  if (reg) capabilitySessions.delete(reg.capability);
   const file = reg?.file ?? path.join(hooksDir(), `${safeName(waniganSessionId)}.json`);
   try { fs.rmSync(file, { force: true }); } catch { /* already gone */ }
 }
@@ -243,14 +255,15 @@ function hooksEnabled(): boolean {
 
 /* ── request handling ────────────────────────────────────────────────── */
 
-async function onRequest(req: http.IncomingMessage, res: http.ServerResponse, token: string) {
+async function onRequest(req: http.IncomingMessage, res: http.ServerResponse) {
   // Nagle would add up to 40ms to every answer, and on PreToolUse the agent is
   // sitting on its hands for exactly that long.
   try { req.socket.setNoDelay(true); } catch { /* socket already closed */ }
 
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
   if (req.method !== 'POST' || url.pathname !== '/hook') return reply(res, 404, {});
-  if (!authOk(req.headers.authorization, token)) return reply(res, 401, {});
+  const sessionId = sessionForCapability(req.headers.authorization);
+  if (!sessionId) return reply(res, 401, {});
 
   const body = await readBody(req);
   if (!body.ok) return reply(res, body.status, {});
@@ -259,10 +272,9 @@ async function onRequest(req: http.IncomingMessage, res: http.ServerResponse, to
 
   const at = Date.now();
   const event = clip(str(input.hook_event_name), 64) ?? 'Unknown';
-  const sessionId = attribute(url, input);
 
   // Answer first, bookkeep after: a tool call must never wait on a SQLite write.
-  if (event === 'PreToolUse' && sessionId) {
+  if (event === 'PreToolUse') {
     const decision = decide({ ...input, wanigan_session_id: sessionId }, sessionId);
     reply(res, 200, decision
       ? {
@@ -273,16 +285,19 @@ async function onRequest(req: http.IncomingMessage, res: http.ServerResponse, to
           },
         }
       : {});
-  } else if (event === 'SessionStart' && sessionId) {
+  } else if (event === 'SessionStart') {
     reply(res, 200, await briefing(sessionId));
   } else {
     // A hook that returns nothing is a hook that stays out of the way.
     reply(res, 200, {});
   }
 
-  if (!sessionId) return;
   const stored = store(sessionId, event, input, at);
   if (stored) emit(stored);
+  // Claude Code's own lifecycle signal is an additional cleanup path. The
+  // session/headless owners call cleanup too, so either a graceful hook end or
+  // a process exit revokes the capability and removes the on-disk credential.
+  if (event === 'SessionEnd') cleanupHookSettings(sessionId);
 }
 
 function reply(res: http.ServerResponse, status: number, body: unknown) {
@@ -300,13 +315,25 @@ function reply(res: http.ServerResponse, status: number, body: unknown) {
   } catch { /* client hung up first */ }
 }
 
-function authOk(header: string | undefined, token: string): boolean {
-  if (!header || !header.startsWith('Bearer ')) return false;
-  const given = Buffer.from(header.slice(7));
-  const want = Buffer.from(token);
-  // Compare in constant time: a local attacker can retry a guess as fast as the
-  // loop will spin, and a length-or-content short circuit leaks the token.
-  return given.length === want.length && timingSafeEqual(given, want);
+function sessionForCapability(header: string | undefined): string | null {
+  const match = typeof header === 'string' ? /^Bearer\s+([A-Za-z0-9_-]{43})$/i.exec(header.trim()) : null;
+  if (!match || !CAPABILITY_RE.test(match[1])) return null;
+
+  // All minted capabilities are exactly 32 random bytes in base64url form, so
+  // every candidate has the same length and can be compared without a
+  // length-or-content short circuit. A map scan is tiny (one entry per live
+  // hook-enabled session) and keeps the bearer comparison timing-safe.
+  const given = Buffer.from(match[1]);
+  let sessionId: string | null = null;
+  for (const [capability, candidate] of capabilitySessions) {
+    if (timingSafeEqual(given, Buffer.from(capability))) sessionId = candidate;
+  }
+  if (!sessionId) return null;
+
+  // Deleting/replacing a settings file revokes its old token immediately. Check
+  // both indexes so a stale map entry can never be treated as authority.
+  const reg = registered.get(sessionId);
+  return reg?.capability === match[1] ? sessionId : null;
 }
 
 type Body = { ok: true; text: string } | { ok: false; status: number };
@@ -355,29 +382,6 @@ function asHookInput(raw: string): HookInput | null {
   } catch {
     return null;
   }
-}
-
-/**
- * Which Wanigan session this event belongs to. The query parameter is the real
- * answer; the cwd fallback covers a config the agent copied to a subagent, which
- * keeps the URL but can lose the query string on some CLI versions.
- *
- * Two things produce these ids now: a PTY pane, and one row of a headless
- * fan-out, whose id stands for a (runId, projectId) pair because that pair is
- * all a fan-out row has. Nothing here needs to tell them apart — the id is
- * opaque to attribution — but the clip below is why headless.ts keeps its ids
- * short: an id that came back shorter than the one registered with policy.ts
- * would find no context and be judged at the default trust level.
- */
-function attribute(url: URL, input: HookInput): string | null {
-  const q = url.searchParams.get('s');
-  if (q) return clip(q, MAX_ID);
-  if (input.wanigan_session_id) return clip(input.wanigan_session_id, MAX_ID);
-  const cwd = str(input.cwd);
-  if (cwd) {
-    for (const [id, reg] of registered) if (reg.projectPath === cwd) return id;
-  }
-  return null;
 }
 
 /* ── policy ──────────────────────────────────────────────────────────── */

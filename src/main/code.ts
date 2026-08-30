@@ -56,6 +56,36 @@ function confine(root: string, rel: string): string {
   return full;
 }
 
+function isWithin(base: string, target: string): boolean {
+  return target === base || target.startsWith(base + path.sep);
+}
+
+/**
+ * Files-panel reads are stricter than a lexical `..` check. A repository can
+ * contain `secret -> ~/.ssh/id_rsa`; stat/readFile follow it and would turn a
+ * harmless-looking in-project row into a local-file disclosure. Resolve both
+ * ends and reject every symlink segment rather than promising a boundary that
+ * a repo controls.
+ */
+function confineExisting(root: string, rel: string): string {
+  const base = path.resolve(root);
+  const full = confine(base, rel);
+  const relative = path.relative(base, full);
+  let cursor = base;
+  for (const segment of relative ? relative.split(path.sep) : []) {
+    cursor = path.join(cursor, segment);
+    const stat = fs.lstatSync(cursor);
+    if (stat.isSymbolicLink()) {
+      throw new Error('Symlinked paths are not available in the Files panel. Open the target in your editor instead.');
+    }
+  }
+
+  const realRoot = fs.realpathSync(base);
+  const realTarget = fs.realpathSync(full);
+  if (!isWithin(realRoot, realTarget)) throw new Error('Path is outside the project.');
+  return realTarget;
+}
+
 /* ── git ─────────────────────────────────────────────────────────────── */
 
 export type ChangedFile = {
@@ -145,12 +175,20 @@ export type Entry = { name: string; rel: string; dir: boolean; size: number };
 const SKIP_DIRS = new Set(['node_modules', '.git', '.next', 'vendor', 'dist', 'build', '.cache', 'out']);
 
 export function listDir(root: string, rel: string): Entry[] {
-  const full = confine(root, rel);
+  // Keep the renderer-facing relative name on the path spelling the project
+  // was added with. On macOS `/tmp` resolves to `/private/tmp`; returning the
+  // latter as a relative path would make a safe project look like `../../…`
+  // on the next click even though the realpath check is correct.
+  const requested = confine(root, rel);
+  const full = confineExisting(root, rel);
   const entries = fs.readdirSync(full, { withFileTypes: true });
   return entries
-    .filter((e) => !(e.isDirectory() && SKIP_DIRS.has(e.name)))
+    // Do not render an entry that we would refuse to open. Besides making the
+    // boundary obvious, this avoids a race where a directory entry becomes a
+    // symlink between readdir and a later click.
+    .filter((e) => !e.isSymbolicLink() && !(e.isDirectory() && SKIP_DIRS.has(e.name)))
     .map((e) => {
-      const r = path.relative(path.resolve(root), path.join(full, e.name));
+      const r = path.relative(path.resolve(root), path.join(requested, e.name));
       let size = 0;
       try { size = e.isFile() ? fs.statSync(path.join(full, e.name)).size : 0; } catch { /* race */ }
       return { name: e.name, rel: r, dir: e.isDirectory(), size };
@@ -161,7 +199,7 @@ export function listDir(root: string, rel: string): Entry[] {
 const MAX_VIEW_BYTES = 1_500_000;
 
 export function readProjectFile(root: string, rel: string): { text: string; truncated: boolean; size: number; binary: boolean } {
-  const full = confine(root, rel);
+  const full = confineExisting(root, rel);
   const size = fs.statSync(full).size;
   const buf = fs.readFileSync(full, { encoding: null }).subarray(0, MAX_VIEW_BYTES);
   // A NUL byte in the first chunk is the cheap, reliable binary test.
