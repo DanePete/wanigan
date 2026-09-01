@@ -2,15 +2,21 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type {
   LaunchOptions, PastSession, Project, ProviderInfo, Session, RunConfig, SourceConfig,
   SessionUsage, ApiEvent, SessionEvent, Attention, TranscriptHit, TranscriptTurn,
-  WorktreeInfo, HeadlessConfig, HeadlessRow, HeadlessRun, QueueItem, QueueKind, QueueSlots, QueueState,
+  WorktreeInfo, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, HeadlessStartRequest,
+  QueueItem, QueueSlots, QueueState,
+  BackupCheck, BackupRestoreSummary, BackupSummary,
+  InteractiveSessionLoad, NotificationRoute, PluginScope,
   McpServerConfig, McpServerStatus, BudgetState, Reconciliation, TrustLevel, LedgerEntry,
   WaniganSettings, ThemeSetting, UploadedFile, EvalPair, GoldenSet,
   EgressReport, ObservedSession, ObservedState,
   MobileMonitorConfig, MobileMonitorStatus,
   ReviewRecipe, ReviewRun,
-  ArtifactRoiSummary, ForgedSkill, KnowledgeBriefing, KnowledgeCandidate,
-  KnowledgeEvidence, KnowledgeItem, KnowledgeProjection, KnowledgeVersion,
-  LearningExperiment, LearningOverview, LearningSettings, LearningSignal,
+  ArtifactRoiSummary, CandidateExplanation, ForgedSkill, FreshnessReport,
+  KnowledgeBriefing, KnowledgeCandidate,
+  KnowledgeEvidence, KnowledgeItem, KnowledgeProjection, KnowledgeRelation, KnowledgeVersion,
+  SkillInstallResult,
+  LearningExperiment, LearningOverview, LearningPipelineStats, LearningSettings, LearningSignal,
+  SessionLearningLedger,
   OptimizerDiagnostic, ProviderManifestInspection, ProviderPackInfo, ProviderProfileInfo, SkillDiagnostic,
   TeachWaniganInput,
   ImprovementScoutGoal, ImprovementScoutOverview, ImprovementScoutRun,
@@ -68,7 +74,15 @@ const api = {
     remove: (id: string) => call<Project[]>('projects:remove', id),
   },
   sessions: {
+    // Sessions carry `baselineSummary` here, not `baseline`: the launch
+    // snapshot's dirty-path list is thousands of strings in a monorepo and
+    // three pollers re-serialise this list every few seconds. `baseline(id)`
+    // below returns the paths for one session, on demand.
     list: () => call<Session[]>('sessions:list'),
+    // How many interactive sessions hold a PTY right now, against the limit the
+    // launcher itself checks. The dispatcher meter counts queue rows, and an
+    // interactive session never creates one.
+    liveCount: () => call<InteractiveSessionLoad>('sessions:liveCount'),
     create: (opts: LaunchOptions) => call<Session>('sessions:create', opts),
     recoverExactCodex: (input: { threadId: string; projectId: string }) =>
       call<Session>('sessions:recoverExactCodex', input),
@@ -77,11 +91,13 @@ const api = {
     kill: (id: string) => call<boolean>('sessions:kill', id),
     close: (id: string) => call<boolean>('sessions:close', id),
     markRead: (id: string) => call<boolean>('sessions:markRead', id),
-    reveal: (p: string) => call<boolean>('sessions:reveal', p),
+    reveal: (id: string) => call<boolean>('sessions:reveal', id),
     baseline: (id: string) => call<{ head: string | null; dirty: string[]; at: number } | null>('sessions:baseline', id),
     past: () => call<PastSession[]>('sessions:past'),
     forget: (id: string) => call<PastSession[]>('sessions:forget', id),
     write: (id: string, data: string) => ipcRenderer.send('sessions:write', id, data),
+    setTuning: (id: string, field: 'model' | 'effort', value: string) =>
+      call<boolean>('sessions:setTuning', id, field, value),
     resize: (id: string, cols: number, rows: number) =>
       ipcRenderer.send('sessions:resize', id, cols, rows),
   },
@@ -195,8 +211,15 @@ const api = {
   },
   // ── phase 10 · headless fan-out ──────────────────────────────────────
   headless: {
-    start: (cfg: HeadlessConfig) => call<{ runId: string; rows: number }>('headless:start', cfg),
-    rows: (runId: string) => call<HeadlessRow[]>('headless:rows', runId),
+    // `allProjects` is the operator saying "every registered repository" out
+    // loud. Main refuses a selection covering the whole project list without
+    // it, because an omitted repository field arrives looking identical.
+    start: (cfg: HeadlessStartRequest) => call<{ runId: string; rows: number }>('headless:start', cfg),
+    // Status only. `output` and `error` are null on every row here; `hasOutput`
+    // and `hasError` say whether rowDetail has anything to fetch.
+    rows: (runId: string) => call<HeadlessRowSummary[]>('headless:rows', runId),
+    rowDetail: (runId: string, projectId: string) =>
+      call<HeadlessRowDetail>('headless:rowDetail', runId, projectId),
     runs: (limit?: number) => call<HeadlessRun[]>('headless:runs', limit),
     cancel: (runId: string) => call<number>('headless:cancel', runId),
   },
@@ -207,8 +230,6 @@ const api = {
     cancel: (id: string) => call<boolean>('queue:cancel', id),
     slots: () => call<QueueSlots>('queue:slots'),
     setSlots: (next: Partial<QueueSlots>) => call<QueueSlots>('queue:setSlots', next),
-    enqueue: (kind: QueueKind, label: string, payload: unknown, priority?: number) =>
-      call<QueueItem>('queue:enqueue', kind, label, payload, priority),
   },
   // ── phase 12 · MCP ───────────────────────────────────────────────────
   mcp: {
@@ -350,6 +371,7 @@ const api = {
     releaseClaim: (id: string) => call<boolean>('control:releaseClaim', id),
     start: (nodeId: string, input: { providerId: string; model?: string; effort?: string; permissionMode?: string }) =>
       call<DocketNode>('control:start', nodeId, input),
+    retry: (nodeId: string) => call<DocketNode>('control:retry', nodeId),
     checkpoint: (nodeId: string, note: string) => call<DocketCheckpoint>('control:checkpoint', nodeId, note),
     runProof: (nodeId: string) => call<DocketProof>('control:runProof', nodeId),
     complete: (nodeId: string, input?: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }) =>
@@ -383,11 +405,16 @@ const api = {
     file: (p: string) => call<{ text: string; truncated: boolean; bytes: number }>('plugins:file', p),
     catalog: () => call<{ plugins: any[]; note: string | null }>('plugins:catalog'),
     details: (name: string) => call<{ text: string; alwaysOnTokens: number | null; error: string | null }>('plugins:details', name),
-    install: (id: string, scope?: 'user' | 'project' | 'local') =>
+    // Ids, scopes and marketplace sources are validated in main before they
+    // become argv for a CLI that installs and runs code; the types here are a
+    // convenience, never the check.
+    install: (id: string, scope?: PluginScope) =>
       call<{ ok: boolean; output: string; error: string | null }>('plugins:install', id, scope),
     setEnabled: (id: string, on: boolean) =>
       call<{ ok: boolean; output: string; error: string | null }>('plugins:setEnabled', id, on),
     marketUpdate: (name?: string) => call<{ ok: boolean; output: string; error: string | null }>('plugins:marketUpdate', name),
+    // Asks in the main process before it runs. A cancelled prompt comes back as
+    // ok:false with a reason, not as a thrown error.
     marketAdd: (source: string) => call<{ ok: boolean; output: string; error: string | null }>('plugins:marketAdd', source),
     marketRemove: (name: string) => call<{ ok: boolean; output: string; error: string | null }>('plugins:marketRemove', name),
   },
@@ -407,7 +434,10 @@ const api = {
     paste: (sessionId: string, data: ArrayBuffer, name: string) => call<any>('attach:paste', sessionId, data, name),
     list: (sessionId: string) => call<any[]>('attach:list', sessionId),
     remove: (id: string) => call<boolean>('attach:remove', id),
-    type: (sessionId: string) => call<boolean>('attach:type', sessionId),
+    // onlyUnreferenced: name just the files that are not already in the prompt,
+    // so attaching a second file does not repeat the first.
+    type: (sessionId: string, onlyUnreferenced?: boolean) =>
+      call<boolean>('attach:type', sessionId, onlyUnreferenced),
   },
   // ── phases 13/15/16/17 · batch depth ─────────────────────────────────
   uploads: {
@@ -449,6 +479,11 @@ const api = {
     agentsMd: (projectPath: string) => call<{ present: boolean; imported: boolean; symlinked: boolean; note: string }>('context:agentsMd', projectPath),
     refresh: (projectPath: string) => call<any>('context:refresh', projectPath),
   },
+  // Opening a link is an external side effect, so it is explicit and validated
+  // in main; the boolean says whether the scheme was one Wanigan will open.
+  shell: {
+    openExternal: (url: string) => call<boolean>('shell:openExternal', url),
+  },
   prefs: {
     all: () => call<WaniganSettings>('settings:all'),
     set: (k: string, v: string) => call<WaniganSettings>('settings:set', k, v),
@@ -463,7 +498,10 @@ const api = {
     teach: (input: TeachWaniganInput) => call<KnowledgeCandidate>('learning:teach', input),
     consolidate: (projectId?: string | null) =>
       call<{ processed: number; candidates: number; autoApplied: number }>('learning:consolidate', projectId),
-    signals: (filter?: { projectId?: string | null; providerId?: string | null; processed?: boolean; limit?: number }) =>
+    signals: (filter?: {
+      projectId?: string | null; providerId?: string | null; sessionId?: string | null;
+      kinds?: string[]; processed?: boolean; limit?: number;
+    }) =>
       call<LearningSignal[]>('learning:signals', filter),
     candidates: (filter?: { projectId?: string | null; status?: string | string[]; scope?: string; limit?: number }) =>
       call<KnowledgeCandidate[]>('learning:candidates', filter),
@@ -484,6 +522,11 @@ const api = {
       item: KnowledgeItem; versions: KnowledgeVersion[]; evidence: KnowledgeEvidence[];
       projections: KnowledgeProjection[]; roi: ArtifactRoiSummary;
     }>('learning:item', id),
+    // Takes an artifact out of circulation so it stops being injected into
+    // agent context. Nothing is deleted — versions, citations and projections
+    // stay, and the reason is recorded as an operational signal. The reason is
+    // required: main rejects an empty one.
+    retireItem: (id: string, reason: string) => call<KnowledgeItem>('learning:retireItem', id, reason),
     briefing: (input: { query: string; providerId: string; projectId?: string | null; path?: string | null; maxTokens?: number }) =>
       call<KnowledgeBriefing>('learning:briefing', input),
     projections: (filter?: { itemId?: string; candidateId?: string; status?: string; limit?: number }) =>
@@ -499,7 +542,7 @@ const api = {
     doctorSkill: (skillMd: string, root?: string) =>
       call<SkillDiagnostic[]>('learning:doctorSkill', skillMd, root),
     installSkill: (skill: ForgedSkill, providerIds: string[], projectId?: string | null) =>
-      call<KnowledgeProjection[]>('learning:installSkill', skill, providerIds, projectId),
+      call<SkillInstallResult[]>('learning:installSkill', skill, providerIds, projectId),
     experiments: (filter?: { projectId?: string | null; status?: string; limit?: number }) =>
       call<LearningExperiment[]>('learning:experiments', filter),
     createExperiment: (input: {
@@ -509,6 +552,19 @@ const api = {
     }) => call<LearningExperiment>('learning:createExperiment', input),
     setExperimentStatus: (id: string, action: 'start' | 'cancel' | 'complete', outcome?: Record<string, unknown>) =>
       call<LearningExperiment>('learning:setExperimentStatus', id, action, outcome),
+    // ── the legibility surface: recorded facts about what the engine did ──
+    sessionLedger: (sessionId: string) =>
+      call<SessionLearningLedger>('learning:sessionLedger', sessionId),
+    pipeline: (input?: { projectId?: string | null; windowDays?: number }) =>
+      call<LearningPipelineStats>('learning:pipeline', input),
+    candidateExplain: (id: string) =>
+      call<CandidateExplanation>('learning:candidateExplain', id),
+    candidateSignals: (id: string) =>
+      call<LearningSignal[]>('learning:candidateSignals', id),
+    relations: (itemId?: string) =>
+      call<KnowledgeRelation[]>('learning:relations', itemId),
+    freshness: (itemId: string) =>
+      call<FreshnessReport>('learning:freshness', itemId),
   },
   // ── phase 27 · observed sessions ─────────────────────────────────────
   observed: {
@@ -523,6 +579,16 @@ const api = {
   egress: {
     report: () => call<EgressReport>('egress:report'),
   },
+  // ── backup and restore ───────────────────────────────────────────────
+  // The folder is always chosen in a native dialog, so no path crosses this
+  // bridge in either direction; null means the dialog was cancelled.
+  backup: {
+    create: () => call<BackupSummary | null>('backup:create'),
+    /** Read-only. Verifies a backup and reports what restoring it would cost. */
+    inspect: () => call<BackupCheck | null>('backup:inspect'),
+    /** Asks in main, naming what will be replaced, then relaunches Wanigan. */
+    restore: () => call<BackupRestoreSummary | null>('backup:restore'),
+  },
   on: {
     startupChanged: (cb: (state: { phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }) => void) => {
       const h = (_e: unknown, state: { phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }) => cb(state);
@@ -533,6 +599,11 @@ const api = {
       const h = () => cb();
       ipcRenderer.on('batch:changed', h);
       return () => ipcRenderer.removeListener('batch:changed', h);
+    },
+    learningChanged: (cb: () => void) => {
+      const h = () => cb();
+      ipcRenderer.on('learning:changed', h);
+      return () => ipcRenderer.removeListener('learning:changed', h);
     },
     data: (cb: (p: { sessionId: string; data: string }) => void) => {
       const h = (_e: unknown, p: { sessionId: string; data: string }) => cb(p);
@@ -558,6 +629,14 @@ const api = {
       const h = (_e: unknown, s: Session[]) => cb(s);
       ipcRenderer.on('session:list', h);
       return () => ipcRenderer.removeListener('session:list', h);
+    },
+    // A clicked notification. Main has already raised the window; this says
+    // which session or run the banner was about, so the operator lands on it
+    // instead of on whichever tab happened to be open.
+    notificationOpened: (cb: (route: NotificationRoute) => void) => {
+      const h = (_e: unknown, route: NotificationRoute) => cb(route);
+      ipcRenderer.on('notify:open', h);
+      return () => ipcRenderer.removeListener('notify:open', h);
     },
   },
 };

@@ -26,21 +26,38 @@ function reader(context: ArtifactCompilerContext): (file: string) => string | nu
   };
 }
 
+function dominantEol(existing: string | null): '\n' | '\r\n' {
+  if (!existing) return '\n';
+  const crlf = (existing.match(/\r\n/g) ?? []).length;
+  const lf = (existing.match(/\n/g) ?? []).length - crlf;
+  return crlf > lf ? '\r\n' : '\n';
+}
+
+function stripLeadingFrontmatter(existing: string | null): string | null {
+  if (existing == null) return null;
+  const match = /^---\r?\n(?:[\s\S]*?\r?\n)?---[ \t]*(?:\r?\n)*/.exec(existing);
+  return match ? existing.slice(match[0].length) : existing;
+}
+
 function managedMarkdown(existing: string | null, candidate: KnowledgeCandidate): string {
   const key = candidate.itemId ?? candidate.id;
   const begin = `<!-- wanigan:begin ${key} -->`;
   const end = `<!-- wanigan:end ${key} -->`;
+  // Splicing LF into a CRLF file leaves mixed endings that trip whitespace
+  // checks, so the block adopts the surrounding file's dominant ending.
+  const eol = dominantEol(existing);
   const body = candidate.proposedText
     .replaceAll('<!-- wanigan:begin', '<!-- wanigan-user:begin')
-    .replaceAll('<!-- wanigan:end', '<!-- wanigan-user:end');
-  const block = `${begin}\n## ${candidate.title}\n\n${body.trim()}\n${end}`;
+    .replaceAll('<!-- wanigan:end', '<!-- wanigan-user:end')
+    .trim().replace(/\r?\n/g, eol);
+  const block = `${begin}${eol}## ${candidate.title}${eol}${eol}${body}${eol}${end}`;
   const source = (existing ?? '').trimEnd();
   const start = source.indexOf(begin);
   const finish = start === -1 ? -1 : source.indexOf(end, start + begin.length);
   if (start !== -1 && finish !== -1) {
-    return `${source.slice(0, start)}${block}${source.slice(finish + end.length)}`.trimEnd() + '\n';
+    return `${source.slice(0, start)}${block}${source.slice(finish + end.length)}`.trimEnd() + eol;
   }
-  return source ? `${source}\n\n${block}\n` : `${block}\n`;
+  return source ? `${source}${eol}${eol}${block}${eol}` : `${block}${eol}`;
 }
 
 function skillBody(candidate: KnowledgeCandidate): string {
@@ -117,8 +134,6 @@ function claudeCompile(candidate: KnowledgeCandidate, context: ArtifactCompilerC
   }
 
   let target: string;
-  let format = 'claude-instructions';
-  let candidateForFile = candidate;
   if (candidate.scope === 'personal') {
     target = path.join(requireHomeDir(context), '.claude', 'CLAUDE.md');
   } else if (candidate.scope === 'path') {
@@ -126,14 +141,22 @@ function claudeCompile(candidate: KnowledgeCandidate, context: ArtifactCompilerC
     target = path.join(root, '.claude', 'rules', `${slug(candidate.title)}.md`);
     const selectors = (candidate.pathScope ?? '').split(/[\n,]/).map((v) => v.trim()).filter(Boolean);
     if (!selectors.length) return result(candidate, context, adapterId, 'unsupported', 'Claude path rules require at least one path selector.');
-    const frontmatter = `---\npaths:\n${selectors.map((v) => `  - ${JSON.stringify(v)}`).join('\n')}\n---\n\n`;
-    candidateForFile = { ...candidate, proposedText: frontmatter + candidate.proposedText };
-    format = 'claude-path-rule';
+    // Claude Code honors `paths:` frontmatter only as the first bytes of the
+    // rule file; buried anywhere else the rule silently loads for every path.
+    // The frontmatter therefore precedes the managed block, and any prior
+    // leading frontmatter is replaced — one file cannot carry two scopes.
+    const existing = stripLeadingFrontmatter(reader(context)(target));
+    const eol = dominantEol(existing);
+    const frontmatter = `---${eol}paths:${eol}${selectors.map((v) => `  - ${JSON.stringify(v)}`).join(eol)}${eol}---${eol}${eol}`;
+    return result(
+      candidate, context, adapterId, 'file', 'Compiled to Claude Code native scoped instructions.',
+      target, 'claude-path-rule', frontmatter + managedMarkdown(existing, candidate),
+    );
   } else {
     target = path.join(requireProjectRoot(context), 'CLAUDE.md');
   }
   const existing = reader(context)(target);
-  return result(candidate, context, adapterId, 'file', 'Compiled to Claude Code native scoped instructions.', target, format, managedMarkdown(existing, candidateForFile));
+  return result(candidate, context, adapterId, 'file', 'Compiled to Claude Code native scoped instructions.', target, 'claude-instructions', managedMarkdown(existing, candidate));
 }
 
 function codexDirectoryScope(scope: string): string | null {

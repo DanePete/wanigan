@@ -10,8 +10,10 @@ as observed fact.
 
 - Use Node `22.23.2` from `.nvmrc`. Node 16 cannot build this project; use
   `nvm use` before `npm` commands.
-- Run `npm test` before handing off a code change. It is typecheck plus the
-  offline main-process smoke suite. Run `git diff --check` for documentation
+- Run `npm test` before handing off a code change. It is four steps in order:
+  `typecheck`, `test:package-hooks`, `test:local-install`, then the offline
+  main-process `smoke` suite. CI runs the same four, splitting the two macOS
+  packaging suites onto a macOS runner. Run `git diff --check` for documentation
   and UI changes too.
 - Keep Electron's trust boundary intact: privileged work belongs in
   `src/main/`, the renderer reaches it only through typed preload APIs, and all

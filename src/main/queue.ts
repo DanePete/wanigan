@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { db } from './db';
-import { getSetting, setSetting } from './settings';
+import { pruneEvents } from './hooks';
+import { eventRetentionDays, getSetting, setSetting } from './settings';
 import {
   DEFAULT_SLOTS,
   type QueueItem,
@@ -62,6 +63,7 @@ const MAX_SLOT = 64;
 const KEEP_DONE_MS = 7 * 24 * 60 * 60_000;
 const KEEP_FAILED_MS = 30 * 24 * 60 * 60_000;
 const PRUNE_EVERY_TICKS = 100;
+const DAY_MS = 24 * 60 * 60_000;
 
 const runners = new Map<QueueKind, QueueRunner>();
 /** Ids this process has handed to a runner and not yet finalised. */
@@ -330,6 +332,13 @@ async function dispatch(): Promise<void> {
   `).all(now, READY_LIMIT) as QueueRow[];
 
   for (const row of ready) {
+    // A row this process is already running must not be started a second time,
+    // whichever process moved it back to 'waiting'. The atomic claim below
+    // cannot catch this: a re-claim by *this* process restores the same
+    // lease_owner, so the first runner's finish() would land on the second
+    // runner's row and report work that never finished as done.
+    if (inFlight.has(row.id)) continue;
+
     const kind = row.kind as QueueKind;
     const run = runners.get(kind);
 
@@ -383,7 +392,10 @@ async function dispatch(): Promise<void> {
     inFlight.set(item.id, p);
   }
 
-  if (++tickCount % PRUNE_EVERY_TICKS === 0) prune();
+  if (++tickCount % PRUNE_EVERY_TICKS === 0) {
+    prune();
+    pruneRetention();
+  }
   if (moved) emit();
 }
 
@@ -496,21 +508,64 @@ function setBlocked(row: QueueRow, reason: string): boolean {
 }
 
 /**
+ * Re-asserts the lease on work this process can see is still running.
+ *
+ * The per-item heartbeat is a 30s timer that logs and swallows a busy database,
+ * and a blocked event loop stops it firing at all — so a live worker's 120s
+ * lease really can lapse while its promise is still pending in `inFlight`. That
+ * is the trigger for the double-dispatch: not the absence of an `inFlight`
+ * check in the recovery query alone, but a lapsed lease on work that never
+ * stopped. Renewing here, from the dispatch tick, is the backstop the heartbeat
+ * cannot be, and it also tells the *other* processes that this row is not an
+ * orphan.
+ *
+ * Bounded by the slot counts, so the id list cannot approach SQLite's
+ * host-parameter cap.
+ */
+function renewOwnLeases(now: number): void {
+  const ids = [...inFlight.keys()];
+  if (!ids.length) return;
+  db().prepare(
+    `UPDATE queue SET lease_expires_at=? WHERE state='running' AND lease_owner=? AND id IN (${ids.map(() => '?').join(',')})`
+  ).run(now + LEASE_MS, DISPATCHER_OWNER, ...ids);
+}
+
+/**
  * A row is reclaimable only after its durable lease expires. This is the
  * distinction that a fresh desktop process needs: a live launchd worker is not
  * an orphan merely because its in-memory map lives in another process.
  *
  * Pre-lease rows from older Wanigan builds have NULL expiry and are deliberately
  * recovered once; the conditional UPDATE makes concurrent upgrade starts safe.
+ *
+ * Recovery counts as an attempt. Without that, recovery was the one path that
+ * moved a row back to 'waiting' without touching `attempts`, so an item that
+ * wedges whatever runs it — the case recovery exists for — was dispatched,
+ * wedged, recovered and dispatched again forever, spending on every lap.
+ * MAX_ATTEMPTS is what ends that, and a failed row is kept as evidence for a
+ * month while a silently looping one is kept nowhere.
  */
 function recoverExpiredLeases(now: number): boolean {
-  const result = db().prepare(
-    "UPDATE queue SET state='waiting', started_at=NULL, blocked_by=?, lease_owner=NULL, lease_expires_at=NULL WHERE state='running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?)"
+  renewOwnLeases(now);
+  const d = db();
+
+  const failed = d.prepare(
+    "UPDATE queue SET state='failed', attempts=attempts+1, started_at=NULL, ended_at=?, next_attempt_at=NULL, blocked_by=NULL, error=?, lease_owner=NULL, lease_expires_at=NULL WHERE state='running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?) AND attempts + 1 >= ?"
+  ).run(
+    now,
+    `A Wanigan worker stopped reporting before this completed (gave up after ${MAX_ATTEMPTS} attempts).`,
+    now,
+    MAX_ATTEMPTS
+  );
+
+  const requeued = d.prepare(
+    "UPDATE queue SET state='waiting', attempts=attempts+1, started_at=NULL, blocked_by=?, lease_owner=NULL, lease_expires_at=NULL WHERE state='running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?)"
   ).run(
     'The prior Wanigan worker stopped reporting before this completed — it is queued again from the start.',
     now
   );
-  return result.changes > 0;
+
+  return failed.changes + requeued.changes > 0;
 }
 
 /** Keeps the table from growing without bound across months of use. */
@@ -523,6 +578,38 @@ export function prune(): number {
     "DELETE FROM queue WHERE state='failed' AND COALESCE(ended_at, created_at) < ?"
   ).run(now - KEEP_FAILED_MS);
   return done.changes + failed.changes;
+}
+
+/**
+ * Retention for the tables this dispatcher does not own, because its tick is the
+ * only retention timer the app runs.
+ *
+ * Hook events are the volume: a busy session writes thousands of rows a day,
+ * nothing had ever deleted one, and Settings already tells the user that "the
+ * timeline and the tool statistics read no further back than this". Reading the
+ * same `event_retention_days` key is what makes that sentence true rather than
+ * aspirational — one key, so the panel and the delete can never describe
+ * different windows.
+ *
+ * The policy ledger is deliberately not pruned here. It is the record of what
+ * Wanigan allowed and denied on the user's behalf, and how long an audit log is
+ * kept is theirs to choose, in front of them — not a constant picked by whoever
+ * happened to wire up the timer. The same Settings copy promises this control
+ * leaves the ledger alone, and it does.
+ */
+function pruneRetention(): void {
+  try {
+    const days = eventRetentionDays();
+    const gone = pruneEvents(days * DAY_MS);
+    // The first pass on an install that predates this can be large, and a
+    // silent multi-second delete is exactly the kind of thing that gets
+    // reported as a hang. Say so once, then be quiet on the empty passes.
+    if (gone > 0) console.log(`[wanigan] pruned ${gone} hook event(s) older than ${days} days`);
+  } catch (error) {
+    // Housekeeping. A busy database here must not take the dispatch loop's
+    // error path and cost the rest of the tick its emit.
+    console.warn('[wanigan] event retention pass did not run; trying again later:', error);
+  }
 }
 
 function emit() {

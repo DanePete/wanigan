@@ -27,12 +27,20 @@ import * as policy from './policy';
 import * as control from './control';
 import { listGoalTrace, recordGoalTrace } from './goal-trace';
 import * as review from './review';
+import * as revert from './revert';
+import { isManagedRoot } from './roots';
+import { redactCredentials } from './redact';
 import * as providers from './providers';
+import * as plugins from './plugins';
 import * as batch from './batch';
 import { egressReport } from './egress';
 import { mobileFleetSnapshot } from './fleet-snapshot';
 import * as mobile from './mobile';
-import { forgetPastSession, pastSessions, reconcileAbandonedSessions, scanCodexNotifications } from './sessions';
+import {
+  __test as sessionsTest,
+  createSession, forgetPastSession, killSession, listSessions, pastSessions,
+  reconcileAbandonedSessions, scanCodexNotifications, sessionBaseline, setSessionTuning,
+} from './sessions';
 import {
   backfillCodexThreadIds, captureNewCodexThreadId, matchCodexThreads, validateExactCodexThread,
 } from './codex-sessions';
@@ -41,6 +49,7 @@ import { getSetting, setSetting } from './settings';
 import { dataDir, db, resultsDir } from './db';
 import { addProject } from './store';
 import { selectedProviderStatus, selectedSessionTelemetry } from '../shared/provider-status';
+import { MAX_TERMINAL_INPUT_CHUNK_BYTES, splitTerminalInput } from '../shared/terminal-input';
 import { EMPTY_USAGE, type HookInput, type ProviderInfo, type RunConfig, type Session, type SessionUsage } from '../shared/types';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
@@ -70,8 +79,24 @@ function appRoot(): string {
   return fs.existsSync(path.join(a, 'src', 'main')) ? a : process.cwd();
 }
 
+/**
+ * A path that no longer resolves used to come back as an empty string, and an
+ * empty string satisfies every *negated* source assertion in this file. One
+ * renamed or moved file therefore turned a block of contracts into a block of
+ * vacuous truths that still printed a green tick. Misses are collected and
+ * asserted in the wiring section, and the sentinel is short and unmatchable so
+ * the positive length and substring checks fail loudly on it too.
+ */
+const MISSING_SOURCE = '<wanigan: source file not found>';
+const missingSources: string[] = [];
+
 function sourceOf(rel: string): string {
-  try { return fs.readFileSync(path.join(appRoot(), rel), 'utf8'); } catch { return ''; }
+  let text: string;
+  try { text = fs.readFileSync(path.join(appRoot(), rel), 'utf8'); }
+  catch { missingSources.push(rel); return MISSING_SOURCE; }
+  // An empty file cannot support an assertion either, and reads the same way.
+  if (!text) { missingSources.push(`${rel} (empty)`); return MISSING_SOURCE; }
+  return text;
 }
 
 function permissionBits(file: string): number {
@@ -273,6 +298,15 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     fs.writeFileSync(path.join(filesRoot, 'inside.txt'), 'inside the project\n');
     fs.writeFileSync(outside, 'this must not appear in the Files panel\n');
     fs.symlinkSync(outside, path.join(filesRoot, 'escape.txt'), 'file');
+    // The Files panel only ever reads a project the user added; roots now have
+    // to be ones Wanigan manages, so the fixture registers itself the way the
+    // real path does.
+    await addProject(filesRoot);
+
+    let unmanaged = false;
+    try { code.listDir(path.join(tmp, 'never-added'), ''); }
+    catch (error) { unmanaged = /manages/i.test(error instanceof Error ? error.message : String(error)); }
+    check(unmanaged, 'a root that is not a registered project or worktree is refused before any read');
 
     const listed = code.listDir(filesRoot, '');
     check(listed.some((entry) => entry.name === 'inside.txt') && !listed.some((entry) => entry.name === 'escape.txt'),
@@ -290,8 +324,124 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(globRows.rows.length === 1 && listedRows.rows.length === 1
       && !JSON.stringify([...globRows.rows, ...listedRows.rows]).includes('must not appear'),
     'batch file and glob sources also refuse repository symlinks outside their root');
+
+    // The acting git surface takes a root from the renderer too, and it deletes
+    // and checks out files rather than reading them. It is confined by the same
+    // managed-root rule, canonicalised, so the fixtures above serve both.
+    const rootChecks = {
+      self: isManagedRoot(filesRoot),
+      child: isManagedRoot(path.join(filesRoot, 'src', 'main')),
+      unrelated: isManagedRoot(path.join(tmp, 'never-added')),
+      empty: isManagedRoot(''),
+    };
+    check(rootChecks.self && rootChecks.child && !rootChecks.unrelated && !rootChecks.empty,
+      'a managed root covers its own subdirectories and nothing outside every project and worktree',
+      JSON.stringify(rootChecks));
+    const unmanagedRevert = await revert.planRevert(path.join(tmp, 'never-added'), 'inside.txt', 'HEAD', false);
+    check(unmanagedRevert.action === 'nothing' && !unmanagedRevert.safe
+      && /does not resolve inside a project Wanigan manages/.test(unmanagedRevert.detail),
+    'a revert named against an unmanaged root is refused before git is asked anything', unmanagedRevert.detail);
+    const escapedRevert = await revert.planRevert(filesRoot, 'escape.txt', 'HEAD', false);
+    check(escapedRevert.action === 'nothing' && !escapedRevert.safe
+      && /does not resolve inside a project Wanigan manages/.test(escapedRevert.detail),
+    'and a symlink inside a managed project cannot carry a revert out of it', escapedRevert.detail);
+    const unmanagedBatch = await revert.revertAll(path.join(tmp, 'never-added'), [{ path: 'inside.txt' }], 'HEAD');
+    check(unmanagedBatch.reverted.length === 0 && unmanagedBatch.failed.length === 1
+      && /outside every project and worktree/.test(unmanagedBatch.failed[0]?.detail ?? '')
+      && fs.readFileSync(outside, 'utf8').includes('must not appear'),
+    'the batch path refuses an unmanaged root once for the whole set, and nothing outside the project is touched',
+    unmanagedBatch.failed[0]?.detail);
   } catch (error) {
     check(false, `Files-panel confinement suite threw: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  /* ── plugin reader · rendered docs never escape the plugin store ─── */
+  say('── plugin reader confinement');
+  try {
+    const pluginRoot = path.join(tmp, 'plugins');
+    const pluginDir = path.join(pluginRoot, 'cache', 'market', 'example', '1.0.0');
+    const doc = path.join(pluginDir, 'README.md');
+    const secret = path.join(tmp, 'not-a-plugin-secret.txt');
+    fs.mkdirSync(pluginDir, { recursive: true });
+    fs.writeFileSync(doc, 'ordinary plugin documentation\n');
+    fs.writeFileSync(secret, 'this must never reach the plugin reader\n');
+    fs.symlinkSync(secret, path.join(pluginDir, 'outside.md'), 'file');
+    const ordinary = plugins.readPluginFile(doc, pluginRoot);
+    let rejectedPluginLink = false;
+    try { plugins.readPluginFile(path.join(pluginDir, 'outside.md'), pluginRoot); }
+    catch (error) { rejectedPluginLink = /outside the plugins directory|not follow/i.test(error instanceof Error ? error.message : String(error)); }
+    const large = path.join(pluginDir, 'large.md');
+    fs.writeFileSync(large, Buffer.alloc(200 * 1024 + 8, 'x'));
+    const preview = plugins.readPluginFile(large, pluginRoot);
+    check(ordinary.text.includes('ordinary plugin documentation') && rejectedPluginLink,
+      'the plugin reading pane accepts a real plugin document but refuses a symlink outside its root');
+    check(preview.truncated && preview.bytes === 200 * 1024 + 8 && Buffer.byteLength(preview.text) <= 200 * 1024,
+      'the plugin reading pane reads only its bounded preview budget for a large document');
+  } catch (error) {
+    check(false, `Plugin reader confinement suite threw: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  /* ── terminal input · bound fire-and-forget PTY traffic ───────────── */
+  say('── terminal input boundary');
+  check(
+    sessionsTest.acceptsPtyInput('live-session', 'hello\r')
+      && !sessionsTest.acceptsPtyInput('x'.repeat(201), 'hello')
+      && !sessionsTest.acceptsPtyInput('live-session', 'x'.repeat(256 * 1024 + 1))
+      && sessionsTest.acceptsPtyResize('live-session', 160, 48)
+      && !sessionsTest.acceptsPtyResize('live-session', 0, 48)
+      && !sessionsTest.acceptsPtyResize('live-session', 1001, 48)
+      && !sessionsTest.acceptsPtyResize('live-session', 160, 501),
+    'renderer PTY traffic has bounded input, session identifiers, and terminal geometry before node-pty receives it',
+  );
+  const pastedTerminalText = `${'a'.repeat(300 * 1024 - 4)}🙂`;
+  const pastedTerminalChunks = splitTerminalInput(pastedTerminalText);
+  check(
+    pastedTerminalChunks.length > 1
+      && pastedTerminalChunks.join('') === pastedTerminalText
+      && pastedTerminalChunks.every((chunk) => Buffer.byteLength(chunk, 'utf8') <= MAX_TERMINAL_INPUT_CHUNK_BYTES)
+      && pastedTerminalChunks.every((chunk) => Buffer.from(chunk, 'utf8').toString('utf8') === chunk),
+    'a 300 KiB Unicode terminal paste stays ordered and whole while every IPC message remains bounded',
+  );
+  check(
+    !setSessionTuning('no-such-session', 'effort', 'max')
+      && !setSessionTuning('no-such-session', 'effort', 'ultra')
+      && !setSessionTuning('no-such-session', 'model', 'fable; rm -rf ~')
+      && !setSessionTuning('no-such-session', 'model', 'fable max')
+      && !setSessionTuning('no-such-session', 'permissionMode', 'bypassPermissions'),
+    'session tuning refuses an unknown session, an effort outside EFFORT_LEVELS, a model that is not one shell-safe token, and any field other than model/effort',
+  );
+
+  /* ── external editor launcher · renderer may not choose a program ─── */
+  say('── external editor launcher boundary');
+  try {
+    const detectedEditor = path.join(tmp, 'editor-bin', 'code');
+    fs.mkdirSync(path.dirname(detectedEditor), { recursive: true });
+    fs.writeFileSync(detectedEditor, '#!/bin/sh\nexit 0\n');
+    fs.chmodSync(detectedEditor, 0o755);
+    const editorTarget = code.__test.normalizeEditorTarget('--disable-gpu');
+    check(path.isAbsolute(editorTarget) && path.basename(editorTarget) === '--disable-gpu',
+      'an editor target is made absolute, so a filename beginning with a dash cannot become a CLI option', editorTarget);
+    check(code.__test.isExecutableFile(detectedEditor)
+      && !code.__test.isExecutableFile(path.dirname(detectedEditor))
+      && code.__test.approvedEditorPath(path.join(tmp, 'editor-bin', '.', 'code'), [
+        { id: 'code', label: 'VS Code', path: detectedEditor },
+      ]) === detectedEditor,
+    'an editor must be an executable file and the selected launcher resolves only to one Wanigan detected');
+    let rejectedUnlisted = false;
+    let rejectedMalformed = false;
+    let rejectedLine = false;
+    try { code.__test.approvedEditorPath(path.join(tmp, 'not-an-editor'), []); }
+    catch { rejectedUnlisted = true; }
+    try { code.__test.normalizeEditorTarget(`safe\0not-safe`); }
+    catch { rejectedMalformed = true; }
+    try { code.__test.normalizeEditorLine(0); }
+    catch { rejectedLine = true; }
+    check(rejectedUnlisted && rejectedMalformed && rejectedLine
+      && code.__test.normalizeEditorLine(42) === 42
+      && code.__test.normalizeEditorLine(undefined) === undefined,
+    'unlisted launchers, malformed paths and invalid line numbers are rejected before a process is started');
+  } catch (error) {
+    check(false, `External editor launcher boundary suite threw: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   /* ── phase 4 · archiving follows the CLI, not the provider label ───── */
@@ -654,6 +804,74 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'Codex approval and completed-turn OSC notifications become provider-neutral lifecycle signals',
     codexControl.signals);
 
+  /* ── sessions · an ambient Anthropic key never rides along ───────── */
+  // A provider pack chooses its own base URL and a pack is untrusted data, so
+  // an operator's exported ANTHROPIC_API_KEY must not travel to whatever host
+  // it names. The lookalikes below are the whole point of asserting this: a
+  // substring test for 'api.anthropic.com' calls both of them official and
+  // hands the key over, which is exactly the regression to keep closed.
+  say('── sessions · credential strip at the provider boundary');
+  const priorAmbientKey = process.env.ANTHROPIC_API_KEY;
+  const priorAmbientAdmin = process.env.ANTHROPIC_ADMIN_KEY;
+  process.env.ANTHROPIC_API_KEY = 'sk-ant-smoke-ambient-key';
+  process.env.ANTHROPIC_ADMIN_KEY = 'sk-ant-smoke-ambient-admin';
+  try {
+    const glmEnv = { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic', ANTHROPIC_AUTH_TOKEN: 'glm-own-token' };
+    const deepseekEnvFixture = {
+      ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic', ANTHROPIC_AUTH_TOKEN: 'deepseek-own-token',
+    };
+    const redirected = sessionsTest.agentEnv('/usr/bin', 's_smoke_env_glm', glmEnv);
+    check(redirected.ANTHROPIC_API_KEY === undefined && redirected.ANTHROPIC_ADMIN_KEY === undefined,
+      'a redirected base URL strips both inherited Anthropic keys from the child environment',
+      Object.keys(redirected).filter((k) => k.startsWith('ANTHROPIC_')).sort());
+    check(redirected.ANTHROPIC_AUTH_TOKEN === 'glm-own-token'
+      && sessionsTest.agentEnv('/usr/bin', 's_smoke_env_ds', deepseekEnvFixture).ANTHROPIC_AUTH_TOKEN === 'deepseek-own-token',
+    'while GLM and DeepSeek keep the credential their own profile declared');
+    const declaredOwnKey = sessionsTest.agentEnv('/usr/bin', 's_smoke_env_declared', {
+      ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic', ANTHROPIC_API_KEY: 'profile-declared-key',
+    });
+    check(declaredOwnKey.ANTHROPIC_API_KEY === 'profile-declared-key',
+      'a profile that deliberately declares one of those names keeps it — only the borrowed value is dropped');
+    const official = sessionsTest.agentEnv('/usr/bin', 's_smoke_env_anthropic', {
+      ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+    });
+    check(official.ANTHROPIC_API_KEY === 'sk-ant-smoke-ambient-key'
+      && official.ANTHROPIC_ADMIN_KEY === 'sk-ant-smoke-ambient-admin',
+    'and a session actually pointed at Anthropic still receives the keys it needs');
+    const lookalikes = [
+      'https://api.anthropic.com.evil.io',
+      'https://api.anthropic.com.evil.io/v1',
+      'https://evil.com/api.anthropic.com',
+      'https://evil.com/?next=https://api.anthropic.com',
+      'https://sub.api.anthropic.com',
+      'https://api.anthropic.com@evil.io',
+      // A plaintext hop to the right hostname is still somewhere else.
+      'http://api.anthropic.com',
+      // Unparseable is not evidence of the official endpoint; it fails closed.
+      'api.anthropic.com',
+    ];
+    const treatedAsOfficial = lookalikes.filter((base) => !sessionsTest.redirectsAnthropicApi({ ANTHROPIC_BASE_URL: base }));
+    check(treatedAsOfficial.length === 0,
+      'a host that merely contains the official one is a redirect, so a naive substring test cannot leak the key',
+      treatedAsOfficial.join(', '));
+    const leakedToLookalike = lookalikes.filter((base) => {
+      const env = sessionsTest.agentEnv('/usr/bin', 's_smoke_env_lookalike', { ANTHROPIC_BASE_URL: base });
+      return env.ANTHROPIC_API_KEY !== undefined || env.ANTHROPIC_ADMIN_KEY !== undefined;
+    });
+    check(leakedToLookalike.length === 0,
+      'and no lookalike host receives an inherited key through the launch environment',
+      leakedToLookalike.join(', '));
+    check(!sessionsTest.redirectsAnthropicApi({})
+      && !sessionsTest.redirectsAnthropicApi({ ANTHROPIC_BASE_URL: '  ' })
+      && !sessionsTest.redirectsAnthropicApi({ ANTHROPIC_BASE_URL: 'https://API.Anthropic.Com/v1' }),
+    'a profile that names no base URL, or the official one in any casing, is not a redirect');
+  } finally {
+    if (priorAmbientKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = priorAmbientKey;
+    if (priorAmbientAdmin === undefined) delete process.env.ANTHROPIC_ADMIN_KEY;
+    else process.env.ANTHROPIC_ADMIN_KEY = priorAmbientAdmin;
+  }
+
   /* ── sessions · durable recents, not an execution ledger ─────────── */
   say('── sessions · durable recents');
   const recentPrefix = `s_smoke_recent_${Date.now().toString(36)}`;
@@ -701,6 +919,104 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       'forgetting a Recent conversation removes every duplicate execution record in its lineage');
   } finally {
     db().prepare('DELETE FROM session_log WHERE id LIKE ?').run(`${recentPrefix}%`);
+  }
+
+  /* ── sessions · the revert baseline outlives the process ─────────── */
+  // A baseline that lived only in memory answered "undo what this agent did"
+  // with "this session has no baseline commit" after every quit, and lost the
+  // dirty list with it — the list that keeps edits the operator had already
+  // made from being offered back as the agent's work.
+  say('── sessions · persisted revert baseline');
+  const baselinePrefix = `s_smoke_baseline_${Date.now().toString(36)}`;
+  const baselineAt = Date.now() - 5_000;
+  const baselineHead = '1f2e3d4c5b6a798877665544332211000ffeedd';
+  const baselineInsert = db().prepare(`
+    INSERT INTO session_log
+      (id,provider_id,project_path,project_name,started_at,baseline_head,baseline_dirty_json)
+    VALUES (?,?,?,?,?,?,?)
+  `);
+  try {
+    baselineInsert.run(`${baselinePrefix}_kept`, 'claude', tmp, 'baseline smoke', baselineAt,
+      baselineHead, JSON.stringify(['src/main/db.ts', 'README.md']));
+    baselineInsert.run(`${baselinePrefix}_legacy`, 'claude', tmp, 'baseline smoke', baselineAt, null, null);
+    baselineInsert.run(`${baselinePrefix}_corrupt`, 'claude', tmp, 'baseline smoke', baselineAt,
+      baselineHead, '{not json');
+    baselineInsert.run(`${baselinePrefix}_nohead`, 'claude', tmp, 'baseline smoke', baselineAt,
+      null, JSON.stringify(['src/main/db.ts']));
+
+    // No live session exists for any of these ids, so every answer below comes
+    // from the persisted columns — the restart case, not the warm-cache one.
+    const kept = sessionBaseline(`${baselinePrefix}_kept`);
+    check(kept?.head === baselineHead && kept.at === baselineAt
+      && kept.dirty.join(',') === 'src/main/db.ts,README.md',
+    'a baseline captured before a restart is read back from the row, head and dirty list intact', kept);
+    check(sessionBaseline(`${baselinePrefix}_legacy`) === null,
+      'a row written before those columns existed answers "no baseline" rather than an empty dirty list that would claim every pre-existing edit as the agent’s work');
+    const corrupt = sessionBaseline(`${baselinePrefix}_corrupt`);
+    check(corrupt?.head === baselineHead && corrupt.dirty.length === 0,
+      'a corrupt dirty list costs attribution, not the head commit a revert needs', corrupt);
+    const noHead = sessionBaseline(`${baselinePrefix}_nohead`);
+    check(noHead !== null && noHead.head === null && noHead.dirty.length === 1,
+      'a repo-less session still records what was already dirty, so nothing is attributed to it either', noHead);
+    check(sessionBaseline(`${baselinePrefix}_absent`) === null,
+      'and an id with no row at all is null rather than a fabricated empty baseline');
+  } finally {
+    db().prepare('DELETE FROM session_log WHERE id LIKE ?').run(`${baselinePrefix}%`);
+  }
+
+  /* ── sessions · the two refusals that precede a PTY ───────────────── */
+  // Both gates answer before provider probing, worktree creation or any
+  // injected file exists, so a refusal must leave nothing to roll back. The
+  // messages are asserted too: a limit the operator set in Settings is only
+  // honoured if the refusal says which control to change.
+  say('── sessions · launch gates');
+  const gateRoot = path.join(tmp, 'launch-gate');
+  fs.mkdirSync(gateRoot, { recursive: true });
+  const gateProject = await addProject(gateRoot);
+  const priorSlots = getSetting('slots', '{}');
+  const gateSpendSession = `s_smoke_gate_spend_${Date.now().toString(36)}`;
+  const gateSessionCount = () => (db()
+    .prepare('SELECT count(*) AS n FROM session_log WHERE project_id = ?')
+    .get(gateProject.id) as { n: number }).n;
+  try {
+    setSetting('slots', JSON.stringify({ session: 0 }));
+    let slotRefusal = '';
+    try { await createSession({ providerId: 'claude', projectId: gateProject.id }); }
+    catch (error) { slotRefusal = error instanceof Error ? error.message : String(error); }
+    check(/held at 0/.test(slotRefusal) && /Settings › Dispatcher/.test(slotRefusal),
+      'an interactive launch honours the dispatcher session limit and names the control that would raise it',
+      slotRefusal);
+    check(gateSessionCount() === 0, 'and the refusal leaves no half-created session behind');
+
+    setSetting('slots', priorSlots);
+    // Recorded spend, not a projection: a projected overspend keeps drawing its
+    // banner and nothing more, because on the 2nd of a month one expensive
+    // session projects over almost any cap.
+    db().prepare(`
+      INSERT INTO session_log (id,provider_id,project_id,project_path,project_name,started_at)
+      VALUES (?,?,?,?,?,?)
+    `).run(gateSpendSession, 'claude', gateProject.id, gateRoot, gateProject.name, Date.now());
+    db().prepare(`
+      INSERT INTO session_api_events (session_id,at,kind,model,cost_usd,in_tokens,out_tokens)
+      VALUES (?,?,?,?,?,?,?)
+    `).run(gateSpendSession, Date.now(), 'request', 'claude-sonnet-5', 9.5, 1_000, 500);
+    spend.setBudget(gateProject.id, 5);
+    let budgetRefusal = '';
+    try { await createSession({ providerId: 'claude', projectId: gateProject.id }); }
+    catch (error) { budgetRefusal = error instanceof Error ? error.message : String(error); }
+    check(/monthly budget/.test(budgetRefusal) && /Insights › Budgets/.test(budgetRefusal),
+      'a scope already over its recorded cap refuses the launch and says where the cap lives',
+      budgetRefusal);
+    check(gateSessionCount() === 1,
+      'and that refusal adds nothing either — only the spend fixture row is present');
+  } finally {
+    setSetting('slots', priorSlots);
+    spend.setBudget(gateProject.id, 0);
+    db().prepare('DELETE FROM session_api_events WHERE session_id = ?').run(gateSpendSession);
+    db().prepare('DELETE FROM session_log WHERE id = ?').run(gateSpendSession);
+    // If either gate ever stops refusing, the calls above started a real agent.
+    // Stop it here rather than leaving a PTY inside the smoke process.
+    for (const live of listSessions()) if (live.projectId === gateProject.id) killSession(live.id);
   }
 
   /* ── phase 2 · the file a session is launched with ─────────────────── */
@@ -832,6 +1148,54 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   hooks.cleanupHookSettings(anonymousHookId);
   check(policy.contextForSession(fanId) === null,
     'the context is released with the run, so a later run reusing the id cannot inherit it');
+
+  /* ── one redactor, every surface that persists text ───────────────── */
+  // Wanigan grew four of these, of unequal strength, and the policy ledger —
+  // the one table built to be exported and mailed to somebody — had the
+  // weakest. Each shape below is one the old ledger redactor did not know.
+  say('── credential redaction');
+  const credentialShapes: { label: string; raw: string; leak: string }[] = [
+    { label: 'GitHub personal access token', raw: 'git clone with ghp_abcdefghij0123456789ABCDEFGHIJ', leak: 'ghp_abcdefghij' },
+    { label: 'fine-grained GitHub token', raw: 'header github_pat_11ABCDEFG0abcdefghijklmnop set', leak: 'github_pat_11ABCDEFG' },
+    { label: 'Slack bot token', raw: 'posting as xoxb-1234567890-abcdefghijkl now', leak: 'xoxb-1234567890' },
+    { label: 'AWS access key id', raw: 'AKIAIOSFODNN7EXAMPLE is exported in the shell', leak: 'AKIAIOSFODNN7EXAMPLE' },
+    { label: 'webhook signing secret', raw: 'verify against whsec_0123456789abcdefghij first', leak: 'whsec_0123456789' },
+    { label: 'JSON web token', raw: 'cookie eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.dBjftJeZ4CVPmB92K27uhbUJU1p1r ok', leak: 'eyJzdWIiOiIxMjM0NSJ9' },
+    { label: 'URL userinfo', raw: 'psql postgres://admin:hunter2pass@db.internal/app', leak: 'hunter2pass' },
+    { label: 'Authorization header', raw: 'Authorization: Bearer sk-ant-0123456789abcdef', leak: 'sk-ant-0123456789abcdef' },
+  ];
+  const stillLeaking = credentialShapes
+    .filter((shape) => redactCredentials(shape.raw).includes(shape.leak))
+    .map((shape) => shape.label);
+  check(stillLeaking.length === 0,
+    'the shared redactor removes every credential shape the exported surfaces can carry', stillLeaking.join(', '));
+  const pemBlock = '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAsmokekeymaterial\n-----END RSA PRIVATE KEY-----';
+  check(!redactCredentials(pemBlock).includes('smokekeymaterial')
+    && !redactCredentials(pemBlock).includes('BEGIN RSA PRIVATE KEY'),
+  'and a pasted PEM block is replaced whole rather than line by line');
+
+  // A path can be a signed URL and a Grep pattern is routinely the credential
+  // somebody was hunting for. Both used to reach the ledger raw because only
+  // the command and the url went through a redactor.
+  const redactRule = 'smoke.ledger.redaction';
+  const redactCtx = { sessionId: 's_smoke_redact', projectId: fanProject, projectPath: fanRepo, trust: 'project' as const };
+  policy.recordDecision(redactCtx, {
+    hook_event_name: 'PreToolUse', tool_name: 'Read',
+    tool_input: { file_path: '/tmp/export/report.csv?token=ghp_abcdefghij0123456789ABCDEFGHIJ' },
+  }, { decision: 'deny', rule: redactRule, reason: 'smoke fixture' });
+  policy.recordDecision(redactCtx, {
+    hook_event_name: 'PreToolUse', tool_name: 'Grep',
+    tool_input: { pattern: 'AKIAIOSFODNN7EXAMPLE' },
+  }, { decision: 'deny', rule: redactRule, reason: 'smoke fixture' });
+  const redactedRows = policy.ledger(200).filter((row) => row.rule === redactRule);
+  check(redactedRows.length === 2
+    && !redactedRows.some((row) => row.summary.includes('ghp_abcdefghij'))
+    && !redactedRows.some((row) => row.summary.includes('AKIAIOSFODNN7EXAMPLE')),
+  'the ledger redacts a signed target path and a search pattern, not only a shell command',
+  redactedRows.map((row) => row.summary));
+  check(redactedRows.some((row) => row.summary.includes('/tmp/export/report.csv')),
+    'while keeping enough of each row to be worth reading back afterwards',
+    redactedRows.map((row) => row.summary));
 
   /* ── the attention queue advances on output ────────────────────────── */
   // An agent streaming a long answer fires no hook events at all, so before the
@@ -1129,11 +1493,30 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
 
   /* ── phase 12 · MCP registry ───────────────────────────────────────── */
   say('── phase 12 · MCP registry');
+  // An enabled stdio server is a command the agent's CLI runs at every launch in
+  // this scope, so it is now approved the way a provider pack is: read the exact
+  // command, trust that digest, then enable. Registering it stays free; it is
+  // enablement that carries the grant, which is why the refusal is asserted here
+  // rather than assumed.
   const srv = mcpRegistry.upsertServer({
     projectId: null, name: 'smoke-fs', transport: 'stdio',
-    command: 'echo', args: 'hello', enabled: true,
+    command: 'echo', args: 'hello', enabled: false,
   });
   check(mcpRegistry.listServers(null).some((x) => x.id === srv.id), 'an MCP server is stored');
+
+  let untrustedEnable = '';
+  try { mcpRegistry.setServerEnabled(srv.id, true); }
+  catch (error) { untrustedEnable = error instanceof Error ? error.message : String(error); }
+  check(/trust this exact command/i.test(untrustedEnable),
+    'enabling an untrusted stdio MCP server is refused, because enablement is a standing grant to run that command',
+    untrustedEnable);
+
+  const mcpReview = mcpRegistry.reviewServers(null).find((x) => x.id === srv.id);
+  check(Boolean(mcpReview?.sha256), 'the review names the exact digest a person would be approving');
+  mcpRegistry.trustServer(srv.id, mcpReview!.sha256);
+  mcpRegistry.setServerEnabled(srv.id, true);
+  check(mcpRegistry.reviewServers(null).find((x) => x.id === srv.id)?.enabled === true,
+    'and the same server enables once that exact command is trusted');
   const cfgPath = mcpRegistry.writeMcpConfig(null, tmp);
   check(cfgPath !== null && fs.existsSync(cfgPath), 'an .mcp.json-shaped config is generated');
   if (cfgPath) {
@@ -1168,10 +1551,15 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(use?.failures === 1, 'and the failures are counted apart from them', use?.failures);
   check((use?.lastUsedAt ?? 0) > 0, 'with the moment one last completed', use?.lastUsedAt);
 
+  // Registered and trusted, so it is genuinely enabled — the point of the check
+  // below is that nobody has called it, not that it was never turned on.
   const idle = mcpRegistry.upsertServer({
     projectId: null, name: 'smoke-unused', transport: 'stdio',
-    command: 'echo', args: '', enabled: true,
+    command: 'echo', args: '', enabled: false,
   });
+  const idleReview = mcpRegistry.reviewServers(null).find((x) => x.id === idle.id);
+  mcpRegistry.trustServer(idle.id, idleReview!.sha256);
+  mcpRegistry.setServerEnabled(idle.id, true);
   const idleUse = mcpRegistry.serverStatuses().find((x) => x.id === idle.id);
   check(idleUse?.toolCalls === 0 && idleUse?.lastUsedAt === null,
     'a server nobody has called reads as unused, which is not the same as broken');
@@ -1280,12 +1668,21 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // deliberately: rows written by older builds are in people's databases, and
   // a type that narrows while the table can still return the value is a type
   // that lies. The list marks those rows dead instead.
-  const legacy = schedule.createSchedule({
-    name: 'smoke legacy session row', cron: '0 4 * * *', kind: 'session', payload: {},
-  });
-  check(schedule.listSchedules().find((x) => x.id === legacy.id)?.kind === 'session',
+  // Written the way an older build wrote it, because createSchedule now
+  // refuses the kind outright: a schedule nothing can ever run should not be
+  // creatable, and the row still has to read back for the people who have one.
+  const legacyId = 'sch_smoke_legacy_session';
+  db().prepare(`INSERT INTO schedules (id,name,cron,kind,payload_json,project_id,enabled,created_at,next_at)
+    VALUES (?,?,?,?,?,?,1,?,?)`)
+    .run(legacyId, 'smoke legacy session row', '0 4 * * *', 'session', '{}', null, Date.now(), Date.now() + 60_000);
+  check(schedule.listSchedules().find((x) => x.id === legacyId)?.kind === 'session',
     "a 'session' row written by an older build still reads back rather than throwing");
-  check(schedule.deleteSchedule(legacy.id), 'and it can be deleted, which is what the list tells you to do');
+  let refusedSession = false;
+  try {
+    schedule.createSchedule({ name: 'smoke rejected session row', cron: '0 4 * * *', kind: 'session' as never, payload: {} });
+  } catch { refusedSession = true; }
+  check(refusedSession, 'but a new session schedule is refused, since no runner could ever claim it');
+  check(schedule.deleteSchedule(legacyId), 'and it can be deleted, which is what the list tells you to do');
 
   /* ── phase 27 · sessions Wanigan did not start ─────────────────────── */
   // VS Code's agent host is on by default, so the ordinary state of a machine
@@ -1395,6 +1792,14 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const named = new Set<string>();
   for (const file of filesUnder(mainDir)) {
     if (!file.endsWith('.ts')) continue;
+    // This suite ships inside src/main but never connects anywhere: it names
+    // lookalike hosts on purpose, so that the credential-strip check can prove
+    // https://api.anthropic.com.evil.io is treated as a redirect rather than as
+    // the real endpoint. Scanning our own fixtures would report them as
+    // undeclared egress and, worse, invite someone to "fix" it by adding an
+    // attacker-shaped host to the Settings table. Every module that can actually
+    // open a socket is still scanned.
+    if (/[\\/]smoke\d*\.ts$/.test(file)) continue;
     for (const m of fs.readFileSync(file, 'utf8').matchAll(/https:\/\/([A-Za-z0-9.-]+)/g)) {
       named.add(m[1].toLowerCase());
     }
@@ -1578,6 +1983,12 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(mainSrc.length > 1000 && preloadSrc.length > 500 && schedulesSrc.length > 500
     && sessionsSrc.length > 500 && settingsSrc.length > 500 && appSrc.length > 500 && sessionManagerSrc.length > 500,
     'the sources these checks read are present, so a miss is a miss and not a bad path');
+  // The check above names seven of the twenty-three files read here. This one
+  // names every path that failed to resolve, including the ones read earlier in
+  // the suite, so a moved file cannot silently retire the assertions about it.
+  check(missingSources.length === 0,
+    'every source path this suite reads resolved to a non-empty file, so no negated assertion passes by reading nothing',
+    missingSources.join(', '));
 
   check(/registerRunner\(\s*'batch'/.test(mainSrc),
     "the 'batch' queue kind has a runner — without one every batch schedule blocks on 'no runner registered' forever");
@@ -1609,7 +2020,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && /startup\.status\(\)/.test(appSrc) && /Wanigan is open in recovery mode/.test(appSrc),
   'a partially migrated local database opens a recovery window with status and retry instead of rejecting startup before any UI exists');
   check(/handle\(\s*'settings:setTheme'/.test(mainSrc)
-    && mainSrc.includes("if (k === 'theme') throw new Error('Use the typed theme setting.')")
+    && /handle\(\s*'settings:set'\s*,\s*\(key: string, value: string\)\s*=>\s*setUserPreference/.test(mainSrc)
     && /setTheme:\s*\(theme: ThemeSetting\).*settings:setTheme/.test(preloadSrc)
     && appSrc.includes('useThemePreference') && appSrc.includes('<ThemeControl')
     && themeSrc.includes("window.wanigan.prefs.setTheme(next)")
@@ -1627,7 +2038,12 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && appSrc.includes('className="nav-new-session"')
     && appSrc.includes('newSessionRequest={newSessionRequest}')
     && appSrc.includes('onNewSessionRequestConsumed={consumeNewSessionRequest}')
-    && appSrc.includes('onNewSession={() => { closePalette(false); requestNewSession(); }}')
+    // The palette became a command list, so "new session" is one entry that
+    // runs after the palette closes. staysPut carries the old closePalette(false)
+    // intent: an action that opens a dialog must not hand focus back to the
+    // opener it just replaced.
+    && appSrc.includes('run: requestNewSession')
+    && appSrc.includes('onRun={(item) => { closePalette(item.staysPut === true); item.run(); }}')
     && sessionsSrc.includes('onNewSessionRequestConsumed')
     && sessionsSrc.includes('setDialog(true);')
     && cssSrc.includes('.nav-new-session') && cssSrc.includes('.command-item-primary'),
@@ -1657,10 +2073,22 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   'Scout is a touch-safe nested Learning surface with a hard local preview, one explicit online action, separate unattended-network consent, cited external links, and a Control Goal handoff');
   check(appSrc.includes('aria-modal="true"')
     && appSrc.includes('const focusable = Array.from(dialog.current')
-    && appSrc.includes('tabStop={!railHasActiveTab}')
+    // Opener restoration is explicit now rather than incidental: closing has to
+    // hand focus back to the control that opened it, not drop it on the body.
+    && appSrc.includes('const opener = paletteOpenerRef.current')
+    && appSrc.includes('opener?.focus()')
+    // Reaching the third result used to cost three Tabs. The highlight moves on
+    // arrow keys and is published to assistive tech, while focus stays in the
+    // field so typing never stops mid-search.
+    && appSrc.includes("if (e.key === 'ArrowDown')")
+    && appSrc.includes('aria-activedescendant={active >= 0')
+    // The rail is a roving tabindex, so it is one tab stop rather than eleven.
+    && appSrc.includes('tabIndex={roving === id ? 0 : -1}')
     && appSrc.includes("aria-current={railHasActiveTab ? undefined : 'page'}")
-    && appSrc.includes('shortcutForTab(item.id)'),
-  'the keyboard palette traps focus and restores its opener, while navigation remains reachable and truthful on Views-only routes');
+    // Off-rail views (Skills, Context) are reachable and are labelled with a
+    // real shortcut where one exists rather than a blank column.
+    && appSrc.includes('meta: TAB_SHORTCUTS[item.id].label'),
+  'the keyboard palette traps focus, moves an announced highlight on arrow keys and restores its opener, while navigation remains reachable and truthful on Views-only routes');
   check(sessionsSrc.includes("import '../styles/sessions.css'")
     && sessionsSrc.includes('SESSION_PICKER_COMPACT_QUERY')
     && sessionsSrc.includes('sessions--picker-open')
@@ -1708,9 +2136,12 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'Claude Platform API key', 'GLM Coding Plan', 'DeepSeek', 'Installed agent runtimes',
     'Projects', 'Worktrees', 'Trust and the policy ledger', 'Spending', 'Dispatcher',
     'Phone monitor', 'MCP servers', 'Observation', 'What leaves this machine', 'Storage',
-    'Appearance', 'Motion', 'Demo mode',
+    'Appearance', 'Motion', 'Demo mode', 'Backup & restore',
   ];
-  const settingsPanels = ['agents', 'projects', 'automation', 'connections', 'privacy', 'app'];
+  // 'backup' joined these when backup/restore shipped: before it, the SQLite
+  // database CLAUDE.md calls the source of truth for all evidence and knowledge
+  // had no export, no backup and no restore anywhere in the app.
+  const settingsPanels = ['agents', 'projects', 'automation', 'connections', 'privacy', 'backup', 'app'];
   check(settingsSurfaces.every((surface) => settingsSrc.includes(surface))
     && settingsPanels.every((panel) => settingsSrc.includes(`settingsTabInfo('${panel}')`))
     && (settingsSrc.match(/<SettingsTabPanel\b/g) ?? []).length === settingsPanels.length
@@ -1720,7 +2151,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && settingsSrc.includes('hidden={!active}') && settingsSrc.includes('moveSettingsTab')
     && settingsSrc.includes('.set.pane { width: 100%; max-width: none;')
     && !settingsSrc.includes('<div className="pane set" style={{ maxWidth'),
-  'Settings keeps every operator surface in six labelled persistent full-width tab panels, with keyboard navigation and no draft-destroying unmount');
+  'Settings keeps every operator surface in seven labelled persistent full-width tab panels, with keyboard navigation and no draft-destroying unmount');
 
   const kindDecl = /type Kind = ([^;]+);/.exec(schedulesSrc)?.[1] ?? '';
   check(kindDecl.includes("'batch'") && !kindDecl.includes("'session'"),

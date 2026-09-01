@@ -1,5 +1,7 @@
 import { client, isMock, explainApiError } from './anthropic';
-import { costOf, modelFor } from './pricing';
+import { minimumCacheablePrefix } from './cachediag';
+import { costOf, isPricedModel, modelFor } from './pricing';
+import { estimateTokens } from '../../shared/tokens';
 import type { RunConfig } from '../../shared/types';
 import type { BuiltRequest } from './build';
 
@@ -20,10 +22,23 @@ export type Estimate = {
   costHighUsd: number;
   /** What the same work would cost on the synchronous Messages API. */
   syncCostHighUsd: number;
+  /**
+   * The model id, when Wanigan has no published rate for it. Set means every
+   * cost field above is a stand-in model's rates, not this model's price — a
+   * caller that gates spending on those numbers is gating on a guess.
+   */
+  unpricedModel?: string;
   notes: string[];
 };
 
 const SAMPLE_SIZE = 6;
+
+/**
+ * What the low band assumes each response comes back at, absent a measurement.
+ * Named once so the number in the arithmetic and the number in the note it is
+ * declared by cannot drift apart.
+ */
+const LOW_OUTPUT_FRACTION = 0.25;
 
 export async function estimate(
   cfg: RunConfig,
@@ -45,9 +60,11 @@ export async function estimate(
   let meanInputTokens = 0;
 
   if (isMock()) {
-    // ~4 chars/token is close enough for the mock path.
-    meanInputTokens = Math.round(sample.reduce((a, r) => a + r.rendered.length / 4, 0) / sample.length);
-    cachedPrefixTokens = Math.round(cfg.system.filter((b) => b.cache).reduce((a, b) => a + b.text.length / 4, 0));
+    // Mock mode has no countTokens endpoint to call, so the shared local
+    // heuristic stands in — the same one the context and learning panels use,
+    // rather than a fourth private guess about the same bytes.
+    meanInputTokens = Math.round(sample.reduce((a, r) => a + estimateTokens(r.rendered), 0) / sample.length);
+    cachedPrefixTokens = cfg.system.filter((b) => b.cache).reduce((a, b) => a + estimateTokens(b.text), 0);
     notes.push('Mock mode — token counts are estimated locally, not measured.');
   } else {
     const c = client();
@@ -74,16 +91,27 @@ export async function estimate(
   }
 
   const uncachedPerRequest = Math.max(0, meanInputTokens - cachedPrefixTokens);
-  const totalInputTokens = uncachedPerRequest * n;
   const worstCaseOutputTokens = cfg.maxTokens * n;
 
-  // Cache economics: written once, read on the remaining n-1 requests.
-  // Cache hits in a batch are best-effort (30–98% in practice), so the low/high
-  // band assumes a good hit rate and the high band assumes none.
-  const cacheWrite = cachedPrefixTokens;
-  const cacheRead = cachedPrefixTokens * Math.max(0, n - 1);
+  /* ── what the cache can actually do for this config ──────────────────
+     A prefix under the model's minimum cacheable size never creates an entry —
+     no write, no read, no error — and a single-request batch has nothing to read
+     one back. Pricing cache reads at 0.1x in either case invents a 90% discount
+     on tokens that bill at the full input rate, and it does it on the *low*
+     band, which is the number an operator reads as "at best". A floor built on a
+     cache that cannot exist is not a floor.
+     ─────────────────────────────────────────────────────────────────── */
+  const minimumPrefix = minimumCacheablePrefix(cfg.model);
+  const cacheEngages = cachedPrefixTokens >= minimumPrefix && n > 1;
+  const cacheWrite = cacheEngages ? cachedPrefixTokens : 0;
+  const cacheRead = cacheEngages ? cachedPrefixTokens * (n - 1) : 0;
+  // With no cache to carry it, the prefix is not billed once — it is billed on
+  // every request, like the rest of the input.
+  const totalInputTokens = (cacheEngages ? uncachedPerRequest : meanInputTokens) * n;
 
-  const lowOutput = observedOutputTokens ? observedOutputTokens * n : Math.round(worstCaseOutputTokens * 0.25);
+  const lowOutput = observedOutputTokens
+    ? observedOutputTokens * n
+    : Math.round(worstCaseOutputTokens * LOW_OUTPUT_FRACTION);
   const usage = (out: number, withCache: boolean) => ({
     input_tokens: withCache ? totalInputTokens : meanInputTokens * n,
     output_tokens: out,
@@ -92,18 +120,43 @@ export async function estimate(
     cacheTtl: cfg.cacheTtl,
   });
 
-  const costLowUsd = costOf(cfg.model, usage(lowOutput, true));
-  const costHighUsd = costOf(cfg.model, usage(worstCaseOutputTokens, cachedPrefixTokens === 0));
+  // Cache hits in a batch are best-effort (30–98% in practice): the low band
+  // prices a cache that engages and hits, the high band prices none at all.
+  const costLowUsd = costOf(cfg.model, usage(lowOutput, cacheEngages));
+  const costHighUsd = costOf(cfg.model, usage(worstCaseOutputTokens, false));
   const syncCostHighUsd = costHighUsd * 2; // batch rates are exactly 50% of list
 
+  // First, because it governs how every other number here should be read.
+  const priced = isPricedModel(cfg.model);
+  if (!priced) {
+    notes.unshift(
+      `Wanigan has no published rate for "${cfg.model}", so every cost here is ${model.label}'s ` +
+      `rates standing in — a placeholder, not this model's price. Treat the dollar figures as unknown until the ` +
+      `pricing table lists this model.`
+    );
+  }
   if (!observedOutputTokens) {
-    notes.push('Low estimate assumes responses average 25% of max_tokens. Run a dry run to replace that guess with a measurement.');
+    notes.push(
+      `Low estimate assumes responses average ${Math.round(LOW_OUTPUT_FRACTION * 100)}% of max_tokens — an ` +
+      `assumption, not a measurement. Run a dry run to replace it with an observed figure.`
+    );
   }
-  if (cachedPrefixTokens > 0 && cachedPrefixTokens < 1024) {
-    notes.push(`Cached prefix is only ~${cachedPrefixTokens} tokens — below the minimum cacheable prefix, so caching will not engage.`);
+  if (cachedPrefixTokens > 0 && cachedPrefixTokens < minimumPrefix) {
+    notes.push(
+      `Cached prefix is only ~${cachedPrefixTokens.toLocaleString()} tokens, under the ` +
+      `${minimumPrefix.toLocaleString()}-token minimum for this model — caching will not engage, and nothing ` +
+      `below is priced as cached.`
+    );
   }
-  if (n > 1 && cachedPrefixTokens >= 1024) {
-    notes.push(`Cached prefix of ~${cachedPrefixTokens.toLocaleString()} tokens is written once and read ${(n - 1).toLocaleString()} times.`);
+  if (cachedPrefixTokens >= minimumPrefix && n < 2) {
+    notes.push('A one-request batch has nothing to read the cache back, so the prefix is priced uncached.');
+  }
+  if (cacheEngages) {
+    notes.push(
+      `Cached prefix of ~${cachedPrefixTokens.toLocaleString()} tokens is written once and read ` +
+      `${(n - 1).toLocaleString()} times. The low estimate assumes every one of those reads hits; batch cache ` +
+      `hits are best-effort, so it is a floor rather than a forecast.`
+    );
   }
 
   return {
@@ -118,6 +171,7 @@ export async function estimate(
     costLowUsd,
     costHighUsd,
     syncCostHighUsd,
+    unpricedModel: priced ? undefined : cfg.model,
     notes,
   };
 }
@@ -132,7 +186,7 @@ export async function dryRun(cfg: RunConfig, req: BuiltRequest) {
     return {
       ok: true as const,
       text: `[mock dry run] would send ${req.rendered.length} chars for custom_id ${req.custom_id}`,
-      usage: { input_tokens: Math.round(req.rendered.length / 4), output_tokens: 128 },
+      usage: { input_tokens: estimateTokens(req.rendered), output_tokens: 128 },
       stopReason: 'end_turn',
       customId: req.custom_id,
     };

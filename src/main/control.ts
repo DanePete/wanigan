@@ -1,10 +1,10 @@
-import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { db } from './db';
+import { headSync } from './git';
 import { projectById } from './store';
-import { createSession, listSessions } from './sessions';
+import { createSession, killSession, listSessions } from './sessions';
 import * as review from './review';
 import * as otel from './otel';
 import { listGoalTrace } from './goal-trace';
@@ -45,9 +45,17 @@ const parseStrings = (value: string): string[] => {
 };
 const now = () => Date.now();
 
+/**
+ * The commit a docket or checkpoint was recorded against.
+ *
+ * This used to be its own `execFileSync` with no timeout and no hardened
+ * environment: against a repo whose git decided it needed a credential, the
+ * main process — and every PTY it pumps — stopped until someone quit the app.
+ * git.ts owns both, so this is now one bounded call. A null still means "no
+ * commit was recorded", which the caller stores as such rather than guessing.
+ */
 function gitHead(root: string): string | null {
-  try { return execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { stdio: 'pipe' }).toString().trim() || null; }
-  catch { return null; }
+  return root ? headSync(root) : null;
 }
 
 function mapDocket(row: DocketRow): WorkDocket {
@@ -176,9 +184,12 @@ export function createDocket(input: {
   }
   const id = uid('doc'); const at = now();
   const plan = uid('node'); const implement = uid('node'); const verify = uid('node'); const reviewer = uid('node');
+  // Read before the transaction opens. Spawning git inside it holds SQLite's
+  // write lock for as long as git takes, and git is the slow, external half.
+  const baseCommit = gitHead(project.path);
   const insert = db().transaction(() => {
     db().prepare(`INSERT INTO work_dockets (id, project_id, title, objective, acceptance_json, risk, budget_usd, base_commit, status, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(id, project.id, title, objective, JSON.stringify(acceptance), risk, budgetUsd, gitHead(project.path), 'draft', at, at);
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(id, project.id, title, objective, JSON.stringify(acceptance), risk, budgetUsd, baseCommit, 'draft', at, at);
     const add = (nodeId: string, kind: DocketNodeKind, nodeTitle: string, instructions: string, depends: string[]) => {
       db().prepare(`INSERT INTO work_nodes (id,docket_id,kind,title,instructions,depends_json,status)
         VALUES (?,?,?,?,?,?,?)`).run(nodeId, id, kind, nodeTitle, instructions, JSON.stringify(depends), 'pending');
@@ -197,10 +208,16 @@ export function createDocket(input: {
 function cleanClaim(raw: string): string {
   const value = safeText(raw, 'Claimed path', 1_000).replaceAll('\\', '/');
   if (path.posix.isAbsolute(value) || value.split('/').includes('..')) throw new Error('A claimed path must be relative to its project and cannot escape it.');
-  return value.replace(/^\.\//, '');
+  // '.' and './' mean the whole project. Left as literal text they claimed
+  // everything while overlapping nothing, so two agents could each hold the
+  // entire repository and never see a conflict. Normalized to the root claim.
+  const trimmed = value.replace(/^\.\//, '').replace(/\/+$/, '');
+  return trimmed === '.' ? '' : trimmed;
 }
 
+/** '' is the project root: it contains, and therefore conflicts with, everything. */
 function overlaps(a: string, b: string): boolean {
+  if (a === '' || b === '') return true;
   return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
@@ -243,8 +260,17 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
   const session = await createSession({ providerId, projectId: project.id, model: input.model?.trim() || undefined,
     effort: input.effort?.trim() || undefined, permissionMode: input.permissionMode?.trim() || (node.kind === 'implement' ? 'acceptEdits' : 'plan'),
     isolate: true, initialPrompt: prompt });
-  db().prepare(`UPDATE work_nodes SET status='running',provider_id=?,model=?,session_id=?,worktree=?,started_at=?,detail=NULL WHERE id=?`)
+  // Readiness was checked before a multi-second await (worktree creation,
+  // provider probe, PTY spawn). Two starts can both pass that check, and an
+  // unconditional write would leave the loser's agent running, spending
+  // tokens, attached to nothing. Claiming the row atomically decides it.
+  const claimed = db().prepare(`UPDATE work_nodes SET status='running',provider_id=?,model=?,session_id=?,worktree=?,started_at=?,detail=NULL
+    WHERE id=? AND session_id IS NULL AND status!='running'`)
     .run(providerId, input.model?.trim() || null, session.id, session.worktree ?? null, now(), nodeId);
+  if (claimed.changes === 0) {
+    try { killSession(session.id); } catch { /* the duplicate is already gone */ }
+    throw new Error('This task was already started by another action; the duplicate session was stopped.');
+  }
   db().prepare(`INSERT INTO work_resume_receipts
     (node_id,docket_id,session_id,conversation_id,provider_id,model,base_commit,worktree,created_at,updated_at)
     VALUES (?,?,?,?,?,?,?,?,?,?)
@@ -347,9 +373,16 @@ export async function runProof(nodeId: string): Promise<DocketProof> {
   touch(parent.id); return proof;
 }
 
+/**
+ * The LATEST gate run decides. Accepting any historical pass meant a green run
+ * from an hour and three commits ago outvoted the red one just recorded — the
+ * proof would say "verified" about a tree that had since failed.
+ */
 function hasPassedProof(docketId: string, nodeId: string): boolean {
-  return !!db().prepare("SELECT 1 FROM work_proofs WHERE docket_id=? AND node_id=? AND kind='test' AND status='passed' LIMIT 1")
-    .get(docketId, nodeId);
+  const latest = db().prepare(`SELECT status FROM work_proofs
+    WHERE docket_id=? AND node_id=? AND kind='test' ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+    .get(docketId, nodeId) as { status: string } | undefined;
+  return latest?.status === 'passed';
 }
 
 function storeOutcome(node: NodeRow, accepted: boolean, testsPassed: boolean): void {
@@ -390,9 +423,12 @@ export function completeNode(nodeId: string, input: { detail?: string; decision?
     for (const candidate of rawNodes(parent.id)) {
       if (candidate.provider_id) storeOutcome(candidate, decision === 'approve', testsPassed);
     }
-  } else if (node.kind !== 'implement') {
-    storeOutcome(node, false, testsPassed);
   }
+  // No interim row for plan/verify. It was written as accepted=0 expecting the
+  // review pass above to overwrite it — but a docket that is abandoned before
+  // review never reaches that loop, leaving those phases permanently recorded
+  // as rejected work. An unreviewed phase has no verdict, and no verdict is
+  // not a rejection; the router is better served by silence than by a guess.
   if (node.kind === 'review' && decision === 'reject') db().prepare("UPDATE work_dockets SET status='rejected',updated_at=? WHERE id=?").run(now(), parent.id);
   else setDocketPhase(parent.id);
   return mapNodes(rawNodes(parent.id)).find((value) => value.id === nodeId)!;
@@ -435,9 +471,22 @@ export function triageEvent(eventId: string, input: { title?: string; acceptance
   if (!event) throw new Error('Event not found.');
   if (!event.project_id) throw new Error('Assign this event to a project before creating work.');
   if (event.status !== 'new') throw new Error('This event has already been triaged or dismissed.');
-  const created = createDocket({ projectId: event.project_id, title: input.title?.trim() || `Triage: ${event.summary.slice(0, 120)}`,
-    objective: event.summary, acceptance: input.acceptance?.length ? input.acceptance : ['Identify the root cause or rule out the alert.', 'Record evidence and a human review decision.'], risk: input.risk ?? 'elevated' });
-  db().prepare("UPDATE control_events SET status='triaged',docket_id=? WHERE id=?").run(created.id, eventId);
+  // Claim the event BEFORE the docket exists. createDocket commits its own
+  // transaction, so creating first and marking after leaves a window where a
+  // crash — or a second click — produces a duplicate docket for one event.
+  // Claiming first can at worst leave a triaged event with no docket, which is
+  // visible and harmless next to duplicated work.
+  const claimed = db().prepare("UPDATE control_events SET status='triaged' WHERE id=? AND status='new'").run(eventId);
+  if (claimed.changes === 0) throw new Error('This event has already been triaged or dismissed.');
+  let created: DocketDetail;
+  try {
+    created = createDocket({ projectId: event.project_id, title: input.title?.trim() || `Triage: ${event.summary.slice(0, 120)}`,
+      objective: event.summary, acceptance: input.acceptance?.length ? input.acceptance : ['Identify the root cause or rule out the alert.', 'Record evidence and a human review decision.'], risk: input.risk ?? 'elevated' });
+  } catch (error) {
+    db().prepare("UPDATE control_events SET status='new' WHERE id=? AND status='triaged'").run(eventId);
+    throw error;
+  }
+  db().prepare('UPDATE control_events SET docket_id=? WHERE id=?').run(created.id, eventId);
   return created;
 }
 
@@ -461,7 +510,66 @@ export function cancelMcpTask(taskId: string): boolean {
   const node = nodeRow(task.node_id);
   if (['pending', 'running'].includes(node.status)) {
     db().prepare("UPDATE work_nodes SET status='canceled',ended_at=? WHERE id=?").run(now(), node.id);
+    // Cancelling the record while the agent keeps working is the worst of both:
+    // its claims are released for someone else to take, and it goes on editing
+    // the same worktree and spending tokens against a task nobody is watching.
+    if (node.session_id) {
+      try { killSession(node.session_id); } catch { /* already exited */ }
+    }
     releaseClaims(node.id); setDocketPhase(task.docket_id);
   }
   return true;
+}
+
+/**
+ * Reopen a failed or canceled task so its docket can move again.
+ *
+ * Without this every non-approve decision was terminal: the node stayed
+ * 'failed', mapNodes marked its dependents 'blocked', and the docket sat
+ * 'blocked' forever with no action anywhere that could revive it — a review
+ * asking for changes bricked the work it was reviewing.
+ */
+export function retryNode(nodeId: string): DocketNode {
+  const node = nodeRow(nodeId);
+  if (!['failed', 'canceled'].includes(node.status)) {
+    throw new Error(`Only a failed or canceled task can be reopened; this task is ${node.status}.`);
+  }
+  if (node.session_id) {
+    try { killSession(node.session_id); } catch { /* already exited */ }
+  }
+  db().prepare(`UPDATE work_nodes SET status='pending',session_id=NULL,started_at=NULL,ended_at=NULL,
+    detail=? WHERE id=?`).run(`Reopened after ${node.status}.`, nodeId);
+  releaseClaims(nodeId);
+  // The MCP task vocabulary has no 'pending': a reopened task is one waiting
+  // to be started again, which is exactly what input_required means here.
+  setTaskStatus(nodeId, 'input_required');
+  setDocketPhase(node.docket_id);
+  return mapNodes(rawNodes(node.docket_id)).find((value) => value.id === nodeId)!;
+}
+
+/**
+ * A live PTY cannot survive a quit, so a node left 'running' by a crash or a
+ * shutdown describes an agent that no longer exists. Called at startup: the
+ * row is reopened rather than silently believed, because a task that claims to
+ * be running holds claims nobody can release.
+ */
+export function reconcileRunningNodes(): number {
+  const running = db().prepare("SELECT id,session_id FROM work_nodes WHERE status='running'")
+    .all() as { id: string; session_id: string | null }[];
+  if (!running.length) return 0;
+  const live = new Set(listSessions().map((session) => session.id));
+  let reopened = 0;
+  for (const node of running) {
+    if (node.session_id && live.has(node.session_id)) continue;
+    db().prepare(`UPDATE work_nodes SET status='failed',ended_at=?,detail=? WHERE id=? AND status='running'`)
+      .run(now(), 'The session running this task ended before it was completed. Reopen it to continue.', node.id);
+    releaseClaims(node.id);
+    reopened++;
+  }
+  if (reopened) {
+    for (const id of new Set(running.map((node) => nodeRow(node.id).docket_id))) {
+      try { setDocketPhase(id); } catch { /* the docket may have been removed */ }
+    }
+  }
+  return reopened;
 }

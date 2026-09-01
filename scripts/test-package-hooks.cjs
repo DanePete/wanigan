@@ -13,6 +13,13 @@ const {
   signLocalMacAppIfNeeded,
 } = require('./sign-local-macos-app.cjs');
 const { assertElectronAsarIntegrity, synchronizeElectronAsarIntegrity } = require('./macos-asar-integrity.cjs');
+const {
+  FUSE_POLICY,
+  FUSE_DISABLED,
+  FUSE_ENABLED,
+  assertHardenedElectronFuses,
+  hardenElectronFuses,
+} = require('./electron-fuses.cjs');
 
 async function exists(file) {
   try {
@@ -24,6 +31,9 @@ async function exists(file) {
 }
 
 async function main() {
+  // @electron/fuses 2.x is ESM-only while this test intentionally remains a
+  // CommonJS hook fixture, matching electron-builder's loading model.
+  const { FuseV1Options, FuseVersion } = await import('@electron/fuses');
   const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'wanigan-package-hook-'));
   const release = path.join(fixture, 'node_modules', 'node-pty', 'build', 'Release');
   const marker = path.join(release, '.forge-meta');
@@ -81,16 +91,43 @@ async function main() {
         config: {},
       },
     };
-    await afterPack(afterPackContext);
+    const fuseCalls = [];
+    const integritySyncCalls = [];
+    const signingHookCalls = [];
+    const afterPackOptions = {
+      hostPlatform: 'darwin',
+      hardenElectronFuses: async (app) => { fuseCalls.push(app); },
+      synchronizeElectronAsarIntegrity: async (app) => { integritySyncCalls.push(app); },
+      signLocalMacAppIfNeeded: async (context) => { signingHookCalls.push(context); },
+    };
+    await afterPack(afterPackContext, afterPackOptions);
+    assert.deepEqual(fuseCalls, [packagedApp],
+      'the macOS afterPack path flips Electron fuses before it seals the app bundle');
+    assert.deepEqual(integritySyncCalls, [packagedApp],
+      'the macOS afterPack path verifies the embedded app.asar hash before sealing');
+    assert.deepEqual(signingHookCalls, [afterPackContext],
+      'the macOS afterPack path seals the app only after fuses and archive integrity are checked');
+    await assert.rejects(
+      afterPack(afterPackContext, { ...afterPackOptions, hostPlatform: 'linux' }),
+      /macOS releases must be built on macOS/,
+      'a cross-host macOS build fails closed instead of skipping fuse and archive checks',
+    );
     if (process.platform === 'darwin') {
+      // afterPack ran with synchronizeElectronAsarIntegrity stubbed, because the
+      // assertions above are about the ORDER the hooks fire in. Nothing wrote a
+      // hash into Info.plist, so asserting integrity here without first running
+      // the real writer compares a freshly built app.asar against all zeros and
+      // can only ever fail. Run the round trip the packaged build actually does:
+      // write the hash, then refuse the bundle if it stops matching.
+      await synchronizeElectronAsarIntegrity(packagedApp);
       await assertElectronAsarIntegrity(packagedApp);
     }
 
     await fs.chmod(packagedHelper, 0o644);
-    await assert.rejects(afterPack(afterPackContext), /not executable/);
+    await assert.rejects(afterPack(afterPackContext, afterPackOptions), /not executable/);
 
     await fs.unlink(packagedHelper);
-    await assert.rejects(afterPack(afterPackContext), /missing/);
+    await assert.rejects(afterPack(afterPackContext, afterPackOptions), /missing/);
 
     assert.equal(hasUsableSigningIdentity('  1) ABCDEF0123456789ABCDEF0123456789ABCDEF01 "Developer ID Application: Example (TEAMID)"'), true,
       'a valid keychain identity must preserve electron-builder signing');
@@ -198,6 +235,37 @@ async function main() {
       'release verification rejects a stale embedded Electron archive checksum');
     assert.equal(integrityCalls.filter(([, args]) => args[1].startsWith('Set ')).length, 1,
       'integrity repair happens once before the app signature is sealed');
+
+    const expectedWire = { version: FuseVersion.V1 };
+    for (const [rawOption, enabled] of Object.entries(FUSE_POLICY)) {
+      expectedWire[Number(rawOption)] = enabled ? FUSE_ENABLED : FUSE_DISABLED;
+    }
+    await assert.doesNotReject(
+      assertHardenedElectronFuses('/fixture/Wanigan.app', {
+        getCurrentFuseWire: async () => expectedWire,
+      }),
+      'the release verifier accepts the complete explicit Electron fuse policy',
+    );
+    const weakWire = { ...expectedWire, [FuseV1Options.RunAsNode]: FUSE_ENABLED };
+    await assert.rejects(
+      assertHardenedElectronFuses('/fixture/Wanigan.app', {
+        getCurrentFuseWire: async () => weakWire,
+      }),
+      /RunAsNode.*expected disabled/,
+      'the release verifier rejects a package that re-enables Electron-as-Node',
+    );
+    let flipped = null;
+    await hardenElectronFuses('/fixture/Wanigan.app', {
+      flipFuses: async (_app, config) => { flipped = config; },
+      getCurrentFuseWire: async () => expectedWire,
+    });
+    assert.equal(flipped?.version, FuseVersion.V1);
+    assert.equal(flipped?.strictlyRequireAllFuses, true,
+      'new Electron fuse slots fail the package instead of inheriting a future default');
+    for (const [rawOption, enabled] of Object.entries(FUSE_POLICY)) {
+      assert.equal(flipped?.[Number(rawOption)], enabled,
+        `the package explicitly sets Electron fuse ${FuseV1Options[Number(rawOption)]}`);
+    }
 
     console.log('package hook checks passed');
   } finally {

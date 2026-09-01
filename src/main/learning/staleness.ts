@@ -47,12 +47,25 @@ export interface FreshnessOptions {
   quarantine?: boolean;
 }
 
-/** Verify file citations against the current checkout before retrieval. */
+/**
+ * Verify file citations against the current checkout before retrieval.
+ *
+ * Quarantine fires only on provable staleness — a cited file changed or went
+ * missing, or the item expired ('changed'/'missing' issues). 'outside-root'
+ * and 'unverifiable' mean the citation cannot be checked from this launch's
+ * roots, not that it is wrong: the item is still withheld from the briefing
+ * (fresh=false) but stays active.
+ */
 export async function checkItemFreshness(itemId: string, options: FreshnessOptions = {}): Promise<FreshnessResult> {
   const item = getKnowledgeItem(itemId);
   if (!item) throw new Error('Knowledge item not found.');
   const checkedAt = Date.now();
   const issues: FreshnessIssue[] = [];
+  // Only file-backed citations can be re-hashed. The caller must be able to
+  // say "N verified, M not checkable" instead of letting a clean pass over
+  // zero checkable rows read as "everything was verified".
+  let checked = 0;
+  let skipped = 0;
   const roots = (options.allowedRoots?.length ? options.allowedRoots : options.projectRoot ? [options.projectRoot] : [])
     .map(canonicalMissingAware);
 
@@ -61,7 +74,8 @@ export async function checkItemFreshness(itemId: string, options: FreshnessOptio
   }
 
   for (const evidence of listEvidence({ itemId })) {
-    if (!FILE_EVIDENCE.has(evidence.sourceType)) continue;
+    if (!FILE_EVIDENCE.has(evidence.sourceType)) { skipped++; continue; }
+    checked++;
     const file = evidencePath(evidence.sourceId, options.projectRoot);
     if (!file) {
       issues.push({ evidenceId: evidence.id, sourceId: evidence.sourceId, kind: 'unverifiable', detail: 'Relative evidence has no project root.' });
@@ -97,10 +111,13 @@ export async function checkItemFreshness(itemId: string, options: FreshnessOptio
 
   if (!issues.length) {
     db().prepare('UPDATE knowledge_items SET last_validated_at=? WHERE id=?').run(checkedAt, itemId);
-  } else if (options.quarantine === true && item.status === 'active') {
+  } else if (
+    options.quarantine === true && item.status === 'active'
+    && issues.some((issue) => issue.kind === 'changed' || issue.kind === 'missing')
+  ) {
     setKnowledgeStatus(itemId, 'quarantined');
   }
-  return { itemId, fresh: issues.length === 0, checkedAt, issues };
+  return { itemId, fresh: issues.length === 0, checkedAt, checked, skipped, issues };
 }
 
 /** Contradictions are explicit evidence, never guessed from lexical difference. */

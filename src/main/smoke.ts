@@ -85,6 +85,19 @@ export async function runSmoke(): Promise<void> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-smoke-'));
   const proj = await addProject(tmp);
   check(listProjects().some((x) => x.id === proj.id), 'project added to the shared list');
+
+  // A path that is not there right now — an unmounted disk, a share that has
+  // not come back after sleep — is not a project the user removed. This read
+  // used to DELETE those rows, and work_dockets cascades from projects, so one
+  // absent path silently took the project's whole Control record with it.
+  const vanished = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-smoke-gone-'));
+  const ghost = await addProject(vanished);
+  fs.rmSync(vanished, { recursive: true, force: true });
+  check(!listProjects().some((x) => x.id === ghost.id),
+    'a project whose directory is absent is hidden from the list');
+  fs.mkdirSync(vanished, { recursive: true });
+  check(listProjects().some((x) => x.id === ghost.id),
+    'and it comes back when the directory does — a read never deletes it');
   const resolved = batch.presetsFor(proj.id);
   const repoAudit = resolved.presets.find((x: { id: string }) => x.id === 'repo-audit');
   check(!JSON.stringify(resolved.presets).includes('{{PROJECT_PATH}}'), 'preset placeholder resolved to the project');
@@ -181,6 +194,18 @@ export async function runSmoke(): Promise<void> {
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }
+
+  // Nothing above notices a suite that stopped running its checks. An import
+  // dropped, an early return, a say() group deleted with its assertions: every
+  // one of those reports "0 failed" and reads as a pass. The floor is a
+  // low-water mark rather than a target — raise it when a wave of coverage
+  // lands, and never lower it to make a truncated run green.
+  say('── suite coverage');
+  const MIN_ASSERTIONS = 460;
+  const ran = pass + fail;
+  check(ran >= MIN_ASSERTIONS,
+    `at least ${MIN_ASSERTIONS} assertions ran, so a suite that stopped early cannot pass by running almost nothing`,
+    `${ran} ran`);
 
   fs.rmSync(tmp, { recursive: true, force: true });
   say(`\n════ ${pass} passed, ${fail} failed ════\n`);

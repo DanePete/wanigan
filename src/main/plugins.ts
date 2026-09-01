@@ -270,17 +270,72 @@ export function readPlugins(): PluginState {
 
 export function refreshPlugins(): void { cache = null; }
 
-/** A component's own markdown, for the reading pane. */
-export function pluginFile(p: string): { text: string; truncated: boolean; bytes: number } {
+const MAX_PLUGIN_FILE_BYTES = 200 * 1024;
+
+function inside(base: string, candidate: string): boolean {
+  return candidate === base || candidate.startsWith(`${base}${path.sep}`);
+}
+
+/**
+ * Read one displayed plugin document without turning the renderer API into a
+ * general file reader. Lexical containment stops `..`; canonical containment
+ * stops a plugin document symlinked to a private file outside the plugin
+ * store. Read only the preview budget so a malicious or corrupt markdown file
+ * cannot be materialised in the main process.
+ */
+export function readPluginFile(p: unknown, root = ROOT): { text: string; truncated: boolean; bytes: number } {
+  if (typeof p !== 'string' || p.length === 0 || p.length > 32_768 || p.includes('\0')) {
+    throw new Error('Choose a valid plugin document to open.');
+  }
+
+  const rootPath = path.resolve(root);
   const abs = path.resolve(p);
-  // Confined to the plugins tree: this path arrives from the renderer.
-  if (!abs.startsWith(ROOT + path.sep)) {
+  if (!inside(rootPath, abs)) {
     throw new Error(`${abs} is not inside the plugins directory, so Wanigan will not open it.`);
   }
-  const st = fs.statSync(abs);
-  const MAX = 200 * 1024;
-  const raw = fs.readFileSync(abs, 'utf8');
-  return { text: raw.slice(0, MAX), truncated: raw.length > MAX, bytes: st.size };
+
+  let canonicalRoot: string;
+  let canonicalFile: string;
+  try {
+    canonicalRoot = fs.realpathSync(rootPath);
+    canonicalFile = fs.realpathSync(abs);
+  } catch {
+    throw new Error('That plugin document is no longer available.');
+  }
+  if (!inside(canonicalRoot, canonicalFile)) {
+    throw new Error('Wanigan will not follow a plugin document outside the plugins directory.');
+  }
+
+  let fd: number | null = null;
+  try {
+    // Use the canonical path and then fstat the open descriptor. This avoids
+    // loading a whole file after a check and refuses a final symlink on hosts
+    // that support O_NOFOLLOW (including supported macOS releases).
+    const noFollow = fs.constants.O_NOFOLLOW ?? 0;
+    fd = fs.openSync(canonicalFile, fs.constants.O_RDONLY | noFollow);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) throw new Error('Wanigan can open plugin documents, not directories or devices.');
+    const bytesToRead = Math.min(stat.size, MAX_PLUGIN_FILE_BYTES);
+    const buffer = Buffer.allocUnsafe(bytesToRead);
+    const bytesRead = bytesToRead === 0 ? 0 : fs.readSync(fd, buffer, 0, bytesToRead, 0);
+    return {
+      text: buffer.subarray(0, bytesRead).toString('utf8'),
+      truncated: stat.size > bytesRead,
+      bytes: stat.size,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('Wanigan ')) throw error;
+    throw new Error('Wanigan could not safely open that plugin document.');
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch { /* descriptor was already closed by the OS */ }
+    }
+  }
+}
+
+/** A component's own markdown, for the reading pane. */
+export function pluginFile(p: string): { text: string; truncated: boolean; bytes: number } {
+  return readPluginFile(p);
 }
 
 
@@ -300,8 +355,19 @@ export type CatalogPlugin = {
 
 export type PluginAction = { ok: boolean; output: string; error: string | null };
 
+/**
+ * `claude plugin` is a subcommand of the Claude Code CLI, so what this needs is
+ * a provider running that harness — not the profile that happens to be spelled
+ * 'claude'. GLM and DeepSeek resolve the same binary, and a rename or a removal
+ * of the built-in id would have left the whole Plugins view reporting that
+ * Claude Code was not installed on a machine where it plainly is.
+ *
+ * Nothing provider-specific rides along: this is the binary only, launched with
+ * the shell PATH and no profile environment, so which claude-code profile the
+ * path came from cannot change what the catalog says.
+ */
 async function claudeBin(): Promise<string | null> {
-  const found = (await detectProviders()).find((p) => p.id === 'claude');
+  const found = (await detectProviders()).find((p) => p.harnessId === 'claude-code' && p.path);
   return found?.path ?? null;
 }
 

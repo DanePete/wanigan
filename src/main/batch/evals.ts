@@ -173,16 +173,30 @@ export function listPairs(): EvalPair[] {
 
 /* ── the diff ───────────────────────────────────────────────────────── */
 
+/**
+ * `rendered` is deliberately absent: it is the whole prompt, and a glob or files
+ * source inlines file contents into it, so on a repo-wide run it is the largest
+ * column in the table by a wide margin. The diff never reads it — only the judge
+ * does, from promptsOf() — and selecting it here was pulling the entire input
+ * corpus of both runs into memory to compare output text.
+ */
 type ReqRow = {
-  custom_id: string; row_index: number; status: string; rendered: string; output_text: string | null;
+  custom_id: string; row_index: number; status: string; output_text: string | null;
   in_tokens: number; out_tokens: number; cache_read: number; cache_write: number;
 };
 
 function requestsOf(runId: string): ReqRow[] {
   return db().prepare(`
-    SELECT custom_id, row_index, status, rendered, output_text, in_tokens, out_tokens, cache_read, cache_write
+    SELECT custom_id, row_index, status, output_text, in_tokens, out_tokens, cache_read, cache_write
     FROM requests WHERE run_id = ? ORDER BY row_index
   `).all(runId) as ReqRow[];
+}
+
+/** The rendered prompts, keyed by custom_id. Only the judge needs these. */
+function promptsOf(runId: string): Map<string, string> {
+  const rows = db().prepare('SELECT custom_id, rendered FROM requests WHERE run_id = ?')
+    .all(runId) as { custom_id: string; rendered: string }[];
+  return new Map(rows.map((r) => [r.custom_id, r.rendered]));
 }
 
 const rowCost = (cfg: RunConfig, model: string, r: ReqRow) => costOf(model, {
@@ -203,7 +217,7 @@ const norm = (t: string | null) => (t ?? '').trim();
  * runs shows up here as rows that line up with nothing. That is a second
  * variable, and it is worth seeing before you read the win counts.
  */
-export function pairDiff(pairId: string): {
+function diffOf(pairId: string): {
   pair: EvalPair;
   rows: EvalRowDiff[];
   summary: { same: number; different: number; onlyA: number; onlyB: number; costA: number; costB: number };
@@ -280,6 +294,42 @@ export function pairDiff(pairId: string): {
 
   rows.sort((x, y) => x.rowIndex - y.rowIndex || x.customId.localeCompare(y.customId));
   return { pair, rows, summary: { same, different, onlyA, onlyB, costA, costB } };
+}
+
+/**
+ * Ceiling on the rows one diff hands back.
+ *
+ * Every row carries both sides' output text, and the whole array crosses the IPC
+ * boundary as a single structured clone — two 5,000-row runs with long answers
+ * is hundreds of megabytes copied into the renderer to draw a list nobody
+ * scrolls to the end of. The counts and the costs are still computed over every
+ * matched row: a truncated *list* is honest as long as the payload says it was
+ * truncated, but a truncated *count* is simply a wrong answer.
+ */
+const MAX_DIFF_ROWS = 1_000;
+
+export function pairDiff(pairId: string, limit = MAX_DIFF_ROWS): {
+  pair: EvalPair;
+  /** At most `rowLimit` rows, lowest row index first. */
+  rows: EvalRowDiff[];
+  /** Rows compared — what `summary` counts, and what `rows` is a prefix of. */
+  totalRows: number;
+  rowLimit: number;
+  truncated: boolean;
+  summary: { same: number; different: number; onlyA: number; onlyB: number; costA: number; costB: number };
+} {
+  const { pair, rows, summary } = diffOf(pairId);
+  // The limit may arrive from the renderer, which is not trusted to ask for a
+  // clone big enough to take the window down.
+  const cap = Math.max(1, Math.min(MAX_DIFF_ROWS, Math.round(Number(limit) || MAX_DIFF_ROWS)));
+  return {
+    pair,
+    rows: rows.length > cap ? rows.slice(0, cap) : rows,
+    totalRows: rows.length,
+    rowLimit: cap,
+    truncated: rows.length > cap,
+    summary,
+  };
 }
 
 /* ── running the other side ─────────────────────────────────────────── */
@@ -484,7 +534,10 @@ export async function judgePair(
     );
   }
 
-  const { rows: diff } = pairDiff(pairId);
+  // diffOf, not pairDiff: the judge has to see every judgeable row. Scoring the
+  // first page of a capped diff would pay for a verdict over part of the pair
+  // and report it as the pair's verdict.
+  const { rows: diff } = diffOf(pairId);
   const judgeable = diff.filter((r) => norm(r.aText) && norm(r.bText));
   if (!judgeable.length) {
     throw new Error(
@@ -494,7 +547,7 @@ export async function judgePair(
   }
 
   const a = configOf(pair.runAId);
-  const prompts = new Map(requestsOf(pair.runAId).map((r) => [r.custom_id, r.rendered]));
+  const prompts = promptsOf(pair.runAId);
 
   const rows: JudgeRow[] = judgeable.map((r) => {
     // Position bias is real and large: a judge shown the same two answers in the
@@ -638,7 +691,9 @@ export function ingestJudgement(judgeRunId: string): { scored: number; pairId: s
 export function regressionSummary(pairId: string): {
   aWins: number; bWins: number; ties: number; meanScore: number | null; costDeltaUsd: number; verdict: string;
 } {
-  const { pair, rows, summary } = pairDiff(pairId);
+  // Uncapped: the win counts have to be over every judged row, not over the
+  // page the UI would have been handed.
+  const { pair, rows, summary } = diffOf(pairId);
   const a = configOf(pair.runAId);
   const b = configOf(pair.runBId);
 

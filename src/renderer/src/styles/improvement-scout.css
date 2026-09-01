@@ -180,10 +180,13 @@
 .scout-chip.risk-elevated, .scout-chip.risk-medium { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
 .scout-chip.risk-high { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
 
-.scout-score-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; overflow: hidden; margin-top: var(--s-3); border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--line); }
-.scout-score-grid > div { min-width: 0; padding: 8px 9px; background: var(--bg-sunk); }
-.scout-score-grid small { display: block; overflow: hidden; color: var(--text-faint); font-size: var(--t-micro); text-overflow: ellipsis; white-space: nowrap; }
-.scout-score-grid strong { display: block; overflow: hidden; margin-top: 2px; color: var(--text); font-size: var(--t-small); font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+/* Named for what it carries: the reason codes behind a proposal, never a score. */
+.scout-reason-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; overflow: hidden; margin-top: var(--s-3); border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--line); }
+.scout-reason-grid > div { min-width: 0; padding: 8px 9px; background: var(--bg-sunk); }
+/* A reason code is the payload, so it wraps. An ellipsis here truncated the very
+   words that keep the figure honest — the "· rule-derived" basis first. */
+.scout-reason-grid small { display: block; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.35; }
+.scout-reason-grid strong { display: block; margin-top: 2px; color: var(--text); font-size: var(--t-small); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 
 .scout-why { margin-top: var(--s-3); padding: 9px 10px; border-left: 2px solid var(--plate-blue); border-radius: 0 var(--r-sm) var(--r-sm) 0; background: color-mix(in srgb, var(--bg-sunk) 82%, transparent); color: var(--text-dim); font-size: var(--t-small); line-height: 1.45; }
 .scout-why strong { color: var(--text); }
@@ -242,11 +245,11 @@
 }
 
 @media (max-width: 540px) {
-  .scout-stat-grid, .scout-score-grid, .scout-setting-grid { grid-template-columns: 1fr; }
+  .scout-stat-grid, .scout-reason-grid, .scout-setting-grid { grid-template-columns: 1fr; }
   .scout-setting-grid > :first-child { grid-column: auto; }
   .scout-suggestion-top { flex-direction: column; }
-  .scout-score-grid > div { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
-  .scout-score-grid strong { margin-top: 0; }
+  .scout-reason-grid > div { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
+  .scout-reason-grid strong { margin-top: 0; }
   .scout-filter-controls { display: grid; grid-template-columns: 1fr 1fr; }
   .scout-filter-controls label, .scout-filter-controls label:last-child { min-width: 0; }
   .scout-filter-controls label:last-child { grid-column: 1 / -1; }

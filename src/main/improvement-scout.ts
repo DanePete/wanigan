@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { db } from './db';
+import { redactCredentials } from './redact';
 import { getSetting, setSetting } from './settings';
 import { IMPROVEMENT_SCOUT_SCHEDULE_ID, nextFire, describeCron } from './schedule';
 import * as control from './control';
@@ -504,15 +505,16 @@ function sourceHostMatches(source: TrustedSource): boolean {
   } catch { return false; }
 }
 
-function redact(value: string): string {
-  return value
-    .replace(/-----BEGIN [^\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^\r\n]*PRIVATE KEY-----/gi, '[REDACTED PRIVATE KEY]')
-    .replace(/\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{8,}|xox[baprs]-[A-Za-z0-9-]{8,}|AKIA[0-9A-Z]{16})\b/g, '[REDACTED CREDENTIAL]')
-    .replace(/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g, '[REDACTED TOKEN]');
-}
-
+/**
+ * Fetched remote HTML is exactly where a credential arrives without being a
+ * secret of the user's: an "Authorization: Bearer …" example or a
+ * postgres://user:pass@host connection string in somebody's documentation is
+ * stored as Scout evidence and shown back in the app. The shared redactor
+ * covers those header and connection-string shapes; the three rules this
+ * module used to carry itself did not.
+ */
 function textFromDocument(value: string): string {
-  return redact(value
+  return redactCredentials(value
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
@@ -728,7 +730,44 @@ function runningRow(): RunRow | undefined {
   return db().prepare("SELECT * FROM improvement_scout_runs WHERE status='running' LIMIT 1").get() as RunRow | undefined;
 }
 
+/**
+ * How long a 'running' row is believed before it is treated as abandoned.
+ *
+ * The running row is a durable cross-process claim shared with the launchd
+ * daemon, and the schema carries no heartbeat or pid — so age is the only
+ * liveness signal there is. A real pass is bounded by its sequential source
+ * fetches, each capped at 12s, plus local database work: about a minute at the
+ * outside. Fifteen leaves a slept laptop, a stalled socket and a slow disk far
+ * more room than they need, while making a pass killed mid-flight self-healing
+ * instead of jamming the feature forever with no UI path to clear it.
+ */
+const STALE_RUN_MS = 15 * 60_000;
+
+/**
+ * Releases a claim whose process is gone. Only ever rewrites the status of a
+ * row that is already past the staleness window; the row itself is kept, along
+ * with the evidence hanging off it, because a Scout run is a record of what
+ * happened and deleting it would cascade that evidence away.
+ *
+ * A suspended pass that does wake up and finish lands its own UPDATE on the
+ * same row and replaces this verdict with what actually happened. It never
+ * writes 'running' again, so it cannot collide with the claim taken here.
+ */
+function reclaimStaleRun(now: number): void {
+  db().prepare(`UPDATE improvement_scout_runs SET status='failed',ended_at=?,detail=?,error=?
+    WHERE status='running' AND started_at < ?`).run(
+    now,
+    'Wanigan stopped before this pass finished, so nothing was proposed from it.',
+    `The run was still marked running ${Math.round(STALE_RUN_MS / 60_000)} minutes after it started with no process left to finish it. The claim was released so the Scout can run again.`,
+    now - STALE_RUN_MS,
+  );
+}
+
 function createRun(mode: ImprovementScoutRunMode, networkAllowed: boolean, inventory: Record<string, unknown>): RunRow | null {
+  // Before the claim is read, not after: a crash, quit or kill leaves the row
+  // behind and only this releases it. A pass that is genuinely still running is
+  // younger than the window and still blocks below.
+  reclaimStaleRun(Date.now());
   const existing = runningRow();
   if (existing) return null;
   const row: RunRow = {
@@ -775,7 +814,7 @@ export async function run(input: RunScoutInput = {}): Promise<ImprovementScoutRu
   if (!row) {
     const active = runningRow();
     if (mode === 'scheduled' && active) return mapRun(active);
-    throw new Error('An AI Improvement Scout run is already in progress. It is shared safely between the desktop app and the local scheduler.');
+    throw new Error(`An AI Improvement Scout run is already in progress. It is shared safely between the desktop app and the local scheduler; a pass interrupted mid-flight releases its claim after ${Math.round(STALE_RUN_MS / 60_000)} minutes.`);
   }
 
   const finish = (status: ImprovementScoutRunStatus, patch: Partial<RunRow>): ImprovementScoutRun => {

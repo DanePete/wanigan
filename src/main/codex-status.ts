@@ -88,14 +88,58 @@ function stop(child: ChildProcessWithoutNullStreams): void {
   if (!child.killed) { try { child.kill('SIGTERM'); } catch { /* already gone */ } }
 }
 
+/**
+ * What a read-only status probe needs, and nothing else.
+ *
+ * Handing the child the whole of process.env passes on every unrelated
+ * credential the launching shell exported to a process that only reads two
+ * numbers, which is the opposite of the stripping every other spawn in the
+ * main process does. CODEX_HOME is kept deliberately — it is where the
+ * person's own Codex login lives — while every other CODEX_* variable
+ * identifies the *parent* session and makes app-server attach to that writer
+ * instead of answering. Proxy and CA settings stay because the read is an
+ * HTTPS call and a managed network cannot make it without them.
+ */
+function probeEnv(PATH: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { PATH };
+  for (const name of [
+    'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'CODEX_HOME',
+    'HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy',
+    'ALL_PROXY', 'all_proxy', 'NO_PROXY', 'no_proxy',
+    'SSL_CERT_FILE', 'SSL_CERT_DIR',
+  ]) {
+    const value = process.env[name];
+    if (value !== undefined) env[name] = value;
+  }
+  return env;
+}
+
+/**
+ * The app-server surface belongs to the Codex harness, not to the profile id
+ * that happens to be spelled 'codex'. A pack may ship a second Codex profile —
+ * a different sign-in, a different model backend — and it speaks this same
+ * protocol; an id test would have refused it while claiming Codex was not
+ * installed. Harness is the declared fact, so it is what routes.
+ *
+ * The claim is not free: provider-packs.ts refuses a local pack that declares
+ * the Codex harness without a separately trusted capability-probe adapter, so
+ * a manifest alone cannot volunteer an arbitrary binary for `app-server`.
+ */
+async function codexAppServer(purpose: string): Promise<string> {
+  const provider = (await detectProviders()).find((p) => p.harnessId === 'codex' && p.path);
+  if (!provider?.path) {
+    throw new Error(`No Codex-harness provider is installed, so Wanigan cannot read ${purpose}.`);
+  }
+  return provider.path;
+}
+
 async function request(): Promise<CodexStatus> {
-  const provider = (await detectProviders()).find((p) => p.id === 'codex');
-  if (!provider?.path) throw new Error('Codex is not installed, so Wanigan cannot read its usage status.');
+  const bin = await codexAppServer('Codex usage status');
   const PATH = await shellPath();
 
   return new Promise<CodexStatus>((resolve, reject) => {
-    const child = spawn(provider.path!, ['app-server', '--stdio'], {
-      env: { ...process.env, PATH }, stdio: ['pipe', 'pipe', 'pipe'],
+    const child = spawn(bin, ['app-server', '--stdio'], {
+      env: probeEnv(PATH), stdio: ['pipe', 'pipe', 'pipe'],
     });
     let settled = false;
     let buffer = '';
@@ -142,11 +186,10 @@ async function request(): Promise<CodexStatus> {
 }
 
 async function requestModels(): Promise<CodexModels> {
-  const provider = (await detectProviders()).find((p) => p.id === 'codex');
-  if (!provider?.path) throw new Error('Codex is not installed, so Wanigan cannot read its model catalog.');
+  const bin = await codexAppServer('the Codex model catalog');
   const PATH = await shellPath();
   return new Promise<CodexModels>((resolve, reject) => {
-    const child = spawn(provider.path!, ['app-server', '--stdio'], { env: { ...process.env, PATH }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(bin, ['app-server', '--stdio'], { env: probeEnv(PATH), stdio: ['pipe', 'pipe', 'pipe'] });
     let settled = false; let buffer = '';
     const fail = (reason: string) => { if (settled) return; settled = true; clearTimeout(timer); stop(child); reject(new Error(reason)); };
     const done = (value: CodexModels) => { if (settled) return; settled = true; clearTimeout(timer); stop(child); resolve(value); };

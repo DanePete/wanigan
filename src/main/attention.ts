@@ -1,6 +1,7 @@
 import type { Attention, AttentionKind, Session, SessionEvent } from '../shared/types';
 import { ATTENTION_ORDER } from '../shared/types';
-import { liveState, sessionEvents } from './hooks';
+import { eventsRevision, liveState, sessionEvents } from './hooks';
+import { getSetting } from './settings';
 
 /**
  * Which of nine running agents needs a human, and which has needed one longest.
@@ -23,6 +24,34 @@ export const IDLE_MS = 90_000;
  * permission prompt.
  */
 export const ERROR_WINDOW_MS = 5 * 60_000;
+
+/**
+ * How long a running agent may go without finishing anything before the queue
+ * says so, unless the user has chosen otherwise. 0 turns the check off.
+ *
+ * The only time-based signal Wanigan had was IDLE_MS against terminal output,
+ * and every agent here is a TUI: a spinner is output, a redraw is output, a
+ * retry banner is output. So an agent in a network-retry loop, or looping on
+ * the same failing command, read as "Working" for as long as it kept painting,
+ * and "Idle" only ever meant "this TUI stopped repainting". Progress is a thing
+ * the agent *finished* — a completed tool call — and hook events are where that
+ * is recorded, so that is what this is measured against.
+ */
+const DEFAULT_STALL_MS = 10 * 60_000;
+/** Read no more often than this: classification runs on every hook event. */
+const STALL_SETTING_TTL_MS = 60_000;
+
+/**
+ * Identical failures in a row before this is called a loop rather than a retry.
+ * Restricted to failures on purpose — the same call succeeding repeatedly is
+ * ordinary work, and calling that stuck would be a guess worn as an observation.
+ */
+const REPEAT_LIMIT = 6;
+
+/** A completed call: the one event that proves the agent moved forward. */
+const PROGRESS_EVENTS = new Set(['PostToolUse', 'PostToolUseFailure']);
+/** The turn is over, so nothing is in flight and nothing can be stalled. */
+const TURN_ENDED = new Set(['Stop', 'StopFailure', 'SessionEnd']);
 
 /**
  * How much event history the classifier reads. Generous on purpose: only the
@@ -64,31 +93,65 @@ export const ATTENTION_LABEL: Record<AttentionKind, string> = {
   working: 'Working',
 };
 
+/**
+ * The word for an agent that is not getting anywhere.
+ *
+ * Deliberately not a sixth AttentionKind: that type is shared with the
+ * renderer's two exhaustive glyph tables, and the label is what both the queue
+ * and the fleet already render in preference to their own per-kind word. So the
+ * kind keeps saying what was observed — an error where failures were seen, idle
+ * where only an absence was — and the word says what it amounts to. Glyph plus
+ * word still reads without colour, and each detail states its evidence rather
+ * than a diagnosis.
+ */
+const STALLED_LABEL = 'Stalled';
+
 /* ── reading the hook bus ────────────────────────────────────────────── */
 
 type Live = ReturnType<typeof liveState>;
 const NO_LIVE: Live = { tool: null, since: 0, blocked: false, lastAt: null };
 
-/**
- * Both reads hit SQLite, and the queue is recomputed on session:exit — which
- * also fires during a quit, after the database has been closed. Sessions.ts
- * swallows the same race on its own writes; a dead database is not a reason to
- * stop ranking, because Session alone still separates exited from running.
- */
-function readLive(sessionId: string): Live {
-  try {
-    return liveState(sessionId);
-  } catch {
-    return NO_LIVE;
-  }
-}
+/** Events oldest last; sessionEvents returns newest-first, like every log here. */
+type Snapshot = { revision: number; events: SessionEvent[]; live: Live };
 
-/** Oldest last. sessionEvents returns newest-first, like every event log in the app. */
-function tailFor(sessionId: string): SessionEvent[] {
+/**
+ * One classification reads about four hundred rows, and the fleet is classified
+ * on every hook event and on every poll of the queue — so the same rows were
+ * read again and again for a session whose timeline had not moved. hooks.ts
+ * stamps each session's rows; a stamp that still matches is proof they are the
+ * same rows, and the read is skipped.
+ *
+ * The Attention itself is deliberately not cached. Idle and stalled are
+ * statements about elapsed time, and a session crosses into both while its rows
+ * sit perfectly still — a cached verdict would be a stopped clock. Only the
+ * reads are held; the judgement is made against a fresh `now` every time.
+ */
+const snapshots = new Map<string, Snapshot>();
+/** Nine live sessions is the design centre; the cap is for a long-lived app. */
+const MAX_SNAPSHOTS = 64;
+
+function snapshotOf(sessionId: string): Snapshot {
+  const revision = eventsRevision(sessionId);
+  const cached = snapshots.get(sessionId);
+  if (cached && cached.revision === revision) return cached;
+
   try {
-    return sessionEvents(sessionId, TAIL).reverse();
+    const fresh: Snapshot = {
+      revision,
+      events: sessionEvents(sessionId, TAIL).reverse(),
+      live: liveState(sessionId),
+    };
+    if (snapshots.size >= MAX_SNAPSHOTS) snapshots.clear();
+    snapshots.set(sessionId, fresh);
+    return fresh;
   } catch {
-    return [];
+    // Both reads hit SQLite, and the queue is recomputed on session:exit — which
+    // also fires during a quit, after the database has been closed. Sessions.ts
+    // swallows the same race on its own writes; a dead database is not a reason
+    // to stop ranking, because Session alone still separates exited from
+    // running. Not stored: a read that failed is not this revision's answer, and
+    // caching it would hold an empty timeline until the next event arrived.
+    return { revision, events: [], live: NO_LIVE };
   }
 }
 
@@ -116,6 +179,7 @@ export function noteOutput(sessionId: string, at: number = Date.now()) {
  */
 export function forgetSession(sessionId: string) {
   lastOutput.delete(sessionId);
+  snapshots.delete(sessionId);
 }
 
 /* ── phrasing ────────────────────────────────────────────────────────── */
@@ -173,6 +237,111 @@ function workingSince(session: Session, events: SessionEvent[]): number {
   return session.createdAt;
 }
 
+/* ── stalled: progress, measured in hook events ──────────────────────── */
+
+let stallMs = DEFAULT_STALL_MS;
+let stallReadAt = 0;
+
+/** Re-read on a coarse interval, so a settings change lands without a restart. */
+function stallThresholdMs(now: number): number {
+  if (stallReadAt && now - stallReadAt < STALL_SETTING_TTL_MS) return stallMs;
+  stallReadAt = now;
+  try {
+    const minutes = Number(getSetting('stall_minutes', String(DEFAULT_STALL_MS / 60_000)));
+    stallMs = Number.isFinite(minutes) && minutes >= 0
+      // A day is the ceiling; past that the check has stopped being a check.
+      ? Math.min(24 * 60, Math.round(minutes)) * 60_000
+      : DEFAULT_STALL_MS;
+  } catch {
+    // A closed database during quit must not stop the fleet being ranked, and
+    // the default is the answer this setting gives until somebody changes it.
+    stallMs = DEFAULT_STALL_MS;
+  }
+  return stallMs;
+}
+
+/**
+ * The moment the current stretch of unfinished work began, or null when there is
+ * nothing to measure against.
+ *
+ * Null is the important half. A provider that posts no PostToolUse, or a run
+ * with hooks switched off, has never given Wanigan evidence of progress — and
+ * without evidence the honest answer is to say nothing, not to call every such
+ * session stalled for the rest of its life.
+ */
+function stallBaseline(events: SessionEvent[]): SessionEvent | null {
+  let turnStart: SessionEvent | null = null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (TURN_ENDED.has(e.event)) return null;
+    // A prompt newer than the last completed call means this turn has finished
+    // nothing yet, and the wait belongs to the turn rather than to the call
+    // before it — the human was still typing in between.
+    if (e.event === 'UserPromptSubmit' || e.event === 'SessionStart') turnStart = e;
+    else if (PROGRESS_EVENTS.has(e.event)) return turnStart ?? e;
+  }
+  return null;
+}
+
+/**
+ * The same call failing over and over: a retry loop, or an agent circling its
+ * own error. Reported only while the loop is still going round — a streak that
+ * stopped an hour ago is history, and the time rule below is what covers a
+ * session that went quiet on one.
+ */
+function repeatedFailure(events: SessionEvent[], now: number): {
+  since: number; transitionId: string; detail: string; tool: string | null;
+} | null {
+  let key: string | null = null;
+  let count = 0;
+  let latest: SessionEvent | null = null;
+  let first: SessionEvent | null = null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (TURN_ENDED.has(e.event) || e.event === 'UserPromptSubmit') break;
+    if (!PROGRESS_EVENTS.has(e.event)) continue;
+    // A call that came back clean is progress, whatever it repeated.
+    if (e.ok !== false) break;
+    const k = `${e.toolName ?? e.event}\u0000${e.summary ?? ''}`;
+    if (key === null) { key = k; latest = e; }
+    else if (k !== key) break;
+    count++;
+    first = e;
+  }
+  if (!first || !latest || count < REPEAT_LIMIT) return null;
+  if (now - latest.at > ERROR_WINDOW_MS) return null;
+  return {
+    since: first.at,
+    // One identity for the whole loop, so a notification is sent when it starts
+    // rather than once per lap — which is what a per-failure transition did.
+    transitionId: `stalled:repeat:${first.at}`,
+    detail: `${describe(first) ?? 'The same call'} failed ${count} times in a row.`,
+    tool: first.toolName,
+  };
+}
+
+/**
+ * Still active — something is arriving from the session — but nothing it started
+ * has finished for longer than the threshold. An absence, reported as one: the
+ * detail names the last thing that did finish and claims nothing about why.
+ */
+function stalled(events: SessionEvent[], now: number): {
+  since: number; transitionId: string; detail: string;
+} | null {
+  const threshold = stallThresholdMs(now);
+  if (!threshold) return null;
+  const baseline = stallBaseline(events);
+  if (!baseline || now - baseline.at <= threshold) return null;
+  // `since` is the instant it became stalled, like the idle branch below, so
+  // "who has been stuck longest" stays answerable across refreshes.
+  const at = baseline.at + threshold;
+  return {
+    since: at,
+    transitionId: `stalled:${at}`,
+    detail: `Still active, but nothing has finished since ${lastSeen(baseline) ?? 'its last step'}.`,
+  };
+}
+
 /* ── classification ──────────────────────────────────────────────────── */
 
 function mk(
@@ -182,7 +351,8 @@ function mk(
   transitionId: string,
   detail: string | null,
   tool: string | null,
-  now: number
+  now: number,
+  label: string = ATTENTION_LABEL[kind]
 ): Attention {
   return {
     sessionId: session.id,
@@ -191,16 +361,15 @@ function mk(
     // Clamped: an event stamped in the future would sort ahead of a real
     // four-minute wait and pin itself to the top of the queue.
     since: Math.min(since, now),
-    label: ATTENTION_LABEL[kind],
+    label,
     detail: clip(detail),
     tool: tool?.trim() || null,
   };
 }
 
 function classify(session: Session, now: number): Attention {
-  const events = tailFor(session.id);
+  const { events, live } = snapshotOf(session.id);
   const last = events[events.length - 1] ?? null;
-  const live = readLive(session.id);
   const exited = session.status === 'exited';
 
   // A permission prompt on an exited session is a question nobody can answer:
@@ -222,6 +391,16 @@ function classify(session: Session, now: number): Attention {
   if (exited && session.exitCode !== null && session.exitCode !== 0) {
     const ended = session.endedAt ?? now;
     return mk(session, 'error', ended, `exit:${ended}:${session.exitCode}`, `Exited with code ${session.exitCode}.`, null, now);
+  }
+
+  // A loop says more than its newest lap does, so it is read before the single
+  // failure below. It stays an error kind because the failures were observed
+  // rather than inferred — the word is what says the agent is not getting
+  // anywhere, and `since` is when the loop began rather than when it last went
+  // round, so it sorts by how long it has really been stuck.
+  const loop = exited ? null : repeatedFailure(events, now);
+  if (loop) {
+    return mk(session, 'error', loop.since, loop.transitionId, loop.detail, loop.tool, now, STALLED_LABEL);
   }
 
   if (last && FAILURE_EVENTS.has(last.event) && now - last.at <= ERROR_WINDOW_MS) {
@@ -277,6 +456,14 @@ function classify(session: Session, now: number): Attention {
       live.tool,
       now
     );
+  }
+
+  // Below the idle threshold something is still arriving, so this is an agent
+  // that looks busy. Whether it is getting anywhere is a different question, and
+  // the answer comes from what it has finished rather than from what it printed.
+  const stall = stalled(events, now);
+  if (stall) {
+    return mk(session, 'idle', stall.since, stall.transitionId, stall.detail, live.tool, now, STALLED_LABEL);
   }
 
   let detail: string | null = null;

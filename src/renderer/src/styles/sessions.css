@@ -31,6 +31,41 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* A closed session used to put a clickable × inside the button that selected
+   it. Besides being invalid nested interactive content, that made the close
+   target tiny and unreliable with touch or VoiceOver. The wrapper keeps one
+   visual tab while both actions remain real, independently focusable buttons. */
+.sessions-view .session-tab-wrap {
+  display: flex;
+  flex: none;
+  align-items: stretch;
+  min-width: 0;
+  border-radius: var(--r-sm);
+}
+
+.sessions-view .session-tab-wrap .session-tab {
+  min-width: 0;
+}
+
+.sessions-view .session-tab-close {
+  display: grid;
+  width: 28px;
+  min-width: 28px;
+  place-items: center;
+  border-radius: var(--r-sm);
+  font-size: var(--t-lead);
+  line-height: 1;
+}
+
+.sessions-view .session-tab-wrap.active .session-tab-close {
+  background: var(--bg-sunk);
+}
+
+.sessions-view .session-tab-close:hover {
+  background: var(--critical-soft);
+  color: var(--critical);
+}
+
 /* Below this point the session list is a true overlay, not a narrower first
    column. A coarse pointer gets the same treatment through 960px so iPad
    portrait has a calm, readable terminal. */
@@ -160,7 +195,7 @@
     line-height: 1;
   }
 
-  .sessions-view .session-tab,
+  .sessions-view .session-tab-wrap,
   .sessions-view .session-side-panel-toggle {
     display: none;
   }
@@ -240,12 +275,19 @@
   }
 
   .sessions-view .session-picker-close,
-  .sessions-view .tab-new-session {
+  .sessions-view .tab-new-session,
+  .sessions-view .session-tab-close {
     min-width: 44px;
   }
 
   .sessions-view .terminal-host .xterm {
     padding: 14px 16px;
+  }
+
+  /* iPad uses the xterm canvas as its input field. The ring tells the person
+     who is about to type that their keystrokes belong to this session. */
+  .sessions-view .terminal-host:focus-within {
+    box-shadow: inset 0 0 0 2px var(--accent);
   }
 }
 

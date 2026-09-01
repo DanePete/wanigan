@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { db, dataDir } from './db';
+import { getSetting, setSetting } from './settings';
 import { uploadFile, isUploadable } from './batch/files';
-import { modelFor, DEFAULT_MODEL } from './batch/pricing';
+import { findModel, DEFAULT_MODEL } from './batch/pricing';
 
 /**
  * Attachments — files a person hands to an agent.
@@ -119,6 +120,10 @@ export type Attachment = {
   visualTokens: number | null;
   addedAt: number;
   fileId: string | null;
+  /** When this attachment's path was typed into the prompt, if it has been. */
+  referencedAt: number | null;
+  /** When the operator submitted a line after that reference. */
+  sentAt: number | null;
 };
 
 /* ── storage ─────────────────────────────────────────────────────────── */
@@ -151,6 +156,15 @@ function store(): ReturnType<typeof db> {
     );
     CREATE INDEX IF NOT EXISTS idx_attachments_session ON attachments(session_id, added_at);
   `);
+  // Additive, for databases written before an attachment could record that it
+  // reached the prompt. `referenced_at` is when its path was typed; `sent_at`
+  // is when the operator actually submitted a line afterwards. Both stay NULL
+  // for a file that is merely staged.
+  for (const [column, decl] of [['referenced_at', 'INTEGER'], ['sent_at', 'INTEGER']] as const) {
+    const present = (d.prepare('PRAGMA table_info(attachments)').all() as { name: string }[])
+      .some((c) => c.name === column);
+    if (!present) d.exec(`ALTER TABLE attachments ADD COLUMN ${column} ${decl}`);
+  }
   schemaReady = true;
   return d;
 }
@@ -174,6 +188,8 @@ type Row = {
   visual_tokens: number | null;
   added_at: number;
   file_id: string | null;
+  referenced_at: number | null;
+  sent_at: number | null;
 };
 
 function toAttachment(r: Row): Attachment {
@@ -190,6 +206,8 @@ function toAttachment(r: Row): Attachment {
     visualTokens: r.visual_tokens,
     addedAt: r.added_at,
     fileId: r.file_id,
+    referencedAt: r.referenced_at ?? null,
+    sentAt: r.sent_at ?? null,
   };
 }
 
@@ -541,8 +559,12 @@ export function estimateImageUsd(visualTokens: number, inputRatePerMTok: number)
  * pricing.ts stores the batch rate, which is half of it. Quoting half the real
  * cost is worse than quoting none.
  */
-function sessionInputRate(modelId: string): number {
-  return modelFor(modelId).batchInput / BATCH_DISCOUNT;
+function sessionInputRate(modelId: string): number | null {
+  // An unrecognised model would otherwise be priced at the default model's
+  // rate — a number for a different model presented as this one's cost.
+  // Null means "no published rate"; callers say so rather than quoting it.
+  const priced = findModel(modelId);
+  return priced ? priced.batchInput / BATCH_DISCOUNT : null;
 }
 
 /* ── inspection ──────────────────────────────────────────────────────── */
@@ -774,8 +796,13 @@ function okCheck(
     visualTokens,
     // Priced against the default model, because inspect() is a preflight and
     // does not yet know which session or run the file is headed for.
-    estimatedUsd:
-      visualTokens === null ? null : estimateImageUsd(visualTokens, sessionInputRate(DEFAULT_MODEL)),
+    estimatedUsd: (() => {
+      if (visualTokens === null) return null;
+      const rate = sessionInputRate(DEFAULT_MODEL);
+      // No published rate means no price — null, not a figure borrowed from
+      // whichever model happened to be the default.
+      return rate === null ? null : estimateImageUsd(visualTokens, rate);
+    })(),
     warnings,
     error: null,
   };
@@ -899,6 +926,8 @@ function stage(
       visualTokens: check.visualTokens,
       addedAt: Date.now(),
       fileId: null,
+      referencedAt: null,
+      sentAt: null,
     });
   } catch (e) {
     // Never show a file as staged when its durable record was not written.
@@ -936,9 +965,33 @@ export function sessionAttachments(sessionId: string): Attachment[] {
 /** A prompt must never name a stale attachment row whose file has gone away. */
 export function promptableSessionAttachments(sessionId: string): Attachment[] {
   return sessionAttachments(sessionId).filter((attachment) => {
+    if (attachment.sentAt !== null) return false;
     try { return fs.statSync(attachment.storedPath).isFile(); }
     catch { return false; }
   });
+}
+
+/** Records that these paths were typed into the prompt. Not that they were sent. */
+export function markAttachmentsReferenced(ids: string[], at = Date.now()): number {
+  const clean = [...new Set(ids.filter((id) => typeof id === 'string' && id))];
+  if (!clean.length) return 0;
+  const d = store();
+  const statement = d.prepare('UPDATE attachments SET referenced_at=? WHERE id=? AND referenced_at IS NULL');
+  let changed = 0;
+  d.transaction(() => { for (const id of clean) changed += statement.run(at, id).changes; })();
+  return changed;
+}
+
+/**
+ * The operator submitted a line, so everything already named in that prompt has
+ * now gone to the agent. Only referenced rows are affected: a file staged but
+ * never named is not sent by someone pressing Enter on an unrelated message.
+ */
+export function markSessionAttachmentsSent(sessionId: string, at = Date.now()): number {
+  if (!sessionId) return 0;
+  return store().prepare(
+    'UPDATE attachments SET sent_at=? WHERE session_id=? AND referenced_at IS NOT NULL AND sent_at IS NULL',
+  ).run(at, sessionId).changes;
 }
 
 /**
@@ -986,6 +1039,326 @@ export function cleanupSessionAttachments(sessionId: string): number {
 
   store().prepare('DELETE FROM attachments WHERE session_id = ?').run(sessionId);
   return removed;
+}
+
+/* ── retention ───────────────────────────────────────────────────────── */
+
+/*
+ * Nothing here changes what happens when a session exits. That directory is
+ * deliberately kept (sessions.ts, at the end of the exit path): it starts as an
+ * attachment staging area but is also the only writable non-project directory
+ * the agent is granted, so reports and generated images linked from a saved
+ * conversation live there. Deleting it on exit turns an intact conversation
+ * into a page of dead links.
+ *
+ * What that leaves is a directory tree that only grows. On one four-day-old
+ * install it measured 113 MB across 100 session directories, and nothing in the
+ * app ever removed any of it. So retention is opt-in, age-based, and refuses to
+ * touch anything it cannot prove is inert: a session that ended long ago, whose
+ * staged files were never named in a prompt, and whose directory holds nothing
+ * the agent itself put there.
+ */
+
+/** Suggested when someone switches retention on. Not applied unless they do. */
+export const DEFAULT_ATTACHMENT_RETENTION_DAYS = 30;
+
+const RETENTION_SETTING = 'attachment_retention_days';
+const MAX_RETENTION_DAYS = 3650;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Zero days means off, which is the default: an install never deletes on its own. */
+export function attachmentRetention(): { enabled: boolean; days: number } {
+  const raw = Number(getSetting(RETENTION_SETTING, '0'));
+  const days = Number.isFinite(raw) ? Math.floor(raw) : 0;
+  return days > 0 ? { enabled: true, days: Math.min(days, MAX_RETENTION_DAYS) } : { enabled: false, days: 0 };
+}
+
+/** Validated in the main process; the renderer's number is not trusted to be one. */
+export function setAttachmentRetention(days: unknown): { enabled: boolean; days: number } {
+  const n = typeof days === 'number' ? days : Number(days);
+  if (!Number.isInteger(n) || n < 0 || n > MAX_RETENTION_DAYS) {
+    throw new Error(
+      `Attachment retention is a whole number of days from 0 to ${MAX_RETENTION_DAYS}, where 0 keeps everything.`
+    );
+  }
+  setSetting(RETENTION_SETTING, String(n));
+  return attachmentRetention();
+}
+
+export type ReclaimSkipReason =
+  | 'session-still-open'
+  | 'no-session-record'
+  | 'resumed-later'
+  | 'within-window'
+  | 'referenced'
+  | 'holds-agent-output'
+  | 'unreadable';
+
+export type ReclaimSkip = { sessionId: string; reason: ReclaimSkipReason; detail: string };
+
+export type ReclaimCandidate = {
+  sessionId: string;
+  dir: string;
+  endedAt: number;
+  files: number;
+  /** Sizes read from the files themselves, before anything is deleted. */
+  bytes: number;
+};
+
+export type AttachmentReclaimPlan = {
+  enabled: boolean;
+  windowDays: number;
+  /** Sessions that ended before this instant are in scope. */
+  cutoff: number;
+  /** Session directories looked at. */
+  scanned: number;
+  candidates: ReclaimCandidate[];
+  filesEligible: number;
+  /** Size on disk of the files a reclaim would delete. Nothing has been deleted. */
+  bytesEligible: number;
+  skipped: ReclaimSkip[];
+};
+
+export type AttachmentReclaimReport = {
+  ranAt: number;
+  enabled: boolean;
+  windowDays: number;
+  cutoff: number;
+  scanned: number;
+  reclaimed: { sessionId: string; dir: string; files: number; bytes: number }[];
+  /** Summed from files that were unlinked and then confirmed gone. Measured, not projected. */
+  bytesFreed: number;
+  filesRemoved: number;
+  skipped: ReclaimSkip[];
+  errors: { sessionId: string; message: string }[];
+};
+
+type SessionRow = { id: string; ended_at: number | null };
+
+/**
+ * Whether anything downstream of this session is still live or recent.
+ *
+ * A resumed session is granted its ancestors' attachment directories as extra
+ * roots (sessions.ts builds that chain), so the age of one session says nothing
+ * on its own: deleting a 40-day-old directory can break a continuation that is
+ * running right now.
+ */
+function resumeChainBlocks(sessionId: string, cutoff: number): boolean {
+  const d = store();
+  const next = d.prepare('SELECT id, ended_at FROM session_log WHERE resumed_from = ?');
+  const seen = new Set<string>([sessionId]);
+  const queue = [sessionId];
+  // Bounded for the same reason priorArtifactDirs is: a resumed_from cycle in
+  // an old database must not become an unkillable loop in a cleanup pass.
+  for (let visited = 0; queue.length && visited < 256; visited++) {
+    const current = queue.shift() as string;
+    for (const row of next.all(current) as SessionRow[]) {
+      if (row.ended_at === null || Number(row.ended_at) >= cutoff) return true;
+      if (!seen.has(row.id)) { seen.add(row.id); queue.push(row.id); }
+    }
+  }
+  return false;
+}
+
+/** Entry names directly under a session's directory, or null if it cannot be read. */
+function directoryEntries(dir: string): fs.Dirent[] | null {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What a reclaim would remove, without removing it.
+ *
+ * `days` overrides the stored window so a UI can show what switching retention
+ * on would free before anyone switches it on.
+ */
+export function planAttachmentReclaim(
+  opts: { now?: number; days?: number } = {}
+): AttachmentReclaimPlan {
+  const now = opts.now ?? Date.now();
+  const configured = attachmentRetention();
+  const days = opts.days === undefined
+    ? configured.days
+    : Math.min(Math.max(Math.floor(opts.days), 0), MAX_RETENTION_DAYS);
+  const enabled = days > 0;
+  const cutoff = now - days * DAY_MS;
+
+  const plan: AttachmentReclaimPlan = {
+    enabled, windowDays: days, cutoff, scanned: 0,
+    candidates: [], filesEligible: 0, bytesEligible: 0, skipped: [],
+  };
+  if (!enabled) return plan;
+
+  const root = attachmentsRoot();
+  const dirs = directoryEntries(root);
+  if (!dirs) return plan; // no attachment root yet: nothing was ever staged
+
+  const d = store();
+  const sessionRow = d.prepare('SELECT id, ended_at FROM session_log WHERE id = ?');
+  const rowsFor = d.prepare('SELECT * FROM attachments WHERE session_id = ?');
+
+  for (const entry of dirs) {
+    if (!entry.isDirectory()) continue;
+    const sessionId = entry.name;
+    plan.scanned += 1;
+
+    let dir: string;
+    try {
+      dir = attachmentsDir(sessionId);
+    } catch {
+      // A directory name that is not a usable session id was not written by
+      // this module, so it is not this module's to delete.
+      plan.skipped.push({ sessionId, reason: 'unreadable', detail: `${sessionId} is not a session directory Wanigan wrote.` });
+      continue;
+    }
+
+    const session = sessionRow.get(sessionId) as SessionRow | undefined;
+    if (!session) {
+      plan.skipped.push({
+        sessionId, reason: 'no-session-record',
+        detail: 'No session was recorded under this id, so Wanigan cannot observe when it ended.',
+      });
+      continue;
+    }
+    if (session.ended_at === null) {
+      plan.skipped.push({ sessionId, reason: 'session-still-open', detail: 'This session has not ended.' });
+      continue;
+    }
+    const endedAt = Number(session.ended_at);
+    if (endedAt >= cutoff) {
+      plan.skipped.push({
+        sessionId, reason: 'within-window',
+        detail: `Ended ${new Date(endedAt).toISOString()}, inside the ${days}-day window.`,
+      });
+      continue;
+    }
+    if (resumeChainBlocks(sessionId, cutoff)) {
+      plan.skipped.push({
+        sessionId, reason: 'resumed-later',
+        detail: 'A later session resumed from this one and still has this directory as a granted root.',
+      });
+      continue;
+    }
+
+    const rows = rowsFor.all(sessionId) as Row[];
+    const used = rows.find((r) => r.referenced_at !== null || r.sent_at !== null);
+    if (used) {
+      plan.skipped.push({
+        sessionId, reason: 'referenced',
+        detail: `${used.name} was named in a prompt, so the saved conversation points at it.`,
+      });
+      continue;
+    }
+
+    const contents = directoryEntries(dir);
+    if (!contents) {
+      plan.skipped.push({ sessionId, reason: 'unreadable', detail: `${dir} could not be read.` });
+      continue;
+    }
+
+    // Anything in here that Wanigan did not stage was put there by the agent —
+    // a report, a generated image — and is the reason the directory survives an
+    // exit at all. One unknown entry disqualifies the whole directory rather
+    // than being stepped around, because a cleanup that deletes selectively
+    // around someone's results is harder to trust than one that skips.
+    const staged = new Set(rows.map((r) => path.basename(r.stored_path)));
+    const foreign = contents.find((c) => !c.isFile() || !staged.has(c.name));
+    if (foreign) {
+      plan.skipped.push({
+        sessionId, reason: 'holds-agent-output',
+        detail: `${foreign.name} is not a staged attachment, so the agent put it there.`,
+      });
+      continue;
+    }
+
+    let bytes = 0;
+    let files = 0;
+    for (const file of contents) {
+      try {
+        bytes += fs.statSync(path.join(dir, file.name)).size;
+        files += 1;
+      } catch {
+        // Gone between readdir and stat. It frees nothing and blocks nothing.
+      }
+    }
+    plan.candidates.push({ sessionId, dir, endedAt, files, bytes });
+    plan.filesEligible += files;
+    plan.bytesEligible += bytes;
+  }
+
+  return plan;
+}
+
+/**
+ * Delete the directories the plan named, and report what that actually freed.
+ *
+ * `bytesFreed` is measured: each file's size is read, the file is unlinked, and
+ * the size counts only once the file is confirmed gone. A cleanup that reports
+ * the size of what it meant to delete is reporting an intention.
+ *
+ * Deliberately takes no window override. planAttachmentReclaim accepts one
+ * because a preview that deletes nothing is safe to run against any window; the
+ * only way to actually remove a file is to have switched retention on, so that
+ * one setting cannot be routed around by a caller passing a number.
+ */
+export function reclaimAttachments(
+  opts: { now?: number } = {}
+): AttachmentReclaimReport {
+  const ranAt = opts.now ?? Date.now();
+  const plan = planAttachmentReclaim({ now: ranAt });
+  const report: AttachmentReclaimReport = {
+    ranAt, enabled: plan.enabled, windowDays: plan.windowDays, cutoff: plan.cutoff,
+    scanned: plan.scanned, reclaimed: [], bytesFreed: 0, filesRemoved: 0,
+    skipped: plan.skipped, errors: [],
+  };
+  if (!plan.enabled) return report;
+
+  const d = store();
+  for (const candidate of plan.candidates) {
+    let bytes = 0;
+    let files = 0;
+    let directoryRemoved = false;
+    try {
+      for (const entry of fs.readdirSync(candidate.dir, { withFileTypes: true })) {
+        if (!entry.isFile()) continue;
+        const file = path.join(candidate.dir, entry.name);
+        const size = fs.statSync(file).size;
+        fs.rmSync(file, { force: true });
+        // Counted only once the file is confirmed gone. An unlink that a lock
+        // or a permission defeated frees nothing, and saying otherwise would
+        // make this report a projection.
+        if (fs.existsSync(file)) continue;
+        bytes += size;
+        files += 1;
+      }
+      fs.rmdirSync(candidate.dir);
+      directoryRemoved = true;
+    } catch (error) {
+      // Partial progress is still progress: the bytes counted above are gone
+      // whether or not the directory itself could be removed.
+      report.errors.push({
+        sessionId: candidate.sessionId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    if (files || directoryRemoved) {
+      // The rows described files that were staged and never named in a prompt,
+      // so they are not evidence that anything reached an agent. Leaving them
+      // behind would make promptableSessionAttachments filter dead paths for
+      // the life of the install.
+      d.prepare('DELETE FROM attachments WHERE session_id = ? AND referenced_at IS NULL AND sent_at IS NULL')
+        .run(candidate.sessionId);
+      report.reclaimed.push({ sessionId: candidate.sessionId, dir: candidate.dir, files, bytes });
+      report.bytesFreed += bytes;
+      report.filesRemoved += files;
+    }
+  }
+
+  return report;
 }
 
 /**
@@ -1107,6 +1480,8 @@ export async function uploadForBatch(
           visualTokens: check.visualTokens,
           addedAt: Date.now(),
           fileId: uploaded.fileId,
+          referencedAt: null,
+          sentAt: null,
         })
       );
     } catch (e) {

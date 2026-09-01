@@ -6,3 +6,6 @@ release/
 .DS_Store
 *.tsbuildinfo
 /index-*.js
+
+# Worktree history rail — local scratch, can reach gigabytes.
+.wt-history-rail/

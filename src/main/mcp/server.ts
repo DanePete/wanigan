@@ -323,44 +323,36 @@ const TOOLS: ToolDef[] = [
      nobody approved. ─────────────────────────────────────────────── */
   {
     name: 'wanigan_list_projects',
-    title: 'List projects',
-    description: 'The repositories Wanigan knows about, with their current branch.',
+    title: 'This session’s project',
+    description:
+      'The one repository this session is attached to, with its current branch. A session-scoped capability ' +
+      'never sees Wanigan’s other projects, so this is not a list of what Wanigan knows about.',
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
     name: 'wanigan_find_repos',
-    title: 'Find a repository on this machine',
+    title: 'Find a repository inside this project',
     description:
-      'Search the usual project locations for a git repository whose folder name matches. ' +
-      'Bounded by depth and by a cap on directories visited, and it says when it stopped early. ' +
-      'Use this to turn "the polaris project" into a path before adding it.',
+      'Search this session’s own project directory for a git repository whose folder name matches — useful ' +
+      'inside a monorepo. The search is confined to that directory: a session-scoped capability is not a ' +
+      'machine-wide path index, and there is no way to point it elsewhere. Bounded by depth and by a cap on ' +
+      'directories visited, and it says when it stopped early.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['query'],
       properties: {
         query: { type: 'string', description: 'Part of the folder name, e.g. "polaris".' },
         limit: { type: 'integer', description: 'Maximum matches to return. Default 20.' },
-        roots: { type: 'array', items: { type: 'string' }, description: 'Directories to search instead of the defaults.' },
       },
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
-    name: 'wanigan_add_project',
-    title: 'Add a project',
-    description:
-      'Add a directory to Wanigan\'s project list so sessions, batches and Context can target it. ' +
-      'Requires a human to approve. Adding a project that already exists returns the existing one.',
-    inputSchema: {
-      type: 'object', additionalProperties: false, required: ['path'],
-      properties: { path: { type: 'string', description: 'Absolute path to the directory.' } },
-    },
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-  },
-  {
     name: 'wanigan_list_sessions',
-    title: 'List sessions',
-    description: 'Agent sessions running right now, with provider, project, model and status.',
+    title: 'This session',
+    description:
+      'The calling session itself — provider, project, model, trust and status. A session-scoped capability ' +
+      'cannot see the other agents running right now, so this is never a roster of them.',
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
@@ -374,7 +366,7 @@ const TOOLS: ToolDef[] = [
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['projectId'],
       properties: {
-        projectId: { type: 'string', description: 'From wanigan_list_projects or wanigan_add_project.' },
+        projectId: { type: 'string', description: 'From wanigan_list_projects. It must be this session’s own project.' },
         provider: { type: 'string', enum: ['claude', 'codex', 'glm'], description: 'Default claude.' },
         model: { type: 'string', description: 'Model alias, e.g. opus or sonnet. Omit for the CLI default.' },
         effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max'] },
@@ -705,23 +697,21 @@ async function callTool(name: string, args: Record<string, unknown>, caller: Mcp
       const project = callerProject(caller);
       // Repo discovery is useful for a monorepo, but letting a session supply
       // arbitrary roots turns the MCP server into a machine-wide path index.
+      // The tool therefore does not offer a roots parameter at all: advertising
+      // one and then overwriting it told the model it had a control it did not
+      // have, and then blamed it for not using it.
       const r = findRepos(q, { limit, roots: [project.path] });
-      const known = new Set([project.path]);
       return ok({
-        repos: r.repos.map((x) => ({ name: x.name, path: x.path, alreadyAdded: known.has(x.path) })),
+        repos: r.repos.map((x) => ({ name: x.name, path: x.path, isThisProject: x.path === project.path })),
         searched: r.roots,
         directoriesVisited: r.visited,
         // Say it plainly rather than letting an empty result imply the repo
-        // does not exist anywhere on the machine.
+        // does not exist anywhere under this project.
         truncated: r.truncated,
         note: r.truncated
-          ? 'The search stopped at its ceiling, so this list may be incomplete. Narrow it with "roots".'
+          ? 'The search stopped at its ceiling, so this list may be incomplete. A more specific query finishes sooner.'
           : null,
       });
-    }
-
-    case 'wanigan_add_project': {
-      return toolError('Adding projects is available only from Wanigan’s desktop Projects flow, not from a session-scoped MCP capability.');
     }
 
     case 'wanigan_list_sessions':

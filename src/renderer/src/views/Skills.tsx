@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Project } from '@shared/types';
 import { Note, Section, Stat, ago, num } from '../components/bits';
 
 /**
@@ -177,6 +178,37 @@ export default function Skills({ projectId, activeSessionId }: {
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
 
+  /* Which repository's `.claude/skills` this catalogue includes.
+     `projectId` is the app's derived project, and its only setters are opening
+     a session, adding a project and Learning's scope picker — so pointing this
+     view at another repository used to mean going to Learning, changing the
+     scope there, and coming back. `pinned` is this view's own answer and wins
+     once it is set: a choice made here must not be undone by a session
+     starting somewhere else. `projects` is read over IPC rather than taken as
+     a prop, because the shell does not pass one to this view.
+
+     `null` means "follow whatever the app is pointed at" — an absence of a
+     choice, which is not the same statement as the empty string, which is
+     someone deliberately asking for no project skills at all. */
+  const [projects, setProjects] = useState<Project[] | null>(null);
+  const [projectsErr, setProjectsErr] = useState<string | null>(null);
+  const [pinned, setPinned] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    window.wanigan.projects.list()
+      .then((list) => { if (live) { setProjects(list); setProjectsErr(null); } })
+      .catch((e) => { if (live) { setProjects(null); setProjectsErr(msg(e)); } });
+    return () => { live = false; };
+  }, []);
+
+  // A pin whose project has been removed is not a scope, it is a dangling id,
+  // so it falls back to following rather than silently scanning nothing.
+  const pinnedLive = pinned !== null
+    && (pinned === '' || projects === null || projects.some((p) => p.id === pinned));
+  const scopeId = pinnedLive ? (pinned || undefined) : projectId;
+  const scope = projects?.find((p) => p.id === scopeId) ?? null;
+
   const [q, setQ] = useState('');
   const [sources, setSources] = useState<Set<SkillSource>>(new Set());
   const [open, setOpen] = useState(false);
@@ -192,14 +224,14 @@ export default function Skills({ projectId, activeSessionId }: {
     setScanning(true);
     try {
       if (rescan) await window.wanigan.skills.refresh();
-      setCat((await window.wanigan.skills.list(projectId)) as Catalogue);
+      setCat((await window.wanigan.skills.list(scopeId)) as Catalogue);
       setLoadErr(null);
     } catch (e) {
       setLoadErr(msg(e));
     } finally {
       setScanning(false);
     }
-  }, [projectId]);
+  }, [scopeId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -375,7 +407,22 @@ export default function Skills({ projectId, activeSessionId }: {
               Every skill this machine can run — searchable, and firable straight into a live agent.
             </p>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            {/* This view's own scope control. Only the project source depends on
+                it — user, plugin and built-in skills are the same whichever
+                repository is picked — so the label says what it changes rather
+                than implying the whole catalogue swaps. */}
+            {projects && projects.length > 0 && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span className="label">Project skills from</span>
+                <select className="field" style={{ width: 'auto' }} value={scopeId ?? ''}
+                        aria-label="Which repository's project skills to include"
+                        onChange={(ev) => setPinned(ev.target.value)}>
+                  <option value="">No repository</option>
+                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </label>
+            )}
             <span className="faint" style={{ fontSize: 'var(--t-small)', fontVariantNumeric: 'tabular-nums' }}>
               scanned {ago(cat.scannedAt)}
             </span>
@@ -384,6 +431,34 @@ export default function Skills({ projectId, activeSessionId }: {
             </button>
           </div>
         </div>
+
+        {/* The project list has three answers and they are not one: not read
+            yet (no picker, and nothing claimed about repositories), read and
+            empty (there are none to pick), and read but failed (the picker is
+            missing for a reason, and the reason is said out loud). */}
+        {projectsErr && (
+          <Note tone="warn">
+            <strong>⚠ The project list could not be read</strong> ({projectsErr}), so this view cannot offer a
+            repository picker. Project skills are still scanned for{' '}
+            {projectId ? 'whichever repository the app is pointed at' : 'nothing — no project is selected'}.
+          </Note>
+        )}
+        {projects !== null && projects.length === 0 && (
+          <Note tone="info">
+            No repositories registered, so nothing under a{' '}
+            <span className="mono">.claude/skills</span> directory in a repo is in this catalogue. Add a folder
+            in Sessions and it becomes pickable here.
+          </Note>
+        )}
+        {pinnedLive && projectId && pinned !== projectId && (
+          <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
+            {pinned === ''
+              ? <>Project skills are excluded here by choice. </>
+              : <>Pinned to <strong>{scope?.name ?? pinned}</strong> on this view. </>}
+            The rest of Wanigan is still pointed at another project, and this pick does not move it.{' '}
+            <button className="link" onClick={() => setPinned(null)}>Follow the app's project instead</button>
+          </p>
+        )}
 
         <div className="stat-grid">
           <Stat label="Skills catalogued" value={num(total)}
@@ -791,6 +866,16 @@ function Roots({ cat }: { cat: Catalogue }) {
           </Note>
         </div>
       ))}
+
+      {/* A skill is one of several things a repository puts in front of an
+          agent, and this view only knows about skills. The surface that reads
+          the rest of them is a keyboard chord away and almost nobody finds it,
+          so it is named here where its subject is being discussed. */}
+      <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 11 }}>
+        The rest of what a session in these repositories is told before you type anything — the CLAUDE.md
+        chain, memory, rules, settings and hooks, and what carrying them costs per session — is the Context
+        view: <span className="mono">⌘⇧C</span>, or ⌘K → Context.
+      </p>
     </Section>
   );
 }

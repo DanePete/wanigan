@@ -23,6 +23,19 @@ import TeamPanel from '../components/TeamPanel';
 const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)', glm: 'var(--glm)' };
 const PROVIDER: Record<ProviderId, string> = { claude: 'Claude', codex: 'Codex', glm: 'GLM' };
 
+/**
+ * A provider id is an opaque string: profiles and installed packs produce ids
+ * this map has never heard of, so the raw id is the honest label for them. The
+ * one thing it must never do is read "undefined" out loud.
+ */
+const providerName = (id: ProviderId): string => PROVIDER[id] || id || 'unknown provider';
+
+/** Announced, never painted. */
+const SR_ONLY: React.CSSProperties = {
+  position: 'absolute', width: 1, height: 1, margin: -1, padding: 0, border: 0,
+  overflow: 'hidden', clip: 'rect(0 0 0 0)', clipPath: 'inset(50%)', whiteSpace: 'nowrap',
+};
+
 type Mark = { glyph: string; word: string; fg: string; bg: string };
 
 /** Glyph + word + colour, in that order of importance. */
@@ -67,6 +80,51 @@ function dur(ms: number): string {
 /** Output tokens per second, as the collector rounds them. */
 const rate = (v: number) => (v >= 100 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1));
 
+/**
+ * What a session's dollar figure IS, not merely what it says.
+ *
+ * `costStatus: 'unavailable'` covers two situations that must not render the
+ * same. Codex on a ChatGPT plan reports token counters but no per-thread
+ * invoice, so there is no figure at all and "Not reported" is the whole truth.
+ * GLM — and any pack-declared backend Wanigan has no price list for — runs the
+ * Claude Code CLI, which prices every turn from Anthropic's published rates for
+ * a model nobody is billing at them. That number is real arithmetic but it is
+ * not a bill, and printing it plain beside a Claude session's actual spend is
+ * precisely the estimate-as-fact this app exists to refuse. So it keeps the
+ * number and takes the estimate marks: a tilde and the word "est.".
+ *
+ * The judgement itself is made once, in the main process: providers.ts owns the
+ * per-backend cost basis and otel.ts stamps the status onto the usage record
+ * from the backend frozen on the session at launch. Nothing here re-decides it.
+ */
+function costFigure(costUsd: number, status: SessionUsage['costStatus']): {
+  kind: 'reported' | 'unverified' | 'none'; value: string; qualifier: string | null; title: string;
+} {
+  if (status !== 'unavailable') {
+    return {
+      kind: 'reported',
+      value: usd(costUsd),
+      qualifier: null,
+      title: "Cost as the agent's own telemetry reported it, at rates this account is billed at.",
+    };
+  }
+  if (costUsd > 0) {
+    return {
+      kind: 'unverified',
+      value: `~${usd(costUsd)}`,
+      qualifier: 'est.',
+      title: "The CLI priced these turns from Anthropic's published rates for a model this backend "
+        + "is not billing at them. It is the CLI's own arithmetic, not an invoice.",
+    };
+  }
+  return {
+    kind: 'none',
+    value: 'Not reported',
+    qualifier: null,
+    title: 'This provider reports token counters but no per-thread cost, so there is no figure to show.',
+  };
+}
+
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export default function Fleet({ projects = [], onOpenSession }: {
@@ -83,6 +141,11 @@ export default function Fleet({ projects = [], onOpenSession }: {
   const [ready, setReady] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState(0);
+  // The outcome of the last stop or interrupt. Signalling a process is not
+  // something a card can show by itself — the next poll simply shows a
+  // different state — so what was asked for and what came back is said once,
+  // out loud, and stays until it is dismissed.
+  const [acted, setActed] = useState<{ ok: boolean; text: string } | null>(null);
   // Re-render on a clock of its own: every "waiting 4m 12s" on screen is stale
   // the second after it is drawn, and the poll alone would only refresh the
   // ones whose numbers happened to change.
@@ -170,7 +233,13 @@ export default function Fleet({ projects = [], onOpenSession }: {
       ticks.current += 1;
       void load(ticks.current % SPARK_EVERY === 0);
     }, POLL_MS);
-    const clock = setInterval(() => setTick((n) => n + 1), 1000);
+    // Same guard as the poll above, for the same reason and a bigger cost: this
+    // tick re-renders the whole view, which re-runs three memos that sort every
+    // session and repaints every card in an unvirtualized grid. Sixty of those
+    // a minute behind a hidden window buys nothing — the elapsed times are
+    // recomputed from Date.now() on the next render either way, and
+    // `onVisible` below forces one the moment the window comes back.
+    const clock = setInterval(() => { if (document.hidden) return; setTick((n) => n + 1); }, 1000);
 
     // Polling alone makes a permission request up to three seconds late. The
     // hook bus knows immediately, so the interval is the floor, not the source.
@@ -229,6 +298,54 @@ export default function Fleet({ projects = [], onOpenSession }: {
       .sort((a, b) => (attention[a.id]?.since ?? 0) - (attention[b.id]?.since ?? 0)),
     [sessions, attention],
   );
+
+  // The banner below carries a wait time that is re-rendered every second, so
+  // the banner itself cannot be the live region: a screen reader would re-read
+  // the whole alert on every tick and the one signal that must never go
+  // unheard turns into noise. What is worth announcing is membership — an
+  // agent became blocked, or stopped being blocked — so that sentence, and
+  // only that sentence, lives in the live region.
+  const everBlocked = useRef(false);
+  const blockedSay = useMemo(() => {
+    if (blocked.length) {
+      everBlocked.current = true;  // latched during render: it only ever flips on
+      return `${blocked.length === 1 ? '1 agent is' : `${blocked.length} agents are`} `
+        + `waiting on you: ${blocked.map((s) => s.projectName).join(', ')}.`;
+    }
+    // Nothing to clear on first paint; "nobody is blocked" is only news after
+    // somebody was.
+    return everBlocked.current ? 'No agent is waiting on you.' : '';
+  }, [blocked]);
+
+  const fleetCost = costFigure(totals.cost, totals.costUnavailable ? 'unavailable' : 'reported');
+
+  /**
+   * Taking a turn back off an agent.
+   *
+   * The main process owns the process; this only asks, and then re-reads so the
+   * card stops describing a state that is already over. `false` is not a
+   * failure — it is the launcher saying there was no live process to signal,
+   * which is worth reporting rather than swallowing into a silent no-op.
+   */
+  const control = useCallback(async (action: ControlAction, session: Session) => {
+    const verb = action === 'interrupt' ? 'interrupt' : 'stop';
+    try {
+      const ok = action === 'interrupt'
+        ? await window.wanigan.sessions.interrupt(session.id)
+        : await window.wanigan.sessions.kill(session.id);
+      setActed(ok
+        ? {
+            ok: true,
+            text: action === 'interrupt'
+              ? `Interrupt sent to ${session.projectName}. The session is still open.`
+              : `${session.projectName} was ended.`,
+          }
+        : { ok: false, text: `${session.projectName} had no live process to ${verb}; its card is catching up.` });
+    } catch (e) {
+      setActed({ ok: false, text: `Could not ${verb} ${session.projectName} — ${msg(e)}` });
+    }
+    await load(false);
+  }, [load]);
 
   const shown = useMemo(() => {
     const visible = only === 'all'
@@ -339,24 +456,36 @@ export default function Fleet({ projects = [], onOpenSession }: {
         </Note>
       )}
 
+      {/* Announced as well as painted: stopping an agent is the one thing on
+          this screen that cannot be undone by looking again. */}
       <div aria-live="polite">
-        {blocked.length > 0 && (
-          <Note tone="error">
-            <strong>
-              {blocked.length === 1 ? '1 agent is' : `${blocked.length} agents are`} waiting on you.
-            </strong>{' '}
-            Nothing moves on {blocked.length === 1 ? 'it' : 'them'} until you answer:{' '}
-            {blocked.map((s, i) => (
-              <span key={s.id}>
-                {i > 0 ? ', ' : ''}
-                <button className="fleet-inline" onClick={() => onOpenSession(s.id)}>
-                  {s.projectName} — {dur(Date.now() - (attention[s.id]?.since ?? Date.now()))}
-                </button>
-              </span>
-            ))}
+        {acted && (
+          <Note tone={acted.ok ? 'ok' : 'warn'}>
+            <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>{acted.ok ? '✓' : '△'}</span>
+            {acted.text}{' '}
+            <button className="fleet-inline" onClick={() => setActed(null)}>Dismiss</button>
           </Note>
         )}
       </div>
+
+      <p aria-live="polite" style={SR_ONLY}>{blockedSay}</p>
+
+      {blocked.length > 0 && (
+        <Note tone="error">
+          <strong>
+            {blocked.length === 1 ? '1 agent is' : `${blocked.length} agents are`} waiting on you.
+          </strong>{' '}
+          Nothing moves on {blocked.length === 1 ? 'it' : 'them'} until you answer:{' '}
+          {blocked.map((s, i) => (
+            <span key={s.id}>
+              {i > 0 ? ', ' : ''}
+              <button className="fleet-inline" onClick={() => onOpenSession(s.id)}>
+                {s.projectName} — {dur(Date.now() - (attention[s.id]?.since ?? Date.now()))}
+              </button>
+            </span>
+          ))}
+        </Note>
+      )}
 
       <div className="stat-grid">
         <Stat label="Agents" value={`${num(totals.running)} running`}
@@ -367,9 +496,15 @@ export default function Fleet({ projects = [], onOpenSession }: {
               sub={blocked.length
                 ? `longest wait ${dur(Date.now() - (attention[blocked[0].id]?.since ?? Date.now()))}`
                 : 'nobody is blocked'} />
+        {/* A fleet total that mixes billed dollars with a flat-rate backend's
+            own arithmetic is not a bill, so the whole total inherits the
+            weaker label rather than averaging the two claims into one. */}
         <Stat label="Fleet spend"
-              value={totals.costUnavailable ? (totals.cost > 0 ? `${usd(totals.cost)} +` : 'Not reported') : usd(totals.cost)}
-              sub={totals.costUnavailable ? 'Codex plan has no per-thread invoice' : `${num(totals.requests)} API requests`} />
+              value={fleetCost.value}
+              sub={fleetCost.kind === 'unverified'
+                ? "est. · not every session's dollars are billed at the rates they were priced from"
+                : fleetCost.kind === 'none' ? 'no session in this fleet reports a cost'
+                  : `${num(totals.requests)} API requests`} />
         <Stat label="Lines changed"
               value={<>+{num(totals.added)} <span className="faint">/</span> −{num(totals.removed)}</>}
               sub={`${num(totals.commits)} commits`} />
@@ -408,7 +543,8 @@ export default function Fleet({ projects = [], onOpenSession }: {
           {shown.map((s) => (
             <Card key={s.id} session={s} att={attention[s.id]} usage={usageOf(s.id)}
                   spark={spark[s.id] ?? []} branch={branchOf.get(s.projectId) ?? null}
-                  trust={s.trust ?? defaultTrust} onOpen={() => onOpenSession(s.id)} />
+                  trust={s.trust ?? defaultTrust} onOpen={() => onOpenSession(s.id)}
+                  onControl={control} />
           ))}
         </div>
       )}
@@ -421,9 +557,10 @@ export default function Fleet({ projects = [], onOpenSession }: {
 
 /* ── one agent ───────────────────────────────────────────────────────── */
 
-function Card({ session: s, att, usage: u, spark, branch, trust, onOpen }: {
+function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onControl }: {
   session: Session; att: Attention | undefined; usage: SessionUsage;
   spark: number[]; branch: string | null; trust: TrustLevel; onOpen: () => void;
+  onControl: (action: ControlAction, session: Session) => Promise<void>;
 }) {
   const kind = att?.kind ?? 'idle';
   const m = MARK[kind] ?? UNKNOWN;
@@ -431,10 +568,27 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen }: {
   const urgent = kind === 'permission';
   const model = s.model || u.models[0] || null;
   const tokens = u.inTokens + u.outTokens;
+  const cost = costFigure(u.costUsd, u.costStatus);
+
+  // Asked for, then done — never both at once, so the card cannot show a
+  // confirmation for an action that is already in flight.
+  const [asking, setAsking] = useState<ControlAction | null>(null);
+  const [running, setRunning] = useState<ControlAction | null>(null);
+
+  const act = async (action: ControlAction) => {
+    setAsking(null);
+    setRunning(action);
+    try { await onControl(action, s); }
+    finally { setRunning(null); }
+  };
 
   return (
-    <button type="button" className={`fleet-card${urgent ? ' urgent' : ''}`} onClick={onOpen}
-            aria-label={`${s.projectName}, ${PROVIDER[s.providerId]}, ${word}. Open this session.`}>
+    // A div, not a button: the card now carries controls of its own, and a
+    // button inside a button is invalid and unreachable by keyboard. Whole-card
+    // click still opens the session — the same convention the table below
+    // already uses — and every action inside it is a real focusable button.
+    <div className={`fleet-card${urgent ? ' urgent' : ''}`} onClick={onOpen}
+         style={{ cursor: 'pointer' }}>
       <div className="fleet-row">
         <span className="pill" style={{ background: m.bg, color: m.fg }}>
           <span aria-hidden="true" style={{ fontWeight: 700 }}>{m.glyph}</span>{word}
@@ -452,7 +606,7 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen }: {
       <div className="fleet-row fleet-title">
         <span className="fleet-name">{s.projectName}</span>
         <span className="pill fleet-prov" style={{ color: TINT[s.providerId] }}>
-          {PROVIDER[s.providerId] ?? s.providerId}
+          {providerName(s.providerId)}
         </span>
       </div>
 
@@ -475,8 +629,11 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen }: {
       <Spark values={spark} live={u.lastAt} />
 
       <div className="fleet-metrics">
-        <Metric label="Cost" value={u.costStatus === 'unavailable' ? 'Not reported' : usd(u.costUsd)}
-                sub={u.costStatus === 'unavailable' ? 'Codex plan total unavailable' : `${num(u.requests)} requests`} />
+        <Metric label="Cost" title={cost.title}
+                value={<>{cost.value}{cost.qualifier && <span className="faint" style={{ fontWeight: 400 }}> {cost.qualifier}</span>}</>}
+                sub={cost.kind === 'unverified' ? "the CLI's own arithmetic, not a bill"
+                  : cost.kind === 'none' ? 'this plan reports no per-thread cost'
+                    : `${num(u.requests)} requests`} />
         <Metric label="Tokens" value={num(tokens)} sub={`${num(u.cacheRead)} cached`} />
         <Metric
           label="Lines"
@@ -491,15 +648,103 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen }: {
             ? `Exited ${s.exitCode === null ? 'without a code' : `code ${s.exitCode}`} · ${ago(s.endedAt)}`
             : `Running · pid ${s.pid ?? '—'} · started ${ago(s.createdAt)}`}
         </span>
-        <span className="fleet-open" aria-hidden="true">open →</span>
+        <button type="button" className="fleet-inline fleet-open" onClick={(e) => { e.stopPropagation(); onOpen(); }}
+                aria-label={`Open ${s.projectName} — ${providerName(s.providerId)}, ${word}`}>
+          open →
+        </button>
       </div>
-    </button>
+
+      {s.status !== 'exited' && (
+        asking ? (
+          <ConfirmRow action={asking} session={s} onCancel={() => setAsking(null)} onConfirm={() => void act(asking)} />
+        ) : (
+          <div className="fleet-row" style={{ gap: 10, fontSize: 11.5 }}
+               onClick={(e) => e.stopPropagation()}>
+            {CONTROLS.map((c) => (
+              <button key={c.action} type="button" className="fleet-inline"
+                      style={{ color: c.tone, opacity: running !== null && running !== c.action ? 0.45 : 1 }}
+                      disabled={running !== null}
+                      title={c.title} onClick={() => setAsking(c.action)}>
+                <span aria-hidden="true">{c.glyph} </span>
+                {running === c.action ? c.running : c.word}
+              </button>
+            ))}
+          </div>
+        )
+      )}
+    </div>
   );
 }
 
-function Metric({ label, value, sub }: { label: string; value: React.ReactNode; sub: string }) {
+/**
+ * The two ways to take a turn back off an agent, and what each one costs you.
+ *
+ * Glyph plus word, like every other mark on this surface: the difference
+ * between pausing a turn and destroying a conversation must not be carried by
+ * colour, because the reader who most needs that difference is the one least
+ * able to see it.
+ */
+type ControlAction = 'interrupt' | 'stop';
+
+const CONTROLS: {
+  action: ControlAction; glyph: string; word: string; running: string; tone: string; title: string;
+}[] = [
+  {
+    action: 'interrupt', glyph: '⎋', word: 'interrupt', running: 'interrupting…', tone: 'var(--warning)',
+    title: 'Stop the turn this agent is in the middle of. The session stays open and keeps its conversation.',
+  },
+  {
+    action: 'stop', glyph: '■', word: 'stop', running: 'stopping…', tone: 'var(--critical)',
+    title: 'End the session. The process is killed and the conversation goes with it.',
+  },
+];
+
+/**
+ * Both actions confirm, which Sessions deliberately does not do.
+ *
+ * There the terminal you are about to interrupt is the one filling the screen.
+ * Here eight cards re-sort under the pointer every time attention rank changes,
+ * so the agent under the cursor a moment ago is not necessarily the one that
+ * receives the click. Naming the project in the question is the whole point of
+ * asking it.
+ */
+function ConfirmRow({ action, session, onCancel, onConfirm }: {
+  action: ControlAction; session: Session; onCancel: () => void; onConfirm: () => void;
+}) {
+  const stopping = action === 'stop';
   return (
-    <div className="fleet-metric">
+    <div className="sunk" style={{ padding: '8px 10px', borderRadius: 'var(--r-sm)', display: 'flex',
+                                   flexDirection: 'column', gap: 7 }}
+         onClick={(e) => e.stopPropagation()}>
+      <span style={{ fontSize: 11.5, lineHeight: 1.45, color: 'var(--text-dim)' }}>
+        <span aria-hidden="true" style={{ color: stopping ? 'var(--critical)' : 'var(--warning)', fontWeight: 700 }}>
+          {stopping ? '■ ' : '⎋ '}
+        </span>
+        {stopping
+          ? <>End <strong>{session.projectName}</strong>? The process is killed and the conversation goes
+              with it. Anything already written to disk stays there.</>
+          : <>Interrupt <strong>{session.projectName}</strong>? The current turn stops; the session stays
+              open and you can carry on typing to it.</>}
+      </span>
+      <div style={{ display: 'flex', gap: 12 }}>
+        <button type="button" className="fleet-inline" style={{ fontSize: 11.5 }} onClick={onCancel}>
+          leave it alone
+        </button>
+        <button type="button" className="fleet-inline"
+                style={{ fontSize: 11.5, color: stopping ? 'var(--critical)' : 'var(--warning)', fontWeight: 600 }}
+                onClick={onConfirm}>
+          {stopping ? 'end the session' : 'interrupt the turn'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value, sub, title }: {
+  label: string; value: React.ReactNode; sub: string; title?: string;
+}) {
+  return (
+    <div className="fleet-metric" title={title}>
       <span className="label">{label}</span>
       <b>{value}</b>
       <span className="faint">{sub}</span>
@@ -602,6 +847,7 @@ function FleetTable({ rows, att, usageOf, spark, defaultTrust, onOpen }: {
               const a = att[s.id];
               const m = MARK[a?.kind ?? 'idle'] ?? UNKNOWN;
               const u = usageOf(s.id);
+              const cost = costFigure(u.costUsd, u.costStatus);
               const vals = spark[s.id] ?? [];
               const peak = vals.length ? Math.max(...vals) : 0;
               const last = vals.length ? vals[vals.length - 1] : 0;
@@ -613,7 +859,7 @@ function FleetTable({ rows, att, usageOf, spark, defaultTrust, onOpen }: {
                       {s.projectName}
                     </button>
                     <span className="faint" style={{ marginLeft: 6, color: TINT[s.providerId] }}>
-                      {PROVIDER[s.providerId] ?? s.providerId}
+                      {providerName(s.providerId)}
                     </span>
                   </td>
                   <td style={{ color: m.fg, whiteSpace: 'nowrap' }}>
@@ -627,7 +873,9 @@ function FleetTable({ rows, att, usageOf, spark, defaultTrust, onOpen }: {
                     <span aria-hidden="true">{TRUST_GLYPH[trust]} </span>{TRUST_COPY[trust].label.toLowerCase()}
                   </td>
                   <td className="r">{num(u.requests)}</td>
-                  <td className="r">{u.costStatus === 'unavailable' ? 'Not reported' : usd(u.costUsd)}</td>
+                  <td className="r" title={cost.title}>
+                    {cost.value}{cost.qualifier && <span className="faint"> {cost.qualifier}</span>}
+                  </td>
                   <td className="r">{num(u.inTokens + u.outTokens)}</td>
                   <td className="r">+{num(u.linesAdded)} / −{num(u.linesRemoved)}</td>
                   <td className="r">{vals.length ? rate(last) : '—'}</td>

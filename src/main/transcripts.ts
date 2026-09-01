@@ -454,13 +454,17 @@ const HIT_COLUMNS = `
   LEFT JOIN transcripts t ON t.session_id = transcript_fts.session_id`;
 
 function toHit(r: HitRow, fallbackSnippet: string): TranscriptHit {
-  // Now that GLM sessions are archived too, folding them into 'claude' here
-  // would badge another model's answers with Claude's colour in every search
-  // result. Anything else — a forgotten row, a provider a later build drops —
-  // falls back to 'claude' because the shape demands one of the three.
-  const provider: ProviderId = r.provider_id === 'codex' || r.provider_id === 'glm'
-    ? r.provider_id
-    : 'claude';
+  // The id the session was logged with, whatever it was. This used to name
+  // Claude, Codex and GLM and default everything else to 'claude', which badged
+  // a fourth provider's conversation — a local pack's, a built-in a later
+  // release adds — with Claude's identity in every search result. That is a
+  // wrong attribution of somebody's words, not a colour choice. ProviderId is a
+  // string precisely so history can carry an id this build no longer compiles.
+  //
+  // Empty means the session_log row is gone (a forgotten session, the reason
+  // for the LEFT JOIN above). Naming no provider is the only honest answer
+  // there; inventing one is what this function is being fixed for.
+  const provider: ProviderId = r.provider_id?.trim() || '';
   return {
     sessionId: r.session_id,
     projectName: r.project_name ?? '(forgotten session)',
@@ -490,6 +494,10 @@ export function searchTranscripts(q: string, limit = 50): TranscriptHit[] {
   const query = q.trim();
   if (!query) return [];
   const d = db();
+  // The renderer supplies this. SQLite reads a negative LIMIT as "no limit", so
+  // an unclamped value turns a search box into a request for every archived
+  // turn on the machine — clamped here the way the other read paths do it.
+  const n = Math.min(Math.max(Math.trunc(limit) || 1, 1), 200);
 
   try {
     const rows = d.prepare(`
@@ -498,7 +506,7 @@ export function searchTranscripts(q: string, limit = 50): TranscriptHit[] {
       WHERE transcript_fts MATCH ? AND transcript_fts.role IN ('user','assistant')
       ORDER BY rank
       LIMIT ?
-    `).all(ftsQuery(query), limit) as HitRow[];
+    `).all(ftsQuery(query), n) as HitRow[];
     return rows.map((r) => toHit(r, ''));
   } catch {
     // MATCH still rejects some inputs outright (an unpaired surrogate, a future
@@ -510,7 +518,7 @@ export function searchTranscripts(q: string, limit = 50): TranscriptHit[] {
       WHERE transcript_fts.text LIKE ? ESCAPE '\\' AND transcript_fts.role IN ('user','assistant')
       ORDER BY transcript_fts.at DESC
       LIMIT ?
-    `).all(like, limit) as (HitRow & { text: string })[];
+    `).all(like, n) as (HitRow & { text: string })[];
     return rows.map((r) => toHit(r, windowAround(r.text, query)));
   }
 }

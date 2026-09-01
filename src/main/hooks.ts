@@ -255,6 +255,27 @@ function hooksEnabled(): boolean {
 
 /* ── request handling ────────────────────────────────────────────────── */
 
+/**
+ * SessionEnd does not always mean the CLI is finished. `/clear` and an
+ * in-session resume end the *conversation* and keep the same process running —
+ * claude 2.1.252 posts SessionEnd with reason `clear` from its /clear handler
+ * and `resume` from its in-place session swap, then carries on. Tearing the
+ * registration down there revokes a live session's capability with nothing left
+ * to re-register it: every later hook from that run arrives unauthenticated and
+ * is dropped, for the rest of the run.
+ */
+const SESSION_CONTINUES = new Set(['clear', 'resume']);
+
+/**
+ * Why SessionEnd fired. HookInput does not model the field and the body is
+ * agent-supplied, so it is read defensively; an absent or unrecognised reason
+ * is treated as a real end, which is what the CLI's other four reasons
+ * (logout, prompt_input_exit, other, and anything a future version adds) are.
+ */
+function endReason(input: HookInput): string | null {
+  return str((input as { reason?: unknown }).reason);
+}
+
 async function onRequest(req: http.IncomingMessage, res: http.ServerResponse) {
   // Nagle would add up to 40ms to every answer, and on PreToolUse the agent is
   // sitting on its hands for exactly that long.
@@ -281,7 +302,10 @@ async function onRequest(req: http.IncomingMessage, res: http.ServerResponse) {
           hookSpecificOutput: {
             hookEventName: 'PreToolUse',
             permissionDecision: decision.decision,
-            permissionDecisionReason: decision.reason,
+            // Signed, so an agent (or its operator) reading the verdict knows
+            // which layer produced it instead of hunting through CLI hooks,
+            // plugins and permission modes for a rule that lives in none of them.
+            permissionDecisionReason: `Wanigan: ${decision.reason}`,
           },
         }
       : {});
@@ -294,10 +318,14 @@ async function onRequest(req: http.IncomingMessage, res: http.ServerResponse) {
 
   const stored = store(sessionId, event, input, at);
   if (stored) emit(stored);
-  // Claude Code's own lifecycle signal is an additional cleanup path. The
-  // session/headless owners call cleanup too, so either a graceful hook end or
-  // a process exit revokes the capability and removes the on-disk credential.
-  if (event === 'SessionEnd') cleanupHookSettings(sessionId);
+  // Claude Code's own lifecycle signal is an additional cleanup path, never the
+  // authoritative one: the session/headless owners call cleanup when the process
+  // exits, and stopHookServer sweeps the rest. So a SessionEnd the process
+  // outlives is left registered — the credential it keeps for another few
+  // seconds is bounded, and dropping it costs the session its whole timeline.
+  if (event === 'SessionEnd' && !SESSION_CONTINUES.has(endReason(input) ?? '')) {
+    cleanupHookSettings(sessionId);
+  }
 }
 
 function reply(res: http.ServerResponse, status: number, body: unknown) {
@@ -514,6 +542,7 @@ function store(sessionId: string, event: string, input: HookInput, at: number): 
       sessionId, at, event, toolName, summary, durationMs, ok,
       paths.length ? JSON.stringify(paths) : null,
     );
+    bumpRevision(sessionId);
     const stored: SessionEvent = {
       id: Number(res.lastInsertRowid),
       sessionId,
@@ -709,6 +738,43 @@ function parsePaths(json: string | null): string[] {
   }
 }
 
+/* ── change tracking ─────────────────────────────────────────────────── */
+
+/**
+ * A stamp that changes whenever a session's event rows change.
+ *
+ * The attention queue reads about four hundred rows to classify one session —
+ * a two-hundred-event tail plus the live-state window — and it classifies on
+ * every hook event and every poll. Most of those reads answer a question whose
+ * inputs have not moved since the last one. Values only ever increase, so a
+ * stamp a caller still holds is proof the rows behind it are the same rows.
+ */
+let revisionClock = 0;
+/** What a session with no entry of its own reads. */
+let revisionFloor = 0;
+const revisions = new Map<string, number>();
+/** One small number per session id seen this run; flushed rather than grown. */
+const MAX_REVISIONS = 1000;
+
+function bumpRevision(sessionId: string): void {
+  if (revisions.size >= MAX_REVISIONS) resetRevisions();
+  revisions.set(sessionId, ++revisionClock);
+}
+
+/**
+ * Retire every stamp at once. The floor is taken from the same clock, so each
+ * session reads a value it has never read before and no cache built on an
+ * older one can survive — which is what a delete across all sessions needs.
+ */
+function resetRevisions(): void {
+  revisions.clear();
+  revisionFloor = ++revisionClock;
+}
+
+export function eventsRevision(sessionId: string): number {
+  return revisions.get(sessionId) ?? revisionFloor;
+}
+
 /** Newest first, matching every other event log in the app. */
 export function sessionEvents(sessionId: string, limit = 200): SessionEvent[] {
   const n = Math.min(Math.max(Math.trunc(limit) || 1, 1), 2000);
@@ -726,13 +792,21 @@ export function sessionEvents(sessionId: string, limit = 200): SessionEvent[] {
  * Pairing is by tool name rather than tool_use_id because the id is not on every
  * event, and a Stop closes the scan: a hook lost to a killed agent would
  * otherwise leave a tool "in flight" for the rest of the session.
+ *
+ * Ordered by `at`, not by `id`, so idx_session_events(session_id, at DESC)
+ * serves the read. `ORDER BY id DESC` cannot use that index: SQLite sorted the
+ * session's whole history into a temporary b-tree to answer a question about
+ * its newest two hundred rows, on every hook event and every poll, at a cost
+ * that grew for as long as the session lived. `id DESC` stays as the tie-break,
+ * so rows sharing a millisecond keep insertion order and this reads in the same
+ * order as sessionEvents().
  */
 export function liveState(sessionId: string): {
   tool: string | null; since: number; blocked: boolean; lastAt: number | null;
 } {
   const rows = db().prepare(`
     SELECT event, tool_name, summary, at FROM session_events
-    WHERE session_id = ? ORDER BY id DESC LIMIT ?
+    WHERE session_id = ? ORDER BY at DESC, id DESC LIMIT ?
   `).all(sessionId, LIVE_WINDOW) as {
     event: string; tool_name: string | null; summary: string | null; at: number;
   }[];
@@ -740,11 +814,24 @@ export function liveState(sessionId: string): {
   if (!rows.length) return { tool: null, since: 0, blocked: false, lastAt: null };
 
   const latest = rows[0];
-  // Not every CLI version emits PermissionRequest; the ones that don't send a
-  // Notification instead, and a session waiting on a human is exactly the state
-  // the queue exists to surface.
-  const blocked = latest.event === 'PermissionRequest'
-    || (latest.event === 'Notification' && WAITING.test(latest.summary ?? ''));
+  // An outstanding question, not "the newest row is a question". A blocked
+  // session keeps receiving events — a second notification, a lifecycle ping —
+  // and reading rows[0] alone let the first of them clear the asking state while
+  // the prompt was still on the human's screen. That is the one state this queue
+  // exists to make impossible to miss, so it stands until something answers it,
+  // and `since` is when the human was asked rather than when we noticed.
+  let askedAt: number | null = null;
+  for (const r of rows) {
+    if (ANSWERED.has(r.event)) break;
+    // Not every CLI version emits PermissionRequest; the ones that don't send a
+    // Notification instead.
+    if (r.event === 'PermissionRequest'
+      || (r.event === 'Notification' && WAITING.test(r.summary ?? ''))) {
+      askedAt = r.at;
+      break;
+    }
+  }
+  const blocked = askedAt !== null;
 
   const closed = new Map<string, number>();
   let tool: string | null = null;
@@ -768,13 +855,28 @@ export function liveState(sessionId: string): {
 
   return {
     tool,
-    since: blocked ? latest.at : (toolAt ?? latest.at),
+    since: askedAt ?? toolAt ?? latest.at,
     blocked,
     lastAt: latest.at,
   };
 }
 
 const WAITING = /permission|waiting for your input|needs your|approve|confirm/i;
+
+/**
+ * Events that settle an outstanding permission request. The human's verdict is
+ * the obvious one; the rest are the run moving on without needing it — the call
+ * completing, the next call starting, the turn ending. PreToolUse belongs here
+ * because a request is raised for a call the CLI has already announced, so a
+ * PreToolUse *newer* than the request is the next call rather than the one being
+ * asked about. Anything not named here — another notification, an event a future
+ * CLI adds — leaves the question standing, which is the safe direction to err in.
+ */
+const ANSWERED = new Set<string>([
+  'PermissionResponse', 'PermissionDenied', 'PreToolUse', 'PostToolUse',
+  'PostToolUseFailure', 'UserPromptSubmit', 'Stop', 'StopFailure',
+  'SessionStart', 'SessionEnd', 'PreCompact', 'PostCompact',
+]);
 
 /**
  * Completed calls only — a tool still in flight has no duration to report.
@@ -805,9 +907,51 @@ export function toolStats(sessionId: string): {
   }));
 }
 
-/** Retention. Returns how many rows went. */
-export function pruneEvents(olderThanMs: number): number {
+/** How many rows one statement may delete before the caller gets its tick back. */
+const PRUNE_CHUNK = 20_000;
+/** And how long the whole pass may spend. The main process is pumping PTYs. */
+const PRUNE_BUDGET_MS = 250;
+
+/**
+ * Retention. Returns how many rows went.
+ *
+ * Deleted in bounded slices rather than one statement. This table has never
+ * been pruned, so the first pass on an existing install can meet a year of
+ * history at four thousand rows a day, and a multi-second DELETE on the main
+ * process stalls every terminal it is pumping. Whatever a pass does not reach
+ * is deleted by the next one, and steady state is one small slice.
+ *
+ * The subquery names the timestamp one slice in, so each statement is served by
+ * idx_session_events_at and stops there; with less than a slice left it falls
+ * back to the cutoff and finishes the job.
+ */
+export function pruneEvents(olderThanMs: number, budgetMs: number = PRUNE_BUDGET_MS): number {
   const age = Number.isFinite(olderThanMs) ? Math.max(0, olderThanMs) : 0;
-  const res = db().prepare('DELETE FROM session_events WHERE at < ?').run(Date.now() - age);
-  return res.changes;
+  const cutoff = Date.now() - age;
+  const budget = Number.isFinite(budgetMs) ? Math.max(0, budgetMs) : PRUNE_BUDGET_MS;
+  const until = Date.now() + budget;
+  const d = db();
+  const slice = d.prepare(`
+    DELETE FROM session_events
+    WHERE at < COALESCE(
+      (SELECT at FROM session_events WHERE at < ? ORDER BY at LIMIT 1 OFFSET ?), ?)
+  `);
+  const rest = d.prepare('DELETE FROM session_events WHERE at < ?');
+
+  let total = 0;
+  for (;;) {
+    const res = slice.run(cutoff, PRUNE_CHUNK, cutoff);
+    total += res.changes;
+    if (res.changes === 0) {
+      // Nothing to slice, or every remaining row shares one timestamp and the
+      // slice boundary cannot advance past it. Either way this finishes it.
+      total += rest.run(cutoff).changes;
+      break;
+    }
+    if (Date.now() >= until) break;
+  }
+  // Deleted rows are a change no per-session bump describes, so every cached
+  // read of this table is retired at once.
+  if (total) resetRevisions();
+  return total;
 }

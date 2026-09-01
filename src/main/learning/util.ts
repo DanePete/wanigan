@@ -52,6 +52,20 @@ export function nonEmpty(value: string, label: string, max: number): string {
   return trimmed;
 }
 
+/** Trim to a UTF-8 byte budget without splitting a code point. */
+export function truncateUtf8Bytes(text: string, maxBytes: number): string {
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
+  let out = '';
+  let used = 0;
+  for (const ch of text) {
+    const bytes = Buffer.byteLength(ch, 'utf8');
+    if (used + bytes > maxBytes) break;
+    out += ch;
+    used += bytes;
+  }
+  return out;
+}
+
 export function optionalText(value: string | null | undefined, max: number): string | null {
   if (value == null) return null;
   const trimmed = value.trim();
@@ -60,13 +74,14 @@ export function optionalText(value: string | null | undefined, max: number): str
   return trimmed;
 }
 
-/** Directional estimate for previews only. Provider telemetry remains truth. */
-export function estimateTokens(text: string): number {
-  if (!text) return 0;
-  const bytes = Buffer.byteLength(text, 'utf8');
-  const words = text.trim() ? text.trim().split(/\s+/u).length : 0;
-  return Math.max(1, Math.ceil(Math.max(bytes / 4, words * 1.25)));
-}
+/**
+ * Directional estimate for previews only. Provider telemetry remains truth.
+ *
+ * Re-exported rather than implemented here: this ledger's numbers and the
+ * context panel's numbers describe the same bytes, and a byte-count estimate
+ * ran about a third light against the context panel on anything fenced.
+ */
+export { estimateTokens } from '../../shared/tokens';
 
 /** Convert a conservative path glob to a regex without importing a matcher. */
 export function globMatches(pattern: string, candidate: string): boolean {
@@ -95,7 +110,11 @@ export function scopeMatches(pathScope: string | null, candidatePath: string | n
 }
 
 export function ftsExpression(query: string, match: 'all' | 'any' = 'all'): string | null {
-  const terms = query.normalize('NFKC').match(/[\p{L}\p{N}_./-]+/gu)?.slice(0, 12) ?? [];
+  // A term with no letter or digit ('-', '.', '…' after NFKC) tokenizes to
+  // zero FTS tokens; joined with AND it annihilates the whole expression.
+  const terms = (query.normalize('NFKC').match(/[\p{L}\p{N}_./-]+/gu) ?? [])
+    .filter((term) => /[\p{L}\p{N}]/u.test(term))
+    .slice(0, 12);
   if (!terms.length) return null;
   // Quoting means FTS operators in user input remain text. The suffix is the
   // documented FTS5 prefix query and makes filenames useful while typing.

@@ -1,6 +1,7 @@
 import type { IPty } from 'node-pty';
 import { BrowserWindow } from 'electron';
 import type { LaunchOptions, Session, ProviderId } from '../shared/types';
+import { EFFORT_LEVELS } from '../shared/types';
 import {
   providerById, shellPath, detectProviders, refreshProviderPacks, runsClaudeCli,
 } from './providers';
@@ -12,17 +13,20 @@ import path from 'node:path';
 import type { PastSession } from '../shared/types';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { Baseline, TrustLevel } from '../shared/types';
+import type { Baseline, BudgetState, TrustLevel } from '../shared/types';
 import { otelEnv } from './otel';
 import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './hooks';
 import { archiveSession } from './transcripts';
 import { createWorktree, removeWorktree, repoRootFor } from './worktrees';
 import { trustFor } from './policy';
+import { slots } from './queue';
+import { budgetBreached } from './spend';
 import { cleanupMcpConfig, writeMcpConfig } from './mcp/registry';
 import { noteOutput, forgetSession } from './attention';
 import { flags, learningSettings } from './settings';
-import { attachmentsDir, cleanupSessionAttachments, prepareAttachmentDir } from './attachments';
-import { buildBriefing } from './learning';
+import { attachmentsDir, cleanupSessionAttachments, markSessionAttachmentsSent, prepareAttachmentDir } from './attachments';
+import { redactCredentials } from './redact';
+import { buildBriefing, recordSessionBriefing } from './learning';
 import {
   assertCodexThreadWriterUnlocked, backfillCodexThreadIds, captureNewCodexThreadId,
   codexThreadIdForSession, discoverCodexThreadId, normalizeCodexThreadId, validateExactCodexThread,
@@ -71,6 +75,43 @@ const pty = require('node-pty') as typeof import('node-pty');
 
 /** Bytes of scrollback kept per session so a pane can be re-attached with history. */
 const SCROLLBACK_BYTES = 512 * 1024;
+/**
+ * How much of a launch prompt session_log keeps.
+ *
+ * The row exists to answer "what was this started to do", which is a sentence
+ * or a paragraph. A pasted file is not that, and this column is read back into
+ * history views and carried out of the app by every export and backup.
+ */
+const INITIAL_PROMPT_MAX = 4_096;
+// PTY traffic is deliberately fire-and-forget, so bound it where it crosses
+// into node-pty. A compromised renderer must not turn one IPC message into an
+// unbounded write queue or an absurd terminal geometry allocation.
+const MAX_SESSION_ID_CHARS = 200;
+const MAX_PTY_INPUT_BYTES = 256 * 1024;
+const MAX_PTY_COLUMNS = 1_000;
+const MAX_PTY_ROWS = 500;
+
+function acceptsPtyInput(sessionId: unknown, data: unknown): data is string {
+  return typeof sessionId === 'string'
+    && sessionId.length > 0
+    && sessionId.length <= MAX_SESSION_ID_CHARS
+    && typeof data === 'string'
+    && Buffer.byteLength(data, 'utf8') <= MAX_PTY_INPUT_BYTES;
+}
+
+function acceptsPtyResize(sessionId: unknown, cols: unknown, rows: unknown): boolean {
+  return typeof sessionId === 'string'
+    && sessionId.length > 0
+    && sessionId.length <= MAX_SESSION_ID_CHARS
+    && typeof cols === 'number'
+    && Number.isInteger(cols)
+    && cols >= 1
+    && cols <= MAX_PTY_COLUMNS
+    && typeof rows === 'number'
+    && Number.isInteger(rows)
+    && rows >= 1
+    && rows <= MAX_PTY_ROWS;
+}
 
 /**
  * Variables that must never reach a spawned agent.
@@ -96,6 +137,39 @@ const STRIPPED_ENV = [
   'CLAUDECODE',
 ];
 const STRIPPED_PREFIXES = ['VSCODE_', 'ELECTRON_IPC', 'npm_'];
+
+/**
+ * The only host an inherited Anthropic credential is allowed to reach.
+ *
+ * Everything in STRIPPED_ENV above is functional — editor plumbing and
+ * parent-session markers — so nothing there is a security strip. The two
+ * variables below are, and they are removed conditionally rather than always,
+ * because a session pointed at Anthropic still needs them.
+ */
+const ANTHROPIC_API_HOST = 'api.anthropic.com';
+/**
+ * Credentials the operator exported for Anthropic itself. ANTHROPIC_ADMIN_KEY
+ * is the sharper one: it reaches organisation membership, workspaces and API
+ * keys, a far wider blast radius than any one session.
+ */
+const ANTHROPIC_AMBIENT_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_ADMIN_KEY'];
+
+/** True when the resolved provider environment aims the Anthropic API somewhere else. */
+function redirectsAnthropicApi(providerEnv: Record<string, string>): boolean {
+  const base = providerEnv.ANTHROPIC_BASE_URL?.trim();
+  if (!base) return false;
+  try {
+    const url = new URL(base);
+    // A plaintext hop to the right hostname is still somewhere else: the
+    // credential would cross the network readable.
+    return url.protocol !== 'https:' || url.hostname.toLowerCase() !== ANTHROPIC_API_HOST;
+  } catch {
+    // An unparseable base URL is not evidence of the official endpoint, and the
+    // only consequence of this answer is whether a key is withheld, so an
+    // unreadable value fails towards withholding it.
+    return true;
+  }
+}
 
 /**
  * Telemetry and hooks are how Wanigan knows anything about a running agent, and
@@ -130,6 +204,20 @@ function agentEnv(PATH: string, sessionId: string, providerEnv: Record<string, s
   // from the shell — an ANTHROPIC_BASE_URL in your profile must not silently
   // point a GLM session back at Anthropic, or the other way round.
   Object.assign(out, providerEnv);
+  if (redirectsAnthropicApi(providerEnv)) {
+    // A provider pack chooses this host, and a pack is untrusted data. Consent
+    // is otherwise the only control on where it points, and a consent dialog
+    // can be padded off-screen by a large manifest — so an ambient Anthropic
+    // key must not be along for the ride when the operator scrolls past.
+    //
+    // Only the *inherited* value is dropped. GLM and DeepSeek supply their own
+    // credential through this same providerEnv (as ANTHROPIC_AUTH_TOKEN), and a
+    // profile that deliberately declares one of these names keeps it: that
+    // value was declared and consented to, not borrowed from the shell.
+    for (const key of ANTHROPIC_AMBIENT_KEYS) {
+      if (!(key in providerEnv)) delete out[key];
+    }
+  }
   return out;
 }
 
@@ -137,6 +225,9 @@ type Live = {
   meta: Session;
   proc: IPty;
   buffer: string;
+  /** PTY output waiting for the next coalesced `session:data` send. */
+  pending: string;
+  pendingTimer: ReturnType<typeof setTimeout> | null;
   /** Most recent PTY output; used to avoid typing an initial Codex prompt into a redraw. */
   lastDataAt: number;
   /** Last moment this session's output was reported to the attention queue. */
@@ -257,7 +348,7 @@ function captureCodexIdentityAfterPrompt(live: Live, cwd: string): void {
       if (threadId) {
         live.meta.conversationId = threadId;
         live.codexCapturingIdentity = false;
-        broadcast('session:list', listSessions());
+        broadcast('session:list', sessionListEntries());
         return;
       }
     } catch { /* the state database can be between its own migrations */ }
@@ -307,7 +398,11 @@ function submitInitialCodexPrompt(live: Live, cwd: string, prompt: string): void
     // make the fallback explicit and leave the user in control of the prompt.
     const notice = '\r\n\x1b[38;5;214mWanigan could not confirm Codex\'s ready prompt, so it did not send the initial task automatically. Paste or type it here, then press Enter.\x1b[0m\r\n';
     live.buffer = (live.buffer + notice).slice(-SCROLLBACK_BYTES);
-    broadcast('session:data', { sessionId: live.meta.id, data: notice });
+    // Queued rather than broadcast directly so it lands behind any output still
+    // waiting on the flush timer, then sent at once: nothing further is coming
+    // that would carry it out.
+    queueSessionData(live, notice);
+    flushSessionData(live);
   };
   setTimeout(trySubmit, 150);
 }
@@ -327,12 +422,74 @@ export function listSessions(): Session[] {
 }
 
 /**
+ * The session list as it goes over IPC, with the launch snapshot reduced to a
+ * count.
+ *
+ * `baseline.dirty` holds one string per file that was already modified when a
+ * session started — 84 in this repository, thousands in a monorepo — and this
+ * module pushes the whole list again on every launch, exit, close, rename,
+ * unread change and Codex identity discovery. Nothing in the list renders a
+ * path; the code panel asks `sessions:baseline` for one session's worth when
+ * it actually needs them.
+ *
+ * Exported because index.ts answers the poll for the same list. Two
+ * projections would eventually disagree about what a session row contains,
+ * and the renderer reads both through one type.
+ */
+export function sessionListEntries(): Session[] {
+  return listSessions().map((value) => {
+    const { baseline, ...rest } = value;
+    if (!baseline) return rest;
+    return {
+      ...rest,
+      baselineSummary: { head: baseline.head, dirtyCount: baseline.dirty.length, at: baseline.at },
+    };
+  });
+}
+
+/**
  * How coarse the "still talking" stamp may be. The attention queue only ever
  * compares it against a ninety-second idle threshold, and onData fires per
  * chunk — hundreds of times a second while an answer streams — so a reading
  * per chunk buys nothing any reader can see.
  */
 const OUTPUT_NOTE_MS = 1000;
+
+/**
+ * How long a PTY chunk may wait for company before it crosses to the renderer.
+ *
+ * A streaming TUI emits tens of chunks a second, and every one of them used to
+ * be its own IPC message and its own renderer state update; a handful of live
+ * sessions made this the busiest path in the app. Coalescing collapses a burst
+ * into a few sends a second. The window stays far below the ~100ms at which a
+ * person starts to feel a terminal lag, so local echo still reads as instant.
+ */
+const DATA_FLUSH_MS = 25;
+
+/**
+ * Send whatever is queued now. The payload shape is deliberately unchanged —
+ * the renderer receives the same bytes in the same order, in fewer messages.
+ */
+function flushSessionData(live: Live): void {
+  if (live.pendingTimer) {
+    clearTimeout(live.pendingTimer);
+    live.pendingTimer = null;
+  }
+  if (!live.pending) return;
+  const data = live.pending;
+  live.pending = '';
+  broadcast('session:data', { sessionId: live.meta.id, data });
+}
+
+/** Queue PTY output behind the flush timer, starting one if none is running. */
+function queueSessionData(live: Live, data: string): void {
+  live.pending += data;
+  if (live.pendingTimer) return;
+  live.pendingTimer = setTimeout(() => {
+    live.pendingTimer = null;
+    flushSessionData(live);
+  }, DATA_FLUSH_MS);
+}
 
 const OSC9_PREFIX = '\x1b]9;';
 const MAX_PROVIDER_CONTROL = 2_048;
@@ -489,6 +646,82 @@ export async function recoverExactCodexThread(input: ExactCodexRecoveryInput): P
   }
 }
 
+/** Live means "still holds a PTY". An exited tab kept open for reading costs nothing. */
+function liveSessionCount(): number {
+  let n = 0;
+  for (const value of sessions.values()) if (value.meta.status !== 'exited') n++;
+  return n;
+}
+
+/**
+ * Honour the dispatcher's `session` slot count for interactive launches too.
+ *
+ * Settings has always shown this control, a usage meter and a confirmation
+ * reading "Wanigan will now start at most N sessions", but only queued work
+ * ever consulted it — an interactive launch never goes through the queue, so
+ * someone who lowered the number to protect their laptop was not protected.
+ * Refusing is the honest reading of that promise: silently queueing a terminal
+ * the operator is standing in front of would hide the limit rather than apply
+ * it, and this codebase says no out loud.
+ */
+function assertSessionSlotAvailable(): void {
+  // Read fresh, exactly like the dispatcher, so a Settings change takes effect
+  // on the next launch without a restart. A hand-written 0 means here what it
+  // means in queue.ts: hold this surface, do not start work on it.
+  const limit = slots().session;
+  const live = liveSessionCount();
+  if (live < limit) return;
+  throw new Error(
+    limit === 0
+      ? 'Interactive sessions are held at 0 in Settings › Dispatcher. Raise the "Interactive sessions" limit to start one.'
+      : `${live} of ${limit} interactive ${limit === 1 ? 'session is' : 'sessions are'} already running. `
+        + 'Stop one, or raise the "Interactive sessions" limit in Settings › Dispatcher, then start this one again.'
+  );
+}
+
+function usd(amount: number): string {
+  return `$${amount.toFixed(2)}`;
+}
+
+/**
+ * Refuse to start new spend against a budget that is already over its cap.
+ *
+ * `budgetBreached()` had exactly one consumer — the IPC read that draws the
+ * Insights banner — so a cap was a receipt rather than a budget: by the time it
+ * spoke, the money was gone. The refusal belongs here, at the one place that
+ * starts an interactive agent, which also keeps policy.ts's note true that no
+ * budget figure was added to the trust path.
+ *
+ * Only a scope whose *recorded* month-to-date spend has reached its cap
+ * refuses. The breach list also carries warning-threshold and run-rate entries;
+ * those are a projection, and a projection is not a fact you can be stopped by
+ * — on the 2nd of a month one expensive session projects over almost any cap,
+ * and blocking the rest of the month on that would be a guess wearing a
+ * refusal's clothes. Those keep drawing their banner and nothing more.
+ */
+function assertBudgetAllowsLaunch(projectId: string): void {
+  let over: BudgetState[];
+  try {
+    over = budgetBreached().filter((state) =>
+      // A cap on another project must never block this one.
+      (state.scopeId === null || state.scopeId === projectId)
+      && state.monthlyUsd > 0
+      && state.spentUsd >= state.monthlyUsd);
+  } catch {
+    // Spend accounting is evidence about launches, never a gate on them: an
+    // unreadable budgets table must not make the app unable to start work.
+    return;
+  }
+  if (!over.length) return;
+  const detail = over
+    .map((state) => `${state.scopeName} has spent ${usd(state.spentUsd)} of its ${usd(state.monthlyUsd)} monthly budget`)
+    .join('; ');
+  throw new Error(
+    `${detail}. Raise or clear that cap under Insights › Budgets — a cap of 0 keeps tracking spend without ` +
+    'stopping work — then start this session again.'
+  );
+}
+
 export async function createSession(opts: LaunchOptions, internal: CreateSessionInternal = {}): Promise<Session> {
   const exactRecovery = internal.exactCodexRecovery ?? null;
   if (exactRecovery && (
@@ -501,6 +734,11 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   if (!def) throw new Error(`Unknown provider: ${opts.providerId}`);
   const project = projectById(opts.projectId);
   if (!project) throw new Error('Project not found — it may have been removed.');
+
+  // Both refusals are local and cheap, so they answer before provider probing,
+  // worktree creation or any injected file exists to roll back.
+  assertSessionSlotAvailable();
+  assertBudgetAllowsLaunch(project.id);
 
   const PATH = await shellPath();
   // Launch the exact binary detection found, not whatever PATH resolves to now.
@@ -677,6 +915,17 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
           learnedArgs.push('--append-system-prompt', learned.text);
         }
       }
+      // Record what was actually delivered — entries, estimated tokens, and
+      // what retrieval held back — so "this session received briefing X" is a
+      // stored fact, not a guess. An empty result is recorded too: "retrieval
+      // ran and matched nothing" must stay distinguishable from "no record".
+      try {
+        recordSessionBriefing({
+          sessionId: id0, delivery: 'argv', providerId: def.id,
+          projectId: project.id, briefing: learned,
+          maxTokens: learningSettings().briefingMaxTokens,
+        });
+      } catch { /* the record is evidence, never a launch dependency */ }
     } catch { /* learned context is never a launch dependency */ }
   }
   // Codex does not post Claude-style hooks, but it can emit two structured TUI
@@ -722,6 +971,16 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   if (!finalDef || finalDef.profileFingerprint !== def.profileFingerprint) {
     await rollbackLaunch();
     throw new Error(`${def.label} changed or was disabled before launch. Review the provider pack and try again.`);
+  }
+
+  // Re-checked here because the early refusal cannot see a launch that started
+  // while this one was probing providers and preparing files: nothing joins the
+  // live map until pty.spawn, and there is no await between this line and it.
+  try {
+    assertSessionSlotAvailable();
+  } catch (error) {
+    await rollbackLaunch();
+    throw error;
   }
 
   const resumeKey = isResuming && conversationId
@@ -840,6 +1099,16 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   // Exact UUID recovery defers this write until Codex actually reaches its TUI
   // prompt. A writer-lock/bootstrap refusal therefore leaves Recent entirely
   // untouched rather than creating a failed duplicate record.
+  // What the operator asked for at launch. Once the PTY is gone the scrollback
+  // goes with it, and the row is then the only thing that can say what this
+  // session was started to do — the first question anyone asks of a finished
+  // one. Redacted before it is cut, never after: cutting first can slice a
+  // pasted key in half and leave the visible half sitting in a row that
+  // outlives the terminal it was typed into.
+  const initialPrompt = opts.initialPrompt?.trim()
+    ? redactCredentials(opts.initialPrompt.trim()).slice(0, INITIAL_PROMPT_MAX)
+    : null;
+
   const recordSessionHistory = () => {
     const d = db();
     d.transaction(() => {
@@ -848,13 +1117,21 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
                                  project_name, model, effort, permission_mode, started_at,
                                  resumed_from, worktree, trust, bin, capabilities_json,
                                  provider_pack_id,provider_pack_version,provider_profile_json,
-                                 backend_id,harness_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                 backend_id,harness_id,baseline_head,baseline_dirty_json,
+                                 initial_prompt)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(id, conversationId, opts.providerId, project.id, project.path, project.name,
              meta.model ?? null, meta.effort ?? null, meta.permissionMode ?? null,
              meta.createdAt, savedResume?.sessionId ?? null, worktree, trust, resolvedBin,
              detected?.capabilities ? JSON.stringify(detected.capabilities) : null,
-             def.packId, def.packVersion, JSON.stringify(meta.providerProfile), def.backendId, def.harness);
+             def.packId, def.packVersion, JSON.stringify(meta.providerProfile), def.backendId, def.harness,
+             // The launch snapshot has to outlive the process that took it.
+             // "Undo what this agent did" is asked most often after a restart,
+             // and the dirty list is the half that keeps work the operator had
+             // already done from being attributed to the agent, so it is stored
+             // whole rather than capped.
+             baseline.head, JSON.stringify(baseline.dirty),
+             initialPrompt);
       // A reused isolated checkout now belongs to this live continuation for
       // reconciliation purposes. Its historical session_log rows retain the
       // original path, so moving this liveness pointer loses no provenance.
@@ -894,6 +1171,8 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     meta,
     proc,
     buffer: '',
+    pending: '',
+    pendingTimer: null,
     lastDataAt: Date.now(),
     notedAt: 0,
     providerControl: '',
@@ -933,7 +1212,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       }
       const current = sessions.get(id);
       if (current) current.meta.conversationId = threadId;
-      broadcast('session:list', listSessions());
+      broadcast('session:list', sessionListEntries());
     }).catch((e) => {
       console.warn(`[wanigan] Codex thread discovery failed for session ${id}:`, e);
     });
@@ -967,7 +1246,11 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
           live.exactRecovery.bootstrapFailure = 'Wanigan could not record this recovered session, so it stopped the unrecorded writer.';
           const notice = `\r\n\x1b[38;5;214m${live.exactRecovery.bootstrapFailure}\x1b[0m\r\n`;
           live.buffer = (live.buffer + notice).slice(-SCROLLBACK_BYTES);
-          broadcast('session:data', { sessionId: id, data: notice });
+          // Queued, not broadcast directly, so it stays behind any output still
+          // waiting — then flushed at once, because the writer is killed below
+          // and there may be no later chunk to ride out with.
+          queueSessionData(live, notice);
+          flushSessionData(live);
           settleExactRecovery(live, new Error(live.exactRecovery.bootstrapFailure));
           try { live.proc.kill(); } catch { /* process may already be exiting */ }
           void error;
@@ -1002,15 +1285,23 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
         }
       }
     }
-    broadcast('session:data', { sessionId: id, data });
+    queueSessionData(live, data);
   });
 
-  proc.onExit(({ exitCode }) => {
+  proc.onExit(({ exitCode, signal }) => {
+    // The last chunk of an agent's answer is often the whole answer. Send what
+    // is still queued before anything else runs, so a pending flush timer
+    // cannot lose it to the teardown below.
+    flushSessionData(live);
     // The OS process is gone at this point even if later archival/notification
     // bookkeeping throws, so shutdown must be allowed to finish.
     live.resolveExit();
     live.meta.status = 'exited';
-    live.meta.exitCode = exitCode;
+    // node-pty reports exitCode 0 when a process dies by SIGNAL and carries the
+    // number separately, so an agent that was killed or crashed was recorded —
+    // and shown — as having "exited cleanly". 128+signal is the shell's own
+    // convention for the same fact.
+    live.meta.exitCode = typeof signal === 'number' && signal > 0 ? 128 + signal : exitCode;
     live.meta.endedAt = Date.now();
     const unrecordedRecovery = Boolean(live.exactRecovery && !live.exactRecovery.historyRecorded);
     if (unrecordedRecovery && !live.exactRecovery?.bootstrapFailure) {
@@ -1035,7 +1326,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       void discoverCodexThreadId(id, cwd, meta.createdAt).then((threadId) => {
         if (!threadId) return;
         live.meta.conversationId = threadId;
-        broadcast('session:list', listSessions());
+        broadcast('session:list', sessionListEntries());
       }).catch(() => {});
     }
 
@@ -1080,7 +1371,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     }
 
     broadcast('session:exit', { sessionId: id, exitCode });
-    broadcast('session:list', listSessions());
+    broadcast('session:list', sessionListEntries());
   });
 
   if (opts.initialPrompt?.trim()) {
@@ -1095,7 +1386,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     }
   }
 
-  broadcast('session:list', listSessions());
+  broadcast('session:list', sessionListEntries());
   return meta;
 }
 
@@ -1235,19 +1526,62 @@ export function forgetPastSession(id: string) {
   })();
 }
 
+/**
+ * The launch snapshot for a session, live or historical.
+ *
+ * The in-memory copy is the fast path, but a baseline that exists only in this
+ * process answers "undo what this agent did" with "this session has no baseline
+ * commit" after every restart — and loses the dirty list, which is what keeps
+ * edits the operator had already made from being offered as the agent's work.
+ */
 export function sessionBaseline(sessionId: string): Baseline | null {
-  return sessions.get(sessionId)?.meta.baseline ?? null;
+  const live = sessions.get(sessionId)?.meta.baseline;
+  if (live) return live;
+  let row: { baseline_head: string | null; baseline_dirty_json: string | null; started_at: number } | undefined;
+  try {
+    row = db().prepare(
+      'SELECT baseline_head, baseline_dirty_json, started_at FROM session_log WHERE id = ?'
+    ).get(sessionId) as typeof row;
+  } catch { return null; /* the database is closing during quit */ }
+  if (!row) return null;
+  // A row written before these columns existed captured nothing. Answering it
+  // with an empty dirty list would claim every pre-existing edit for the agent,
+  // so an absent capture stays absent rather than becoming a confident zero.
+  if (row.baseline_head === null && row.baseline_dirty_json === null) return null;
+  let dirty: string[] = [];
+  try {
+    const parsed: unknown = JSON.parse(row.baseline_dirty_json ?? '[]');
+    if (Array.isArray(parsed)) dirty = parsed.filter((value): value is string => typeof value === 'string');
+  } catch { /* a corrupt list costs attribution, not the head commit a revert needs */ }
+  // `started_at` is the launch stamp rather than the capture stamp; they are
+  // milliseconds apart and no reader distinguishes them.
+  return { head: row.baseline_head, dirty, at: row.started_at };
 }
 
 /** Scrollback for a pane that is being mounted or re-mounted. */
 export function scrollback(sessionId: string): string {
-  return sessions.get(sessionId)?.buffer ?? '';
+  const s = sessions.get(sessionId);
+  if (!s) return '';
+  // The buffer is appended per chunk while sends are coalesced, so without this
+  // it could hand a mounting pane bytes that no `session:data` message has
+  // carried yet. Flushing first restores the invariant the pane relies on:
+  // everything in the scrollback has already been broadcast.
+  flushSessionData(s);
+  return s.buffer;
 }
 
-export function writeSession(sessionId: string, data: string) {
+export function writeSession(sessionId: string, data: string): boolean {
+  if (!acceptsPtyInput(sessionId, data)) return false;
   const s = sessions.get(sessionId);
-  if (!s || s.meta.status === 'exited') return;
+  if (!s || s.meta.status === 'exited') return false;
   s.proc.write(data);
+  // A submitted line carries whatever was already typed, so any attachment
+  // named in that prompt has now gone to the agent. Staged-but-unnamed files
+  // are untouched: pressing Enter on an unrelated message does not send them.
+  if (/[\r\n]/.test(data)) {
+    try { markSessionAttachmentsSent(sessionId); }
+    catch { /* the keystroke matters more than the bookkeeping */ }
+  }
   if (s.meta.harnessId === 'codex' && /[\r\n]/.test(data)) {
     captureCodexIdentityAfterPrompt(s, s.meta.worktree ?? s.meta.projectPath);
   }
@@ -1264,15 +1598,47 @@ export function writeSession(sessionId: string, data: string) {
       recordProviderEvent(sessionId, 'UserPromptSubmit');
     }
   }
+  return true;
 }
 
-export function resizeSession(sessionId: string, cols: number, rows: number) {
+/**
+ * `/model` and `/effort` change the running CLI, but the CLI answers in its
+ * own terminal — nothing flows back into this session's record. A remounted
+ * control bar seeds from that record, so without this write-back it shows the
+ * launch-time argv, not the level the session is actually running at. Record
+ * the tuning only at the moment the command is really delivered to the PTY.
+ */
+export function setSessionTuning(sessionId: unknown, field: unknown, value: unknown): boolean {
+  if (typeof sessionId !== 'string') return false;
+  if (field !== 'model' && field !== 'effort') return false;
+  if (typeof value !== 'string' || value.length === 0) return false;
+  if (field === 'effort' && !(EFFORT_LEVELS as readonly string[]).includes(value)) return false;
+  // A model id is one shell-safe token ('fable', 'glm-5.3', a full dotted id);
+  // anything else does not belong in a slash command typed into a terminal.
+  if (field === 'model' && !/^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,63}$/.test(value)) return false;
   const s = sessions.get(sessionId);
-  if (!s || s.meta.status === 'exited') return;
-  if (cols > 0 && rows > 0) {
-    try { s.proc.resize(cols, rows); } catch { /* race with exit */ }
-  }
+  if (!s || s.meta.status !== 'running' || s.meta.harnessId === 'codex') return false;
+  if (!writeSession(sessionId, `/${field} ${value}\r`)) return false;
+  s.meta[field] = value;
+  // The command is already in the terminal; a history-row hiccup must not
+  // roll back the live record the renderer will re-seed from on remount.
+  try {
+    db().prepare(`UPDATE session_log SET ${field === 'model' ? 'model' : 'effort'} = ? WHERE id = ?`)
+      .run(value, sessionId);
+  } catch { /* the row can be absent when the launch insert itself failed */ }
+  broadcast('session:list', sessionListEntries());
+  return true;
 }
+
+export function resizeSession(sessionId: string, cols: number, rows: number): boolean {
+  if (!acceptsPtyResize(sessionId, cols, rows)) return false;
+  const s = sessions.get(sessionId);
+  if (!s || s.meta.status === 'exited') return false;
+  try { s.proc.resize(cols, rows); } catch { return false; /* race with exit */ }
+  return true;
+}
+
+export const __test = { acceptsPtyInput, acceptsPtyResize, agentEnv, redirectsAnthropicApi };
 
 /**
  * Stop what the agent is doing without ending the session.
@@ -1313,12 +1679,12 @@ export function closeSession(sessionId: string) {
     throw new Error('Session is still running — stop it before closing.');
   }
   sessions.delete(sessionId);
-  broadcast('session:list', listSessions());
+  broadcast('session:list', sessionListEntries());
 }
 
 export function markRead(sessionId: string) {
   const s = sessions.get(sessionId);
-  if (s && s.meta.unread) { s.meta.unread = 0; broadcast('session:list', listSessions()); }
+  if (s && s.meta.unread) { s.meta.unread = 0; broadcast('session:list', sessionListEntries()); }
 }
 
 export function bumpUnread(sessionId: string) {

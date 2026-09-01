@@ -18,7 +18,16 @@ type ProjectionRow = {
   target_path: string; target_format: string; proposed_content: string; base_hash: string;
   applied_hash: string | null; previous_content: string | null; status: string; error: string | null;
   created_at: number; applied_at: number | null; undone_at: number | null;
+  allowed_roots_json: string | null;
 };
+
+function parseAllowedRoots(json: string | null): string[] {
+  if (!json) return [];
+  try {
+    const value = JSON.parse(json);
+    return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+  } catch { return []; }
+}
 
 const fromRow = (row: ProjectionRow): KnowledgeProjection => ({
   id: row.id,
@@ -40,6 +49,7 @@ const fromRow = (row: ProjectionRow): KnowledgeProjection => ({
   createdAt: row.created_at,
   appliedAt: row.applied_at,
   undoneAt: row.undone_at,
+  allowedRoots: parseAllowedRoots(row.allowed_roots_json),
 });
 
 function readTarget(file: string, maxBytes: number): { hash: string; content: string | null; mode: number | null } {
@@ -88,6 +98,21 @@ function assertAllowed(targetPath: string, safety: ProjectionSafety): string {
   });
   if (!allowed) throw new Error('Projection target resolves outside its explicitly allowed roots.');
   return target;
+}
+
+/** Best-effort cleanup of directories a created-file projection introduced. */
+function removeEmptyParents(target: string, safety: ProjectionSafety): void {
+  try {
+    const roots = safety.allowedRoots.filter((root) => path.isAbsolute(root)).map(canonicalMissingAware);
+    let dir = path.dirname(target);
+    // Stop at the first non-empty directory or the granted-root boundary; the
+    // root itself is never removed. Cleanup must never fail the undo.
+    while (roots.some((root) => dir !== root && isInside(root, dir))) {
+      if (fs.readdirSync(dir).length) return;
+      fs.rmdirSync(dir);
+      dir = path.dirname(dir);
+    }
+  } catch { /* a leftover empty directory is cosmetic */ }
 }
 
 function atomicWrite(file: string, content: string, mode: number | null): void {
@@ -149,13 +174,14 @@ export function createProjectionPreview(
     INSERT INTO knowledge_projections
       (id,candidate_id,item_id,version_id,provider_id,adapter_id,scope,project_id,target_path,
        target_format,proposed_content,base_hash,applied_hash,previous_content,status,error,
-       created_at,applied_at,undone_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,'preview',NULL,?,NULL,NULL)
+       created_at,applied_at,undone_at,allowed_roots_json)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,'preview',NULL,?,NULL,NULL,?)
   `).run(
     id, input.candidateId, input.itemId ?? candidate.itemId, input.versionId ?? null,
     nonEmpty(input.providerId, 'Projection provider', 200), nonEmpty(input.adapterId, 'Projection adapter', 200),
     input.scope, input.projectId ?? candidate.projectId, targetPath,
     nonEmpty(input.targetFormat, 'Projection format', 100), input.proposedContent, current.hash, Date.now(),
+    safety ? JSON.stringify(safety.allowedRoots) : null,
   );
   return getProjection(id)!;
 }
@@ -209,6 +235,11 @@ export function applyProjection(id: string, safety: ProjectionSafety): Knowledge
     throw new Error(error);
   }
 
+  // Persist the pre-image and the granted roots before the destructive write:
+  // a failure after atomicWrite must leave the replaced bytes recoverable from
+  // the row ('failed' rows keep previous_content for manual recovery).
+  db().prepare('UPDATE knowledge_projections SET previous_content=?,allowed_roots_json=? WHERE id=?')
+    .run(current.content, JSON.stringify(safety.allowedRoots), id);
   try {
     atomicWrite(target, projection.proposedContent, current.mode);
     // Re-resolve after mkdir/write: an ancestor cannot silently move us out of
@@ -248,6 +279,7 @@ export function undoProjection(id: string, safety: ProjectionSafety): KnowledgeP
 
   if (projection.baseHash === MISSING_FILE_HASH) {
     fs.unlinkSync(target);
+    removeEmptyParents(target, safety);
   } else {
     if (projection.previousContent == null) throw new Error('The prior file snapshot is unavailable; undo was refused.');
     atomicWrite(target, projection.previousContent, current.mode);

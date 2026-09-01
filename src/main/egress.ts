@@ -8,6 +8,7 @@ import { transcriptsDir } from './transcripts';
 import { flags } from './settings';
 import { mobileConfig } from './mobile';
 import { improvementScoutSettings, listSources } from './improvement-scout';
+import { providerPackRegistry } from './providers';
 import type { EgressHost, EgressPath, EgressPin, EgressReport } from '../shared/types';
 
 /**
@@ -75,6 +76,77 @@ function deepseekKey(): boolean {
   catch { return false; }
 }
 
+/**
+ * The backend endpoint an installed provider pack declares, read out of the
+ * pack registry instead of typed here.
+ *
+ * The rows below this one are enumerated by hand from Wanigan's own fetch()
+ * calls, which is exactly the list that cannot grow when somebody installs a
+ * provider pack. A third-party pack aims a session at an API this file has
+ * never heard of, and until now the panel went on printing the built-ins as if
+ * that were the whole story — the failure the header warns about, arriving by
+ * install rather than by edit.
+ *
+ * These rows are weaker evidence than the ones around them, and say so. The
+ * endpoint is a manifest declaration: Wanigan validates and stores it, but what
+ * actually points a CLI somewhere is the launch environment, and Wanigan does
+ * not read that CLI's traffic. So `by` is 'agent' and `activeNow` is null — the
+ * same "unknown" the Claude and Codex CLI rows carry, for the same reason.
+ *
+ * Built-in profiles are deliberately not derived here. Their destinations are
+ * already on the table by hand, with the condition Wanigan can observe (a
+ * stored key) and the override variable each one honours — neither of which a
+ * manifest declaration knows. A derived built-in row would restate the same
+ * socket less accurately, and would name the manifest's URL even where an
+ * override sends the session elsewhere. What keeps that list current is the
+ * smoke check that every https host named anywhere in the main process — the
+ * built-in manifests included — appears on this table.
+ */
+function packBackendHosts(): EgressHost[] {
+  let profiles: ReturnType<typeof providerPackRegistry.listProfiles>;
+  try {
+    profiles = providerPackRegistry.listProfiles();
+  } catch {
+    // A registry that cannot be read is reported by the Providers panel. It
+    // must not take the privacy report down with it.
+    return [];
+  }
+
+  const rows: EgressHost[] = [];
+  for (const profile of profiles) {
+    if (profile.source !== 'local') continue;
+    const baseUrl = profile.backend.baseUrl?.trim();
+    if (!baseUrl) continue;
+    let host = '';
+    let pathname = '/';
+    try {
+      const parsed = new URL(baseUrl);
+      host = parsed.hostname;
+      pathname = parsed.pathname || '/';
+    } catch {
+      // Manifest URLs are validated on load, so an installed pack cannot reach
+      // this. If one ever does there is no host to name, and inventing one is
+      // worse than the row's absence.
+      continue;
+    }
+    if (!host) continue;
+    rows.push({
+      host,
+      paths: [pathname],
+      by: 'agent',
+      purpose:
+        `The backend the “${profile.packLabel}” provider pack declares for its ${profile.label} profile ` +
+        `(${profile.backend.label}). Wanigan does not open this socket and does not read the CLI's traffic.`,
+      when:
+        `Whenever a session runs on the ${profile.label} profile, if the CLI honours the endpoint its pack ` +
+        `declares. Declared in ${profile.packId}@${profile.packVersion}, not measured by Wanigan.`,
+      activeNow: null,
+      overrideEnv: null,
+    });
+  }
+  return rows;
+}
+
 /* ── hosts ───────────────────────────────────────────────────────────── */
 
 /**
@@ -87,7 +159,8 @@ function deepseekKey(): boolean {
  */
 function hosts(): EgressHost[] {
   const anthropicBase = process.env.ANTHROPIC_BASE_URL?.trim() || 'https://api.anthropic.com';
-  const glmModels = process.env.WANIGAN_GLM_MODELS_URL?.trim() || 'https://api.z.ai/api/paas/v4/models';
+  // Same default as glm.ts: a Coding Plan token must use the coding endpoint.
+  const glmModels = process.env.WANIGAN_GLM_MODELS_URL?.trim() || 'https://api.z.ai/api/coding/paas/v4/models';
   const glmBase = process.env.WANIGAN_GLM_BASE_URL?.trim() || 'https://api.z.ai/api/anthropic';
   const deepseekModels = process.env.WANIGAN_DEEPSEEK_MODELS_URL?.trim() || 'https://api.deepseek.com/models';
   const deepseekBase = process.env.WANIGAN_DEEPSEEK_BASE_URL?.trim() || 'https://api.deepseek.com/anthropic';
@@ -120,7 +193,7 @@ function hosts(): EgressHost[] {
     };
   });
 
-  return [
+  const enumerated: EgressHost[] = [
     {
       host: hostOf(anthropicBase, 'api.anthropic.com'),
       paths: ['/v1/messages/batches', '/v1/files'],
@@ -160,7 +233,7 @@ function hosts(): EgressHost[] {
     },
     {
       host: hostOf(glmModels, 'api.z.ai'),
-      paths: ['/api/paas/v4/models'],
+      paths: ['/api/coding/paas/v4/models'],
       by: 'wanigan',
       purpose: 'The GLM model list, read live so a stale table cannot quietly offer the wrong model.',
       when: 'Only when a Z.ai provider key is stored.',
@@ -211,8 +284,39 @@ function hosts(): EgressHost[] {
       activeNow: null,
       overrideEnv: null,
     },
+    // Codex is a first-class provider here, so leaving its destination off a
+    // table that names Claude's, GLM's and DeepSeek's would read as "a Codex
+    // session sends nothing" — the one inaccuracy this file cannot carry.
+    //
+    // Two rows because the Codex CLI has two sign-ins with two destinations,
+    // and Wanigan chooses neither: it sets no base URL for Codex and never
+    // reads which login is in use, unlike GLM and DeepSeek where it supplies
+    // the endpoint itself. So these name the CLI's own documented endpoints
+    // rather than anything Wanigan observed, and both say unknown.
+    {
+      host: 'chatgpt.com',
+      paths: [],
+      by: 'agent',
+      purpose: 'Where the Codex CLI sends your prompts when it is signed in with a ChatGPT account. Wanigan neither supplies nor sees that credential.',
+      when: 'Whenever a session runs on the Codex provider under a ChatGPT sign-in.',
+      activeNow: null,
+      overrideEnv: null,
+    },
+    {
+      host: 'api.openai.com',
+      paths: [],
+      by: 'agent',
+      purpose: 'Where the Codex CLI sends your prompts when it is signed in with an OpenAI API key instead. Wanigan neither supplies nor sees that key.',
+      when: 'Whenever a session runs on the Codex provider under an API-key sign-in.',
+      activeNow: null,
+      overrideEnv: null,
+    },
     ...scoutHosts,
   ];
+
+  // Appended last: an installed pack can add destinations to this table, and
+  // the rows above stay the ones with the stronger claim behind them.
+  return [...enumerated, ...packBackendHosts()];
 }
 
 /* ── pinned variables ────────────────────────────────────────────────── */
@@ -332,6 +436,8 @@ const UNENUMERATED = [
 
 const PROVENANCE =
   "This table is enumerated by hand from Wanigan's own source — every fetch() in the main process and the Scout's static official-source registry. " +
+  'The rows marked “agent” are the exception: they are where each CLI sends your prompts, which Wanigan supplies for GLM and DeepSeek and neither supplies nor reads for Claude and Codex, so those are named from the CLI’s own documented endpoints and report as unknown rather than measured. ' +
+  'Any row naming a provider pack is weaker still — it is the backend endpoint that pack’s manifest declares, read from the installed manifest rather than from a call Wanigan makes, and reported as unknown for the same reason. ' +
   'It is exhaustive for Wanigan’s code and for nothing else. The caveat below is the part that keeps it honest.';
 
 export function egressReport(): EgressReport {

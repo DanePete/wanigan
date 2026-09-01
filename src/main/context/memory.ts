@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { managedPolicyDir } from './instructions';
 
 /**
  * Auto memory — what is actually in the agent's head at session start.
@@ -104,9 +105,7 @@ export type MemoryState = {
  * what the *CLI* will do, not what Wanigan would like it to do.
  */
 function settingsLayers(projectPath: string): { layer: string; file: string }[] {
-  const managed = process.platform === 'darwin'
-    ? '/Library/Application Support/ClaudeCode/managed-settings.json'
-    : '/etc/claude-code/managed-settings.json';
+  const managed = path.join(managedPolicyDir(), 'managed-settings.json');
   return [
     { layer: 'user', file: path.join(HOME, '.claude', 'settings.json') },
     { layer: 'project', file: path.join(projectPath, '.claude', 'settings.json') },
@@ -259,8 +258,28 @@ function repoFor(dir: string): RepoLookup {
   return value;
 }
 
+/**
+ * Compare real paths, not lexical ones. A symlink sitting inside a memory
+ * directory otherwise satisfies a startsWith() check while pointing anywhere.
+ */
+function realOrSelf(p: string): string {
+  try { return fs.realpathSync(p); } catch { return p; }
+}
+
 /** Directories readMemory has actually resolved, so memoryBody can refuse the rest. */
 const knownDirs = new Set<string>();
+
+/**
+ * Both spellings of a resolved directory are known: the literal path and its
+ * realpath. memoryBody realpaths the incoming file, so with only the literal
+ * recorded, a memory directory reached through any symlink — ~/.claude kept in
+ * a dotfiles repo, /tmp on macOS — would refuse every file the panel itself
+ * just listed.
+ */
+function addKnownDir(dir: string): void {
+  knownDirs.add(dir);
+  knownDirs.add(realOrSelf(dir));
+}
 
 function defaultDirFor(root: string): string {
   return path.join(PROJECTS_ROOT, slugForPath(root), 'memory');
@@ -272,7 +291,7 @@ export function memoryDirFor(projectPath: string): { dir: string; derivedFrom: M
   const override = settingValue(abs, 'autoMemoryDirectory');
   if (typeof override?.value === 'string' && override.value.trim()) {
     const dir = expandHome(override.value.trim(), abs);
-    knownDirs.add(dir);
+    addKnownDir(dir);
     return { dir, derivedFrom: 'setting-override' };
   }
 
@@ -282,7 +301,7 @@ export function memoryDirFor(projectPath: string): { dir: string; derivedFrom: M
     // is the only project root available. readMemory says which of the two it
     // was, because they are not the same claim.
     const dir = defaultDirFor(abs);
-    knownDirs.add(dir);
+    addKnownDir(dir);
     return { dir, derivedFrom: 'project-root' };
   }
 
@@ -292,7 +311,7 @@ export function memoryDirFor(projectPath: string): { dir: string; derivedFrom: M
   if (repo.worktree && !fs.existsSync(dir) && fs.existsSync(defaultDirFor(repo.worktree))) {
     dir = defaultDirFor(repo.worktree);
   }
-  knownDirs.add(dir);
+  addKnownDir(dir);
   return { dir, derivedFrom: 'git-repo' };
 }
 
@@ -468,9 +487,13 @@ function budgetFor(text: string, bytes: number, complete: boolean): NonNullable<
   let used = 0;
   let loaded = 0;
   let cut: 'lines' | 'bytes' | null = null;
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
     if (loaded >= INDEX_LINE_LIMIT) { cut = 'lines'; break; }
-    const cost = Buffer.byteLength(line, 'utf8') + 1;
+    // The +1 is the newline byte, charged only for lines the source actually
+    // follows with one. A final line without a trailing '\n' billed a phantom
+    // byte reports an exactly-at-limit index as over budget.
+    const newline = i < lines.length - 1 || text.endsWith('\n') ? 1 : 0;
+    const cost = Buffer.byteLength(lines[i], 'utf8') + newline;
     if (used + cost > INDEX_BYTE_LIMIT) { cut = 'bytes'; break; }
     used += cost;
     loaded++;
@@ -788,14 +811,6 @@ function autoMemoryEnabled(projectPath: string, bad?: string[]): { enabled: bool
 /* ── the reading pane ────────────────────────────────────────────────── */
 
 /**
- * Compare real paths, not lexical ones. A symlink sitting inside a memory
- * directory otherwise satisfies a startsWith() check while pointing anywhere.
- */
-function realOrSelf(p: string): string {
-  try { return fs.realpathSync(p); } catch { return p; }
-}
-
-/**
  * The file itself. The path arrives from the renderer, so it is confined to a
  * memory directory Wanigan has actually resolved: without that, this IPC is a
  * read-any-file-on-disk hole with a friendly name.
@@ -803,7 +818,13 @@ function realOrSelf(p: string): string {
 export function memoryBody(p: string): { text: string; truncated: boolean; bytes: number } {
   const full = realOrSelf(path.resolve(p));
   const dir = path.dirname(full);
-  const inDefaultRoot = full.startsWith(PROJECTS_ROOT + path.sep) && path.basename(dir) === 'memory';
+  // `full` is a realpath, so the default root must be compared as one too —
+  // a ~/.claude that is itself a symlink otherwise fails this check for every
+  // file under it.
+  const realProjectsRoot = realOrSelf(PROJECTS_ROOT);
+  const inDefaultRoot =
+    (full.startsWith(PROJECTS_ROOT + path.sep) || full.startsWith(realProjectsRoot + path.sep)) &&
+    path.basename(dir) === 'memory';
 
   /*
    * A memory is a markdown file, and requiring that is not cosmetic.

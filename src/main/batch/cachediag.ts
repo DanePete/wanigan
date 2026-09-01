@@ -1,6 +1,7 @@
 import { db } from '../db';
 import { client, isMock } from './anthropic';
 import type { CacheDiagnosis, CacheTtl, RunConfig, SystemBlock } from '../../shared/types';
+import { estimateTokens } from '../../shared/tokens';
 
 /**
  * Minimum cacheable prefix, in tokens, per model.
@@ -211,11 +212,11 @@ async function resolvePrefixTokens(
       return { tokens: Math.max(0, only.input_tokens - 1), measured: true };
     } catch {
       // A diagnostic that throws is worse than one that approximates. Fall
-      // through to ~4 chars/token and say so in the copy.
+      // through to the shared local estimate and say so in the copy.
     }
   }
   return {
-    tokens: Math.round(prefix.reduce((a, b) => a + b.text.length, 0) / 4),
+    tokens: prefix.reduce((a, b) => a + estimateTokens(b.text), 0),
     measured: false,
   };
 }

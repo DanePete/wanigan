@@ -5,9 +5,9 @@ import { estimate } from './estimate';
 import { createAndSubmitRun } from './submit';
 import { rollUp } from './results';
 import { explainApiError } from './anthropic';
-import { MODELS, modelFor } from './pricing';
+import { MODELS, findModel, isPricedModel, modelFor } from './pricing';
 import { modelInfo } from './models';
-import type { ModelInfo, RunConfig } from '../../shared/types';
+import type { CacheTtl, ModelInfo, RunConfig } from '../../shared/types';
 
 /**
  * The refusal lane.
@@ -159,8 +159,8 @@ export function mergeRescue(childRunId: string): { merged: number; parentRunId: 
   }
 
   const parentRunId = child.parent_run_id;
-  const parent = d.prepare('SELECT id, model FROM runs WHERE id = ?').get(parentRunId) as
-    { id: string; model: string } | undefined;
+  const parent = d.prepare('SELECT id, model, config_json FROM runs WHERE id = ?').get(parentRunId) as
+    { id: string; model: string; config_json: string } | undefined;
   if (!parent) throw new Error(`The parent run ${parentRunId} no longer exists, so there is nothing to merge into.`);
 
   const answers = d.prepare(`
@@ -211,7 +211,7 @@ export function mergeRescue(childRunId: string): { merged: number; parentRunId: 
     }
   })();
 
-  rollUp(parentRunId, parent.model);
+  rollUp(parentRunId, parent.model, cacheTtlOf(parent.config_json));
 
   logEvent(parentRunId, 'info',
     `Merged ${merged.toLocaleString()} rescued row(s) from ${childRunId} on ${labelFor(child.model)}. ` +
@@ -290,7 +290,9 @@ async function planRescue(runId: string, fallbackModel: string): Promise<Plan> {
     ...ceilingsFor(parentCfg, fallbackModel, info, notes),
   };
 
-  if (!MODELS.some((m) => m.id === fallbackModel)) {
+  // Same question the estimate answers, asked the same way, so the note and the
+  // estimate's own unpriced marker can never contradict each other.
+  if (!isPricedModel(fallbackModel)) {
     notes.push(`No local pricing for ${fallbackModel} — the cost shown for this rescue uses default rates and may be wrong.`);
   }
 
@@ -325,7 +327,7 @@ function ceilingsFor(
   info: ModelInfo | undefined,
   notes: string[]
 ): Partial<RunConfig> {
-  const priced = MODELS.find((m) => m.id === fallbackModel);
+  const priced = findModel(fallbackModel);
   const label = labelFor(fallbackModel);
   const out: Partial<RunConfig> = {};
 
@@ -406,6 +408,25 @@ function markOf(configJson: string): RescueMark | null {
     return mark && typeof mark.parentRunId === 'string' ? mark : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * The TTL the parent run was configured with.
+ *
+ * rollUp() prices a cache write at 1.25x when nobody tells it the TTL and 2.0x
+ * when told '1h', so calling it without this re-derives a 1-hour parent's totals
+ * 37.5% light on their cache-write line. A merge is the last thing that ever
+ * recomputes those totals, which makes the wrong number permanent.
+ */
+function cacheTtlOf(configJson: string): CacheTtl | undefined {
+  try {
+    const cfg = JSON.parse(configJson) as { cacheTtl?: unknown };
+    return cfg.cacheTtl === '1h' || cfg.cacheTtl === '5m' ? cfg.cacheTtl : undefined;
+  } catch {
+    // An unparseable config is not a reason to abandon the roll-up; the cost
+    // falls back to the 5-minute multiplier, as it did before.
+    return undefined;
   }
 }
 

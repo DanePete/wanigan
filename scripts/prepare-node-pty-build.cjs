@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { signLocalMacAppIfNeeded } = require('./sign-local-macos-app.cjs');
 const { synchronizeElectronAsarIntegrity } = require('./macos-asar-integrity.cjs');
+const { hardenElectronFuses } = require('./electron-fuses.cjs');
 
 /**
  * electron-builder runs @electron/rebuild without force. Its `.forge-meta`
@@ -54,8 +55,16 @@ async function beforeBuild(context) {
  * }} context
  * @returns {Promise<void>}
  */
-async function afterPack(context) {
+async function afterPack(context, options = {}) {
   if (context.electronPlatformName !== 'darwin') return;
+  const hostPlatform = options.hostPlatform || process.platform;
+  // Flipping a macOS framework's fuses, synchronizing its Info.plist hash,
+  // and sealing the result are release requirements, not optional niceties.
+  // A non-macOS host cannot honestly verify all three, so fail closed rather
+  // than creating a signed-looking Darwin artifact with default fuses.
+  if (hostPlatform !== 'darwin') {
+    throw new Error('Wanigan macOS releases must be built on macOS so Electron fuses and archive integrity can be verified.');
+  }
 
   const helper = path.join(
     context.appOutDir,
@@ -88,15 +97,18 @@ async function afterPack(context) {
   // embedded checksum current before any ad-hoc or Developer ID signature
   // seals Info.plist; otherwise a package can pass codesign yet fail once the
   // integrity fuse is enabled.
-  if (process.platform === 'darwin') {
-    await synchronizeElectronAsarIntegrity(path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`));
-  }
+  const appPath = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
+  // Flip the immutable Electron runtime fuses before Info.plist is sealed.
+  // The read-back inside this helper makes a package fail rather than ship if
+  // an Electron upgrade changes the fuse wire or a build step resets it.
+  await (options.hardenElectronFuses || hardenElectronFuses)(appPath);
+  await (options.synchronizeElectronAsarIntegrity || synchronizeElectronAsarIntegrity)(appPath);
 
   // electron-builder skips its signing phase when this Mac has no valid
   // identity. Seal that local app before artifacts are made; the helper itself
   // decides whether a configured/available Developer ID signer should retain
   // full control of the normal signing and notarization flow.
-  await signLocalMacAppIfNeeded(context);
+  await (options.signLocalMacAppIfNeeded || signLocalMacAppIfNeeded)(context);
 }
 
 exports.beforeBuild = beforeBuild;

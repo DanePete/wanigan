@@ -183,11 +183,86 @@ function surfaceRows(byDay: DayUsd[], sync: SyncRow[]): DayRow[] {
   });
 }
 
+/**
+ * Spend per repository, split by meter rather than by surface.
+ *
+ * `sessionUsd` is everything the CLI billed for itself in that repo —
+ * interactive sessions and headless runs both — and `batchUsd` is what Wanigan
+ * priced from token counts. The split is the whole point: the column Wanigan
+ * computed stays separable from the column it was handed.
+ */
+type ProjectSpendRow = {
+  projectId: string | null; projectName: string;
+  sessionUsd: number; batchUsd: number; total: number;
+};
+
+/**
+ * The preload signature for this channel is `unknown[]`, so the shape is
+ * checked here rather than asserted. A row that does not carry the fields is
+ * dropped — a NaN column reads as a real number, and this page is about money.
+ */
+function projectRows(value: unknown[]): ProjectSpendRow[] {
+  const money = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const out: ProjectSpendRow[] = [];
+  for (const row of value) {
+    if (!row || typeof row !== 'object') continue;
+    const r = row as Record<string, unknown>;
+    if (typeof r.projectName !== 'string') continue;
+    out.push({
+      projectId: typeof r.projectId === 'string' ? r.projectId : null,
+      projectName: r.projectName,
+      sessionUsd: money(r.sessionUsd),
+      batchUsd: money(r.batchUsd),
+      total: money(r.total),
+    });
+  }
+  return out;
+}
+
 const WINDOWS = [7, 30, 90];
+
+/**
+ * How long each read may be reused before the 15-second beat asks for it again.
+ *
+ * Every figure on this page is a multi-table aggregate over the whole ledger —
+ * the effort, cache and estimator rollups scan every session, run and row there
+ * is — and ten of them were being recomputed on a clock rather than when
+ * anything moved. So the idle beat reuses what it read recently, and the TTL is
+ * set per read by how fast that number can actually change: the two windowed
+ * series stay on the beat, an all-time distribution does not need to.
+ *
+ * Every explicit signal bypasses this entirely. Changing the window, a
+ * batch-changed event and every Retry button call `load` unquiet, which forces
+ * a full re-read — a cache must never be the reason a page disagrees with the
+ * database after you asked it to look again.
+ */
+const TTL = {
+  /** The headline series. The beat IS its cadence; this never suppresses one. */
+  spend: 15_000,
+  /** A breached cap must not wait behind a slower tier. */
+  breached: 15_000,
+  batch: 30_000,
+  budgets: 60_000,
+  codex: 60_000,
+  /** All-time distributions: a single turn moves them by a rounding error. */
+  rollups: 90_000,
+  accuracy: 120_000,
+  /** Only changes when a repository is added or removed. */
+  projects: 120_000,
+} as const;
 
 /* ── the view ─────────────────────────────────────────────────────────── */
 
-export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) => void }) {
+export default function InsightsView({ onOpenRun, projects: given }: {
+  onOpenRun?: (id: string) => void;
+  /**
+   * The shell already holds the project list and hands it to every other view.
+   * Insights kept a private copy on a 15-second timer instead, so the two could
+   * disagree about which repositories exist. Optional because App does not pass
+   * it yet; until it does, the fallback read below is the honest source.
+   */
+  projects?: Project[];
+}) {
   const [days, setDays] = useState(30);
   const [batch, setBatch] = useState<BatchInsights | null>(null);
   const [byDay, setByDay] = useState<DayUsd[]>([]);
@@ -197,15 +272,35 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
   const [buds, setBuds] = useState<BudgetState[]>([]);
   const [breached, setBreached] = useState<BudgetState[]>([]);
   const [acc, setAcc] = useState<AccuracyRow[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [byProject, setByProject] = useState<ProjectSpendRow[]>([]);
+  const [ownProjects, setOwnProjects] = useState<Project[]>([]);
   const [codexUsage, setCodexUsage] = useState<CodexUsage | null>(null);
   const [errs, setErrs] = useState<{ batch?: string; spend?: string; budgets?: string }>({});
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // The shell's list wins when there is one; the private read is the fallback.
+  const projects = given ?? ownProjects;
+  // A boolean, not the array: `load` is a dependency of the effect that calls
+  // it, so anything unstable in its closure would re-run the whole page on
+  // every render of a parent that rebuilds the list.
+  const shellSuppliesProjects = given !== undefined;
+
   const alive = useRef(true);
   const daysRef = useRef(days);
   daysRef.current = days;
+
+  /**
+   * When each read last succeeded, so the idle beat can skip the ones that
+   * cannot have moved. A failed read is never stamped, so it is retried on the
+   * next beat rather than being cached as an absence.
+   */
+  const readAt = useRef<Map<string, number>>(new Map());
+  const due = useCallback((key: string, ttl: number, force: boolean) => {
+    if (force) return true;
+    const at = readAt.current.get(key);
+    return at === undefined || Date.now() - at >= ttl;
+  }, []);
 
   // Set on mount, not just cleared on unmount: StrictMode mounts twice in dev,
   // and a flag only ever cleared would leave the second mount reading dead.
@@ -217,42 +312,95 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
   const load = useCallback(async (d: number, quiet = false) => {
     if (!quiet) setBusy(true);
     const next: { batch?: string; spend?: string; budgets?: string } = {};
+    // An unquiet load is somebody asking — a window change, a Retry, the first
+    // paint — so it reads everything. Only the idle beat consults the TTLs.
+    const force = !quiet;
+    const stamp = (key: string) => { readAt.current.set(key, Date.now()); };
 
     await Promise.all([
       (async () => {
+        if (!due('batch', TTL.batch, force)) return;
         try {
           const r = await window.wanigan.batch.insights();
+          stamp('batch');
           if (alive.current) setBatch(r as BatchInsights);
         } catch (e) { next.batch = msg(e); }
       })(),
       (async () => {
+        if (!due('codex', TTL.codex, force)) return;
         try {
           const value = await window.wanigan.codex.usageSummary();
+          stamp('codex');
           if (alive.current) setCodexUsage(value);
         } catch { /* Codex may not be installed; the rest of Insights still works. */ }
       })(),
+      // The two windowed series, keyed by window so switching to 90 days can
+      // never be answered out of the 7-day read.
       (async () => {
+        if (!due(`spend:${d}`, TTL.spend, force)) return;
         try {
-          const [bd, sy, ef, ca] = await Promise.all([
+          const [bd, sy] = await Promise.all([
             window.wanigan.spend.byDay(d),
             window.wanigan.spend.sync(d),
-            window.wanigan.spend.effort(),
-            window.wanigan.spend.cache(),
           ]);
+          stamp(`spend:${d}`);
           if (!alive.current) return;
-          setByDay(bd); setSync(sy); setEffort(ef); setCache(ca);
+          setByDay(bd); setSync(sy);
         } catch (e) { next.spend = msg(e); }
       })(),
       (async () => {
+        if (!due(`project:${d}`, TTL.spend, force)) return;
         try {
-          const [ls, br, ac, pr] = await Promise.all([
-            window.wanigan.budgets.list(),
-            window.wanigan.budgets.breached(),
-            window.wanigan.budgets.accuracy(),
-            window.wanigan.projects.list(),
+          const rows = await window.wanigan.spend.byProject(d);
+          stamp(`project:${d}`);
+          if (alive.current) setByProject(projectRows(rows));
+        } catch (e) { next.spend = msg(e); }
+      })(),
+      // All-time distributions. Neither is scoped by the window and neither
+      // moves visibly inside one beat.
+      (async () => {
+        if (!due('rollups', TTL.rollups, force)) return;
+        try {
+          const [ef, ca] = await Promise.all([
+            window.wanigan.spend.effort(),
+            window.wanigan.spend.cache(),
           ]);
+          stamp('rollups');
           if (!alive.current) return;
-          setBuds(ls); setBreached(br); setAcc(ac); setProjects(pr);
+          setEffort(ef); setCache(ca);
+        } catch (e) { next.spend = msg(e); }
+      })(),
+      (async () => {
+        if (!due('budgets', TTL.budgets, force)) return;
+        try {
+          const ls = await window.wanigan.budgets.list();
+          stamp('budgets');
+          if (alive.current) setBuds(ls);
+        } catch (e) { next.budgets = msg(e); }
+      })(),
+      (async () => {
+        if (!due('breached', TTL.breached, force)) return;
+        try {
+          const br = await window.wanigan.budgets.breached();
+          stamp('breached');
+          if (alive.current) setBreached(br);
+        } catch (e) { next.budgets = msg(e); }
+      })(),
+      (async () => {
+        if (!due('accuracy', TTL.accuracy, force)) return;
+        try {
+          const ac = await window.wanigan.budgets.accuracy();
+          stamp('accuracy');
+          if (alive.current) setAcc(ac);
+        } catch (e) { next.budgets = msg(e); }
+      })(),
+      (async () => {
+        // Skipped entirely when the shell handed the list down.
+        if (shellSuppliesProjects || !due('projects', TTL.projects, force)) return;
+        try {
+          const pr = await window.wanigan.projects.list();
+          stamp('projects');
+          if (alive.current) setOwnProjects(pr);
         } catch (e) { next.budgets = msg(e); }
       })(),
     ]);
@@ -261,15 +409,26 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
     setErrs(next);
     setReady(true);
     setBusy(false);
-  }, []);
+  }, [due, shellSuppliesProjects]);
 
   useEffect(() => { void load(days); }, [load, days]);
 
   useEffect(() => {
+    // The beat is idle refresh and consults the TTLs. A batch-changed event is
+    // the ledger telling us it moved, so it re-reads everything — a cache must
+    // not be the reason a finished run is missing from the page that reports on
+    // it. Its `quiet` flag stays true so the header does not flash "Refreshing".
     const tick = () => void load(daysRef.current, true);
-    const off = window.wanigan.on.batchChanged(tick);
-    const t = setInterval(tick, 15_000);
-    return () => { off(); clearInterval(t); };
+    const off = window.wanigan.on.batchChanged(() => { readAt.current.clear(); tick(); });
+    const t = setInterval(() => { if (document.hidden) return; tick(); }, 15_000);
+    // A page nobody is looking at does not need ten aggregate queries a minute;
+    // the beat resumes, and re-reads, the moment the window comes back.
+    const onVisible = () => { if (!document.hidden) tick(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      off(); clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [load]);
 
   const rows = useMemo(() => surfaceRows(byDay, sync), [byDay, sync]);
@@ -439,6 +598,8 @@ export default function InsightsView({ onOpenRun }: { onOpenRun?: (id: string) =
 
       <SyncComparison rows={rows} days={days} totals={win} onWiden={() => setDays(90)} />
 
+      <SpendByProject rows={byProject} days={days} />
+
       <Budgets buds={buds} projects={projects} onSaved={(next) => {
         setBuds(next);
         window.wanigan.budgets.breached().then((b) => { if (alive.current) setBreached(b); }).catch(() => {});
@@ -564,7 +725,8 @@ function CodexActivity({ usage }: { usage: CodexUsage }) {
       <div className="stat-grid ins-hero-row">
         <Stat label="Total tokens" value={num(usage.totalTokens)} sub="input plus output" />
         <Stat label="Input" value={num(usage.inTokens)} sub={`${num(usage.cacheRead)} cached reads`} />
-        <Stat label="Output" value={num(usage.outTokens)} sub="including model output" />
+        <Stat label="Output" value={num(usage.outTokens)}
+              sub={`${pct(usage.totalTokens > 0 ? usage.outTokens / usage.totalTokens : 0)} of all tokens`} />
         <Stat label="Dollar amount" value="Not reported" sub="your Codex plan does not expose one per conversation" />
       </div>
       <p className="faint" style={{ marginTop: 10, fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
@@ -793,6 +955,86 @@ function SurfaceOverTime({ rows, days, onWiden }: {
       )}
 
       <Meters of={['cli', 'wanigan']} />
+    </div>
+  );
+}
+
+/**
+ * Which repository the money went to.
+ *
+ * Every other axis on this page is surface, effort, model or day — none of
+ * which answers "which repo is this costing me", the question anybody with more
+ * than two projects asks first. The main process has always grouped this; the
+ * channel was simply never called.
+ *
+ * The two columns are two different instruments and stay apart. A repo whose
+ * spend cannot be attributed keeps its own row rather than being dropped: a
+ * session that ran before its folder was registered is still money.
+ */
+function SpendByProject({ rows, days }: { rows: ProjectSpendRow[]; days: number }) {
+  if (!rows.length) return null;
+  const max = Math.max(...rows.map((r) => r.total));
+  const total = rows.reduce((a, r) => a + r.total, 0);
+  return (
+    <div className="chart-card">
+      <h3>Spend by repository</h3>
+      <p className="sub">
+        Last {days} days, dearest first. Sessions and headless runs are the CLI's own figure; batch
+        runs are Wanigan's arithmetic. They are separate columns because they are separate meters.
+      </p>
+      <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 7 }}>
+        {rows.map((r) => {
+          const p = max > 0 ? (r.total / max) * 100 : 0;
+          const cliShare = r.total > 0 ? (r.sessionUsd / r.total) * 100 : 0;
+          return (
+            <div key={r.projectId ?? r.projectName}>
+              <div style={{ display: 'flex', fontSize: 'var(--t-small)', marginBottom: 3, gap: 8 }}>
+                <span className="trunc">{r.projectName}</span>
+                <span className="mono ins-num" style={{ marginLeft: 'auto', color: 'var(--text-dim)' }}>
+                  {cents(r.total)}
+                </span>
+              </div>
+              {/* One bar, two segments, in the page's fixed slot order:
+                  sessions are always slot 1 and batches always slot 2, on every
+                  chart here, so the mapping is learned once. */}
+              <div style={{ height: 7, borderRadius: 'var(--r-sm)', background: 'var(--bg-sunk)',
+                            overflow: 'hidden', display: 'flex', width: `${Math.max(p, 1)}%` }}>
+                <div style={{ width: `${cliShare}%`, background: SERIES[0] }} />
+                <div style={{ width: `${100 - cliShare}%`, background: SERIES[1] }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <table className="viz-table">
+        <thead>
+          <tr>
+            <th>Repository</th>
+            <th className="ins-th-r">{METER.cli.glyph} Sessions &amp; headless</th>
+            <th className="ins-th-r">{METER.wanigan.glyph} Batches</th>
+            <th className="ins-th-r">Total</th>
+            <th className="ins-th-r">Share</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.projectId ?? r.projectName}>
+              <td className="trunc">
+                {r.projectName}
+                {r.projectId === null && (
+                  <span className="ins-dim"> · not attributed to a registered repository</span>
+                )}
+              </td>
+              <td className="n">{cents(r.sessionUsd)}</td>
+              <td className="n">{cents(r.batchUsd)}</td>
+              <td className="n">{cents(r.total)}</td>
+              <td className="n ins-dim">{total > 0 ? pct(r.total / total, 1) : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Meters of={['cli', 'wanigan']}
+              extra="Totals are the two columns added, never reconciled against each other." />
     </div>
   );
 }
@@ -2148,7 +2390,10 @@ function SpendOverTime({ runs, onOpenRun }: {
 }) {
   const [ref, w] = useWidth();
   const withCost = runs.filter((r) => Number(r.cost_usd) > 0);
-  if (withCost.length < 2) return null;
+  if (!withCost.length) return null;
+  // One run is not a trend, but it is still a run with a cost and a way into
+  // it. Dropping the whole card took the table and its links with it.
+  const trend = withCost.length >= 2;
 
   const max = Math.max(...withCost.map((r) => Number(r.cost_usd)));
   const models = [...new Set(withCost.map((r) => String(r.model)))];
@@ -2165,7 +2410,12 @@ function SpendOverTime({ runs, onOpenRun }: {
   return (
     <div className="chart-card" ref={ref}>
       <h3>Cost per run</h3>
-      <p className="sub">Oldest to newest. Hover for the run; click to open it.</p>
+      <p className="sub">
+        {trend
+          ? 'Oldest to newest. Hover for the run; click to open it.'
+          : 'One run has a settled cost so far. A cost-over-time line needs at least two, so none is drawn — the run itself is below.'}
+      </p>
+      {trend && (
       <svg className="chart-svg" viewBox={`0 0 ${w} ${H}`} height={H} role="img"
            aria-label="Cost per run over time">
         {[0, 1].map((f) => {
@@ -2195,7 +2445,8 @@ function SpendOverTime({ runs, onOpenRun }: {
         <text x={PAD_L} y={H - 8} fontSize="10" fill="var(--text-faint)">oldest</text>
         <text x={w - PAD_R} y={H - 8} fontSize="10" textAnchor="end" fill="var(--text-faint)">newest</text>
       </svg>
-      {models.length > 1 && (
+      )}
+      {trend && models.length > 1 && (
         <div className="legend">
           {models.map((m) => (
             <span key={m} className="legend-item">

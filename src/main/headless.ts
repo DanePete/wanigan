@@ -4,18 +4,37 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { db, logEvent, newRunId } from './db';
 import { detectProviders, providerById, refreshProviderPacks, shellPath } from './providers';
-import { projectById } from './store';
+import { listProjects, projectById } from './store';
 import { trustFor, registerPolicyContext, releasePolicyContext } from './policy';
 import { writeHookSettings, cleanupHookSettings } from './hooks';
 import { flags, learningSettings } from './settings';
 import { createWorktree, removeWorktree } from './worktrees';
-import { buildBriefing } from './learning';
-import type { HeadlessConfig, HeadlessRow, HeadlessRun, TrustLevel } from '../shared/types';
+import { buildBriefing, recordSessionBriefing } from './learning';
+import { claimFireForRun, recordFireOutcome, type ScheduleFire } from './schedule';
+import { announceRunEnded } from './notify';
+import type {
+  HeadlessConfig, HeadlessRow, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, TrustLevel,
+} from '../shared/types';
 
 const exec = promisify(execFile);
 
 type ProviderDef = NonNullable<ReturnType<typeof providerById>>;
-type StoredHeadlessConfig = HeadlessConfig & { providerProfileFingerprint: string };
+type StoredHeadlessConfig = HeadlessConfig & {
+  providerProfileFingerprint: string;
+  /** Set only for a run a schedule paid for; see startHeadlessRun. */
+  scheduleFire?: ScheduleFire;
+  allProjects?: boolean;
+};
+
+/**
+ * What a caller may ask for, which is a little more than what a run stores.
+ *
+ * `allProjects` is an intent, not a selection: it is the difference between an
+ * operator who means every repository and a payload that simply left the field
+ * out. See the fan-out guard in startHeadlessRun for why that difference has
+ * to be stated rather than inferred.
+ */
+export type HeadlessStart = HeadlessConfig & { allProjects?: boolean };
 
 /** Row output is read in a pane, not streamed; past this it is only weight. */
 const OUTPUT_LIMIT = 64 * 1024;
@@ -156,6 +175,11 @@ export function headlessEnv(PATH: string, providerEnv: Record<string, string> = 
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
     if (STRIPPED_ENV.includes(k)) continue;
+    // Same reason attended sessions strip these (sessions.ts): a CODEX_* marker
+    // inherited from a parent writer makes the child attach to that session
+    // instead of doing the run it was launched for. CODEX_HOME is deliberately
+    // kept — it is the user's credential/conversation location, not a marker.
+    if (k.startsWith('CODEX_') && k !== 'CODEX_HOME') continue;
     if (STRIPPED_PREFIXES.some((pre) => k.startsWith(pre))) continue;
     out[k] = v;
   }
@@ -387,6 +411,18 @@ async function changedSet(dir: string, baseHead: string | null): Promise<Set<str
 /* ── run state ────────────────────────────────────────────────────────── */
 
 const liveChildren = new Map<string, ChildProcess>();
+/**
+ * Rows this process has claimed and not yet finished, whether or not an agent
+ * is up for them yet.
+ *
+ * Broader than `liveChildren` and narrower than the table, and both of those
+ * differences matter at quit. A row inside the pre-spawn window has no child
+ * to count but is this process's to stop; a row the launchd scheduler is
+ * running is in the same table and is not this process's to touch at all.
+ * Quitting the window used to read the table globally, which cancelled the
+ * daemon's rows in the database while its detached agents kept spending.
+ */
+const ownedRows = new Map<string, { runId: string; projectId: string }>();
 /** Runs the human stopped. Checked on entry so a late dispatch never revives one. */
 const canceledRuns = new Set<string>();
 
@@ -490,7 +526,7 @@ export function registerHeadlessRunner(fn: HeadlessRunner | null) {
 
 /* ── the fan-out ──────────────────────────────────────────────────────── */
 
-export async function startHeadlessRun(cfg: HeadlessConfig): Promise<{ runId: string; rows: number }> {
+export async function startHeadlessRun(cfg: HeadlessStart): Promise<{ runId: string; rows: number }> {
   // The app may have been open while an on-disk pack changed. Refresh before
   // accepting the requested identity or probing its executable.
   refreshProviderPacks();
@@ -541,6 +577,32 @@ export async function startHeadlessRun(cfg: HeadlessConfig): Promise<{ runId: st
     );
   }
   if (!picked.length) throw new Error('Pick at least one repository to fan out across.');
+
+  /* ── the blast-radius gate ──────────────────────────────────────────
+     An omitted field must never be able to mean "everything". A queued
+     payload that names no repository is expanded to the whole project list
+     before it reaches this function, and by then a run across every
+     repository the operator has ever registered is indistinguishable from
+     one they chose repository by repository — same array, same length,
+     nobody asked. It is reachable without a window, it spends a per-repo
+     budget on each one, and it grows silently every time a project is added.
+
+     So the one selection that cannot be told apart from an accident has to
+     be said out loud. Anything smaller is untouched: this is about the shape
+     of the request, not the size of the bill.
+     ───────────────────────────────────────────────────────────────── */
+  if (picked.length > 1 && !cfg.allProjects) {
+    const chosen = new Set(cfg.projectIds);
+    const registered = listProjects();
+    if (registered.length === picked.length && registered.every((p) => chosen.has(p.id))) {
+      throw new Error(
+        `This would run an unattended agent in all ${picked.length} registered repositories, and nothing in the ` +
+        `request says that was meant — a payload that leaves the repository out arrives here looking exactly the ` +
+        `same. Name the repositories to run, or start it again with the every-repository intent set.`
+      );
+    }
+  }
+
   const constrained = picked.find(({ project }) => project && trustFor(project.id) !== 'trusted');
   if (constrained && !detected.capabilities.policy) {
     throw new Error(
@@ -558,11 +620,28 @@ export async function startHeadlessRun(cfg: HeadlessConfig): Promise<{ runId: st
     throw new Error(`${def.label} changed or was disabled before the run could be queued.`);
   }
   def = finalDef;
+
+  /* ── who paid for this ──────────────────────────────────────────────
+     A schedule spends a fire, records it as 'queued', and until now that was
+     the last thing ever written about it: the queue item completes the
+     moment this function returns, so a schedule whose fan-out failed every
+     night for a month read exactly like one that succeeded every night.
+
+     The link goes this way round because `schedule_runs` has no run_id
+     column to hold the other one, and the run's name is a display string a
+     rename breaks. `config_json` is the run's own definition and already
+     round-trips, so the fire's id rides there and finalize() reads it back.
+     Claimed here — after every refusal above — so a run that never starts
+     cannot consume the fire it would have reported on.
+     ───────────────────────────────────────────────────────────────── */
+  const scheduleFire = claimFireForRun({ prompt: cfg.prompt, projectIds: cfg.projectIds });
+
   const storedConfig: StoredHeadlessConfig = {
     ...cfg,
     // Last on purpose: an IPC caller cannot choose the identity that later rows
     // are authorised to launch.
     providerProfileFingerprint: def.profileFingerprint,
+    ...(scheduleFire ? { scheduleFire } : {}),
   };
 
   const runId = newRunId();
@@ -573,6 +652,55 @@ export async function startHeadlessRun(cfg: HeadlessConfig): Promise<{ runId: st
   // those rows again and the old run would sit 'in_progress' forever.
   sweepInterruptedRows();
 
+  try {
+    writeRunRows(d, runId, cfg, storedConfig, picked, now, def.label);
+  } catch (error) {
+    // The fire was claimed a moment ago and only finalize() clears it. Leaving
+    // it 'running' would hide a run that never existed behind a status that
+    // reads as work in progress.
+    if (scheduleFire) {
+      recordFireOutcome(scheduleFire, 'failed',
+        `The run could not be created: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    throw error;
+  }
+
+  const ids = picked.map((p) => p.id);
+  if (runner) {
+    for (const id of ids) {
+      try {
+        const started = runner(runId, id);
+        // A registered runner may hand back a promise, and a rejection from one
+        // is the same failure as a synchronous throw. Without this it escapes
+        // as an unhandled rejection and the row stays 'pending' for ever.
+        if (started && typeof (started as Promise<unknown>).then === 'function') {
+          void (started as Promise<unknown>).catch((e) => {
+            failRow(runId, id, e instanceof Error ? e.message : String(e));
+          });
+        }
+      } catch (e) {
+        failRow(runId, id, e instanceof Error ? e.message : String(e));
+      }
+    }
+  } else {
+    // Not awaited: the caller gets its run id now and the repos report in as
+    // they finish. Awaiting here would block the caller for the whole fan-out.
+    void driveInternally(runId, ids);
+  }
+
+  return { runId, rows: picked.length };
+}
+
+/** The run and its one row per repository, written before anything dispatches. */
+function writeRunRows(
+  d: ReturnType<typeof db>,
+  runId: string,
+  cfg: HeadlessStart,
+  storedConfig: StoredHeadlessConfig,
+  picked: { id: string; project: ReturnType<typeof projectById> }[],
+  now: number,
+  providerLabel: string,
+): void {
   d.prepare(`
     INSERT INTO runs (id, name, preset, project_id, model, status, config_json, kind,
                       total_requests, created_at)
@@ -598,25 +726,8 @@ export async function startHeadlessRun(cfg: HeadlessConfig): Promise<{ runId: st
 
   // Prompt content never reaches the event log; it lives in config_json, which
   // is the run's own definition, exactly as a batch template does.
-  logEvent(runId, 'info', `Fan-out across ${picked.length} ${picked.length === 1 ? 'repository' : 'repositories'} using ${def.label}.`);
+  logEvent(runId, 'info', `Fan-out across ${picked.length} ${picked.length === 1 ? 'repository' : 'repositories'} using ${providerLabel}.`);
   d.prepare("UPDATE runs SET status='in_progress', submitted_at=? WHERE id=?").run(Date.now(), runId);
-
-  const ids = picked.map((p) => p.id);
-  if (runner) {
-    for (const id of ids) {
-      try {
-        void runner(runId, id);
-      } catch (e) {
-        failRow(runId, id, e instanceof Error ? e.message : String(e));
-      }
-    }
-  } else {
-    // Not awaited: the caller gets its run id now and the repos report in as
-    // they finish. Awaiting here would block the caller for the whole fan-out.
-    void driveInternally(runId, ids);
-  }
-
-  return { runId, rows: picked.length };
 }
 
 async function driveInternally(runId: string, projectIds: string[]) {
@@ -625,8 +736,9 @@ async function driveInternally(runId: string, projectIds: string[]) {
     for (;;) {
       const id = pending.shift();
       if (id === undefined) return;
-      // Every failure is already recorded on its row; a rejection escaping here
-      // would only take the remaining repos down with it.
+      // Every failure is recorded on its row, including the ones that escape
+      // runRow — runOneRepo writes those down before rethrowing. A rejection
+      // arriving here would only take the remaining repos down with it.
       await runOneRepo(runId, id).catch(() => { /* recorded on the row */ });
     }
   });
@@ -636,7 +748,33 @@ async function driveInternally(runId: string, projectIds: string[]) {
 /* ── one repo ─────────────────────────────────────────────────────────── */
 
 export async function runOneRepo(runId: string, projectId: string): Promise<void> {
+  const key = rowKey(runId, projectId);
+  try {
+    await runRow(runId, projectId);
+  } catch (error) {
+    // A failure runRow anticipated is already on its row. One that escaped is
+    // not, and the row it escaped from is still 'running' — left alone it stays
+    // that way until some later restart sweeps it, which is a fan-out reporting
+    // nothing wrong while its run never ends. Only a row this process was
+    // holding is closed out: the other way to arrive here is runRow refusing to
+    // double-dispatch a row somebody else is running, and that row is theirs.
+    if (ownedRows.has(key)) {
+      failRow(runId, projectId,
+        `Wanigan could not finish this repository: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    throw error;
+  } finally {
+    // Ownership is what scopes an attended quit to the agents this process
+    // actually started. A key left behind here would let a quit cancel a row
+    // the launchd scheduler is still running, so it is released on every exit
+    // including the ones nothing else expects.
+    ownedRows.delete(key);
+  }
+}
+
+async function runRow(runId: string, projectId: string): Promise<void> {
   const d = db();
+  const key = rowKey(runId, projectId);
   // Before the row is read, and synchronously: after a restart the dispatcher
   // hands back rows still marked 'running' by the dead process, and the guard
   // below would return success for every one of them.
@@ -717,6 +855,10 @@ export async function runOneRepo(runId: string, projectId: string): Promise<void
   const startedAt = Date.now();
   d.prepare("UPDATE headless_rows SET status='running', started_at=? WHERE run_id=? AND project_id=?")
     .run(startedAt, runId, projectId);
+  // Claimed at the same moment the row is, not at spawn: everything between
+  // here and the spawn is an await, and a row this process is holding open in
+  // that window is still a row only this process may cancel.
+  ownedRows.set(key, { runId, projectId });
 
   // Before the worktree, so a CLI that has since been uninstalled fails without
   // leaving a whole checkout of the repo behind for nobody.
@@ -860,6 +1002,15 @@ export async function runOneRepo(runId: string, projectId: string): Promise<void
         allowedEvidenceRoots: [row.project_path],
       });
       learningCapsule = learned.text.trim() || null;
+      // Keyed by the same synthetic id the run's hook events use, so the
+      // delivery stays auditable even though fan-out rows have no session_log.
+      try {
+        recordSessionBriefing({
+          sessionId: hookId, delivery: 'argv', providerId: def.id,
+          projectId, briefing: learned,
+          maxTokens: learningSettings().briefingMaxTokens,
+        });
+      } catch { /* the record is evidence, never a launch dependency */ }
     } catch { /* learned context is an optimization, never a launch dependency */ }
   }
 
@@ -920,7 +1071,6 @@ export async function runOneRepo(runId: string, projectId: string): Promise<void
     return;
   }
 
-  const key = rowKey(runId, projectId);
   liveChildren.set(key, child);
 
   // Held to PARSE_LIMIT rather than OUTPUT_LIMIT: the cost lives in the result
@@ -1049,6 +1199,18 @@ export async function runOneRepo(runId: string, projectId: string): Promise<void
     projectId
   );
 
+  // Said on the run, not only on the row. The queue marks a per-repo item
+  // 'done' whether the agent succeeded or failed — this function returns
+  // normally either way — so a fan-out where every repository errored reads as
+  // twelve completed queue items on the dispatcher's own seven-day clock. The
+  // run's event log is where that evidence belongs and how long it should last.
+  // Bounded to one line: the full stderr is on the row, which is where the
+  // reader is being sent.
+  if (status !== 'succeeded') {
+    const why = error ? ` — ${error.split('\n')[0].trim().slice(0, 200)}` : '';
+    logEvent(runId, status === 'canceled' ? 'warn' : 'error', `${row.project_name}: ${status}${why}`);
+  }
+
   // Only now, not at exit: between the agent exiting and this write there are
   // git calls that take seconds, and a cancel arriving in that gap would find no
   // child, mark the row 'canceled' and count it as a repo it stopped — when the
@@ -1064,10 +1226,19 @@ export async function runOneRepo(runId: string, projectId: string): Promise<void
 
 function failRow(runId: string, projectId: string, message: string, startedAt?: number) {
   const now = Date.now();
-  db().prepare(`
+  // Only a row that has not already reached an answer. Every ordinary call site
+  // holds a 'pending' or 'running' row, but the rejection handlers added around
+  // the dispatch paths can arrive after the row closed itself out, and
+  // overwriting a measured outcome with a late error would lose the truth.
+  const changed = db().prepare(`
     UPDATE headless_rows SET status='errored', error=?, ended_at=?, duration_ms=?
-     WHERE run_id=? AND project_id=?
+     WHERE run_id=? AND project_id=? AND status IN ('pending','running')
   `).run(message, now, startedAt ? now - startedAt : null, runId, projectId);
+  if (changed.changes) {
+    // The row carries the detail; the run log is what says a repository failed
+    // at all, and it is the copy that outlives the queue item.
+    logEvent(runId, 'error', `${projectById(projectId)?.name ?? projectId}: ${message.split('\n')[0].trim().slice(0, 300)}`);
+  }
   finalize(runId);
 }
 
@@ -1103,20 +1274,121 @@ function finalize(runId: string) {
   ).get(runId) as { n: number };
   if (open.n > 0) return;
 
-  d.prepare(`
+  const ended = d.prepare(`
     UPDATE runs SET status='ended', ended_at=COALESCE(ended_at, ?)
      WHERE id=? AND status NOT IN ('ended','failed')
   `).run(Date.now(), runId);
+  // Every row calls finalize(), and the last few can each find the run already
+  // closed. The status transition is the only edge in here, which is what the
+  // outcome write-back and the notification hang off — otherwise a twelve-repo
+  // fan-out would announce itself twelve times over.
+  if (!ended.changes) return;
+  reportRunEnded(runId);
+}
+
+/** Failures first, so a truncated notification keeps the part worth reading. */
+const ROW_REPORT_ORDER = ['errored', 'timeout', 'blocked', 'canceled', 'succeeded'];
+const ROW_FAILURES = new Set(['errored', 'timeout', 'blocked']);
+
+/**
+ * The one place a finished fan-out reports itself.
+ *
+ * Two audiences that were both being left out. The schedule that spent a fire
+ * on this run only ever recorded that it was dispatched, so a month of
+ * failures and a month of successes read identically in its history. And the
+ * operator who started an unattended run precisely so they could walk away was
+ * told nothing at all when it ended, in an app whose notification toggle
+ * defaults on.
+ */
+function reportRunEnded(runId: string): void {
+  const d = db();
+  const rows = d.prepare('SELECT status, COUNT(*) n FROM headless_rows WHERE run_id=? GROUP BY status')
+    .all(runId) as { status: string; n: number }[];
+
+  try {
+    const run = d.prepare('SELECT config_json, cost_usd FROM runs WHERE id=?')
+      .get(runId) as { config_json: string; cost_usd: number } | undefined;
+    const fire = scheduleFireOf(run?.config_json);
+    if (fire) {
+      const failed = rows.filter((r) => ROW_FAILURES.has(r.status)).reduce((n, r) => n + r.n, 0);
+      const total = rows.reduce((n, r) => n + r.n, 0);
+      const parts = [...rows]
+        .sort((a, b) => ROW_REPORT_ORDER.indexOf(a.status) - ROW_REPORT_ORDER.indexOf(b.status))
+        .map((r) => `${r.n} ${r.status}`);
+      recordFireOutcome(
+        fire,
+        failed > 0 ? 'failed' : 'ok',
+        // "recorded", not "spent": a CLI that reports no cost is written down
+        // as $0.00 and warned about on the run, never estimated into a figure
+        // the schedule history would then read as a measurement.
+        `${total} ${total === 1 ? 'repository' : 'repositories'} — ${parts.join(', ') || 'no rows'} · $${(run?.cost_usd ?? 0).toFixed(2)} recorded.`,
+      );
+    }
+  } catch (error) {
+    // The fan-out's own record is already written and is the authority. A
+    // schedule history row that could not be updated must not turn a finished
+    // run into a thrown error inside somebody's completion handler.
+    console.warn('[wanigan] could not record the schedule outcome for', runId, error);
+  }
+
+  announceRunEnded(runId);
+}
+
+/**
+ * The schedule fire a run was started for, read back out of its own config.
+ *
+ * Validated rather than trusted: config_json is old data as much as new, and a
+ * run written by a build before fires were linked has no such field at all.
+ */
+function scheduleFireOf(configJson: string | undefined): ScheduleFire | null {
+  if (!configJson) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(configJson);
+  } catch {
+    // A config that cannot be read still describes a run that happened; it just
+    // has no link to follow back to a schedule.
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const fire = (parsed as Record<string, unknown>).scheduleFire;
+  if (!fire || typeof fire !== 'object') return null;
+  const { scheduleId, fireId } = fire as Record<string, unknown>;
+  if (typeof scheduleId !== 'string' || !scheduleId) return null;
+  if (typeof fireId !== 'number' || !Number.isInteger(fireId) || fireId <= 0) return null;
+  return { scheduleId, fireId };
 }
 
 /* ── reads ────────────────────────────────────────────────────────────── */
 
-export function headlessRows(runId: string): HeadlessRow[] {
-  const rows = db().prepare(
-    'SELECT * FROM headless_rows WHERE run_id = ? ORDER BY project_name'
-  ).all(runId) as Record<string, string | number | null>[];
+/**
+ * A ceiling on one run's rows, not a page.
+ *
+ * A fan-out writes exactly one row per repository it was started for, so no
+ * real run reaches this — it bounds a table that has been corrupted or edited
+ * by hand rather than truncating work somebody is waiting on. Silently short
+ * would be indistinguishable from a small run, so a read that hits it says so.
+ */
+const ROW_READ_LIMIT = 500;
 
-  return rows.map((r) => ({
+/** The columns the list and detail reads share, spelled out so a later column
+ *  cannot join every read by accident the way `SELECT *` let output do. */
+const ROW_COLUMNS =
+  'run_id, project_id, project_name, project_path, status, cost_usd, duration_ms, ' +
+  'exit_code, files_changed, worktree, started_at, ended_at';
+
+type RowRecord = Record<string, string | number | null>;
+
+function noteTruncated(runId: string, n: number): void {
+  if (n < ROW_READ_LIMIT) return;
+  console.warn(
+    `[wanigan] run ${runId} has at least ${ROW_READ_LIMIT} headless rows; the read stopped there.`
+  );
+}
+
+/** Everything a row records except its identity in the fan-out. */
+function toRowBase(r: RowRecord): Omit<HeadlessRow, 'output' | 'error'> {
+  return {
     runId: String(r.run_id),
     projectId: String(r.project_id),
     projectName: String(r.project_name),
@@ -1125,13 +1397,73 @@ export function headlessRows(runId: string): HeadlessRow[] {
     costUsd: Number(r.cost_usd) || 0,
     durationMs: r.duration_ms === null ? null : Number(r.duration_ms),
     exitCode: r.exit_code === null ? null : Number(r.exit_code),
-    output: r.output === null ? null : String(r.output),
-    error: r.error === null ? null : String(r.error),
     filesChanged: Number(r.files_changed) || 0,
     worktree: r.worktree === null ? null : String(r.worktree),
     startedAt: r.started_at === null ? null : Number(r.started_at),
     endedAt: r.ended_at === null ? null : Number(r.ended_at),
+  };
+}
+
+export function headlessRows(runId: string): HeadlessRow[] {
+  const rows = db().prepare(
+    `SELECT ${ROW_COLUMNS}, output, error FROM headless_rows
+      WHERE run_id = ? ORDER BY project_name LIMIT ?`
+  ).all(runId, ROW_READ_LIMIT) as RowRecord[];
+  noteTruncated(runId, rows.length);
+
+  return rows.map((r) => ({
+    ...toRowBase(r),
+    output: r.output === null ? null : String(r.output),
+    error: r.error === null ? null : String(r.error),
   }));
+}
+
+/**
+ * The same rows with the agent's stdout left where it is.
+ *
+ * The list channel renders none of that text and refires every few seconds,
+ * and every row holds up to OUTPUT_LIMIT of it, so each poll carried the whole
+ * run's stdout into main to decide two booleans. SQLite answers both without
+ * handing the text over; `headlessRowDetail` fetches the row a reader expands.
+ */
+export function headlessRowSummaries(runId: string): HeadlessRowSummary[] {
+  const rows = db().prepare(
+    `SELECT ${ROW_COLUMNS},
+            (output IS NOT NULL AND output <> '') AS has_output,
+            (error  IS NOT NULL AND error  <> '') AS has_error
+       FROM headless_rows WHERE run_id = ? ORDER BY project_name LIMIT ?`
+  ).all(runId, ROW_READ_LIMIT) as RowRecord[];
+  noteTruncated(runId, rows.length);
+
+  return rows.map((r) => ({
+    ...toRowBase(r),
+    output: null,
+    error: null,
+    hasOutput: Number(r.has_output) === 1,
+    hasError: Number(r.has_error) === 1,
+  }));
+}
+
+/**
+ * One row's output and error, for the reader who expanded it.
+ *
+ * Keyed on the pair that identifies a row — which is also the table's primary
+ * key — so a repository's transcript costs one row rather than the run's.
+ * Null, not an empty row, when the pair names nothing: a run whose rows were
+ * pruned and a repository that was never in it are different answers, and the
+ * caller is the one that knows how to say so.
+ */
+export function headlessRowDetail(runId: string, projectId: string): HeadlessRowDetail | null {
+  const row = db().prepare(
+    'SELECT output, error FROM headless_rows WHERE run_id = ? AND project_id = ?'
+  ).get(runId, projectId) as { output: string | null; error: string | null } | undefined;
+  if (!row) return null;
+  return {
+    runId,
+    projectId,
+    output: row.output === null ? null : String(row.output),
+    error: row.error === null ? null : String(row.error),
+  };
 }
 
 export function headlessRuns(limit = 50): HeadlessRun[] {
@@ -1254,21 +1586,49 @@ function waitForChildren(children: ChildProcess[], timeoutMs: number): Promise<v
  * pre-spawn race; TERM then bounded KILL reaches every live group.
  */
 export async function shutdownHeadless(graceMs = KILL_GRACE_MS): Promise<number> {
-  const runIds = db().prepare(`
-    SELECT DISTINCT run_id FROM headless_rows
-     WHERE status IN ('pending','running')
-  `).all() as { run_id: string }[];
+  const owned = [...ownedRows.values()];
+  const runIds = [...new Set(owned.map((r) => r.runId))];
+  // Entered before anything is signalled: a row inside runRow's pre-spawn
+  // window has no child to kill, and this flag is the second signal it tests
+  // before it launches one.
+  for (const id of runIds) canceledRuns.add(id);
+
+  const d = db();
+  const mark = d.prepare(
+    "UPDATE headless_rows SET status='canceled', ended_at=? WHERE run_id=? AND project_id=? AND status IN ('pending','running')"
+  );
+  const now = Date.now();
+  const children: ChildProcess[] = [];
   let stopped = 0;
-  for (const { run_id } of runIds) stopped += cancelHeadless(run_id);
+  for (const { runId, projectId } of owned) {
+    const child = liveChildren.get(rowKey(runId, projectId));
+    if (child) {
+      children.push(child);
+      // A row with a live agent closes itself out on exit with its real cost
+      // and file count; marking it here would replace a measurement with a
+      // guess. One whose agent has already gone is on that same path.
+      if (killTree(child, 'SIGTERM')) stopped++;
+      continue;
+    }
+    stopped += mark.run(now, runId, projectId).changes;
+  }
 
-  const initial = [...liveChildren.values()];
-  await waitForChildren(initial, Math.max(0, graceMs));
-
-  // `cancelHeadless` schedules its own escalation, but an attended quit needs
-  // a bounded, awaited boundary rather than relying on an unref'd future timer.
-  const stubborn = [...liveChildren.values()]
-    .filter((child) => child.exitCode === null && child.signalCode === null);
+  await waitForChildren(children, Math.max(0, graceMs));
+  // A bounded, awaited boundary rather than an unref'd future timer: the app is
+  // on its way out, and an escalation scheduled for later never happens.
+  const stubborn = children.filter((child) => child.exitCode === null && child.signalCode === null);
   for (const child of stubborn) killTree(child, 'SIGKILL');
   await waitForChildren(stubborn, Math.min(2_000, Math.max(500, graceMs)));
+
+  for (const id of runIds) {
+    try {
+      logEvent(id, 'warn', 'Wanigan quit — the repositories this window was running were stopped.');
+      finalize(id);
+    } catch (error) {
+      // Quit is already under way and the database may be closing under it.
+      // Nothing here is allowed to hold the app open.
+      console.warn('[wanigan] could not close out headless run', id, error);
+    }
+  }
   return stopped;
 }

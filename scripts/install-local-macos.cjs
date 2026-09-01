@@ -23,6 +23,7 @@ const path = require('node:path');
 const { execFile: execFileCallback } = require('node:child_process');
 const { promisify } = require('node:util');
 const { assertElectronAsarIntegrity } = require('./macos-asar-integrity.cjs');
+const { assertHardenedElectronFuses } = require('./electron-fuses.cjs');
 
 const execFile = promisify(execFileCallback);
 
@@ -56,10 +57,10 @@ function usage() {
   return `Usage: npm run install:mac:arm64 [-- --source /absolute/path/Wanigan.app]
 
 Installs a verified arm64 Wanigan.app into /Applications. The installer checks
-the bundle identifier, node-pty spawn-helper, and a strict sealed code
-signature before staging anything. It asks a currently installed Wanigan to
-quit, never sends a signal to force it down, and leaves the existing app alone
-if it does not exit before the timeout.
+the bundle identifier, node-pty spawn-helper, hardened Electron fuses, archive
+integrity, and a strict sealed code signature before staging anything. It asks
+a currently installed Wanigan to quit, never sends a signal to force it down,
+and leaves the existing app alone if it does not exit before the timeout.
 
 Options:
   --source <path>          Source app bundle (default: ${DEFAULT_SOURCE})
@@ -284,6 +285,7 @@ async function verifyCodeSignature(appPath, execute = execFile) {
 async function assertVerifiedWaniganApp(appPath, options = {}) {
   const filesystem = options.filesystem || fs;
   const execute = options.execute || execFile;
+  const verifyElectronFuses = options.assertHardenedElectronFuses || assertHardenedElectronFuses;
   const resolvedPath = path.resolve(assertSafePathInput(appPath, 'App path'));
   if (path.basename(resolvedPath) !== APP_FILENAME) {
     throw installError(`Expected a ${APP_FILENAME} bundle, received ${resolvedPath}.`);
@@ -315,6 +317,11 @@ async function assertVerifiedWaniganApp(appPath, options = {}) {
     await assertElectronAsarIntegrity(resolvedPath, { filesystem, execute });
   } catch (error) {
     throw installError(`Electron archive integrity verification failed for ${resolvedPath}.\n${error.message}`, error);
+  }
+  try {
+    await verifyElectronFuses(resolvedPath);
+  } catch (error) {
+    throw installError(`Electron fuse verification failed for ${resolvedPath}.\n${error.message}`, error);
   }
   return { appPath: resolvedPath, executable, helper, bundleIdentifier, signatureMetadata };
 }

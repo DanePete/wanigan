@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { db, dataDir } from '../db';
+import { createHash, randomUUID } from 'node:crypto';
+import { db, dataDir, ensurePrivateDir, ensurePrivateFile } from '../db';
+import { projectById } from '../store';
 import { issueMcpSessionCapability, revokeMcpSessionCapabilities } from './server';
 import type { McpServerConfig, McpServerStatus } from '../../shared/types';
 
@@ -68,6 +69,419 @@ export function listServers(projectId?: string | null): McpServerConfig[] {
   return (rows as Row[]).map(toConfig);
 }
 
+/* ── trust ───────────────────────────────────────────────────────────── */
+
+/**
+ * An enabled stdio server is a standing grant to execute a local command.
+ *
+ * The CLI spawns it from the generated config at every launch in scope, for as
+ * long as the row exists — so a form with a "command" field and a save button
+ * was quietly the widest privilege in the app, granted with no approval step,
+ * in a product that makes the user approve a SHA-256 of a provider manifest
+ * before it will read a JSON file. This closes that gap to at least the pack
+ * model's shape: trust is a separate act from enabling, it is bound to the
+ * exact command line and scope that was displayed, and changing any of them
+ * withdraws it.
+ *
+ * HTTP servers are deliberately not gated here. They execute nothing locally,
+ * and the URL is already constrained to HTTPS or loopback above. What they can
+ * still do — carry repository context to a remote endpoint — is a real question
+ * and a different one; it is not answered by pretending a URL is a command.
+ */
+
+const TRUST_STATE_FILE = '.mcp-server-trust.json';
+const MAX_TRUST_STATE_BYTES = 4 * 1024 * 1024;
+
+/** Exactly what the user was shown. Kept as the durable record of the grant. */
+export type McpApprovedCommand = {
+  name: string;
+  transport: 'stdio' | 'http';
+  scope: 'global' | 'project';
+  projectId: string | null;
+  command: string;
+  args: string;
+};
+
+type TrustRecord = { sha256: string; trustedAt: number; approved: McpApprovedCommand };
+type TrustState = { schemaVersion: 1; servers: Record<string, TrustRecord> };
+
+export type McpServerTrustState =
+  /** The current command line matches one the user approved. */
+  | 'trusted'
+  /** Nothing local is executed, so there is nothing to approve. */
+  | 'not-required'
+  /** Never approved, or approved as something else. */
+  | 'needs-trust';
+
+function trustStateFile(): string {
+  return path.join(dataDir(), TRUST_STATE_FILE);
+}
+
+function freshTrust(): TrustState {
+  return { schemaVersion: 1, servers: {} };
+}
+
+/**
+ * A trust file that cannot be read is treated as no trust at all. Failing open
+ * here would turn a corrupt file into a silent execution grant, which is the
+ * one outcome this whole section exists to prevent.
+ */
+function readTrust(): TrustState {
+  const file = trustStateFile();
+  let raw: unknown;
+  try {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.size > MAX_TRUST_STATE_BYTES) return freshTrust();
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    // ENOENT on a fresh install, or a file someone edited into nonsense. Both
+    // mean the same thing: no server has an approved command line.
+    return freshTrust();
+  }
+  if (!raw || typeof raw !== 'object') return freshTrust();
+  const parsed = raw as { schemaVersion?: unknown; servers?: unknown };
+  if (parsed.schemaVersion !== 1 || !parsed.servers || typeof parsed.servers !== 'object') return freshTrust();
+
+  const servers: Record<string, TrustRecord> = {};
+  for (const [id, value] of Object.entries(parsed.servers as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object') continue;
+    const record = value as Partial<TrustRecord>;
+    const approved = record.approved;
+    if (typeof record.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(record.sha256)) continue;
+    if (!approved || typeof approved !== 'object') continue;
+    servers[id] = {
+      sha256: record.sha256,
+      trustedAt: typeof record.trustedAt === 'number' ? record.trustedAt : 0,
+      approved: {
+        name: typeof approved.name === 'string' ? approved.name : '',
+        transport: approved.transport === 'http' ? 'http' : 'stdio',
+        scope: approved.scope === 'project' ? 'project' : 'global',
+        projectId: typeof approved.projectId === 'string' ? approved.projectId : null,
+        command: typeof approved.command === 'string' ? approved.command : '',
+        args: typeof approved.args === 'string' ? approved.args : '',
+      },
+    };
+  }
+  return { schemaVersion: 1, servers };
+}
+
+function writeTrust(state: TrustState): void {
+  const dir = ensurePrivateDir(dataDir());
+  const file = path.join(dir, TRUST_STATE_FILE);
+  const temp = path.join(dir, `${TRUST_STATE_FILE}.${process.pid}.${Date.now()}.tmp`);
+  fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+  try {
+    fs.renameSync(temp, file);
+  } catch (error) {
+    try { fs.unlinkSync(temp); } catch { /* the rename is what mattered */ }
+    throw error;
+  }
+  try { ensurePrivateFile(file); } catch { /* the write succeeded; the mode is a hardening step */ }
+}
+
+/**
+ * The digest covers every field a reviewer is shown, not just the command.
+ * Renaming a server changes the tool ids the agent calls and the name that
+ * appears in a policy prompt; re-scoping it changes which repositories the
+ * command is launched against. Approving one line is not approving the others.
+ */
+function trustDigest(v: McpApprovedCommand): string {
+  return createHash('sha256')
+    .update(JSON.stringify(['mcp-server-trust/1', v.transport, v.name, v.scope, v.projectId ?? '', v.command, v.args]))
+    .digest('hex');
+}
+
+function approvedShape(row: Pick<Row, 'name' | 'transport' | 'project_id' | 'command' | 'args'>): McpApprovedCommand {
+  return {
+    name: row.name,
+    transport: row.transport === 'http' ? 'http' : 'stdio',
+    scope: row.project_id ? 'project' : 'global',
+    projectId: row.project_id,
+    command: row.command ?? '',
+    args: row.args ?? '',
+  };
+}
+
+/** Only a locally executed command needs approval; see the note above. */
+function requiresTrust(transport: 'stdio' | 'http'): boolean {
+  return transport === 'stdio';
+}
+
+function trustStateFor(id: string, shape: McpApprovedCommand, state: TrustState): {
+  trust: McpServerTrustState; sha256: string; record: TrustRecord | null;
+} {
+  const sha256 = trustDigest(shape);
+  if (!requiresTrust(shape.transport)) return { trust: 'not-required', sha256, record: null };
+  const record = state.servers[id] ?? null;
+  return { trust: record?.sha256 === sha256 ? 'trusted' : 'needs-trust', sha256, record };
+}
+
+/* ── how the policy gate reads this server, and on what evidence ─────── */
+
+/**
+ * A copy of the verb test in policy.ts, kept here so a reviewer can be told
+ * which of a server's tools the gate treats as reads.
+ *
+ * It is a copy because policy.ts does not export it, and the two must not
+ * drift: if that list changes and this one does not, this section starts
+ * describing a rule the gate no longer applies. Exporting the single copy from
+ * policy.ts is the right fix and belongs in that file.
+ */
+const MCP_READ_VERB = /^(get|list|read|search|fetch|query|describe|find|view|show|lookup|inspect|count|check|preview|summar)/i;
+
+/** The tool half of an id, sliced the way policy.ts slices it. */
+function toolOf(toolName: string, server: string): string | null {
+  const parts = toolName.split('__');
+  if (parts.length < 3 || parts[1] !== server) return null;
+  const name = parts.slice(2).join('__');
+  return name.startsWith(`${server}_`) ? name.slice(server.length + 1) : name;
+}
+
+export type McpServerClassification = {
+  /**
+   * How read-vs-write is decided for this server's tools. There is only one
+   * value today, and that is the point of recording it: nothing observes what
+   * an MCP tool actually did, so the gate tests the tool's *name* against a
+   * verb list. A server that calls a mutating tool `get_everything` is allowed
+   * without asking at read-only trust. A reviewer needs to be able to tell that
+   * apart from an allow backed by evidence.
+   */
+  basis: 'tool-name';
+  /** Distinct tools of this server that have completed a call on record. */
+  toolsSeen: number;
+  /** Of those, the ones the name test reads as reads. */
+  nameDerivedReadTools: string[];
+  /** Completed calls on record for those tools. Counted, not estimated. */
+  nameDerivedReadCalls: number;
+  /** The rest — the ones that would be put to the user at read-only trust. */
+  askedTools: string[];
+  note: string;
+};
+
+const CLASSIFICATION_NOTE =
+  'Read and write are derived from each tool’s name, never from what the call did. ' +
+  'At read-only trust a name beginning with a read verb is allowed without asking, ' +
+  'so a server is free to name a mutating tool "get_everything". The call counts below are observed; ' +
+  'the read/write split beside them is not.';
+
+/**
+ * What the policy gate's read/write split for this server rests on, with the
+ * observed call counts it applies to.
+ */
+export function serverClassification(name: string): McpServerClassification {
+  const rows = db().prepare(`
+    SELECT tool_name, COUNT(*) AS calls
+    FROM session_events
+    WHERE event IN ('PostToolUse', 'PostToolUseFailure')
+      AND tool_name GLOB ?
+    GROUP BY tool_name
+  `).all(`${MCP_TOOL_PREFIX}${name}__*`) as { tool_name: string; calls: number }[];
+
+  const readTools: string[] = [];
+  const askedTools: string[] = [];
+  let readCalls = 0;
+  let seen = 0;
+  for (const row of rows) {
+    const tool = toolOf(row.tool_name, name);
+    if (!tool) continue;
+    seen += 1;
+    if (MCP_READ_VERB.test(tool)) {
+      readTools.push(tool);
+      readCalls += Number(row.calls);
+    } else {
+      askedTools.push(tool);
+    }
+  }
+  return {
+    basis: 'tool-name',
+    toolsSeen: seen,
+    nameDerivedReadTools: readTools.sort(),
+    nameDerivedReadCalls: readCalls,
+    askedTools: askedTools.sort(),
+    note: CLASSIFICATION_NOTE,
+  };
+}
+
+/* ── the consent view ────────────────────────────────────────────────── */
+
+export type McpServerReview = {
+  id: string;
+  name: string;
+  transport: 'stdio' | 'http';
+  scope: 'global' | 'project';
+  projectId: string | null;
+  /** argv[0], as stored. Null for an HTTP server. */
+  command: string | null;
+  /** argv[1..], split the way writeMcpConfig splits them. */
+  args: string[];
+  url: string | null;
+  /** True when {{PROJECT_PATH}} appears, so the argv differs per repository. */
+  resolvesPerProject: boolean;
+  /**
+   * The concrete argv for one project, when the scope names one. A global
+   * server using the placeholder has no single answer, and none is invented.
+   */
+  resolvedFor: { projectPath: string; command: string; args: string[] } | null;
+  /** The digest a caller passes back to trustServer. */
+  sha256: string;
+  trust: McpServerTrustState;
+  /** What was approved, if anything ever was. */
+  approved: McpApprovedCommand | null;
+  trustedSha256: string | null;
+  trustedAt: number | null;
+  enabled: boolean;
+  classification: McpServerClassification;
+};
+
+function reviewOf(row: Row, state: TrustState): McpServerReview {
+  const shape = approvedShape(row);
+  const { trust, sha256, record } = trustStateFor(row.id, shape, state);
+  const command = row.command ?? null;
+  const args = row.args ?? '';
+  const template = `${command ?? ''} ${args} ${row.url ?? ''}`;
+  const projectPath = row.project_id ? projectById(row.project_id)?.path ?? null : null;
+
+  return {
+    id: row.id,
+    name: row.name,
+    transport: shape.transport,
+    scope: shape.scope,
+    projectId: row.project_id,
+    command,
+    args: args ? splitArgs(args) : [],
+    url: row.url ?? null,
+    resolvesPerProject: template.includes(PROJECT_PATH_SLOT),
+    resolvedFor: command && projectPath
+      ? {
+          projectPath,
+          command: command.split(PROJECT_PATH_SLOT).join(projectPath),
+          args: args ? splitArgs(args.split(PROJECT_PATH_SLOT).join(projectPath)) : [],
+        }
+      : null,
+    sha256,
+    trust,
+    approved: record?.approved ?? null,
+    trustedSha256: record?.sha256 ?? null,
+    trustedAt: record?.trustedAt ?? null,
+    enabled: row.enabled === 1,
+    classification: serverClassification(row.name),
+  };
+}
+
+/**
+ * Everything a person needs to see before enabling a server: the command, its
+ * arguments, the scope it runs in, whether it has ever been approved, and what
+ * the policy gate's read/write split for it is actually based on.
+ */
+export function reviewServers(projectId?: string | null): McpServerReview[] {
+  const state = readTrust();
+  const d = db();
+  const rows =
+    projectId === undefined
+      ? d.prepare('SELECT * FROM mcp_servers ORDER BY project_id IS NOT NULL, name').all()
+      : projectId === null
+        ? d.prepare('SELECT * FROM mcp_servers WHERE project_id IS NULL ORDER BY name').all()
+        : d.prepare(
+            'SELECT * FROM mcp_servers WHERE project_id IS NULL OR project_id = ? ORDER BY project_id IS NOT NULL, name'
+          ).all(projectId);
+  return (rows as Row[]).map((row) => reviewOf(row, state));
+}
+
+/** The same view for one server, or null if it is not registered. */
+export function reviewServer(id: string): McpServerReview | null {
+  const row = db().prepare('SELECT * FROM mcp_servers WHERE id = ?').get(id) as Row | undefined;
+  return row ? reviewOf(row, readTrust()) : null;
+}
+
+/**
+ * Approve one exact command line.
+ *
+ * The digest must be the one the caller was shown, so a server edited between
+ * being displayed and being approved is refused rather than approved as
+ * something else. Trusting deliberately does not enable: the pack model keeps
+ * those two acts apart and so does this, because a single click that both
+ * approves and starts using a local command is the thing being fixed.
+ */
+export function trustServer(id: string, sha256: string): McpServerReview {
+  const row = db().prepare('SELECT * FROM mcp_servers WHERE id = ?').get(id) as Row | undefined;
+  if (!row) throw new Error(`No MCP server ${id} is registered.`);
+  const shape = approvedShape(row);
+  if (!requiresTrust(shape.transport)) {
+    throw new Error(`"${row.name}" is an HTTP server: it runs no local command, so there is nothing to trust.`);
+  }
+  const current = trustDigest(shape);
+  if (current !== sha256) {
+    throw new Error(
+      `"${row.name}" changed after it was reviewed. Read the new command, arguments and scope before trusting them.`
+    );
+  }
+
+  const state = readTrust();
+  state.servers[id] = { sha256: current, trustedAt: Date.now(), approved: shape };
+  writeTrust(state);
+  db().prepare('UPDATE mcp_servers SET enabled = 0 WHERE id = ?').run(id);
+
+  const after = reviewServer(id);
+  if (!after) throw new Error(`No MCP server ${id} is registered.`);
+  return after;
+}
+
+/**
+ * Withdraw the grant and stop handing the server out.
+ *
+ * The order matters. Revoking first means that if the row update fails the
+ * server is still enabled but no longer trusted, and writeMcpConfig leaves it
+ * out — the safe half-state. Doing it the other way round would leave a trusted
+ * grant standing after the user asked for it to be gone.
+ */
+export function revokeServerTrust(id: string): McpServerReview | null {
+  const state = readTrust();
+  delete state.servers[id];
+  writeTrust(state);
+  db().prepare('UPDATE mcp_servers SET enabled = 0 WHERE id = ?').run(id);
+  return reviewServer(id);
+}
+
+/**
+ * Start or stop handing a registered server to sessions, without editing it.
+ *
+ * The same refusal as upsertServer, at the narrower surface a toggle wants:
+ * enabling is the act that grants execution, so it is the act that needs the
+ * approval. Disabling is always allowed.
+ */
+export function setServerEnabled(id: string, enabled: boolean): McpServerReview {
+  const row = db().prepare('SELECT * FROM mcp_servers WHERE id = ?').get(id) as Row | undefined;
+  if (!row) throw new Error(`No MCP server ${id} is registered.`);
+  const shape = approvedShape(row);
+  if (enabled && requiresTrust(shape.transport)) {
+    const { trust } = trustStateFor(id, shape, readTrust());
+    if (trust !== 'trusted') {
+      throw new Error(
+        `Trust this exact command before enabling "${row.name}". An enabled stdio MCP server is a command the ` +
+        'agent\'s CLI runs at every launch in this scope.'
+      );
+    }
+  }
+  db().prepare('UPDATE mcp_servers SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, id);
+  const after = reviewServer(id);
+  if (!after) throw new Error(`No MCP server ${id} is registered.`);
+  return after;
+}
+
+/**
+ * Enabled rows whose command is not currently approved.
+ *
+ * These exist: a database written before this gate had no trust to record, and
+ * writeMcpConfig now leaves them out of every generated config. Surfacing them
+ * is the difference between a server the user can see needs approving and one
+ * that has simply stopped working.
+ */
+export function untrustedEnabledServers(projectId?: string | null): McpServerReview[] {
+  return reviewServers(projectId).filter((s) => s.enabled && s.trust === 'needs-trust');
+}
+
+/* ── registration ────────────────────────────────────────────────────── */
+
 export function upsertServer(cfg: Omit<McpServerConfig, 'id'> & { id?: string }): McpServerConfig {
   const name = (cfg.name ?? '').trim();
   if (!NAME_RE.test(name)) {
@@ -124,6 +538,25 @@ export function upsertServer(cfg: Omit<McpServerConfig, 'id'> & { id?: string })
     );
   }
 
+  // Saving a server is free; enabling one is a standing grant to execute
+  // `command` at every session launch in scope. Approval is bound to the exact
+  // line, so editing a trusted server's command drops it back to needs-trust
+  // here rather than silently changing what the agent's CLI will spawn.
+  const shape: McpApprovedCommand = {
+    name, transport, scope: projectId ? 'project' : 'global', projectId,
+    command: command ?? '', args: args ?? '',
+  };
+  if (cfg.enabled && requiresTrust(transport)) {
+    const { trust } = trustStateFor(id, shape, readTrust());
+    if (trust !== 'trusted') {
+      throw new Error(
+        `Trust this exact command before enabling "${name}". An enabled stdio MCP server is a command the agent's ` +
+        'CLI runs at every launch in this scope, so it is approved the way a provider pack is: read the command, ' +
+        'arguments and scope, trust that exact line, then enable it.'
+      );
+    }
+  }
+
   db().prepare(`
     INSERT INTO mcp_servers (id, project_id, name, transport, command, args, url, enabled, created_at)
     VALUES (@id,@project,@name,@transport,@command,@args,@url,@enabled,@created)
@@ -140,6 +573,14 @@ export function upsertServer(cfg: Omit<McpServerConfig, 'id'> & { id?: string })
 
 export function removeServer(id: string) {
   db().prepare('DELETE FROM mcp_servers WHERE id = ?').run(id);
+  // The grant goes with the row. Ids are random, so a leftover record could
+  // never be re-matched anyway — but a stored approval for a server that no
+  // longer exists is a claim nobody can check.
+  const state = readTrust();
+  if (state.servers[id]) {
+    delete state.servers[id];
+    writeTrust(state);
+  }
   // Nothing else to clean up. Use is read back out of session_events, which is
   // the record of what the agents did: removing a server stops it being handed
   // out, it does not unhappen the calls already made through it.
@@ -267,11 +708,25 @@ export function writeMcpConfig(projectId: string | null, projectPath: string, se
   const fill = (v: string) => v.split(PROJECT_PATH_SLOT).join(projectPath);
   const entries: Record<string, StdioEntry | HttpEntry> = {};
 
+  // Second check, not a duplicate one. upsertServer refuses to enable an
+  // unapproved command, but a database written before that gate existed is full
+  // of enabled rows nobody ever approved, and this is the last point before the
+  // command reaches a process. Leaving one out is visible: it reads as
+  // needs-trust in Settings, and untrustedEnabledServers() lists it.
+  const trust = readTrust();
   for (const s of listServers(projectId)) {
     if (!s.enabled) continue;
     if (s.transport === 'http') {
       if (s.url) entries[s.name] = { type: 'http', url: fill(s.url) };
     } else if (s.command) {
+      const shape: McpApprovedCommand = {
+        name: s.name, transport: 'stdio', scope: s.projectId ? 'project' : 'global',
+        projectId: s.projectId, command: s.command, args: s.args ?? '',
+      };
+      if (trustStateFor(s.id, shape, trust).trust !== 'trusted') {
+        console.warn(`[wanigan] MCP server "${s.name}" was left out of this session: its command is not trusted.`);
+        continue;
+      }
       entries[s.name] = { command: fill(s.command), args: s.args ? splitArgs(fill(s.args)) : [] };
     }
   }

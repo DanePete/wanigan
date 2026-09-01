@@ -76,7 +76,12 @@ async function main() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wanigan-local-install-fixture-'));
   try {
     const { app, helper } = await createFixtureBundle(root);
-    const verified = await assertVerifiedWaniganApp(app, { execute: fixtureExecutor() });
+    const verified = await assertVerifiedWaniganApp(app, {
+      execute: fixtureExecutor(),
+      assertHardenedElectronFuses: async (verifiedApp) => {
+        assert.equal(verifiedApp, app, 'the installer verifies fuses on the exact app it will promote');
+      },
+    });
     assert.equal(verified.bundleIdentifier, BUNDLE_IDENTIFIER);
     assert.equal(verified.helper, helper);
 
@@ -99,6 +104,14 @@ async function main() {
       assertVerifiedWaniganApp(app, { execute: fixtureExecutor({ integrityHash: '0'.repeat(64) }) }),
       /Electron archive integrity verification failed.*does not match/s,
       'a sealed app whose embedded app.asar hash is stale must never be installed',
+    );
+    await assert.rejects(
+      assertVerifiedWaniganApp(app, {
+        execute: fixtureExecutor(),
+        assertHardenedElectronFuses: async () => { throw new Error('Electron fuse RunAsNode is enabled.'); },
+      }),
+      /Electron fuse verification failed.*RunAsNode is enabled/s,
+      'a sealed app with an unsafe Electron fuse can never be installed',
     );
 
     await assert.rejects(

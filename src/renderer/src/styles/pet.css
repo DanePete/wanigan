@@ -41,5 +41,8 @@
               padding: 0 3px 0 0; font-size: 10px; line-height: 1; }
 .pet-toggle:hover { color: var(--text); }
 .pet-toggle span { display: inline-block; transition: transform .15s ease; }
-.pet-alert { margin-left: auto; font-size: 9.5px; color: var(--warning); white-space: nowrap; }
+/* Deliberately not --warning. That token belongs to real agent attention, and
+   this rail already carries the attention queue; a toy borrowing it competes
+   with the one signal the rail exists to deliver. */
+.pet-alert { margin-left: auto; font-size: 9.5px; color: var(--text-faint); white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) { .pet-toggle span { transition: none; } }

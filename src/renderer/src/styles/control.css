@@ -64,5 +64,14 @@
 .control-table td, .control-table th { padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .control-table small { display: block; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btn-small { padding: 3px 7px; font-size: 11px; }
-@media (max-width: 1100px) { .control-guide { grid-template-columns: 1fr 1fr; } .control-example { grid-column: 1 / -1; } }
-@media (max-width: 900px) { .control-view { padding: 18px; } .control-grid, .control-guide { grid-template-columns: 1fr; } .control-example { grid-column: auto; } .control-node { display: grid; } .control-node-actions { width: 100%; } .control-evidence { grid-template-columns: 1fr; } }
+/* Prose inside the create card — the empty-state route and the stated reason
+   the Create button is disabled — is not a labelled field, so it sits tight to
+   the control it explains instead of taking a full 11px grid step. */
+.control-create .control-hint { margin: -5px 0 0; font-size: 12px; line-height: 1.45; }
+.control-create > .btn:not(.btn-primary) { justify-self: start; }
+/* Control is not a .pane, so compact.css never reached it and it kept its own
+   1100/900 shelves — the visible result was Control at 18px padding beside a
+   document surface still at 16px. Both queries now sit on the named ladder in
+   index.css (wide 1180, medium 980) and the padding uses the shared step. */
+@media (max-width: 1180px) { .control-guide { grid-template-columns: 1fr 1fr; } .control-example { grid-column: 1 / -1; } }
+@media (max-width: 980px) { .control-view { padding: var(--s-4); } .control-grid, .control-guide { grid-template-columns: 1fr; } .control-example { grid-column: auto; } .control-node { display: grid; } .control-node-actions { width: 100%; } .control-evidence { grid-template-columns: 1fr; } }

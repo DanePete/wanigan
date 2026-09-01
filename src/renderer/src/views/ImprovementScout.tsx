@@ -60,7 +60,6 @@ type ScoutSuggestion = {
   summary: string;
   status: string;
   category: string;
-  score: number | null;
   confidence: number | null;
   effort: string;
   risk: string;
@@ -207,7 +206,6 @@ function normalizeSuggestion(value: unknown, index: number): ScoutSuggestion {
     summary: string(raw.summary ?? raw.description ?? raw.rationale, 'No summary was supplied.'),
     status: string(raw.status, 'new').toLowerCase().replace(/\s+/g, '_'),
     category: string(raw.category ?? raw.kind, 'Improvement'),
-    score: numeric(raw.score ?? raw.priorityScore ?? raw.impactScore),
     confidence: normaliseConfidence(raw.confidence),
     effort: string(raw.effort ?? raw.estimatedEffort, 'Unestimated'),
     risk: string(raw.risk ?? raw.riskLevel, 'elevated').toLowerCase(),
@@ -257,16 +255,37 @@ function formatDate(at: number | null): string {
   return new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function pct(value: number | null): string {
-  return value === null ? '—' : `${Math.round(value * 100)}%`;
-}
-
-function score(value: number | null): string {
-  return value === null ? '—' : `${Math.round(value)}/100`;
+/**
+ * Confidence is a deterministic rule-table output, not a measurement, so it
+ * renders as a plain 0–1 value beside its basis instead of as a headline
+ * percentage — the same grammar the Learning surfaces already use. A proposal
+ * the rules gave no confidence says so rather than printing a bare dash.
+ */
+function ruleConfidence(value: number | null): string {
+  return value === null ? 'not derived' : Math.max(0, Math.min(1, value)).toFixed(2);
 }
 
 function goalHref(id: string): string {
   return `#goal=${encodeURIComponent(id)}`;
+}
+
+/**
+ * Effort arrives as free text, so ordering it alphabetically put 'high' above
+ * 'low' above 'medium' and interleaved 'Unestimated' — a ranking that ranked
+ * nothing. Known words sort smallest first; anything unrecognised sorts last
+ * rather than claiming a size it was never given.
+ */
+const EFFORT_RANK: Record<string, number> = {
+  trivial: 0, tiny: 0, xs: 0,
+  small: 1, low: 1, s: 1,
+  medium: 2, moderate: 2, m: 2,
+  large: 3, high: 3, l: 3,
+  xl: 4, huge: 4,
+};
+
+function effortRank(effort: string): number {
+  const known = EFFORT_RANK[effort.trim().toLowerCase()];
+  return known === undefined ? Number.MAX_SAFE_INTEGER : known;
 }
 
 export default function ImprovementScout({ projects, onOpenGoal }: {
@@ -284,13 +303,25 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
   const [notice, setNotice] = useState<Notice>(null);
   const [status, setStatus] = useState('all');
   const [query, setQuery] = useState('');
-  const [sort, setSort] = useState<'score' | 'newest' | 'effort'>('score');
+  /**
+   * Newest first, deliberately. The queue used to open on a composite priority
+   * number that came from a hardcoded rule table rather than from any
+   * measurement, which made the first thing a reader saw the least defensible
+   * thing on the page. Arrival order is a filing order and claims nothing.
+   */
+  const [sort, setSort] = useState<'newest' | 'effort'>('newest');
   const [inspectedId, setInspectedId] = useState<string | null>(null);
   const [goalProjectId, setGoalProjectId] = useState('');
   const [goalIds, setGoalIds] = useState<Record<string, string>>({});
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  /**
+   * `quiet` reloads the same records without flashing the loading state. Every
+   * action here funnels back through load(), and blanking the queue after a
+   * "Mark reviewed" threw away the reader's place in a list they were working
+   * down. The first read and an explicit re-read still announce themselves.
+   */
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     try {
       const api = scout();
       const [nextOverview, nextSettings, nextSources, nextSuggestions] = await Promise.all([
@@ -333,13 +364,13 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
 
   const patchSettings = useCallback((patch: JsonObject, message: string) => act(
     'settings',
-    async () => { await scout().setSettings(patch); await load(); },
+    async () => { await scout().setSettings(patch); await load(true); },
     { message },
   ), [act, load]);
 
   const toggleSource = useCallback((source: ScoutSource, enabled: boolean) => act(
     `source-${source.id}`,
-    async () => { await scout().setSourceEnabled(source.id, enabled); await load(); },
+    async () => { await scout().setSourceEnabled(source.id, enabled); await load(true); },
     { message: `${source.label} is ${enabled ? 'included' : 'excluded'} from future scans.` },
   ), [act, load]);
 
@@ -347,7 +378,7 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
     `run-${mode}`,
     async () => {
       await scout().run(mode === 'manual' ? { mode, allowNetwork: true } : { mode });
-      await load();
+      await load(true);
     },
     { message: mode === 'preview'
       ? 'Local preview complete. No external source was contacted, nothing was scheduled, and no agent was started.'
@@ -356,7 +387,7 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
 
   const updateSuggestion = useCallback((suggestion: ScoutSuggestion, nextStatus: string, message: string) => act(
     `suggestion-${suggestion.id}-${nextStatus}`,
-    async () => { await scout().updateSuggestion(suggestion.id, { status: nextStatus }); await load(); },
+    async () => { await scout().updateSuggestion(suggestion.id, { status: nextStatus }); await load(true); },
     { message },
   ), [act, load]);
 
@@ -374,7 +405,7 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
       }
       const receipt: ScoutGoalReceipt = await api.createGoal(suggestion.id, { projectId: goalProjectId });
       setGoalIds((previous) => ({ ...previous, [suggestion.id]: receipt.goalId }));
-      await load();
+      await load(true);
       setNotice({ message: 'Goal created. It is linked to this proposal and its evidence; no agent was started.', goalId: receipt.goalId });
     },
   ), [act, goalProjectId, load]);
@@ -395,9 +426,11 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
         .some((part) => part.toLowerCase().includes(normalized));
     });
     return matches.sort((a, b) => {
-      if (sort === 'newest') return (b.createdAt ?? 0) - (a.createdAt ?? 0);
-      if (sort === 'effort') return a.effort.localeCompare(b.effort);
-      return (b.score ?? -1) - (a.score ?? -1) || (b.createdAt ?? 0) - (a.createdAt ?? 0);
+      if (sort === 'effort') {
+        const byEffort = effortRank(a.effort) - effortRank(b.effort);
+        return byEffort !== 0 ? byEffort : (b.createdAt ?? 0) - (a.createdAt ?? 0);
+      }
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
     });
   }, [query, sort, status, suggestions]);
 
@@ -497,10 +530,10 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
           </section>
 
           <section className="card scout-filterbar" aria-label="Filter Scout proposals">
-            <div className="scout-filter-copy"><span className="label">Review queue</span><h3>{filteredSuggestions.length} proposal{filteredSuggestions.length === 1 ? '' : 's'}</h3><p>Ranked proposals are suggestions, not a claim that the feature is appropriate for your setup.</p></div>
+            <div className="scout-filter-copy"><span className="label">Review queue</span><h3>{filteredSuggestions.length} proposal{filteredSuggestions.length === 1 ? '' : 's'}</h3><p>The order here is a filing order, not a ranking — a proposal is a suggestion, never a claim that the change suits your setup.</p></div>
             <div className="scout-filter-controls">
               <label><span className="label">Status</span><select className="field" value={status} onChange={(event) => setStatus(event.target.value)}>{statuses.map((item) => <option value={item} key={item}>{item === 'all' ? 'All statuses' : displayStatus(item)}</option>)}</select></label>
-              <label><span className="label">Order</span><select className="field" value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="score">Highest score</option><option value="newest">Newest first</option><option value="effort">Effort</option></select></label>
+              <label><span className="label">Order</span><select className="field" value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="newest">Newest first</option><option value="effort">Smallest effort first · unestimated last</option></select></label>
               <label><span className="label">Find</span><input className="field" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search proposals" /></label>
             </div>
           </section>
@@ -517,9 +550,12 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
                   <div className="scout-suggestion-title"><span className="label">{suggestion.category} · found {formatDate(suggestion.createdAt)}</span><h3>{suggestion.title}</h3><p>{suggestion.summary}</p></div>
                   <span className={`scout-status ${suggestion.status}`}>{displayStatus(suggestion.status)}</span>
                 </div>
-                <div className="scout-score-grid" aria-label="Proposal assessment">
-                  <div><small>Priority score</small><strong>{score(suggestion.score)}</strong></div>
-                  <div><small>Confidence</small><strong>{pct(suggestion.confidence)}</strong></div>
+                {/* Reason codes, not a verdict. The evidence count is observed; the
+                    rest are the rule-table inputs that raised this proposal, each
+                    named so the reader can disagree with a specific one. */}
+                <div className="scout-reason-grid" role="group" aria-label="Why this proposal was raised">
+                  <div><small>Linked evidence</small><strong>{suggestion.evidence.length} source{suggestion.evidence.length === 1 ? '' : 's'}</strong></div>
+                  <div><small>Confidence · rule-derived</small><strong>{ruleConfidence(suggestion.confidence)}</strong></div>
                   <div><small>Effort</small><strong>{suggestion.effort}</strong></div>
                   <div><small>Risk</small><strong><span className={`scout-chip risk-${suggestion.risk}`}>{suggestion.risk}</span></strong></div>
                 </div>

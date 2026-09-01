@@ -170,6 +170,18 @@ export type Session = {
   permissionMode?: string;
   /** Repo state at launch — lets the code panel show only this session's work. */
   baseline?: Baseline;
+  /**
+   * The launch snapshot as the session LIST carries it: the head commit and how
+   * many paths were already dirty, never the paths themselves.
+   *
+   * `baseline.dirty` holds one string per file that was already modified when
+   * the session started — 84 in this repository, thousands in a monorepo — and
+   * three independent pollers re-serialise the whole session list every few
+   * seconds. The list reports the count; `sessions:baseline` returns the paths
+   * when the code panel actually needs them. Absent means no snapshot was
+   * captured, exactly as an absent `baseline` does.
+   */
+  baselineSummary?: { head: string | null; dirtyCount: number; at: number };
   /** The agent's own conversation id, so this exact session can be resumed. */
   conversationId?: string | null;
   /** Set when the session runs in its own worktree rather than the repo itself. */
@@ -608,6 +620,17 @@ export type HeadlessConfig = {
   isolate: boolean;
 };
 
+/**
+ * A fan-out request as it crosses IPC.
+ *
+ * `allProjects` is the operator saying "yes, every repository I have
+ * registered" out loud. A payload that simply leaves the repository out arrives
+ * at the runner looking identical to that choice, so headless.ts refuses a
+ * selection covering the whole project list unless this is set. It is not a
+ * size limit: naming three of twenty repositories needs nothing here.
+ */
+export type HeadlessStartRequest = HeadlessConfig & { allProjects?: boolean };
+
 export type HeadlessRow = {
   runId: string;
   projectId: string;
@@ -623,6 +646,32 @@ export type HeadlessRow = {
   worktree: string | null;
   startedAt: number | null;
   endedAt: number | null;
+};
+
+/**
+ * A fan-out row as the LIST channel sends it.
+ *
+ * Measured: `headless:rows` selects every column, maps the agent's full stdout
+ * into each row, and the run view refires it every three seconds. Twenty
+ * repositories at 50KB of output apiece is roughly 20MB a minute across IPC to
+ * paint a status table that shows none of it. The text stays in SQLite until a
+ * row is expanded and `headless:rowDetail` asks for that one row.
+ */
+export type HeadlessRowSummary = Omit<HeadlessRow, 'output' | 'error'> & {
+  /** Never carried here; `headless:rowDetail` returns it. */
+  output: null;
+  /** Never carried here either — a stack trace is not list material. */
+  error: null;
+  /** So a row can offer the expander without shipping what is behind it. */
+  hasOutput: boolean;
+  hasError: boolean;
+};
+
+export type HeadlessRowDetail = {
+  runId: string;
+  projectId: string;
+  output: string | null;
+  error: string | null;
 };
 
 export type HeadlessRun = {
@@ -971,11 +1020,11 @@ export const TRUST_COPY: Record<TrustLevel, { label: string; detail: string }> =
     // containment the gate has never enforced. This string is what the user
     // reads before choosing a trust level for a repository, which makes it the
     // most expensive place in the app to be wrong.
-    detail: 'The agent can read, search and look things up on the web. File writes, shell commands and any MCP call that is not a read are denied.',
+    detail: 'The agent can read, search and look things up on the web. A file write, shell command or MCP call that is not a read is held for your approval.',
   },
   project: {
     label: 'Project',
-    detail: 'Writes and commands are allowed inside the project directory. Anything outside it is denied.',
+    detail: 'Writes and commands are allowed inside the project directory. Anything outside it — including your credential folders — asks you first.',
   },
   trusted: {
     label: 'Trusted',
@@ -1310,6 +1359,17 @@ export type KnowledgeProjection = {
   createdAt: number;
   appliedAt: number | null;
   undoneAt: number | null;
+  /** Roots granted at preview time; undo verifies against these even after the
+   * provider profile or project registration is gone. Empty for legacy rows. */
+  allowedRoots: string[];
+};
+
+/** Per-provider outcome of a skill install; a failed provider never hides the
+ * ones that applied. */
+export type SkillInstallResult = {
+  providerId: string;
+  projection: KnowledgeProjection | null;
+  error: string | null;
 };
 
 export type KnowledgeBriefing = {
@@ -1324,7 +1384,118 @@ export type KnowledgeBriefing = {
     estimatedTokens: number;
   }[];
   estimatedTokens: number;
+  /** Total items ranked but not admitted: the sum of the four counters below. */
   omitted: number;
+  /** Quarantined at retrieval because a citation failed its freshness check. */
+  omittedStale: number;
+  /** Ranked but dropped because the token ceiling was already reached. */
+  omittedBudget: number;
+  /**
+   * Refused because the entry was never synthesized into a claim: its text is
+   * its own title, or a bare filesystem path. The fix is upstream in
+   * consolidation, not a bigger budget.
+   */
+  omittedUnsynthesized: number;
+  /**
+   * Ranked and affordable, but the per-launch freshness-check quota was spent
+   * before they could be verified. Unverified is not stale: raising the check
+   * quota admits these, raising the token ceiling does not.
+   */
+  omittedUnverified: number;
+  /**
+   * False when the launch supplied neither a task query nor a path hint. Only
+   * standing artifacts were eligible, so a short briefing is a consequence of
+   * the request and not evidence that the store is empty.
+   */
+  queryProvided: boolean;
+};
+
+/** One recorded briefing delivery — what a session was actually told. */
+export type SessionBriefingRecord = {
+  sessionId: string;
+  at: number;
+  delivery: 'argv' | 'hook';
+  providerId: string | null;
+  projectId: string | null;
+  entries: {
+    itemId: string;
+    versionId: string | null;
+    kind: KnowledgeKind;
+    title: string;
+    estimatedTokens: number;
+  }[];
+  estimatedTokens: number;
+  maxTokens: number;
+  omittedStale: number;
+  omittedBudget: number;
+};
+
+/** One persisted consolidation pass — the automation heartbeat. */
+export type ConsolidationRun = {
+  id: string;
+  at: number;
+  trigger: 'timer' | 'manual';
+  processed: number;
+  candidates: number;
+  autoApplied: number;
+  durationMs: number;
+};
+
+/** Everything recorded about one session's learning. All fields are stored rows. */
+export type SessionLearningLedger = {
+  sessionId: string;
+  briefings: SessionBriefingRecord[];
+  signals: LearningSignal[];
+  contributions: { itemId: string; title: string; kind: KnowledgeKind; status: KnowledgeStatus; evidenceCount: number }[];
+  candidates: { candidateId: string; title: string; status: CandidateStatus; targetKind: KnowledgeKind }[];
+};
+
+/** The automation gate's checks, decomposed so a verdict is never magic. */
+export type CandidateExplanation = {
+  candidateId: string;
+  decision: 'auto-apply' | 'review' | 'blocked';
+  reason: string;
+  checks: { label: string; ok: boolean; actual: string; required: string }[];
+};
+
+/** Observed pipeline throughput; every number is a COUNT over stored rows. */
+export type LearningPipelineStats = {
+  windowDays: number;
+  signals: number;
+  /** Same project scoping, no time window — lets "outside this window" be a fact. */
+  signalsAllTime: number;
+  eligibleSignals: number;
+  candidatesCreated: number;
+  autoPromoted: number;
+  reviewed: number;
+  itemsPromoted: number;
+  projectionsApplied: number;
+  briefingsServed: number;
+  signalsByDay: { day: string; total: number; failures: number; teachings: number }[];
+  consolidationRuns: ConsolidationRun[];
+};
+
+/** A stored relation edge between knowledge items, with its recorded reason. */
+export type KnowledgeRelation = {
+  fromItemId: string;
+  toItemId: string;
+  relation: 'supports' | 'contradicts' | 'supersedes' | 'duplicates';
+  confidence: number;
+  evidence: Record<string, unknown>;
+  createdAt: number;
+  resolvedAt: number | null;
+};
+
+/** A report-only freshness check: why an item is (or is not) trustworthy now. */
+export type FreshnessReport = {
+  itemId: string;
+  fresh: boolean;
+  checkedAt: number;
+  /** File-backed citations actually re-hashed this pass. */
+  checked: number;
+  /** Citations with no checkable file — never verified, only carried. */
+  skipped: number;
+  issues: { evidenceId: string; sourceId: string; kind: 'missing' | 'changed' | 'outside-root' | 'unverifiable'; detail: string }[];
 };
 
 export type OptimizerDiagnostic = {
@@ -1382,6 +1553,14 @@ export type ArtifactRoiSummary = {
   successfulUses: number;
   failedUses: number;
   repairDelta: number;
+  /** Rows behind each figure: 0 means "never measured", not a measured zero. */
+  metricCounts: {
+    tokensLoaded: number;
+    tokensSaved: number;
+    costUsd: number;
+    uses: number;
+    repairDelta: number;
+  };
 };
 
 export type LearningOverview = {
@@ -1497,4 +1676,82 @@ export type EgressReport = {
   provenance: string;
   /** safeStorage.isEncryptionAvailable(), so the keychain claim is measured. */
   keychainAvailable: boolean;
+};
+
+/* ── the renderer bridge's own shapes ────────────────────────────────── */
+
+/**
+ * Where a clicked notification should land.
+ *
+ * The identity was known when the banner was built and thrown away one line
+ * later, so every alert used to raise the window onto whichever tab happened
+ * to be open — the operator still had to find the blocked agent themselves.
+ * Main sends this on `notify:open` after focusing the window.
+ */
+export type NotificationRoute =
+  | { kind: 'session'; sessionId: string }
+  | { kind: 'run'; runId: string };
+
+/** Where the Claude CLI installs a plugin. Validated in main, not just typed. */
+export type PluginScope = 'user' | 'project' | 'local';
+
+/**
+ * What each dispatcher surface is using right now.
+ *
+ * Settings counted queue rows in state `running`, and an interactive session
+ * never creates one — so the surface whose limit is actually enforced at launch
+ * read "0 of N" forever. `limit` is the same number the launcher checks, read
+ * in the same call, so the meter cannot disagree with the refusal.
+ */
+export type InteractiveSessionLoad = { live: number; limit: number };
+
+/* ── backup and restore ──────────────────────────────────────────────── */
+
+/**
+ * The renderer's view of `src/main/backup.ts`.
+ *
+ * The main process annotates its backup handlers with these types, so a change
+ * to the backup module's own shapes fails the node typecheck here instead of
+ * quietly drifting away from what the UI renders.
+ */
+export type BackupSummary = {
+  dir: string;
+  manifestPath: string;
+  createdAt: number;
+  appVersion: string;
+  database: { path: string; bytes: number; sha256: string };
+  transcripts: { path: string; files: number; bytes: number };
+  /** Observed total of the files written, manifest included. */
+  totalBytes: number;
+  latestEvidenceAt: number | null;
+  /** What the backup deliberately does not carry. Rendered verbatim. */
+  excluded: string[];
+  durationMs: number;
+};
+
+export type BackupCheck = {
+  dir: string;
+  createdAt: number | null;
+  appVersion: string | null;
+  database: { bytes: number; sha256: string } | null;
+  transcripts: { files: number; bytes: number };
+  latestEvidenceAt: number | null;
+  /** The same measure taken over the database currently in place. */
+  currentLatestEvidenceAt: number | null;
+  /** True when restoring this backup would drop work recorded since it was taken. */
+  wouldDiscardNewer: boolean;
+  /** Empty means the backup verified; anything here blocks a restore. */
+  problems: { code: string; detail: string }[];
+};
+
+export type BackupRestoreSummary = {
+  restoredFrom: string;
+  createdAt: number;
+  database: { bytes: number; sha256: string };
+  transcripts: { files: number; bytes: number };
+  /** Where the replaced database and transcripts were moved. Never deleted. */
+  replacedDir: string;
+  discardedNewer: boolean;
+  /** Always true: the swap closed this process's database connection. */
+  relaunchRequired: true;
 };

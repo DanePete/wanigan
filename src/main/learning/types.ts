@@ -208,6 +208,9 @@ export interface KnowledgeProjection {
   createdAt: number;
   appliedAt: number | null;
   undoneAt: number | null;
+  /** Roots granted at preview time; undo verifies against these when the
+   * provider profile or project registration is gone. Empty for legacy rows. */
+  allowedRoots: string[];
 }
 
 export interface ProjectionPreviewInput {
@@ -339,6 +342,12 @@ export interface BriefingInput {
   kinds?: KnowledgeKind[];
   projectRoot?: string | null;
   allowedEvidenceRoots?: string[];
+  /**
+   * Default true: a launch is the last safe moment to pull a stale fact out of
+   * circulation. A PREVIEW must pass false — a read that quarantines is not a
+   * read, and an inspector must never mutate what it inspects.
+   */
+  quarantineStale?: boolean;
 }
 
 export interface BriefingEntry {
@@ -355,7 +364,112 @@ export interface KnowledgeBriefing {
   text: string;
   entries: BriefingEntry[];
   estimatedTokens: number;
+  /** Total items ranked but not admitted: the sum of the four counters below. */
   omitted: number;
+  /** Quarantined at retrieval because a citation failed its freshness check. */
+  omittedStale: number;
+  /** Ranked but dropped because the token ceiling was already reached. */
+  omittedBudget: number;
+  /**
+   * Refused because the entry was never synthesized into a claim: its text is
+   * its own title, or a bare filesystem path. The fix is upstream in
+   * consolidation, not a bigger budget.
+   */
+  omittedUnsynthesized: number;
+  /**
+   * Ranked and affordable, but the per-launch freshness-check quota was spent
+   * before they could be verified. Unverified is not stale: raising the check
+   * quota admits these, raising the token ceiling does not.
+   */
+  omittedUnverified: number;
+  /**
+   * False when the launch supplied neither a task query nor a path hint. Only
+   * standing artifacts were eligible, so a short briefing is a consequence of
+   * the request and not evidence that the store is empty.
+   */
+  queryProvided: boolean;
+}
+
+/**
+ * One recorded briefing delivery. The launch site used to compute the capsule
+ * and throw everything but its text away; this row is what makes "this session
+ * received briefing X" a recorded fact instead of a guess.
+ */
+export interface SessionBriefingRecord {
+  sessionId: string;
+  at: number;
+  /** How the capsule reached the agent: launch argv or the SessionStart hook. */
+  delivery: 'argv' | 'hook';
+  providerId: string | null;
+  projectId: string | null;
+  entries: {
+    itemId: string;
+    versionId: string | null;
+    kind: KnowledgeKind;
+    title: string;
+    estimatedTokens: number;
+  }[];
+  /** estimateTokens() output — a directional estimate, never a measurement. */
+  estimatedTokens: number;
+  maxTokens: number;
+  omittedStale: number;
+  omittedBudget: number;
+}
+
+/** One consolidation pass, persisted so automation stops being silent. */
+export interface ConsolidationRun {
+  id: string;
+  at: number;
+  trigger: 'timer' | 'manual';
+  processed: number;
+  candidates: number;
+  autoApplied: number;
+  durationMs: number;
+}
+
+/**
+ * Everything the learning engine can honestly say about one session: the
+ * briefing it received (recorded at injection), the signals it emitted, and
+ * the knowledge its evidence reached. Every field is a query over stored rows.
+ */
+export interface SessionLearningLedger {
+  sessionId: string;
+  briefings: SessionBriefingRecord[];
+  signals: LearningSignal[];
+  /** Knowledge items citing this session's signals via knowledge_evidence. */
+  contributions: { itemId: string; title: string; kind: KnowledgeKind; status: KnowledgeStatus; evidenceCount: number }[];
+  /** Candidates whose signal lineage includes this session's signals. */
+  candidates: { candidateId: string; title: string; status: CandidateStatus; targetKind: KnowledgeKind }[];
+}
+
+/**
+ * The automation gate's checks, decomposed for display. Same deterministic
+ * inputs as automationDecision — actual values against required thresholds,
+ * so the Inbox can say why an item waits instead of presenting magic.
+ */
+export interface CandidateExplanation {
+  candidateId: string;
+  decision: AutomationDecision['decision'];
+  reason: string;
+  checks: { label: string; ok: boolean; actual: string; required: string }[];
+}
+
+/** Observed pipeline throughput; every number is a COUNT over stored rows. */
+export interface LearningPipelineStats {
+  windowDays: number;
+  signals: number;
+  /** Same project scoping, no time window — lets "outside this window" be a fact. */
+  signalsAllTime: number;
+  eligibleSignals: number;
+  candidatesCreated: number;
+  autoPromoted: number;
+  reviewed: number;
+  itemsPromoted: number;
+  projectionsApplied: number;
+  briefingsServed: number;
+  /** Continuous local-midnight day series, oldest first, zero-filled. */
+  signalsByDay: { day: string; total: number; failures: number; teachings: number }[];
+  consolidationRuns: ConsolidationRun[];
 }
 
 export interface FreshnessIssue {
@@ -369,6 +483,10 @@ export interface FreshnessResult {
   itemId: string;
   fresh: boolean;
   checkedAt: number;
+  /** File-backed citations actually re-hashed this pass. */
+  checked: number;
+  /** Citations with no checkable file (e.g. learning-signal rows) — never verified. */
+  skipped: number;
   issues: FreshnessIssue[];
 }
 
@@ -462,6 +580,8 @@ export interface ArtifactMetric {
   projectionId: string | null;
   sessionId: string | null;
   providerId: string | null;
+  /** The controlled run this measurement came from; required for a causal claim. */
+  experimentId: string | null;
   metric: string;
   value: number;
   evidenceLevel: EvidenceLevel;
@@ -475,6 +595,7 @@ export interface RecordMetricInput {
   projectionId?: string | null;
   sessionId?: string | null;
   providerId?: string | null;
+  experimentId?: string | null;
   metric: string;
   value: number;
   evidenceLevel: EvidenceLevel;
@@ -492,4 +613,12 @@ export interface ArtifactRoiSummary {
   successfulUses: number;
   failedUses: number;
   repairDelta: number;
+  /** Rows behind each figure: 0 means "never measured", not a measured zero. */
+  metricCounts: {
+    tokensLoaded: number;
+    tokensSaved: number;
+    costUsd: number;
+    uses: number;
+    repairDelta: number;
+  };
 }

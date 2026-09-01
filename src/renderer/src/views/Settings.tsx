@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type {
-  WaniganSettings, EgressHost, LedgerEntry, McpServerConfig, MotionSetting, ThemeSetting,
+  WaniganSettings, BackupCheck, BackupRestoreSummary, BackupSummary,
+  EgressHost, LedgerEntry, McpServerConfig, MotionSetting, ThemeSetting,
   MobileMonitorConfig, MobileMonitorStatus, Project, ProviderInfo, QueueItem, QueueSlots, QueueState,
-  TrustLevel, UploadedFile, WorktreeInfo,
+  TranscriptHit, TranscriptTurn, TrustLevel, UploadedFile, WorktreeInfo,
 } from '@shared/types';
 import { TRUST_COPY, TRUST_LEVELS } from '@shared/types';
 import { Note, Section, Stat, ago, num } from '../components/bits';
@@ -12,7 +13,7 @@ import type { ResolvedTheme } from '../theme-boot';
 
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
 type ProviderKeyStatus = { present: boolean; fingerprint: string | null };
-type SettingsTab = 'agents' | 'projects' | 'automation' | 'connections' | 'privacy' | 'app';
+type SettingsTab = 'agents' | 'projects' | 'automation' | 'connections' | 'privacy' | 'backup' | 'app';
 
 type SettingsTabInfo = {
   id: SettingsTab;
@@ -25,6 +26,11 @@ type SettingsTabInfo = {
 };
 
 const SETTINGS_TAB_STORAGE_KEY = 'wanigan.settings.tab';
+// Keep the settings breakpoint deliberately wider than the general phone
+// breakpoint. A 1,024 px iPad (or a desktop window in split view) has enough
+// room for the content, but not enough room for a useful 212 px navigation
+// rail beside forms, tables, and explanatory copy.
+const SETTINGS_COMPACT_QUERY = '(max-width: 1024px), (pointer: coarse) and (max-width: 1180px)';
 
 /**
  * Settings are organised by the job someone is trying to do, not by the table
@@ -48,7 +54,7 @@ const SETTINGS_TABS: SettingsTabInfo[] = [
   {
     id: 'automation', label: 'Automation', eyebrow: 'Cost & capacity', title: 'Automation',
     detail: 'Set a spend ceiling and decide how many interactive, headless, and batch jobs may run at once.',
-    help: 'Save buttons apply the fields beside them. Lowering a queue limit prevents additional work from starting; it deliberately does not stop work that is already underway.',
+    help: 'Save buttons apply the fields beside them. Lowering a limit prevents additional work from starting — queued for headless, batch and Scout work, refused outright for an interactive session — and deliberately does not stop work that is already underway.',
     includes: ['spending cap', 'concurrency limits', 'dispatch queue'],
   },
   {
@@ -59,9 +65,15 @@ const SETTINGS_TABS: SettingsTabInfo[] = [
   },
   {
     id: 'privacy', label: 'Privacy & data', eyebrow: 'Observation & retention', title: 'Privacy & data',
-    detail: 'Choose what Wanigan observes, inspect its own network boundaries, and remove locally retained data.',
+    detail: 'Choose what Wanigan observes, search the transcript archive, inspect its own network boundaries, and remove locally retained data.',
     help: 'Most switches save immediately for future activity. The descriptions distinguish aggregate telemetry, tool summaries, and the separate transcript archive that can retain conversation text on this Mac.',
-    includes: ['telemetry', 'egress report', 'transcripts', 'event retention'],
+    includes: ['telemetry', 'transcript search', 'egress report', 'event retention'],
+  },
+  {
+    id: 'backup', label: 'Backup', eyebrow: 'Copy & recovery', title: 'Backup & restore',
+    detail: 'Write a verified copy of Wanigan’s database and transcript archive, check a copy you already have, and put one back.',
+    help: 'A backup is a file operation you start here; nothing is scheduled and nothing is uploaded. Restoring replaces the database in place and relaunches Wanigan, so it refuses while any agent is still running.',
+    includes: ['create a backup', 'verify a backup', 'restore', 'what is not copied'],
   },
   {
     id: 'app', label: 'App', eyebrow: 'Appearance & sharing', title: 'App experience',
@@ -108,7 +120,10 @@ const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 function bytes(n: number): string {
   if (n < 1024) return `${num(n)} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+  // A backup of a year-old install is measured in gigabytes; capping the scale
+  // at MB turned that into a five-digit number nobody reads as a size.
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${num(n)} ${n === 1 ? one : many}`;
@@ -135,9 +150,12 @@ const fileName = (p: string) => (sep(p) < 0 ? p : p.slice(sep(p) + 1));
 
 type MarkSpec = { glyph: string; word: string; color: string };
 
-function Mark({ glyph, word, color, title }: MarkSpec & { title?: string }) {
+/* No `title` escape hatch. The reason behind a mark used to hide in a tooltip,
+   which a touch screen has no gesture for and a keyboard cannot reach at all —
+   so a reason worth giving is rendered beside the mark instead. */
+function Mark({ glyph, word, color }: MarkSpec) {
   return (
-    <span className="set-mark" style={{ color }} title={title}>
+    <span className="set-mark" style={{ color }}>
       <span className="g" aria-hidden="true">{glyph}</span>{word}
     </span>
   );
@@ -359,7 +377,8 @@ export default function Settings({
   const [deepseekBusy, setDeepseekBusy] = useState(false);
   const [deepseekMsg, setDeepseekMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>(savedSettingsTab);
-  const compactSettingsLayout = useMediaQuery('(max-width: 900px)');
+  const compactSettingsLayout = useMediaQuery(SETTINGS_COMPACT_QUERY);
+  const settingsTabsRef = useRef<HTMLElement>(null);
 
   const load = () => window.wanigan.key.status().then((st) => {
     setStatus(st);
@@ -467,6 +486,27 @@ export default function Settings({
     try { localStorage.setItem(SETTINGS_TAB_STORAGE_KEY, settingsTab); } catch { /* storage may be disabled */ }
   }, [settingsTab]);
 
+  // A remembered tab can begin off-screen in the horizontal iPad strip. Keep
+  // its control visible without calling scrollIntoView(), which can also move
+  // the settings document and make a category change feel like a page jump.
+  useEffect(() => {
+    if (!compactSettingsLayout) return;
+    const frame = requestAnimationFrame(() => {
+      const strip = settingsTabsRef.current;
+      const control = document.getElementById(`settings-tab-${settingsTab}`);
+      if (!strip || !control) return;
+      const stripBox = strip.getBoundingClientRect();
+      const controlBox = control.getBoundingClientRect();
+      const inset = 8;
+      if (controlBox.left < stripBox.left + inset) {
+        strip.scrollLeft -= stripBox.left + inset - controlBox.left;
+      } else if (controlBox.right > stripBox.right - inset) {
+        strip.scrollLeft += controlBox.right - (stripBox.right - inset);
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [compactSettingsLayout, settingsTab]);
+
   const setPref = useCallback(async (k: string, v: string) => {
     setPending(k); setPrefsErr(null);
     try {
@@ -530,7 +570,7 @@ export default function Settings({
       {prefsErr && <Callout level="critical" title="A preference did not save.">{prefsErr}</Callout>}
 
       <div className="set-layout">
-        <nav className="set-tabs" role="tablist" aria-label="Settings sections"
+        <nav ref={settingsTabsRef} className="set-tabs" role="tablist" aria-label="Settings sections"
              aria-orientation={compactSettingsLayout ? 'horizontal' : 'vertical'}>
           <div className="set-tabs-intro">
             <strong>Settings areas</strong>
@@ -689,7 +729,7 @@ export default function Settings({
                   {p.path ? (
                     <>
                       <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>{p.version ?? 'installed'}</span>
-                      <span className="faint mono trunc" style={{ fontSize: 'var(--t-micro)', flex: 1 }} title={p.path}>{p.path}</span>
+                      <span className="faint set-path set-wrap" style={{ flex: 1 }}>{p.path}</span>
                     </>
                   ) : (
                     <span className="faint">not found — <code className="mono">{p.bin}</code> is not on PATH or in an editor extension</span>
@@ -700,18 +740,7 @@ export default function Settings({
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('projects')} active={settingsTab === 'projects'}>
-            <Section title="Projects" hint="Shared by both views — an agent session and a batch run target the same repo."
-                     right={<button className="btn" onClick={onAddProject}>+ Add project</button>}>
-              {!projects.length && <p className="dim">No projects yet.</p>}
-              {projects.map((p) => (
-                <div className="set-project-row" key={p.id}>
-                  <span style={{ fontWeight: 500 }}>{p.name}</span>
-                  {p.branch && <span className="pill mono" style={{ background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>{p.branch}</span>}
-                  <span className="faint mono trunc" style={{ fontSize: 'var(--t-micro)', flex: 1 }} title={p.path}>{p.path}</span>
-                  <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={() => onRemoveProject(p.id)}>remove</button>
-                </div>
-              ))}
-            </Section>
+            <Projects projects={projects} onAddProject={onAddProject} onRemoveProject={onRemoveProject} />
             <Worktrees />
             <Trust projects={projects} onAddProject={onAddProject} />
           </SettingsTabPanel>
@@ -745,8 +774,13 @@ export default function Settings({
 
           <SettingsTabPanel tab={settingsTabInfo('privacy')} active={settingsTab === 'privacy'}>
             <Observation prefs={prefs} pending={pending} setFlag={setFlag} />
+            <TranscriptSearch prefs={prefs} />
             <Egress />
             <Storage prefs={prefs} pending={pending} setPref={setPref} />
+          </SettingsTabPanel>
+
+          <SettingsTabPanel tab={settingsTabInfo('backup')} active={settingsTab === 'backup'}>
+            <Backup />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('app')} active={settingsTab === 'app'}>
@@ -757,6 +791,236 @@ export default function Settings({
         </div>
       </div>
     </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Projects, and what removing one destroys
+   ════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * What a removal actually takes with it, counted from the record.
+ *
+ * `projects.remove` is one DELETE, but `work_dockets.project_id` is
+ * ON DELETE CASCADE, so the row takes every Goal for that project and, through
+ * them, the nodes, claims, checkpoints, proofs, trace events, resume receipts
+ * and model outcomes underneath. store.ts already reasoned this through on the
+ * automatic path and refused there — a project whose directory is merely
+ * unmounted is hidden, never deleted. The manual path is the one that still
+ * needs to say what it is about to spend, and to say it with counts rather
+ * than with the word "permanently".
+ */
+type RemovalCost = {
+  goals: number;
+  /** True when the Goal list came back at its ceiling, so `goals` is a floor. */
+  goalsCapped: boolean;
+  nodes: number;
+  proofs: number;
+  checkpoints: number;
+  claims: number;
+  sessions: number;
+  /** How many Goals could not be opened, so a zero is never printed as a fact. */
+  unread: number;
+};
+
+/** The ceiling `control.list` enforces; asking for more returns no more. */
+const GOAL_COUNT_CEILING = 200;
+
+async function readRemovalCost(projectId: string): Promise<RemovalCost> {
+  const [goals, past] = await Promise.all([
+    window.wanigan.control.list(projectId, GOAL_COUNT_CEILING),
+    window.wanigan.sessions.past(),
+  ]);
+  // One read per Goal, because only the detail carries the child rows the
+  // cascade reaches. Bounded by the ceiling above, so this cannot fan out.
+  const details = await Promise.all(
+    goals.map((g) => window.wanigan.control.get(g.id).catch(() => null)),
+  );
+
+  const cost: RemovalCost = {
+    goals: goals.length, goalsCapped: goals.length >= GOAL_COUNT_CEILING,
+    nodes: 0, proofs: 0, checkpoints: 0, claims: 0,
+    sessions: past.filter((s) => s.projectId === projectId).length,
+    unread: 0,
+  };
+  for (const d of details) {
+    if (!d) { cost.unread += 1; continue; }
+    cost.nodes += d.nodes.length;
+    cost.proofs += d.proofs.length;
+    cost.checkpoints += d.checkpoints.length;
+    cost.claims += d.claims.length;
+  }
+  return cost;
+}
+
+/**
+ * The confirmation itself.
+ *
+ * Typing the name is asked for only when there is recorded work to lose. A
+ * project registered an hour ago with nothing under it does not need a
+ * ceremony; one carrying forty proofs does, because nothing in the app can
+ * bring those back.
+ */
+function RemoveProjectConfirm({ project, onCancel, onConfirm }: {
+  project: Project; onCancel: () => void; onConfirm: () => void;
+}) {
+  const cost = useLoad(() => readRemovalCost(project.id), [project.id]);
+  const [typed, setTyped] = useState('');
+
+  return (
+    <div className="set-danger-zone" role="group" aria-label={`Confirm removing ${project.name}`}>
+      <Callout level="critical" title={`Remove “${project.name}” and everything recorded against it?`}>
+        Removing a project is not the same as closing it. Wanigan deletes the project row, and the
+        database cascades from there through its Goals into every node, claim, checkpoint, proof,
+        trace event, resume receipt and model outcome underneath. <strong>There is no undo, and no
+        backup is taken first.</strong> The repository on disk is untouched — only Wanigan’s record
+        of the work goes.
+      </Callout>
+
+      <Frame v={cost.v} what={`what removing ${project.name} would destroy`} onRetry={cost.reload}>
+        {(c) => {
+          const evidence = c.goals + c.nodes + c.proofs + c.checkpoints + c.claims;
+          const gate = evidence > 0;
+          const ready = !gate || typed.trim() === project.name;
+          return (
+            <>
+              <div className="set-scroll">
+                <table className="grid">
+                  <thead><tr><th>What goes</th><th className="r">Count</th><th>What survives</th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td>Goals for this project</td>
+                      <td className="set-n">{c.goalsCapped ? `${num(c.goals)}+` : num(c.goals)}</td>
+                      <td className="dim">Nothing — the Goal row is the parent of the cascade.</td>
+                    </tr>
+                    <tr>
+                      <td>Nodes under those Goals</td>
+                      <td className="set-n">{num(c.nodes)}</td>
+                      <td className="dim">Nothing.</td>
+                    </tr>
+                    <tr>
+                      <td>Proofs recorded against them</td>
+                      <td className="set-n">{num(c.proofs)}</td>
+                      <td className="dim">Nothing. A proof is a recorded run; it cannot be re-derived.</td>
+                    </tr>
+                    <tr>
+                      <td>Checkpoints and file claims</td>
+                      <td className="set-n">{num(c.checkpoints + c.claims)}</td>
+                      <td className="dim">Nothing.</td>
+                    </tr>
+                    <tr>
+                      <td>Past sessions filed under it</td>
+                      <td className="set-n">{num(c.sessions)}</td>
+                      <td className="dim">
+                        The session rows stay; they lose the project they pointed at. Archived
+                        transcripts are removed separately, in Privacy &amp; data.
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {c.goalsCapped && (
+                <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.5 }}>
+                  The Goal list is read at a ceiling of {num(GOAL_COUNT_CEILING)}, so the counts above
+                  are a floor, not a total. There is at least this much.
+                </p>
+              )}
+              {c.unread > 0 && (
+                <div style={{ marginTop: 9 }}>
+                  <Note tone="warn">
+                    {plural(c.unread, 'Goal')} could not be opened, so the node, proof and checkpoint
+                    counts above exclude {c.unread === 1 ? 'it' : 'them'}. The real number is higher.
+                  </Note>
+                </div>
+              )}
+
+              {gate ? (
+                <div style={{ marginTop: 12, maxWidth: 380 }}>
+                  <label className="label" htmlFor={`confirm-remove-${project.id}`}>
+                    Type the project name to confirm
+                  </label>
+                  <input id={`confirm-remove-${project.id}`} className="field mono" style={{ marginTop: 4 }}
+                         value={typed} spellCheck={false} autoComplete="off" placeholder={project.name}
+                         onChange={(e) => setTyped(e.target.value)} />
+                  <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 4, lineHeight: 1.45 }}>
+                    Asked for because there is recorded work here. A project with nothing under it is
+                    removed on one click.
+                  </p>
+                </div>
+              ) : (
+                <p className="dim" style={{ fontSize: 'var(--t-small)', marginTop: 10, lineHeight: 1.5 }}>
+                  Nothing is recorded against this project yet, so removing it destroys no evidence.
+                </p>
+              )}
+
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
+                <button className="btn btn-danger" disabled={!ready} onClick={onConfirm}>
+                  Remove {project.name} permanently
+                </button>
+                <button className="btn" onClick={onCancel}>Keep it</button>
+              </div>
+            </>
+          );
+        }}
+      </Frame>
+    </div>
+  );
+}
+
+function Projects({ projects, onAddProject, onRemoveProject }: {
+  projects: Project[]; onAddProject: () => void; onRemoveProject: (id: string) => void;
+}) {
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const target = projects.find((p) => p.id === confirming) ?? null;
+
+  return (
+    <Section title="Projects" hint="Shared by both views — an agent session and a batch run target the same repo."
+             right={<button className="btn" onClick={onAddProject}>+ Add project</button>}>
+      {!projects.length && <p className="dim">No projects yet.</p>}
+      {projects.map((p) => (
+        <Fragment key={p.id}>
+          <div className="set-project-row">
+            <span style={{ fontWeight: 500 }}>{p.name}</span>
+            {p.branch && <span className="pill mono" style={{ background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>{p.branch}</span>}
+            {/* The path used to be a tooltip on a truncated line, which is
+                nothing at all on a touch screen. It wraps instead. */}
+            <span className="faint set-path set-wrap" style={{ flex: 1 }}>{p.path}</span>
+            <button className="set-mini danger" aria-expanded={confirming === p.id}
+                    onClick={() => { setSaved(null); setConfirming(confirming === p.id ? null : p.id); }}>
+              {confirming === p.id ? 'cancel' : 'remove…'}
+            </button>
+          </div>
+          {/* Directly under the row it belongs to: a confirmation that appears
+              somewhere else on the page is a confirmation of nothing in
+              particular. */}
+          {target && target.id === p.id && (
+            <div style={{ margin: '10px 0 4px' }}>
+              <RemoveProjectConfirm
+                key={target.id}
+                project={target}
+                onCancel={() => setConfirming(null)}
+                onConfirm={() => {
+                  const name = target.name;
+                  setConfirming(null);
+                  onRemoveProject(target.id);
+                  setSaved({ tone: 'ok', text: `“${name}” and its recorded work were removed. The repository on disk was not touched.` });
+                }}
+              />
+            </div>
+          )}
+        </Fragment>
+      ))}
+
+      <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 11, lineHeight: 1.5 }}>
+        A project whose directory is not mounted right now is hidden from this list rather than
+        removed, so an external disk that has not come back does not read as a project you deleted.
+        Reconnect the volume and it reappears.
+      </p>
+
+      <Result r={saved} />
+    </Section>
   );
 }
 
@@ -1363,10 +1627,36 @@ function PhoneMonitor() {
    2 · Trust and the policy ledger
    ════════════════════════════════════════════════════════════════════════ */
 
+/**
+ * Time ranges for the ledger, as windows rather than as a free-form date box.
+ *
+ * An incident is remembered as "this afternoon" or "some time last week", not
+ * as a pair of timestamps, and a window is also the only shape that stays
+ * honest against a bounded fetch: it narrows what is already loaded rather than
+ * implying a query over the whole table.
+ */
+/** The ceiling main clamps a ledger read to; asking for more returns no more. */
+const LEDGER_MAX_ROWS = 5000;
+const nextLedgerLimit = (current: number) => Math.min(LEDGER_MAX_ROWS, current * 5);
+
+const LEDGER_WINDOWS: { id: string; word: string; ms: number | null }[] = [
+  { id: 'all', word: 'Any time', ms: null },
+  { id: '1h', word: 'Last hour', ms: 60 * 60 * 1000 },
+  { id: '24h', word: 'Last 24 hours', ms: 24 * 60 * 60 * 1000 },
+  { id: '7d', word: 'Last 7 days', ms: 7 * 24 * 60 * 60 * 1000 },
+  { id: '30d', word: 'Last 30 days', ms: 30 * 24 * 60 * 60 * 1000 },
+];
+
 function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: () => void }) {
   const [deniedOnly, setDeniedOnly] = useState(false);
   const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [exporting, setExporting] = useState(false);
+  // Scoping an incident: which session, which project, when, and what it said.
+  const [sessionFilter, setSessionFilter] = useState('');
+  const [projectFilter, setProjectFilter] = useState('');
+  const [windowId, setWindowId] = useState('all');
+  const [query, setQuery] = useState('');
+  const [ledgerLimit, setLedgerLimit] = useState(200);
 
   const trust = useLoad(async () => {
     const [dflt, perProject] = await Promise.all([
@@ -1377,13 +1667,35 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
   }, [projects.length]);
 
   const summary = useLoad(() => window.wanigan.policy.summary());
-  const ledger = useLoad(() => window.wanigan.policy.ledger(200, deniedOnly), [deniedOnly]);
+  const ledger = useLoad(() => window.wanigan.policy.ledger(ledgerLimit, deniedOnly), [deniedOnly, ledgerLimit]);
 
   const pick = async (fn: () => Promise<unknown>, text: string) => {
     setSaved(null);
     try { await fn(); trust.reload(); setSaved({ tone: 'ok', text }); }
     catch (e) { setSaved({ tone: 'error', text: msg(e) }); }
   };
+
+  // Session ids come from the rows themselves: a session that made no tool call
+  // has nothing in the ledger, and offering it as a filter would promise a view
+  // that is empty for a reason the operator cannot see.
+  const loadedSessions = useMemo(() => {
+    if (ledger.v.s !== 'ok') return [] as string[];
+    const seen = new Set<string>();
+    for (const r of ledger.v.d) if (r.sessionId) seen.add(r.sessionId);
+    return [...seen];
+  }, [ledger.v]);
+
+  const filtersActive = Boolean(sessionFilter || projectFilter || query.trim()) || windowId !== 'all';
+
+  const matches = useCallback((r: LedgerEntry) => {
+    if (sessionFilter && r.sessionId !== sessionFilter) return false;
+    if (projectFilter && r.projectId !== projectFilter) return false;
+    const span = LEDGER_WINDOWS.find((w) => w.id === windowId)?.ms ?? null;
+    if (span !== null && r.at < Date.now() - span) return false;
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return `${r.toolName} ${r.summary} ${r.rule} ${r.reason} ${r.projectName ?? ''}`.toLowerCase().includes(q);
+  }, [sessionFilter, projectFilter, windowId, query]);
 
   async function exportLedger() {
     setExporting(true); setSaved(null);
@@ -1442,7 +1754,7 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
                         <tr key={p.id}>
                           <td>
                             <div style={{ fontWeight: 500 }}>{p.name}</div>
-                            <div className="faint set-path trunc" title={p.path}>{p.path}</div>
+                            <div className="faint set-path set-wrap">{p.path}</div>
                           </td>
                           <td>
                             <select className="field" style={{ width: 118 }} value={lv}
@@ -1512,16 +1824,51 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
         }}
       </Frame>
 
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '12px 0 8px', flexWrap: 'wrap' }}>
-        <div className="set-chips" role="group" aria-label="Ledger filter">
+      <div className="set-filters">
+        <div className="set-chips" role="group" aria-label="Ledger decision filter">
           <button className={`set-chip${deniedOnly ? '' : ' on'}`} aria-pressed={!deniedOnly}
                   onClick={() => setDeniedOnly(false)}>Every decision</button>
           <button className={`set-chip${deniedOnly ? ' on' : ''}`} aria-pressed={deniedOnly}
                   onClick={() => setDeniedOnly(true)}>⊘ Denied only</button>
         </div>
-        <button className="btn" style={{ marginLeft: 'auto' }} onClick={exportLedger} disabled={exporting}>
-          {exporting ? 'Choosing a file…' : 'Export ledger (JSONL)'}
-        </button>
+        <div className="set-filter-field">
+          <label className="label" htmlFor="ledger-session">Session</label>
+          <select id="ledger-session" className="field" value={sessionFilter}
+                  onChange={(e) => setSessionFilter(e.target.value)}>
+            <option value="">Every session</option>
+            {loadedSessions.map((id) => <option key={id} value={id}>{id}</option>)}
+          </select>
+        </div>
+        <div className="set-filter-field">
+          <label className="label" htmlFor="ledger-project">Project</label>
+          <select id="ledger-project" className="field" value={projectFilter}
+                  onChange={(e) => setProjectFilter(e.target.value)}>
+            <option value="">Every project</option>
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </div>
+        <div className="set-filter-field">
+          <label className="label" htmlFor="ledger-window">When</label>
+          <select id="ledger-window" className="field" value={windowId}
+                  onChange={(e) => setWindowId(e.target.value)}>
+            {LEDGER_WINDOWS.map((w) => <option key={w.id} value={w.id}>{w.word}</option>)}
+          </select>
+        </div>
+        <div className="set-filter-field grow">
+          <label className="label" htmlFor="ledger-q">Tool, target or rule contains</label>
+          <input id="ledger-q" className="field" value={query} spellCheck={false} placeholder="Bash, .env, WebFetch…"
+                 onChange={(e) => setQuery(e.target.value)} />
+        </div>
+        <div className="set-filter-actions">
+          {filtersActive && (
+            <button className="btn" onClick={() => {
+              setSessionFilter(''); setProjectFilter(''); setWindowId('all'); setQuery('');
+            }}>Clear filters</button>
+          )}
+          <button className="btn" onClick={exportLedger} disabled={exporting}>
+            {exporting ? 'Choosing a file…' : 'Export ledger (JSONL)'}
+          </button>
+        </div>
       </div>
 
       <Frame v={ledger.v} what="the ledger" onRetry={ledger.reload}>
@@ -1541,39 +1888,84 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
               </div>
             );
           }
+          // Loaded-but-excluded is not the same answer as nothing-recorded, and
+          // the difference is the whole point of a filter: one says the incident
+          // is not here, the other says you have not looked far enough back.
+          const shown = rows.filter(matches);
+          if (!shown.length) {
+            return (
+              <div className="sunk set-empty">
+                None of the {plural(rows.length, 'loaded decision')} match this filter.
+                <div className="faint" style={{ marginTop: 6, fontSize: 'var(--t-small)' }}>
+                  Rows are filtered after they are read, so an older decision may simply not be loaded
+                  yet. Widen the time window, clear the filters, or load more rows.
+                </div>
+                <div style={{ marginTop: 9, display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <button className="btn" onClick={() => {
+                    setSessionFilter(''); setProjectFilter(''); setWindowId('all'); setQuery('');
+                  }}>Clear filters</button>
+                  {ledgerLimit < LEDGER_MAX_ROWS && (
+                    <button className="btn" onClick={() => setLedgerLimit(nextLedgerLimit(ledgerLimit))}>
+                      Load {num(nextLedgerLimit(ledgerLimit))} rows instead
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          }
           return (
             <>
               <div className="set-scroll wide">
                 <table className="grid">
                   <thead>
                     <tr>
-                      <th>When</th><th>Project</th><th>Tool</th><th>What it asked for</th><th>Decision</th>
+                      <th>When</th><th>Project &amp; session</th><th>Tool</th>
+                      <th>What it asked for</th><th>Decision</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((r) => (
+                    {shown.map((r) => (
                       <tr key={r.id}>
-                        <td className="set-when" title={fullDate(r.at)}>{ago(r.at)}</td>
-                        <td className="trunc" style={{ maxWidth: 130 }} title={r.projectName ?? 'no project'}>
+                        {/* The exact instant was a tooltip, which an incident
+                            review on a tablet could not reach at all. */}
+                        <td className="set-when">
+                          {ago(r.at)}
+                          <div className="faint set-sub-line">{fullDate(r.at)}</div>
+                        </td>
+                        <td style={{ maxWidth: 170 }}>
                           {r.projectName ?? <span className="faint">no project</span>}
-                          <div className="faint" style={{ fontSize: 'var(--t-micro)' }}>{TRUST_COPY[r.trust]?.label ?? r.trust}</div>
+                          <div className="faint set-sub-line">{TRUST_COPY[r.trust]?.label ?? r.trust}</div>
+                          {r.sessionId
+                            ? <div className="faint set-path set-wrap">{r.sessionId}</div>
+                            : <div className="faint set-sub-line">no session</div>}
                         </td>
                         <td className="mono" style={{ fontSize: 'var(--t-small)' }}>{r.toolName}</td>
-                        <td className="trunc dim" style={{ maxWidth: 240 }} title={`${r.summary}\n\n${r.reason}`}>
-                          {r.summary}
-                          <div className="faint" style={{ fontSize: 'var(--t-micro)' }}>rule: {r.rule}</div>
+                        <td className="dim" style={{ maxWidth: 300 }}>
+                          <div className="set-wrap">{r.summary}</div>
+                          <div className="faint set-sub-line">rule: {r.rule}</div>
+                          <div className="faint set-wrap" style={{ fontSize: '10.5px', marginTop: 2 }}>{r.reason}</div>
                         </td>
-                        <td><Mark {...DECISION[r.decision]} title={r.reason} /></td>
+                        <td><Mark {...DECISION[r.decision]} /></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
               <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.5 }}>
-                Showing the {plural(rows.length, 'most recent row', 'most recent rows')}
-                {deniedOnly ? ' that were denied' : ''}. Export writes the whole ledger, one JSON object
-                per line, including the reason each rule gave.
+                {filtersActive
+                  ? <>Showing {num(shown.length)} of the {plural(rows.length, 'decision')} loaded. Filters run over
+                      what is loaded, not over the whole table.</>
+                  : <>Showing the {plural(shown.length, 'most recent row', 'most recent rows')}
+                      {deniedOnly ? ' that were denied' : ''}.</>}
+                {' '}Export writes the whole ledger, one JSON object per line, including the reason each
+                rule gave. Every command, path, URL and search pattern here passes through the shared
+                credential redactor before it is stored.
               </p>
+              {ledgerLimit < LEDGER_MAX_ROWS && (
+                <button className="btn" style={{ marginTop: 9 }} onClick={() => setLedgerLimit(nextLedgerLimit(ledgerLimit))}>
+                  Load {num(nextLedgerLimit(ledgerLimit))} rows instead of {num(ledgerLimit)}
+                </button>
+              )}
             </>
           );
         }}
@@ -1588,12 +1980,69 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
    3 · Dispatcher
    ════════════════════════════════════════════════════════════════════════ */
 
-const KIND_COPY: { id: keyof QueueSlots; label: string; detail: string }[] = [
-  { id: 'session',  label: 'Interactive sessions', detail: 'Terminals you drive yourself.' },
-  { id: 'headless', label: 'Headless runs',        detail: 'One unattended agent per repo.' },
-  { id: 'batch',    label: 'Batch submissions',    detail: 'Submissions in flight against the Batches API.' },
-  { id: 'scout',    label: 'Improvement Scout',     detail: 'One bounded official-source research pass at a time.' },
+const KIND_COPY: { id: keyof QueueSlots; label: string; detail: string; overLimit: string }[] = [
+  {
+    id: 'session', label: 'Interactive sessions', detail: 'Terminals you drive yourself.',
+    overLimit: 'A launch past this limit is refused, not queued — you are standing in front of the terminal, so Wanigan says no rather than silently holding it.',
+  },
+  {
+    id: 'headless', label: 'Headless runs', detail: 'One unattended agent per repo.',
+    overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
+  },
+  {
+    id: 'batch', label: 'Batch submissions', detail: 'Submissions in flight against the Batches API.',
+    overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
+  },
+  {
+    id: 'scout', label: 'Improvement Scout', detail: 'One bounded official-source research pass at a time.',
+    overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
+  },
 ];
+
+/**
+ * The four states a meter can be in are four renderings.
+ *
+ * "Still reading", "the read failed", "nothing is running" and "n of m are
+ * running" are different facts, and a meter that draws an empty bar for all
+ * four is the shape of the bug this replaced: the interactive row counted
+ * queue rows, an interactive launch never makes one, and the surface that sets
+ * the enforced limit reported nothing running no matter what was.
+ */
+function SlotMeter({ load, limit, enforcedLimit, source }: {
+  load: Load<number>; limit: number; enforcedLimit: number | null; source: string;
+}) {
+  if (load.s === 'loading') {
+    return <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 6 }}>Reading what is running…</p>;
+  }
+  if (load.s === 'err') {
+    return (
+      <p style={{ fontSize: 'var(--t-micro)', marginTop: 6, color: 'var(--warning)', lineHeight: 1.5 }}>
+        ⚠ Wanigan could not read what is running: {load.e} — the limit beside this row is still the one
+        it enforces.
+      </p>
+    );
+  }
+  const inUse = load.d;
+  const shown = Math.max(1, enforcedLimit ?? limit);
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 6, maxWidth: 320 }}>
+        <div className="set-meter" style={{ flex: 1 }}>
+          <span style={{ width: `${Math.min(100, (inUse / shown) * 100)}%` }} />
+        </div>
+        <span className="faint" style={{ fontSize: 'var(--t-micro)', fontVariantNumeric: 'tabular-nums' }}>
+          {inUse === 0 ? `none of ${shown} running` : `${inUse} of ${shown} running`}
+        </span>
+      </div>
+      <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 3, lineHeight: 1.45 }}>
+        {source}
+        {enforcedLimit !== null && enforcedLimit !== limit && (
+          <> Saving changes the enforced limit to {num(limit)}.</>
+        )}
+      </p>
+    </>
+  );
+}
 
 function Dispatcher({ active }: { active: boolean }) {
   const [draft, setDraft] = useState<QueueSlots | null>(null);
@@ -1602,6 +2051,11 @@ function Dispatcher({ active }: { active: boolean }) {
 
   const slots = useLoad(() => window.wanigan.queue.slots());
   const queue = useLoad(() => window.wanigan.queue.list(60), [tick]);
+  // Interactive sessions never create a queue row, so counting queue rows made
+  // this meter read "0 of N" forever — on the very page whose number the
+  // launcher enforces. This reads the live PTY count and the limit from the
+  // same slots() call the refusal uses, so the two cannot disagree.
+  const interactive = useLoad(() => window.wanigan.sessions.liveCount(), [tick]);
 
   // The queue moves on its own, so the table follows it rather than waiting for
   // the user to come back and reopen the page.
@@ -1624,7 +2078,14 @@ function Dispatcher({ active }: { active: boolean }) {
       const applied = await window.wanigan.queue.setSlots(next);
       setDraft(applied);
       slots.reload();
-      setSaved({ tone: 'ok', text: `Wanigan will now start at most ${applied.session} sessions, ${applied.headless} headless runs, ${applied.batch} batch submissions and ${applied.scout} Scout pass${applied.scout === 1 ? '' : 'es'} at a time.` });
+      interactive.reload();
+      setSaved({
+        tone: 'ok',
+        text: `Saved. Headless runs, batch submissions and Scout passes above ${applied.headless}, `
+          + `${applied.batch} and ${applied.scout} wait in the queue. An interactive session is not `
+          + `queued: starting one while ${applied.session} ${applied.session === 1 ? 'is' : 'are'} already `
+          + 'running is refused, with a message naming this limit.',
+      });
     } catch (e) { setSaved({ tone: 'error', text: `Slots were not saved: ${msg(e)}` }); }
   }
 
@@ -1641,29 +2102,39 @@ function Dispatcher({ active }: { active: boolean }) {
 
   return (
     <Section title="Dispatcher"
-             hint="How much Wanigan starts at once, and what is holding. Work above the limit waits in the queue instead of all launching together and starving the machine.">
+             hint="How much Wanigan starts at once, and what is holding. Headless runs, batch submissions and Scout passes above their limit wait in the queue; an interactive session above its limit is refused instead, because there is a person waiting at the terminal.">
       <Frame v={slots.v} what="the slot limits" onRetry={slots.reload}>
         {(loaded) => {
           const d = draft ?? loaded;
           const dirty = (['session', 'headless', 'batch', 'scout'] as const).some((k) => d[k] !== loaded[k]);
           return (
           <>
-            {KIND_COPY.map(({ id, label, detail }) => {
-              const inUse = running[id] ?? 0;
-              const limit = Math.max(1, d[id]);
+            {KIND_COPY.map(({ id, label, detail, overLimit }) => {
+              // The interactive row is the only one whose live figure is not a
+              // queue row, so it is the only one that reads its own channel.
+              const live: Load<number> = id === 'session'
+                ? interactive.v.s === 'ok'
+                  ? { s: 'ok', d: interactive.v.d.live }
+                  : interactive.v
+                : queue.v.s === 'ok'
+                  ? { s: 'ok', d: running[id] ?? 0 }
+                  : queue.v;
+              const enforced = id === 'session' && interactive.v.s === 'ok'
+                ? interactive.v.d.limit
+                : loaded[id];
               return (
                 <div className="set-row" key={id}>
                   <div className="txt">
                     <h4>{label}</h4>
-                    <p>{detail}</p>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 6, maxWidth: 300 }}>
-                      <div className="set-meter" style={{ flex: 1 }}>
-                        <span style={{ width: `${Math.min(100, (inUse / limit) * 100)}%` }} />
-                      </div>
-                      <span className="faint" style={{ fontSize: 'var(--t-micro)', fontVariantNumeric: 'tabular-nums' }}>
-                        {inUse} of {limit} running
-                      </span>
-                    </div>
+                    <p>{detail} {overLimit}</p>
+                    <SlotMeter
+                      load={live}
+                      limit={Math.max(1, d[id])}
+                      enforcedLimit={enforced}
+                      source={id === 'session'
+                        ? 'Counted from the sessions holding a terminal right now, against the limit the launcher itself checks.'
+                        : 'Counted from queue rows in the running state.'}
+                    />
                   </div>
                   <label style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 7 }}>
                     <span className="label">slots</span>
@@ -1679,10 +2150,19 @@ function Dispatcher({ active }: { active: boolean }) {
               {dirty && (
                 <button className="btn" onClick={() => setDraft(loaded)}>Discard changes</button>
               )}
+              <button className="btn" onClick={() => { interactive.reload(); setTick((t) => t + 1); }}>Re-count</button>
               <span className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>
-                1 to 64 per surface. Lowering a number never stops work already running — it only
-                narrows what the next tick starts.
+                1 to 64 per surface. Lowering a number never stops work already running.
               </span>
+            </div>
+            <div style={{ marginTop: 11 }}>
+              <Callout level="warning" title="Lowering the interactive limit takes effect on the next launch, as a refusal.">
+                Every other surface here queues. Interactive sessions do not: the launcher re-reads
+                this number and refuses to start a terminal once that many are already open, naming
+                this setting in the message. Set it below the number currently running and the
+                sessions already open keep running — you simply cannot start another until enough of
+                them exit.
+              </Callout>
             </div>
           </>
           );
@@ -1719,11 +2199,12 @@ function Dispatcher({ active }: { active: boolean }) {
                     const age = (q.endedAt ?? Date.now()) - q.createdAt;
                     return (
                       <tr key={q.id}>
-                        <td className="trunc" style={{ maxWidth: 210 }} title={q.label}>{q.label}</td>
+                        <td className="set-wrap" style={{ maxWidth: 210 }}>{q.label}</td>
                         <td className="dim">{q.kind}</td>
                         <td><Mark {...s} /></td>
-                        <td className="dim trunc" style={{ maxWidth: 200 }}
-                            title={q.error ?? q.blockedBy ?? undefined}>
+                        {/* Why an item is stuck is the reason to open this table
+                            at all, so it is text, not a hover. */}
+                        <td className="dim set-wrap" style={{ maxWidth: 240 }}>
                           {q.error ?? q.blockedBy ?? <span className="faint">—</span>}
                           {q.nextAttemptAt && q.state === 'waiting' && (
                             <div className="faint" style={{ fontSize: 'var(--t-micro)' }}>retry {ago(q.nextAttemptAt)}</div>
@@ -1769,7 +2250,121 @@ type Draft = {
   transport: 'stdio' | 'http'; command: string; args: string; url: string; enabled: boolean;
 };
 
-const BLANK: Draft = { name: '', projectId: '', transport: 'stdio', command: '', args: '', url: '', enabled: true };
+const BLANK: Draft = { name: '', projectId: '', transport: 'stdio', command: '', args: '', url: '', enabled: false };
+
+/** The placeholder writeMcpConfig substitutes when it writes a session config. */
+const PROJECT_PATH_SLOT = '{{PROJECT_PATH}}';
+
+/**
+ * The command line as it will be handed to the agent's CLI, with the scope it
+ * runs in, so the thing being approved is the thing being displayed.
+ *
+ * `resolved` is null when the entry is global and uses the project placeholder:
+ * that argv genuinely has no single answer, and inventing one for the review
+ * step would approve a line that is never actually run.
+ */
+function resolvedCommand(s: { transport: 'stdio' | 'http'; command?: string; args?: string; url?: string },
+                         projectPath: string | null): { template: string; resolved: string | null } {
+  const template = s.transport === 'stdio'
+    ? `${s.command ?? ''} ${s.args ?? ''}`.trim()
+    : (s.url ?? '');
+  if (!template.includes(PROJECT_PATH_SLOT)) return { template, resolved: template };
+  return {
+    template,
+    resolved: projectPath ? template.split(PROJECT_PATH_SLOT).join(projectPath) : null,
+  };
+}
+
+/**
+ * What has to be on screen before a local command becomes a standing grant.
+ *
+ * An enabled stdio server is not a preference. Wanigan writes it into the
+ * config of every session it launches in that scope, and the agent's CLI
+ * spawns it — so the click that enables one is the click that authorises a
+ * program to run on this machine, repeatedly, unattended. Elsewhere Wanigan
+ * makes that kind of grant against a SHA-256 the operator was shown. This is
+ * the reading half of the same idea, on the surface that actually has one.
+ */
+function McpEnableReview({ server, scopeName, scopePath, template, resolved, read, onRead, onCancel, onEnable }: {
+  server: McpServerConfig; scopeName: string; scopePath: string | null;
+  template: string; resolved: string | null;
+  read: boolean; onRead: (next: boolean) => void;
+  onCancel: () => void; onEnable: () => void;
+}) {
+  return (
+    <div className="set-review" role="group" aria-label={`Review ${server.name} before enabling it`}>
+      <Callout level="warning" title={`Enabling “${server.name}” lets the agent’s CLI run this command at every launch.`}>
+        Not once, and not while you are watching: Wanigan writes the line below into the config of
+        every session it starts for {scopeName}, and the CLI spawns it. Read the command and its
+        arguments the way you would read a line before pasting it into a shell.
+      </Callout>
+
+      <dl className="set-facts">
+        <div>
+          <dt>Command as stored</dt>
+          <dd className="set-path set-wrap">{template || '—'}</dd>
+        </div>
+        <div>
+          <dt>Command as it will run</dt>
+          <dd className="set-path set-wrap">
+            {resolved ?? (
+              <span className="dim" style={{ fontFamily: 'inherit' }}>
+                This entry is global and uses <span className="mono">{PROJECT_PATH_SLOT}</span>, so the
+                argument list differs per repository and there is no single line to show. Scope it to
+                one project to see the exact one.
+              </span>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>Scope</dt>
+          <dd>
+            {server.projectId === null
+              ? 'Every project — every session Wanigan launches, in every repository.'
+              : `${scopeName} only.`}
+            {scopePath && <div className="faint set-path set-wrap">{scopePath}</div>}
+          </dd>
+        </div>
+        <div>
+          <dt>Arguments</dt>
+          <dd className="set-path set-wrap">{server.args?.trim() || <span className="dim" style={{ fontFamily: 'inherit' }}>none</span>}</dd>
+        </div>
+      </dl>
+
+      <div style={{ marginTop: 11 }}>
+        <Callout level="warning" title="Read and write are decided by the tool’s name, not by what the call did.">
+          The policy gate matches each tool name against a list of read verbs — get, list, read,
+          search, fetch and their siblings. Nothing observes what an MCP tool actually changed, so a
+          server is free to call a mutating tool <span className="mono">get_everything</span> and have
+          it allowed without asking at read-only trust. Trust levels bound this server less than they
+          appear to. Judge it on the command above, not on the trust level of the project.
+        </Callout>
+      </div>
+
+      <label className="set-read-check">
+        <input type="checkbox" checked={read} onChange={(e) => onRead(e.target.checked)} />
+        <span>
+          I have read the command, arguments and scope above and want them run at every session
+          launch in this scope.
+        </span>
+      </label>
+
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 11, flexWrap: 'wrap' }}>
+        <button className="btn btn-primary" disabled={!read} onClick={onEnable}>
+          Enable {server.name}
+        </button>
+        <button className="btn" onClick={onCancel}>Leave it off</button>
+      </div>
+
+      <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 9, lineHeight: 1.55 }}>
+        Reading is not the same act as approving. Wanigan records approval of an exact command line
+        separately — bound to a digest of the command, arguments and scope, so editing a server drops
+        its approval rather than silently changing what gets spawned. If the enable is refused below,
+        that record is what is missing, and the refusal names it.
+      </p>
+    </div>
+  );
+}
 
 function Mcp({ projects, prefs, pending, setFlag }: {
   projects: Project[]; prefs: WaniganSettings | null; pending: string | null;
@@ -1778,6 +2373,11 @@ function Mcp({ projects, prefs, pending, setFlag }: {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [tick, setTick] = useState(0);
+  // Which server's command line is open for reading. Enabling a stdio server is
+  // a standing grant to execute that line at every launch, so the line is put
+  // on screen before the click that grants it, never in a tooltip afterwards.
+  const [reviewing, setReviewing] = useState<string | null>(null);
+  const [read, setRead] = useState(false);
 
   const own = useLoad(() => window.wanigan.mcp.server(), [prefs?.mcpServerEnabled]);
   // Configuration only, no status. There were Connection and Calls columns here
@@ -1817,8 +2417,22 @@ function Mcp({ projects, prefs, pending, setFlag }: {
     try {
       await window.wanigan.mcp.upsert({ ...s, enabled: on });
       setTick((t) => t + 1);
-      setSaved({ tone: 'ok', text: `“${s.name}” is ${on ? 'enabled' : 'disabled'} for new sessions.` });
+      setReviewing(null);
+      setSaved({
+        tone: 'ok',
+        text: on
+          ? `“${s.name}” is enabled. Sessions Wanigan launches for ${projectName(s.projectId)} from now on receive it; sessions already running keep the config they launched with.`
+          : `“${s.name}” is disabled. It is left out of every config Wanigan writes from now on; a session already running keeps it until it ends.`,
+      });
     } catch (e) { setSaved({ tone: 'error', text: msg(e) }); }
+  }
+
+  /** Disabling is always allowed. Enabling a local command is read first. */
+  function requestEnable(s: McpServerConfig, on: boolean) {
+    setSaved(null);
+    if (!on || s.transport !== 'stdio') { void toggleServer(s, on); return; }
+    setRead(false);
+    setReviewing(reviewing === s.id ? null : s.id);
   }
 
   async function remove(s: McpServerConfig) {
@@ -1955,11 +2569,18 @@ function Mcp({ projects, prefs, pending, setFlag }: {
               {draft.id ? 'Save changes' : 'Add server'}
             </button>
             <button className="btn" onClick={() => { setDraft(null); setSaved(null); }}>Cancel</button>
-            <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--t-small)' }}>
-              <input type="checkbox" checked={draft.enabled}
-                     onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />
-              Give it to new sessions
-            </label>
+            {draft.transport === 'http' ? (
+              <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--t-small)' }}>
+                <input type="checkbox" checked={draft.enabled}
+                       onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />
+                Give it to new sessions
+              </label>
+            ) : (
+              <span className="faint" style={{ marginLeft: 'auto', fontSize: 'var(--t-micro)', maxWidth: 320, lineHeight: 1.45 }}>
+                Saving a stdio server does not switch it on. Enable it from the list below, where the
+                command that will be executed is shown before the grant is made.
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -1988,29 +2609,52 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                   </tr>
                 </thead>
                 <tbody>
-                  {list.map((s) => (
-                    <tr key={s.id}>
-                      <td className="mono" style={{ fontSize: 'var(--t-small)' }}>{s.name}</td>
-                      <td className="dim">{s.projectId === null ? 'global' : projectName(s.projectId)}</td>
-                      <td className="set-path trunc" style={{ maxWidth: 210 }}
-                          title={s.transport === 'stdio' ? `${s.command ?? ''} ${s.args ?? ''}`.trim() : s.url}>
-                        {s.transport === 'stdio' ? `${s.command ?? ''} ${s.args ?? ''}`.trim() : s.url}
-                      </td>
-                      <td>
-                        <button className="set-mini" aria-pressed={s.enabled}
-                                onClick={() => void toggleServer(s, !s.enabled)}>
-                          <Mark {...(s.enabled ? ON : OFF)} />
-                        </button>
-                      </td>
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        <button className="set-mini" onClick={() => setDraft({
-                          id: s.id, name: s.name, projectId: s.projectId ?? '', transport: s.transport,
-                          command: s.command ?? '', args: s.args ?? '', url: s.url ?? '', enabled: s.enabled,
-                        })}>edit</button>
-                        <button className="set-mini danger" onClick={() => void remove(s)}>remove</button>
-                      </td>
-                    </tr>
-                  ))}
+                  {list.map((s) => {
+                    const scopePath = s.projectId ? projects.find((p) => p.id === s.projectId)?.path ?? null : null;
+                    const line = resolvedCommand(s, scopePath);
+                    return (
+                      <Fragment key={s.id}>
+                        <tr>
+                          <td className="mono" style={{ fontSize: 'var(--t-small)' }}>{s.name}</td>
+                          <td className="dim">
+                            {s.projectId === null ? 'global' : projectName(s.projectId)}
+                            <div className="faint set-sub-line">{s.transport}</div>
+                          </td>
+                          {/* The command was a tooltip on a truncated cell — the
+                              one fact a reviewer needs, in the one place a touch
+                              screen cannot reach. It wraps now. */}
+                          <td className="set-path set-wrap" style={{ maxWidth: 260 }}>{line.template || '—'}</td>
+                          <td>
+                            <button className="set-mini" aria-pressed={s.enabled}
+                                    aria-expanded={reviewing === s.id}
+                                    onClick={() => requestEnable(s, !s.enabled)}>
+                              <Mark {...(s.enabled ? ON : OFF)} />
+                            </button>
+                          </td>
+                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            <button className="set-mini" onClick={() => setDraft({
+                              id: s.id, name: s.name, projectId: s.projectId ?? '', transport: s.transport,
+                              command: s.command ?? '', args: s.args ?? '', url: s.url ?? '', enabled: s.enabled,
+                            })}>edit</button>
+                            <button className="set-mini danger" onClick={() => void remove(s)}>remove</button>
+                          </td>
+                        </tr>
+                        {reviewing === s.id && (
+                          <tr>
+                            <td colSpan={5} style={{ padding: 0 }}>
+                              <McpEnableReview
+                                server={s} scopeName={projectName(s.projectId)} scopePath={scopePath}
+                                template={line.template} resolved={line.resolved}
+                                read={read} onRead={setRead}
+                                onCancel={() => setReviewing(null)}
+                                onEnable={() => void toggleServer(s, true)}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -2021,6 +2665,13 @@ function Mcp({ projects, prefs, pending, setFlag }: {
         Wanigan writes these into the config of each session it launches and does not watch them
         afterwards. Whether a server answered is between the agent and that server, and this page will
         not guess: it reports what was handed out, not what connected.
+      </p>
+      <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 6, lineHeight: 1.5 }}>
+        Enabling a stdio server requires a recorded approval of that exact command, arguments and
+        scope — the same separation of <em>trusted</em> from <em>enabled</em> that provider packs use.
+        A server saved before that rule existed carries no approval, so it is left out of the configs
+        Wanigan writes until one is made; switching it on here surfaces the refusal rather than
+        failing quietly. HTTP servers run no local command and need no approval.
       </p>
 
       <Result r={saved} />
@@ -2085,8 +2736,11 @@ function Worktrees() {
                       return (
                         <tr key={w.path}>
                           <td>
-                            <div className="set-path" title={w.path}>{fileName(w.path)}</div>
-                            <div className="faint" style={{ fontSize: 'var(--t-micro)' }}>in {w.repoRoot}</div>
+                            <div className="set-path">{fileName(w.path)}</div>
+                            {/* The full path decides whether this is the
+                                worktree you meant to delete; it was a hover. */}
+                            <div className="faint set-path set-wrap">{w.path}</div>
+                            <div className="faint set-sub-line">in {w.repoRoot}</div>
                           </td>
                           <td className="mono" style={{ fontSize: 'var(--t-small)' }}>
                             {w.branch ?? <span className="faint">detached</span>}
@@ -2299,12 +2953,13 @@ function Storage({ prefs, pending, setPref }: {
                       <tbody>
                         {shown.map((t) => (
                           <tr key={t.sessionId}>
-                            <td className="mono trunc" style={{ fontSize: 'var(--t-small)', maxWidth: 220 }} title={t.sessionId}>
-                              {t.sessionId}
-                            </td>
+                            <td className="set-path set-wrap" style={{ maxWidth: 240 }}>{t.sessionId}</td>
                             <td className="set-n">{num(t.turns)}</td>
                             <td className="set-n">{bytes(t.bytes)}</td>
-                            <td className="set-when" title={fullDate(t.archivedAt)}>{ago(t.archivedAt)}</td>
+                            <td className="set-when">
+                              {ago(t.archivedAt)}
+                              <div className="faint set-sub-line">{fullDate(t.archivedAt)}</div>
+                            </td>
                             <td style={{ textAlign: 'right' }}>
                               <button className="set-mini danger" onClick={() => void forget(t.sessionId, t.bytes)}>
                                 forget
@@ -2344,10 +2999,16 @@ function Storage({ prefs, pending, setPref }: {
                       <tbody>
                         {[...uploads].sort((a, b) => b.bytes - a.bytes).map((u) => (
                           <tr key={u.hash}>
-                            <td className="set-path trunc" style={{ maxWidth: 240 }} title={u.path}>{fileName(u.path)}</td>
+                            <td style={{ maxWidth: 260 }}>
+                              {fileName(u.path)}
+                              <div className="faint set-path set-wrap">{u.path}</div>
+                            </td>
                             <td className="dim mono" style={{ fontSize: 'var(--t-micro)' }}>{u.mediaType}</td>
                             <td className="set-n">{bytes(u.bytes)}</td>
-                            <td className="set-when" title={fullDate(u.uploadedAt)}>{ago(u.uploadedAt)}</td>
+                            <td className="set-when">
+                              {ago(u.uploadedAt)}
+                              <div className="faint set-sub-line">{fullDate(u.uploadedAt)}</div>
+                            </td>
                             <td style={{ textAlign: 'right' }}>
                               <button className="set-mini danger" onClick={() => void dropUpload(u)}>remove</button>
                             </td>
@@ -2359,6 +3020,24 @@ function Storage({ prefs, pending, setPref }: {
                   <button className="btn" style={{ marginTop: 9 }} onClick={prune}>Prune unreferenced files</button>
                 </>
               )}
+
+              <div className="set-sub">Session attachment directories</div>
+              <div className="sunk" style={{ padding: '11px 13px' }}>
+                <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55 }}>
+                  Each session gets a directory that starts as an attachment staging area and stays
+                  the agent’s only writable non-project location, so reports and generated images
+                  linked from a saved conversation live there too. It is deliberately kept when the
+                  session exits — deleting it would turn an intact conversation into a page of dead
+                  links — which means the tree only grows.
+                </p>
+                <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 7 }}>
+                  <strong>This screen cannot yet measure or reclaim it.</strong> The two figures above
+                  cover transcripts and uploaded batch files only, so they are not the size of
+                  Wanigan’s data directory. Until an age-based retention control reaches this panel,
+                  the honest answer is that these directories are not listed here and nothing in the
+                  app removes them.
+                </p>
+              </div>
             </>
           );
         }}
@@ -2395,6 +3074,482 @@ function Storage({ prefs, pending, setPref }: {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
+   8 · Reading the transcript archive
+   ════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * The markers main wraps around a match.
+ *
+ * They are a copy of HIT_OPEN/HIT_CLOSE in src/main/transcripts.ts, which the
+ * renderer cannot import. The pair was chosen there precisely so a renderer
+ * could swap them for markup without corrupting a snippet that quotes a bracket
+ * or a tag — so the copy is the contract, and if that file ever changes them,
+ * highlighting here degrades to showing the raw characters rather than to
+ * showing something false. Putting them in shared/types is the right fix and
+ * belongs in that file.
+ */
+const HIT_OPEN = '«';
+const HIT_CLOSE = '»';
+
+function Snippet({ text }: { text: string }) {
+  const parts: React.ReactNode[] = [];
+  let rest = text;
+  let key = 0;
+  for (;;) {
+    const open = rest.indexOf(HIT_OPEN);
+    const close = open < 0 ? -1 : rest.indexOf(HIT_CLOSE, open + 1);
+    if (open < 0 || close < 0) break;
+    if (open > 0) parts.push(rest.slice(0, open));
+    parts.push(<mark key={`m${key++}`} className="set-hit">{rest.slice(open + 1, close)}</mark>);
+    rest = rest.slice(close + 1);
+  }
+  if (rest) parts.push(rest);
+  return <>{parts}</>;
+}
+
+const TURN_ROLE: Record<TranscriptTurn['role'], string> = {
+  user: 'You', assistant: 'Agent', system: 'System', tool: 'Tool',
+};
+
+/** Rendered before the "show the rest" button; the rest is one click away. */
+const READER_TURN_CAP = 200;
+
+/** The whole archived conversation, read on demand rather than with the hits. */
+function TranscriptReader({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
+  const doc = useLoad(() => window.wanigan.transcripts.get(sessionId), [sessionId]);
+  const [all, setAll] = useState(false);
+
+  return (
+    <div className="set-reader">
+      <div className="set-reader-head">
+        <div>
+          <div className="label">Archived conversation</div>
+          <div className="set-path set-wrap">{sessionId}</div>
+        </div>
+        <button className="btn" onClick={onClose}>Close</button>
+      </div>
+      <Frame v={doc.v} what="this transcript" onRetry={doc.reload}>
+        {(d) => {
+          if (!d.turns.length) {
+            return (
+              <div className="sunk set-empty">
+                The archive holds {bytes(d.bytes)} for this session but no readable turns.
+                {d.note && <div className="faint" style={{ marginTop: 6, fontSize: 'var(--t-small)' }}>{d.note}</div>}
+              </div>
+            );
+          }
+          const shown = all ? d.turns : d.turns.slice(0, READER_TURN_CAP);
+          return (
+            <>
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.5, marginBottom: 8 }}>
+                {plural(d.turns.length, 'turn')} · {bytes(d.bytes)} on this disk. Oldest first, so the
+                end of the conversation is at the bottom.
+                {d.note ? ` ${d.note}` : ''}
+              </p>
+              <div className="set-turns">
+                {shown.map((t, i) => (
+                  <article key={`${t.at}-${i}`} className="set-turn" data-role={t.role}>
+                    <header>
+                      <strong>{TURN_ROLE[t.role]}</strong>
+                      {t.toolName && <span className="mono faint"> · {t.toolName}</span>}
+                      <span className="faint set-sub-line"> {fullDate(t.at)}</span>
+                    </header>
+                    <pre>{t.text}</pre>
+                  </article>
+                ))}
+              </div>
+              {d.turns.length > shown.length && (
+                <button className="btn" style={{ marginTop: 9 }} onClick={() => setAll(true)}>
+                  Show the remaining {num(d.turns.length - shown.length)} turns
+                </button>
+              )}
+            </>
+          );
+        }}
+      </Frame>
+    </div>
+  );
+}
+
+/**
+ * The archive has had an FTS5 index and a working search since it was built,
+ * and no reader at all: the only transcript surface was a storage list with a
+ * forget button, so the delete verb was reachable and the search verb was not.
+ * This is the question that gets asked in an incident — "that session did
+ * something odd, what did it actually say" — and it had no answer.
+ */
+function TranscriptSearch({ prefs }: { prefs: WaniganSettings | null }) {
+  const [typed, setTyped] = useState('');
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState<string | null>(null);
+
+  const hits = useLoad<TranscriptHit[]>(
+    async () => (query.trim() ? window.wanigan.transcripts.search(query.trim(), 80) : []),
+    [query],
+  );
+
+  function run() {
+    setOpen(null);
+    setQuery(typed);
+  }
+
+  return (
+    <Section title="Search transcripts"
+             hint="Full-text search across every conversation Wanigan has archived on this machine. Nothing is sent anywhere to answer it.">
+      <form className="set-field-action" onSubmit={(e) => { e.preventDefault(); run(); }}>
+        <label className="sr-only" htmlFor="transcript-q">Search archived transcripts</label>
+        <input id="transcript-q" className="field" value={typed} spellCheck={false}
+               placeholder="rm -rf, .env, force push, a file name…"
+               onChange={(e) => setTyped(e.target.value)} />
+        <button className="btn btn-primary" type="submit" disabled={!typed.trim()}>Search</button>
+      </form>
+      <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 5, lineHeight: 1.5 }}>
+        Matches user and agent turns. Only sessions archived while <em>Archive transcripts</em> was on
+        are here — {prefs
+          ? prefs.archiveTranscripts
+            ? 'it is on now, so sessions that finish from here on are searchable.'
+            : 'it is off now, so nothing new is being added.'
+          : 'that switch is still loading.'}
+      </p>
+
+      {!query.trim() ? (
+        <div className="sunk set-empty" style={{ marginTop: 11 }}>
+          Type something to search for. Nothing has been read yet.
+        </div>
+      ) : (
+        <div style={{ marginTop: 11 }}>
+          <Frame v={hits.v} what="the transcript index" onRetry={hits.reload}>
+            {(rows) => {
+              if (!rows.length) {
+                return (
+                  <div className="sunk set-empty">
+                    No archived turn contains “{query.trim()}”.
+                    <div className="faint" style={{ marginTop: 6, fontSize: 'var(--t-small)' }}>
+                      That is an answer about the archive, not about what the agents did: a session
+                      that ran while archiving was off left no text to search, and a forgotten
+                      transcript is gone from the index too.
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <>
+                  <div className="set-scroll wide">
+                    <table className="grid">
+                      <thead>
+                        <tr><th>When</th><th>Project</th><th>Who</th><th>Match</th><th /></tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((h, i) => (
+                          <tr key={`${h.sessionId}-${h.at}-${i}`}>
+                            <td className="set-when">
+                              {ago(h.at)}
+                              <div className="faint set-sub-line">{fullDate(h.at)}</div>
+                            </td>
+                            <td>
+                              {h.projectName}
+                              <div className="faint set-sub-line">
+                                {h.providerId || 'provider not recorded'}
+                              </div>
+                            </td>
+                            <td className="dim">{h.role === 'user' ? 'You' : 'Agent'}</td>
+                            <td className="dim set-wrap" style={{ maxWidth: 420, lineHeight: 1.5 }}>
+                              <Snippet text={h.snippet} />
+                            </td>
+                            <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                              <button className="set-mini"
+                                      onClick={() => setOpen(open === h.sessionId ? null : h.sessionId)}>
+                                {open === h.sessionId ? 'close' : 'read session'}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.5 }}>
+                    {plural(rows.length, 'matching turn')}, best match first, capped at 80. A hit names
+                    the session so you can open the whole conversation beside it.
+                  </p>
+                </>
+              );
+            }}
+          </Frame>
+          {open && (
+            <div style={{ marginTop: 12 }}>
+              <TranscriptReader sessionId={open} onClose={() => setOpen(null)} />
+            </div>
+          )}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   9 · Backup and restore
+   ════════════════════════════════════════════════════════════════════════ */
+
+/** Both evidence clocks read the same way, including when there is no clock. */
+const evidenceClock = (at: number | null) => (at === null ? 'nothing recorded' : fullDate(at));
+
+/**
+ * The database is the source of truth for every Goal, proof, decision and
+ * learned item Wanigan holds, and until this section existed there was no
+ * export, no copy and no way back: a failed disk or a new laptop took all of it,
+ * and the app never said so.
+ *
+ * Every number this panel prints is measured — bytes written, files copied,
+ * digests verified — so none of them carries a tilde. The one thing it will not
+ * do is promise that a restore is safe: that is decided by the two evidence
+ * clocks, and both are put on screen before the decision, not after it.
+ */
+type BackupAction = 'create' | 'inspect' | 'restore';
+
+function Backup() {
+  const [busy, setBusy] = useState<BackupAction | null>(null);
+  const [made, setMade] = useState<BackupSummary | null>(null);
+  const [checked, setChecked] = useState<BackupCheck | null>(null);
+  const [restored, setRestored] = useState<BackupRestoreSummary | null>(null);
+  // Kept with the action that produced it: a refusal from the restore path must
+  // not surface under "Back up now", where it would read as a failed backup.
+  const [note, setNote] = useState<{ kind: BackupAction; tone: 'info' | 'error'; text: string } | null>(null);
+
+  async function run<T>(kind: BackupAction, fn: () => Promise<T | null>,
+                        onDone: (value: T) => void, canceledText: string) {
+    setBusy(kind); setNote(null);
+    try {
+      const value = await fn();
+      // A native chooser that was dismissed returns null. That is a decision,
+      // not a failure, and it does not deserve red.
+      if (value === null) { setNote({ kind, tone: 'info', text: canceledText }); return; }
+      onDone(value);
+    } catch (e) {
+      setNote({ kind, tone: 'error', text: msg(e) });
+    } finally { setBusy(null); }
+  }
+
+  const outcome = (kind: BackupAction) => (note && note.kind === kind ? (
+    <div style={{ marginTop: 11 }}>
+      {note.tone === 'error'
+        ? (
+          <Callout level="critical" title="Nothing was changed.">
+            <p className="set-wrap" style={{ whiteSpace: 'pre-wrap' }}>{note.text}</p>
+          </Callout>
+        )
+        : <Note tone="info">{note.text}</Note>}
+    </div>
+  ) : null);
+
+  return (
+    <>
+      <Section title="Back up Wanigan’s record"
+               hint="One folder holding a verified copy of the database and every archived transcript. Written where you choose; nothing is uploaded and nothing is scheduled.">
+        <Callout level="warning" title="Wanigan takes no backup on its own. Nothing here is scheduled.">
+          Its Goals, proofs, decisions, costs, learned items and archived conversations all live in
+          one SQLite database on this Mac. A whole-disk backup may happen to carry it; nothing inside
+          Wanigan does, and a copy of a live SQLite database is not automatically a consistent one.
+          A backup is a deliberate act, and this is the only place in the app to make one.
+        </Callout>
+
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" disabled={busy !== null}
+                  onClick={() => void run('create', () => window.wanigan.backup.create(), (v) => { setMade(v); setChecked(null); }, 'Backup canceled at the folder chooser. Nothing was written.')}>
+            {busy === 'create' ? 'Copying…' : 'Back up now'}
+          </button>
+          <span className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45, maxWidth: 420 }}>
+            You choose the folder. Wanigan writes a consistent copy of the live database, every
+            archived transcript, and a manifest carrying a SHA-256 of each file.
+          </span>
+        </div>
+
+        {made && (
+          <div style={{ marginTop: 12 }}>
+            <Note tone="ok">Backup written.</Note>
+            <div className="set-scroll" style={{ marginTop: 9 }}>
+              <table className="grid">
+                <thead><tr><th>What was written</th><th>Measured</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td>Folder</td>
+                    <td className="set-path set-wrap" style={{ userSelect: 'all' }}>{made.dir}</td>
+                  </tr>
+                  <tr>
+                    <td>Total on disk</td>
+                    <td>{bytes(made.totalBytes)} across the database, the transcripts and the manifest</td>
+                  </tr>
+                  <tr>
+                    <td>Database</td>
+                    <td>
+                      {bytes(made.database.bytes)}
+                      <div className="faint set-path set-wrap">sha256 {made.database.sha256}</div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Transcripts copied</td>
+                    <td>{plural(made.transcripts.files, 'file')} · {bytes(made.transcripts.bytes)}</td>
+                  </tr>
+                  <tr>
+                    <td>Newest evidence in the copy</td>
+                    <td>{evidenceClock(made.latestEvidenceAt)}</td>
+                  </tr>
+                  <tr>
+                    <td>Time taken</td>
+                    <td>{dur(made.durationMs)} · Wanigan {made.appVersion}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            {made.excluded.length > 0 && (
+              <>
+                <div className="set-sub">Deliberately not in the backup</div>
+                <ul className="set-list">
+                  {made.excluded.map((line) => <li key={line}>{line}</li>)}
+                </ul>
+              </>
+            )}
+            <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.5 }}>
+              Every figure above was read from the files after they were written, not projected from
+              the database’s size. Copy the folder somewhere that is not this machine — a backup on
+              the disk that fails is not a backup.
+            </p>
+          </div>
+        )}
+        {outcome('create')}
+      </Section>
+
+      <Section title="Check a backup"
+               hint="Read-only. Verifies a folder against its manifest and says what restoring it would cost, before you decide anything.">
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn" disabled={busy !== null}
+                  onClick={() => void run('inspect', () => window.wanigan.backup.inspect(), (v) => { setChecked(v); setMade(null); }, 'Check canceled at the folder chooser. Nothing was read.')}>
+            {busy === 'inspect' ? 'Verifying…' : 'Check a backup folder'}
+          </button>
+          <span className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45, maxWidth: 420 }}>
+            Nothing is changed by this. It re-hashes the files, compares them with the manifest, and
+            compares the backup’s newest evidence with the database in place.
+          </span>
+        </div>
+
+        {checked && (
+          <div style={{ marginTop: 12 }}>
+            {checked.problems.length ? (
+              <Callout level="critical" title="This backup did not verify. It cannot be restored.">
+                <ul style={{ margin: 0, paddingLeft: 16 }}>
+                  {checked.problems.map((p) => <li key={p.code} style={{ marginTop: 4 }}>{p.detail}</li>)}
+                </ul>
+              </Callout>
+            ) : (
+              <Note tone="ok">This backup verified: every file matches the digest recorded in its manifest.</Note>
+            )}
+            <div className="set-scroll" style={{ marginTop: 9 }}>
+              <table className="grid">
+                <thead><tr><th>Fact</th><th>Value</th></tr></thead>
+                <tbody>
+                  <tr><td>Folder</td><td className="set-path set-wrap">{checked.dir}</td></tr>
+                  <tr><td>Taken</td><td>{checked.createdAt === null ? 'no date recorded' : fullDate(checked.createdAt)}</td></tr>
+                  <tr><td>Written by</td><td>{checked.appVersion ?? 'version not recorded'}</td></tr>
+                  <tr>
+                    <td>Database</td>
+                    <td>
+                      {checked.database ? bytes(checked.database.bytes) : 'none in this folder'}
+                      {checked.database && <div className="faint set-path set-wrap">sha256 {checked.database.sha256}</div>}
+                    </td>
+                  </tr>
+                  <tr><td>Transcripts</td><td>{plural(checked.transcripts.files, 'file')} · {bytes(checked.transcripts.bytes)}</td></tr>
+                  <tr><td>Newest evidence in this backup</td><td>{evidenceClock(checked.latestEvidenceAt)}</td></tr>
+                  <tr><td>Newest evidence in the database now</td><td>{evidenceClock(checked.currentLatestEvidenceAt)}</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div style={{ marginTop: 10 }}>
+              {checked.wouldDiscardNewer ? (
+                <Callout level="critical" title="The database in place holds work this backup does not.">
+                  Restoring would drop everything recorded between the two clocks above. Back up the
+                  current database first if any of it matters.
+                </Callout>
+              ) : (
+                <Note tone="info">
+                  The database in place records nothing newer than this backup, so restoring it would
+                  drop no recorded work.
+                </Note>
+              )}
+            </div>
+          </div>
+        )}
+        {outcome('inspect')}
+      </Section>
+
+      <Section title="Restore a backup"
+               hint="Replaces the database and the transcript archive in place, then relaunches Wanigan.">
+        <Callout level="critical" title="Read this before you start: a restore relaunches Wanigan, and it is refused while any agent is live.">
+          <p>
+            <strong>Every running agent must be stopped first.</strong> A restore swaps the database
+            file out from under this process, and anything still writing to it — a terminal recording
+            events, a headless row banking a cost — would start failing against a file that has moved.
+            Wanigan counts the live interactive and headless agents and refuses, naming the number,
+            rather than starting and hoping.
+          </p>
+          <p style={{ marginTop: 6 }}>
+            <strong>Wanigan restarts immediately afterwards.</strong> The database connection this
+            window holds is closed to make the swap, so the app cannot keep running against it. A
+            live terminal cannot survive that: saved projects, transcripts and settings are a
+            different thing from a running PTY.
+          </p>
+          <p style={{ marginTop: 6 }}>
+            <strong>Nothing is deleted.</strong> The replaced database and transcripts are moved into
+            a dated folder inside Wanigan’s data directory, and the restore names it. Your API
+            credential and your provider-pack and MCP approvals are <em>not</em> restored — those are
+            granted on one machine, for one machine.
+          </p>
+        </Callout>
+
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
+          <button className="btn btn-danger" disabled={busy !== null}
+                  onClick={() => void run('restore', () => window.wanigan.backup.restore(), setRestored, 'Restore canceled. The database in place was not touched.')}>
+            {busy === 'restore' ? 'Restoring…' : 'Choose a backup to restore'}
+          </button>
+          <span className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45, maxWidth: 440 }}>
+            After you pick a folder, Wanigan verifies it and then asks once more — naming the backup’s
+            date, its transcript count, both evidence clocks and where the replaced files will be
+            moved. Nothing is replaced until you answer that.
+          </span>
+        </div>
+
+        {restored && (
+          <div style={{ marginTop: 12 }}>
+            <Callout level="warning" title="Restored. Wanigan is restarting to open the restored database.">
+              This window is already running against a closed connection, so its other panels will
+              fail until the app comes back.
+            </Callout>
+            <div className="set-scroll" style={{ marginTop: 9 }}>
+              <table className="grid">
+                <thead><tr><th>What happened</th><th>Measured</th></tr></thead>
+                <tbody>
+                  <tr><td>Restored from</td><td className="set-path set-wrap">{restored.restoredFrom}</td></tr>
+                  <tr><td>That backup was taken</td><td>{fullDate(restored.createdAt)}</td></tr>
+                  <tr><td>Database put in place</td><td>{bytes(restored.database.bytes)}</td></tr>
+                  <tr><td>Transcripts put in place</td><td>{plural(restored.transcripts.files, 'file')} · {bytes(restored.transcripts.bytes)}</td></tr>
+                  <tr><td>Replaced files moved to</td><td className="set-path set-wrap">{restored.replacedDir}</td></tr>
+                  <tr>
+                    <td>Newer work dropped</td>
+                    <td>{restored.discardedNewer
+                      ? 'Yes — the database in place held work recorded after this backup.'
+                      : 'No — the database in place held nothing newer.'}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {outcome('restore')}
+      </Section>
+    </>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
    Styles
 
    Settings owns no feature stylesheet: index.css belongs to the shell and each
@@ -2406,7 +3561,7 @@ function Storage({ prefs, pending, setPref }: {
 const SHEET = `
 .set :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 5px; }
 
-.set.pane { width: 100%; max-width: none; box-sizing: border-box; overscroll-behavior: contain; }
+.set.pane { width: 100%; max-width: none; flex: 1 1 auto; align-self: stretch; min-width: 0; box-sizing: border-box; overscroll-behavior: contain; }
 .set-kicker, .set-panel-kicker { color: var(--accent); font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .set-kicker { margin-bottom: 4px; }
 .set-hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(270px, .72fr); gap: var(--s-4); align-items: start; }
@@ -2415,7 +3570,7 @@ const SHEET = `
 .set-save-guide { padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
 .set-save-guide strong { display: block; color: var(--text); font-size: 12px; margin-bottom: 3px; }
 
-.set-layout { display: grid; grid-template-columns: 212px minmax(0, 1fr); gap: var(--s-4); align-items: start; flex: 0 0 auto; width: 100%; }
+.set-layout { display: grid; grid-template-columns: clamp(196px, 18vw, 232px) minmax(0, 1fr); gap: var(--s-4); align-items: start; align-self: stretch; min-width: 0; width: 100%; }
 .set-tabs { position: sticky; top: 0; display: flex; flex-direction: column; gap: 4px; padding: 7px; max-height: calc(100vh - 104px); overflow-y: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); scrollbar-width: thin; }
 .set-tabs-intro { padding: 5px 6px 8px; color: var(--text-dim); font-size: var(--t-micro); line-height: 1.45; border-bottom: 1px solid var(--line-soft); margin-bottom: 2px; }
 .set-tabs-intro strong { display: block; color: var(--text); font-size: 11px; margin-bottom: 2px; }
@@ -2425,8 +3580,8 @@ const SHEET = `
 .set-tab-label { line-height: 1.2; }
 .set-tab-detail { color: var(--text-faint); font-size: 10.5px; font-weight: 500; line-height: 1.25; }
 .set-tabs button.on .set-tab-detail { color: var(--accent); opacity: .82; }
-.set-panels { min-width: 0; }
-.set-tab-panel { display: flex; flex-direction: column; gap: var(--s-4); min-width: 0; }
+.set-panels { min-width: 0; width: 100%; }
+.set-tab-panel { display: flex; flex-direction: column; gap: var(--s-4); min-width: 0; width: 100%; }
 .set-tab-panel[hidden] { display: none; }
 .set-panel-intro { padding: 14px 15px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); }
 .set-panel-intro h2 { margin-top: 3px; font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
@@ -2522,6 +3677,62 @@ const SHEET = `
 .set-sub { margin: 16px 0 7px; font-size: 10.5px; font-weight: 600;
            letter-spacing: .07em; text-transform: uppercase; color: var(--text-faint); }
 
+/* Text that used to be a title attribute. A tooltip is nothing on a touch
+   screen, unreliable in a screen reader and unreachable from a keyboard, so
+   anything load-bearing wraps in place instead of hiding behind a hover. */
+.set-wrap { white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+
+/* Visually hidden, still announced and still focusable by a screen reader. */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+           overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+.set-list { margin: 0; padding-left: 17px; color: var(--text-dim);
+            font-size: var(--t-small); line-height: 1.55; }
+.set-list li { margin-top: 3px; }
+
+/* Filter bars: one labelled control per fact you can scope by. */
+.set-filters { display: flex; flex-wrap: wrap; gap: 9px 11px; align-items: flex-end;
+               margin: 12px 0 9px; }
+.set-filter-field { display: flex; flex-direction: column; gap: 3px; min-width: 150px; }
+.set-filter-field.grow { flex: 1 1 220px; }
+.set-filter-field > .field { max-width: 260px; }
+.set-filter-field.grow > .field { max-width: none; }
+.set-filter-actions { display: flex; gap: 8px; margin-left: auto; align-items: flex-end; flex-wrap: wrap; }
+
+/* A destructive confirmation and a consent review are the same shape: a bordered
+   region that is plainly not part of the list it grew out of. */
+.set-danger-zone, .set-review { display: grid; gap: 11px; padding: 13px;
+                                border-radius: var(--r-md); background: var(--bg-sunk);
+                                border: 1px solid var(--line); }
+.set-danger-zone { border-color: var(--critical); }
+.set-review { margin: 4px 0; }
+
+.set-facts { display: grid; gap: 9px; margin: 0; }
+.set-facts > div { display: grid; grid-template-columns: minmax(130px, 170px) minmax(0, 1fr); gap: 10px; }
+.set-facts dt { font-size: 11px; font-weight: 650; color: var(--text-dim); }
+.set-facts dd { margin: 0; min-width: 0; font-size: var(--t-small); line-height: 1.5; }
+
+.set-read-check { display: flex; gap: 8px; align-items: flex-start; margin-top: 4px;
+                  font-size: var(--t-small); line-height: 1.5; color: var(--text); }
+.set-read-check input { margin-top: 3px; flex: none; }
+
+/* Transcript search and the reader it opens. */
+.set-hit { background: var(--accent-soft); color: var(--accent); border-radius: 3px; padding: 0 2px; }
+.set-reader { border: 1px solid var(--line); border-radius: var(--r-md);
+              background: var(--bg-sunk); padding: 13px; }
+.set-reader-head { display: flex; gap: 11px; align-items: flex-start;
+                   justify-content: space-between; margin-bottom: 11px; }
+.set-turns { display: grid; gap: 9px; max-height: 520px; overflow-y: auto;
+             overscroll-behavior: contain; padding-right: 4px; }
+.set-turn { border-left: 2px solid var(--line); padding: 2px 0 2px 10px; }
+.set-turn[data-role='user'] { border-left-color: var(--accent); }
+.set-turn[data-role='assistant'] { border-left-color: var(--series-1); }
+.set-turn header { font-size: 11px; color: var(--text-dim); }
+.set-turn header strong { color: var(--text); font-size: 11.5px; }
+.set-turn pre { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere;
+                font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+                font-size: 11.5px; line-height: 1.55; color: var(--text-dim); }
+
 .set-empty { padding: 20px 14px; text-align: center;
              font-size: 12.5px; line-height: 1.55; color: var(--text-dim); }
 
@@ -2529,14 +3740,13 @@ const SHEET = `
 .set-mini:hover { background: var(--bg-sunk); color: var(--text); }
 .set-mini.danger:hover { background: var(--critical-soft); color: var(--critical); }
 
-/* A full-width iPad has room for the navigation rail. In portrait or split
-   view the same controls become a scrollable touch tab strip rather than
-   forcing content to a narrow second column. */
-@media (max-width: 900px) {
+/* A full-width desktop carries a rail. An iPad or a desktop split view gets a
+   scrollable touch tab strip instead of a narrow second column. */
+@media (max-width: 1024px), (pointer: coarse) and (max-width: 1180px) {
   .set-hero { grid-template-columns: 1fr; gap: 10px; }
   .set-save-guide { max-width: none; }
   .set-layout { display: flex; flex-direction: column; gap: var(--s-4); }
-  .set-tabs { position: relative; top: auto; flex-direction: row; width: 100%; max-height: none; overflow-x: auto; overflow-y: hidden; padding: 5px; scroll-snap-type: x proximity; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; touch-action: pan-x; }
+  .set-tabs { position: relative; top: auto; flex-direction: row; width: 100%; max-height: none; overflow-x: auto; overflow-y: hidden; padding: 5px; scroll-padding-inline: 8px; scroll-snap-type: x proximity; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; touch-action: pan-x; }
   .set-tabs-intro { display: none; }
   .set-tabs button { flex: 0 0 auto; width: auto; min-height: 42px; padding: 8px 11px; white-space: nowrap; scroll-snap-align: start; }
   .set-tab-detail { display: none; }
@@ -2544,8 +3754,9 @@ const SHEET = `
 }
 
 @media (pointer: coarse) {
-  .set-tabs button, .set-switch { min-height: 44px; touch-action: manipulation; }
-  .set-mini { min-height: 32px; touch-action: manipulation; }
+  .set-tabs button, .set-switch, .set-opt { min-height: 44px; touch-action: manipulation; }
+  .set-mini, .set-chip { min-height: 40px; padding-inline: 10px; touch-action: manipulation; }
+  .set button:not(.set-mini):not(.set-chip) { min-height: 44px; touch-action: manipulation; }
 }
 
 @media (max-width: 640px) {
@@ -2561,7 +3772,11 @@ const SHEET = `
   .set-field-action > .btn { align-self: flex-start; }
   .set-key-status .btn:first-of-type { margin-left: 0; }
   .set-runtime-row, .set-project-row { align-items: flex-start; flex-wrap: wrap; }
-  .set-runtime-row .trunc, .set-project-row .trunc { flex-basis: 100%; }
+  .set-runtime-row .trunc, .set-project-row .trunc,
+  .set-runtime-row .set-wrap, .set-project-row .set-wrap { flex-basis: 100%; }
+  .set-filter-field, .set-filter-field > .field { min-width: 0; max-width: none; width: 100%; }
+  .set-filter-actions { margin-left: 0; }
+  .set-facts > div { grid-template-columns: 1fr; gap: 2px; }
 }
 `;
 

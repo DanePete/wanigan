@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { MODELS, DEFAULT_MODEL, modelFor } from '../batch/pricing';
+import { isServablePath, managedPolicyDir } from './instructions';
+import { estimateTokens } from '../../shared/tokens';
 
 /**
  * Everything a project injects into an agent *besides* its CLAUDE.md: the
@@ -109,13 +111,9 @@ const LAYER_PATHS: Record<SettingsLayer, (projectPath: string) => string> = {
   managed: () => managedSettingsPath(),
 };
 
-/** Managed policy lives outside the user's home, per platform. */
+/** Managed policy lives outside the user's home, per platform — resolved once, in instructions.ts, for all three context modules. */
 function managedSettingsPath(): string {
-  if (process.platform === 'darwin') return '/Library/Application Support/ClaudeCode/managed-settings.json';
-  if (process.platform === 'win32') {
-    return path.join(process.env.ProgramData || 'C:\\ProgramData', 'ClaudeCode', 'managed-settings.json');
-  }
-  return '/etc/claude-code/managed-settings.json';
+  return path.join(managedPolicyDir(), 'managed-settings.json');
 }
 
 /**
@@ -147,6 +145,8 @@ const MAX_WALK_DEPTH = 4;
 const MAX_WALK_ENTRIES = 400;
 /** A permission list this long is already unreadable; the rest is summarised. */
 const MAX_LIST = 1000;
+/** The budget prices at most this many files per call. The renderer names them, so the list must be bounded. */
+const MAX_BUDGET_FILES = 512;
 
 /* ── small readers ───────────────────────────────────────────────────── */
 
@@ -205,12 +205,19 @@ function readJsonFile(file: string, maxBytes = MAX_JSON_BYTES): JsonRead {
  * screenshotted. Values that look like credentials never leave this module.
  */
 const SECRET_ARG = /^(--?[A-Za-z0-9_-]*(?:key|token|secret|password|auth)[A-Za-z0-9_-]*)=(.+)$/i;
-const SECRET_INLINE = /\b(sk-[A-Za-z0-9_-]{8,}|dop_v1_[A-Za-z0-9]{8,}|gh[pousr]_[A-Za-z0-9]{8,}|xox[baprs]-[A-Za-z0-9-]{8,})/g;
+/** A flag whose VALUE is the next argv token: `--api-key sk…`, `-p hunter2`. */
+const SECRET_FLAG = /^(?:-p|--?[A-Za-z0-9_-]*(?:key|token|secret|password|passwd|auth|credential)[A-Za-z0-9_-]*)$/i;
+const SECRET_INLINE = /\b(sk-[A-Za-z0-9_-]{8,}|dop_v1_[A-Za-z0-9]{8,}|gh[pousr]_[A-Za-z0-9]{8,}|xox[baprs]-[A-Za-z0-9-]{8,}|whsec_[A-Za-z0-9]{8,}|[a-z]{2,6}_(?:live|test)_[A-Za-z0-9]{8,})/g;
 /** A credential passed inline. Seeing that a hook sends a token is the point; its value is not. */
-const SECRET_KV = /\b([A-Za-z0-9_-]*(?:key|token|secret|password|passwd)[A-Za-z0-9_-]*)([=:])(\S+)/gi;
+const SECRET_KV = /\b([A-Za-z0-9_-]*(?:key|token|secret|password|passwd)[A-Za-z0-9_-]*)\s*([=:])\s*(\S+)/gi;
+/** `Authorization: Bearer <x>` — the header name carries none of the keywords the KV rule knows. */
+const SECRET_AUTH = /\b((?:proxy-)?authorization\b["']?\s*[:=]\s*(?:bearer\s+|basic\s+)?|bearer\s+)(\S+)/gi;
 
 function redactSecrets(s: string): string {
-  return s.replace(SECRET_INLINE, (m) => m.slice(0, 6) + '…redacted').replace(SECRET_KV, '$1$2…redacted');
+  return s
+    .replace(SECRET_INLINE, (m) => m.slice(0, 6) + '…redacted')
+    .replace(SECRET_AUTH, '$1…redacted')
+    .replace(SECRET_KV, '$1$2…redacted');
 }
 
 function redactArg(a: string): string {
@@ -218,12 +225,42 @@ function redactArg(a: string): string {
   return m ? `${m[1]}=…redacted` : redactSecrets(a);
 }
 
-/** URLs keep origin and path; a query string is where tokens hide. */
+/** Hosts whose webhook URLs carry the secret in the PATH rather than the query. */
+function pathCarriesSecret(host: string): boolean {
+  const h = host.toLowerCase();
+  return h === 'hooks.slack.com' || h === 'discord.com' || h.endsWith('.discord.com') || h.includes('webhook');
+}
+
+/** URLs keep origin and path; a query string is where tokens hide — except on webhook hosts, where the path is. */
 function safeUrl(raw: string): string {
   try {
     const u = new URL(raw);
+    if (pathCarriesSecret(u.hostname) && u.pathname !== '/') return `${u.origin}/…`;
     return u.search || u.hash ? `${u.origin}${u.pathname}?…` : `${u.origin}${u.pathname}`;
   } catch { return redactSecrets(clip(raw, 200)); }
+}
+
+/** A key whose string value is a credential wherever the pair appears — an Authorization header map, an env block. */
+const SECRET_KEY = /key|token|secret|password|passwd|auth|credential/i;
+
+/**
+ * Settings values are arbitrary JSON and reach the renderer as-is, so they get
+ * the same treatment the summaries get: string leaves through redactSecrets,
+ * and a string under a credential-looking key replaced outright — the string
+ * rules cannot see a map's key from inside its value.
+ */
+function redactValue(v: unknown, depth = 0): unknown {
+  if (typeof v === 'string') return redactSecrets(v);
+  if (depth >= 8) return v;
+  if (Array.isArray(v)) return v.map((x) => redactValue(x, depth + 1));
+  if (isRecord(v)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v)) {
+      out[k] = typeof val === 'string' && SECRET_KEY.test(k) ? '…redacted' : redactValue(val, depth + 1);
+    }
+    return out;
+  }
+  return v;
 }
 
 /* ── frontmatter ─────────────────────────────────────────────────────────
@@ -327,9 +364,9 @@ function resolveSettings(layers: LayerFile[], notes: string[]): ResolvedSetting[
       for (const l of layers) for (const v of strList(l.read.value?.[key])) if (!union.includes(v)) union.push(v);
       out.push({
         key,
-        value: clipValue(key, union, notes),
+        value: redactValue(clipValue(key, union, notes)),
         from: holders[0].layer,
-        shadowed: holders.slice(1).map((l) => ({ from: l.layer, value: l.read.value?.[key] })),
+        shadowed: holders.slice(1).map((l) => ({ from: l.layer, value: redactValue(l.read.value?.[key]) })),
       });
       notes.push(`${key} merges across settings layers instead of overriding, so the value shown is the union of all ${holders.length} of them.`);
       continue;
@@ -337,9 +374,9 @@ function resolveSettings(layers: LayerFile[], notes: string[]): ResolvedSetting[
 
     out.push({
       key,
-      value: clipValue(key, holders[0].read.value?.[key], notes),
+      value: redactValue(clipValue(key, holders[0].read.value?.[key], notes)),
       from: holders[0].layer,
-      shadowed: holders.slice(1).map((l) => ({ from: l.layer, value: clipValue(key, l.read.value?.[key], notes) })),
+      shadowed: holders.slice(1).map((l) => ({ from: l.layer, value: redactValue(clipValue(key, l.read.value?.[key], notes)) })),
     });
   }
   return out;
@@ -479,10 +516,19 @@ function mcpFrom(block: unknown, from: McpEntry['from'], source: string): McpEnt
     // `type` is authoritative when present; otherwise url vs command decides.
     const transport = str(cfg.type) ?? (url ? 'http' : command ? 'stdio' : 'unknown');
     const args = Array.isArray(cfg.args) ? cfg.args.filter((a): a is string => typeof a === 'string') : [];
+    // Redact pairwise, not just per token: the common two-arg form
+    // ["--api-key", "sk…"] carries the secret in the element AFTER the flag.
+    const shown: string[] = [];
+    let followsSecretFlag = false;
+    for (const a of args) {
+      if (followsSecretFlag) { shown.push('…redacted'); followsSecretFlag = false; continue; }
+      followsSecretFlag = SECRET_FLAG.test(a);
+      shown.push(redactArg(a));
+    }
     const target = url
       ? safeUrl(url)
       : command
-        ? clip([redactArg(command), ...args.map(redactArg)].join(' '), 240)
+        ? clip([redactArg(command), ...shown].join(' '), 240)
         : '(nothing to run)';
     out.push({ name, transport, target, from, source });
   }
@@ -613,7 +659,11 @@ function readCommands(root: string, scope: 'user' | 'project', projectPath: stri
   for (const { file, rel } of walkMarkdown(root, projectPath, notes)) {
     const md = readMarkdownHead(file);
     if (!md) continue;
-    const name = md.fm.name || path.basename(file, '.md');
+    // Claude Code invokes a slash command by its FILENAME. A `name:` key in
+    // frontmatter — a common carry-over from agent files, where it does work —
+    // changes nothing, so advertising it here would print an invoke string
+    // that does nothing when typed.
+    const name = path.basename(file, '.md');
     // A command in a subdirectory is namespaced: commands/git/sync.md → /git:sync.
     const dirs = path.dirname(rel).split(path.sep).filter((d) => d && d !== '.');
     out.push({
@@ -718,41 +768,12 @@ export function readProjectConfig(projectPath: string): ProjectConfig {
 /* ── token budget ────────────────────────────────────────────────────── */
 
 /**
- * Rough chars-per-token for English prose and for punctuation-dense code. A
- * flat chars/4 undercounts a CLAUDE.md that is mostly fenced code by roughly a
- * third, which is exactly the file most likely to be too big.
+ * Re-exported so this module stays the context panel's whole API surface. The
+ * implementation moved to src/shared/tokens.ts because the Learning ledger and
+ * the batch builder price the same text and used to disagree with this panel
+ * about it.
  */
-const PROSE_CHARS_PER_TOKEN = 4.0;
-const CODE_CHARS_PER_TOKEN = 2.8;
-/** Punctuation share at which text is treated as fully code-dense. */
-const CODE_SYMBOL_RATIO = 0.25;
-/** CJK and similar wide scripts run near one token per character. */
-const WIDE_CHARS_PER_TOKEN = 1.2;
-
-/**
- * A LOCAL estimate, never a measurement. This runs on every project open, so it
- * must work offline and with no API key — spending a network round trip to
- * label a panel would be absurd — and it carries the same honesty
- * src/main/batch/pricing.ts carries about pricing not being in the API.
- */
-export function estimateTokens(text: string): number {
-  if (!text) return 0;
-  let alnum = 0, symbols = 0, wide = 0, space = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text.charCodeAt(i);
-    if (c >= 0x2e80) { wide++; continue; }
-    if (c === 32 || c === 9 || c === 10 || c === 13) { space++; continue; }
-    const isAlnum = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
-    if (isAlnum) alnum++; else symbols++;
-  }
-  const narrow = alnum + symbols + space;
-  if (!narrow) return Math.ceil(wide / WIDE_CHARS_PER_TOKEN);
-
-  const ratio = symbols / Math.max(1, alnum + symbols);
-  const density = Math.min(1, ratio / CODE_SYMBOL_RATIO);
-  const perToken = PROSE_CHARS_PER_TOKEN - density * (PROSE_CHARS_PER_TOKEN - CODE_CHARS_PER_TOKEN);
-  return Math.ceil(narrow / perToken + wide / WIDE_CHARS_PER_TOKEN);
-}
+export { estimateTokens };
 
 /**
  * Interactive sessions pay LIST price. Everything in pricing.ts is the batch
@@ -783,15 +804,36 @@ export function contextBudget(
   files: { path: string; label: string }[],
   modelId?: string
 ): ContextBudget {
-  const root = projectPath ? path.resolve(projectPath) : '';
+  const root = path.resolve(projectPath || '.');
+  let rootSt: fs.Stats;
+  try { rootSt = fs.statSync(root); } catch {
+    throw new Error(`No such project directory: ${root}. Re-add the project in Wanigan, or pick another one.`);
+  }
+  if (!rootSt.isDirectory()) {
+    throw new Error(`${root} is a file, not a project directory. Pick the repository folder instead.`);
+  }
+
   const rows: ContextBudget['files'] = [];
   const warnings: string[] = [];
   const seen = new Set<string>();
   let totalBytes = 0, skippedBytes = 0, estTokens = 0;
+  let outside = 0, unreadable = 0;
 
-  for (const f of files) {
-    if (!f?.path) continue;
+  const inRoot = (p: string): boolean => p === root || p.startsWith(root + path.sep);
+
+  const list = files.filter((f) => typeof f?.path === 'string' && f.path);
+  if (list.length > MAX_BUDGET_FILES) {
+    warnings.push(`Only the first ${MAX_BUDGET_FILES} of ${list.length} files were priced; the rest are ignored.`);
+  }
+
+  for (const f of list.slice(0, MAX_BUDGET_FILES)) {
     const abs = path.resolve(f.path);
+
+    // Confinement, before any disk touch: the renderer names these files, so
+    // only paths inside the project — or paths an instruction scan actually
+    // served — are priced. Anything else would make this IPC an existence,
+    // size and symlink-target oracle for the whole disk.
+    if (!inRoot(abs) && !isServablePath(abs)) { outside++; continue; }
 
     // A symlink out of the project means the file in context is not the file
     // the repo appears to contain. Say so rather than reporting the link.
@@ -800,16 +842,18 @@ export function contextBudget(
       const ls = fs.lstatSync(abs);
       if (ls.isSymbolicLink()) {
         target = fs.realpathSync(abs);
-        if (root && !target.startsWith(root + path.sep) && target !== root) {
+        if (!inRoot(target)) {
+          // Confinement applies to where the link LANDS, not where it sits.
+          if (!isServablePath(abs) && !isServablePath(target)) { outside++; continue; }
           warnings.push(`${f.label} is a symlink to ${target}, outside the project.`);
         }
       }
-    } catch { continue; }
+    } catch { unreadable++; continue; }
     if (seen.has(target)) continue;
     seen.add(target);
 
     let st: fs.Stats;
-    try { st = fs.statSync(target); } catch { continue; }
+    try { st = fs.statSync(target); } catch { unreadable++; continue; }
     if (!st.isFile()) continue;
 
     if (st.size > CLAUDE_MD_MAX_BYTES) {
@@ -825,10 +869,19 @@ export function contextBudget(
     }
 
     let tokens = 0;
-    try { tokens = estimateTokens(fs.readFileSync(target, 'utf8')); } catch { continue; }
+    try { tokens = estimateTokens(fs.readFileSync(target, 'utf8')); } catch { unreadable++; continue; }
     rows.push({ path: target, label: f.label, bytes: st.size, estTokens: tokens });
     totalBytes += st.size;
     estTokens += tokens;
+  }
+
+  if (outside > 0) {
+    warnings.push(`${outside} entr${outside === 1 ? 'y' : 'ies'} outside the project ${outside === 1 ? 'was' : 'were'} not priced.`);
+  }
+  // A file the chain says loads must not just vanish from the budget: the two
+  // panels would disagree, and the cheaper number would look authoritative.
+  if (unreadable > 0) {
+    warnings.push(`${unreadable} file(s) could not be read; the totals are a floor.`);
   }
 
   const { id, known } = resolveModel(modelId);

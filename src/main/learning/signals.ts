@@ -81,6 +81,7 @@ export interface SignalFilter {
   kinds?: LearningSignalKind[];
   processed?: boolean;
   limit?: number;
+  order?: 'asc' | 'desc';
 }
 
 export function listSignals(filter: SignalFilter = {}): LearningSignal[] {
@@ -96,7 +97,8 @@ export function listSignals(filter: SignalFilter = {}): LearningSignal[] {
     args.push(...kinds);
   }
   const limit = Math.max(1, Math.min(1_000, filter.limit ?? 200));
-  const sql = `SELECT * FROM learning_signals ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT ?`;
+  const direction = filter.order === 'asc' ? 'ASC' : 'DESC';
+  const sql = `SELECT * FROM learning_signals ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at ${direction} LIMIT ?`;
   args.push(limit);
   return (db().prepare(sql).all(...args) as SignalRow[]).map(fromRow);
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { splitTerminalInput } from '@shared/terminal-input';
 
 /**
  * One xterm instance per session, kept alive across tab switches. Terminals are
@@ -112,6 +113,15 @@ export function feed(sessionId: string, data: string) {
 export default function TerminalPane({ sessionId, visible }: { sessionId: string; visible: boolean }) {
   const hostRef = useRef<HTMLDivElement>(null);
 
+  // A canvas-backed terminal does not give iPad users a conventional text
+  // field to tap. Focus its helper textarea as soon as the visible reading
+  // surface is tapped (or reached by keyboard), so the on-screen keyboard is
+  // available without hunting for xterm's invisible input.
+  const focusInput = () => {
+    if (!visible) return;
+    pool.get(sessionId)?.term.focus();
+  };
+
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -134,8 +144,27 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
       });
       const fit = new FitAddon();
       term.loadAddon(fit);
-      term.loadAddon(new WebLinksAddon());
-      term.onData((d) => window.wanigan.sessions.write(sessionId, d));
+      // Its default handler opens a blank child window and then navigates it,
+      // which this app denies outright — so without an explicit handler every
+      // link in the terminal is inert. Main re-validates the scheme.
+      term.loadAddon(new WebLinksAddon((_event, uri) => {
+        void window.wanigan.shell.openExternal(uri);
+      }));
+      // Keep the privileged PTY bridge bounded per IPC message, while making
+      // a large pasted prompt behave exactly like ordinary typing. The helper
+      // keeps UTF-8 code points whole, so emoji and non-Latin source survive
+      // a chunk boundary intact.
+      term.onData((data) => {
+        for (const chunk of splitTerminalInput(data)) {
+          window.wanigan.sessions.write(sessionId, chunk);
+        }
+        // The terminal is pooled outside React, so the attachment strip cannot
+        // be handed a callback. A submitted line is announced instead, and the
+        // strip drops the files that prompt just carried to the agent.
+        if (/[\r\n]/.test(data)) {
+          window.dispatchEvent(new CustomEvent('wanigan:session-submit', { detail: { sessionId } }));
+        }
+      });
       term.onResize(({ cols, rows }) => window.wanigan.sessions.resize(sessionId, cols, rows));
       const container = document.createElement('div');
       container.style.width = '100%';
@@ -208,6 +237,10 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
       className="terminal-host"
       ref={hostRef}
       style={{ display: visible ? 'block' : 'none' }}
+      tabIndex={visible ? 0 : -1}
+      aria-label="Interactive terminal. Tap to focus and type."
+      onPointerDown={focusInput}
+      onFocus={focusInput}
     />
   );
 }

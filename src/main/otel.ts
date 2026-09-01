@@ -5,6 +5,8 @@ import type { AddressInfo } from 'node:net';
 import { db } from './db';
 import { EMPTY_USAGE, type ApiEvent, type SessionUsage } from '../shared/types';
 import { mergeCodexUsage } from './codex-usage';
+import { backendCostBasis, providerById } from './providers';
+import { sessionEffortRollup, type EffortRollupRow } from './spend';
 import { recordGoalTrace } from './goal-trace';
 
 /**
@@ -574,6 +576,54 @@ function norm(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+/**
+ * A dollar figure is only money spent when somebody is billing at the price it
+ * was computed from.
+ *
+ * The Claude Code CLI prices each turn from Anthropic's published rates for the
+ * model it thinks it is talking to, and this file banks that number verbatim.
+ * Run the same binary against a flat-rate coding plan — GLM, DeepSeek, or a
+ * provider pack aimed at an endpoint Wanigan has never had a price list for —
+ * and the arithmetic is still perfectly good arithmetic about a model nobody is
+ * charging for. Printing it as spend is the estimate-presented-as-fact this
+ * codebase exists to refuse, and Codex already had the honest answer: the
+ * counters are exact, the dollars are not reported.
+ *
+ * So the status is downgraded, not the number: costUsd stays on the record, and
+ * `costStatus` tells every reader of it which kind of figure it is. The routing
+ * is by backend (providers.ts owns that judgement) and reads the backend frozen
+ * onto the session at launch, so disabling, renaming or repointing a pack
+ * afterwards cannot restate what an old session's cost meant. A row whose
+ * backend cannot be resolved at all is unverified rather than assumed billed.
+ */
+function markUnverifiedCost(usage: Record<string, SessionUsage>): void {
+  const ids = Object.keys(usage);
+  if (!ids.length) return;
+  const marks = ids.map(() => '?').join(',');
+  const rows = db().prepare(
+    `SELECT id, provider_id, backend_id FROM session_log WHERE id IN (${marks})`
+  ).all(...ids) as { id: string; provider_id: string | null; backend_id: string | null }[];
+
+  // providerById() re-synchronises the pack registry, so the legacy fallback is
+  // resolved once per distinct provider rather than once per session row.
+  const cache = new Map<string, boolean>();
+  for (const row of rows) {
+    const target = usage[row.id];
+    if (!target) continue;
+    const backend = row.backend_id?.trim() ?? '';
+    const key = backend || `provider:${row.provider_id ?? ''}`;
+    let unverified = cache.get(key);
+    if (unverified === undefined) {
+      // backend_id was added after the first sessions were logged; those rows
+      // resolve their backend through the provider id they were written with.
+      const resolved = backend || providerById(row.provider_id ?? '')?.backendId;
+      unverified = backendCostBasis(resolved) === 'unverified';
+      cache.set(key, unverified);
+    }
+    if (unverified) target.costStatus = 'unavailable';
+  }
+}
+
 export function usageForMany(ids: string[]): Record<string, SessionUsage> {
   const out: Record<string, SessionUsage> = {};
   if (!ids.length) return out;
@@ -662,6 +712,9 @@ export function usageForMany(ids: string[]): Record<string, SessionUsage> {
   // authoritative cumulative token counters.  Keep the two sources merged at
   // the boundary so Fleet, phone Fleet, and the session panel agree.
   mergeCodexUsage(out);
+  // Last, so it has the final word on every session however its counters got
+  // here: one builder of SessionUsage means one place that can label the cost.
+  markUnverifiedCost(out);
 
   return out;
 }
@@ -789,17 +842,22 @@ export function sessionSpendTotal(sinceMs?: number): number {
 }
 
 /**
- * What each effort level actually costs, dearest first. Both numbers come from
- * the same api_request event, so the $/request a caller derives from them is
- * never a ratio of two different accountings.
+ * What each effort level actually costs, dearest first — every session request
+ * on record, which is what the `spend:effort` IPC and the Insights panel behind
+ * it are reading.
+ *
+ * The query is spend.ts's, not a second copy of it. This function and
+ * spend.effortDistribution() were building the same `{ effort, requests,
+ * costUsd }` rows from different source sets — this one all-time and
+ * sessions-only, that one windowed and carrying batch and headless rows beside
+ * the session ones — so the same effort level could legitimately show two
+ * different totals with nothing on either to say why. Now there is one query,
+ * and the `surface` tag on every row it returns is what stops a session's
+ * metered dollars being added to a batch's priced ones.
+ *
+ * The window is the remaining difference and it is deliberate: this answers
+ * "on record", effortDistribution(days) answers "in the last n days".
  */
-export function effortBreakdown(): { effort: string; requests: number; costUsd: number }[] {
-  const rows = db().prepare(`
-    SELECT COALESCE(NULLIF(effort, ''), 'default') AS effort,
-           COUNT(*) AS requests, COALESCE(SUM(cost_usd), 0) AS cost
-    FROM session_api_events WHERE kind = 'request'
-    GROUP BY effort ORDER BY cost DESC
-  `).all() as { effort: string; requests: number; cost: number }[];
-
-  return rows.map((r) => ({ effort: r.effort, requests: r.requests, costUsd: r.cost }));
+export function effortBreakdown(): EffortRollupRow[] {
+  return sessionEffortRollup(null);
 }

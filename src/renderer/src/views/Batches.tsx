@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type {
   CacheTtl, EvalPair, EvalRowDiff, GoldenSet, Project, RunConfig, SourceConfig, UploadedFile,
 } from '@shared/types';
+import { estimateTokens } from '@shared/tokens';
 import { Pill, Bar, Stat, Note, Section, num, usd, ago, until } from '../components/bits';
 
 type Preset = { id: string; label: string; blurb: string; config: Omit<RunConfig, 'name'> };
@@ -63,6 +64,53 @@ function usdFine(n: number): string {
 const usdDelta = (n: number) => (Math.abs(n) < 0.00005 ? 'no change' : `${n > 0 ? '+' : '\u2212'}${usdFine(Math.abs(n))}`);
 
 const pctLabel = (n: number) => `${(n * 100).toFixed(n >= 0.1 ? 0 : 1)}%`;
+
+/**
+ * A priced figure nobody has been billed for yet.
+ *
+ * One grammar for the whole surface: an estimate carries a tilde on the value
+ * and the word "est." beside it; an amount the API actually charged renders
+ * plain. The number that decides whether to spend money is the last one that
+ * may look like a measurement, so the mark is applied at every site rather than
+ * only where the label happens to say "Est.".
+ */
+const usdEst = (n: number) => `~${usd(n)}`;
+
+/**
+ * JSON out of SQLite, pretty-printed without letting one bad row take the
+ * window with it.
+ *
+ * `row_json` is whatever the dataset loader wrote: a truncated write, a
+ * hand-edited database, or a row stored by a Wanigan old enough to have used a
+ * different shape all throw here. This runs inside render, and an exception in
+ * render unmounts the pane \u2014 a white screen over a live PTY, for a drawer whose
+ * whole job is to show what a request actually contained. So a parse failure
+ * degrades to the stored bytes verbatim, and says that it did.
+ */
+function parseStored(text: string | null | undefined): { ok: boolean; text: string } {
+  if (!text) return { ok: true, text: '\u2014' };
+  try { return { ok: true, text: JSON.stringify(JSON.parse(text), null, 2) }; }
+  catch { return { ok: false, text }; }
+}
+
+/**
+ * How many run rows are painted before the list says it stopped.
+ *
+ * No list in this app is virtualized and none is about to be: pulling a
+ * windowing library in for one table is a worse trade than drawing fewer rows
+ * and being honest about it, the way the Git diff viewer already is.
+ */
+const RUN_ROWS = 60;
+
+/** Same guard for the per-batch counts map, which has a usable empty fallback. */
+function parseCounts(text: string | null | undefined): Record<string, number> {
+  if (!text) return {};
+  try {
+    const value: unknown = JSON.parse(text);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    return value as Record<string, number>;
+  } catch { return {}; }
+}
 
 /**
  * The batch-depth phases have no feature stylesheet of their own and index.css
@@ -136,9 +184,17 @@ export default function Batches({ projects, hasKey, onNeedKey, seed, onSeedConsu
 function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) => void }) {
   const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(true);
+  /**
+   * A failed read is not an empty workspace. Swallowing the rejection sent
+   * every failure to the "No runs yet" onboarding state, which invites you to
+   * build your first batch over the top of runs the database still holds.
+   */
+  const [err, setErr] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   const load = useCallback(async () => {
-    try { setRuns((await window.wanigan.batch.runs()) as Run[]); } catch { /* db not ready */ }
+    try { setRuns((await window.wanigan.batch.runs()) as Run[]); setErr(null); }
+    catch (e) { setErr(msg(e)); }
     setLoading(false);
   }, []);
 
@@ -151,23 +207,64 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
 
   const active = runs.filter((r) => ['in_progress', 'submitting', 'canceling'].includes(r.status));
   const spent = runs.reduce((a, r) => a + (r.cost_usd || 0), 0);
+  // Main returns up to 200 runs and every row draws a progress bar, so the
+  // whole table re-lays out on an eight-second beat. Cut what is painted, say
+  // so, and keep the way through — the counters above still total all 200.
+  const listed = expanded ? runs : runs.slice(0, RUN_ROWS);
+  const hiddenRuns = runs.length - listed.length;
+
+  const head = (
+    <div className="pane-head">
+      <div>
+        <h1>Batches</h1>
+        <p className="dim">Bulk work across your repos, asynchronous, at half price.</p>
+      </div>
+      <button className="btn btn-primary" onClick={onNew}>New run</button>
+    </div>
+  );
+
+  // Nothing was counted, so nothing is totalled: the stats and the onboarding
+  // empty state below would both be claims about a database Wanigan could not read.
+  if (err && !runs.length) {
+    return (
+      <div className="pane">
+        {head}
+        <div className="card bx-state">
+          <h4>Could not read your runs</h4>
+          <p>{err}</p>
+          <p>
+            This is a failed read, not an empty workspace. Runs already submitted are untouched, and
+            none of them are counted above because none of them were seen.
+          </p>
+          <button className="btn" onClick={() => { setLoading(true); void load(); }}>Try again</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="pane">
-      <div className="pane-head">
-        <div>
-          <h1>Batches</h1>
-          <p className="dim">Bulk work across your repos, asynchronous, at half price.</p>
-        </div>
-        <button className="btn btn-primary" onClick={onNew}>New run</button>
-      </div>
+      {head}
+
+      {err && (
+        <Note tone="warn">
+          <strong>Last refresh failed.</strong> {err} The runs below are from the previous read, so
+          their progress and cost may have moved since.{' '}
+          <button className="bx-f" style={{ textDecoration: 'underline' }} onClick={() => void load()}>Retry</button>
+        </Note>
+      )}
 
       <div className="stat-grid">
         <Stat label="Runs" value={num(runs.length)} />
         <Stat label="Active" value={num(active.length)} tone={active.length ? 'var(--accent)' : undefined}
               sub={active.reduce((a, r) => a + r.pending, 0) ? `${num(active.reduce((a, r) => a + r.pending, 0))} in flight` : 'nothing in flight'} />
         <Stat label="Spent" value={usd(spent)} sub="batch rates" />
-        <Stat label="Saved vs sync" value={usd(spent)} tone="var(--ok)" sub="batch is 50% of list" />
+        {/* Nobody was ever billed the synchronous price, so this is a modelled
+            counterfactual off the published 50% batch discount — arithmetic,
+            not an invoice line. It gets the same mark as every other number
+            here that has not been charged. */}
+        <Stat label="Saved vs sync" value={usdEst(spent)} tone="var(--ok)"
+              sub="est. · batch rates are 50% of list" />
       </div>
 
       <div className="card scroll-x">
@@ -186,7 +283,7 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
                 <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={onNew}>Build your first batch</button>
               </td></tr>
             )}
-            {runs.map((r) => {
+            {listed.map((r) => {
               const exp = until(r.expires_at);
               return (
                 <tr key={r.id} onClick={() => onOpen(r.id)} className="clickable">
@@ -206,7 +303,13 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
                       {r.pending > 0 && <span>{num(r.pending)} pending</span>}
                     </div>
                   </td>
-                  <td className="r mono">{r.cost_usd ? usd(r.cost_usd) : <span className="faint">~{usd(r.est_cost_usd)}</span>}</td>
+                  <td className="r mono">
+                    {r.cost_usd
+                      ? usd(r.cost_usd)
+                      : <span className="faint" title="Priced before submission from a sampled token count. Nothing has been billed for this run yet.">
+                          {usdEst(r.est_cost_usd)} est.
+                        </span>}
+                  </td>
                   <td className="r mono" style={{ color: exp.urgent ? 'var(--warn)' : undefined }}>
                     {r.status === 'in_progress' ? exp.text : '—'}
                   </td>
@@ -217,6 +320,28 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
           </tbody>
         </table>
       </div>
+
+      {/* A table that stops without saying so reads as the whole history, and
+          the missing part is exactly the part nobody goes looking for. */}
+      {hiddenRuns > 0 && (
+        <div className="faint" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>
+          <span>
+            Showing {num(listed.length)} of {num(runs.length)} runs — the {num(hiddenRuns)} older ones
+            are not drawn. The counters above still total all {num(runs.length)}.
+          </span>
+          <button className="bx-f" style={{ textDecoration: 'underline' }} onClick={() => setExpanded(true)}>
+            Draw all {num(runs.length)}
+          </button>
+        </div>
+      )}
+      {expanded && runs.length > RUN_ROWS && (
+        <div className="faint" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>
+          <span>Showing all {num(runs.length)} runs. Main returns at most 200; anything older is not read.</span>
+          <button className="bx-f" style={{ textDecoration: 'underline' }} onClick={() => setExpanded(false)}>
+            Back to {RUN_ROWS}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -233,6 +358,10 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   const [models, setModels] = useState<Model[]>([]);
   const [catalog, setCatalog] = useState<{ fetchedAt: number | null; stale: boolean }>({ fetchedAt: null, stale: true });
   const [refreshingModels, setRefreshingModels] = useState(false);
+  const [modelsErr, setModelsErr] = useState<string | null>(null);
+  /** The recipes and the model list, without which there is no form to show. */
+  const [bootErr, setBootErr] = useState<string | null>(null);
+  const [bootAttempt, setBootAttempt] = useState(0);
   const [cfg, setCfg] = useState<RunConfig | null>(null);
   const [preview, setPreview] = useState<any>(null);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
@@ -250,6 +379,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   useEffect(() => {
     const pid = seed?.projectId ?? projects[0]?.id;
     window.wanigan.batch.presets(pid).then((d) => {
+      setBootErr(null);
       setPresets(d.presets); setModels(d.models);
       setCatalog({ fetchedAt: d.modelsFetchedAt, stale: d.modelsStale });
 
@@ -266,23 +396,33 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
         });
         onSeedConsumed?.();
       } else {
-        setCfg({ name: '', projectId: pid, ...d.presets[0].config });
+        // Only ever INITIALIZE. This effect re-runs whenever the shared project
+        // list is refreshed (a new array identity every 30s) and again when a
+        // consumed seed clears — an unconditional setCfg here wiped the user's
+        // half-built run on a timer, and erased the seeded config it had just
+        // handed over.
+        setCfg((current) => current ?? { name: '', projectId: pid, ...d.presets[0].config });
       }
-    });
+    }).catch((e) => setBootErr(msg(e)));
     // Seeding is a one-shot handoff; re-running on every projects change would
     // clobber edits the user has already made.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projects, seed]);
+  }, [projects, seed, bootAttempt]);
 
   const model = useMemo(() => models.find((m) => m.id === cfg?.model), [models, cfg?.model]);
 
   async function refreshCatalog() {
-    setRefreshingModels(true);
+    setRefreshingModels(true); setModelsErr(null);
     try {
-      const r = await window.wanigan.batch.refreshModels();
+      await window.wanigan.batch.refreshModels();
       const d = await window.wanigan.batch.presets(projectId);
       setModels(d.models); setCatalog({ fetchedAt: d.modelsFetchedAt, stale: d.modelsStale });
-    } catch (e) { /* surfaced by the estimate path */ }
+    } catch (e) {
+      // Nothing runs after this to notice, so a swallowed failure leaves the
+      // previous capability table on screen looking freshly read — which is
+      // how a context window or an effort level silently goes out of date.
+      setModelsErr(msg(e));
+    }
     finally { setRefreshingModels(false); }
   }
   const patch = (p: Partial<RunConfig>) => setCfg((c) => (c ? { ...c, ...p } : c));
@@ -343,13 +483,40 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
     setSubmitting(true); setSubmitErr(null);
     try {
       const r = await window.wanigan.batch.submit(cfg, {
-        input: est.totalInputTokens, output: est.worstCaseOutputTokens, cost: est.costLowUsd,
+        // The ceiling, not the optimistic band: submit.ts gates the spend cap
+        // on whatever cost arrives, and a run that only fits under the cap if
+        // every response comes back short has not been shown to fit. Pairing
+        // worstCaseOutputTokens with costLowUsd also stored two different
+        // quantities in one column, which skewed estimate accuracy.
+        input: est.totalInputTokens, output: est.worstCaseOutputTokens, cost: est.costHighUsd,
       });
       onDone(r.runId);
     } catch (e) { setSubmitErr(e instanceof Error ? e.message : String(e)); setSubmitting(false); }
   }
 
-  if (!cfg) return <div className="pane"><p className="dim">Loading…</p></div>;
+  if (!cfg) {
+    // Loading and failed-to-load are different states: the second one has to
+    // say so, or the builder sits on "Loading…" for the rest of the session.
+    if (bootErr) {
+      return (
+        <div className="pane">
+          <div className="pane-head">
+            <div>
+              <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={onCancel}>← Batches</button>
+              <h1 style={{ marginTop: 2 }}>New run</h1>
+            </div>
+          </div>
+          <div className="card bx-state">
+            <h4>Could not load the recipes</h4>
+            <p>{bootErr}</p>
+            <p>The builder needs the preset list and the model table before it can show a form. Nothing has been built or submitted.</p>
+            <button className="btn" onClick={() => setBootAttempt((n) => n + 1)}>Try again</button>
+          </div>
+        </div>
+      );
+    }
+    return <div className="pane"><p className="dim">Loading…</p></div>;
+  }
 
   const dryFailed = dry?.result && !dry.result.ok;
   const blockers: string[] = [];
@@ -487,6 +654,15 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
               ? <>Capabilities read from the Models API{catalog.stale ? ' — over a day old' : ''}. Only models that support the Batch API are listed.</>
               : <>Using the local model table. Add an API key and refresh to read live capabilities, context windows and effort levels.</>}
           </p>
+          {modelsErr && (
+            <div style={{ marginBottom: 9 }}>
+              <Note tone="error">
+                <strong>Model refresh failed.</strong> {modelsErr} The list below is unchanged — it is
+                still {catalog.fetchedAt ? 'the capabilities read earlier' : 'the local model table'},
+                not a fresh read.
+              </Note>
+            </div>
+          )}
           <div className="row3">
             <div>
               <label className="label">Model</label>
@@ -605,14 +781,25 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
             <>
               <div className="stat-2">
                 <Stat label="Requests" value={num(est.requests)} sub={est.chunks > 1 ? `${est.chunks} batches` : '1 batch'} />
-                <Stat label="Est. cost" value={usd(est.costLowUsd)} sub={`up to ${usd(est.costHighUsd)}`} tone="var(--accent)" />
+                {/* The number an operator reads before spending must not be the
+                    one that looks most like a measurement: both bounds are
+                    priced off a sampled token count, so both carry the mark. */}
+                <Stat label="Est. cost" value={usdEst(est.costLowUsd)}
+                      sub={`est. · up to ${usdEst(est.costHighUsd)}`} tone="var(--accent)" />
               </div>
               <div className="sunk" style={{ padding: '9px 11px', fontSize: 'var(--t-small)', lineHeight: 1.7 }}>
-                <KV k="Mean input" v={`${num(est.meanInputTokens)} tok`} note={`sampled ${est.sampledRows}`} />
+                {/* Counted on a sample and multiplied out to the whole dataset:
+                    exact for the rows that were counted, a projection for the
+                    run. The projection is what prices the batch, so it is the
+                    one that carries the mark. */}
+                <KV k="Mean input" v={`~${num(est.meanInputTokens)} tok`}
+                    note={`est. · sampled ${est.sampledRows} of ${num(est.requests)}`} />
                 {est.cachedPrefixTokens > 0 && <KV k="Cached prefix" v={`${num(est.cachedPrefixTokens)} tok`} note="written once" />}
                 <KV k={est.observedOutputTokens ? 'Output (measured)' : 'Output (assumed)'}
-                    v={`${num(est.observedOutputTokens ?? Math.round(est.worstCaseOutputTokens * 0.25 / est.requests))} tok/row`} />
-                <KV k="Same work, sync" v={usd(est.syncCostHighUsd)} note="you save half" />
+                    v={est.observedOutputTokens
+                        ? `${num(est.observedOutputTokens)} tok/row`
+                        : `~${num(Math.round(est.worstCaseOutputTokens * 0.25 / est.requests))} tok/row est.`} />
+                <KV k="Same work, sync" v={`${usdEst(est.syncCostHighUsd)} est.`} note="you save half" />
               </div>
               {est.notes?.map((n: string, i: number) => <p key={i} className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>{n}</p>)}
             </>
@@ -632,7 +819,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           <div style={{ borderTop: '1px solid var(--line)', paddingTop: 11 }}>
             <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}
                     disabled={!!blockers.length || submitting} onClick={submit}>
-              {submitting ? 'Submitting…' : est ? `Submit — ${usd(est.costLowUsd)}` : 'Submit'}
+              {submitting ? 'Submitting…' : est ? `Submit — up to ${usdEst(est.costHighUsd)} est.` : 'Submit'}
             </button>
             {blockers.length > 0 && (
               <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, textAlign: 'center' }}>Still to do: {blockers.join(', ')}.</p>
@@ -758,16 +945,24 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
   const [offset, setOffset] = useState(0);
   const [open, setOpen] = useState<any>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [detailErr, setDetailErr] = useState<string | null>(null);
+  const [rowsErr, setRowsErr] = useState<string | null>(null);
+  const [exportNote, setExportNote] = useState<{ tone: 'ok' | 'info' | 'error'; text: string } | null>(null);
 
   const loadDetail = useCallback(async () => {
-    try { setD(await window.wanigan.batch.run(id)); } catch { /* deleted */ }
+    // A run that cannot be read is not a run that is still loading. Swallowing
+    // this parked the whole view on "Loading…" with nothing to act on.
+    try { setD(await window.wanigan.batch.run(id)); setDetailErr(null); }
+    catch (e) { setDetailErr(msg(e)); }
     // Rescue runs are their own runs, so a merged rescue stays worth showing
     // after the parent's refused count has fallen back to zero.
     try { setRescues(await window.wanigan.refusal.children(id)); } catch { /* pre-P15 database */ }
   }, [id]);
   const loadRows = useCallback(async () => {
-    const r = await window.wanigan.batch.results(id, filter, q, offset);
-    setRows(r.rows); setTotal(r.total);
+    try {
+      const r = await window.wanigan.batch.results(id, filter, q, offset);
+      setRows(r.rows); setTotal(r.total); setRowsErr(null);
+    } catch (e) { setRowsErr(msg(e)); }
   }, [id, filter, q, offset]);
 
   useEffect(() => { void loadDetail(); }, [loadDetail]);
@@ -779,7 +974,28 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
     return () => clearInterval(t);
   }, [d, loadDetail, loadRows]);
 
-  if (!d) return <div className="pane"><p className="dim">Loading…</p></div>;
+  if (!d) {
+    if (detailErr) {
+      return (
+        <div className="pane">
+          <div className="pane-head">
+            <div>
+              <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={onBack}>← Batches</button>
+              <h1 style={{ marginTop: 2 }}>Run unavailable</h1>
+              <p className="faint mono" style={{ fontSize: 'var(--t-micro)', marginTop: 3 }}>{id}</p>
+            </div>
+          </div>
+          <div className="card bx-state">
+            <h4>Could not read this run</h4>
+            <p>{detailErr}</p>
+            <p>Nothing about the run has changed. If it was deleted this will keep failing; otherwise the read can be retried.</p>
+            <button className="btn" onClick={() => void loadDetail()}>Try again</button>
+          </div>
+        </div>
+      );
+    }
+    return <div className="pane"><p className="dim">Loading…</p></div>;
+  }
 
   const { run, counts } = d;
   const succeeded = counts.succeeded ?? 0;
@@ -816,6 +1032,23 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
     finally { setBusy(null); }
   }
 
+  /**
+   * A save dialog the user closed is not a failure, and a file that was
+   * written is worth naming — the main process returns the path on success and
+   * null when the dialog was dismissed, which is exactly that distinction.
+   */
+  async function exportResults(format: 'jsonl' | 'csv') {
+    setBusy(`export-${format}`); setExportNote(null);
+    try {
+      const path = await window.wanigan.batch.exportTo(id, format);
+      setExportNote(path
+        ? { tone: 'ok', text: `Exported to ${path}` }
+        : { tone: 'info', text: `Export canceled — no ${format.toUpperCase()} file was written.` });
+    } catch (e) {
+      setExportNote({ tone: 'error', text: `Export failed. ${msg(e)}` });
+    } finally { setBusy(null); }
+  }
+
   return (
     <div className="pane">
       <div className="pane-head">
@@ -833,11 +1066,20 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
           {!live && failed > 0 && <button className="btn" disabled={busy === 'retry'}
                            onClick={() => act(() => window.wanigan.batch.retry(id), 'retry')}>
             {busy === 'retry' ? 'Resubmitting…' : `Retry ${num(failed)} failed`}</button>}
-          <button className="btn" onClick={() => window.wanigan.batch.exportTo(id, 'jsonl')}>Export JSONL</button>
-          <button className="btn" onClick={() => window.wanigan.batch.exportTo(id, 'csv')}>Export CSV</button>
+          <button className="btn" disabled={busy === 'export-jsonl'} onClick={() => void exportResults('jsonl')}>
+            {busy === 'export-jsonl' ? 'Exporting…' : 'Export JSONL'}</button>
+          <button className="btn" disabled={busy === 'export-csv'} onClick={() => void exportResults('csv')}>
+            {busy === 'export-csv' ? 'Exporting…' : 'Export CSV'}</button>
         </div>
       </div>
 
+      {exportNote && <Note tone={exportNote.tone}>{exportNote.text}</Note>}
+      {detailErr && (
+        <Note tone="warn">
+          <strong>Last refresh failed.</strong> {detailErr} The numbers below are from the previous read.{' '}
+          <button className="bx-f" style={{ textDecoration: 'underline' }} onClick={() => void loadDetail()}>Retry</button>
+        </Note>
+      )}
       {run.error && <Note tone="error"><strong>Run failed.</strong> {run.error}</Note>}
       {retries.length > 0 && (
         <Note tone="info">Retried as {retries.map((c: any) => (
@@ -853,7 +1095,11 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
           <Stat label="Refused" value={<span>⊘ {num(refused)}</span>} tone="var(--serious)"
                 sub="declined — rescue on another model" />
         )}
-        <Stat label="Cost" value={run.cost_usd ? usd(run.cost_usd) : `~${usd(run.est_cost_usd)}`} sub={run.cost_usd ? 'actual' : 'estimated'} />
+        {/* One grammar with the pre-flight card and the run list: a tilde and
+            "est." until the API has returned token counts to price, plain once
+            it has. */}
+        <Stat label="Cost" value={run.cost_usd ? usd(run.cost_usd) : usdEst(run.est_cost_usd)}
+              sub={run.cost_usd ? 'priced from returned token counts' : 'est. · no token counts returned yet'} />
         <Stat label={live ? 'Expires in' : 'Duration'}
               value={live ? exp.text : run.ended_at && run.submitted_at ? `${Math.max(1, Math.round((run.ended_at - run.submitted_at) / 60000))}m` : '—'}
               tone={live && exp.urgent ? 'var(--warn)' : undefined} sub={live ? '24h hard limit' : ago(run.ended_at)} />
@@ -893,12 +1139,20 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
             <input className="field" style={{ marginLeft: 'auto', maxWidth: 260 }} placeholder="Search prompts, output, errors…"
                    value={q} onChange={(e) => { setQ(e.target.value); setOffset(0); }} />
           </div>
+          {rowsErr && (
+            <Note tone="error">
+              <strong>Could not read these results.</strong> {rowsErr} This is a failed read, not an
+              empty result set.{' '}
+              <button className="bx-f" style={{ textDecoration: 'underline' }} onClick={() => void loadRows()}>Retry</button>
+            </Note>
+          )}
           <div className="card scroll-x">
             <table className="grid">
               <thead><tr className="label"><th>custom_id</th><th>Status</th><th>Output</th><th className="r">Tokens</th></tr></thead>
               <tbody>
                 {!rows.length && <tr><td colSpan={4} className="dim center">
-                  {pending ? 'Still processing — results land as batches end.' : 'No rows match.'}</td></tr>}
+                  {rowsErr ? 'Results could not be read — the message above says why.'
+                    : pending ? 'Still processing — results land as batches end.' : 'No rows match.'}</td></tr>}
                 {rows.map((r) => (
                   <tr key={r.custom_id} className="clickable" onClick={() => setOpen(r)}>
                     <td className="mono">{r.custom_id}</td>
@@ -937,7 +1191,7 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
             <thead><tr className="label"><th>Batch</th><th>Status</th><th className="r">Requests</th><th>Counts</th><th className="r">Expires</th><th className="r">Polled</th></tr></thead>
             <tbody>
               {d.batches.map((b: any) => {
-                const c = b.counts_json ? JSON.parse(b.counts_json) : {};
+                const c = parseCounts(b.counts_json);
                 const e = until(b.expires_at);
                 return (
                   <tr key={b.id}>
@@ -969,31 +1223,96 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
 
       {activeTab === 'config' && <pre className="card mono scroll-y" style={{ padding: 14, maxHeight: 560 }}>{JSON.stringify(d.config, null, 2)}</pre>}
 
-      {open && (
-        <div className="modal-backdrop" onClick={() => setOpen(null)}>
-          <div className="drawer" onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: 'flex', gap: 11, alignItems: 'center' }}>
-              <h3 className="mono" style={{ fontSize: 'var(--t-body)', fontWeight: 600 }}>{open.custom_id}</h3>
-              <Pill status={open.status} />
-              <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setOpen(null)}>Close</button>
-            </div>
-            <div className="faint mono" style={{ fontSize: 'var(--t-micro)', marginTop: 4 }}>
-              row {open.row_index}
-              {open.stop_reason && ` · stop_reason: ${open.stop_reason}`}
-              {open.in_tokens > 0 && ` · ${num(open.in_tokens)} in / ${num(open.out_tokens)} out`}
-            </div>
-            {open.error_message && <div style={{ marginTop: 11 }}><Note tone="error"><strong>{open.error_type}</strong> — {open.error_message}</Note></div>}
-            <div style={{ display: 'grid', gap: 14, marginTop: 14 }}>
-              <div><div className="label" style={{ marginBottom: 4 }}>Prompt sent</div>
-                <pre className="sunk mono scroll-y" style={{ padding: 11, maxHeight: 260 }}>{open.rendered}</pre></div>
-              {open.output_text && <div><div className="label" style={{ marginBottom: 4 }}>Output</div>
-                <pre className="sunk mono scroll-y" style={{ padding: 11, maxHeight: 340 }}>{open.output_text}</pre></div>}
-              <div><div className="label" style={{ marginBottom: 4 }}>Source row</div>
-                <pre className="sunk mono scroll-y" style={{ padding: 11, maxHeight: 200 }}>{JSON.stringify(JSON.parse(open.row_json), null, 2)}</pre></div>
-            </div>
+      {open && <RequestDrawer row={open} onClose={() => setOpen(null)} />}
+    </div>
+  );
+}
+
+/**
+ * What one request actually contained — the prompt sent, the model's output and
+ * the stored source row.
+ *
+ * This is the evidence somebody opens when a batch request went wrong, so it is
+ * a real dialog rather than a div that looks like one: focus moves in on open
+ * and returns to the row that opened it, Tab stays inside, and Escape closes.
+ * Without those, a keyboard user could open this drawer and have no way back
+ * out of it. App.tsx and Sessions.tsx already suppress their shortcuts on
+ * `.modal-backdrop` and on `[role="dialog"][aria-modal="true"]`, so the
+ * semantics below also stop ⌘-keys firing behind the scrim.
+ *
+ * The backdrop closes on mousedown rather than click: this pane is full of long
+ * output somebody selects and copies, and a drag that starts inside the drawer
+ * and releases over the scrim is a text selection, not a request to throw the
+ * evidence away.
+ */
+function RequestDrawer({ row, onClose }: { row: any; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const titleId = useId();
+  const source = parseStored(row.row_json);
+
+  useEffect(() => {
+    const priorFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = requestAnimationFrame(() => {
+      dialogRef.current?.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      priorFocus?.focus?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { onClose(); return; }
+      if (e.key !== 'Tab') return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = [...dialog.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'
+      )].filter((node) => !node.hasAttribute('hidden'));
+      if (!focusable.length) return;
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div className="drawer" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId}
+           onMouseDown={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', gap: 11, alignItems: 'center' }}>
+          <h3 id={titleId} className="mono" style={{ fontSize: 'var(--t-body)', fontWeight: 600 }}>{row.custom_id}</h3>
+          <Pill status={row.status} />
+          <button className="btn" style={{ marginLeft: 'auto' }} onClick={onClose}>Close</button>
+        </div>
+        <div className="faint mono" style={{ fontSize: 'var(--t-micro)', marginTop: 4 }}>
+          row {row.row_index}
+          {row.stop_reason && ` · stop_reason: ${row.stop_reason}`}
+          {row.in_tokens > 0 && ` · ${num(row.in_tokens)} in / ${num(row.out_tokens)} out`}
+        </div>
+        {row.error_message && <div style={{ marginTop: 11 }}><Note tone="error"><strong>{row.error_type}</strong> — {row.error_message}</Note></div>}
+        <div style={{ display: 'grid', gap: 14, marginTop: 14 }}>
+          <div><div className="label" style={{ marginBottom: 4 }}>Prompt sent</div>
+            <pre className="sunk mono scroll-y" style={{ padding: 11, maxHeight: 260 }}>{row.rendered}</pre></div>
+          {row.output_text && <div><div className="label" style={{ marginBottom: 4 }}>Output</div>
+            <pre className="sunk mono scroll-y" style={{ padding: 11, maxHeight: 340 }}>{row.output_text}</pre></div>}
+          <div>
+            <div className="label" style={{ marginBottom: 4 }}>Source row</div>
+            {!source.ok && (
+              <div style={{ marginBottom: 6 }}>
+                <Note tone="warn">
+                  <strong>This row is not valid JSON.</strong> It is shown below exactly as it is stored,
+                  unformatted — the request was still built from these bytes.
+                </Note>
+              </div>
+            )}
+            <pre className="sunk mono scroll-y" style={{ padding: 11, maxHeight: 200 }}>{source.text}</pre>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -1205,9 +1524,13 @@ function CachePreflight({ cfg, requests, prefixTokens, onUseTtl }: {
 
       <div className="sunk" style={{ padding: '9px 11px', fontSize: 'var(--t-small)', lineHeight: 1.7 }}>
         <KV k="Minimum prefix" v={minimum === null ? '—' : `${num(minimum)} tok`} note={cfg.model} />
+        {/* "measured" was a claim this panel cannot make. The number arrives
+            from the estimate, which counts tokens through the API in normal
+            mode and falls back to the local heuristic in mock mode — the
+            renderer is handed the figure, not which of the two produced it. */}
         <KV k="Your cached prefix"
             v={prefixTokens > 0 ? `${num(prefixTokens)} tok` : '—'}
-            note={prefixTokens > 0 ? 'measured' : 'run the estimate'} />
+            note={prefixTokens > 0 ? 'from the estimate' : 'run the estimate'} />
         <KV k="Recommended TTL" v={advice?.ttl ?? '—'} note={advice && advice.ttl !== cfg.cacheTtl ? `set to ${cfg.cacheTtl}` : 'matches'} />
       </div>
 
@@ -1417,7 +1740,7 @@ function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
   const total = summary?.total ?? 0;
   const cachedBlock = config?.system?.some((b) => b.cache && b.text.trim()) ?? false;
   const cachedTokens = config?.system?.filter((b) => b.cache && b.text.trim())
-    .reduce((a, b) => a + Math.round(b.text.length / 4), 0) ?? 0;
+    .reduce((a, b) => a + estimateTokens(b.text), 0) ?? 0;
 
   // Offsets first, so the stacked bar does not need a mutable counter inside JSX.
   let cursor = 0;
@@ -1501,7 +1824,7 @@ function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
             <div style={{ marginBottom: 11 }}>
               <Note tone="warn">
                 <strong>The cache does not carry over.</strong> Prompt caches belong to one model, so a rescue
-                writes this run’s cached prefix{cachedTokens ? ` (~${num(cachedTokens)} tokens)` : ''} again at
+                writes this run’s cached prefix{cachedTokens ? ` (~${num(cachedTokens)} est. tokens)` : ''} again at
                 full price on the fallback and reads it back across only {num(total)} request
                 {total === 1 ? '' : 's'}. Expect the cost per row to land well above this run’s.
               </Note>
@@ -1863,8 +2186,13 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
         <Section title="Row by row"
                  hint="Matched on custom_id, never on position — results come back unordered and the two runs were submitted separately."
                  right={
-                   <span className="faint bx-num" style={{ fontSize: 'var(--t-micro)' }}>
+                   <span className="faint bx-num" style={{ fontSize: 'var(--t-micro)' }}
+                         title={diff?.truncated
+                           ? `This run pair has ${num(diff.totalRows)} matched rows; the row list is capped at ${num(diff.rowLimit)}. The counts and costs above are computed over every row, not just these.`
+                           : undefined}>
                      {num(shown.length)} of {num(rows.length)} rows
+                     {/* Silent truncation would read as a complete comparison. */}
+                     {diff?.truncated && <> · newest {num(diff.rowLimit)} of {num(diff.totalRows)} matched</>}
                    </span>
                  }>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 11 }}>

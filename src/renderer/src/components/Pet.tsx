@@ -48,6 +48,13 @@ type Pet = {
   /** The two counters that decide what it becomes. Neither resets on evolution. */
   careMistakes: number; disciplineMistakes: number; discipline: number;
   need: Need; needSince: number | null;
+  /**
+   * The needs that have already cost their one mistake. A need stays listed —
+   * flag down, no second charge — until it is actually met, which is what
+   * makes the cap a cap rather than a fifteen-minute metronome. Hunger and
+   * misery are charged separately, because on the P1 they are separate calls.
+   */
+  counted: Need[];
   nextPoopAt: number; nextCallAt: number;
   meals: number; dead: boolean; deathAt: number | null;
 };
@@ -59,7 +66,7 @@ const fresh = (generation = 1): Pet => {
     hunger: 20, happy: 80, energy: 90, health: 100,
     weight: 5, poops: 0, sick: false, asleep: false, lightsOff: false,
     careMistakes: 0, disciplineMistakes: 0, discipline: 0,
-    need: 'none', needSince: null,
+    need: 'none', needSince: null, counted: [],
     nextPoopAt: now + POOP_EVERY_MIN * 60_000,
     nextCallAt: now + CALL_EVERY_MIN * 60_000,
     meals: 0, dead: false, deathAt: null,
@@ -70,7 +77,10 @@ function load(): Pet {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return fresh();
-    return { ...fresh(), ...(JSON.parse(raw) as Partial<Pet>) };
+    const saved = { ...fresh(), ...(JSON.parse(raw) as Partial<Pet>) };
+    // A pet saved before the cap existed has no list; a mangled one must not be
+    // able to crash the tick that reads it.
+    return Array.isArray(saved.counted) ? saved : { ...saved, counted: [] };
   } catch { return fresh(); }
 }
 function save(p: Pet) {
@@ -127,6 +137,20 @@ function needOf(p: Pet): Need {
 }
 
 /**
+ * Whether one specific need has actually been answered. `needOf` reports only
+ * the top of the priority list, so a starving pet that then falls ill stops
+ * *saying* it is hungry without anyone having fed it. Reading the meter itself
+ * is the only way to tell "satisfied" apart from "outranked", and the mistake
+ * cap has to know the difference.
+ */
+function met(p: Pet, need: Need): boolean {
+  if (need === 'sick') return !p.sick;
+  if (need === 'hungry') return p.hunger < 100;
+  if (need === 'unhappy') return p.happy > 0;
+  return true;
+}
+
+/**
  * Advance to now. A week away is one calculation rather than a week of ticks.
  */
 function advance(p: Pet): Pet {
@@ -164,19 +188,36 @@ function advance(p: Pet): Pet {
   // left long enough to have already cost a care mistake.
   if (!n.sick && n.poops >= 3) n.sick = true;
 
+  // A need that has been answered is free to call again later; one that has
+  // already been charged stays charged until it actually is.
+  if (n.counted.length) n.counted = n.counted.filter((need) => !met(n, need));
+
   // Raise the attention flag the moment a meter empties.
   const want = needOf(n);
   if (n.need !== 'discipline') {
-    if (want !== 'none' && n.need !== want) { n.need = want; n.needSince = now; }
-    else if (want === 'none' && n.need !== 'none') { n.need = 'none'; n.needSince = null; }
+    if (want === 'none' || n.counted.includes(want)) {
+      // Either nothing is wrong, or the only thing wrong has already cost its
+      // one mistake and is now waiting to be fixed rather than re-charged.
+      if (n.need !== 'none') { n.need = 'none'; n.needSince = null; }
+    } else if (n.need !== want) {
+      n.need = want; n.needSince = now;
+    }
   }
 
   // Fifteen minutes, then exactly one mistake — no matter how much longer it
   // is ignored. That cap is the mechanic, and getting it wrong turns a missed
-  // afternoon into instant death.
+  // afternoon into instant death. The flag comes down and the need is recorded
+  // as charged, so the same neglect cannot restart the window on the next tick;
+  // the health drain below is what keeps costing until you help.
   if (n.need !== 'none' && n.needSince !== null && now - n.needSince >= CARE_WINDOW_MIN * 60_000) {
-    if (n.need === 'discipline') n.disciplineMistakes += 1;
-    else n.careMistakes += 1;
+    if (n.need === 'discipline') {
+      // Discipline is on its own schedule: the next call is already booked, so
+      // it needs no charge to stay quiet until then.
+      n.disciplineMistakes += 1;
+    } else {
+      n.careMistakes += 1;
+      n.counted = [...n.counted, n.need];
+    }
     n.need = 'none';
     n.needSince = null;
     n.health = clamp(n.health - 12);
@@ -258,37 +299,25 @@ const PALETTE: Record<string, string> = {
 
 type Mood = 'ok' | 'happy' | 'sad' | 'sick' | 'asleep' | 'hungry' | 'dead';
 
+/*
+ * Deliberately blind to real work. This used to poll the session list and the
+ * attention queue and render both as feeling — "Anxious — 3 agents are waiting
+ * on you" over a real blocked count, a critical-token "!" on the same rail as
+ * the attention queue. A toy that narrates operational state is a second,
+ * unaccountable status display for the same numbers, and the honest sentence is
+ * "3 sessions are blocked", not a mood. The pet now knows only about itself, so
+ * it also stops being a third poller on the Sessions tab.
+ */
 function PetInner() {
-  // Self-contained: it reads the two signals it reacts to rather than making
-  // the rail thread them through. One poll, shared with nothing.
-  const [running, setRunning] = useState(0);
-  const [blocked, setBlocked] = useState(0);
-  useEffect(() => {
-    let live = true;
-    const read = async () => {
-      try {
-        const [ss, att] = await Promise.all([
-          window.wanigan.sessions.list(),
-          window.wanigan.attention.list(),
-        ]);
-        if (!live) return;
-        setRunning(ss.filter((s) => s.status === 'running').length);
-        setBlocked(att.filter((a) => a.kind === 'permission').length);
-      } catch { /* the pet does not care why */ }
-    };
-    void read();
-    const t = setInterval(() => { if (!document.hidden) void read(); }, 4000);
-    return () => { live = false; clearInterval(t); };
-  }, []);
-
   const [pet, setPet] = useState<Pet>(() => advance(load()));
   const [say, setSay] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [game, setGame] = useState<{ round: number; wins: number; face: -1 | 1 } | null>(null);
-  /* Collapsed state is remembered: a mascot you have to re-hide every launch
-     stops being charming on about the third day. */
+  /* Collapsed until you ask for it, and remembered after that. The rail's job
+     is telling you which session to go to; a mascot that opens itself on every
+     launch spends that space before the sessions get a chance to. */
   const [open, setOpen] = useState(() => {
-    try { return localStorage.getItem('wanigan.pet.open') !== '0'; } catch { return true; }
+    try { return localStorage.getItem('wanigan.pet.open') === '1'; } catch { return false; }
   });
   const toggle = () => setOpen((v) => {
     const next = !v;
@@ -306,7 +335,10 @@ function PetInner() {
   useEffect(() => { save(pet); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const t = setInterval(() => update((p) => advance(p)), TICK_MS);
+    // Skipped while the window is hidden, which costs nothing: decay is
+    // computed from the wall clock, and the visibility handler below settles
+    // the whole hidden stretch in one advance when you come back.
+    const t = setInterval(() => { if (!document.hidden) update((p) => advance(p)); }, TICK_MS);
     const onVis = () => { if (!document.hidden) update((p) => advance(p)); };
     document.addEventListener('visibilitychange', onVis);
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
@@ -413,18 +445,10 @@ function PetInner() {
         });
       }
       if (pet.sick) { ctx.fillStyle = cssVar('var(--bad)'); ctx.fillText('☠', 30 * px, 6 * px); }
-      if (blocked > 0 && !pet.dead && !pet.asleep) {
-        ctx.fillStyle = cssVar('var(--critical)');
-        ctx.fillText('!', 6 * px, 6 * px);
-      }
-      if (running > 0 && !pet.dead && !pet.asleep && !reduce) {
-        // A tiny spark per running agent: the pet is busy because you are.
-        ctx.fillStyle = cssVar('var(--series-3)');
-        for (let i = 0; i < Math.min(running, 4); i++) {
-          const t = (f + i * 7) % 24;
-          put(30 + i, 14 - Math.floor(t / 6), cssVar('var(--series-3)'));
-        }
-      }
+
+      // A critical-token "!" for the real blocked count and a spark per running
+      // agent used to be drawn here. Both were removed with the poll: the
+      // attention queue above this rail is where a blocked session is reported.
 
       // Short-lived reaction to a care action.
       if (fx.current.until > Date.now()) {
@@ -438,7 +462,7 @@ function PetInner() {
     };
     draw();
     return () => { cancelAnimationFrame(raf); clearTimeout(raf); };
-  }, [pet, mood, stage, running, blocked]);
+  }, [pet, mood, stage]);
 
   /* ── care ──────────────────────────────────────────────────────────── */
   const react = (glyph: string, msg: string) => {
@@ -554,15 +578,24 @@ function PetInner() {
       : pet.need === 'sick' ? `Sick. Medicine — ${left}m before that is a care mistake.`
       : pet.need === 'hungry' ? `Starving. Feed it — ${left}m left.`
       : pet.need === 'unhappy' ? `Miserable. Play with it — ${left}m left.`
+      // The flag comes down once the mistake is recorded, but the meter is
+      // still empty. Saying "Content." here would be a lie, and the health
+      // drain would look like it came from nowhere.
+      : pet.sick ? 'Still sick. The care mistake is already recorded — medicine stops the damage, not the record.'
+      : pet.hunger >= 100 ? 'Still starving. The care mistake is already recorded — feeding it stops the health drain.'
+      : pet.happy <= 0 ? 'Still miserable. The care mistake is already recorded — playing stops the health drain.'
       : pet.poops >= 2 ? 'It has made a mess. Three and it falls ill.'
       : pet.asleep ? 'Asleep.'
-      : blocked > 0 ? `Anxious — ${blocked} agent${blocked > 1 ? 's are' : ' is'} waiting on you.`
-      : running > 0 ? `Busy alongside ${running} agent${running > 1 ? 's' : ''}.`
       : 'Content.'
     );
 
-  // Collapsed still says the one thing worth knowing: whether it needs you.
-  const needsYou = !pet.dead && (pet.need !== 'none' || pet.poops >= 2);
+  /*
+   * Collapsed still says whether the toy has something pending — but quietly,
+   * and about the toy. "Needs you" in the warning token, in the rail that
+   * carries the attention queue, put a game on the same footing as a session
+   * that is actually blocked on an answer.
+   */
+  const carePending = !pet.dead && (pet.need !== 'none' || needOf(pet) !== 'none' || pet.poops >= 2);
 
   return (
     <div className={`pet${open ? '' : ' shut'}`}>
@@ -582,9 +615,9 @@ function PetInner() {
               {characterOf(pet)}{pet.generation > 1 ? ` · gen ${pet.generation}` : ''}
             </span>
             <span className="age">{ageText(pet.born)}</span>
-            {!open && needsYou && (
+            {!open && carePending && (
               <span className="pet-alert" title={caption}>
-                <span aria-hidden="true">●</span> needs you
+                <span aria-hidden="true">◦</span> care due
               </span>
             )}
           </>
@@ -646,8 +679,8 @@ function PetInner() {
 
 /**
  * The gate. Off by default, and the check wraps the component rather than
- * living inside it: a pet that is switched off should not be polling sessions
- * and running a fifteen-second tick, it should not exist.
+ * living inside it: a pet that is switched off should not be running a
+ * fifteen-second tick and a canvas loop, it should not exist.
  */
 export default function Pet() {
   const [on, setOn] = useState(false);

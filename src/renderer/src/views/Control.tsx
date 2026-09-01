@@ -49,8 +49,16 @@ export default function Control({ projects, providers, onOpenSession }: {
   const [eventSource, setEventSource] = useState('manual');
   const [eventKind, setEventKind] = useState('CI failure');
   const [eventSummary, setEventSummary] = useState('');
+  // A folder picked from this card. The shell owns the project list and re-reads
+  // it on window focus, so this is not a second source of truth — it is what
+  // keeps the form usable in the frame after the dialog closes.
+  const [picked, setPicked] = useState<Project[]>([]);
 
   const enabledProviders = useMemo(() => providers.filter((provider) => !!provider.path), [providers]);
+  const projectOptions = useMemo(() => {
+    const seen = new Set(projects.map((project) => project.id));
+    return [...projects, ...picked.filter((project) => !seen.has(project.id))];
+  }, [projects, picked]);
 
   const load = useCallback(async (focus?: string | null) => {
     try {
@@ -76,7 +84,7 @@ export default function Control({ projects, providers, onOpenSession }: {
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, [load]);
-  useEffect(() => { if (!projectId && projects[0]) setProjectId(projects[0].id); }, [projectId, projects]);
+  useEffect(() => { if (!projectId && projectOptions[0]) setProjectId(projectOptions[0].id); }, [projectId, projectOptions]);
   useEffect(() => { if (!providerId && enabledProviders[0]) setProviderId(enabledProviders[0].id); }, [enabledProviders, providerId]);
 
   const act = async (key: string, work: () => Promise<void>, message?: string) => {
@@ -93,6 +101,16 @@ export default function Control({ projects, providers, onOpenSession }: {
     setTitle(''); setObjective(''); setAcceptance(''); setBudget(''); await load(created.id);
   }, 'Goal created. Start with the planning task; downstream work stays blocked until its prerequisites are complete.');
 
+  // Control is reachable before any project exists, and every field on the
+  // create card depends on one. Without a route out of that state the card is a
+  // dead end: an empty picker above a button that refuses to explain itself.
+  const addProject = () => act('add-project', async () => {
+    const project = await window.wanigan.projects.pick();
+    if (!project) return;
+    setPicked((previous) => previous.some((entry) => entry.id === project.id) ? previous : [...previous, project]);
+    setProjectId(project.id);
+  });
+
   const choose = (id: string) => act(`choose-${id}`, async () => {
     if (window.location.hash !== goalHash(id)) window.history.replaceState(null, '', goalHash(id));
     await load(id);
@@ -105,7 +123,7 @@ export default function Control({ projects, providers, onOpenSession }: {
     const launched = await window.wanigan.control.start(node.id, { providerId, model: model.trim() || undefined });
     await load(detail?.id);
     if (launched.sessionId) onOpenSession(launched.sessionId);
-  }, 'Isolated agent session launched from the docket contract.');
+  }, 'Isolated agent session launched from this task’s contract.');
   const checkpoint = (node: DocketNode) => act(`checkpoint-${node.id}`, async () => {
     await window.wanigan.control.checkpoint(node.id, notes[node.id] || 'Operator checkpoint.');
     setNotes((previous) => ({ ...previous, [node.id]: '' })); await load(detail?.id);
@@ -117,6 +135,14 @@ export default function Control({ projects, providers, onOpenSession }: {
   const proof = (node: DocketNode) => act(`proof-${node.id}`, async () => {
     await window.wanigan.control.runProof(node.id); await load(detail?.id);
   }, 'Review gate recorded as evidence.');
+  // A failed or canceled task blocks everything downstream of it. Without this
+  // the docket is a dead end: the main process can reopen the node, but nothing
+  // in the UI could ask it to.
+  const retry = (node: DocketNode) => act(`retry-${node.id}`, async () => {
+    await window.wanigan.control.retry(node.id);
+    await load(detail?.id);
+  }, 'Task reopened. Start it again when you are ready; its dependents are unblocked.');
+
   const complete = (node: DocketNode, decision: 'approve' | 'request_changes' | 'reject' = 'approve') => act(`complete-${node.id}-${decision}`, async () => {
     await window.wanigan.control.complete(node.id, { detail: notes[node.id] || undefined, decision });
     setNotes((previous) => ({ ...previous, [node.id]: '' })); await load(detail?.id);
@@ -127,17 +153,29 @@ export default function Control({ projects, providers, onOpenSession }: {
   }, 'Event added to the local triage inbox. It cannot launch work on its own.');
   const triage = (event: ControlEvent) => act(`triage-${event.id}`, async () => {
     const created = await window.wanigan.control.triageEvent(event.id, {}); await load(created.id);
-  }, 'Event turned into a reviewed docket; no agent was launched automatically.');
+  }, 'Event turned into a reviewed goal; no agent was launched automatically.');
+
+  // A disabled primary button that never says why is the same dead end in a
+  // different shape, so the missing pieces are named in visible text and the
+  // button points at it.
+  const missing = [
+    !projectId && 'a project',
+    !title.trim() && 'a title',
+    !objective.trim() && 'an objective',
+    !acceptance.trim() && 'at least one acceptance check',
+  ].filter((entry): entry is string => typeof entry === 'string');
+  const missingText = missing.length < 2 ? missing.join('')
+    : `${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]}`;
 
   return <div className="control-view">
     <header className="control-head">
       <div><span className="label">Agent control plane</span><h1>Proof before merge</h1>
-        <p>A docket is a durable work contract: task graph, worktree, claim, evidence, checkpoint, and human decision.</p></div>
-      <div className="control-head-stats"><strong>{dockets.filter((docket) => ['executing', 'review'].includes(docket.status)).length}</strong><span>active dockets</span></div>
+        <p>A goal is a durable work contract: task graph, worktree, claim, evidence, checkpoint, and human decision.</p></div>
+      <div className="control-head-stats"><strong>{dockets.filter((docket) => ['executing', 'review'].includes(docket.status)).length}</strong><span>active goals</span></div>
     </header>
     <section className="card control-guide" aria-labelledby="control-guide-title">
       <div><span className="label">Quick start</span><h2 id="control-guide-title">How Control works</h2>
-        <p>A docket is a <strong>Goal</strong>: use it for work you want to delegate without losing the reason for it, the evidence, or the final decision.</p></div>
+        <p>A <strong>goal</strong> is work you delegate without losing the reason for it, the evidence, or the final decision.</p></div>
       <ol>
         <li><strong>Define the contract.</strong> Choose a project, write the objective, then add observable acceptance checks. These become the shared definition of done.</li>
         <li><strong>Work the graph in order.</strong> Start <em>Plan</em> first. Once you mark it complete, <em>Implement</em> unlocks in an isolated worktree. Claim paths such as <code>src/cart/total.ts</code> before parallel work touches them.</li>
@@ -150,18 +188,21 @@ export default function Control({ projects, providers, onOpenSession }: {
     {notice && <Note tone="ok">{notice}</Note>}
 
     <section className="control-grid">
-      <article className="card control-create"><span className="label">New work contract</span><h2>Create a docket</h2>
-        <label><span className="label">Project</span><select className="field" value={projectId} onChange={(event) => setProjectId(event.target.value)}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+      <article className="card control-create"><span className="label">New goal</span><h2>Define the contract</h2>
+        <label><span className="label">Project</span><select className="field" value={projectId} aria-describedby={projectOptions.length === 0 ? 'control-no-projects' : undefined} onChange={(event) => setProjectId(event.target.value)}>{projectOptions.length === 0 && <option value="" disabled>No project added yet</option>}{projectOptions.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+        {projectOptions.length === 0 && <><p className="faint control-hint" id="control-no-projects">A goal is scoped to one repository, and no project folder has been added yet.</p>
+        <button className="btn" onClick={() => void addProject()} disabled={busy !== null}>{busy === 'add-project' ? 'Choosing…' : 'Add your first project'}</button></>}
         <label><span className="label">Title</span><input className="field" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Harden checkout retry" /></label>
         <label><span className="label">Objective</span><textarea className="field control-textarea" value={objective} onChange={(event) => setObjective(event.target.value)} placeholder="What must change, and why?" /></label>
         <label><span className="label">Acceptance checks · one per line</span><textarea className="field control-textarea" value={acceptance} onChange={(event) => setAcceptance(event.target.value)} placeholder={'Targeted tests pass\nFailure mode is covered\nDiff is reviewed'} /></label>
         <div className="control-inline"><label><span className="label">Risk</span><select className="field" value={risk} onChange={(event) => setRisk(event.target.value as DocketRisk)}>{risks.map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label><span className="label">Budget · USD</span><input className="field" inputMode="decimal" value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="optional" /></label></div>
-        <button className="btn btn-primary" disabled={busy !== null || !projectId || !title.trim() || !objective.trim() || !acceptance.trim()} onClick={() => void create()}>{busy === 'create' ? 'Creating…' : 'Create work graph'}</button>
+        {missing.length > 0 && <p className="faint control-hint" id="control-create-blocked">Still needed: {missingText}.</p>}
+        <button className="btn btn-primary" disabled={busy !== null || missing.length > 0} aria-describedby={missing.length > 0 ? 'control-create-blocked' : undefined} onClick={() => void create()}>{busy === 'create' ? 'Creating…' : 'Create goal'}</button>
       </article>
 
       <article className="card control-list"><div className="control-card-head"><div><span className="label">Durable work</span><h2>Goals</h2></div><span className="faint">{dockets.length}</span></div>
-        {dockets.length === 0 && <p className="faint">Nothing is in flight. Create a contract before sending work to an agent.</p>}
-        {dockets.map((docket) => <button key={docket.id} className={`control-docket ${selected === docket.id ? 'selected' : ''}`} onClick={() => void choose(docket.id)}><span className={`control-status ${docket.status}`}>{docket.status}</span><strong>{docket.title}</strong><small>Goal · {docket.projectName} · {ago(docket.updatedAt)}</small></button>)}
+        {dockets.length === 0 && <p className="faint">Nothing is in flight. Create a goal before sending work to an agent.</p>}
+        {dockets.map((docket) => <button key={docket.id} className={`control-docket ${selected === docket.id ? 'selected' : ''}`} onClick={() => void choose(docket.id)}><span className={`control-status ${docket.status}`}>{docket.status}</span><strong>{docket.title}</strong><small>{docket.projectName} · {ago(docket.updatedAt)}</small></button>)}
       </article>
     </section>
 
@@ -170,25 +211,28 @@ export default function Control({ projects, providers, onOpenSession }: {
       <div className="control-launch"><label><span className="label">Provider for next task</span><select className="field" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{enabledProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label><span className="label">Model override</span><input className="field" value={model} onChange={(event) => setModel(event.target.value)} placeholder="provider default" /></label></div>
       <div className="control-nodes">{detail.nodes.map((node) => <NodeCard key={node.id} node={node} busy={busy} note={notes[node.id] ?? ''} claim={claims[node.id] ?? ''}
         onNote={(value) => setNotes((previous) => ({ ...previous, [node.id]: value }))} onClaim={(value) => setClaims((previous) => ({ ...previous, [node.id]: value }))}
-        onStart={() => start(node)} onCheckpoint={() => checkpoint(node)} onClaimAdd={() => addClaim(node)} onProof={() => proof(node)} onComplete={(decision) => complete(node, decision)} />)}</div>
+        onStart={() => start(node)} onCheckpoint={() => checkpoint(node)} onClaimAdd={() => addClaim(node)} onProof={() => proof(node)} onComplete={(decision) => complete(node, decision)} onRetry={() => retry(node)} />)}</div>
       <div className="control-evidence"><div><span className="label">Proof bundle</span><h3>{detail.proofs.length} record{detail.proofs.length === 1 ? '' : 's'}</h3>{detail.proofs.length === 0 ? <p className="faint">No evidence yet. A review gate result is required before verification can pass.</p> : detail.proofs.map((proof) => <p key={proof.id}><span className={`control-status ${proof.status}`}>{proof.status}</span> {proof.summary} <small>{ago(proof.createdAt)}</small></p>)}</div><div><span className="label">Continuity</span><h3>{detail.checkpoints.length} checkpoint{detail.checkpoints.length === 1 ? '' : 's'}</h3>{detail.checkpoints.length === 0 ? <p className="faint">Save a checkpoint before handoff or interruption. It records the exact provider conversation when one exists.</p> : detail.checkpoints.slice(0, 4).map((checkpoint) => <p key={checkpoint.id}>{checkpoint.note}<small>{checkpoint.conversationId ? ` · thread ${checkpoint.conversationId.slice(0, 12)}…` : ''} · {ago(checkpoint.createdAt)}</small></p>)}</div></div>
       <div className="control-evidence"><div><span className="label">Safe recovery</span><h3>{receipts.length === 0 ? 'No launched task yet' : `${receipts.filter((receipt) => receipt.state === 'exact').length} exact resume${receipts.filter((receipt) => receipt.state === 'exact').length === 1 ? '' : 's'}`}</h3>{receipts.map((receipt) => <p key={receipt.nodeId}><span className={`control-status ${receipt.state === 'exact' ? 'passed' : receipt.state === 'writer_active' ? 'working' : 'blocked'}`}>{receipt.state.replace('_', ' ')}</span> {receipt.detail}<small>{receipt.conversationId ? ` · thread ${receipt.conversationId.slice(0, 12)}…` : ''}</small></p>)}</div><div><span className="label">Goal trace</span><h3>{traces.length} recent signal{traces.length === 1 ? '' : 's'}</h3>{traces.length === 0 ? <p className="faint">Operational events appear here without copying prompts or responses into Control.</p> : traces.slice(0, 5).map((trace) => <p key={trace.id}><span className={`control-status ${trace.status}`}>{trace.status}</span> {trace.toolName ?? trace.kind}{trace.summary ? ` · ${trace.summary}` : ''}<small>{trace.durationMs !== null ? ` · ${trace.durationMs}ms` : ''}{trace.costUsd ? ` · ${usd(trace.costUsd)}` : ''} · {ago(trace.createdAt)}</small></p>)}</div></div>
       <div className="control-claims"><span className="label">Active file claims</span>{detail.claims.filter((claim) => !claim.releasedAt).length === 0 ? <p className="faint">No paths claimed. Claims are optional but prevent overlapping parallel edits.</p> : detail.claims.filter((claim) => !claim.releasedAt).map((claim) => <span key={claim.id} className="control-claim">{claim.path} <button className="btn btn-small" onClick={() => void act(`release-${claim.id}`, async () => { await window.wanigan.control.releaseClaim(claim.id); await load(detail.id); })}>release</button></span>)}</div>
     </section>}
 
-    <section className="control-grid control-lower"><article className="card"><span className="label">Local event inbox</span><h2>Triage, don’t auto-run</h2><p className="faint">Use this for CI, incident, or issue signals. Remote webhooks are intentionally not opened until their identity and replay controls are designed.</p><div className="control-inline"><input className="field" value={eventSource} onChange={(event) => setEventSource(event.target.value)} aria-label="Event source" /><input className="field" value={eventKind} onChange={(event) => setEventKind(event.target.value)} aria-label="Event kind" /></div><textarea className="field control-textarea" value={eventSummary} onChange={(event) => setEventSummary(event.target.value)} placeholder="What happened? Include the observable failure, not a solution guess." /><button className="btn" disabled={busy !== null || !eventSummary.trim()} onClick={() => void addEvent()}>Add event</button>{events.slice(0, 6).map((event) => <div className="control-event" key={event.id}><span className={`control-status ${event.status}`}>{event.status}</span><strong>{event.kind}</strong><p>{event.summary}</p>{event.status === 'new' && <button className="btn btn-small" onClick={() => void triage(event)}>Create docket</button>}</div>)}</article>
-      <article className="card"><span className="label">Model evidence</span><h2>Outcome router</h2><p className="faint">This ranks only completed docket evidence; it does not invent a winner from token volume or a single run.</p>{outcomes.length === 0 ? <p className="faint">No completed provider outcomes yet.</p> : <table className="control-table"><thead><tr><th>Model</th><th>Task</th><th>Accept</th><th>Tests</th><th>Cost</th></tr></thead><tbody>{outcomes.map((outcome) => <tr key={`${outcome.providerId}-${outcome.model}-${outcome.taskKind}`}><td>{outcome.providerId}<small>{outcome.model}</small></td><td>{outcome.taskKind}<small>{outcome.samples} sample{outcome.samples === 1 ? '' : 's'}</small></td><td>{outcome.acceptedRate === null ? '—' : `${Math.round(outcome.acceptedRate * 100)}%`}</td><td>{outcome.testPassRate === null ? '—' : `${Math.round(outcome.testPassRate * 100)}%`}</td><td>{usd(outcome.totalCostUsd)}</td></tr>)}</tbody></table>}
-        <span className="label">MCP task compatibility</span><p className="faint">Docket tasks have durable working/input-required/completed/cancelled state ready for the evolving MCP Tasks adapter.</p>{tasks.slice(0, 5).map((task) => <p key={task.id}><span className={`control-status ${task.status}`}>{task.status}</span> {task.title} {['working', 'input_required'].includes(task.status) && <button className="btn btn-small" onClick={() => void act(`cancel-task-${task.id}`, async () => { await window.wanigan.control.cancelMcpTask(task.id); await load(detail?.id); })}>cancel</button>}</p>)}</article></section>
+    <section className="control-grid control-lower"><article className="card"><span className="label">Local event inbox</span><h2>Triage, don’t auto-run</h2><p className="faint">Use this for CI, incident, or issue signals. Remote webhooks are intentionally not opened until their identity and replay controls are designed.</p><div className="control-inline"><label><span className="label">Event source</span><input className="field" value={eventSource} onChange={(event) => setEventSource(event.target.value)} /></label><label><span className="label">Event kind</span><input className="field" value={eventKind} onChange={(event) => setEventKind(event.target.value)} /></label></div><textarea className="field control-textarea" value={eventSummary} onChange={(event) => setEventSummary(event.target.value)} placeholder="What happened? Include the observable failure, not a solution guess." /><button className="btn" disabled={busy !== null || !eventSummary.trim()} onClick={() => void addEvent()}>Add event</button>{events.slice(0, 6).map((event) => <div className="control-event" key={event.id}><span className={`control-status ${event.status}`}>{event.status}</span><strong>{event.kind}</strong><p>{event.summary}</p>{event.status === 'new' && <button className="btn btn-small" onClick={() => void triage(event)}>Create goal</button>}</div>)}</article>
+      <article className="card"><span className="label">Model evidence</span><h2>Outcome router</h2><p className="faint">This ranks only completed goal evidence; it does not invent a winner from token volume or a single run.</p>{outcomes.length === 0 ? <p className="faint">No completed provider outcomes yet.</p> : <table className="control-table"><thead><tr><th>Model</th><th>Task</th><th>Accept</th><th>Tests</th><th>Cost</th></tr></thead><tbody>{outcomes.map((outcome) => <tr key={`${outcome.providerId}-${outcome.model}-${outcome.taskKind}`}><td>{outcome.providerId}<small>{outcome.model}</small></td><td>{outcome.taskKind}<small>{outcome.samples} sample{outcome.samples === 1 ? '' : 's'}</small></td><td>{outcome.acceptedRate === null ? '—' : `${Math.round(outcome.acceptedRate * 100)}%`}</td><td>{outcome.testPassRate === null ? '—' : `${Math.round(outcome.testPassRate * 100)}%`}</td><td>{usd(outcome.totalCostUsd)}</td></tr>)}</tbody></table>}
+        <span className="label">MCP task compatibility</span><p className="faint">Goal tasks have durable working/input-required/completed/cancelled state ready for the evolving MCP Tasks adapter.</p>{tasks.slice(0, 5).map((task) => <p key={task.id}><span className={`control-status ${task.status}`}>{task.status}</span> {task.title} {['working', 'input_required'].includes(task.status) && <button className="btn btn-small" onClick={() => void act(`cancel-task-${task.id}`, async () => { await window.wanigan.control.cancelMcpTask(task.id); await load(detail?.id); })}>cancel</button>}</p>)}</article></section>
   </div>;
 }
 
-function NodeCard({ node, busy, note, claim, onNote, onClaim, onStart, onCheckpoint, onClaimAdd, onProof, onComplete }: {
+function NodeCard({ node, busy, note, claim, onNote, onClaim, onStart, onCheckpoint, onClaimAdd, onProof, onComplete, onRetry }: {
   node: DocketNode; busy: string | null; note: string; claim: string;
   onNote: (value: string) => void; onClaim: (value: string) => void; onStart: () => void; onCheckpoint: () => void;
   onClaimAdd: () => void; onProof: () => void; onComplete: (decision?: 'approve' | 'request_changes' | 'reject') => void;
+  onRetry: () => void;
 }) {
   const actionable = ['ready', 'running'].includes(node.status);
+  const reopenable = ['failed', 'canceled'].includes(node.status);
   return <article className="control-node"><div><span className={`control-status ${node.status}`}>{node.status}</span><span className="label">{node.kind}</span><h3>{node.title}</h3><p>{node.instructions}</p>{node.sessionId && <button className="btn btn-small" onClick={onCheckpoint} disabled={busy !== null}>Checkpoint</button>}</div>
-    <div className="control-node-actions">{node.status === 'ready' && <button className="btn btn-primary" onClick={onStart} disabled={busy !== null}>Start isolated task</button>}{node.kind === 'verify' && actionable && <button className="btn" onClick={onProof} disabled={busy !== null}>Run review gate</button>}<input className="field" value={note} onChange={(event) => onNote(event.target.value)} placeholder="Evidence or handoff note" disabled={!actionable} />{node.kind === 'implement' && actionable && <div className="control-inline"><input className="field" value={claim} onChange={(event) => onClaim(event.target.value)} placeholder="src/path.ts" /><button className="btn btn-small" onClick={onClaimAdd} disabled={busy !== null || !claim.trim()}>Claim</button></div>}{node.kind === 'review' && actionable ? <div className="control-review-actions"><button className="btn btn-primary" onClick={() => onComplete('approve')} disabled={busy !== null}>Approve</button><button className="btn" onClick={() => onComplete('request_changes')} disabled={busy !== null}>Request changes</button><button className="btn btn-danger" onClick={() => onComplete('reject')} disabled={busy !== null}>Reject</button></div> : actionable && <button className="btn" onClick={() => onComplete('approve')} disabled={busy !== null}>Mark complete</button>}</div>
+    <div className="control-node-actions">{node.status === 'ready' && <button className="btn btn-primary" onClick={onStart} disabled={busy !== null}>Start isolated task</button>}{reopenable && <button className="btn" onClick={onRetry} disabled={busy !== null}
+      title="Reopen this task so it can be started again. Its dependents stop being blocked.">Reopen task</button>}{node.kind === 'verify' && actionable && <button className="btn" onClick={onProof} disabled={busy !== null}>Run review gate</button>}<input className="field" value={note} onChange={(event) => onNote(event.target.value)} placeholder="Evidence or handoff note" disabled={!actionable} />{node.kind === 'implement' && actionable && <div className="control-inline"><input className="field" value={claim} onChange={(event) => onClaim(event.target.value)} placeholder="src/path.ts" /><button className="btn btn-small" onClick={onClaimAdd} disabled={busy !== null || !claim.trim()}>Claim</button></div>}{node.kind === 'review' && actionable ? <div className="control-review-actions"><button className="btn btn-primary" onClick={() => onComplete('approve')} disabled={busy !== null}>Approve</button><button className="btn" onClick={() => onComplete('request_changes')} disabled={busy !== null}>Request changes</button><button className="btn btn-danger" onClick={() => onComplete('reject')} disabled={busy !== null}>Reject</button></div> : actionable && <button className="btn" onClick={() => onComplete('approve')} disabled={busy !== null}>Mark complete</button>}</div>
   </article>;
 }

@@ -50,6 +50,15 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
   const [plan, setPlan] = useState<{ file: string; action: string; detail: string; safe: boolean } | null>(null);
   const [reverting, setReverting] = useState(false);
   const [reverted, setReverted] = useState<string | null>(null);
+  /*
+   * Undo everything this session did, in one act. File-by-file was the only
+   * route, which is not much of an undo when an agent has touched forty files.
+   * It is deliberately a two-step: the confirmation counts the files first,
+   * because five hundred reverts is a different act from one.
+   */
+  const [bulk, setBulk] = useState<{ files: Changed[]; preexisting: number } | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkResult, setBulkResult] = useState<{ reverted: number; failed: { file: string; detail: string }[] } | null>(null);
   const [inspector, setInspector] = useState(false);
 
   useEffect(() => { window.wanigan.code.editors().then(setEditors).catch(() => {}); }, []);
@@ -66,10 +75,15 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
   }, [projectPath, sessionId]);
 
   // Poll while an agent is working — the whole point is watching edits land.
+  // Not while the window is hidden: this runs git status every four seconds and
+  // nobody is watching the result. The visibility handler catches up at once,
+  // so coming back never shows a stale list.
   useEffect(() => {
     loadChanges();
-    const t = setInterval(loadChanges, 4000);
-    return () => clearInterval(t);
+    const t = setInterval(() => { if (!document.hidden) loadChanges(); }, 4000);
+    const onVis = () => { if (!document.hidden) loadChanges(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
   }, [loadChanges]);
 
   useEffect(() => { setSel(null); setDiff(''); setFile(null); setDir(''); }, [projectPath]);
@@ -139,6 +153,26 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
     finally { setReverting(false); }
   }
 
+  async function doRevertAll() {
+    if (!bulk) return;
+    setBulkBusy(true);
+    try {
+      const r = await window.wanigan.revert.all(
+        projectPath,
+        bulk.files.map((f) => ({ path: f.path, preexisting: f.preexisting === true })),
+        baseHead,
+      );
+      setBulkResult({ reverted: r.reverted.length, failed: r.failed });
+      setBulk(null);
+      // A file that is gone has no diff left to show.
+      if (sel && r.reverted.includes(sel)) { setSel(null); setDiff(''); }
+      loadChanges();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBulk(null);
+    } finally { setBulkBusy(false); }
+  }
+
   async function openDiff(p: string) {
     setSel(p); setFile(null); setPlan(null); setReverted(null);
     try { setDiff(await window.wanigan.code.diff(projectPath, p)); }
@@ -199,6 +233,17 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
               {scope === 'session' ? 'this session' : `all (+${preexistingCount} pre-existing)`}
             </button>
           )}
+          {tab === 'changes' && visible.length > 0 && sessionId && baseHead && (
+            <button className="btn" style={{ padding: '3px 9px', fontSize: 'var(--t-small)' }}
+                    disabled={bulkBusy || bulk !== null}
+                    title={`Restore all ${visible.length} listed file(s) to ${baseHead.slice(0, 8)}, the commit this session started from`}
+                    onClick={() => {
+                      setBulkResult(null);
+                      setBulk({ files: visible, preexisting: visible.filter((f) => f.preexisting).length });
+                    }}>
+              Revert {visible.length}…
+            </button>
+          )}
           {tab === 'changes' && visible.length > 0 && onSendToBatch && (
             <button className="btn" style={{ padding: '3px 9px', fontSize: 'var(--t-small)' }}
                     title="Run one prompt across these files as a batch"
@@ -225,6 +270,60 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
       </div>
 
       {err && <div className="code-err" onClick={() => setErr(null)}>{err} — click to dismiss</div>}
+
+      {bulk && (
+        <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--line)' }}>
+          <Note tone="warn">
+            <strong>
+              Revert {bulk.files.length} file{bulk.files.length === 1 ? '' : 's'} to {baseHead?.slice(0, 8)}?
+            </strong>
+            <div style={{ marginTop: 4, lineHeight: 1.5 }}>
+              Every listed file goes back to the commit this session started from; files that did not
+              exist then are deleted. Uncommitted work in them is not recoverable from git afterwards.
+              {bulk.preexisting > 0 && (
+                <> {bulk.preexisting} of them {bulk.preexisting === 1 ? 'was' : 'were'} already modified
+                  before this session started, so reverting {bulk.preexisting === 1 ? 'it' : 'them'} discards
+                  your own earlier changes too.</>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+              <button className="btn btn-danger" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                      disabled={bulkBusy} onClick={() => void doRevertAll()}>
+                {bulkBusy ? 'Reverting…' : `Revert ${bulk.files.length} file${bulk.files.length === 1 ? '' : 's'}`}
+              </button>
+              <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                      disabled={bulkBusy} onClick={() => setBulk(null)}>Cancel</button>
+            </div>
+          </Note>
+        </div>
+      )}
+
+      {bulkResult && (
+        <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--line)' }}>
+          <Note tone={bulkResult.failed.length ? 'warn' : 'ok'}>
+            {/* Counted, not summarised: "done" over a batch that half failed is
+                the reason you would not notice the half that failed. */}
+            Reverted {bulkResult.reverted} file{bulkResult.reverted === 1 ? '' : 's'}.
+            {bulkResult.failed.length > 0 && <> {bulkResult.failed.length} could not be reverted:</>}
+            {bulkResult.failed.length > 0 && (
+              <ul style={{ margin: '4px 0 0', paddingLeft: 18, lineHeight: 1.45 }}>
+                {bulkResult.failed.slice(0, 8).map((f) => (
+                  <li key={f.file || f.detail}>
+                    {f.file && <span className="mono">{f.file}</span>}{f.file ? ' — ' : ''}{f.detail}
+                  </li>
+                ))}
+                {bulkResult.failed.length > 8 && (
+                  <li className="faint">and {bulkResult.failed.length - 8} more, still listed above.</li>
+                )}
+              </ul>
+            )}
+            <div style={{ marginTop: 6 }}>
+              <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                      onClick={() => setBulkResult(null)}>Dismiss</button>
+            </div>
+          </Note>
+        </div>
+      )}
 
       <div className="code-body">
         {tab === 'changes' ? (
@@ -356,12 +455,19 @@ function fmtSize(n: number): string {
 }
 
 /**
+ * Rendering an unbounded diff hangs the pane, so it is cut — and says so. The
+ * same limit and the same admission as the Git view's own diff.
+ */
+const DIFF_LINES = 4000;
+
+/**
  * The +/- character carries the meaning, not the colour. Red/green alone is
  * unreadable for red-green colourblind users; the prefix is always present.
  */
 function Diff({ text }: { text: string }) {
+  const all = useMemo(() => text.split('\n'), [text]);
   if (!text.trim()) return <p className="faint code-hint">No textual diff (binary file, or the change is already committed).</p>;
-  const lines = text.split('\n');
+  const lines = all.slice(0, DIFF_LINES);
   return (
     <pre className="diff">
       {lines.map((l, i) => {
@@ -372,6 +478,15 @@ function Diff({ text }: { text: string }) {
         else if (l.startsWith('-')) cls = 'del';
         return <div key={i} className={`dl ${cls}`}>{l || ' '}</div>;
       })}
+      {/* A diff that stops without saying so reads as a complete diff, and the
+          missing part is exactly the part nobody reviews. Pop out reads the
+          same text, so the count is where to go, not a dead end. */}
+      {all.length > DIFF_LINES && (
+        <div className="dl meta">
+          — showing {DIFF_LINES.toLocaleString('en-US')} of {all.length.toLocaleString('en-US')} lines.
+          The remaining {(all.length - DIFF_LINES).toLocaleString('en-US')} are not displayed.
+        </div>
+      )}
     </pre>
   );
 }
@@ -408,13 +523,34 @@ function CodeInspector({ title, text, kind, truncated, onClose, onExternal }: {
     ? lines.map((line, i) => line.toLocaleLowerCase().includes(needle) ? i : -1).filter((i) => i >= 0)
     : [], [lines, needle]);
 
+  const panel = useRef<HTMLElement>(null);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+      // aria-modal="true" promises the rest of the app is inert, but nothing
+      // was holding focus: Tab walked straight out into the view behind and
+      // left a screen reader outside a dialog it had been told was modal.
+      if (e.key !== 'Tab' || !panel.current) return;
+      const focusable = [...panel.current.querySelectorAll<HTMLElement>(
+        'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      )].filter((el) => !el.hasAttribute('disabled'));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (!panel.current.contains(active)) { e.preventDefault(); first.focus(); return; }
+      if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+      else if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
+
+  // Focus starts inside the dialog rather than wherever the opener left it.
+  useEffect(() => {
+    panel.current?.querySelector<HTMLElement>('input, button')?.focus();
+  }, []);
 
   const jump = (where: 'top' | 'bottom' | 'match') => {
     const el = body.current;
@@ -426,7 +562,7 @@ function CodeInspector({ title, text, kind, truncated, onClose, onExternal }: {
 
   return (
     <div className="code-inspector-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="code-inspector" role="dialog" aria-modal="true" aria-label={`Code inspector: ${title}`}
+      <section ref={panel} className="code-inspector" role="dialog" aria-modal="true" aria-label={`Code inspector: ${title}`}
                onMouseDown={(e) => e.stopPropagation()}>
         <header className="code-inspector-head">
           <div style={{ minWidth: 0 }}>

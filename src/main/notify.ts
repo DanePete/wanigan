@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { BrowserWindow, Notification } from 'electron';
+import { app, BrowserWindow, Notification } from 'electron';
 import { db, resultsDir } from './db';
 import { getSetting, setSetting } from './settings';
 import { sendMobilePush } from './mobile';
@@ -162,6 +162,12 @@ export function notify(opts: {
   desktop?: boolean;
   mobile?: boolean;
   onMobileResult?: (result: MobilePushResult) => void;
+  /**
+   * Keep this for the attended app when the process showing it has no window.
+   * Opt-in per call, and never set for anything carrying agent detail — see
+   * `hold()` for why the digest is allowed so much less than a banner is.
+   */
+  hold?: boolean;
 }): void {
   // Phone delivery is its own opt-in. A user may reasonably turn off banners
   // on the Mac while keeping the alert that lets them leave the room, so the
@@ -182,6 +188,16 @@ export function notify(opts: {
   }
 
   if (opts.desktop === false || !notificationsEnabled()) return;
+
+  // The launchd scheduler is this same app with no window: a banner it shows
+  // has nothing to raise and nobody in front of it, and the operator finds out
+  // about a night of failures whenever they next happen to look. Held instead,
+  // and handed over the moment an attended Wanigan opens a window.
+  if (opts.hold && !hasWindow()) {
+    hold({ at: Date.now(), title: opts.title, body: opts.body, urgent: opts.urgent === true });
+    return;
+  }
+
   try {
     // isSupported() is false on a Linux box with no notification daemon, and
     // the constructor itself throws before the app is ready.
@@ -231,6 +247,177 @@ function focusWanigan(): void {
   } catch {
     // No window yet, or the app is on its way out.
   }
+}
+
+function hasWindow(): boolean {
+  try {
+    return BrowserWindow.getAllWindows().some((w) => !w.isDestroyed());
+  } catch {
+    // Before `ready`, or during teardown. Treated as "no window", which is the
+    // direction that keeps a notification rather than losing it.
+    return false;
+  }
+}
+
+/* ── where a click lands ─────────────────────────────────────────────── */
+
+/**
+ * What the banner was about, so that clicking it arrives somewhere.
+ *
+ * Every announcement used to raise the window and stop there, which means an
+ * urgent "Asking — mnair-shop" put the operator on whichever tab happened to
+ * be open — with the same number of clicks left to find the blocked agent as
+ * if they had never been told. The identity was known at the moment the
+ * notification was built and thrown away one line later; this carries it.
+ */
+export type NotificationTarget =
+  | { kind: 'session'; sessionId: string }
+  | { kind: 'run'; runId: string };
+
+let opener: ((target: NotificationTarget) => void) | null = null;
+
+/**
+ * Registered by whoever owns the renderer. Notifications keep working without
+ * one — the window still comes forward — so a build that has not wired the
+ * route yet degrades to what this file did before rather than throwing.
+ */
+export function setNotificationOpener(fn: ((target: NotificationTarget) => void) | null): void {
+  opener = fn;
+}
+
+function reveal(target?: NotificationTarget): () => void {
+  return () => {
+    focusWanigan();
+    if (!target || !opener) return;
+    try {
+      opener(target);
+    } catch {
+      // The window is already up, which is most of what the click was for. A
+      // renderer that cannot be navigated must not surface as an error from
+      // inside Electron's notification callback.
+    }
+  };
+}
+
+/* ── what a windowless process holds ─────────────────────────────────── */
+
+/**
+ * Notifications a process with no window kept for the attended app.
+ *
+ * Deliberately small and deliberately dull. This is the one sink that writes a
+ * notification's text to disk, so nothing carrying agent detail is allowed in
+ * — attention bodies can contain a shell command or a file name, and the
+ * promise made at `announceAttention` is that those reach the OS and nowhere
+ * else. Run summaries are counts, a name the operator chose and a cost, and
+ * those are already in the database this is stored in.
+ */
+const DIGEST_KEY = 'notifications.held';
+const DIGEST_MAX = 50;
+/** Past this a held banner is archaeology, not news. */
+const DIGEST_TTL_MS = 7 * 24 * 60 * 60_000;
+
+type HeldNotification = { at: number; title: string; body: string; urgent: boolean };
+
+function readDigest(): HeldNotification[] {
+  let raw: string;
+  try {
+    raw = getSetting(DIGEST_KEY, '[]');
+  } catch {
+    // Same reason notificationsEnabled() keeps its last answer: the database
+    // is closed during quit, which is when the last cycle is still reporting.
+    return [];
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return []; }
+  if (!Array.isArray(parsed)) return [];
+  const cutoff = Date.now() - DIGEST_TTL_MS;
+  const out: HeldNotification[] = [];
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== 'object') continue;
+    const e = entry as Record<string, unknown>;
+    if (typeof e.at !== 'number' || !Number.isFinite(e.at) || e.at < cutoff) continue;
+    if (typeof e.title !== 'string' || typeof e.body !== 'string') continue;
+    out.push({ at: e.at, title: e.title, body: e.body, urgent: e.urgent === true });
+  }
+  return out;
+}
+
+function writeDigest(entries: HeldNotification[]): void {
+  try {
+    setSetting(DIGEST_KEY, JSON.stringify(entries));
+  } catch {
+    // A held notification is a courtesy to the next launch, never the record
+    // of the work — that is already in runs, headless_rows and schedule_runs.
+  }
+}
+
+function hold(entry: HeldNotification): void {
+  // Oldest first out. A month of nightly runs against a Mac nobody opened must
+  // not grow a settings row without bound.
+  writeDigest([...readDigest(), entry].slice(-DIGEST_MAX));
+}
+
+let draining = false;
+
+/**
+ * Show what a windowless process kept, as one banner rather than a burst.
+ *
+ * One is the point: the toggle survives because Wanigan interrupts rarely, and
+ * eleven banners at login is exactly the morning that gets it switched off.
+ * The phone sink already delivered these at the time they happened, so this
+ * does not push again.
+ */
+export function drainNotificationDigest(): number {
+  if (draining) return 0;
+  draining = true;
+  try {
+    const held = readDigest();
+    // Cleared whether or not it can be shown: a banner that could not be
+    // displayed is not worth re-offering at every window for a week.
+    if (held.length) writeDigest([]);
+    if (!held.length || !notificationsEnabled()) return 0;
+
+    const names = held.map((h) => h.title);
+    notify({
+      title: held.length === 1
+        ? held[0].title
+        : `${held.length} unattended runs finished while Wanigan was closed`,
+      body: held.length === 1
+        ? `${held[0].body} · ${whenHeld(held[0].at)}`
+        : `${names.slice(0, 3).join('; ')}${names.length > 3 ? `; and ${names.length - 3} more` : ''}`,
+      urgent: held.some((h) => h.urgent),
+      // Delivered by the process that held them, at the time they happened.
+      mobile: false,
+      onClick: reveal(),
+    });
+    return held.length;
+  } finally {
+    draining = false;
+  }
+}
+
+function whenHeld(at: number): string {
+  const mins = Math.max(0, Math.round((Date.now() - at) / 60_000));
+  if (mins < 60) return `${mins}m ago`;
+  if (mins < 24 * 60) return `${Math.round(mins / 60)}h ago`;
+  return new Date(at).toLocaleString();
+}
+
+// Wired here rather than at a start-up call site because the process that
+// needs the drain is the one that has no start-up call site for it: a window
+// appearing is the only signal that an attended Wanigan is present to read
+// what the scheduler left.
+try {
+  app.on('browser-window-created', () => {
+    try {
+      drainNotificationDigest();
+    } catch (error) {
+      console.warn('[wanigan] could not show held notifications:', error);
+    }
+  });
+} catch {
+  // `app` is unavailable in a context that imported this module for its pure
+  // schedule maths. Nothing else in the file depends on the listener.
 }
 
 /* ── what the operator is already looking at ─────────────────────────── */
@@ -500,33 +687,54 @@ function usd(n: number): string {
 
 /** Failures first: an OS notification truncates the tail, never the head. */
 const STATUS_ORDER = ['errored', 'expired', 'canceled', 'pending', 'succeeded'];
+/**
+ * The same idea for a fan-out, whose rows are repositories rather than
+ * requests. 'blocked' is a failure and reads like one: it is a repository the
+ * trust level refused to run, which is a decision the operator has to see.
+ */
+const ROW_STATUS_ORDER = ['errored', 'timeout', 'blocked', 'canceled', 'running', 'pending', 'succeeded'];
+const BAD_STATUSES = new Set(['errored', 'expired', 'timeout', 'blocked']);
 
+/**
+ * A run reached its end state.
+ *
+ * Both shapes of run land here, and they count different tables: a batch's
+ * outcome is its requests, a headless fan-out's is one row per repository.
+ * Reading `requests` for a fan-out was not a smaller answer, it was a wrong
+ * one — no rows at all, rendered as "No results · $0.00" for twelve repos
+ * that had just spent an hour working.
+ */
 export function announceRunEnded(runId: string): void {
   if (!claim(`run:${runId}`, RUN_ENDED_DEDUPE_MS)) return;
 
-  let run: { name: string; cost_usd: number } | undefined;
+  let run: { name: string; cost_usd: number; kind: string } | undefined;
   let counts: { status: string; n: number }[];
   try {
     const d = db();
-    run = d.prepare('SELECT name, cost_usd FROM runs WHERE id = ?').get(runId) as typeof run;
-    counts = d.prepare('SELECT status, COUNT(*) n FROM requests WHERE run_id = ? GROUP BY status')
-      .all(runId) as { status: string; n: number }[];
+    run = d.prepare('SELECT name, cost_usd, kind FROM runs WHERE id = ?').get(runId) as typeof run;
+    counts = run?.kind === 'headless'
+      ? d.prepare('SELECT status, COUNT(*) n FROM headless_rows WHERE run_id = ? GROUP BY status')
+        .all(runId) as { status: string; n: number }[]
+      : d.prepare('SELECT status, COUNT(*) n FROM requests WHERE run_id = ? GROUP BY status')
+        .all(runId) as { status: string; n: number }[];
   } catch {
     return;
   }
   if (!run) return;
 
-  counts.sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status));
-  const bad = counts
-    .filter((c) => c.status === 'errored' || c.status === 'expired')
-    .reduce((n, c) => n + c.n, 0);
+  const order = run.kind === 'headless' ? ROW_STATUS_ORDER : STATUS_ORDER;
+  counts.sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status));
+  const bad = counts.filter((c) => BAD_STATUSES.has(c.status)).reduce((n, c) => n + c.n, 0);
   const parts = counts.map((c) => `${c.n.toLocaleString()} ${c.status}`);
 
   notify({
     title: `${run.name} finished`,
     body: `${parts.join(', ') || 'No results'} · ${usd(run.cost_usd)}`,
     urgent: bad > 0,
-    onClick: focusWanigan,
+    // Counts, an operator-chosen name and a cost — nothing an agent wrote, so
+    // this is one of the two things the windowless scheduler may keep.
+    hold: true,
+    onClick: reveal({ kind: 'run', runId }),
   });
 }
 
@@ -550,7 +758,10 @@ export function announceSpendCapTrip(name: string, projected: number, cap: numbe
     title: 'Stopped at the spend cap',
     body: `${name} is estimated at ${usd(projected)}, above your ${usd(cap)} cap. Nothing was submitted — raise the cap in Settings or cut the dataset down.`,
     urgent: true,
-    onClick: focusWanigan,
+    // No target, for the same reason there is no run id above: the refusal
+    // happens before the row exists, so there is nothing to deep-link to. The
+    // window still comes forward, on the form the operator was last using.
+    onClick: reveal(),
   });
 }
 
@@ -605,7 +816,10 @@ export function announceAttention(a: Attention): void {
     // project/state/wait is enough to decide whether to walk back to the Mac.
     mobileBody: mobileAttentionBody(a),
     urgent: URGENT_KINDS.has(a.kind),
-    onClick: focusWanigan,
+    // The session is the whole content of the alert. Raising the window onto
+    // whatever tab was last open leaves the operator with the same search they
+    // would have had if nothing had told them.
+    onClick: reveal({ kind: 'session', sessionId: a.sessionId }),
   };
   if (sendMobile) notify({
     ...message,

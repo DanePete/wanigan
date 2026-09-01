@@ -13,6 +13,8 @@ export const REQUIRED_LEARNING_TABLES = [
   'knowledge_projections',
   'learning_experiments',
   'artifact_metrics',
+  'session_briefings',
+  'consolidation_runs',
   'knowledge_fts',
 ] as const;
 

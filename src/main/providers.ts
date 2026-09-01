@@ -221,10 +221,12 @@ const LEGACY_BUILTINS: ProviderDef[] = [
     // GLM session ran with telemetry and nothing else. runsClaudeCli() below is
     // that test; adding a fourth provider on this binary needs nothing more.
     //
-    // Spend is the one thing that stays wrong on purpose. A session banks the
-    // cost figure the CLI hands it, and neither otel.ts nor spend.ts knows a
-    // Z.ai coding plan is a flat monthly fee, so a GLM session's dollars are
-    // the CLI's arithmetic about a model it is not billing for — not a bill.
+    // Spend is the number that cannot be taken at face value. A session banks
+    // the cost figure the CLI hands it, and a Z.ai coding plan is a flat
+    // monthly fee, so a GLM session's dollars are the CLI's arithmetic about a
+    // model it is not billing for — not a bill. backendCostBasis() below is
+    // where that is said once, per backend, so a reader is told the figure is
+    // unverified instead of being shown it as money spent.
     bin: 'claude',
     cli: 'claude',
     harness: 'claude-code',
@@ -360,6 +362,33 @@ export function effectiveProviderBackendId(
 
 function fingerprint(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+/**
+ * Backends whose reported dollars Wanigan can hold against an actual bill.
+ *
+ * The Claude Code CLI prices every turn from Anthropic's published rates for
+ * the model it believes it is talking to, and Wanigan banks that number. It is
+ * only a bill where the account really is charged at those rates: GLM and
+ * DeepSeek run the same binary against a flat-rate plan, so their figure prices
+ * a model nobody is billing for, and a pack may declare a backend Wanigan has
+ * never had a price list for at all. spend.ts can reconcile the Anthropic
+ * backend against the organisation cost report; it has no such comparison for
+ * anything else, so nothing else may be presented as money spent.
+ *
+ * Keyed by backend rather than by profile id so a pack that adds a fifth
+ * Anthropic-compatible endpoint inherits the honest answer without an edit here.
+ */
+const RECONCILABLE_BACKENDS = new Set(['anthropic']);
+
+export type ProviderCostBasis = 'reconcilable' | 'unverified';
+
+export function backendCostBasis(backendId: string | null | undefined): ProviderCostBasis {
+  const id = backendId?.trim();
+  // An unknown or missing backend is unverified, never assumed reconcilable: a
+  // row from a removed pack must not inherit Anthropic's billing on a guess.
+  if (!id) return 'unverified';
+  return RECONCILABLE_BACKENDS.has(id) ? 'reconcilable' : 'unverified';
 }
 
 function synchronizeProviderDefinitions(refreshPacks = false): ProviderPackSnapshot {
@@ -590,6 +619,73 @@ function nvmBinDirs(): string[] {
   } catch { return []; }
 }
 
+/**
+ * `<bin> --version` is a process spawn, and detectProviders() runs on every
+ * session launch and again every time the window takes focus. Uncached that was
+ * one spawn per profile per call — measured at 2.3s cold — for a string that
+ * only changes when the binary does.
+ *
+ * So the answer is cached the way capabilitiesFor() caches its --help probe:
+ * keyed on the identity of the thing it describes rather than on a clock. The
+ * key is the resolved path plus the size and mtime of the file at it, so an
+ * upgrade in place invalidates it, and the three profiles that share the claude
+ * binary resolve to one entry and therefore one spawn.
+ */
+type VersionProbe = { at: number; ok: boolean; value: string | null };
+const versionCache = new Map<string, VersionProbe>();
+const versionInFlight = new Map<string, Promise<string | null>>();
+
+/**
+ * A probe that failed is cached only briefly. "Busy machine, timed out" and
+ * "this binary reports no version" are not the same fact, and pinning the
+ * failure to the binary's mtime would keep repeating it until the CLI is next
+ * upgraded — which for a transient failure could be never.
+ */
+const VERSION_FAILURE_TTL_MS = 60_000;
+
+function binaryStamp(resolved: string): string {
+  try {
+    const st = fs.statSync(resolved);
+    return `${st.size}:${st.mtimeMs}`;
+  } catch {
+    // Without a stat there is nothing to prove the file is the one already
+    // probed, so make the key unique and pay for a fresh spawn instead.
+    return `unstatable:${Date.now()}`;
+  }
+}
+
+async function probeVersion(def: ProviderDef, resolved: string, PATH: string): Promise<string | null> {
+  const key = `${resolved}|${binaryStamp(resolved)}|${JSON.stringify(def.versionArgs)}`;
+  const prior = versionCache.get(key);
+  if (prior && (prior.ok || Date.now() - prior.at < VERSION_FAILURE_TTL_MS)) return prior.value;
+  // Profiles are probed concurrently; without this the three that share one
+  // binary would each start their own spawn before any of them cached.
+  const running = versionInFlight.get(key);
+  if (running) return running;
+
+  const work = (async (): Promise<string | null> => {
+    let value: string | null = null;
+    let ok = false;
+    try {
+      const { stdout } = await exec(resolved, def.versionArgs, {
+        timeout: 10_000,
+        env: providerProbeEnvironment(PATH),
+      });
+      value = stdout.trim().split('\n')[0] || null;
+      ok = value !== null;
+    } catch {
+      // Not installed-but-broken and momentarily unavailable look identical
+      // from here; the short failure TTL above is what keeps that cheap.
+      value = null;
+    }
+    versionCache.set(key, { at: Date.now(), ok, value });
+    return value;
+  })();
+
+  versionInFlight.set(key, work);
+  try { return await work; } finally { versionInFlight.delete(key); }
+}
+
 async function which(def: ProviderDef): Promise<string | null> {
   const p = await shellPath();
   const onPath = path.isAbsolute(def.bin)
@@ -604,16 +700,7 @@ export async function detectProviders(): Promise<ProviderInfo[]> {
   return Promise.all(
     PROVIDERS.map(async (def): Promise<ProviderInfo> => {
       const resolved = await which(def);
-      let version: string | null = null;
-      if (resolved) {
-        try {
-          const { stdout } = await exec(resolved, def.versionArgs, {
-            timeout: 10_000,
-            env: providerProbeEnvironment(p),
-          });
-          version = stdout.trim().split('\n')[0] || null;
-        } catch { version = null; }
-      }
+      const version = resolved ? await probeVersion(def, resolved, p) : null;
       const capabilities = await capabilitiesFor(def, resolved, p);
       return {
         id: def.id,

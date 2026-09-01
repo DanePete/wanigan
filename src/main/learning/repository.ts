@@ -1,5 +1,9 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { db } from '../db';
 import { automationDecision } from './classifier';
+import { markSignalsProcessed, recordSignal } from './signals';
+import { ARTIFACT_SCOPES, KNOWLEDGE_KINDS } from './types';
 import type {
   AddEvidenceInput, ArtifactScope, CandidateConflict, CandidateStatus, CreateCandidateInput,
   JsonObject, KnowledgeCandidate, KnowledgeEvidence, KnowledgeItem, KnowledgeKind,
@@ -69,6 +73,28 @@ const versionFromRow = (row: VersionRow): KnowledgeVersion => ({
   previousVersionId: row.previous_version_id,
   createdAt: row.created_at,
 });
+
+/**
+ * Every current-version column, aliased. searchKnowledge used to fetch the
+ * version for each hit in its own query; on a launch that is up to 100 extra
+ * round trips before the first token is ever sent.
+ */
+const VERSION_JOIN_COLUMNS = `v.id AS v_id,v.item_id AS v_item_id,v.version AS v_version,
+  v.canonical_text AS v_canonical_text,v.metadata_json AS v_metadata_json,
+  v.content_hash AS v_content_hash,v.created_by AS v_created_by,
+  v.previous_version_id AS v_previous_version_id,v.created_at AS v_created_at`;
+
+type VersionJoin = {
+  v_id: string | null; v_item_id: string | null; v_version: number | null;
+  v_canonical_text: string | null; v_metadata_json: string | null; v_content_hash: string | null;
+  v_created_by: string | null; v_previous_version_id: string | null; v_created_at: number | null;
+};
+
+const versionFromJoin = (row: VersionJoin): KnowledgeVersion | null => (row.v_id == null ? null : versionFromRow({
+  id: row.v_id, item_id: row.v_item_id!, version: row.v_version!, canonical_text: row.v_canonical_text!,
+  metadata_json: row.v_metadata_json ?? '{}', content_hash: row.v_content_hash!,
+  created_by: row.v_created_by!, previous_version_id: row.v_previous_version_id, created_at: row.v_created_at!,
+}));
 
 const candidateFromRow = (row: CandidateRow): KnowledgeCandidate => ({
   id: row.id,
@@ -223,6 +249,13 @@ export function updateCandidate(id: string, patch: UpdateCandidatePatch): Knowle
   if (current.status !== 'pending' && current.status !== 'snoozed') {
     throw new Error(`A ${current.status} candidate is immutable. Reopen or create a replacement.`);
   }
+  // Renderer input: the compile-time union proves nothing at this boundary.
+  if (patch.scope !== undefined && !(ARTIFACT_SCOPES as readonly string[]).includes(patch.scope)) {
+    throw new Error(`Unknown candidate scope "${patch.scope}".`);
+  }
+  if (patch.targetKind !== undefined && !(KNOWLEDGE_KINDS as readonly string[]).includes(patch.targetKind)) {
+    throw new Error(`Unknown knowledge kind "${patch.targetKind}".`);
+  }
   const next = {
     itemId: current.itemId,
     targetKind: patch.targetKind ?? current.targetKind,
@@ -238,6 +271,7 @@ export function updateCandidate(id: string, patch: UpdateCandidatePatch): Knowle
   if (next.scope !== 'personal' && !next.projectId) throw new Error('Project and path-scoped candidates need a project id.');
   if (next.scope === 'path' && !next.pathScope) throw new Error('A path-scoped candidate needs a path selector.');
   if (next.scope !== 'path') next.pathScope = null;
+  if (next.scope === 'personal') next.projectId = null;
   const conflicts = findCandidateConflicts(next);
   db().prepare(`
     UPDATE knowledge_candidates SET target_kind=?,scope=?,provider_id=?,project_id=?,path_scope=?,
@@ -261,7 +295,11 @@ export function reviewCandidate(id: string, action: ReviewAction, note?: string 
     reopen: ['rejected', 'snoozed'],
   };
   if (!transitions[action].includes(candidate.status)) {
-    throw new Error(`A ${candidate.status} candidate cannot be ${action}d.`);
+    const past: Record<ReviewAction, string> = {
+      approve: 'approved', reject: 'rejected', snooze: 'snoozed', reopen: 'reopened',
+    };
+    const article = /^[aeiou]/i.test(candidate.status) ? 'An' : 'A';
+    throw new Error(`${article} ${candidate.status} candidate cannot be ${past[action]}.`);
   }
   const status: CandidateStatus = action === 'approve' ? 'approved'
     : action === 'reject' ? 'rejected'
@@ -271,6 +309,16 @@ export function reviewCandidate(id: string, action: ReviewAction, note?: string 
   db().prepare('UPDATE knowledge_candidates SET status=?,reviewed_at=?,reviewer_note=?,updated_at=? WHERE id=?')
     .run(status, action === 'reopen' ? null : now, reviewerNote, now, id);
   return getCandidate(id)!;
+}
+
+/**
+ * Terminal bookkeeping for a pipeline that died after candidate creation. A
+ * candidate stranded 'pending' or 'approved' inflates the Inbox and, for
+ * installs, blocks every retry; 'failed' keeps the record without the debt.
+ */
+export function markCandidateFailed(id: string, note?: string | null): void {
+  db().prepare("UPDATE knowledge_candidates SET status='failed',reviewer_note=COALESCE(?,reviewer_note),updated_at=? WHERE id=?")
+    .run(optionalText(note, 8 * 1024), Date.now(), id);
 }
 
 export function getKnowledgeItem(id: string): KnowledgeItem | null {
@@ -326,6 +374,73 @@ function refreshFts(item: KnowledgeItem): void {
   }
 }
 
+/** Enough to locate a change; a promotion is not an index of the repository. */
+const MAX_FILE_EVIDENCE_PER_SIGNAL = 5;
+/** Bounded work at promotion time even when a signal reports a whole tree. */
+const MAX_FILE_PATHS_INSPECTED = 50;
+/** A citation exists to be re-hashed on every launch; a huge file is not worth that cost. */
+const MAX_FILE_EVIDENCE_BYTES = 2 * 1024 * 1024;
+
+/**
+ * The files a signal reported touching, resolved and hashed inside one root.
+ *
+ * Promotion only ever wrote 'learning-signal' evidence, which the freshness
+ * checker cannot re-hash. Every promoted item therefore passed its citation
+ * check by having nothing checkable, so quarantine never fired on anything the
+ * pipeline produced. Recording the touched files as hashed 'file' evidence is
+ * what puts those items under the existing machinery.
+ */
+function fileEvidenceForSignal(detailJson: string, root: string | null): { sourceId: string; contentHash: string }[] {
+  if (!root) return [];
+  let realRoot: string;
+  // The project moved or was deleted: cite nothing rather than guess a root.
+  try { realRoot = fs.realpathSync(root); } catch { return []; }
+  const detail = parseObject(detailJson);
+  const paths = Array.isArray(detail.paths) ? detail.paths.filter((v): v is string => typeof v === 'string') : [];
+  const found: { sourceId: string; contentHash: string }[] = [];
+  for (const raw of paths.slice(0, MAX_FILE_PATHS_INSPECTED)) {
+    if (found.length >= MAX_FILE_EVIDENCE_PER_SIGNAL) break;
+    let resolved: string;
+    let stats: fs.Stats;
+    // A path that no longer resolves is not evidence; recording it would only
+    // manufacture a stale citation on the next launch.
+    try {
+      resolved = fs.realpathSync(path.isAbsolute(raw) ? raw : path.join(realRoot, raw));
+      stats = fs.statSync(resolved);
+    } catch { continue; }
+    if (!stats.isFile() || stats.size > MAX_FILE_EVIDENCE_BYTES) continue;
+    // Symlinks are resolved before the containment test, so a link inside the
+    // root cannot cite a file the launch is not allowed to verify.
+    const relative = path.relative(realRoot, resolved);
+    if (!relative || path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) continue;
+    let contentHash: string;
+    // A citation Wanigan cannot hash now is not verifiable later.
+    try { contentHash = sha256(fs.readFileSync(resolved)); } catch { continue; }
+    found.push({ sourceId: relative.replaceAll('\\', '/'), contentHash });
+  }
+  return found;
+}
+
+/**
+ * Distinct independent sources behind an item. A file the same signal touched
+ * is corroborating detail for that one observation, not a second observation,
+ * so signal-derived file citations are excluded: optimizer.ts reads this
+ * number as "independent source(s)" and would otherwise report three touched
+ * files as three sources. Evidence added deliberately still counts.
+ */
+function recountSources(itemId: string): number {
+  return (db().prepare(`
+    SELECT COUNT(DISTINCT source_id) AS n FROM knowledge_evidence
+    WHERE item_id=? AND NOT (source_type='file' AND signal_id IS NOT NULL)
+  `).get(itemId) as { n: number }).n;
+}
+
+function projectRootPath(projectId: string | null): string | null {
+  if (!projectId) return null;
+  const row = db().prepare('SELECT path FROM projects WHERE id=?').get(projectId) as { path: string } | undefined;
+  return row?.path ?? null;
+}
+
 export interface PromoteCandidateOptions {
   createdBy: 'user' | 'automation' | string;
   allowAutomatic?: boolean;
@@ -344,7 +459,15 @@ export function promoteCandidate(
       && automationDecision(candidate).decision === 'auto-apply';
     if (!automatic) throw new Error('Candidate must be approved before it can become canonical knowledge.');
   }
-  if (candidate.conflicts.length) throw new Error('Resolve candidate conflicts before promotion.');
+  // Conflicts stored at creation go stale the moment another item becomes
+  // active; only a recheck at promotion time can see it. The fresh list is
+  // persisted so the Inbox shows why promotion refused.
+  const conflicts = findCandidateConflicts(candidate);
+  if (conflicts.length) {
+    db().prepare('UPDATE knowledge_candidates SET conflicts_json=?,updated_at=? WHERE id=?')
+      .run(stableJson(conflicts), Date.now(), candidateId);
+    throw new Error(`Resolve candidate conflicts before promotion: conflicts with "${conflicts[0].title}" (${conflicts[0].relation}).`);
+  }
 
   const createdBy = nonEmpty(options.createdBy, 'Created by', 200);
   const metadataJson = stableJson(options.metadata ?? {});
@@ -390,14 +513,23 @@ export function promoteCandidate(
       createdBy, previous?.id ?? null, now);
 
     const signalRows = candidate.signalIds.length
-      ? db().prepare(`SELECT id,session_id,task_hash,summary,content_hash,created_at FROM learning_signals WHERE id IN (${candidate.signalIds.map(() => '?').join(',')})`)
-        .all(...candidate.signalIds) as { id: string; session_id: string | null; task_hash: string | null; summary: string; content_hash: string; created_at: number }[]
+      ? db().prepare(`SELECT id,session_id,task_hash,project_path,summary,detail_json,content_hash,created_at FROM learning_signals WHERE id IN (${candidate.signalIds.map(() => '?').join(',')})`)
+        .all(...candidate.signalIds) as { id: string; session_id: string | null; task_hash: string | null; project_path: string | null; summary: string; detail_json: string; content_hash: string; created_at: number }[]
       : [];
     const evidenceInsert = db().prepare(`
       INSERT INTO knowledge_evidence
         (id,item_id,version_id,candidate_id,signal_id,source_type,source_id,citation,content_hash,weight,observed_at)
       VALUES (?,?,?,?,?,'learning-signal',?,?,?,?,?)
     `);
+    const fileInsert = db().prepare(`
+      INSERT INTO knowledge_evidence
+        (id,item_id,version_id,candidate_id,signal_id,source_type,source_id,citation,content_hash,weight,observed_at)
+      VALUES (?,?,?,?,?,'file',?,?,?,1,?)
+    `);
+    const fileFind = db().prepare("SELECT id FROM knowledge_evidence WHERE item_id=? AND source_type='file' AND source_id=?");
+    const fileRebase = db().prepare('UPDATE knowledge_evidence SET version_id=?,candidate_id=?,signal_id=?,content_hash=?,observed_at=? WHERE id=?');
+    const candidateRoot = projectRootPath(candidate.projectId);
+    const citedFiles = new Set<string>();
     for (const signal of signalRows) {
       const sourceId = signal.task_hash ?? signal.session_id ?? signal.id;
       evidenceInsert.run(
@@ -405,10 +537,24 @@ export function promoteCandidate(
         signal.session_id ? `Session ${signal.session_id}: ${signal.summary}` : signal.summary,
         signal.content_hash, 1, signal.created_at,
       );
+      for (const file of fileEvidenceForSignal(signal.detail_json, candidateRoot ?? signal.project_path)) {
+        if (citedFiles.has(file.sourceId)) continue;
+        citedFiles.add(file.sourceId);
+        // A re-promotion derives the new version from the file as it reads
+        // now, so the baseline hash moves with it. Leaving the old hash in
+        // place would quarantine the item on its very next launch.
+        const existing = fileFind.get(itemId, file.sourceId) as { id: string } | undefined;
+        if (existing) {
+          fileRebase.run(versionId, candidate.id, signal.id, file.contentHash, signal.created_at, existing.id);
+        } else {
+          fileInsert.run(
+            learningId('ev'), itemId, versionId, candidate.id, signal.id,
+            file.sourceId, file.sourceId, file.contentHash, signal.created_at,
+          );
+        }
+      }
     }
-    const sourceCount = (db().prepare('SELECT COUNT(DISTINCT source_id) AS n FROM knowledge_evidence WHERE item_id=?')
-      .get(itemId) as { n: number }).n;
-    db().prepare('UPDATE knowledge_items SET source_count=? WHERE id=?').run(sourceCount, itemId);
+    db().prepare('UPDATE knowledge_items SET source_count=? WHERE id=?').run(recountSources(itemId), itemId);
     db().prepare("UPDATE knowledge_candidates SET status='promoted',item_id=?,updated_at=? WHERE id=?")
       .run(itemId, now, candidate.id);
     db().prepare('UPDATE knowledge_projections SET item_id=?,version_id=? WHERE candidate_id=? AND status=\'preview\'')
@@ -437,6 +583,36 @@ export function setKnowledgeStatus(id: string, status: KnowledgeStatus, supersed
   return updated;
 }
 
+/**
+ * Remove an artifact from circulation without destroying it. Reversible in
+ * spirit: no row is deleted, the item keeps every version, citation and
+ * projection, and setKnowledgeStatus(id, 'active') puts it back. The reason
+ * and the actor are recorded as an operational signal, so "who removed this,
+ * and why" outlives the removal itself.
+ */
+export function retireKnowledgeItem(id: string, reason: string, retiredBy = 'user'): KnowledgeItem {
+  const item = getKnowledgeItem(id);
+  if (!item) throw new Error('Knowledge item not found.');
+  const note = nonEmpty(reason, 'Retirement reason', 2 * 1024);
+  const actor = nonEmpty(retiredBy, 'Retired by', 200);
+  return db().transaction(() => {
+    const updated = setKnowledgeStatus(id, 'retired');
+    const signal = recordSignal({
+      kind: 'artifact-retired',
+      projectId: item.projectId,
+      projectPath: projectRootPath(item.projectId),
+      taskHash: `retire:${id}`,
+      summary: `Retired ${item.kind} "${item.title.slice(0, 200)}": ${note}`,
+      detail: { itemId: id, kind: item.kind, scope: item.scope, retiredBy: actor, reason: note },
+      semanticEligible: false,
+    });
+    // A retirement is an audit fact about a removal, never new material for
+    // consolidation to turn back into a candidate.
+    markSignalsProcessed([signal.id]);
+    return updated;
+  })();
+}
+
 export function addEvidence(input: AddEvidenceInput): KnowledgeEvidence {
   if (!input.itemId && !input.candidateId) throw new Error('Evidence must belong to an item or candidate.');
   if (input.itemId && !getKnowledgeItem(input.itemId)) throw new Error('Knowledge item not found.');
@@ -455,9 +631,8 @@ export function addEvidence(input: AddEvidenceInput): KnowledgeEvidence {
   );
   const row = db().prepare('SELECT * FROM knowledge_evidence WHERE id=?').get(id) as EvidenceRow;
   if (input.itemId) {
-    const n = (db().prepare('SELECT COUNT(DISTINCT source_id) AS n FROM knowledge_evidence WHERE item_id=?')
-      .get(input.itemId) as { n: number }).n;
-    db().prepare('UPDATE knowledge_items SET source_count=?,updated_at=? WHERE id=?').run(n, Date.now(), input.itemId);
+    db().prepare('UPDATE knowledge_items SET source_count=?,updated_at=? WHERE id=?')
+      .run(recountSources(input.itemId), Date.now(), input.itemId);
   }
   return evidenceFromRow(row);
 }
@@ -535,20 +710,26 @@ export function searchKnowledge(input: KnowledgeSearchInput): KnowledgeSearchRes
   if (kinds.length) { where.push(`i.kind IN (${kinds.map(() => '?').join(',')})`); args.push(...kinds); }
   if (statuses.length) { where.push(`i.status IN (${statuses.map(() => '?').join(',')})`); args.push(...statuses); }
 
-  let rows: (ItemRow & { rank: number })[];
+  // The current version comes back with the hit. Path scoping still filters in
+  // TypeScript because a glob selector cannot be expressed in SQL, so the
+  // query stays over-fetched — but it is now one round trip, not one per row.
+  type SearchRow = ItemRow & VersionJoin & { rank: number };
+  let rows: SearchRow[];
   if (expression) {
     rows = db().prepare(`
-      SELECT i.*,bm25(knowledge_fts) AS rank
+      SELECT i.*,bm25(knowledge_fts) AS rank,${VERSION_JOIN_COLUMNS}
       FROM knowledge_fts JOIN knowledge_items i ON i.id=knowledge_fts.item_id
+      LEFT JOIN knowledge_versions v ON v.item_id=i.id AND v.version=i.current_version
       WHERE knowledge_fts MATCH ? ${where.length ? `AND ${where.join(' AND ')}` : ''}
       ORDER BY rank,i.confidence DESC,i.updated_at DESC LIMIT ?
-    `).all(expression, ...args, Math.min(500, limit * 5)) as (ItemRow & { rank: number })[];
+    `).all(expression, ...args, Math.min(500, limit * 5)) as SearchRow[];
   } else {
     rows = db().prepare(`
-      SELECT i.*,0 AS rank FROM knowledge_items i
+      SELECT i.*,0 AS rank,${VERSION_JOIN_COLUMNS} FROM knowledge_items i
+      LEFT JOIN knowledge_versions v ON v.item_id=i.id AND v.version=i.current_version
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY i.confidence DESC,i.updated_at DESC LIMIT ?
-    `).all(...args, Math.min(500, limit * 5)) as (ItemRow & { rank: number })[];
+    `).all(...args, Math.min(500, limit * 5)) as SearchRow[];
   }
   let scopedPath = input.path;
   if (scopedPath && pathIsAbsolute(scopedPath) && input.projectId) {
@@ -561,10 +742,7 @@ export function searchKnowledge(input: KnowledgeSearchInput): KnowledgeSearchRes
   return rows
     .filter((row) => scopeMatches(row.path_scope, scopedPath))
     .slice(0, limit)
-    .map((row) => {
-      const item = itemFromRow(row);
-      return { item, rank: row.rank, version: currentKnowledgeVersion(item.id) };
-    });
+    .map((row) => ({ item: itemFromRow(row), rank: row.rank, version: versionFromJoin(row) }));
 }
 
 function pathIsAbsolute(value: string): boolean {

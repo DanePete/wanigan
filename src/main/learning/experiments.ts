@@ -15,8 +15,8 @@ type ExperimentRow = {
 };
 type MetricRow = {
   id: string; item_id: string | null; version_id: string | null; projection_id: string | null;
-  session_id: string | null; provider_id: string | null; metric: string; value: number;
-  evidence_level: string; attrs_json: string; at: number;
+  session_id: string | null; provider_id: string | null; experiment_id: string | null;
+  metric: string; value: number; evidence_level: string; attrs_json: string; at: number;
 };
 
 const experimentFromRow = (row: ExperimentRow): LearningExperiment => ({
@@ -46,6 +46,7 @@ const metricFromRow = (row: MetricRow): ArtifactMetric => ({
   projectionId: row.projection_id,
   sessionId: row.session_id,
   providerId: row.provider_id,
+  experimentId: row.experiment_id,
   metric: row.metric,
   value: row.value,
   evidenceLevel: row.evidence_level as EvidenceLevel,
@@ -147,22 +148,48 @@ export function endExperiment(id: string, status: 'cancelled' | 'failed', detail
   return getExperiment(id)!;
 }
 
+const EVIDENCE_LEVELS: readonly EvidenceLevel[] = ['estimate', 'correlation', 'causal'];
+
+/**
+ * 'causal' is a claim about attribution, not about the measurement. It is only
+ * true when a controlled run fixed the provider, model, effort and commit and
+ * then finished, so it requires a completed experiment and nothing else earns
+ * it. A measurement still tied to an observed run degrades to 'correlation';
+ * one tied to nothing observed degrades to 'estimate'. Every ROI figure in the
+ * product inherits the weakest label it contains, so this is where the whole
+ * honesty chain is anchored.
+ */
+function attributedEvidenceLevel(input: RecordMetricInput, experimentId: string | null): EvidenceLevel {
+  if (input.evidenceLevel !== 'causal') return input.evidenceLevel;
+  const experiment = experimentId ? getExperiment(experimentId) : null;
+  if (experiment?.status === 'completed') return 'causal';
+  return experimentId || input.sessionId ? 'correlation' : 'estimate';
+}
+
 export function recordMetric(input: RecordMetricInput): ArtifactMetric {
   if (!input.itemId && !input.versionId && !input.projectionId && !input.sessionId) {
     throw new Error('A metric must identify an artifact, projection, version, or session.');
   }
   if (!Number.isFinite(input.value)) throw new Error('Metric value must be finite.');
+  // Renderer and provider input reach here; the compile-time union proves
+  // nothing at this boundary.
+  if (!EVIDENCE_LEVELS.includes(input.evidenceLevel)) {
+    throw new Error(`Unknown metric evidence level "${input.evidenceLevel}".`);
+  }
+  const experimentId = input.experimentId ?? null;
+  if (experimentId && !getExperiment(experimentId)) throw new Error('Metric experiment not found.');
   const attrsJson = stableJson(input.attrs ?? {});
   if (Buffer.byteLength(attrsJson, 'utf8') > 32 * 1024) throw new Error('Metric attributes are too large.');
   const id = learningId('met');
   db().prepare(`
     INSERT INTO artifact_metrics
-      (id,item_id,version_id,projection_id,session_id,provider_id,metric,value,evidence_level,attrs_json,at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+      (id,item_id,version_id,projection_id,session_id,provider_id,experiment_id,metric,value,evidence_level,attrs_json,at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     id, input.itemId ?? null, input.versionId ?? null, input.projectionId ?? null,
-    input.sessionId ?? null, input.providerId ?? null, nonEmpty(input.metric, 'Metric name', 100),
-    input.value, input.evidenceLevel, attrsJson, input.at ?? Date.now(),
+    input.sessionId ?? null, input.providerId ?? null, experimentId,
+    nonEmpty(input.metric, 'Metric name', 100), input.value,
+    attributedEvidenceLevel(input, experimentId), attrsJson, input.at ?? Date.now(),
   );
   const row = db().prepare('SELECT * FROM artifact_metrics WHERE id=?').get(id) as MetricRow;
   return metricFromRow(row);
@@ -170,13 +197,14 @@ export function recordMetric(input: RecordMetricInput): ArtifactMetric {
 
 export function listMetrics(filter: {
   itemId?: string; versionId?: string; projectionId?: string; sessionId?: string;
-  metric?: string; providerId?: string; since?: number; limit?: number;
+  metric?: string; providerId?: string; experimentId?: string; since?: number; limit?: number;
 } = {}): ArtifactMetric[] {
   const where: string[] = [];
   const args: unknown[] = [];
   for (const [column, value] of [
     ['item_id', filter.itemId], ['version_id', filter.versionId], ['projection_id', filter.projectionId],
     ['session_id', filter.sessionId], ['metric', filter.metric], ['provider_id', filter.providerId],
+    ['experiment_id', filter.experimentId],
   ] as const) {
     if (value) { where.push(`${column}=?`); args.push(value); }
   }
@@ -197,6 +225,7 @@ export function summarizeArtifactRoi(itemId: string): ArtifactRoiSummary {
   const metrics = listMetrics({ itemId, limit: 5_000 });
   let evidenceLevel: EvidenceLevel = metrics.length ? 'causal' : 'estimate';
   const total = (name: string) => metrics.filter((metric) => metric.metric === name).reduce((sum, metric) => sum + metric.value, 0);
+  const count = (name: string) => metrics.filter((metric) => metric.metric === name).length;
   // A rollup is only as strong as its weakest included measurement. One A/B
   // result must not turn unrelated estimated cost figures into causal proof.
   for (const metric of metrics) if (LEVELS[metric.evidenceLevel] < LEVELS[evidenceLevel]) evidenceLevel = metric.evidenceLevel;
@@ -210,5 +239,14 @@ export function summarizeArtifactRoi(itemId: string): ArtifactRoiSummary {
     successfulUses: total('use_success'),
     failedUses: total('use_failure'),
     repairDelta: total('repair_delta'),
+    // A zero SUM over zero rows is "not measured", not a measured zero; the
+    // renderer needs the row counts to keep those states distinguishable.
+    metricCounts: {
+      tokensLoaded: count('tokens_loaded'),
+      tokensSaved: count('tokens_saved'),
+      costUsd: count('cost_usd'),
+      uses: count('use_success') + count('use_failure'),
+      repairDelta: count('repair_delta'),
+    },
   };
 }

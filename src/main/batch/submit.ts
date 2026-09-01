@@ -40,21 +40,41 @@ export async function createAndSubmitRun(
   const cap = spendCap();
   let est = opts.estimate;
   let pricedHere = false;
-  if (cap > 0 && !est) {
+  // Price here whenever the cap is armed, even when a caller supplied a figure.
+  // The estimate can arrive from the renderer, which this process does not
+  // trust to have chosen the ceiling — and a gate that accepts the number it
+  // is gating is not a gate. The higher of the two is what gets tested.
+  if (cap > 0) {
+    let priced: Awaited<ReturnType<typeof estimate>>;
     try {
-      const priced = await estimate(cfg, built.requests);
-      // The ceiling, not the optimistic band — the same number the MCP path
-      // asks a human to approve. A run that only fits under the cap if every
-      // response comes back short has not been shown to fit under the cap.
-      est = { input: priced.totalInputTokens, output: priced.worstCaseOutputTokens, cost: priced.costHighUsd };
-      pricedHere = true;
+      priced = await estimate(cfg, built.requests);
     } catch (e) {
+      if (est) throw new Error(
+        `This run could not be re-priced to check your $${cap.toFixed(2)} per-run spend cap: ` +
+        `${e instanceof Error ? e.message : String(e)} Nothing was submitted.`
+      );
       throw new Error(
         `This run could not be priced, so your $${cap.toFixed(2)} per-run spend cap cannot be checked against it: ` +
         `${e instanceof Error ? e.message : String(e)} Nothing was submitted. Estimate the run in Batches to see ` +
         `what is wrong, or set the cap to 0 in Settings if you accept submitting without a price.`
       );
     }
+    // An unrecognised model has no published rate, so the figure above is a
+    // stand-in borrowed from another model. Checking a spend cap against it
+    // would gate the run on a number nobody can stand behind as its price.
+    if (priced.unpricedModel) {
+      throw new Error(
+        `Wanigan has no published price for ${priced.unpricedModel}, so your $${cap.toFixed(2)} per-run spend cap ` +
+        `cannot be checked against this run. Nothing was submitted. Pick a model with known rates, or set the cap ` +
+        `to 0 in Settings if you accept submitting without a price.`
+      );
+    }
+    // The ceiling, not the optimistic band — the same number the MCP path asks
+    // a human to approve. A run that only fits under the cap if every response
+    // comes back short has not been shown to fit under the cap.
+    const local = { input: priced.totalInputTokens, output: priced.worstCaseOutputTokens, cost: priced.costHighUsd };
+    if (!est) { est = local; pricedHere = true; }
+    else if (local.cost > est.cost) { est = { ...est, cost: local.cost }; pricedHere = true; }
   }
 
   const projected = est?.cost ?? 0;
@@ -103,6 +123,19 @@ export async function createAndSubmitRun(
       `against a $${cap.toFixed(2)} per-run spend cap.`);
   }
 
+  /* ── the beta flags the create call must carry ───────────────────────
+     build.ts decides these, because it is what knows whether any row ended up
+     referencing an uploaded file by id. Branching on cfg.extendedOutput alone
+     dropped the files beta on the floor, and a batch created without it does
+     not fail fast: every uploaded row is accepted, billed, and reported as
+     failed when the batch ends a day later.
+
+     Unioned rather than chosen between — a run can want extended output *and*
+     carry attachments, and one create call takes both.
+     ──────────────────────────────────────────────────────────────────── */
+  const betas = [...new Set([...built.betas, ...(cfg.extendedOutput ? [EXTENDED_OUTPUT_BETA] : [])])];
+  if (betas.length) logEvent(runId, 'info', `Batches created with beta flag(s): ${betas.join(', ')}.`);
+
   const batchIds: string[] = [];
   try {
     for (let i = 0; i < built.chunks.length; i++) {
@@ -116,8 +149,8 @@ export async function createAndSubmitRun(
 
       const batch = isMock()
         ? mockCreate(chunkReqs)
-        : cfg.extendedOutput
-          ? await client().beta.messages.batches.create({ betas: [EXTENDED_OUTPUT_BETA], requests: chunkReqs as never })
+        : betas.length
+          ? await client().beta.messages.batches.create({ betas, requests: chunkReqs as never })
           : await client().messages.batches.create({ requests: chunkReqs as never });
 
       d.prepare(`
@@ -131,9 +164,7 @@ export async function createAndSubmitRun(
         Date.parse(batch.expires_at as string) || now + 24 * 3600_000
       );
 
-      d.prepare('UPDATE requests SET batch_id = ? WHERE run_id = ? AND custom_id IN (' +
-        chunkReqs.map(() => '?').join(',') + ')')
-        .run(batch.id, runId, ...chunkReqs.map((r) => r.custom_id));
+      linkRequestsToBatch(runId, batch.id, chunkReqs.map((r) => r.custom_id));
 
       batchIds.push(batch.id);
       logEvent(runId, 'info', `Submitted batch ${batch.id} (${chunkReqs.length.toLocaleString()} requests).`);
@@ -148,6 +179,35 @@ export async function createAndSubmitRun(
   }
 
   return { runId, batchIds, requests: built.requests.length };
+}
+
+/**
+ * Ceiling on how many custom_ids one UPDATE may name.
+ *
+ * SQLite refuses a statement with more than 32,766 host parameters, and a chunk
+ * is allowed 100,000 requests — so the single statement this replaces threw
+ * "too many SQL variables" on any batch over ~32,764 rows. It threw *after* the
+ * create call: the batch was accepted, is billing, and expires in 24 hours,
+ * while its rows carry no batch_id and nothing can poll or ingest them. There
+ * is no size of slice worth optimising here; there is only a size that cannot
+ * hit the cap.
+ */
+const LINK_SLICE = 500;
+
+function linkRequestsToBatch(runId: string, batchId: string, customIds: string[]): void {
+  const d = db();
+  const stmtFor = (n: number) => d.prepare(
+    `UPDATE requests SET batch_id = ? WHERE run_id = ? AND custom_id IN (${Array(n).fill('?').join(',')})`
+  );
+  const fullSlice = customIds.length >= LINK_SLICE ? stmtFor(LINK_SLICE) : null;
+
+  d.transaction(() => {
+    for (let i = 0; i < customIds.length; i += LINK_SLICE) {
+      const slice = customIds.slice(i, i + LINK_SLICE);
+      const stmt = slice.length === LINK_SLICE && fullSlice ? fullSlice : stmtFor(slice.length);
+      stmt.run(batchId, runId, ...slice);
+    }
+  })();
 }
 
 /**

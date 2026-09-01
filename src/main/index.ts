@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, session } from 'electron';
-import type { WebContents } from 'electron';
+import type { WebContents, WebFrameMain } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   detectProviders, effectiveProviderBackendId, providerPackRegistry, refreshProviderPacks,
 } from './providers';
@@ -9,18 +10,23 @@ import {
   initSessions, listSessions, createSession, writeSession, resizeSession,
   killSession, closeSession, scrollback, markRead, shutdownAll, sessionBaseline, interruptSession,
   pastSessions, forgetPastSession, recoverExactCodexThread, setSessionExitObserver,
+  setSessionTuning,
 } from './sessions';
 import { listProjects, addProject, removeProject, refreshBranches, projectById } from './store';
 import * as batch from './batch';
 import * as code from './code';
-import { getSetting, setSetting, setTheme, spendCap } from './settings';
-import { hasKey, getKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailable, getWorkspaceId,
+import { getSetting, setSetting, setTheme, setUserPreference, spendCap } from './settings';
+import { hasKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailable, getWorkspaceId,
          hasProviderKey, setProviderKey, clearProviderKey, providerKeyFingerprint } from './keys';
 import type {
-  LaunchOptions, RunConfig, SourceConfig, HeadlessConfig, HookInput,
-  McpServerConfig, ProviderManifestInspection, QueueKind, QueueSlots, ThemeSetting, TrustLevel,
+  BackupCheck, BackupRestoreSummary, BackupSummary,
+  HeadlessRowDetail, HeadlessRowSummary, HeadlessStartRequest, HookInput,
+  InteractiveSessionLoad, LaunchOptions, McpServerConfig, PluginScope,
+  ProviderInfo, ProviderManifestInspection, QueueSlots, RunConfig, Session,
+  SourceConfig, ThemeSetting, TrustLevel,
 } from '../shared/types';
 import { EFFORT_LEVELS } from '../shared/types';
+import { assertManagedRoot, assertOpenablePath } from './roots';
 
 // ── phases 1-24 ────────────────────────────────────────────────────────
 import * as otel from './otel';
@@ -64,7 +70,11 @@ import { migrateUserData } from './migrate';
 import { isDaemonInvocation, daemonStatus, installDaemon, uninstallDaemon } from './daemon';
 import * as review from './review';
 import * as codexStatus from './codex-status';
+import * as backup from './backup';
 import * as learning from './learning-service';
+// The canonical knowledge record, not a second copy of it: learning-service
+// wraps consolidation and briefing, and has no retirement path of its own.
+import { retireKnowledgeItem } from './learning';
 import * as control from './control';
 import * as scout from './improvement-scout';
 
@@ -287,19 +297,278 @@ function announceCurrentAttention(): void {
 /**
  * There is one trusted renderer in Wanigan.  Every IPC channel changes local
  * state, reads a repository, or starts a process, so a child frame must never
- * be able to invoke it merely because it knows a channel name.
+ * be able to invoke it merely because it knows a channel name. The WebContents
+ * id alone is not enough: a renderer navigation keeps that id, so a packaged
+ * app must also prove the sender is the expected local entry document.
  */
-function trustedSender(sender: WebContents): boolean {
-  return !!win && !win.isDestroyed() && sender.id === win.webContents.id;
+function rendererEntryPath(): string {
+  return path.join(__dirname, '../renderer/index.html');
+}
+
+/** Electron Vite supplies this only for an unpackaged developer shell. Never
+ * let an environment variable turn an installed app into a remote privileged
+ * renderer. Invalid development URLs also fail closed to the bundled UI. */
+function developmentRendererUrl(): string | null {
+  if (app.isPackaged) return null;
+  const raw = process.env.ELECTRON_RENDERER_URL?.trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function trustedRendererUrl(raw: string): boolean {
+  const dev = developmentRendererUrl();
+  if (dev) {
+    try { return new URL(raw).origin === new URL(dev).origin; }
+    catch { return false; }
+  }
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'file:'
+      && path.resolve(fileURLToPath(url)) === path.resolve(rendererEntryPath());
+  } catch {
+    return false;
+  }
+}
+
+function trustedSender(sender: WebContents, frame: WebFrameMain | null): boolean {
+  return !!win && !win.isDestroyed()
+    && sender.id === win.webContents.id
+    && frame !== null
+    && frame === sender.mainFrame
+    && trustedRendererUrl(frame.url);
+}
+
+type ManagedProviderCredentialId = 'glm' | 'deepseek';
+
+/** Provider keys are stored under predictable names in the OS keychain. Do
+ * not let a renderer choose an arbitrary key identifier and turn this into a
+ * secret-presence oracle for the process environment or credential store. */
+function managedProviderCredentialId(value: unknown): ManagedProviderCredentialId {
+  if (value === 'glm' || value === 'deepseek') return value;
+  throw new Error('Wanigan manages provider credentials only for GLM and DeepSeek.');
+}
+
+/* ── renderer text that becomes a `claude plugin` argv entry ───────────
+   The scope was a TypeScript union and nothing else, which a running process
+   cannot read: any string at all reached `-s <scope>`. And an id or a source
+   beginning with '-' is not a value — it is a second flag to a CLI that
+   installs and executes code, in an argv position Wanigan chose. None of this
+   is about shell quoting; nothing here reaches a shell. Argv is exactly where
+   option injection lives when it cannot be a shell injection.
+   ─────────────────────────────────────────────────────────────────────── */
+
+const PLUGIN_SCOPES: readonly PluginScope[] = ['user', 'project', 'local'];
+
+function pluginScope(value: unknown): PluginScope {
+  if (value === undefined || value === null) return 'user';
+  const found = PLUGIN_SCOPES.find((scope) => scope === value);
+  if (!found) {
+    throw new Error(`A plugin installs for the user, for the project, or locally — not "${String(value)}".`);
+  }
+  return found;
+}
+
+/** A plugin id is `name` or `name@marketplace`, and both come from the catalog. */
+function pluginId(value: unknown): string {
+  const id = typeof value === 'string' ? value.trim() : '';
+  if (!id || id.length > 200 || !/^[A-Za-z0-9][A-Za-z0-9._-]*(@[A-Za-z0-9][A-Za-z0-9._-]*)?$/.test(id)) {
+    throw new Error(
+      `"${String(value)}" is not a plugin name Wanigan will hand to the Claude CLI. Install from a row in the catalog.`
+    );
+  }
+  return id;
+}
+
+/** A marketplace name as `claude plugin marketplace list` prints it. */
+function marketplaceName(value: unknown): string {
+  const name = typeof value === 'string' ? value.trim() : '';
+  if (!name || name.length > 200 || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+    throw new Error(`"${String(value)}" is not a marketplace Wanigan knows. Pick one from the marketplace list.`);
+  }
+  return name;
+}
+
+/** A marketplace source: a git URL, an owner/repo shorthand, or a local path. */
+function marketplaceSource(value: unknown): string {
+  const source = typeof value === 'string' ? value.trim() : '';
+  if (!source) throw new Error('Type the marketplace to add — a git URL, an owner/repo, or a folder on this Mac.');
+  if (source.length > 512) throw new Error('That marketplace source is too long to be one.');
+  if (source.startsWith('-')) {
+    throw new Error('A marketplace source cannot begin with "-"; the CLI would read it as another flag, not a source.');
+  }
+  // eslint-disable-next-line no-control-regex
+  if (/\s/.test(source) || /[\u0000-\u001f\u007f]/.test(source)) {
+    throw new Error('A marketplace source cannot contain spaces or control characters.');
+  }
+  return source;
+}
+
+type ModelChoice = { value: string; label: string };
+
+/**
+ * Model aliases each built-in backend publishes.
+ *
+ * Keyed on the BACKEND, never on the profile. Which models exist is a property
+ * of the service being called: 'anthropic' answers for any profile pointed at
+ * Anthropic no matter what that profile is named, and a pack that points the
+ * same harness somewhere else does not inherit the list by accident. spend.ts
+ * already draws this line in the same place and for the same reason.
+ *
+ * It is the last resort, not the rule — see providerModelChoices.
+ */
+const PUBLISHED_BACKEND_MODELS: Record<string, ModelChoice[]> = {
+  anthropic: [
+    { value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' },
+    { value: 'haiku', label: 'Haiku' }, { value: 'fable', label: 'Fable' },
+  ],
+  openai: [
+    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+  ],
+};
+
+/**
+ * Backends Wanigan can ask for a live catalogue, because it holds the
+ * credential that call needs — the same two ids managedProviderCredentialId
+ * governs, keyed the same way.
+ */
+const LIVE_BACKEND_MODELS: Record<string, () => Promise<ModelChoice[]>> = {
+  zai: async () => (await glmModels()).models.map((m) => ({ value: m.id, label: m.label })),
+  deepseek: async () => (await deepseekModels()).models.map((m) => ({ value: m.id, label: m.label })),
+};
+
+/** The choices a profile's own launch field declares, which is the manifest's
+ *  existing mechanism for saying what a profile accepts. */
+function declaredChoices(provider: ProviderInfo, fieldId: string): ModelChoice[] {
+  const field = provider.launchFields?.find((value) => value.id === fieldId);
+  return (field?.options ?? []).map((option) => ({ value: option.value, label: option.label }));
+}
+
+/**
+ * What to offer for a provider's model, in the order Wanigan can vouch for it.
+ *
+ * This used to be a table keyed on four hardcoded profile ids, which is the
+ * shape CLAUDE.md forbids: a pack declaring its own models got an empty picker,
+ * a renamed built-in got somebody else's list, and neither could be fixed
+ * without editing this file. The manifest wins, then the backend Wanigan can
+ * ask, then what that backend publishes.
+ */
+async function providerModelChoices(provider: ProviderInfo): Promise<ModelChoice[]> {
+  const declared = declaredChoices(provider, 'model');
+  if (declared.length) return declared;
+  const live = provider.backendId ? LIVE_BACKEND_MODELS[provider.backendId] : undefined;
+  if (live) {
+    // One backend that will not answer must not empty the whole picker, and a
+    // stale cached list is better than claiming the provider has no models.
+    try { return await live(); } catch { return []; }
+  }
+  return (provider.backendId ? PUBLISHED_BACKEND_MODELS[provider.backendId] : undefined) ?? [];
+}
+
+/**
+ * Effort values the profile itself declares.
+ *
+ * The previous list appended 'ultra' whenever the id read 'codex' — a value no
+ * manifest declares, so picking it produced an argv entry the profile's own
+ * select rejects. EFFORT_LEVELS stands in only for a legacy definition that
+ * carries no launch fields at all.
+ */
+function providerEffortChoices(provider: ProviderInfo): string[] {
+  if (!provider.supports.effort) return [];
+  const declared = declaredChoices(provider, 'effort').map((choice) => choice.value);
+  return declared.length ? declared : [...EFFORT_LEVELS];
+}
+
+/**
+ * Which provider an unattended run uses when the request did not name one.
+ *
+ * This read the literal 'claude' for every scheduled and queued headless run,
+ * so a renamed profile, a disabled pack or an uninstalled CLI turned a schedule
+ * that had been firing for months into `Unknown provider: claude`. A headless
+ * run needs a profile that declares a headless protocol and whose installed CLI
+ * has proven it; take the first in registry order, which is Wanigan's own
+ * preference order, and say plainly when there is none.
+ */
+async function defaultHeadlessProviderId(): Promise<string> {
+  const usable = (await detectProviders())
+    .find((provider) => provider.path && provider.capabilities.headlessJson);
+  if (usable) return usable.id;
+  throw new Error(
+    'No installed provider has proven a headless protocol, so there is nothing to run this unattended. '
+    + 'Install or enable a provider that declares one, refresh providers, then let the schedule fire again.'
+  );
+}
+
+/**
+ * The session list as the renderer receives it.
+ *
+ * Identical to listSessions() except that the launch snapshot is reduced to a
+ * count. `baseline.dirty` is one string per file already modified when the
+ * session started — 84 in this repository, thousands in a monorepo — and three
+ * independent pollers re-serialise the whole list every few seconds to render a
+ * row of status text that never shows a path. The paths still exist; the code
+ * panel asks for one session's worth through `sessions:baseline`.
+ */
+function sessionListEntries(): Session[] {
+  return listSessions().map((value) => {
+    const { baseline, ...rest } = value;
+    if (!baseline) return rest;
+    return {
+      ...rest,
+      baselineSummary: { head: baseline.head, dirtyCount: baseline.dirty.length, at: baseline.at },
+    };
+  });
+}
+
+/** Where the backup save dialog opens. Documents is only a starting point — the
+ *  user picks the folder, and backup.ts refuses one inside the data directory. */
+function defaultBackupParent(): string {
+  try { return app.getPath('documents'); }
+  catch { return app.getPath('home'); }
+}
+
+/** Sortable and unambiguous in a folder listing, which is where this is read. */
+function backupStamp(): string {
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+}
+
+/**
+ * The repository a git channel is allowed to act in.
+ *
+ * Every git:* handler takes a root from the renderer and hands it straight to
+ * `git -C <root>`, and roots.ts exists for exactly this: the relative path was
+ * never the untrusted part, the base was. `discard` deletes untracked files,
+ * `checkout` overwrites them, `deleteBranch --force` and `stashDrop` throw work
+ * away and `push` publishes it — with an unconfined root those are a
+ * delete-anywhere primitive that only needs a channel name to reach.
+ *
+ * A managed root is a registered project or a worktree Wanigan created, read
+ * from this process's own records. Subdirectories are managed too, so acting in
+ * a package inside a monorepo is unaffected.
+ */
+function gitRoot(root: unknown): string {
+  return assertManagedRoot(root, 'That repository');
 }
 
 /** Open only ordinary web links outside Wanigan; never hand arbitrary schemes
  * from a renderer or agent-produced text to the operating system. */
-function openSafeExternal(raw: string): void {
+function openSafeExternal(raw: string): boolean {
   try {
     const url = new URL(raw);
-    if (url.protocol === 'https:' || url.protocol === 'http:') void shell.openExternal(url.toString());
+    if (url.protocol === 'https:' || url.protocol === 'http:') {
+      void shell.openExternal(url.toString());
+      return true;
+    }
   } catch { /* malformed links are not an operating-system action */ }
+  return false;
 }
 
 function createWindow() {
@@ -316,6 +585,9 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      webviewTag: false,
     },
   });
 
@@ -337,10 +609,11 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    win.loadURL(process.env.ELECTRON_RENDERER_URL);
+  const devRenderer = developmentRendererUrl();
+  if (devRenderer) {
+    win.loadURL(devRenderer);
   } else {
-    win.loadFile(path.join(__dirname, '../renderer/index.html'));
+    win.loadFile(rendererEntryPath());
   }
 }
 
@@ -354,6 +627,7 @@ app.whenReady().then(async () => {
   // or any other Chromium permission. OS notifications are created only by
   // the main process, never granted to a renderer.
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  session.defaultSession.setPermissionCheckHandler(() => false);
   if (migration.moved) console.log(`[wanigan] carried userData across from ${migration.from}`);
   else if (migration.note) console.warn(`[wanigan] userData migration skipped: ${migration.note}`);
 
@@ -500,9 +774,20 @@ async function startServices() {
   // Attended sessions receive their capsule directly through the harness's
   // invocation-scoped instruction flag. Hook delivery is reserved for
   // headless Claude-compatible runs, which register a frozen task context.
-  hooks.setLearningBriefingHook((_sessionId, context) => context
-    ? learning.briefingForContext(context)
+  hooks.setLearningBriefingHook((sessionId, context) => context
+    // Hook deliveries are recorded like argv deliveries: the ledger must show
+    // every path a briefing can take, or a headless run looks unbriefed.
+    ? learning.briefingForContext(context, { sessionId, delivery: 'hook' })
     : null);
+
+  // Background learning activity (a signal from a live session, a timer
+  // consolidation pass) pushes one debounced event so the Learning view can
+  // refresh without polling. User-initiated mutations reload via their own
+  // IPC round trip and do not need it.
+  learning.setLearningChangedNotifier(() => {
+    const w = win;
+    if (w && !w.isDestroyed()) w.webContents.send('learning:changed');
+  });
 
   if (f.telemetry) {
     try { await otel.startCollector(); }
@@ -558,7 +843,10 @@ async function startServices() {
   // leaves headless silently falling back to its own internal limit, which is
   // the kind of bug that looks like "the slots setting does nothing".
   queue.registerRunner('headless', async (payload) => {
-    const p = payload as { runId?: unknown; projectId?: unknown; prompt?: unknown; scheduleId?: unknown };
+    const p = payload as {
+      runId?: unknown; projectId?: unknown; prompt?: unknown; scheduleId?: unknown;
+      providerId?: unknown; allProjects?: unknown;
+    };
     if (typeof p.runId === 'string' && p.runId) {
       if (typeof p.projectId !== 'string' || !p.projectId) {
         throw new Error(`Queue row for run ${p.runId} names no repository, so there is nothing to run it in.`);
@@ -584,6 +872,11 @@ async function startServices() {
         'This schedule fans out across every project and there are none in the list. Add a project, or pin the schedule to one.'
       );
     }
+    // An omitted repository is not the same statement as "every repository",
+    // and by the time the ids are expanded the two are the same array. Carry
+    // the schedule's own declaration through instead of manufacturing consent
+    // here; headless.ts refuses a whole-project-list run that does not have it.
+    const allProjects = !projectId && p.allProjects === true;
     // Named after the schedule that fired it. "scheduled · <date>" tells you
     // nothing once there are four of them, and this run id is what Insights and
     // the run list will show it as for as long as the row exists.
@@ -592,8 +885,11 @@ async function startServices() {
       : null;
     await headless.startHeadlessRun({
       name: `${from ?? 'scheduled'} · ${new Date().toLocaleString()}`,
-      providerId: 'claude',
+      providerId: typeof p.providerId === 'string' && p.providerId
+        ? p.providerId
+        : await defaultHeadlessProviderId(),
       projectIds: ids,
+      allProjects,
       prompt,
       maxBudgetUsd: SCHEDULED_BUDGET_USD,
       timeoutMs: SCHEDULED_TIMEOUT_MS,
@@ -692,6 +988,12 @@ async function startServices() {
 
   // Worktrees survive a crash; a stale one costs disk forever, so surface them.
   void worktrees.reconcileWorktrees().catch(() => {});
+  // A docket task left 'running' by a crash describes an agent that no longer
+  // exists — and holds path claims nobody can release until it is reopened.
+  try {
+    const reopened = control.reconcileRunningNodes();
+    if (reopened) console.warn(`[wanigan] reopened ${reopened} docket task(s) whose session did not survive the last run`);
+  } catch (e) { console.warn('[wanigan] docket reconciliation skipped:', e); }
   // Deterministic consolidation runs only while the app or its launchd daemon
   // is alive. The service checks the visible controls on every pass.
   learning.startConsolidator();
@@ -713,18 +1015,11 @@ function configureMobileSources(): void {
     projects: async () => listProjects().map((project) => ({ id: project.id, name: project.name, branch: project.branch })),
     providers: async () => {
       const providers = await detectProviders();
-      const [glm, deepseek] = await Promise.all([glmModels().catch(() => null), deepseekModels().catch(() => null)]);
-      const staticModels: Record<string, { value: string; label: string }[]> = {
-        claude: [{ value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'haiku', label: 'Haiku' }, { value: 'fable', label: 'Fable' }],
-        codex: [{ value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' }, { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' }, { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' }],
-      };
-      return providers.map((provider) => ({
+      return Promise.all(providers.map(async (provider) => ({
         id: provider.id, label: provider.label, available: Boolean(provider.path),
-        models: provider.id === 'glm' ? (glm?.models ?? []).map((model) => ({ value: model.id, label: model.label }))
-          : provider.id === 'deepseek' ? (deepseek?.models ?? []).map((model) => ({ value: model.id, label: model.label }))
-          : (staticModels[provider.id] ?? []),
-        efforts: provider.supports.effort ? [...EFFORT_LEVELS, ...(provider.id === 'codex' ? ['ultra'] : [])] : [],
-      }));
+        models: await providerModelChoices(provider),
+        efforts: providerEffortChoices(provider),
+      })));
     },
     launch: async ({ projectId, providerId, model, effort, prompt }) => {
       const session = await createSession({ providerId, projectId, model, effort, initialPrompt: prompt });
@@ -761,6 +1056,14 @@ async function startAttendedServices(): Promise<StartupState> {
     try {
       initSessions(() => win);
       setSessionExitObserver((value) => notify.announceAttention(attention.attentionOf(value)));
+      // Clicking a banner already raises the window; this is the half that was
+      // missing. Without a route the operator lands on whichever tab happened
+      // to be open and still has to hunt for the agent they were told about.
+      notify.setNotificationOpener((target) => {
+        const w = win;
+        if (!w || w.isDestroyed()) return;
+        w.webContents.send('notify:open', target);
+      });
 
       stage = 'mobile control setup';
       configureMobileSources();
@@ -788,10 +1091,15 @@ async function startAttendedServices(): Promise<StartupState> {
 
 function stopServices() {
   setSessionExitObserver(null);
+  // A held banner can still be clicked after the renderer is gone. Dropping the
+  // route leaves notify.ts's own degraded behaviour — raise the window — rather
+  // than sending into a destroyed WebContents.
+  notify.setNotificationOpener(null);
   stopHookEventListener?.();
   stopHookEventListener = null;
   try { mobile.stopMobileMonitor(); } catch { /* already down */ }
   learning.stopConsolidator();
+  learning.setLearningChangedNotifier(null);
   hooks.setLearningBriefingHook(null);
   try { schedule.stopScheduler(); } catch { /* already down */ }
   try { queue.stopDispatcher(); } catch { /* already down */ }
@@ -800,20 +1108,59 @@ function stopServices() {
   try { mcpServer.stopMcpServer(); } catch { /* already down */ }
 }
 
+/**
+ * Whether demo masking is on, without asking SQLite twice per IPC call.
+ *
+ * unmaskIn and maskOut each call demoOn(), which calls getSetting(), which
+ * compiles a fresh prepared statement every time. Two of those wrap all 291
+ * handlers, so the Sessions tab alone paid for roughly 280 prepare-and-query
+ * pairs a minute to learn that a screenshot mode nobody had switched on was
+ * still off. demo.ts is the only writer and there is exactly one of it in this
+ * process — the demo:set handler below — so the memo is invalidated there; the
+ * short window is belt and braces for a writer this file does not know about.
+ */
+const DEMO_MODE_TTL_MS = 1_000;
+let demoModeCheckedAt = 0;
+let demoModeCached = false;
+
+function demoMasking(): boolean {
+  const now = Date.now();
+  if (demoModeCheckedAt && now - demoModeCheckedAt < DEMO_MODE_TTL_MS) return demoModeCached;
+  try {
+    demoModeCached = demoOn();
+  } catch {
+    // This runs before the handler's own try, and in recovery mode the database
+    // holding the setting is the thing that could not be opened. Masking off is
+    // the only answer available, and it keeps startup:status — the one handler
+    // that has to work here — from failing with a message about SQLite.
+    demoModeCached = false;
+  }
+  demoModeCheckedAt = now;
+  return demoModeCached;
+}
+
+function forgetDemoMasking(): void {
+  demoModeCheckedAt = 0;
+}
+
 function registerIpc() {
   const handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => {
     ipcMain.handle(channel, async (event, ...args) => {
-      if (!trustedSender(event.sender)) return { ok: false, error: 'Untrusted IPC sender.' };
+      if (!trustedSender(event.sender, event.senderFrame)) {
+        return { ok: false, error: 'Untrusted IPC sender.' };
+      }
+      // Demo mode is bidirectional on purpose: a masked path handed back to
+      // git has to become real again, or every action fails while the demo
+      // is running — which is exactly when nobody can debug it. While it is
+      // off, neither walk is entered at all.
+      const masking = demoMasking();
       try {
-        // Demo mode is bidirectional on purpose: a masked path handed back to
-        // git has to become real again, or every action fails while the demo
-        // is running — which is exactly when nobody can debug it.
-        const real = unmaskIn(args) as never[];
+        const real = masking ? (unmaskIn(args) as never[]) : (args as never[]);
         const data = await fn(...real);
-        return { ok: true, data: maskOut(data) };
+        return { ok: true, data: masking ? maskOut(data) : data };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        return { ok: false, error: maskOut(msg) };
+        return { ok: false, error: masking ? maskOut(msg) : msg };
       }
     });
   };
@@ -825,7 +1172,11 @@ function registerIpc() {
   handle('startup:retry', () => startAttendedServices());
 
   handle('demo:state', () => ({ on: demoOn(), map: demoMap() }));
-  handle('demo:set', (on: boolean) => { setDemo(on); return { on: demoOn(), map: demoMap() }; });
+  handle('demo:set', (on: boolean) => {
+    setDemo(on);
+    forgetDemoMasking();
+    return { on: demoOn(), map: demoMap() };
+  });
 
   handle('providers:list', () => detectProviders());
   handle('providerPacks:list', (includeRemoved?: boolean) =>
@@ -974,7 +1325,16 @@ function registerIpc() {
     return addProject(res.filePaths[0]);
   });
 
-  handle('sessions:list', () => listSessions());
+  handle('sessions:list', () => sessionListEntries());
+  // The dispatcher meter's missing half. Every other surface is a queue row and
+  // can be counted from the queue; an interactive session never creates one, so
+  // the limit sessions.ts now enforces read "0 of N" on the page that sets it.
+  // sessions.ts keeps its own live count module-private, so this derives the
+  // same thing from the session list rather than reaching into that module.
+  handle('sessions:liveCount', (): InteractiveSessionLoad => ({
+    live: listSessions().filter((value) => value.status !== 'exited').length,
+    limit: queue.slots().session,
+  }));
   handle('sessions:create', (opts: LaunchOptions) => createSession(opts));
   // Separate from sessions:create: only the exact UUID + selected project
   // cross this boundary, so arbitrary launch flags cannot turn recovery into a
@@ -986,7 +1346,23 @@ function registerIpc() {
   handle('sessions:kill', (id: string) => { killSession(id); return true; });
   handle('sessions:close', (id: string) => { closeSession(id); return true; });
   handle('sessions:markRead', (id: string) => { markRead(id); return true; });
-  handle('sessions:reveal', (p: string) => { shell.openPath(p); return true; });
+  // 'sessions:write' is fire-and-forget; this typed variant exists so a tuning
+  // slash command and its session-record update cannot drift apart.
+  handle('sessions:setTuning', (id: string, field: unknown, value: unknown) => setSessionTuning(id, field, value));
+  // The status bar may reveal only the folder of a live Wanigan session. A
+  // generic renderer-controlled shell.openPath bridge would let a compromised
+  // renderer invoke arbitrary file handlers on this Mac.
+  handle('sessions:reveal', async (id: string) => {
+    if (typeof id !== 'string' || !id.trim() || id.length > 200) {
+      throw new Error('Choose a live session to reveal its folder.');
+    }
+    const value = listSessions().find((candidate) => candidate.id === id);
+    if (!value) throw new Error('That session is no longer open in Wanigan.');
+    const target = value.worktree ?? value.projectPath;
+    const error = await shell.openPath(target);
+    if (error) throw new Error(`Wanigan could not open this session folder: ${error}`);
+    return true;
+  });
   handle('sessions:baseline', (id: string) => sessionBaseline(id));
   handle('sessions:past', () => pastSessions());
   handle('sessions:forget', (id: string) => { forgetPastSession(id); return pastSessions(); });
@@ -1055,11 +1431,15 @@ function registerIpc() {
   // A provider credential is a different secret with a different blast radius:
   // the Z.ai token GLM runs on is not the Anthropic key and must never be
   // substituted for it, so it gets its own slot and its own UI.
-  handle('key:provider', (id: string) => ({
-    present: hasProviderKey(id),
-    fingerprint: providerKeyFingerprint(id),
-  }));
-  handle('key:setProvider', async (id: string, key: string) => {
+  handle('key:provider', (rawId: string) => {
+    const id = managedProviderCredentialId(rawId);
+    return {
+      present: hasProviderKey(id),
+      fingerprint: providerKeyFingerprint(id),
+    };
+  });
+  handle('key:setProvider', async (rawId: string, key: string) => {
+    const id = managedProviderCredentialId(rawId);
     if (id === 'glm') {
       const verified = await verifyGlmKey(key);
       if (!verified.ok) throw new Error(verified.detail);
@@ -1071,7 +1451,7 @@ function registerIpc() {
     setProviderKey(id, key);
     return { present: true, fingerprint: providerKeyFingerprint(id) };
   });
-  handle('key:clearProvider', (id: string) => { clearProviderKey(id); return true; });
+  handle('key:clearProvider', (rawId: string) => { clearProviderKey(managedProviderCredentialId(rawId)); return true; });
   handle('glm:models', (force?: boolean) => glmModels(force === true));
   handle('glm:verify', () => verifyGlmKey());
   handle('deepseek:models', (force?: boolean) => deepseekModels(force === true));
@@ -1118,20 +1498,43 @@ function registerIpc() {
   // ══ phase 9 · worktrees ═════════════════════════════════════════════
   handle('worktrees:list', (repoRoot: string) => worktrees.listWorktrees(repoRoot));
   handle('worktrees:status', (p: string) => worktrees.worktreeStatus(p));
-  handle('worktrees:remove', (p: string, force: boolean) => worktrees.removeWorktree(p, force));
+  // removeWorktree already refuses a directory git does not call a worktree,
+  // but that leaves every worktree on the machine in range of a channel name.
+  // Confining the base first means Wanigan only deletes trees inside the
+  // projects and worktrees it has a record of.
+  handle('worktrees:remove', (p: string, force: boolean) =>
+    worktrees.removeWorktree(assertManagedRoot(p, 'That worktree'), force));
   // Without this a fleet run ends with N worktrees holding the only copy of the
   // work and no way to land any of them from inside the app. Every refusal
   // comes back as { merged: false, detail }; it only throws when there is no
   // worktree at the path at all, so ok:false here is the rare case.
   handle('worktrees:merge', (p: string, opts?: { squash?: boolean; message?: string }) =>
-    worktrees.mergeWorktree(p, opts));
+    worktrees.mergeWorktree(assertManagedRoot(p, 'That worktree'), opts));
   handle('worktrees:orphans', () => worktrees.reconcileWorktrees());
-  handle('worktrees:relink', (p: string) => worktrees.relinkWorktree(p));
+  handle('worktrees:relink', (p: string) => worktrees.relinkWorktree(assertManagedRoot(p, 'That worktree')));
   handle('worktrees:forSession', (id: string) => worktrees.worktreeForSession(id));
 
   // ══ phase 10 · headless fan-out ═════════════════════════════════════
-  handle('headless:start', (cfg: HeadlessConfig) => headless.startHeadlessRun(cfg));
-  handle('headless:rows', (runId: string) => headless.headlessRows(runId));
+  handle('headless:start', (cfg: HeadlessStartRequest) => headless.startHeadlessRun(cfg));
+  // Status without the transcript. The run view refires this every three
+  // seconds and renders none of the agent's stdout in the list, so the text
+  // stays in SQLite until a row is expanded — see HeadlessRowSummary.
+  handle('headless:rows', (runId: string): HeadlessRowSummary[] =>
+    headless.headlessRows(runId).map((row) => {
+      const { output, error, ...rest } = row;
+      return {
+        ...rest,
+        output: null,
+        error: null,
+        hasOutput: typeof output === 'string' && output.length > 0,
+        hasError: typeof error === 'string' && error.length > 0,
+      };
+    }));
+  handle('headless:rowDetail', (runId: string, projectId: string): HeadlessRowDetail => {
+    const row = headless.headlessRows(runId).find((value) => value.projectId === projectId);
+    if (!row) throw new Error('That repository is no longer part of this run.');
+    return { runId: row.runId, projectId: row.projectId, output: row.output, error: row.error };
+  });
   handle('headless:runs', (limit?: number) => headless.headlessRuns(limit));
   handle('headless:cancel', (runId: string) => headless.cancelHeadless(runId));
 
@@ -1145,8 +1548,6 @@ function registerIpc() {
     setSetting('slots', JSON.stringify(v));
     return v;
   });
-  handle('queue:enqueue', (kind: QueueKind, label: string, payload: unknown, priority?: number) =>
-    queue.enqueue(kind, label, payload, priority));
 
   // ══ phase 12 · MCP ══════════════════════════════════════════════════
   handle('mcp:servers', (projectId?: string | null) => mcpRegistry.listServers(projectId));
@@ -1242,29 +1643,31 @@ function registerIpc() {
   handle('skills:send', (sessionId: string, invoke: string) => { writeSession(sessionId, invoke + ' '); return true; });
 
   // ══ phase 28 · git ══════════════════════════════════════════════════
-  handle('git:status', (root: string) => gitOps.status(root));
+  // Every root here goes through gitRoot(); see its comment for why the reads
+  // are confined as well as the writes.
+  handle('git:status', (root: string) => gitOps.status(gitRoot(root)));
   handle('git:log', async (root: string, opts?: { limit?: number; all?: boolean }) => {
-    const cs = await gitOps.log(root, opts);
+    const cs = await gitOps.log(gitRoot(root), opts);
     noteAuthors(cs.map((c) => c.author));
     return cs;
   });
-  handle('git:branches', (root: string) => gitOps.branches(root));
-  handle('git:stashes', (root: string) => gitOps.stashes(root));
-  handle('git:commitDiff', (root: string, hash: string) => gitOps.commitDiff(root, hash));
-  handle('git:fileDiff', (root: string, file: string, staged: boolean) => gitOps.fileDiff(root, file, staged));
-  handle('git:stage', (root: string, files: string[]) => gitOps.stage(root, files));
-  handle('git:unstage', (root: string, files: string[]) => gitOps.unstage(root, files));
-  handle('git:discard', (root: string, tracked: string[], untracked: string[]) => gitOps.discard(root, tracked, untracked));
-  handle('git:commit', (root: string, msg: string, opts?: { amend?: boolean; all?: boolean }) => gitOps.commit(root, msg, opts));
-  handle('git:checkout', (root: string, ref: string, create?: boolean) => gitOps.checkout(root, ref, create === true));
-  handle('git:deleteBranch', (root: string, name: string, force?: boolean) => gitOps.deleteBranch(root, name, force === true));
-  handle('git:merge', (root: string, ref: string) => gitOps.merge(root, ref));
-  handle('git:fetch', (root: string) => gitOps.fetchAll(root));
-  handle('git:pull', (root: string) => gitOps.pull(root));
-  handle('git:push', (root: string, opts?: { setUpstream?: boolean; branch?: string }) => gitOps.push(root, opts));
-  handle('git:stashSave', (root: string, msg: string) => gitOps.stashSave(root, msg));
-  handle('git:stashApply', (root: string, i: number, drop: boolean) => gitOps.stashApply(root, i, drop));
-  handle('git:stashDrop', (root: string, i: number) => gitOps.stashDrop(root, i));
+  handle('git:branches', (root: string) => gitOps.branches(gitRoot(root)));
+  handle('git:stashes', (root: string) => gitOps.stashes(gitRoot(root)));
+  handle('git:commitDiff', (root: string, hash: string) => gitOps.commitDiff(gitRoot(root), hash));
+  handle('git:fileDiff', (root: string, file: string, staged: boolean) => gitOps.fileDiff(gitRoot(root), file, staged));
+  handle('git:stage', (root: string, files: string[]) => gitOps.stage(gitRoot(root), files));
+  handle('git:unstage', (root: string, files: string[]) => gitOps.unstage(gitRoot(root), files));
+  handle('git:discard', (root: string, tracked: string[], untracked: string[]) => gitOps.discard(gitRoot(root), tracked, untracked));
+  handle('git:commit', (root: string, msg: string, opts?: { amend?: boolean; all?: boolean }) => gitOps.commit(gitRoot(root), msg, opts));
+  handle('git:checkout', (root: string, ref: string, create?: boolean) => gitOps.checkout(gitRoot(root), ref, create === true));
+  handle('git:deleteBranch', (root: string, name: string, force?: boolean) => gitOps.deleteBranch(gitRoot(root), name, force === true));
+  handle('git:merge', (root: string, ref: string) => gitOps.merge(gitRoot(root), ref));
+  handle('git:fetch', (root: string) => gitOps.fetchAll(gitRoot(root)));
+  handle('git:pull', (root: string) => gitOps.pull(gitRoot(root)));
+  handle('git:push', (root: string, opts?: { setUpstream?: boolean; branch?: string }) => gitOps.push(gitRoot(root), opts));
+  handle('git:stashSave', (root: string, msg: string) => gitOps.stashSave(gitRoot(root), msg));
+  handle('git:stashApply', (root: string, i: number, drop: boolean) => gitOps.stashApply(gitRoot(root), i, drop));
+  handle('git:stashDrop', (root: string, i: number) => gitOps.stashDrop(gitRoot(root), i));
 
   // ══ phase 25 · schedules ════════════════════════════════════════════
   handle('schedule:list', () => schedule.listSchedules());
@@ -1330,6 +1733,7 @@ function registerIpc() {
   handle('control:releaseClaim', (id: string) => control.releaseClaim(id));
   handle('control:start', (nodeId: string, input: { providerId: string; model?: string; effort?: string; permissionMode?: string }) =>
     control.startNode(nodeId, input));
+  handle('control:retry', (nodeId: string) => control.retryNode(nodeId));
   handle('control:checkpoint', (nodeId: string, note: string) => control.checkpointNode(nodeId, note));
   handle('control:runProof', (nodeId: string) => control.runProof(nodeId));
   handle('control:complete', (nodeId: string, input?: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }) =>
@@ -1362,11 +1766,40 @@ function registerIpc() {
   handle('plugins:file', (p: string) => plugins.pluginFile(p));
   handle('plugins:catalog', () => plugins.catalog());
   handle('plugins:details', (name: string) => plugins.details(name));
-  handle('plugins:install', (id: string, scope?: 'user' | 'project' | 'local') => plugins.install(id, scope));
-  handle('plugins:setEnabled', (id: string, on: boolean) => plugins.setEnabled(id, on));
-  handle('plugins:marketUpdate', (name?: string) => plugins.updateMarketplaces(name));
-  handle('plugins:marketAdd', (source: string) => plugins.addMarketplace(source));
-  handle('plugins:marketRemove', (name: string) => plugins.removeMarketplace(name));
+  // Every argument below becomes an argv entry for a CLI that installs and runs
+  // code. See pluginScope/pluginId/marketplaceSource for why a type is not a check.
+  handle('plugins:install', (id: unknown, scope?: unknown) =>
+    plugins.install(pluginId(id), pluginScope(scope)));
+  handle('plugins:setEnabled', (id: unknown, on: boolean) => plugins.setEnabled(pluginId(id), on === true));
+  handle('plugins:marketUpdate', (name?: unknown) =>
+    plugins.updateMarketplaces(name === undefined || name === null ? undefined : marketplaceName(name)));
+  // Installing one plugin asks in the Plugins view; adding a marketplace asked
+  // nowhere, and it is the larger grant of the two — a catalogue of installable
+  // code rather than one named package, and the thing every later install is
+  // chosen from. The question is asked here rather than in the renderer so it
+  // is not a step a compromised renderer can decline to render.
+  handle('plugins:marketAdd', async (source: unknown): Promise<plugins.PluginAction> => {
+    const value = marketplaceSource(source);
+    const w = win;
+    if (!w || w.isDestroyed()) {
+      throw new Error('Adding a marketplace needs the Wanigan window open to confirm it.');
+    }
+    const answer = await dialog.showMessageBox(w, {
+      type: 'warning',
+      buttons: ['Cancel', 'Add this marketplace'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Add a plugin marketplace?',
+      message: `Wanigan will run: claude plugin marketplace add ${value}`,
+      detail: 'A marketplace is a catalogue every later install is chosen from, and its plugins can ship hooks, '
+        + 'MCP servers and install commands that run on this Mac. Add it only if you trust whoever publishes it.',
+    });
+    if (answer.response !== 1) {
+      return { ok: false, output: '', error: 'Cancelled. No marketplace was added.' };
+    }
+    return plugins.addMarketplace(value);
+  });
+  handle('plugins:marketRemove', (name: unknown) => plugins.removeMarketplace(marketplaceName(name)));
 
   // ══ file explorer ═══════════════════════════════════════════════════
   handle('browse:pick', (multi?: boolean, startIn?: string) => browse.pickFiles(win, { multi, startIn }));
@@ -1374,7 +1807,18 @@ function registerIpc() {
   handle('browse:list', (dir: string, showHidden?: boolean) => browse.browse(dir, { showHidden }));
   handle('browse:places', () => browse.places());
   handle('browse:reveal', (p: string) => browse.revealInFinder(p));
-  handle('browse:open', (p: string) => browse.openExternally(p));
+  // sessions:reveal above says a generic renderer-controlled shell.openPath
+  // bridge must not exist, and this was one: browse.openExternally resolves the
+  // path, checks that it exists, and hands it to LaunchServices, which decides
+  // what to run. assertOpenablePath was written for this exact call — the
+  // target has to be inside a managed project or worktree, or a file a context
+  // scan itself surfaced.
+  handle('browse:open', (p: string) => browse.openExternally(assertOpenablePath(String(p))));
+  // A link in the terminal cannot travel through window.open: setWindowOpenHandler
+  // denies every child window, so the link addon's opener comes back null and the
+  // click does nothing at all. The renderer therefore asks for the open directly,
+  // and the same http/https check the window handler uses still decides it.
+  handle('shell:openExternal', (url: string) => openSafeExternal(url));
 
   // ══ phase 21 · attachments ══════════════════════════════════════════
   handle('attach:inspect', (p: string) => attachments.inspect(p));
@@ -1384,10 +1828,16 @@ function registerIpc() {
   handle('attach:list', (sessionId: string) => attachments.sessionAttachments(sessionId));
   handle('attach:remove', (id: string) => attachments.removeAttachment(id));
   // Deliberately no trailing return: the human decides when to send.
-  handle('attach:type', (sessionId: string) => {
-    const list = attachments.promptableSessionAttachments(sessionId);
+  handle('attach:type', (sessionId: string, onlyUnreferenced?: boolean) => {
+    const list = attachments.promptableSessionAttachments(sessionId)
+      .filter((a) => (onlyUnreferenced === true ? a.referencedAt === null : true));
     if (!list.length) return false;
-    writeSession(sessionId, attachments.promptReferenceFor(list));
+    // writeSession refuses an exited or unknown session. A reference that never
+    // reached the PTY is not one the agent can act on, so it is neither
+    // recorded nor reported as done — the strip would otherwise show a file as
+    // named in a prompt that never received it.
+    if (!writeSession(sessionId, attachments.promptReferenceFor(list))) return false;
+    attachments.markAttachmentsReferenced(list.map((a) => a.id));
     return true;
   });
 
@@ -1414,18 +1864,34 @@ function registerIpc() {
 
   // ══ phase 23 · project context ══════════════════════════════════════
   // Everything a project injects into an agent before it has done anything.
-  handle('context:instructions', (projectPath: string) => ctxInstructions.resolveInstructions(projectPath));
-  handle('context:memory', (projectPath: string) => ctxMemory.readMemory(projectPath));
-  handle('context:config', (projectPath: string) => ctxConfig.readProjectConfig(projectPath));
+  //
+  // These walk a directory tree, read settings files and add every result to
+  // the servable set that context:read then honours, so an unconfined
+  // projectPath turns "scan a project" into "enumerate and serve any folder on
+  // this Mac". The project path is the base, so it is the part confined here.
+  //
+  // context:read and context:memoryBody are deliberately NOT wrapped: they
+  // already enforce a tighter and different membership — a path some scan
+  // actually produced, and a markdown file under a known memory directory — and
+  // a user-scope CLAUDE.md or ~/.claude memory legitimately sits outside every
+  // project. assertManagedRoot there would refuse the files the views exist for.
+  handle('context:instructions', (projectPath: string) =>
+    ctxInstructions.resolveInstructions(assertManagedRoot(projectPath, 'That project folder')));
+  handle('context:memory', (projectPath: string) =>
+    ctxMemory.readMemory(assertManagedRoot(projectPath, 'That project folder')));
+  handle('context:config', (projectPath: string) =>
+    ctxConfig.readProjectConfig(assertManagedRoot(projectPath, 'That project folder')));
   handle('context:budget', (projectPath: string, files: { path: string; label: string }[], model?: string) =>
-    ctxConfig.contextBudget(projectPath, files, model));
+    ctxConfig.contextBudget(assertManagedRoot(projectPath, 'That project folder'), files, model));
   handle('context:read', (p: string) => ctxInstructions.readInstruction(p));
   handle('context:memoryBody', (p: string) => ctxMemory.memoryBody(p));
-  handle('context:agentsMd', (projectPath: string) => ctxInstructions.agentsMdStatus(projectPath));
+  handle('context:agentsMd', (projectPath: string) =>
+    ctxInstructions.agentsMdStatus(assertManagedRoot(projectPath, 'That project folder')));
   handle('context:refresh', (projectPath: string) => {
+    const root = assertManagedRoot(projectPath, 'That project folder');
     ctxInstructions.refreshInstructions();
     ctxConfig.refreshProjectConfig();
-    return ctxInstructions.resolveInstructions(projectPath);
+    return ctxInstructions.resolveInstructions(root);
   });
 
   // ══ Wanigan Compound · provider-neutral learning ═══════════════════
@@ -1458,10 +1924,30 @@ function registerIpc() {
     limit: options?.limit,
   }));
   handle('learning:item', (id: string) => learning.item(id));
+  // Until this channel existed there was no way to take an artifact out of
+  // circulation from inside the app, and every active item is injected into an
+  // agent's context — so a wrong one stayed wrong and kept being spent on.
+  // Retiring destroys nothing: the item keeps every version, citation and
+  // projection, the reason and the actor are recorded as an operational signal,
+  // and the record can be made active again.
+  handle('learning:retireItem', (id: unknown, reason: unknown) => {
+    if (typeof id !== 'string' || !id.trim()) throw new Error('Choose a knowledge item to retire.');
+    const note = typeof reason === 'string' ? reason.trim() : '';
+    if (!note) {
+      throw new Error('Say why this is being retired. "Who removed this, and why" is the part that outlives the removal.');
+    }
+    return retireKnowledgeItem(id.trim(), note);
+  });
   handle('learning:briefing', (input: Parameters<typeof learning.briefing>[0]) =>
     learning.briefing(input));
+  // A LIST never carries the bytes. Each row holds proposedContent plus a
+  // whole-file previousContent snapshot (512KB cap each), so a 500-row listing
+  // was hundreds of megabytes through the structured clone to read a path.
+  // The single-projection reads that need content go through learning:item.
   handle('learning:projections', (filter?: Parameters<typeof learning.listProjections>[0]) =>
-    learning.listProjections(filter));
+    learning.listProjections(filter).map((projection) => ({
+      ...projection, proposedContent: '', previousContent: null,
+    })));
   handle('learning:undoProjection', (id: string) => learning.undo(id));
   handle('learning:diagnostics', (projectId?: string | null) =>
     learning.diagnoseKnowledge({ projectId }));
@@ -1479,6 +1965,14 @@ function registerIpc() {
   handle('learning:setExperimentStatus', (
     id: string, action: 'start' | 'cancel' | 'complete', outcome?: Record<string, unknown>,
   ) => learning.setExperimentStatus(id, action, outcome));
+  // ── the legibility surface: recorded facts about what the engine did ──
+  handle('learning:sessionLedger', (sessionId: string) => learning.sessionLedger(sessionId));
+  handle('learning:pipeline', (input?: { projectId?: string | null; windowDays?: number }) =>
+    learning.pipeline(input ?? {}));
+  handle('learning:candidateExplain', (id: string) => learning.explain(id));
+  handle('learning:candidateSignals', (id: string) => learning.candidateSignals(id));
+  handle('learning:relations', (itemId?: string) => learning.relations(itemId));
+  handle('learning:freshness', (itemId: string) => learning.freshnessReport(itemId));
 
   // ══ phase 27 · observed sessions ════════════════════════════════════
   // listObserved() returns [] when the lane is off, so observed:state is what
@@ -1492,23 +1986,125 @@ function registerIpc() {
   // ══ phase 29 · what leaves this machine ═════════════════════════════
   handle('egress:report', () => egressReport());
 
+  // ══ backup and restore ══════════════════════════════════════════════
+  // Goals, proofs, the policy ledger, the knowledge record and every citation
+  // that makes a briefing checkable are rows in one SQLite file. The app could
+  // forget a transcript but never copy anything out, so a dead disk ended the
+  // record permanently and nothing ever said so.
+  handle('backup:create', async (): Promise<BackupSummary | null> => {
+    if (!win) return null;
+    const res = await dialog.showSaveDialog(win, {
+      title: 'Back up Wanigan’s record',
+      defaultPath: path.join(defaultBackupParent(), `wanigan-backup-${backupStamp()}`),
+      buttonLabel: 'Back up',
+      properties: ['createDirectory'],
+    });
+    if (res.canceled || !res.filePath) return null;
+    return backup.createBackup(res.filePath);
+  });
+  // Read-only: verify a backup and say what restoring it would cost, so the
+  // decision is made against the dates rather than against a folder name.
+  handle('backup:inspect', async (): Promise<BackupCheck | null> => {
+    if (!win) return null;
+    const res = await dialog.showOpenDialog(win, {
+      title: 'Check a Wanigan backup',
+      properties: ['openDirectory'],
+      buttonLabel: 'Check this backup',
+    });
+    if (res.canceled || !res.filePaths[0]) return null;
+    return backup.inspectBackup(res.filePaths[0]);
+  });
+  handle('backup:restore', async (): Promise<BackupRestoreSummary | null> => {
+    const w = win;
+    if (!w || w.isDestroyed()) return null;
+
+    // A restore swaps the database file out from under this process. Anything
+    // still writing to it — a PTY recording events, a headless row banking a
+    // cost — would start throwing mid-run against a file that has moved.
+    const live = listSessions().filter((s) => s.status === 'starting' || s.status === 'running').length;
+    const headlessLive = headless.liveHeadlessCount();
+    if (live || headlessLive) {
+      throw new Error(
+        `${live + headlessLive} agent${live + headlessLive === 1 ? ' is' : 's are'} still running, and a restore `
+        + 'replaces the database they are writing to. Stop them first, then restore.'
+      );
+    }
+
+    const picked = await dialog.showOpenDialog(w, {
+      title: 'Restore a Wanigan backup',
+      properties: ['openDirectory'],
+      buttonLabel: 'Choose this backup',
+    });
+    if (picked.canceled || !picked.filePaths[0]) return null;
+
+    const check = backup.inspectBackup(picked.filePaths[0]);
+    if (check.problems.length) {
+      throw new Error(
+        `This backup did not verify, so nothing was changed:\n- ${check.problems.map((p) => p.detail).join('\n- ')}`
+      );
+    }
+
+    // Name what is being replaced, not "are you sure": the only fact that
+    // decides this is whether the database in place holds work the backup does
+    // not, and that is the sentence a person can actually act on.
+    const takenAt = check.createdAt ? new Date(check.createdAt).toLocaleString() : 'an unrecorded date';
+    const backupEvidence = check.latestEvidenceAt
+      ? new Date(check.latestEvidenceAt).toLocaleString()
+      : 'nothing recorded';
+    const currentEvidence = check.currentLatestEvidenceAt
+      ? new Date(check.currentLatestEvidenceAt).toLocaleString()
+      : 'nothing recorded';
+    const answer = await dialog.showMessageBox(w, {
+      type: 'warning',
+      buttons: ['Cancel', 'Replace the database'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Replace Wanigan’s record with this backup?',
+      message: `The database Wanigan is using now and its ${check.transcripts.files} archived transcript`
+        + `${check.transcripts.files === 1 ? '' : 's'} will be replaced by the backup taken ${takenAt}.`,
+      detail: `That backup records work up to ${backupEvidence}. The database in place records work up to `
+        + `${currentEvidence}.${check.wouldDiscardNewer ? ' Everything in between will be dropped.' : ''}\n\n`
+        + 'Nothing is deleted: the replaced database and transcripts are moved into a dated folder inside '
+        + 'Wanigan’s data directory. The API credential and provider/MCP trust grants are not restored — '
+        + 'those are made on one machine, for one machine. Wanigan must restart immediately afterwards.',
+    });
+    if (answer.response !== 1) return null;
+
+    const report = backup.restoreBackup(picked.filePaths[0], {
+      confirm: true,
+      // The dialog above showed both dates, which is the whole precondition
+      // this flag exists to enforce.
+      overwriteNewer: check.wouldDiscardNewer,
+    });
+
+    // The connection this process held is closed and every later db() call
+    // throws. Say so and relaunch, rather than leaving a window whose every
+    // control now fails against a file that has moved.
+    setTimeout(() => {
+      void dialog.showMessageBox({
+        type: 'info',
+        buttons: ['Restart Wanigan'],
+        defaultId: 0,
+        title: 'Backup restored',
+        message: 'Wanigan will restart to open the restored database.',
+        detail: `The database that was in place was moved to ${report.replacedDir} and not deleted.`,
+      }).finally(() => { app.relaunch(); app.exit(0); });
+    }, 0);
+
+    return report;
+  });
+
   // ══ settings ════════════════════════════════════════════════════════
   handle('settings:all', () => allSettings());
-  handle('settings:set', (k: string, v: string) => {
-    // Appearance has a typed, validated path below. Keep the legacy generic
-    // bridge from becoming a bypass for arbitrary persisted theme text.
-    if (k === 'theme') throw new Error('Use the typed theme setting.');
-    setSetting(k, v);
-    return allSettings();
-  });
+  handle('settings:set', (key: string, value: string) => setUserPreference(key, value));
   handle('settings:setTheme', (value: ThemeSetting) => { setTheme(value); return allSettings(); });
 
   // Hot-path traffic: fire-and-forget, no round trip.
   ipcMain.on('sessions:write', (event, id: string, data: string) => {
-    if (trustedSender(event.sender)) writeSession(id, data);
+    if (trustedSender(event.sender, event.senderFrame)) writeSession(id, data);
   });
   ipcMain.on('sessions:resize', (event, id: string, cols: number, rows: number) => {
-    if (trustedSender(event.sender)) resizeSession(id, cols, rows);
+    if (trustedSender(event.sender, event.senderFrame)) resizeSession(id, cols, rows);
   });
 }
 

@@ -8,6 +8,7 @@ import NewSessionDialog from '../components/NewSessionDialog';
 import CodePanel from '../components/CodePanel';
 import AttentionQueue from '../components/AttentionQueue';
 import Timeline from '../components/Timeline';
+import SessionLearning from '../components/SessionLearning';
 import Pet from '../components/Pet';
 import { Note, ago, num, usd } from '../components/bits';
 import '../styles/sessions.css';
@@ -34,6 +35,10 @@ type Attachment = {
   visualTokens: number | null;
   addedAt: number;
   fileId: string | null;
+  /** Set once this file's path has been typed into the prompt. */
+  referencedAt: number | null;
+  /** Set once the operator submitted a line carrying that reference. */
+  sentAt: number | null;
 };
 
 type AttachCheck = {
@@ -150,7 +155,17 @@ export default function Sessions({
     window.matchMedia(SESSION_PICKER_COMPACT_QUERY).matches,
   );
   const [sessionPickerOpen, setSessionPickerOpen] = useState(false);
-  const [railPane, setRailPane] = useState<Record<string, 'code' | 'timeline'>>(readPanes);
+  const [railPane, setRailPane] = useState<Record<string, RailPane>>(readPanes);
+  /*
+   * Three agents in one repo were three identical rows. The launch title is
+   * assigned once and is "<provider> · <project>" for all three of them, so the
+   * only thing that can tell them apart is a name you give them. Kept on this
+   * machine, which is exactly as long as the sessions themselves last: a PTY
+   * does not survive a quit.
+   */
+  const [labels, setLabels] = useState<Record<string, string>>(readLabels);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
   const [defaultTrust, setDefaultTrust] = useState<TrustLevel | null>(null);
   const [past, setPast] = useState<PastSession[]>([]);
   const [resuming, setResuming] = useState<string | null>(null);
@@ -161,7 +176,31 @@ export default function Sessions({
   // React state does not change until the next render. The ref closes the
   // same-tick gap so a double click cannot launch two writers for one thread.
   const resumePendingRef = useRef(false);
+  // Unread increments waiting to be folded into the list in one pass.
+  const unreadPending = useRef(new Map<string, number>());
+  const unreadTimer = useRef<number | undefined>(undefined);
   activeRef.current = activeId;
+
+  const flushUnread = useCallback(() => {
+    unreadTimer.current = undefined;
+    const pending = unreadPending.current;
+    if (!pending.size) return;
+    const batch = new Map(pending);
+    pending.clear();
+    setSessions((prev) => {
+      let changed = false;
+      const next = prev.map((s) => {
+        const add = batch.get(s.id);
+        // A session selected during the window has already been read; its
+        // badge was cleared by select(), and re-adding here would resurrect it.
+        if (!add || s.id === activeRef.current) return s;
+        changed = true;
+        return { ...s, unread: s.unread + add };
+      });
+      // Identity matters: an unchanged array skips the whole rail re-render.
+      return changed ? next : prev;
+    });
+  }, []);
 
   // The shell can ask for a new interactive session from any route. Consume
   // the request immediately after opening the dialog: returning to Sessions
@@ -262,8 +301,16 @@ export default function Sessions({
   useEffect(() => {
     const offData = window.wanigan.on.data(({ sessionId, data }) => {
       feed(sessionId, data);
-      if (sessionId !== activeRef.current) {
-        setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, unread: s.unread + 1 } : s)));
+      if (sessionId === activeRef.current) return;
+      /*
+       * A chunk arrives per burst of agent output, and rebuilding every session
+       * object in the list for each one made an unread badge cost a full
+       * re-render of the rail and the tab strip. The increments are collected
+       * and applied together instead; the badge is a count, not a clock.
+       */
+      unreadPending.current.set(sessionId, (unreadPending.current.get(sessionId) ?? 0) + 1);
+      if (unreadTimer.current === undefined) {
+        unreadTimer.current = window.setTimeout(flushUnread, 250);
       }
     });
     const offList = window.wanigan.on.sessions((list) => {
@@ -275,11 +322,18 @@ export default function Sessions({
     const offExit = window.wanigan.on.exit(({ sessionId, exitCode }) => {
       feed(sessionId, `\r\n\x1b[38;5;244m── session exited (code ${exitCode}) ──\x1b[0m\r\n`);
     });
-    return () => { offData(); offList(); offExit(); };
-  }, []);
+    return () => {
+      offData(); offList(); offExit();
+      window.clearTimeout(unreadTimer.current);
+      unreadTimer.current = undefined;
+    };
+  }, [flushUnread]);
 
   const select = useCallback((id: string) => {
     onActiveChange(id, sessions.find((session) => session.id === id)?.projectId);
+    // Drop anything queued for this session too, or the next flush would put
+    // the badge straight back on the tab you are now looking at.
+    unreadPending.current.delete(id);
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, unread: 0 } : s)));
     if (sessionPickerCompact) {
       setSessionPickerOpen(false);
@@ -383,14 +437,52 @@ export default function Sessions({
     return () => window.removeEventListener('keydown', onKey, true);
   }, [active]);
   const anyInstalled = providers.some((p) => p.path);
+  // Distinct commands, because two profiles can share one binary — GLM and
+  // DeepSeek are the Claude Code CLI pointed at another endpoint.
+  const missingBins = useMemo(
+    () => [...new Set(providers.filter((p) => !p.path).map((p) => p.bin))],
+    [providers],
+  );
   const pane = (active && railPane[active.id]) || 'code';
   const railOpen = showRail && !compactLayout;
 
-  const setPane = useCallback((sessionId: string, next: 'code' | 'timeline') => {
+  const setPane = useCallback((sessionId: string, next: RailPane) => {
     const merged = { ...railPane, [sessionId]: next };
     setRailPane(merged);
     writePanes(merged, sessions.map((s) => s.id));
   }, [railPane, sessions]);
+
+  /** Your name for a session, or '' when you have not given it one. */
+  const nameOf = useCallback((s: Session) => labels[s.id] ?? '', [labels]);
+
+  const startRename = useCallback((s: Session) => {
+    setDraft(nameOf(s));
+    setRenaming(s.id);
+  }, [nameOf]);
+
+  /*
+   * Leaving the field by keyboard puts focus back on the control that opened
+   * it; leaving it by clicking elsewhere must not, or the rename would steal
+   * the click you just made. Hence the explicit flag rather than doing it on
+   * every exit.
+   */
+  const endRename = useCallback((id: string, refocus: boolean) => {
+    setRenaming(null);
+    if (!refocus) return;
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(`[data-rename-for="${CSS.escape(id)}"]`)?.focus();
+    });
+  }, []);
+
+  const commitRename = useCallback((id: string, refocus: boolean) => {
+    const value = draft.trim().slice(0, LABEL_MAX);
+    const next = { ...labels };
+    // An emptied field is how you take a name back off, not a way to store one.
+    if (value) next[id] = value; else delete next[id];
+    setLabels(next);
+    writeLabels(next, sessions.map((s) => s.id));
+    endRename(id, refocus);
+  }, [draft, endRename, labels, sessions]);
 
   const att = useAttachments(active?.id ?? null);
 
@@ -408,7 +500,9 @@ export default function Sessions({
             <div style={{ minWidth: 0 }}>
               <span className="label">Session switcher</span>
               <span className="session-picker-current mono">
-                {active ? `Viewing ${active.projectName}` : `${sessions.length} open session${sessions.length === 1 ? '' : 's'}`}
+                {active
+                  ? `Viewing ${nameOf(active) || active.projectName}`
+                  : `${sessions.length} open session${sessions.length === 1 ? '' : 's'}`}
               </span>
             </div>
             <FocusBtn className="session-picker-close" data-session-picker-initial
@@ -437,28 +531,54 @@ export default function Sessions({
                               title={`New session in ${p.name}`} onClick={() => setDialog(true)}>+</FocusBtn>
                   </div>
                   {list.length === 0 && <p className="faint" style={{ padding: '2px 8px 4px', fontSize: 'var(--t-small)' }}>no sessions</p>}
-                  {list.map((s) => (
-                    <FocusBtn key={s.id} className={`session-item${s.id === activeId ? ' active' : ''}`}
-                              aria-current={s.id === activeId ? 'page' : undefined}
-                              onClick={() => select(s.id)}>
-                      <span className="dot" style={{ background: s.status === 'running' ? TINT[s.providerId] : 'var(--text-faint)' }} />
-                      <span style={{ minWidth: 0, flex: 1 }}>
-                        <span style={{ display: 'block', fontSize: 'var(--t-small)' }}>
-                          {providers.find((x) => x.id === s.providerId)?.label ?? s.providerId}
-                          {s.worktree && <span className="faint" title="Runs in its own git worktree"> ⑂</span>}
-                        </span>
-                        <span className="faint mono" style={{ fontSize: 'var(--t-micro)', fontVariantNumeric: 'tabular-nums' }}>
-                          {s.status === 'running' ? `pid ${s.pid}` : `exited ${s.exitCode}`}
-                        </span>
-                      </span>
-                      {s.unread > 0 && s.id !== activeId && (
-                        <span className="pill" style={{ background: 'var(--accent-soft)', color: 'var(--accent)',
-                                                        fontVariantNumeric: 'tabular-nums' }}>
-                          {s.unread > 99 ? '99+' : s.unread}
-                        </span>
-                      )}
-                    </FocusBtn>
-                  ))}
+                  {list.map((s) => {
+                    const providerLabel = providers.find((x) => x.id === s.providerId)?.label ?? s.providerId;
+                    const name = nameOf(s);
+                    return renaming === s.id ? (
+                      <input key={s.id} className="field" autoFocus value={draft} maxLength={LABEL_MAX}
+                             aria-label={`Name for this ${providerLabel} session in ${s.projectName}`}
+                             placeholder={providerLabel}
+                             style={{ width: '100%', margin: '2px 0', fontSize: 'var(--t-small)' }}
+                             onChange={(e) => setDraft(e.target.value)}
+                             onBlur={() => commitRename(s.id, false)}
+                             onKeyDown={(e) => {
+                               if (e.key === 'Enter') { e.preventDefault(); commitRename(s.id, true); }
+                               if (e.key === 'Escape') { e.preventDefault(); endRename(s.id, true); }
+                             }} />
+                    ) : (
+                      <div key={s.id} className="past-row">
+                        <FocusBtn className={`session-item${s.id === activeId ? ' active' : ''}`}
+                                  style={{ flex: 1, width: 'auto', minWidth: 0 }}
+                                  aria-current={s.id === activeId ? 'page' : undefined}
+                                  title={s.title}
+                                  onClick={() => select(s.id)}>
+                          <span className="dot" style={{ background: s.status === 'running' ? TINT[s.providerId] : 'var(--text-faint)' }} />
+                          <span style={{ minWidth: 0, flex: 1 }}>
+                            <span className="trunc" style={{ display: 'block', fontSize: 'var(--t-small)' }}>
+                              {name || providerLabel}
+                              {s.worktree && <span className="faint" title="Runs in its own git worktree"> ⑂</span>}
+                            </span>
+                            <span className="faint mono trunc" style={{ display: 'block', fontSize: 'var(--t-micro)', fontVariantNumeric: 'tabular-nums' }}>
+                              {/* Naming a session must not cost you the provider
+                                  it runs, so the second line picks it up. */}
+                              {name ? `${providerLabel} · ` : ''}
+                              {s.status === 'running' ? `pid ${s.pid}` : `exited ${s.exitCode}`}
+                            </span>
+                          </span>
+                          {s.unread > 0 && s.id !== activeId && (
+                            <span className="pill" style={{ background: 'var(--accent-soft)', color: 'var(--accent)',
+                                                            fontVariantNumeric: 'tabular-nums' }}>
+                              {s.unread > 99 ? '99+' : s.unread}
+                            </span>
+                          )}
+                        </FocusBtn>
+                        <FocusBtn className="past-x faint" data-rename-for={s.id}
+                                  title={`Name this session — two agents in ${s.projectName} are otherwise the same row`}
+                                  aria-label={`Rename the ${providerLabel} session in ${s.projectName}`}
+                                  onClick={() => startRename(s)}>✎</FocusBtn>
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
@@ -531,29 +651,34 @@ export default function Sessions({
             <FocusBtn ref={sessionPickerButtonRef} className={`tab session-picker-trigger${sessionPickerOpen ? ' active' : ''}`}
                       aria-controls="wanigan-session-picker" aria-expanded={sessionPickerCompact ? sessionPickerOpen : undefined}
                       aria-label={active
-                        ? `Choose a session. Current session: ${active.projectName}`
+                        ? `Choose a session. Current session: ${nameOf(active) || active.projectName}`
                         : 'Choose a session'}
                       title={active
-                        ? `Choose a session — currently ${active.projectName}`
+                        ? `Choose a session — currently ${nameOf(active) || active.projectName}`
                         : 'Choose a session'}
                       onClick={() => setSessionPickerOpen((open) => !open)}>
               <span aria-hidden="true" className="session-picker-glyph">☰</span>
               <span>Sessions</span>
-              {active && <span className="session-picker-trigger-current">{active.projectName}</span>}
+              {active && <span className="session-picker-trigger-current">{nameOf(active) || active.projectName}</span>}
               <span className="session-picker-count" aria-hidden="true">{sessions.length}</span>
             </FocusBtn>
             {sessions.map((s, i) => (
-              <FocusBtn key={s.id} className={`tab session-tab${s.id === activeId ? ' active' : ''}`} onClick={() => select(s.id)}
-                        aria-current={s.id === activeId ? 'page' : undefined}>
-                <span className="dot" style={{ width: 6, height: 6, borderRadius: 'var(--r-pill)',
-                                               background: s.status === 'running' ? (TINT[s.providerId] ?? 'var(--accent)') : 'var(--text-faint)' }} />
-                {s.projectName}
-                <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>⌘{i + 1}</span>
+              <div key={s.id} className={`session-tab-wrap${s.id === activeId ? ' active' : ''}`}>
+                <FocusBtn className={`tab session-tab${s.id === activeId ? ' active' : ''}`} onClick={() => select(s.id)}
+                          aria-current={s.id === activeId ? 'page' : undefined}
+                          title={nameOf(s) ? `${nameOf(s)} — ${s.title}` : s.title}
+                          aria-label={`${nameOf(s) || s.projectName}, ${s.status === 'running' ? 'running' : 'exited'} session`}>
+                  <span className="dot" style={{ width: 6, height: 6, borderRadius: 'var(--r-pill)',
+                                                 background: s.status === 'running' ? (TINT[s.providerId] ?? 'var(--accent)') : 'var(--text-faint)' }} />
+                  {nameOf(s) || s.projectName}
+                  <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>⌘{i + 1}</span>
+                </FocusBtn>
                 {s.status === 'exited' && (
-                  <span onClick={(e) => { e.stopPropagation(); void closeTab(s.id); }}
-                        className="faint" style={{ marginLeft: 2, fontSize: 'var(--t-body)' }} title="Close (⌘W)">×</span>
+                  <FocusBtn className="session-tab-close faint" title="Close exited session (⌘W)"
+                            aria-label={`Close exited session for ${s.projectName}`}
+                            onClick={() => void closeTab(s.id)}>×</FocusBtn>
                 )}
-              </FocusBtn>
+              </div>
             ))}
             <FocusBtn className="tab tab-new-session faint" onClick={() => setDialog(true)} title="New session (⌘T)"
                       aria-label="New session (Command T)">+<span className="tab-new-session-text"> New</span></FocusBtn>
@@ -606,10 +731,20 @@ export default function Sessions({
                 )}
               </div>
               {!anyInstalled && providers.length > 0 && (
+                // Named from the profiles that are actually loaded. This used to
+                // say "neither claude nor codex", which was one hardcoded pair
+                // out of however many a provider pack contributes.
                 <p className="faint" style={{ maxWidth: 470, lineHeight: 1.5 }}>
-                  Neither <span className="mono">claude</span> nor <span className="mono">codex</span> was found.
-                  Wanigan resolves your login shell's PATH and scans editor extension directories — if they run
-                  in your terminal, restart Wanigan and it will find them.
+                  No agent CLI was found — Wanigan looks for{' '}
+                  {missingBins.map((bin, i) => (
+                    <span key={bin}>
+                      {i > 0 && (i === missingBins.length - 1 ? ' and ' : ', ')}
+                      <span className="mono">{bin}</span>
+                    </span>
+                  ))}
+                  {' '}on the PATH your login shell reported, plus the usual Homebrew, nvm and editor
+                  extension directories. Install one, then open New session — it re-checks from there.
+                  If one already runs in your terminal, quit and reopen Wanigan so it reads that PATH again.
                 </p>
               )}
             </div>
@@ -658,6 +793,8 @@ export default function Sessions({
                          title="Files this session changed">Code</Seg>
                     <Seg on={pane === 'timeline'} onClick={() => setPane(active.id, 'timeline')}
                          title="Every tool call the agent made, and how long it took">Timeline</Seg>
+                    <Seg on={pane === 'learning'} onClick={() => setPane(active.id, 'learning')}
+                         title="What this session was told at launch, and what it recorded — stored facts only">Learning</Seg>
                     <span className="faint mono" style={{ marginLeft: 'auto', fontSize: 'var(--t-micro)' }}>⌘B</span>
                   </div>
                   <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'grid',
@@ -670,9 +807,14 @@ export default function Sessions({
                                    root: active.worktree ?? active.projectPath,
                                    paths,
                                  })} />
-                    ) : (
+                    ) : pane === 'timeline' ? (
                       <Timeline key={`tl-${active.id}`} sessionId={active.id}
                                 onOpenFile={(p) => { window.wanigan.code.open(null, p).catch((e) => onError(msg(e))); }} />
+                    ) : (
+                      <div style={{ overflowY: 'auto', minHeight: 0, borderLeft: '1px solid var(--line)', padding: 'var(--s-2)' }}>
+                        <SessionLearning key={`sl-${active.id}`} sessionId={active.id}
+                                         harness={active.harnessId ?? null} />
+                      </div>
                     )}
                   </div>
                 </div>
@@ -688,7 +830,7 @@ export default function Sessions({
                   {active.status === 'running' ? `pid ${active.pid}` : `exited ${active.exitCode}`}
                 </span>
                 <FocusBtn className="faint session-status-action" style={{ marginLeft: 'auto', fontSize: 'var(--t-small)', borderRadius: 'var(--r-sm)' }}
-                          onClick={() => window.wanigan.sessions.reveal(active.worktree ?? active.projectPath)}
+                          onClick={() => window.wanigan.sessions.reveal(active.id)}
                           title={active.worktree
                             ? `Open the worktree this session runs in: ${active.worktree}`
                             : `Open ${active.projectPath}`}>
@@ -869,24 +1011,53 @@ function Seg({ on, onClick, title, children }: {
 
 const PANE_KEY = 'wanigan.rail.pane';
 
-function readPanes(): Record<string, 'code' | 'timeline'> {
+type RailPane = 'code' | 'timeline' | 'learning';
+
+function readPanes(): Record<string, RailPane> {
   try {
     const raw = localStorage.getItem(PANE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const out: Record<string, 'code' | 'timeline'> = {};
-    for (const [k, v] of Object.entries(parsed)) if (v === 'code' || v === 'timeline') out[k] = v;
+    const out: Record<string, RailPane> = {};
+    for (const [k, v] of Object.entries(parsed)) if (v === 'code' || v === 'timeline' || v === 'learning') out[k] = v;
     return out;
   } catch { return {}; }
 }
 
 /** Session ids are per-launch, so the map is pruned to sessions that still exist. */
-function writePanes(map: Record<string, 'code' | 'timeline'>, live: string[]) {
+function writePanes(map: Record<string, RailPane>, live: string[]) {
   try {
     const keep = new Set(live);
     const out = Object.fromEntries(Object.entries(map).filter(([k]) => keep.has(k)));
     localStorage.setItem(PANE_KEY, JSON.stringify(out));
   } catch { /* storage can be blocked; the choice just stops surviving a restart */ }
+}
+
+/* ── what you called this session ─────────────────────────────────────── */
+
+const LABEL_KEY = 'wanigan.session.labels';
+const LABEL_MAX = 60;
+
+function readLabels(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(LABEL_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v === 'string' && v.trim()) out[k] = v.trim().slice(0, LABEL_MAX);
+    }
+    return out;
+  } catch { return {}; }
+}
+
+/** Pruned to live sessions, exactly like the pane map: ids are per-launch. */
+function writeLabels(map: Record<string, string>, live: string[]) {
+  try {
+    const keep = new Set(live);
+    const out = Object.fromEntries(Object.entries(map).filter(([k]) => keep.has(k)));
+    localStorage.setItem(LABEL_KEY, JSON.stringify(out));
+  } catch { /* storage can be blocked; the name just stops surviving a reload */ }
 }
 
 /* ── P19 + P9 · the session header ────────────────────────────────────── */
@@ -1003,12 +1174,20 @@ function RunConfigBar({ session, provider }: { session: Session; provider: Provi
   });
   const [sent, setSent] = useState<string | null>(null);
 
-  function send(command: string) {
-    // No trailing newline anywhere else in this file types for the user, but a
-    // slash command is the whole action — there is nothing left to write.
-    window.wanigan.sessions.write(session.id, command + '\r');
-    setSent(command);
-    window.setTimeout(() => setSent((c) => (c === command ? null : c)), 2600);
+  function send(field: 'model' | 'effort', value: string) {
+    // A slash command is the whole action — there is nothing left to write —
+    // and setTuning both types it and records the value on the session row.
+    // Without that write-back, a tab switch remounts this bar and it re-seeds
+    // from launch-time argv: the slider snapped back to the default while the
+    // session kept running at the level actually sent.
+    const command = `/${field} ${value}`;
+    window.wanigan.sessions.setTuning(session.id, field, value)
+      .then((ok) => {
+        if (!ok) return;
+        setSent(command);
+        window.setTimeout(() => setSent((c) => (c === command ? null : c)), 2600);
+      })
+      .catch(() => { /* exited under the click; the next session push removes this bar */ });
   }
 
   return (
@@ -1021,7 +1200,7 @@ function RunConfigBar({ session, provider }: { session: Session; provider: Provi
             className="field"
             style={{ padding: '3px 7px', fontSize: 'var(--t-small)' }}
             value={model}
-            onChange={(e) => { setModel(e.target.value); if (e.target.value) send(`/model ${e.target.value}`); }}
+            onChange={(e) => { setModel(e.target.value); if (e.target.value) send('model', e.target.value); }}
           >
             <option value="">CLI default</option>
             {models.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
@@ -1041,8 +1220,8 @@ function RunConfigBar({ session, provider }: { session: Session; provider: Provi
             aria-label="Effort level"
             aria-valuetext={EFFORT_LEVELS[effortIdx]}
             onChange={(e) => setEffortIdx(Number(e.target.value))}
-            onPointerUp={() => send(`/effort ${EFFORT_LEVELS[effortIdx]}`)}
-            onKeyUp={(e) => { if (e.key.startsWith('Arrow')) send(`/effort ${EFFORT_LEVELS[effortIdx]}`); }}
+            onPointerUp={() => send('effort', EFFORT_LEVELS[effortIdx])}
+            onKeyUp={(e) => { if (e.key.startsWith('Arrow')) send('effort', EFFORT_LEVELS[effortIdx]); }}
             style={{ width: 128, accentColor: 'var(--accent)' }}
           />
           {/* The word, not just the notch — a slider position is not a value. */}
@@ -1115,8 +1294,12 @@ function WorktreeBar({ session, path, onRefresh }: {
 
   useEffect(() => {
     void load();
-    const t = setInterval(() => void load(), 20_000);
-    return () => clearInterval(t);
+    // Nobody is reading a worktree count in a hidden window, and the Sessions
+    // tab already runs several pollers; this one shells out to git each time.
+    const t = setInterval(() => { if (!document.hidden) void load(); }, 20_000);
+    const onVis = () => { if (!document.hidden) void load(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
   }, [load]);
 
   async function merge() {
@@ -1198,8 +1381,15 @@ function WorktreeBar({ session, path, onRefresh }: {
                         onClick={merge}>
                 {busy === 'merge' ? 'Merging…' : 'Merge'}
               </FocusBtn>
-              <FocusBtn className="btn btn-danger" style={{ padding: '3px 9px' }} disabled={busy !== null}
-                        title="Delete this worktree folder" onClick={askDiscard}>
+              {/* Deleting the checkout an agent is actively editing pulls the
+                  ground out from under a live process. The session has to end
+                  first — the button says so instead of failing halfway. */}
+              <FocusBtn className="btn btn-danger" style={{ padding: '3px 9px' }}
+                        disabled={busy !== null || session.status === 'running'}
+                        title={session.status === 'running'
+                          ? 'End this session before discarding the worktree it is running in'
+                          : 'Delete this worktree folder'}
+                        onClick={askDiscard}>
                 {busy === 'check' ? 'Checking…' : 'Discard…'}
               </FocusBtn>
             </div>
@@ -1264,6 +1454,7 @@ type AttachState = ReturnType<typeof useAttachments>;
 
 function useAttachments(sessionId: string | null) {
   const [items, setItems] = useState<Attachment[]>([]);
+  const [sent, setSent] = useState(0);
   const [cost, setCost] = useState<Record<string, number | null>>({});
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -1280,9 +1471,13 @@ function useAttachments(sessionId: string | null) {
     // Switching tabs mid-read must not paint the previous session's files.
     const mine = ++run.current;
     try {
-      const list = (await window.wanigan.attach.list(sessionId)) as Attachment[];
+      const all = (await window.wanigan.attach.list(sessionId)) as Attachment[];
       if (mine !== run.current) return;
+      // Sent files leave the strip the way they do in any chat client. The row
+      // and the staged bytes both stay: the agent may still be reading them.
+      const list = all.filter((a) => a.sentAt === null);
       setItems(list);
+      setSent(all.length - list.length);
       setPhase('ready');
       setLoadErr(null);
       // Cost comes from the main process's own pricing, one bounded header read
@@ -1311,6 +1506,26 @@ function useAttachments(sessionId: string | null) {
     setRejects((prev) => [...prev, { key, text }].slice(-4));
   }, []);
 
+  /**
+   * Staging a file is not the same as telling the agent about it: the agent
+   * reads from disk, so its path has to appear in the prompt. Attaching used
+   * to stop at staging, which is why a file could be added, a question asked,
+   * and the agent never learn the file existed.
+   */
+  const typeReference = useCallback(async (onlyNew = false) => {
+    if (!sessionId) return false;
+    try {
+      const ok = await window.wanigan.attach.type(sessionId, onlyNew);
+      if (ok) {
+        setHint('Added to your prompt, not sent. Say what you want done with it, then press Enter.');
+      } else if (!onlyNew) {
+        setHint('Nothing to reference yet — attach a file first.');
+      }
+      await load();
+      return ok;
+    } catch (e) { reject(msg(e)); return false; }
+  }, [sessionId, load, reject]);
+
   const addFiles = useCallback(async (files: File[]) => {
     if (!sessionId || files.length === 0) return;
     setBusy(true); setHint(null);
@@ -1325,7 +1540,10 @@ function useAttachments(sessionId: string | null) {
     }
     setBusy(false);
     await load();
-  }, [sessionId, load, reject]);
+    // Only the newly staged files: a file already named in the prompt must not
+    // be typed a second time.
+    await typeReference(true);
+  }, [sessionId, load, reject, typeReference]);
 
   const addPaths = useCallback(async (paths: string[]) => {
     if (!sessionId || paths.length === 0) return;
@@ -1336,7 +1554,10 @@ function useAttachments(sessionId: string | null) {
     }
     setBusy(false);
     await load();
-  }, [sessionId, load, reject]);
+    // Only the newly staged files: a file already named in the prompt must not
+    // be typed a second time.
+    await typeReference(true);
+  }, [sessionId, load, reject, typeReference]);
 
   const browse = useCallback(async () => {
     try {
@@ -1351,21 +1572,24 @@ function useAttachments(sessionId: string | null) {
     await load();
   }, [load, reject]);
 
-  const typeReference = useCallback(async () => {
-    if (!sessionId) return;
-    try {
-      const ok = await window.wanigan.attach.type(sessionId);
-      setHint(ok
-        ? 'Typed into the session, not sent. Write what you want done with it, then press Enter.'
-        : 'Nothing to reference yet — attach a file first.');
-    } catch (e) { reject(msg(e)); }
-  }, [sessionId, reject]);
 
   useEffect(() => {
     if (!hint) return;
     const t = setTimeout(() => setHint(null), 9000);
     return () => clearTimeout(t);
   }, [hint]);
+
+  // The pooled terminal announces a submitted line; the files that prompt named
+  // have gone to the agent, so re-read and let them leave the strip.
+  useEffect(() => {
+    if (!sessionId) return;
+    const onSubmit = (e: Event) => {
+      const detail = (e as CustomEvent<{ sessionId?: string }>).detail;
+      if (detail?.sessionId === sessionId) void load();
+    };
+    window.addEventListener('wanigan:session-submit', onSubmit);
+    return () => window.removeEventListener('wanigan:session-submit', onSubmit);
+  }, [sessionId, load]);
 
   // ⌘V anywhere in the view, because the terminal is usually focused but the
   // browse button might be. Text paste is left alone for xterm to handle.
@@ -1424,7 +1648,8 @@ function useAttachments(sessionId: string | null) {
   }, [sessionId, addFiles, reject]);
 
   return {
-    items, cost, phase, loadErr, rejects, hint, busy, dragging,
+    items,
+    sent, cost, phase, loadErr, rejects, hint, busy, dragging,
     reload: load, browse, remove, typeReference,
     dismiss: (key: number) => setRejects((prev) => prev.filter((r) => r.key !== key)),
     onDragEnter, onDragOver, onDragLeave, onDrop,
@@ -1461,8 +1686,9 @@ function AttachStrip({ session, att }: { session: Session; att: AttachState }) {
         <span className="label" style={{ flex: 'none' }}>Attachments</span>
         <span className="faint" style={{ fontSize: 'var(--t-small)', fontVariantNumeric: 'tabular-nums' }}>
           {att.phase === 'loading' ? 'reading…'
-            : att.items.length === 0 ? 'none staged'
-            : `${plural(att.items.length, 'file')}`}
+            : att.items.length === 0
+              ? (att.sent > 0 ? `none staged · ${plural(att.sent, 'file')} sent` : 'none staged')
+              : `${plural(att.items.length, 'file')} staged${att.sent > 0 ? ` · ${att.sent} sent` : ''}`}
           {images.length > 0 && visual > 0 && (
             <> · {num(visual)} visual tokens ≈ {usd(priced)} when read</>
           )}
@@ -1472,12 +1698,12 @@ function AttachStrip({ session, att }: { session: Session; att: AttachState }) {
                     title="Pick files to stage for this session">
             {att.busy ? 'Adding…' : '+ Add files'}
           </FocusBtn>
-          <FocusBtn className="btn" style={{ padding: '3px 9px' }} onClick={att.typeReference}
+          <FocusBtn className="btn" style={{ padding: '3px 9px' }} onClick={() => void att.typeReference()}
                     disabled={att.items.length === 0 || att.busy || session.status === 'exited'}
                     title={session.status === 'exited'
                       ? 'This session has exited, so there is no prompt to type into. Resume it from Recent, then add the file.'
-                      : 'Types the file reference into the prompt and stops — you write the question and press Enter'}>
-            Add to prompt
+                      : 'Attaching already names these files in your prompt. Use this to name them again — after clearing the input, say.'}>
+            Name again
           </FocusBtn>
         </div>
       </div>
@@ -1494,7 +1720,8 @@ function AttachStrip({ session, att }: { session: Session; att: AttachState }) {
       ) : att.items.length === 0 ? (
         <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
           Nothing staged yet. Drop a file on the terminal, paste a screenshot with ⌘V, or add one —
-          Wanigan copies it where {session.projectName}'s agent can read it and names the path in your prompt.
+          Wanigan copies it where {session.projectName}'s agent can read it and writes the path into your
+          prompt, so all you add is the question. Sent files leave this strip.
         </p>
       ) : (
         // Its own scroller: a dozen chips are wider than the pane, and the view

@@ -27,12 +27,20 @@ import os from 'node:os';
 
 /**
  * Managed policy sits outside the user's control on purpose, and its CLAUDE.md
- * can never be excluded. The docs cover macOS and Linux/WSL; anything else
- * falls back to the Linux location rather than inventing a third path.
+ * can never be excluded. macOS, Windows (%ProgramData%) and Linux/WSL each have
+ * a documented location; anything else falls back to the Linux path rather than
+ * inventing a fourth. Exported so the memory and config modules resolve the
+ * SAME directory — three panels reading three managed layers would contradict
+ * each other about one policy.
  */
-const MANAGED_DIR = process.platform === 'darwin'
-  ? '/Library/Application Support/ClaudeCode'
-  : '/etc/claude-code';
+export function managedPolicyDir(): string {
+  if (process.platform === 'darwin') return '/Library/Application Support/ClaudeCode';
+  if (process.platform === 'win32') {
+    return path.join(process.env.ProgramData || 'C:\\ProgramData', 'ClaudeCode');
+  }
+  return '/etc/claude-code';
+}
+const MANAGED_DIR = managedPolicyDir();
 const MANAGED_CLAUDE_MD = path.join(MANAGED_DIR, 'CLAUDE.md');
 const MANAGED_SETTINGS = path.join(MANAGED_DIR, 'managed-settings.json');
 
@@ -198,6 +206,14 @@ function readCapped(p: string, cap: number): { text: string; truncated: boolean;
 
 /** The file itself, for a reading pane. Throws with a sentence, because a click asked for this one file. */
 export function readInstruction(p: string): { text: string; truncated: boolean; bytes: number } {
+  if (!servable.has(p)) {
+    // The renderer asked for a path no scan produced. A legitimate open always
+    // follows a scan of the chain that listed the file; anything else is not
+    // this process's file to hand over.
+    throw new Error(
+      `${p} is not part of a scanned instruction chain. Re-scan the project, then open the file from its row.`
+    );
+  }
   let st: fs.Stats;
   try {
     st = fs.statSync(p);
@@ -591,6 +607,33 @@ function unquote(v: string): string {
 }
 
 /**
+ * Split a YAML flow list's contents on commas — but only commas outside quotes
+ * and outside braces. A naive split turns ["*.{ts,tsx}"] into two broken
+ * globs, each of which matches nothing, and the rule is then reported as one
+ * that never loads when it works fine.
+ */
+function splitFlowList(s: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let quote: '"' | "'" | null = null;
+  let depth = 0;
+  for (const c of s) {
+    if (quote) {
+      if (c === quote) quote = null;
+      cur += c;
+      continue;
+    }
+    if (c === '"' || c === "'") { quote = c; cur += c; continue; }
+    if (c === '{') depth++;
+    else if (c === '}' && depth > 0) depth--;
+    else if (c === ',' && depth === 0) { out.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+
+/**
  * The one frontmatter key that decides when a rule loads. Deliberately small,
  * like skills.ts: a YAML parser bought to read one key would be a dependency,
  * and the three shapes people actually write are a block list, a flow list and
@@ -612,7 +655,7 @@ function rulePaths(text: string): { globs: string[]; hasPaths: boolean } {
       hasPaths = true;
       const rest = m[1].trim();
       if (rest.startsWith('[')) {
-        for (const part of rest.replace(/^\[|\]$/g, '').split(',')) {
+        for (const part of splitFlowList(rest.replace(/^\[|\]$/g, ''))) {
           const v = unquote(part);
           if (v) globs.push(v);
         }
@@ -817,6 +860,24 @@ function recordIfPresent(ctx: Ctx, p: string, scope: InstructionScope, opts: Rec
   return record(ctx, p, scope, opts);
 }
 
+/**
+ * Which memory filename a directory entry fills, if any. On macOS and Windows
+ * the default filesystems are case-insensitive, so a mis-cased Claude.md loads
+ * in real sessions — the CLI's open of CLAUDE.md finds it — and a walk that
+ * compares exactly would list a file the agent reads as if it did not exist.
+ * Linux stays exact: there the CLI itself would not load it.
+ */
+const CASE_INSENSITIVE_FS = process.platform === 'darwin' || process.platform === 'win32';
+
+function memoryBasename(name: string): 'CLAUDE.md' | 'CLAUDE.local.md' | null {
+  if (name === 'CLAUDE.md' || name === 'CLAUDE.local.md') return name;
+  if (!CASE_INSENSITIVE_FS) return null;
+  const lower = name.toLowerCase();
+  if (lower === 'claude.md') return 'CLAUDE.md';
+  if (lower === 'claude.local.md') return 'CLAUDE.local.md';
+  return null;
+}
+
 /** Every directory between the filesystem root and the project, root first. */
 function ancestorsOf(dir: string): string[] {
   const out: string[] = [];
@@ -927,6 +988,32 @@ export function agentsMdStatus(projectPath: string): { present: boolean; importe
 /** Short TTL, like the skills catalogue: a panel that re-renders must not re-walk a monorepo each time. */
 const TTL_MS = 15_000;
 const cache = new Map<string, { at: number; value: InstructionChain }>();
+
+/**
+ * Every path a scan has handed to the renderer. context:read serves ONLY
+ * these: the renderer names a file, but the scanner decides which files exist
+ * to be named. Without this, one IPC call reads any path on disk — ~/.ssh
+ * included — from a renderer whose input this process must treat as untrusted.
+ * Exact string membership, deliberately: the scanner emitted these strings,
+ * so a path that differs by one byte was not produced by a scan.
+ */
+const servable = new Set<string>();
+
+function markServable(paths: string[]): void {
+  // Bounded like the chain cache; a clear only means "re-scan before reading",
+  // which the read error already tells the user to do.
+  if (servable.size > 8_192) servable.clear();
+  for (const p of paths) servable.add(p);
+}
+
+/**
+ * Whether a scan has handed this exact path to the renderer — the same
+ * membership context:read enforces, exported so context:budget can confine
+ * itself to the files a scan actually produced.
+ */
+export function isServablePath(p: string): boolean {
+  return servable.has(p);
+}
 
 export function refreshInstructions(): void {
   cache.clear();
@@ -1064,8 +1151,9 @@ export function resolveInstructions(projectPath: string): InstructionChain {
 
   const walkResult = projectFiles();
   for (const rel of walkResult.files) {
-    const base = path.basename(rel);
-    if (base !== 'CLAUDE.md' && base !== 'CLAUDE.local.md') continue;
+    // The entry keeps its on-disk name; only the comparison is case-relaxed.
+    const base = memoryBasename(path.basename(rel));
+    if (!base) continue;
     const dir = path.dirname(rel);
     // The project's own files are already placed; only subdirectories are new.
     if (dir === '.' || dir === '' || dir === '.claude' || dir.startsWith('.claude' + path.sep)) continue;
@@ -1124,5 +1212,6 @@ export function resolveInstructions(projectPath: string): InstructionChain {
   // Bounded, so switching between many projects cannot grow this without end.
   if (cache.size > 24) cache.clear();
   cache.set(abs, { at: Date.now(), value });
+  markServable(ctx.files.map((f) => f.path));
   return value;
 }

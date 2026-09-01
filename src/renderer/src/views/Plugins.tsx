@@ -21,6 +21,63 @@ type State = {
 
 const kb = (b: number) => (b < 1024 ? `${b} B` : b < 1048576 ? `${Math.round(b / 1024)} KB` : `${(b / 1048576).toFixed(1)} MB`);
 
+/**
+ * What is known about whether Claude Code currently has a plugin switched on.
+ *
+ * The disk scan records installation and nothing else — `installed_plugins.json`
+ * and the plugin directory have no enable/disable field — so the honest default
+ * is that the state has not been read. `claude plugin list --json` does know, and
+ * this view already asks it for the catalog, so the unknown is resolvable rather
+ * than permanent. It is still four separate answers and not one:
+ *
+ *  - `unread`    nobody has asked the CLI yet. The recommended action is to ask.
+ *  - `on`/`off`  the CLI answered for this plugin. Only one action can apply.
+ *  - `absent`    the CLI answered, and does not list this plugin as installed —
+ *                the disk and the CLI disagree, which is its own problem.
+ *  - `unlisted`  the CLI answered and has never heard of this id, so the disk
+ *                remains the only source and both actions stay on offer.
+ */
+type Enablement = 'unread' | 'on' | 'off' | 'absent' | 'unlisted';
+
+function enablementOf(id: string, cat: CatalogItem[] | null): Enablement {
+  if (!cat) return 'unread';
+  const row = cat.find((c) => c.id === id);
+  if (!row) return 'unlisted';
+  if (!row.installed) return 'absent';
+  return row.enabled ? 'on' : 'off';
+}
+
+/* Glyph plus word first, colour last — a card whose only difference from its
+   neighbour is a hue is a card nobody can read in greyscale. `blurb` is shown
+   as text on the card for every answer that is not a plain on/off, because
+   "enabled state not on disk" is a sentence about Wanigan's plumbing that
+   means nothing to the person reading it. */
+const ENABLEMENT: Record<Enablement, { glyph: string; word: string; tone: string; blurb: string }> = {
+  unread: {
+    glyph: '?', word: 'enabled state not read', tone: 'var(--text-faint)',
+    blurb: 'Nothing on disk records whether Claude Code has this switched on — installed_plugins.json and the '
+      + 'plugin folder note the installation and stop there. The CLI does know, and has not been asked yet.',
+  },
+  on: {
+    glyph: '●', word: 'enabled', tone: 'var(--good)',
+    blurb: 'The CLI reports this as enabled, so its skills, commands, hooks and MCP servers load into sessions.',
+  },
+  off: {
+    glyph: '○', word: 'disabled', tone: 'var(--text-dim)',
+    blurb: 'The CLI reports this as installed but switched off, so it costs a session nothing.',
+  },
+  absent: {
+    glyph: '⚠', word: 'the CLI does not list it', tone: 'var(--warning)',
+    blurb: 'It is registered on disk, but the CLI does not report it as installed. The two disagree, and the CLI '
+      + 'is the one your sessions obey — reinstall it, or remove the stale registration.',
+  },
+  unlisted: {
+    glyph: '?', word: 'not in the CLI catalog', tone: 'var(--text-faint)',
+    blurb: 'The CLI answered and its catalog has no entry with this id, usually because the marketplace it came '
+      + 'from was removed. Disk is the only source left, and disk does not record enable state.',
+  },
+};
+
 export default function Plugins() {
   const [st, setSt] = useState<State | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -108,11 +165,20 @@ export default function Plugins() {
   if (!st) return <div className="pg-wrap"><p className="dim">Reading your plugins…</p></div>;
 
   const missing = st.installed.filter((p) => !p.present);
+  // The one call that turns every card's unknown into an answer failed. Told on
+  // the cards themselves, not only inside the collapsed catalog section that
+  // happens to own the request.
+  const askFailed = !cat && catNote !== null;
 
   return (
     <div className="pg-wrap">
+      {/* Named for whose plugins these are. "Plugins" on a control surface for
+          coding agents reads as "things that extend this app", and nothing here
+          does: every row is a Claude Code plugin, installed by the Claude Code
+          CLI into its own directory, loaded by Claude Code sessions. Wanigan
+          reads and drives that; it has no extension format of its own. */}
       <div className="pg-head">
-        <h1>Plugins</h1>
+        <h1>Claude Code plugins</h1>
         <span className="pg-count">{st.installed.length} installed · {st.available.length} in the catalog</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           <button className="btn" disabled={busy} onClick={() => void load(true)}>
@@ -120,6 +186,16 @@ export default function Plugins() {
           </button>
         </div>
       </div>
+      <p className="dim" style={{ maxWidth: '76ch', marginTop: 6, lineHeight: 1.55 }}>
+        These are Claude Code's own plugins — bundles of skills, slash commands, subagents, hooks and MCP
+        servers that the <span className="mono">claude</span> CLI installs under{' '}
+        <span className="mono">~/.claude/plugins</span> and loads into its sessions. Wanigan reads that
+        directory and drives the same CLI commands you would run in a terminal. Nothing here extends Wanigan
+        itself: there is no Wanigan plugin format, and writing one of these does not add a view, a panel or an
+        IPC channel to this app. What an enabled plugin costs a session is in Context (
+        <span className="mono">⌘⇧C</span>), and the skills it ships are listed in Skills (
+        <span className="mono">⌘⇧S</span>).
+      </p>
 
       {/* The distinction the directory layout makes easy to get wrong. */}
       {st.notes.map((n, i) => (
@@ -145,7 +221,43 @@ export default function Plugins() {
       </div>
 
       <div className="pg-sec">
-        <div className="pg-sec-h"><h2>Installed</h2><span className="n">{st.installed.length}</span></div>
+        <div className="pg-sec-h">
+          <h2>Installed</h2><span className="n">{st.installed.length}</span>
+          {/* The recommended action, once rather than once per card. It fills
+              the same catalog the section below uses, so a single call turns
+              every card's unknown into an answer — and it is not run on mount
+              because it shells out to the CLI twice and this view has to work
+              with nothing installed and no network. */}
+          {st.installed.length > 0 && !cat && (
+            <button className="btn btn-primary" style={{ marginLeft: 'auto', fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                    disabled={catBusy}
+                    title="Runs `claude plugin list --json`, the only thing that knows whether a plugin is enabled."
+                    onClick={() => void loadCatalog()}>
+              {catBusy ? 'Asking the CLI…' : askFailed ? 'Ask the CLI again' : 'Ask the CLI which are enabled'}
+            </button>
+          )}
+        </div>
+        {st.installed.length > 0 && !cat && (
+          <div style={{ marginBottom: 11, maxWidth: '76ch' }}>
+            <Note tone={askFailed ? 'error' : 'info'}>
+              {askFailed ? (
+                <>
+                  <strong>The CLI could not be asked:</strong> {catNote} Until it answers, every card below says
+                  its enabled state has not been read, and both Disable and Enable stay on offer — each one runs
+                  the matching <span className="mono">claude plugin</span> command and reports what it said.
+                </>
+              ) : (
+                <>
+                  <strong>Enabled state is not recorded on disk.</strong>{' '}
+                  <span className="mono">installed_plugins.json</span> and the plugin folders note that a plugin
+                  is installed and stop there, so Wanigan's own scan cannot tell an enabled plugin from a
+                  disabled one. <span className="mono">claude plugin list --json</span> can. One call above
+                  answers for every card.
+                </>
+              )}
+            </Note>
+          </div>
+        )}
         {st.installed.length === 0 ? (
           <p className="dim" style={{ maxWidth: '62ch', lineHeight: 1.55 }}>
             No plugins installed. The catalog below lists what the marketplaces offer —
@@ -156,6 +268,12 @@ export default function Plugins() {
             {st.installed.map((p) => {
               const items = [...p.skills, ...p.commands, ...p.agents];
               const isOpen = open[p.id];
+              const state = enablementOf(p.id, cat);
+              const mark = ENABLEMENT[state];
+              // Only an answered state can narrow the actions to one. Every
+              // other answer keeps both, because offering only Disable was a
+              // one-way door out of Wanigan with no way back except the CLI.
+              const known = state === 'on' || state === 'off';
               return (
                 <article key={p.id} className={`pg-card${p.present ? '' : ' gone'}`}>
                   <div className="pg-top">
@@ -208,17 +326,57 @@ export default function Plugins() {
                     {p.author && <span>{p.author}</span>}
                     {p.present && <span>{kb(p.bytes)}</span>}
                     <span>{p.lastUpdated ? `updated ${ago(p.lastUpdated)}` : 'no date'}</span>
+                    {/* Read from installed_plugins.json and the plugin directory
+                        until the CLI is asked, and neither records enable state.
+                        An unknown still renders as an unknown — it just no
+                        longer has to stay one. */}
+                    <span title={mark.blurb} style={{ color: mark.tone }}>
+                      <span aria-hidden="true">{mark.glyph}</span> {mark.word}
+                    </span>
                     {!p.present && <span style={{ color: 'var(--warning)' }}>✕ missing</span>}
+                    {/* The CLI reports always-on cost as an estimate and prints
+                        its own tilde; it is repeated here with the word est. so
+                        this reads the same as every other estimate in Wanigan. */}
                     {cost[p.name] != null && (
-                      <span style={{ color: 'var(--accent)' }}>~{num(cost[p.name] as number)} tok every session</span>
+                      <span style={{ color: 'var(--accent)' }}>
+                        ~{num(cost[p.name] as number)} est. tokens every session
+                      </span>
                     )}
                   </div>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
-                            disabled={working === p.id}
-                            onClick={() => void act(p.id, () => window.wanigan.plugins.setEnabled(p.id, false))}>
-                      {working === p.id ? 'working…' : 'Disable'}
-                    </button>
+                  {/* The unknown, in words. A card that says "enabled state not
+                      on disk" and then offers two equally-weighted opposite
+                      buttons is honest and unusable; the state stays honest and
+                      the sentence says what it means. The one action that
+                      resolves it lives at the top of this section, because it
+                      answers for every card at once. */}
+                  {!known && (
+                    <p style={{ fontSize: 'var(--t-micro)', lineHeight: 1.5, color: 'var(--text-faint)' }}>
+                      {mark.blurb}
+                      {state === 'unread' && !askFailed && ' Ask the CLI at the top of this section to resolve it.'}
+                    </p>
+                  )}
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {/* Each button runs the matching `claude plugin` command and
+                        reports what it said. Once the CLI has answered, only the
+                        direction that changes something is offered. */}
+                    {state !== 'off' && (
+                      <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                              disabled={working === p.id}
+                              title="Runs `claude plugin disable` for this plugin."
+                              onClick={() => void act(p.id, () => window.wanigan.plugins.setEnabled(p.id, false))}>
+                        Disable
+                      </button>
+                    )}
+                    {state !== 'on' && (
+                      <button className={`btn${state === 'off' ? ' btn-primary' : ''}`}
+                              style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                              disabled={working === p.id}
+                              title="Runs `claude plugin enable` for this plugin. Harmless if it is already enabled — the CLI's answer is shown below."
+                              onClick={() => void act(p.id, () => window.wanigan.plugins.setEnabled(p.id, true))}>
+                        Enable
+                      </button>
+                    )}
+                    {working === p.id && <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>working…</span>}
                     <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
                             title="What this plugin adds to every session's context"
                             onClick={() => void showCost(p.name)}>Cost</button>

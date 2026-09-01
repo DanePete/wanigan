@@ -266,18 +266,46 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
     sessionId: SID, projectId: 'prj_smoke', projectPath: repo, trust,
   });
   const write: HookInput = { hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: path.join(repo, 'a.ts') } };
-  const outside: HookInput = { hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: path.join(os.homedir(), '.ssh', 'id_rsa') } };
+  const outside: HookInput = { hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: path.join(tmp, 'elsewhere', 'b.ts') } };
+  const credential: HookInput = { hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: path.join(os.homedir(), '.ssh', 'id_rsa') } };
   const read: HookInput = { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: path.join(repo, 'a.ts') } };
 
-  check(policy.decideFor(ctxFor('readonly'), read).decision === 'allow', 'readonly allows a Read');
-  check(policy.decideFor(ctxFor('readonly'), write).decision === 'deny', 'readonly denies a Write');
-  check(policy.decideFor(ctxFor('project'), write).decision === 'allow', 'project allows a write inside the project');
-  check(policy.decideFor(ctxFor('project'), outside).decision === 'deny', 'project denies a write outside the project');
-  check(policy.decideFor(ctxFor('trusted'), outside).decision === 'allow', 'trusted denies nothing');
+  // Below trusted, the gate's answer to an overreach is a question, not a wall:
+  // readonly holds a write for approval and project holds a write that lands
+  // outside the working directory. Assert the exact decision, never merely
+  // "not allow" — 'ask' and 'deny' are different answers and the difference is
+  // the whole point of the level. A rule id goes with each so a decision that
+  // stays correct by accident, via some other rule, still fails here.
+  const readonlyRead = policy.decideFor(ctxFor('readonly'), read);
+  const readonlyWrite = policy.decideFor(ctxFor('readonly'), write);
+  const projectInside = policy.decideFor(ctxFor('project'), write);
+  const projectOutside = policy.decideFor(ctxFor('project'), outside);
+  const projectCredential = policy.decideFor(ctxFor('project'), credential);
+  const trustedOutside = policy.decideFor(ctxFor('trusted'), outside);
 
-  const before = policy.ledger(5).length;
-  policy.recordDecision(ctxFor('project'), outside, policy.decideFor(ctxFor('project'), outside));
-  check(policy.ledger(5).length > before, 'the denial is written to the ledger');
+  check(readonlyRead.decision === 'allow' && readonlyRead.rule === 'readonly.read',
+    'readonly allows a Read', readonlyRead);
+  check(readonlyWrite.decision === 'ask' && readonlyWrite.rule === 'readonly.write',
+    'readonly asks before a Write rather than denying it', readonlyWrite);
+  check(projectInside.decision === 'allow' && projectInside.rule === 'project.write-inside',
+    'project allows a write inside the project', projectInside);
+  check(projectOutside.decision === 'ask' && projectOutside.rule === 'project.write-outside',
+    'project asks before a write outside the project rather than denying it', projectOutside);
+  check(projectCredential.decision === 'ask' && projectCredential.rule === 'credential-path',
+    'a write into a home credential directory is asked before any trust rule sees it', projectCredential);
+  check(trustedOutside.decision === 'allow' && trustedOutside.rule === 'trusted.allow',
+    'trusted denies nothing', trustedOutside);
+
+  // recordDecision skips only an unremarkable allow, so an 'ask' still lands.
+  // The row is the point: an approval prompt the operator answered off the
+  // record would leave the same gap in the ledger a silent denial would.
+  const newestBefore = policy.ledger(1)[0]?.id ?? 0;
+  policy.recordDecision(ctxFor('project'), outside, projectOutside);
+  const newest = policy.ledger(1)[0];
+  check(!!newest && newest.id > newestBefore, 'the withheld write is written to the ledger', newest);
+  check(newest?.decision === 'ask' && newest?.rule === 'project.write-outside'
+    && newest?.toolName === 'Write' && newest?.trust === 'project',
+    'the ledger records it as an ask, with the rule and trust that withheld it', newest);
 
   /* ── phase 11 · the dispatcher ─────────────────────────────────────── */
   say('── phase 11 · dispatcher');
@@ -367,6 +395,31 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   check(attachments.promptableSessionAttachments(attachmentSession).length === 0,
     'a stale attachment record is never named in a prompt');
   attachments.cleanupSessionAttachments(attachmentSession);
+
+  /* A staged file is not a sent file. The agent reads from disk, so an
+     attachment only reaches it once its path is named in a prompt AND that
+     prompt is submitted — and the strip clears on exactly that second step. */
+  const lifecycle = `${SID}-attachment-lifecycle`;
+  const first = attachments.attachBufferToSession(lifecycle, fs.readFileSync(png), 'one.png');
+  const second = attachments.attachBufferToSession(lifecycle, fs.readFileSync(png), 'two.png');
+  check(first.referencedAt === null && first.sentAt === null,
+    'a freshly staged attachment is neither named in a prompt nor sent');
+  check(attachments.markAttachmentsReferenced([first.id]) === 1,
+    'naming an attachment in the prompt is recorded');
+  check(attachments.markAttachmentsReferenced([first.id]) === 0,
+    'naming it twice does not re-record it, so a second attachment cannot repeat the first');
+  check(attachments.markSessionAttachmentsSent(lifecycle) === 1,
+    'submitting a line sends only what that prompt actually named');
+  const afterSend = attachments.sessionAttachments(lifecycle);
+  const sentOne = afterSend.find((a) => a.id === first.id);
+  const stagedTwo = afterSend.find((a) => a.id === second.id);
+  check(sentOne?.sentAt !== null && stagedTwo?.sentAt === null,
+    'a file staged but never named survives someone pressing Enter on an unrelated message');
+  check(fs.statSync(sentOne!.storedPath).isFile(),
+    'a sent attachment keeps its bytes on disk, because the agent may still be reading them');
+  check(!attachments.promptableSessionAttachments(lifecycle).some((a) => a.id === first.id),
+    'an attachment already sent is never named into a later prompt again');
+  attachments.cleanupSessionAttachments(lifecycle);
 
   // HEIC bytes wearing a .png name — the case that otherwise fails much later.
   const fakePng = path.join(tmp, 'vacation.png');

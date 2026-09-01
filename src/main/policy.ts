@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { db } from './db';
+import { redactCredentials } from './redact';
 import { getSetting, setSetting } from './settings';
 import { TRUST_COPY, TRUST_LEVELS } from '../shared/types';
 import type { HookInput, LedgerEntry, PolicyDecision, TrustLevel } from '../shared/types';
@@ -58,7 +59,22 @@ export function defaultTrust(): TrustLevel {
 }
 
 export function setDefaultTrust(level: TrustLevel): void {
-  setSetting(DEFAULT_TRUST_KEY, requireTrust(level));
+  const trust = requireTrust(level);
+  setSetting(DEFAULT_TRUST_KEY, trust);
+  // Rebind running sessions that ride the default — a context registered at
+  // SessionStart would otherwise keep the old level until the next restart,
+  // which reads as the setting not working. A project with its own explicit
+  // trust row keeps that row's answer.
+  for (const ctx of contexts.values()) {
+    if (!ctx.projectId) {
+      ctx.trust = trust;
+      continue;
+    }
+    const row = db()
+      .prepare('SELECT trust FROM project_trust WHERE project_id = ?')
+      .get(ctx.projectId) as { trust: string } | undefined;
+    if (!asTrust(row?.trust)) ctx.trust = trust;
+  }
 }
 
 export function trustFor(projectId: string | null): TrustLevel {
@@ -72,12 +88,19 @@ export function trustFor(projectId: string | null): TrustLevel {
 }
 
 export function setTrust(projectId: string, level: TrustLevel): void {
+  const trust = requireTrust(level);
   db()
     .prepare(
       `INSERT INTO project_trust (project_id, trust, set_at) VALUES (?,?,?)
        ON CONFLICT(project_id) DO UPDATE SET trust=excluded.trust, set_at=excluded.set_at`
     )
-    .run(projectId, requireTrust(level), Date.now());
+    .run(projectId, trust, Date.now());
+  // A trust change the operator just made must bind running sessions too. The
+  // contexts are registered with trust baked in at SessionStart, so without
+  // this the flip appears to do nothing until every session is relaunched.
+  for (const ctx of contexts.values()) {
+    if (ctx.projectId === projectId) ctx.trust = trust;
+  }
 }
 
 /* ── tool classification ──────────────────────────────────────────────── */
@@ -268,7 +291,12 @@ function credentialTarget(input: HookInput, root: string | null): string | null 
  * tokenizer, and no follow-through on a two-step `curl -o x && sh x`.
  */
 
-type BashFinding = { rule: string; reason: string };
+/**
+ * `hard` marks the findings no popup should offer a "yes" to — a fork bomb has
+ * no attended-approval story. Everything else is a judgment call, and judgment
+ * calls go to the person watching as an ask rather than a wall.
+ */
+type BashFinding = { rule: string; reason: string; hard?: boolean };
 
 const PIPE_TO_INTERPRETER =
   /\b(?:curl|wget)\b[^|]*\|\s*(?:sudo\s+)?(?:[\w./-]*\/)?(?:sh|bash|zsh|ksh|dash|python[\d.]*|node|perl|ruby)\b/i;
@@ -298,21 +326,21 @@ function inspectBash(command: string, root: string | null): BashFinding | null {
   if (PIPE_TO_INTERPRETER.test(command) || PROCESS_SUB_FETCH.test(command)) {
     return {
       rule: 'bash.curl-pipe-shell',
-      reason: 'This pipes a download straight into an interpreter, so what runs is whatever the server returns at that moment. Download it, read it, then run it.',
+      reason: 'This pipes a download straight into an interpreter, so what runs is whatever the server returns at that moment. Approve it only if you trust the source right now; downloading and reading it first is safer.',
     };
   }
   if (FORK_BOMB.test(command)) {
-    return { rule: 'bash.fork-bomb', reason: 'This is a fork bomb. It will take the machine down until it is rebooted.' };
+    return { rule: 'bash.fork-bomb', reason: 'This is a fork bomb. It will take the machine down until it is rebooted.', hard: true };
   }
   if (RAW_DISK.test(command)) {
-    return { rule: 'bash.raw-disk', reason: 'This writes to a raw device or reformats a volume. Run it yourself, from a shell, if you truly mean it.' };
+    return { rule: 'bash.raw-disk', reason: 'This writes to a raw device or reformats a volume. Run it yourself, from a shell, if you truly mean it.', hard: true };
   }
 
   for (const seg of segments(command)) {
     // Matched on the leading token rather than anywhere in the string, so that
-    // `echo sudo` and `grep sudo /var/log` are not denials.
+    // `echo sudo` and `grep sudo /var/log` are not findings.
     if (tokens(seg)[0] === 'sudo') {
-      return { rule: 'bash.sudo', reason: 'sudo puts the command outside the project by definition. Run it yourself if you meant it.' };
+      return { rule: 'bash.sudo', reason: 'sudo runs outside the project’s authority by definition. Approve it if you meant to grant that.' };
     }
     const found = inspectRedirects(seg, root) ?? inspectGitPush(seg) ?? inspectMutation(seg, root);
     if (found) return found;
@@ -332,7 +360,7 @@ function inspectRedirects(segment: string, root: string | null): BashFinding | n
     if (!insideRoot(root, abs)) {
       return {
         rule: 'bash.redirect-outside',
-        reason: `This redirects output into ${abs}, which is outside the project. Write it inside the project, or raise this project to ${TRUST_COPY.trusted.label}.`,
+        reason: `This redirects output into ${abs}, which is outside the project. Approve it if that is where it belongs, or raise this project to ${TRUST_COPY.trusted.label} in Settings to stop being asked.`,
       };
     }
   }
@@ -351,7 +379,7 @@ function inspectGitPush(segment: string): BashFinding | null {
   if (!hit) return null;
   return {
     rule: 'bash.force-push-protected',
-    reason: `A force push to ${hit} rewrites history other people have already pulled. Push a feature branch instead, or use --force-with-lease after a fetch.`,
+    reason: `A force push to ${hit} rewrites history other people have already pulled. Approve it only if this branch is yours to rewrite; --force-with-lease after a fetch is the careful version.`,
   };
 }
 
@@ -377,12 +405,13 @@ function inspectMutation(segment: string, root: string | null): BashFinding | nu
       return {
         rule: 'bash.destructive-root',
         reason: `This runs ${bin} against ${abs}. Nothing an agent is asked to do needs that; run it yourself if you meant it.`,
+        hard: true,
       };
     }
     if (root && !insideRoot(root, abs)) {
       return {
         rule: 'bash.target-outside',
-        reason: `This ${bin}s ${abs}, which is outside the project. Keep the change inside the project, or raise this project to ${TRUST_COPY.trusted.label}.`,
+        reason: `This ${bin}s ${abs}, which is outside the project. Approve it if you mean it, or raise this project to ${TRUST_COPY.trusted.label} in Settings to stop being asked.`,
       };
     }
   }
@@ -413,8 +442,11 @@ export function decideFor(ctx: PolicyContext, input: HookInput): PolicyDecision 
 
   const cred = credentialTarget(input, ctx.projectPath);
   if (cred) {
-    return deny(
-      `This touches ${cred}, where your credentials live. Reading a private key is half of an exfiltration; do it yourself if you genuinely meant to.`,
+    // A question, not a wall: the operator watching the session is exactly the
+    // person who can tell a requested read of ~/.aws from an exfiltration, and
+    // nobodyToAsk still turns this into a denial when nobody is watching.
+    return ask(
+      `This touches ${cred}, where your credentials live — reading a private key is half of an exfiltration. Approve it only if you asked for exactly this.`,
       'credential-path'
     );
   }
@@ -427,21 +459,21 @@ function readonlyDecision(tool: string, input: HookInput): PolicyDecision {
   if (mcp) {
     return MCP_READ_VERB.test(mcp.name)
       ? allow(`${mcp.server} ${mcp.name} reads.`, 'readonly.mcp-read')
-      : deny(
-          `${mcp.server} ${mcp.name} is not a read, and ${TRUST_COPY.readonly.label} allows only reads. Set this project to ${TRUST_COPY.project.label} if the agent should be able to change things.`,
+      : ask(
+          `${mcp.server} ${mcp.name} is not a read, and ${TRUST_COPY.readonly.label} allows only reads without asking. Approve this one call, or set the project to ${TRUST_COPY.project.label} in Settings if the agent should change things freely.`,
           'readonly.mcp-write'
         );
   }
   if (READ_TOOLS.has(tool)) return allow(`${tool} reads.`, 'readonly.read');
   if (isShellTool(tool, input)) {
-    return deny(
-      `Shell commands are denied at ${TRUST_COPY.readonly.label} trust. Set this project to ${TRUST_COPY.project.label} in Settings if the agent needs to run commands.`,
+    return ask(
+      `Shell commands need your approval at ${TRUST_COPY.readonly.label} trust. Approve this one, or set the project to ${TRUST_COPY.project.label} in Settings if the agent should run commands freely.`,
       'readonly.shell'
     );
   }
   if (WRITE_TOOLS.has(tool)) {
-    return deny(
-      `${tool} changes files, and ${TRUST_COPY.readonly.label} denies that. Set this project to ${TRUST_COPY.project.label} in Settings if the agent should be able to edit the repo.`,
+    return ask(
+      `${tool} changes files, which ${TRUST_COPY.readonly.label} holds for your approval. Approve it, or set the project to ${TRUST_COPY.project.label} in Settings if the agent should edit the repo freely.`,
       'readonly.write'
     );
   }
@@ -459,7 +491,7 @@ function projectDecision(ctx: PolicyContext, tool: string, input: HookInput): Po
   if (isShellTool(tool, input)) {
     const command = str(input.tool_input?.command);
     const found = inspectBash(command, root);
-    if (found) return deny(found.reason, found.rule);
+    if (found) return found.hard ? deny(found.reason, found.rule) : ask(found.reason, found.rule);
     if (!root) {
       return ask(
         `Wanigan does not know this session's project directory, so it cannot tell whether this command stays inside it. Approve it if you know where it runs.`,
@@ -481,8 +513,8 @@ function projectDecision(ctx: PolicyContext, tool: string, input: HookInput): Po
       );
     }
     if (!insideRoot(root, target)) {
-      return deny(
-        `${tool} targets ${absolutise(root, target)}, which is outside ${root}. Keep the change inside the project, or raise this project to ${TRUST_COPY.trusted.label} in Settings.`,
+      return ask(
+        `${tool} targets ${absolutise(root, target)}, which is outside ${root}. Approve it if that is where the change belongs, or raise this project to ${TRUST_COPY.trusted.label} in Settings to stop being asked.`,
         'project.write-outside'
       );
     }
@@ -619,8 +651,8 @@ export function trustBriefing(ctx: PolicyContext): string {
     ctx.trust === 'trusted'
       ? `Wanigan is running this session at ${TRUST_COPY.trusted.label} trust: it denies nothing, and it still writes shell commands, non-read MCP calls and writes outside the working directory to its policy ledger.`
       : ctx.trust === 'readonly'
-        ? `Wanigan is running this session at ${TRUST_COPY.readonly.label} trust: reads, searches and lookups are allowed, and file writes, shell commands and any MCP call that is not a read will be denied — describe the change rather than attempting it.`
-        : `Wanigan is running this session at ${TRUST_COPY.project.label} trust: writes and shell commands are allowed inside the working directory${where}, and anything resolving outside it, or touching the credential directories under your home folder, will be denied.`;
+        ? `Wanigan is running this session at ${TRUST_COPY.readonly.label} trust: reads, searches and lookups are allowed, and a file write, shell command or non-read MCP call is put to the operator as an approval prompt — attempt it when the change is worth asking for, and describe it instead when it is not.`
+        : `Wanigan is running this session at ${TRUST_COPY.project.label} trust: writes and shell commands are allowed inside the working directory${where}, and anything resolving outside it, or touching the credential directories under your home folder, is put to the operator as an approval prompt rather than denied outright.`;
 
   // Only for a run with nobody watching, and only because it changes what the
   // agent should expect back. Everywhere else an unevaluable call becomes a
@@ -632,14 +664,6 @@ export function trustBriefing(ctx: PolicyContext): string {
 
 /* ── the ledger ───────────────────────────────────────────────────────── */
 
-/** Anything shaped like a credential, in case a command carries one inline. */
-function redact(text: string): string {
-  return text
-    .replace(/sk-ant-[A-Za-z0-9_-]{6,}/g, 'sk-ant-[redacted]')
-    .replace(/\b([A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD)[A-Za-z0-9_]*)=\S+/gi, '$1=[redacted]')
-    .replace(/\b(-{1,2}(?:password|token|api-?key))(\s+|=)\S+/gi, '$1$2[redacted]');
-}
-
 function clip(s: string, max = 400): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
@@ -649,17 +673,22 @@ function clip(s: string, max = 400): string {
  * from the whole tool_input. A Write's tool_input carries the file's entire new
  * contents and a prompt-shaped tool carries the prompt; neither belongs in a
  * table that gets exported to disk and mailed to someone.
+ *
+ * Every one of the four fields goes through the shared redactor, not just the
+ * command and the url. A path can be a signed URL and a search pattern is
+ * routinely the credential somebody was grepping for, so leaving those two raw
+ * put secrets into the one table that is built to leave the machine.
  */
 function summarise(tool: string, input: HookInput): string {
   const ti = input.tool_input ?? {};
   const cmd = str(ti.command);
-  if (cmd) return clip(redact(cmd.replace(/\s+/g, ' ').trim()));
+  if (cmd) return clip(redactCredentials(cmd.replace(/\s+/g, ' ').trim()));
   const p = targetPath(input);
-  if (p) return clip(p);
+  if (p) return clip(redactCredentials(p));
   const url = str(ti.url);
-  if (url) return clip(redact(url));
+  if (url) return clip(redactCredentials(url));
   const pattern = str(ti.pattern);
-  if (pattern) return clip(`${pattern}${str(ti.path) ? ` in ${str(ti.path)}` : ''}`);
+  if (pattern) return clip(redactCredentials(`${pattern}${str(ti.path) ? ` in ${str(ti.path)}` : ''}`));
   return tool;
 }
 

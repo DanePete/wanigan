@@ -30,10 +30,25 @@ every repo you own.
 ```bash
 nvm use          # Node 22.23.2 (see .nvmrc) — not optional, see below
 npm install      # rebuilds node-pty and better-sqlite3 for Electron's ABI
-npm run app      # or: npm run dev  for hot reload
-npm test         # typecheck, then the smoke suite: no network, no spend
+npm run app      # through scripts/launch.sh
+npm run dev      # hot reload — but read the warning under this block first
+npm test         # typecheck, two packaging suites, then smoke: no network, no spend
 npm run cli      # the same database from a terminal
 ```
+
+**`npm run dev` does not go through `scripts/launch.sh`.** It is
+`electron-vite dev` directly, so it never unsets `ELECTRON_RUN_AS_NODE` — which
+is exactly the variable that makes an Electron app die at startup with
+`Cannot read properties of undefined (reading 'whenReady')`. Run it from a VS
+Code terminal and you get that failure; `npm run app` unsets it and does not.
+The full explanation is in *Six things that will bite you if you fork this*.
+
+`npm test` is four steps, in this order: `typecheck` (both tsconfigs),
+`test:package-hooks` and `test:local-install` (fixture-only checks over the
+macOS packaging and installer hooks — they build nothing and touch no
+`/Applications`), then `smoke` (the suite inside a real Electron main process,
+mock runner, no API key). CI runs the same four across two runners; see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Installing a local macOS arm64 build
 
@@ -85,18 +100,29 @@ states. A generic provider pack without a lifecycle channel can still report
 its process exit, but Wanigan cannot infer an approval prompt or completed turn
 from arbitrary terminal text.
 
-**Phone monitoring.** Settings can open a separate read-only Fleet page on a
-fixed loopback port. Wanigan never binds it to the LAN: use a private HTTPS
-reverse proxy such as Tailscale Serve to reach it from a phone, then pair the
-browser with the revocable fragment link Wanigan generates. The phone receives
-the Mac hostname and Wanigan version plus internal session ids, session/project
-names, provider/model, state and timestamps, and aggregate usage — never repo
-paths, commands, terminal output, transcripts, worktrees, pids or conversation
-ids. There is deliberately no remote terminal input or Approve button. A
-background Tailscale Serve mapping persists independently of Wanigan, so turn
-that mapping off when disabling the dashboard or moving it to another port.
+**Phone monitoring.** Settings can open a Fleet page on a fixed loopback port.
+Wanigan never binds it to the LAN: use a private HTTPS reverse proxy such as
+Tailscale Serve to reach it from a phone, then pair the browser with the
+revocable fragment link Wanigan generates. None of Wanigan's hook, telemetry,
+MCP, renderer IPC, transcript or file APIs are exposed there. Monitoring on its
+own sends the Mac hostname and Wanigan version plus internal session ids,
+session/project names, provider/model, state and timestamps, and aggregate
+usage — never repo paths, commands, terminal output, transcripts, worktrees,
+pids or conversation ids. A background Tailscale Serve mapping persists
+independently of Wanigan, so turn that mapping off when disabling the dashboard
+or moving it to another port.
 
-Phone alerts are a second, independent opt-in through
+**Paired control is a separate opt-in, and it is not read-only.** Turning it on
+lets the paired device read the selected session's terminal scrollback and send
+a bounded action: launch a session, send one next instruction, or interrupt.
+That scrollback is **not redacted** and can contain repository paths, prompt
+text, command output or secrets an agent printed, so pair only devices you
+trust. It still cannot approve a permission prompt, browse files, change
+settings, or deliver arbitrary PTY keystrokes. Left off — which is the default —
+the page is the read-only monitor described above. [SECURITY.md](SECURITY.md)
+carries the same boundary.
+
+Phone alerts are another independent opt-in through
 [ntfy](https://ntfy.sh/). Wanigan generates an encrypted high-entropy topic and
 sends the same three useful states at urgent/normal priority. Notification text
 is redacted before it leaves the machine; Settings names exactly what is sent,
@@ -228,6 +254,52 @@ on an attended session no answer means the CLI prompts and a person decides, but
 here it would mean the call runs unexamined on the one surface Wanigan launches
 at `bypassPermissions`. Both are recorded under rules ending `.unattended`, so a
 run that hit them is one ledger query away.
+
+## The CLI
+
+`npm run cli -- <command>` runs the same app binary with `--cli` and no window,
+against the same SQLite file the window uses. It is Electron rather than plain
+`node` deliberately: `better-sqlite3` is compiled against Electron's V8 ABI, so
+a plain-node script loading it dies with `ERR_DLOPEN_FAILED`. Output carries no
+ANSI, because it is as likely to be piped into `awk` as read by a person.
+
+| | |
+|---|---|
+| `runs [limit]` | recent runs, newest first — id, kind, status, model, rows, ok/fail, cost |
+| `status <runId>` | one run: progress, its batches with time left on the 24-hour clock, cost, the last ten events |
+| `poll` | one poll cycle against the Batches API, then exit — deliberately not a loop, because a second poller races the app's own |
+| `export <runId> <file>` | results to `.csv` or `.jsonl`; the extension decides which |
+| `queue <kind> <label> [json]` | queue work — kind is `session`, `headless` or `batch`, payload is one quoted JSON argument |
+| `sessions [limit]` | recent agent sessions from `session_log` |
+| `help` | the same list |
+
+`status` prints identity, progress and cost and never the run's config, because
+the config carries the system prompt and the rendered template and this output
+lands in shell history and redirected logs. Nothing here starts a PTY or opens a
+window: `queue` writes a row into the same `queue` table the app's dispatcher
+reads, so work lined up while Wanigan is closed starts when Wanigan next opens
+and a slot for that kind is free.
+
+`--daemon` is the other windowless entry point. It starts the same signed app
+with no `BrowserWindow` and is what the optional macOS Schedules LaunchAgent
+runs; it is installed and removed from Schedules, not from this CLI.
+
+**Sharp edge: `queue headless` with a prompt and no `projectId` fans out across
+every registered repository.** A headless payload that carries a prompt but
+names no project is treated exactly as a fired schedule is — it becomes a real
+headless run over every project in the list, one row per repo, on the `claude`
+profile, in an isolated worktree, at the scheduled-run ceiling of
+`--max-budget-usd 2` **per repo** and a 15-minute per-repo timeout. There is no
+GUI confirmation anywhere in that path; the command line is the approval. The
+per-repo trust gate still applies, so a repo whose trust level does not permit
+what the prompt asks for is marked blocked rather than spawned — but the spend
+you are authorising is that per-repo cap multiplied by the number of projects
+registered. Name a `projectId` in the payload to pin it to one:
+
+```bash
+npm run cli -- queue headless "audit" '{"prompt":"…"}'                     # every repo
+npm run cli -- queue headless "audit" '{"projectId":"prj_…","prompt":"…"}'  # one repo
+```
 
 ## Reviewing code
 
@@ -409,7 +481,7 @@ supported, unsupported, unknown or awaiting a probe.
 
 On macOS, place a directory whose name matches the pack id under
 `~/Library/Application Support/wanigan/provider-packs/`, then put
-`provider-pack.json` inside it and choose **Learning → Overview → Refresh packs**.
+`provider-pack.json` inside it and choose **Learning → Providers → Refresh packs**.
 For example, an already installed, authenticated `gemini` CLI can be exposed as
 an attended generic terminal without teaching Wanigan any invented hooks:
 
@@ -468,6 +540,11 @@ the same immediately, waits for any live sessions using their frozen profile
 snapshot, then moves the pack to Wanigan's recoverable trash. Session history,
 knowledge, evidence, projections, credentials and generated artifacts are kept;
 their cleanup is a separate, previewable decision.
+
+Every manifest field, the capability vocabulary Wanigan actually consumes, the
+environment source/destination table, the adapter protocol v1 shape, and an
+honest statement of what a third-party pack can and cannot reach today are in
+[docs/provider-packs.md](docs/provider-packs.md).
 
 ## Insights
 
@@ -532,6 +609,9 @@ host, so a Wanigan launched from a VS Code terminal inherits it,
 `require('electron')` returns a path string, and startup dies with
 `Cannot read properties of undefined (reading 'whenReady')`. It is unset in the
 launcher and stripped — with the `VSCODE_*` family — from every spawned agent.
+`npm run app` and `npm run cli` go through those launchers; `npm run dev` calls
+`electron-vite` directly and therefore does not, which is why hot reload is the
+one entry point that still hits this.
 
 **Native addons must be externalised from the bundle.** `node-pty` and
 `better-sqlite3` are listed in `rollupOptions.external`. Bundling one rewrites
@@ -572,6 +652,7 @@ src/main/context/       CLAUDE.md chain, rules, memory budget, settings preceden
 src/main/spend.ts       one spend model over sessions, batches and headless runs
 src/main/notify.ts      the two expiry clocks, polling that knows them, and the alerts
 src/main/mcp/           Wanigan as an MCP client host, and as a server
+src/main/cli.ts         --cli: runs, status, poll, export, queue, sessions, no window
 src/main/db.ts          one SQLite file: projects, runs, batches, requests, events
 src/main/keys.ts        OS-keychain API key storage and live verification
 src/main/git.ts         the acting half of git: stage, commit, branch, stash

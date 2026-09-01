@@ -8,6 +8,25 @@ const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(
 const TRUST_GLYPH: Record<TrustLevel, string> = { readonly: '◇', project: '◈', trusted: '◆' };
 
 /**
+ * What Wanigan is missing, grouped by the command it actually runs.
+ *
+ * Two profiles can need the same executable — GLM and DeepSeek are the Claude
+ * Code binary pointed at another endpoint — so the answer to "what do I have to
+ * install" is a list of commands, not a list of profiles. Built from whatever
+ * profiles are loaded: hardcoding claude and codex here was already wrong the
+ * day the DeepSeek and GLM profiles shipped, and a provider pack can add more.
+ */
+function missingCommands(providers: ProviderInfo[]): { bin: string; labels: string[] }[] {
+  const byBin = new Map<string, string[]>();
+  for (const p of providers) {
+    if (p.path) continue;
+    const bin = p.bin?.trim() || p.id;
+    byBin.set(bin, [...(byBin.get(bin) ?? []), p.label]);
+  }
+  return [...byBin.entries()].map(([bin, labels]) => ({ bin, labels }));
+}
+
+/**
  * index.css owns the global focus styles and this dialog does not; the buttons
  * it hand-styles therefore carry their own ring. :focus-visible is asked of the
  * element, so a click never draws one and a Tab always does.
@@ -36,9 +55,33 @@ export default function NewSessionDialog({
   onCreate: (opts: LaunchOptions) => Promise<void>;
   onAddProject: () => Promise<void>;
 }) {
-  const installed = providers.filter((p) => p.path);
-  const [providerId, setProviderId] = useState<ProviderId>(installed[0]?.id ?? 'claude');
-  const provider = providers.find((p) => p.id === providerId);
+  /*
+   * The dialog re-resolves providers itself when you ask it to, because the
+   * moment you fix a missing CLI is the moment you are standing here. The
+   * override is dropped as soon as the shell hands down a fresher list.
+   */
+  const [rechecked, setRechecked] = useState<ProviderInfo[] | null>(null);
+  useEffect(() => { setRechecked(null); }, [providers]);
+  const list = rechecked ?? providers;
+
+  const installed = useMemo(() => list.filter((p) => p.path), [list]);
+  /*
+   * Nothing installed means nothing selected. This used to fall back to
+   * 'claude', so on a machine that had never installed it the dialog opened
+   * with a disabled provider chosen and Start session live — and the launch
+   * failed with the main process's "disabled, changed, or no longer installed.
+   * Refresh providers and try again", which is wrong three times over for a
+   * first run and names a control this app does not have.
+   */
+  const [providerId, setProviderId] = useState<ProviderId>(installed[0]?.id ?? '');
+  // Detection is asynchronous, so a provider can finish resolving after this
+  // dialog opened; adopt it rather than making the person reopen.
+  useEffect(() => {
+    setProviderId((current) => (installed.some((p) => p.id === current) ? current : installed[0]?.id ?? ''));
+  }, [installed]);
+  const provider = list.find((p) => p.id === providerId);
+  const missing = useMemo(() => missingCommands(list), [list]);
+
   const [projectId, setProjectId] = useState(defaultProjectId ?? projects[0]?.id ?? '');
   /*
    * A folder you have not added yet was unreachable from here: the select only
@@ -49,6 +92,7 @@ export default function NewSessionDialog({
    */
   const [picked, setPicked] = useState<Project[]>([]);
   const [browsing, setBrowsing] = useState(false);
+  const [browseErr, setBrowseErr] = useState<string | null>(null);
   const [model, setModel] = useState('');
   const [effort, setEffort] = useState('');
   const [permissionMode, setPermissionMode] = useState('');
@@ -78,10 +122,20 @@ export default function NewSessionDialog({
 
   async function browseForFolder() {
     setBrowsing(true);
+    setBrowseErr(null);
     try {
       const p = await window.wanigan.projects.pick();
       if (p) { setPicked((x) => [...x, p]); setProjectId(p.id); }
-    } catch { /* the dialog was cancelled, or the folder vanished */ }
+    } catch (e) {
+      /*
+       * Cancelling resolves with null; anything that throws is a real failure —
+       * the project could not be written, the folder is unreadable, the
+       * database is in recovery. Swallowing all of it meant picking a folder
+       * did nothing at all, silently, forever. App.tsx's addProject reports
+       * the same way.
+       */
+      setBrowseErr(e instanceof Error ? e.message : String(e));
+    }
     finally { setBrowsing(false); }
   }
 
@@ -191,16 +245,33 @@ export default function NewSessionDialog({
   // A folder that is not a git repo has no worktree to cut.
   useEffect(() => { if (!isRepo) setIsolate(false); }, [isRepo]);
 
+  /*
+   * The one sentence standing between here and a running session, or null. It
+   * gates the button AND is rendered next to it: a disabled primary action with
+   * its only explanation in a `title` is a dead end for anyone not holding a
+   * mouse, which is how a first run reached a raw ENOENT instead of "install
+   * the CLI first".
+   */
+  const blocker = list.length === 0
+    ? 'Wanigan has not loaded any agent profiles yet, so there is nothing to launch.'
+    : !provider?.path
+      ? (installed.length === 0
+        ? 'No agent CLI is installed yet. Wanigan starts a session by running one of the commands above.'
+        : 'Choose an installed agent above.')
+      : !projectId
+        ? 'Choose the folder this session works in.'
+        : null;
+
   async function go() {
-    if (!projectId || busy) return;
-    const missing = (provider?.launchFields ?? []).find((field) => {
+    if (blocker || busy) return;
+    const missingField = (provider?.launchFields ?? []).find((field) => {
       if (!field.required) return false;
       const value = field.id === 'model' ? model
         : field.id === 'effort' ? effort
           : field.id === 'permissionMode' ? permissionMode : providerOptions[field.id];
       return value === undefined || value === null || value === '';
     });
-    if (missing) { setErr(`${missing.label} is required by this provider profile.`); return; }
+    if (missingField) { setErr(`${missingField.label} is required by this provider profile.`); return; }
     setBusy(true); setErr(null);
     try {
       await onCreate({ providerId, projectId, model, effort, permissionMode, providerOptions, extraArgs, initialPrompt, isolate });
@@ -222,7 +293,7 @@ export default function NewSessionDialog({
 
         <div className="label">Agent</div>
         <div style={{ display: 'flex', gap: 8, margin: '6px 0 14px' }}>
-          {providers.map((p) => {
+          {list.map((p) => {
             const on = providerId === p.id;
             return (
               <FocusBtn
@@ -235,16 +306,24 @@ export default function NewSessionDialog({
                   borderColor: on ? (TINT[p.id] ?? 'var(--accent)') : 'var(--line)',
                   background: on ? 'var(--bg-sunk)' : 'var(--bg-soft)',
                 }}
-                title={p.path ?? `${p.bin} not found on PATH`}
+                title={p.path ?? `${p.bin} was not found on the PATH Wanigan resolved`}
               >
                 <span style={{ fontWeight: 600, color: on ? (TINT[p.id] ?? 'var(--accent)') : undefined }}>{p.label}</span>
+                {/* The reason a button is disabled is on the button, not in a
+                    title: a tooltip is unreachable by keyboard and touch, and
+                    this is the sentence a first run turns on. */}
                 <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>
-                  {p.path ? (p.version ?? 'installed') : 'not installed'}
+                  {p.path ? (p.version ?? 'installed') : `no ${p.bin} command`}
                 </span>
               </FocusBtn>
             );
           })}
         </div>
+
+        {missing.length > 0 && (
+          <InstallGuidance missing={missing} anyInstalled={installed.length > 0}
+                           onProviders={setRechecked} />
+        )}
 
         {provider?.capabilities && (
           <p className={provider.capabilities.hooks ? 'faint' : 'dim'}
@@ -285,6 +364,15 @@ export default function NewSessionDialog({
             <p className="faint" style={{ marginTop: 6 }}>
               Any folder works. It is added to your projects so batches and Context can see it too.
             </p>
+          </div>
+        )}
+
+        {browseErr && (
+          <div role="alert" style={{ background: 'var(--bad-soft)', color: 'var(--bad)', border: '1px solid var(--bad)',
+                        borderRadius: 'var(--r-sm)', padding: '7px 10px', margin: '-8px 0 14px',
+                        fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
+            <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>✕</span>
+            <span style={{ fontWeight: 650 }}>That folder was not added. </span>{browseErr}
           </div>
         )}
 
@@ -473,20 +561,132 @@ export default function NewSessionDialog({
         </details>
 
         {err && (
-          <div style={{ background: 'var(--bad-soft)', color: 'var(--bad)', border: '1px solid var(--bad)',
+          // role="alert" because this text appears where nothing was, after a
+          // button press that a screen reader otherwise reports as silence.
+          <div role="alert" style={{ background: 'var(--bad-soft)', color: 'var(--bad)', border: '1px solid var(--bad)',
                         borderRadius: 'var(--r-sm)', padding: '7px 10px', margin: '10px 0', fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
             <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>✕</span>
             <span style={{ fontWeight: 650 }}>The session did not start. </span>{err}
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+        <div style={{ display: 'flex', gap: 8, marginTop: 16, alignItems: 'center' }}>
+          {blocker && (
+            <p id="new-session-blocked" className="dim"
+               style={{ fontSize: 'var(--t-small)', lineHeight: 1.45, minWidth: 0 }}>
+              {blocker}
+            </p>
+          )}
           <FocusBtn className="btn" onClick={onClose} style={{ marginLeft: 'auto' }}>Cancel</FocusBtn>
-          <FocusBtn className="btn btn-primary" onClick={go} disabled={!projectId || busy}>
+          <FocusBtn className="btn btn-primary" onClick={go} disabled={!!blocker || busy}
+                    aria-describedby={blocker ? 'new-session-blocked' : undefined}>
             {busy ? 'Starting…' : isolate ? 'Start in a worktree' : 'Start session'}
           </FocusBtn>
         </div>
         <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, textAlign: 'right' }}>⌘↵ to start</p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The one hard dependency, said out loud.
+ *
+ * Wanigan does not ship, bundle or install an agent CLI, and it will not
+ * pretend to know how yours is packaged — a provider pack can name any
+ * installed command. So this states exactly what is missing, exactly what
+ * Wanigan does about it, and the one command you can run yourself to check.
+ * Anything more specific would be a guess dressed as an instruction.
+ */
+function InstallGuidance({ missing, anyInstalled, onProviders }: {
+  missing: { bin: string; labels: string[] }[];
+  anyInstalled: boolean;
+  onProviders: (providers: ProviderInfo[]) => void;
+}) {
+  const [copied, setCopied] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function recheck() {
+    setBusy(true);
+    setError(null);
+    try {
+      onProviders(await window.wanigan.providers.list());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
+  }
+
+  const copy = (bin: string) => {
+    navigator.clipboard.writeText(`command -v ${bin}`)
+      .then(() => {
+        setCopied(bin);
+        window.setTimeout(() => setCopied((c) => (c === bin ? null : c)), 2500);
+      })
+      .catch(() => { /* clipboard can be denied; the command is on screen to type */ });
+  };
+
+  // With something already installed this is a footnote, not the first thing
+  // you read: you can start a session, just not with these.
+  if (anyInstalled) {
+    return (
+      <details style={{ margin: '-8px 0 14px' }}>
+        <summary className="faint" style={{ cursor: 'pointer', fontSize: 'var(--t-small)' }}>
+          {missing.length === 1
+            ? `1 agent is unavailable: no ${missing[0].bin} command`
+            : `${missing.length} agents are unavailable`}
+        </summary>
+        <ul className="faint" style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 'var(--t-micro)', lineHeight: 1.5 }}>
+          {missing.map((m) => (
+            <li key={m.bin}>
+              <span className="mono">{m.bin}</span> is not on the PATH Wanigan resolved — needed by {m.labels.join(', ')}.
+            </li>
+          ))}
+        </ul>
+      </details>
+    );
+  }
+
+  return (
+    <div className="sunk" style={{ margin: '-6px 0 14px', padding: '10px 12px' }}>
+      <div className="label" style={{ color: 'var(--warning)', marginBottom: 4 }}>Nothing to launch yet</div>
+      <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
+        A session is a real terminal running a real CLI, so one has to be installed first. Wanigan does
+        not bundle or install them.
+      </p>
+      <ul style={{ margin: '8px 0 0', paddingLeft: 0, listStyle: 'none',
+                   display: 'flex', flexDirection: 'column', gap: 7 }}>
+        {missing.map((m) => (
+          <li key={m.bin} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+            <span className="mono" style={{ fontSize: 'var(--t-small)', fontWeight: 650 }}>{m.bin}</span>
+            <span className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45, minWidth: 0 }}>
+              runs {m.labels.join(', ')}
+            </span>
+            <FocusBtn className="faint" style={{ marginLeft: 'auto', fontSize: 'var(--t-micro)', borderRadius: 'var(--r-sm)' }}
+                      title={`Copy "command -v ${m.bin}" — run it in your terminal to see whether the CLI is installed and where`}
+                      onClick={() => copy(m.bin)}>
+              {copied === m.bin ? 'copied' : `copy command -v ${m.bin}`}
+            </FocusBtn>
+          </li>
+        ))}
+      </ul>
+      <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 9, lineHeight: 1.45 }}>
+        Install a CLI from its own vendor's instructions, then check again. Wanigan looks for these
+        commands on the PATH your login shell reported when it started, plus the usual Homebrew, nvm and
+        <span className="mono"> ~/.local/bin </span> locations. If <span className="mono">command -v</span> finds it
+        in your terminal but Check again does not, it was installed somewhere that PATH did not cover —
+        quit and reopen Wanigan so it reads your shell's PATH again.
+      </p>
+      <div style={{ display: 'flex', gap: 8, marginTop: 9, alignItems: 'center' }}>
+        <FocusBtn className="btn" disabled={busy} onClick={() => void recheck()}>
+          {busy ? 'Checking…' : 'Check again'}
+        </FocusBtn>
+        {error && (
+          <span role="alert" style={{ color: 'var(--bad)', fontSize: 'var(--t-micro)', lineHeight: 1.4, minWidth: 0 }}>
+            <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 5 }}>✕</span>
+            The check did not run: {error}
+          </span>
+        )}
       </div>
     </div>
   );

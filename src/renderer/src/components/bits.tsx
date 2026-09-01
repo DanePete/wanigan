@@ -14,18 +14,39 @@ export const STATUS: Record<string, { bg: string; fg: string; label: string }> =
 };
 
 export function Pill({ status }: { status: string }) {
-  const s = STATUS[status] ?? STATUS.pending;
+  // An unknown status is shown as itself. Falling back to STATUS.pending
+  // relabelled it — a run that came back 'throttled' or a state added later
+  // read as "pending", which is a different claim about the world, not a
+  // missing style.
+  const s = STATUS[status];
+  if (!s) {
+    return (
+      <span className="pill" style={{ background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}
+            title="Wanigan has no styling for this status; it is shown exactly as reported.">
+        {status || 'unknown'}
+      </span>
+    );
+  }
   return <span className="pill" style={{ background: s.bg, color: s.fg }}>{s.label}</span>;
 }
 
 export function Bar({ succeeded, failed, pending }: { succeeded: number; failed: number; pending: number }) {
-  const total = Math.max(1, succeeded + failed + pending);
+  const counted = succeeded + failed + pending;
+  const total = Math.max(1, counted);
   const pct = (n: number) => `${(n / total) * 100}%`;
+  // Colour is the last channel, not the only one. The two filled segments
+  // differ in texture as well as hue — solid for succeeded, hatched for failed
+  // — so the split survives greyscale and the common colour deficiencies, and
+  // the reading is stated in words for anything that cannot see either.
+  const reading = counted === 0
+    ? 'No requests counted yet'
+    : `✓ ${num(succeeded)} succeeded · ✕ ${num(failed)} failed · ${num(pending)} pending`;
   return (
-    <div style={{ display: 'flex', height: 5, borderRadius: 'var(--r-pill)', overflow: 'hidden', background: 'var(--bg-sunk)' }}
-         title={`${succeeded} succeeded · ${failed} failed · ${pending} pending`}>
+    <div role="img" aria-label={reading} title={reading}
+         style={{ display: 'flex', height: 5, borderRadius: 'var(--r-pill)', overflow: 'hidden', background: 'var(--bg-sunk)' }}>
       <div style={{ width: pct(succeeded), background: 'var(--ok)' }} />
-      <div style={{ width: pct(failed), background: 'var(--bad)' }} />
+      <div style={{ width: pct(failed),
+                    background: 'repeating-linear-gradient(135deg, var(--bad) 0 2px, var(--bad-soft) 2px 4px)' }} />
     </div>
   );
 }

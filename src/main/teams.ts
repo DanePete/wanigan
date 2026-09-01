@@ -35,15 +35,41 @@ export type Team = {
   /** Undelivered messages sitting in inboxes right now. */
   pending: TeamMessage[];
   counts: { pending: number; inProgress: number; completed: number; blocked: number };
+  /** Newest mtime across the files this view was actually built from — config,
+   *  tasks and inboxes — so it tracks the team working, not its formation. */
   updatedAt: number | null;
+  /** A file this team owns could not be read on this pass, so what is above is
+   *  less than the team has. Never let a partial read render as a real zero. */
+  partial: boolean;
 };
 
-function readJson(p: string): unknown {
+/**
+ * One file, read.
+ *
+ * `failed` is the distinction that matters: these files are rewritten by live
+ * agents, so a poll can land mid-write and get half a JSON document. Returning
+ * that as "no tasks" would show a working team as an empty one, with nothing
+ * saying the read was partial. A file that is simply not there is genuinely
+ * empty and is not a failure.
+ */
+type FileRead = { value: unknown; failed: boolean; mtimeMs: number | null };
+
+function readJson(p: string): FileRead {
   try {
     const st = fs.statSync(p);
-    if (st.size > 4 * 1024 * 1024) return null;
-    return JSON.parse(fs.readFileSync(p, 'utf8')) as unknown;
-  } catch { return null; }
+    // Too large to parse is a refusal to read, not an absence of content.
+    if (st.size > 4 * 1024 * 1024) return { value: null, failed: true, mtimeMs: st.mtimeMs };
+    return { value: JSON.parse(fs.readFileSync(p, 'utf8')) as unknown, failed: false, mtimeMs: st.mtimeMs };
+  } catch (error) {
+    const absent = (error as NodeJS.ErrnoException | null)?.code === 'ENOENT';
+    return { value: null, failed: !absent, mtimeMs: null };
+  }
+}
+
+function newest(times: (number | null)[]): number | null {
+  let out: number | null = null;
+  for (const t of times) if (t !== null && (out === null || t > out)) out = t;
+  return out;
 }
 
 function asArray(v: unknown): Record<string, unknown>[] {
@@ -63,14 +89,26 @@ const ts = (v: unknown): number | null => {
   return null;
 };
 
-function readTasks(team: string): TeamTask[] {
+type TaskRead = { tasks: TeamTask[]; partial: boolean; mtimeMs: number | null };
+
+function readTasks(team: string): TaskRead {
   const dir = path.join(TASKS, team);
   let files: string[];
-  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { return []; }
+  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch (error) {
+    // No task directory means a team coordinating by message alone; anything
+    // else means this poll saw less of the team than exists.
+    const absent = (error as NodeJS.ErrnoException | null)?.code === 'ENOENT';
+    return { tasks: [], partial: !absent, mtimeMs: null };
+  }
 
   const out: TeamTask[] = [];
+  let partial = false;
+  let mtimeMs: number | null = null;
   for (const f of files) {
-    for (const t of asArray(readJson(path.join(dir, f)))) {
+    const read = readJson(path.join(dir, f));
+    partial = partial || read.failed;
+    mtimeMs = newest([mtimeMs, read.mtimeMs]);
+    for (const t of asArray(read.value)) {
       const id = str(t.id) ?? str(t.taskId) ?? f.replace(/\.json$/, '');
       const deps = Array.isArray(t.dependsOn) ? t.dependsOn.filter((d): d is string => typeof d === 'string')
         : Array.isArray(t.dependencies) ? (t.dependencies as unknown[]).filter((d): d is string => typeof d === 'string')
@@ -92,17 +130,27 @@ function readTasks(team: string): TeamTask[] {
   for (const t of out) {
     t.blocked = t.status === 'pending' && t.dependsOn.some((d) => !done.has(d));
   }
-  return out.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  return { tasks: out.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)), partial, mtimeMs };
 }
 
-function readInboxes(team: string): TeamMessage[] {
+type InboxRead = { messages: TeamMessage[]; partial: boolean; mtimeMs: number | null };
+
+function readInboxes(team: string): InboxRead {
   const dir = path.join(TEAMS, team, 'inboxes');
   let files: string[];
-  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { return []; }
+  try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch (error) {
+    const absent = (error as NodeJS.ErrnoException | null)?.code === 'ENOENT';
+    return { messages: [], partial: !absent, mtimeMs: null };
+  }
   const out: TeamMessage[] = [];
+  let partial = false;
+  let mtimeMs: number | null = null;
   for (const f of files) {
     const to = f.replace(/\.json$/, '');
-    for (const m of asArray(readJson(path.join(dir, f)))) {
+    const read = readJson(path.join(dir, f));
+    partial = partial || read.failed;
+    mtimeMs = newest([mtimeMs, read.mtimeMs]);
+    for (const m of asArray(read.value)) {
       const body = str(m.content) ?? str(m.message) ?? str(m.text) ?? '';
       out.push({
         to,
@@ -114,7 +162,7 @@ function readInboxes(team: string): TeamMessage[] {
       });
     }
   }
-  return out.sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+  return { messages: out.sort((a, b) => (b.at ?? 0) - (a.at ?? 0)), partial, mtimeMs };
 }
 
 export function readTeams(): { teams: Team[]; enabled: boolean; note: string | null } {
@@ -124,7 +172,9 @@ export function readTeams(): { teams: Team[]; enabled: boolean; note: string | n
   const teams: Team[] = [];
   for (const name of names) {
     const configPath = path.join(TEAMS, name, 'config.json');
-    const cfg = readJson(configPath) as Record<string, unknown> | null;
+    const config = readJson(configPath);
+    const cfg = (config.value && typeof config.value === 'object'
+      ? config.value : null) as Record<string, unknown> | null;
     const rawMembers = Array.isArray(cfg?.members) ? (cfg!.members as Record<string, unknown>[]) : [];
     const members: TeamMember[] = rawMembers.map((m) => {
       const type = str(m.agentType) ?? str(m.type);
@@ -135,8 +185,10 @@ export function readTeams(): { teams: Team[]; enabled: boolean; note: string | n
         isLead: type === 'team-lead',
       };
     });
-    const tasks = readTasks(name);
-    const pending = readInboxes(name);
+    const taskRead = readTasks(name);
+    const inboxRead = readInboxes(name);
+    const tasks = taskRead.tasks;
+    const pending = inboxRead.messages;
     const st = (s: string) => tasks.filter((t) => t.status === s).length;
     teams.push({
       name, configPath, members, tasks, pending,
@@ -146,15 +198,27 @@ export function readTeams(): { teams: Team[]; enabled: boolean; note: string | n
         completed: st('completed') + st('complete'),
         blocked: tasks.filter((t) => t.blocked).length,
       },
-      updatedAt: (() => { try { return fs.statSync(configPath).mtimeMs; } catch { return null; } })(),
+      // config.json's mtime alone dates the team's formation: it is written
+      // once and never touched again while the team works. Taking the newest
+      // mtime across everything this view was built from makes the timestamp
+      // mean what "updated" implies, and stops a busy team sorting below an
+      // idle one.
+      updatedAt: newest([config.mtimeMs, taskRead.mtimeMs, inboxRead.mtimeMs]),
+      partial: config.failed || taskRead.partial || inboxRead.partial,
     });
   }
 
   teams.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   const enabled = process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === '1';
+  // A team's files are rewritten by live agents, so a poll can catch one
+  // mid-write. Saying so beats rendering the team momentarily emptier than it
+  // is: the next poll, a few seconds later, normally reads it whole.
+  const incomplete = teams.filter((t) => t.partial).map((t) => t.name);
   return {
     teams, enabled,
-    note: teams.length === 0
+    note: incomplete.length
+      ? `Some files for ${incomplete.join(', ')} could not be read on this pass — a task list or inbox was mid-write. What is shown is partial, not the whole team.`
+      : teams.length === 0
       ? (enabled
         ? 'Agent teams are enabled but none is running. A team appears here the moment a lead spawns its first teammate.'
         : 'Agent teams are off. Set CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 to enable them — they are experimental, and each teammate is a separate Claude instance, so tokens scale with the team.')

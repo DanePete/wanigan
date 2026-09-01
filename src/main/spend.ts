@@ -29,7 +29,9 @@ import type { BudgetState, Reconciliation } from '../shared/types';
  * Nothing here imports otel.ts. The telemetry collector may never have started
  * — it is a setting the user can switch off — but the tables it writes are
  * still on disk and still readable. Reporting on money already spent must not
- * depend on a receiver being up.
+ * depend on a receiver being up. The dependency runs the other way instead:
+ * otel.ts's remaining spend read calls sessionEffortRollup() below rather than
+ * keeping a second copy of the query.
  */
 
 const DEFAULT_DAYS = 30;
@@ -293,6 +295,44 @@ function effortOf(configJson: string): string {
   }
 }
 
+export type EffortRollupRow = {
+  effort: string;
+  requests: number;
+  costUsd: number;
+  /** Carried on every row so no caller can add these to another meter's by accident. */
+  surface: 'sessions';
+};
+
+/**
+ * Session requests grouped by the effort they ran at, dearest first. `sinceMs`
+ * of null means every request on record.
+ *
+ * This is the only place that query is written. There were two — this one and a
+ * copy in otel.ts behind the `spend:effort` IPC — producing the identical
+ * `{ effort, requests, costUsd }` shape from different source sets: one
+ * windowed and carrying batch and headless rows beside the session ones, the
+ * other all-time and sessions-only. Nothing said which was on screen, so the
+ * two answers for the same period simply differed. otel.effortBreakdown() now
+ * calls this with null, effortDistribution() calls it with its window, and the
+ * `surface` tag is what keeps a session row from being summed into a run's.
+ *
+ * Both numbers come from the same api_request event, so the $/request a caller
+ * derives from them is never a ratio of two different accountings.
+ */
+export function sessionEffortRollup(sinceMs: number | null): EffortRollupRow[] {
+  const where = sinceMs === null ? "WHERE kind = 'request'" : "WHERE kind = 'request' AND at >= ?";
+  const sql = `
+    SELECT COALESCE(NULLIF(effort, ''), 'default') AS effort,
+           COUNT(*) AS requests, COALESCE(SUM(cost_usd), 0) AS cost
+    FROM session_api_events ${where}
+    GROUP BY effort ORDER BY cost DESC
+  `;
+  const statement = db().prepare(sql);
+  const rows = (sinceMs === null ? statement.all() : statement.all(sinceMs)) as
+    { effort: string; requests: number; cost: number }[];
+  return rows.map((r) => ({ effort: r.effort, requests: r.requests, costUsd: r.cost, surface: 'sessions' }));
+}
+
 /**
  * What each effort level costs, on each surface, dearest first.
  *
@@ -310,18 +350,8 @@ export function effortDistribution(
   const since = windowStart(n).getTime();
   const d = db();
 
-  const out: { effort: string; requests: number; costUsd: number; surface: string }[] = [];
-
-  const sessions = d.prepare(`
-    SELECT COALESCE(NULLIF(effort, ''), 'default') AS effort,
-           COUNT(*) AS requests, COALESCE(SUM(cost_usd), 0) AS cost
-    FROM session_api_events WHERE kind = 'request' AND at >= ?
-    GROUP BY effort
-  `).all(since) as { effort: string; requests: number; cost: number }[];
-
-  for (const r of sessions) {
-    out.push({ effort: r.effort, requests: r.requests, costUsd: r.cost, surface: 'sessions' });
-  }
+  const out: { effort: string; requests: number; costUsd: number; surface: string }[] =
+    [...sessionEffortRollup(since)];
 
   const runs = d.prepare(`
     SELECT r.kind AS kind, r.config_json AS config_json,
@@ -519,6 +549,34 @@ function scopeName(scopeId: string | null): string {
   return s?.name || scopeId;
 }
 
+/** Spelled out rather than localised: this label is quoted inside a sentence. */
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/**
+ * The calendar month every budget is measured over, in local time — the same
+ * boundary the day charts use, so a budget and a chart cannot disagree about
+ * which day an evening's work landed on.
+ *
+ * Named rather than repeated because a caller refusing to spend money has to be
+ * able to say *which* window it is refusing over, and a second copy of this
+ * arithmetic is how that sentence starts being wrong.
+ */
+function monthWindow(): {
+  monthStart: number; daysInMonth: number; daysElapsed: number; monthLabel: string;
+} {
+  const now = new Date();
+  return {
+    monthStart: new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).getTime(),
+    daysInMonth: new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate(),
+    // Today counts as a whole elapsed day; see budgetState() for why.
+    daysElapsed: now.getDate(),
+    monthLabel: `${MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`,
+  };
+}
+
 /** Every budget on record, most-pressed first. */
 export function budgets(): BudgetState[] {
   const rows = db().prepare('SELECT scope_id, monthly_usd, warn_at FROM budgets')
@@ -578,10 +636,7 @@ export function budgetState(scopeId: string | null): BudgetState {
   const row = d.prepare('SELECT scope_id, monthly_usd, warn_at FROM budgets WHERE scope_id = ?')
     .get(scopeKey(scopeId)) as BudgetRow | undefined;
 
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).getTime();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const daysElapsed = now.getDate();
+  const { monthStart, daysInMonth, daysElapsed } = monthWindow();
   const scoped = scopeId !== null;
 
   // session_log is what ties an api event to a repo. A session with no log row
@@ -639,17 +694,124 @@ export function budgetState(scopeId: string | null): BudgetState {
 }
 
 /**
+ * What a breached budget actually breached.
+ *
+ * A BudgetState answers "how much, out of how much". A caller that refuses to
+ * start work needs one more thing before it can say anything a person can act
+ * on: which of the three lines was crossed, what the configured value was, and
+ * over what window it was measured. Without that the only refusal available is
+ * "over budget", which is the same sentence whether $2 or $2,000 is at stake
+ * and whether the money is spent or merely projected.
+ *
+ * `summary` is one sentence a refusal may print verbatim. The projected case
+ * says it is a run rate in the sentence itself, because that is the one of the
+ * three that is arithmetic about a month that has not happened yet — a caller
+ * that pasted it beside the other two would otherwise be presenting an estimate
+ * as a fact.
+ */
+export type BudgetBreachReason = 'over-budget' | 'warning-threshold' | 'projected-over';
+
+export type BudgetBreach = BudgetState & {
+  /** Which line was crossed. Spend beyond the cap outranks both softer signals. */
+  reason: BudgetBreachReason;
+  /** The configured monthly cap, in USD — the value the reason is measured against. */
+  limitUsd: number;
+  /** Where the warning line sits in dollars, i.e. limitUsd * warnAt. */
+  warnUsd: number;
+  /** The measured window, so a refusal can name the month rather than "now". */
+  window: { monthStart: number; monthLabel: string; daysElapsed: number; daysInMonth: number };
+  /** One sentence, safe to print verbatim. Estimates label themselves as such. */
+  summary: string;
+};
+
+function usd(n: number): string {
+  return `$${n.toFixed(2)}`;
+}
+
+function breachOf(state: BudgetState, month: ReturnType<typeof monthWindow>): BudgetBreach | null {
+  if (state.monthlyUsd <= 0) return null;
+  const warnUsd = state.monthlyUsd * state.warnAt;
+  const detail = {
+    ...state,
+    limitUsd: state.monthlyUsd,
+    warnUsd,
+    window: {
+      monthStart: month.monthStart,
+      monthLabel: month.monthLabel,
+      daysElapsed: state.daysElapsed,
+      daysInMonth: state.daysInMonth,
+    },
+  };
+  const where = `${state.scopeName} · ${month.monthLabel}`;
+
+  if (state.spentUsd >= state.monthlyUsd) {
+    return {
+      ...detail,
+      reason: 'over-budget',
+      summary:
+        `${where}: ${usd(state.spentUsd)} spent against a ${usd(state.monthlyUsd)} monthly budget — ` +
+        `over by ${usd(state.spentUsd - state.monthlyUsd)}.`,
+    };
+  }
+  if (state.spentUsd >= warnUsd) {
+    return {
+      ...detail,
+      reason: 'warning-threshold',
+      summary:
+        `${where}: ${usd(state.spentUsd)} spent against a ${usd(state.monthlyUsd)} monthly budget, ` +
+        `past the ${Math.round(state.warnAt * 100)}% warning line at ${usd(warnUsd)}.`,
+    };
+  }
+  if (state.projectedUsd >= state.monthlyUsd) {
+    return {
+      ...detail,
+      reason: 'projected-over',
+      summary:
+        `${where}: ${usd(state.spentUsd)} spent against a ${usd(state.monthlyUsd)} monthly budget by day ` +
+        `${state.daysElapsed} of ${state.daysInMonth}. At that rate the month ends near ` +
+        `${usd(state.projectedUsd)} — a run rate from the days so far, not a forecast.`,
+    };
+  }
+  return null;
+}
+
+/**
  * Budgets worth saying something about, most-pressed first: already past their
  * warning threshold, or on a run rate that ends the month over.
  *
  * The projection is in the test deliberately. A cap that only speaks once it
  * has been exceeded is a receipt, not a budget — by the time it fires the money
  * is gone and there is nothing left to decide.
+ *
+ * Every row is still a BudgetState, so the banner that reads this is unchanged;
+ * the added fields are what a caller needs to refuse one specific launch for one
+ * specific reason. Order is unchanged too — most-pressed first, which puts a
+ * scope that is genuinely over the cap above one that is only projected there,
+ * since pressure is spend against the cap.
  */
-export function budgetBreached(): BudgetState[] {
-  return budgets().filter(
-    (s) => s.monthlyUsd > 0 && (s.spentUsd >= s.monthlyUsd * s.warnAt || s.projectedUsd >= s.monthlyUsd)
-  );
+export function budgetBreached(): BudgetBreach[] {
+  const month = monthWindow();
+  return budgets()
+    .map((state) => breachOf(state, month))
+    .filter((breach): breach is BudgetBreach => breach !== null);
+}
+
+/**
+ * The breaches that apply to work about to run in one scope: the project's own
+ * budget and the global one, most-pressed first.
+ *
+ * Both, because a project under its own cap can still be the work that takes
+ * the account over the global one, and a gate that asked only about the project
+ * would let exactly that through. An empty array means nothing is breached and
+ * is the only shape a caller should read as "go ahead".
+ */
+export function budgetBreachesFor(scopeId: string | null): BudgetBreach[] {
+  const month = monthWindow();
+  const scopes: (string | null)[] = scopeId === null || scopeId === '' ? [null] : [scopeId, null];
+  return scopes
+    .map((scope) => breachOf(budgetState(scope), month))
+    .filter((breach): breach is BudgetBreach => breach !== null)
+    .sort((a, b) => pressure(b) - pressure(a));
 }
 
 /* ── reconciliation ───────────────────────────────────────────────────── */

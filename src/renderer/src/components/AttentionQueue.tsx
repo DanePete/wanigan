@@ -78,15 +78,23 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
   useEffect(() => {
     alive.current = true;
     void load();
-    const t = setInterval(() => void load(), POLL_MS);
+    // A hidden window is a window nobody is reading, and this is the fastest
+    // poll in the app — two IPC round trips every two seconds, forever, to rank
+    // a strip that is not on screen. Fleet and Pet already stop; so does this.
+    // Coming back is not left to the next beat: `onVisible` below re-reads at
+    // once, because a stale ranking is exactly what this strip must never show.
+    const t = setInterval(() => { if (document.hidden) return; void load(); }, POLL_MS);
     const off = window.wanigan.on.sessionEvent(() => {
       if (burst.current !== null) return;
       burst.current = window.setTimeout(() => { burst.current = null; void load(); }, BURST_MS);
     });
+    const onVisible = () => { if (!document.hidden) void load(); };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       alive.current = false;
       clearInterval(t);
       off();
+      document.removeEventListener('visibilitychange', onVisible);
       if (burst.current !== null) { window.clearTimeout(burst.current); burst.current = null; }
     };
   }, [load]);

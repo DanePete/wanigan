@@ -26,8 +26,14 @@ const STAT_TONE: Record<string, string> = {
   R: 'var(--series-3)', C: 'var(--series-3)', U: 'var(--warning)', '?': 'var(--warning)',
 };
 
+/** Rendering an unbounded diff hangs the pane, so it is cut — and says so. */
+const DIFF_LINES = 4000;
+
 function Diff({ text }: { text: string }) {
-  const lines = useMemo(() => text.split('\n').slice(0, 4000), [text]);
+  const { lines, total } = useMemo(() => {
+    const all = text.split('\n');
+    return { lines: all.slice(0, DIFF_LINES), total: all.length };
+  }, [text]);
   return (
     <div className="gt-diff">
       {lines.map((l, i) => {
@@ -35,13 +41,29 @@ function Diff({ text }: { text: string }) {
           ? 'meta' : l.startsWith('@@') ? 'hunk' : l.startsWith('+') ? 'add' : l.startsWith('-') ? 'del' : '';
         return <div key={i} className={cls}>{l || ' '}</div>;
       })}
+      {/* A diff that stops without saying so reads as a complete diff, and the
+          missing part is exactly the part nobody reviews. */}
+      {total > DIFF_LINES && (
+        <div className="meta">
+          — showing {DIFF_LINES.toLocaleString('en-US')} of {total.toLocaleString('en-US')} lines.
+          The remaining {(total - DIFF_LINES).toLocaleString('en-US')} are not displayed.
+        </div>
+      )}
     </div>
   );
 }
 
 export default function Git({ projects }: { projects: Project[] }) {
   const [projectId, setProjectId] = useState(projects[0]?.id ?? '');
-  const project = projects.find((p) => p.id === projectId) ?? projects[0] ?? null;
+  // A folder picked from the empty state below. The shell owns the project list
+  // and re-reads it on window focus; merging it here as well is what makes this
+  // view usable in the frame after the dialog closes rather than one refresh later.
+  const [picked, setPicked] = useState<Project[]>([]);
+  const options = useMemo(() => {
+    const seen = new Set(projects.map((p) => p.id));
+    return [...projects, ...picked.filter((p) => !seen.has(p.id))];
+  }, [projects, picked]);
+  const project = options.find((p) => p.id === projectId) ?? options[0] ?? null;
   const root = project?.path ?? '';
 
   const [st, setSt] = useState<Status | null>(null);
@@ -57,6 +79,7 @@ export default function Git({ projects }: { projects: Project[] }) {
   const [showAll, setShowAll] = useState(true);
   const [pane, setPane] = useState<'changes' | 'branches' | 'stash'>('changes');
   const [confirm, setConfirm] = useState<{ what: string; run: () => Promise<void> } | null>(null);
+  const [adding, setAdding] = useState(false);
 
   const load = useCallback(async () => {
     if (!root) return;
@@ -103,15 +126,41 @@ export default function Git({ projects }: { projects: Project[] }) {
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }
 
-  if (!projects.length) {
-    return <div className="pane"><p className="dim">Add a project first — Git works on the repo you have open.</p></div>;
+  async function addProject() {
+    setAdding(true); setErr(null);
+    try {
+      const p = await window.wanigan.projects.pick();
+      if (p) { setPicked((x) => (x.some((q) => q.id === p.id) ? x : [...x, p])); setProjectId(p.id); }
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setAdding(false); }
+  }
+
+  if (!options.length) {
+    return (
+      <div className="pane">
+        {err && <div style={{ padding: '8px 12px' }}><Note tone="error">{err}</Note></div>}
+        <div className="empty">
+          <div>
+            <h1 style={{ fontSize: 'var(--t-title)', fontWeight: 600 }}>No project to read git from</h1>
+            <p className="dim" style={{ marginTop: 6, maxWidth: 460, lineHeight: 1.55 }}>
+              This view reads one project's repository: history, working tree, branches, stashes and its
+              review gate. Add a folder and it opens on that repository — nothing is written until you press
+              a button here.
+            </p>
+          </div>
+          <button className="btn btn-primary" disabled={adding} onClick={() => void addProject()}>
+            {adding ? 'Choosing…' : 'Add your first project'}
+          </button>
+        </div>
+      </div>
+    );
   }
 
   const bar = (
     <div className="gt-bar">
       <select className="field" style={{ width: 'auto', fontSize: 'var(--t-small)' }} value={projectId}
               onChange={(e) => { setProjectId(e.target.value); setSel(null); setDetail(null); }}>
-        {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        {options.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
       {st?.isRepo && (
         <>
@@ -318,7 +367,9 @@ export default function Git({ projects }: { projects: Project[] }) {
                           })}>
                     Commit {st.staged.length ? `${st.staged.length} file${st.staged.length > 1 ? 's' : ''}` : ''}
                   </button>
-                  <button className="btn" disabled={!!busy || !st.unstaged.length}
+                  {/* Same message check as Commit: without it this button is
+                      enabled only to fail in the main process on an empty message. */}
+                  <button className="btn" disabled={!!busy || !msg.trim() || !st.unstaged.length}
                           title="Stage every tracked change and commit in one step"
                           onClick={() => void act('Commit', async () => {
                             const r = await window.wanigan.git.commit(st.root, msg, { all: true });

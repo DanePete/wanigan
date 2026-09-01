@@ -16,6 +16,29 @@
 @import './styles/control.css';
 
 /*
+ * Named layout shelves. Twelve unaligned widths across seven stylesheets meant
+ * "narrow" resolved to a different width depending on which view was mounted —
+ * Control reached its compact padding at 900px while every .pane surface waited
+ * for 980px, so two adjacent documents disagreed about their own margins. These
+ * four are the ladder; reach for one before inventing a thirteenth width.
+ *
+ *   wide     1180px  a three- or four-column desktop layout drops a column
+ *   medium    980px  document surfaces go single-column and to --s-4 padding
+ *   compact   720px  two-up grids collapse and padding drops to --s-3
+ *   narrow    460px  one column, everything stacked
+ *
+ * A media condition cannot read a custom property, so these are the reference
+ * for matchMedia in the renderer and for anyone editing a query — each @media
+ * still carries the literal. Change the two together.
+ */
+:root {
+  --bp-wide: 1180px;
+  --bp-medium: 980px;
+  --bp-compact: 720px;
+  --bp-narrow: 460px;
+}
+
+/*
  * Semantic palette. Themes exchange values here, not per-feature rules, so
  * Cards, plots, dialogs, code reviews, and the terminal stay recognisably one
  * product in either mode. `data-theme` is the resolved answer (light/dark);
@@ -195,6 +218,9 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .btn-primary:hover:not(:disabled) { filter: brightness(1.1); background: var(--accent); }
+/* Faded accent + accent-ink falls below 4.5:1 in the light palette; a disabled
+   primary reads on the same neutral pair every other disabled control uses. */
+.btn-primary:disabled { background: var(--bg-sunk); border-color: var(--line); color: var(--text-dim); opacity: 1; }
 .btn-danger { color: var(--bad); }
 .btn-danger:hover:not(:disabled) { background: var(--bad-soft); border-color: var(--bad); }
 
@@ -464,7 +490,10 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .card { background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--r-md); }
 .sunk { background: var(--bg-sunk); border: 1px solid var(--line); border-radius: var(--r-md); }
 
-.stat-grid   { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+/* minmax(0, 1fr), not 1fr: a track's automatic minimum is its own content, so a
+   single long unbreakable value pushed the whole pane sideways in the band
+   between the wide layout and the compact breakpoint that fixes it. */
+.stat-grid   { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .stat-grid-5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
 .stat-2      { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

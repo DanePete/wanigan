@@ -1,0 +1,65 @@
+/* Per-session learning ledger panel (SessionLearning.tsx).
+   Every colour is a semantic token from index.css — this sheet declares none.
+   Status is always glyph + word; colour is the third copy, so every rule here
+   must still read correctly in greyscale. Dense by design: it sits beside a
+   terminal, not on its own page. */
+
+.sl-panel { display: flex; flex-direction: column; gap: var(--s-2); padding: var(--s-3); min-width: 0; }
+.sl-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-2); }
+.sl-head small { color: var(--text-faint); font-size: var(--t-micro); font-variant-numeric: tabular-nums; }
+
+/* One recorded fact per sunk row. */
+.sl-row { min-width: 0; padding: 7px 10px; background: var(--bg-sunk); border: 1px solid var(--line); border-radius: var(--r-sm); font-size: var(--t-small); }
+.sl-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 8px; min-width: 0; color: var(--text-dim); line-height: 1.5; }
+.sl-line strong { color: var(--text); font-weight: 600; }
+.sl-sep { color: var(--text-faint); }
+.sl-num { font-variant-numeric: tabular-nums; }
+
+/* Glyph + word mark; the word is the message, the colour only reinforces. */
+.sl-mark { display: inline-flex; align-items: baseline; gap: 4px; font-weight: 650; white-space: nowrap; }
+.sl-mark .g { font-weight: 700; }
+
+/* Grouped signal counts. Judgment (✕ = failure) lives in the glyph + word. */
+.sl-chip {
+  display: inline-flex; align-items: baseline; gap: 4px; padding: 0 6px;
+  border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--bg-soft);
+  font-size: var(--t-micro); font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.sl-chip .g { font-weight: 750; }
+
+/* Categorical kind chip; identity is the printed word, never the hue. */
+.sl-kind {
+  flex: none; display: inline-flex; padding: 0 5px;
+  border: 1px solid var(--line); border-radius: var(--r-pill);
+  font-size: var(--t-micro); font-weight: 650; white-space: nowrap;
+}
+
+.sl-expand { display: inline-flex; align-items: baseline; gap: 4px; color: var(--text-dim); font-size: var(--t-micro); font-weight: 650; white-space: nowrap; }
+.sl-expand:hover { color: var(--text); }
+.sl-expand .g { font-size: 9px; }
+
+.sl-list { margin-top: 6px; list-style: none; border-top: 1px solid var(--line-soft); }
+.sl-item { display: flex; align-items: baseline; gap: 7px; min-width: 0; padding: 4px 0; border-bottom: 1px solid var(--line-soft); font-size: var(--t-small); color: var(--text-dim); }
+.sl-item:last-child { border-bottom: 0; }
+.sl-glyph { flex: none; width: 13px; text-align: center; font-weight: 750; }
+.sl-trunc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sl-tool { flex: none; max-width: 12em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-family: var(--mono); font-size: var(--t-micro); }
+.sl-when { flex: none; color: var(--text-faint); font-size: var(--t-micro); font-variant-numeric: tabular-nums; }
+.sl-badge { flex: none; padding: 0 5px; border: 1px solid var(--line); border-radius: var(--r-pill); color: var(--text-faint); font-size: var(--t-micro); font-weight: 650; white-space: nowrap; }
+.sl-shell { flex: none; color: var(--text-faint); font-size: var(--t-micro); font-style: italic; white-space: nowrap; }
+
+/* Captions name where a number was measured; --t-micro keeps them subordinate. */
+.sl-cap { margin-top: 5px; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.45; }
+
+/* Observation-channel honesty (Codex lifecycle-only, unverified harnesses). */
+.sl-note { display: flex; gap: 7px; padding: 6px 10px; border: 1px dashed var(--line); border-radius: var(--r-sm); color: var(--text-dim); font-size: var(--t-micro); line-height: 1.5; }
+.sl-note .g { flex: none; font-weight: 700; }
+
+.sl-state { padding: 2px 1px; color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
+.sl-error { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.sl-error p { flex: 1; min-width: 12em; color: var(--bad); font-size: var(--t-small); line-height: 1.45; }
+.sl-error .btn { flex: none; padding: 3px 10px; font-size: var(--t-small); }
+
+@media (max-width: 560px) {
+  .sl-tool { display: none; }
+}

@@ -1,13 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { db, dataDir } from './db';
+import { runGit, head as headOf, repoState } from './git';
 import { listProjects } from './store';
 import { listSessions } from './sessions';
 import type { WorktreeInfo } from '../shared/types';
-
-const exec = promisify(execFile);
 
 /**
  * Three agents on one working tree overwrite each other's edits, and the loser
@@ -27,18 +24,16 @@ type Git = { ok: boolean; stdout: string; stderr: string };
  * Exit status is returned rather than thrown because half of what this module
  * does is ask git a question where "that failed" is the answer (is this a repo,
  * does this branch exist, is there anything to merge).
+ *
+ * The process itself comes from git.ts so that the credential-prompt hardening
+ * lives in exactly one place. This module runs `worktree add` against repos
+ * with remotes; a git that stops to ask for a password it cannot ask for takes
+ * the whole main process — and every PTY it pumps — down with it. The buffer
+ * and timeout stay local because a checkout is not a rev-parse.
  */
 async function git(cwd: string, args: string[], timeout = 20_000): Promise<Git> {
-  try {
-    const { stdout, stderr } = await exec('git', ['-C', cwd, ...args], {
-      timeout,
-      maxBuffer: 16 * 1024 * 1024,
-    });
-    return { ok: true, stdout, stderr };
-  } catch (e) {
-    const err = e as { stdout?: string; stderr?: string; message?: string };
-    return { ok: false, stdout: err.stdout ?? '', stderr: err.stderr || err.message || '' };
-  }
+  const r = await runGit(cwd, args, { timeout, maxBuffer: 16 * 1024 * 1024 });
+  return { ok: r.ok, stdout: r.out, stderr: r.err };
 }
 
 /** git's own last word, for quoting inside a sentence the user has to act on. */
@@ -260,13 +255,20 @@ function shortId(sessionId: string): string {
    is what people already do by hand with worktrees: they are generated or
    machine-local, not the work under review, and a copy of 258 MB per session
    is its own bug.
+
+   The small files are copied rather than linked. A symlink is not a copy: an
+   agent that writes .env inside its isolated worktree writes straight through
+   to the user's real checkout, which is the one thing the isolation is there to
+   stop. They are kilobytes, they are read far more often than written, and a
+   copy that has gone stale is a local problem the operator can see — a
+   write-through into the main checkout is neither.
    ──────────────────────────────────────────────────────────────────────── */
 
 const LINK_DIRS = [
   'vendor', 'node_modules', 'bower_components', '.venv', 'venv', '.yarn',
   'Pods', '.bundle', 'target', '.gradle', '.next/cache', 'vendor/bin',
 ];
-const LINK_FILES = [
+const COPY_FILES = [
   '.env', '.env.local', '.env.development', '.env.development.local',
   'auth.json', '.npmrc', '.tool-versions',
 ];
@@ -283,7 +285,7 @@ async function linkIgnoredDeps(repoRoot: string, worktree: string): Promise<Link
   const linked: LinkedPath[] = [];
   const consider = [
     ...LINK_DIRS.map((p) => ({ rel: p, kind: 'dir' as const })),
-    ...LINK_FILES.map((p) => ({ rel: p, kind: 'file' as const })),
+    ...COPY_FILES.map((p) => ({ rel: p, kind: 'file' as const })),
   ];
   for (const { rel, kind } of consider) {
     const src = path.join(repoRoot, rel);
@@ -296,7 +298,15 @@ async function linkIgnoredDeps(repoRoot: string, worktree: string): Promise<Link
     if (!(await isIgnored(repoRoot, rel))) continue;
     try {
       fs.mkdirSync(path.dirname(dst), { recursive: true });
-      fs.symlinkSync(src, dst, kind === 'dir' ? 'dir' : 'file');
+      if (kind === 'dir') {
+        fs.symlinkSync(src, dst, 'dir');
+      } else {
+        // EXCL rather than the existsSync above alone: the copy must never
+        // overwrite something already sitting in the worktree. copyFileSync
+        // creates the destination from the source's mode, so a 0600 auth.json
+        // never widens on the way in.
+        fs.copyFileSync(src, dst, fs.constants.COPYFILE_EXCL);
+      }
       let bytes: number | null = null;
       try { bytes = kind === 'file' ? fs.statSync(src).size : null; } catch { /* size is a nicety */ }
       linked.push({ path: rel, kind, bytes });
@@ -311,12 +321,22 @@ export async function createWorktree(repoRoot: string, label: string, sessionId:
     throw new Error(`${repoRoot} is not a git repository, so there is nothing to branch from. Add the project's repo root instead, or run this session without isolation.`);
   }
 
-  const headR = await git(root, ['rev-parse', 'HEAD'], 8000);
-  if (!headR.ok) {
+  // "No commits yet" and "git could not answer" both used to arrive here as a
+  // failed rev-parse, and both were reported as the first one — which sends
+  // someone off to commit work they have already committed.
+  const state = await repoState(root);
+  if (state.kind === 'unborn') {
     throw new Error(`${path.basename(root)} has no commits yet — git cannot create a worktree from an empty history. Make one commit, then isolate the session.`);
   }
-  const head = headR.stdout.trim();
-  const baseBranch = await currentBranch(root);
+  if (state.kind !== 'branch' && state.kind !== 'detached') {
+    const why = state.kind === 'unreadable' ? state.reason : 'it is not a git repository';
+    throw new Error(`Wanigan could not read ${path.basename(root)} to branch from it: ${why}. The repo is untouched.`);
+  }
+  const head = state.kind === 'detached' ? state.head : (await headOf(root)) ?? '';
+  if (!head) {
+    throw new Error(`Wanigan could not resolve HEAD in ${path.basename(root)}, so it will not guess what to branch from. The repo is untouched.`);
+  }
+  const baseBranch = state.kind === 'branch' ? state.branch : null;
   // Detached HEAD is legal; it just means merge later has no branch to aim at,
   // which mergeWorktree says out loud rather than guessing.
   const startPoint = baseBranch ?? head;
@@ -415,12 +435,11 @@ async function inspect(p: string): Promise<{ info: WorktreeInfo; dirty: Dirty; a
   const repoRoot = await repoRootFor(abs);
   if (!repoRoot) return null;
 
-  const [branch, headR, dirty] = await Promise.all([
+  const [branch, head, dirty] = await Promise.all([
     currentBranch(abs),
-    git(abs, ['rev-parse', 'HEAD'], 8000),
+    headOf(abs),
     dirtyCount(abs),
   ]);
-  const head = headR.ok ? headR.stdout.trim() || null : null;
 
   // No base is "there is nothing to count from", which is not a failure and is
   // not reported as one: merge refuses on a missing recorded base long before

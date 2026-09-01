@@ -227,6 +227,12 @@ function migratePhases(d: Database.Database) {
       last_at    INTEGER NOT NULL,
       PRIMARY KEY (session_id, metric, attrs)
     );
+    -- Spend and cache totals sum one metric across every session. The primary
+    -- key leads with session_id, so a metric-only filter has nothing to seek on
+    -- and reads the whole table. Carrying attrs and value answers those sums
+    -- from the index alone, without a temp b-tree per group.
+    CREATE INDEX IF NOT EXISTS idx_session_metrics_metric
+      ON session_metrics(metric, attrs, value);
 
     CREATE TABLE IF NOT EXISTS session_api_events (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -245,6 +251,13 @@ function migratePhases(d: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_api_events_session ON session_api_events(session_id, at DESC);
     CREATE INDEX IF NOT EXISTS idx_api_events_at      ON session_api_events(at DESC);
+    -- The effort breakdowns filter kind='request', with and without a time
+    -- window, and neither index above leads with kind. Carrying effort and
+    -- cost_usd is what makes this worth having: most rows in this table are
+    -- requests, so an index on kind alone still fetches nearly every row from
+    -- the table and measures slower than the scan it replaces.
+    CREATE INDEX IF NOT EXISTS idx_api_events_kind
+      ON session_api_events(kind, at DESC, effort, cost_usd);
 
     -- P2 · hook bus ----------------------------------------------------
     CREATE TABLE IF NOT EXISTS session_events (
@@ -259,12 +272,21 @@ function migratePhases(d: Database.Database) {
       paths_json  TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_session_events ON session_events(session_id, at DESC);
+    -- This also bounds the prune: a DESC index still serves an at < ? range, so
+    -- deleting past an age cutoff visits only the rows it removes.
     CREATE INDEX IF NOT EXISTS idx_session_events_at ON session_events(at DESC);
     -- serverStatuses() asks this table for every mcp__ tool call each time
     -- Settings opens. GLOB is case-sensitive, so SQLite can use an index for the
-    -- prefix; without one it is a full scan of a table that grows with every tool
-    -- call and is never pruned — pruneEvents() has no callers.
+    -- prefix; without one it is a full scan of a table that grows with every
+    -- tool call.
     CREATE INDEX IF NOT EXISTS idx_session_events_tool ON session_events(tool_name);
+    -- That aggregate also reads event, at and ok for every matched row, so the
+    -- name-only index still sends it to the table once per call. Carrying the
+    -- other three columns keeps the whole read inside the index. The narrow
+    -- index above is deliberately left in place: this migration is additive,
+    -- and SQLite picks whichever of the two is cheaper for a given query.
+    CREATE INDEX IF NOT EXISTS idx_session_events_tool_usage
+      ON session_events(tool_name, event, at, ok);
 
     -- P4 · transcript archive ------------------------------------------
     CREATE TABLE IF NOT EXISTS transcripts (
@@ -418,6 +440,12 @@ function migratePhases(d: Database.Database) {
       reason     TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_ledger_at ON policy_ledger(at DESC);
+    -- ledgerSummary() counts every row grouped by decision and takes MIN(at)
+    -- per group, over a table that is append-only by design and so never gets
+    -- smaller. at is in the index for the same reason as above: on decision
+    -- alone SQLite walks the index and then still reads every row for the
+    -- minimum, which measures slower than the scan it replaced.
+    CREATE INDEX IF NOT EXISTS idx_ledger_decision ON policy_ledger(decision, at);
 
     -- P25 · durable schedules ------------------------------------------
     -- Claude Code's own /loop is session-scoped and expires after seven days,
@@ -496,6 +524,27 @@ function migratePhases(d: Database.Database) {
   // from outside Wanigan without declaring it foreign, and history, spend and
   // resume exclude it by the shape of the query rather than by remembering.
   addColumn(d, 'session_log', 'origin', "TEXT NOT NULL DEFAULT 'wanigan'");
+  // Revert measures a session's work against the HEAD and dirty paths observed
+  // when it started. Keeping that baseline only in memory loses it at exactly
+  // the moment an operator reaches for undo — after a restart — and a revert
+  // without one cannot tell this agent's edits from work that was already there.
+  addColumn(d, 'session_log', 'baseline_head', 'TEXT');
+  addColumn(d, 'session_log', 'baseline_dirty_json', 'TEXT');
+  // What the operator actually asked for at launch. It seeds the briefing query
+  // and is typed into the PTY, and after that only the scrollback holds it — so
+  // a session's own row cannot say what the session was started to do, which is
+  // the first question anyone asks of a finished one. The writer must pass this
+  // through redactCredentials() from ./redact and bound its length before it
+  // lands: a launch prompt is exactly where a pasted key ends up, and this row
+  // outlives the terminal that showed it.
+  addColumn(d, 'session_log', 'initial_prompt', 'TEXT');
+  // A fire and the run it dispatched were linked only by a prefix of the run's
+  // name, which is a display string a rename breaks. headless.ts writes the
+  // terminal outcome back onto the fire, and that write needs an id an operator
+  // cannot edit out from under it. Nullable: a fire can be spent on work that
+  // creates no run row, and every row written before this column existed has no
+  // answer to give.
+  addColumn(d, 'schedule_runs', 'run_id', 'TEXT');
   addColumn(d, 'queue', 'lease_owner', 'TEXT');
   addColumn(d, 'queue', 'lease_expires_at', 'INTEGER');
   // This must follow the additive columns above. `CREATE TABLE IF NOT
@@ -503,6 +552,16 @@ function migratePhases(d: Database.Database) {
   // first makes SQLite abort the entire migration with "no such column".
   d.exec('CREATE INDEX IF NOT EXISTS idx_queue_lease ON queue(state, lease_expires_at)');
   d.exec("CREATE INDEX IF NOT EXISTS idx_runs_kind ON runs(kind, created_at DESC)");
+  // Ordered after the ALTER above for the same reason as the queue index. The
+  // read is "which fire does this run answer for", once per run that finishes,
+  // so this is not a tight loop — but schedule_runs only accumulates and no
+  // existing index starts at run_id, which leaves a full scan that grows with
+  // every fire ever dispatched. Partial because a fire that produced no run has
+  // nothing to find here, and SQLite leaves NULLs out of a partial index.
+  d.exec(
+    'CREATE INDEX IF NOT EXISTS idx_schedule_runs_run ON schedule_runs(run_id) '
+    + 'WHERE run_id IS NOT NULL'
+  );
   migrateLearning(d);
   migrateControl(d);
   migrateImprovementScout(d);
@@ -542,6 +601,15 @@ function migrateLearning(d: Database.Database) {
       ON learning_signals(provider_id, processed_at, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_learning_signals_task
       ON learning_signals(task_hash, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_learning_signals_session
+      ON learning_signals(session_id, created_at DESC);
+    -- The consolidator claims the oldest unprocessed signals on a five-minute
+    -- interval. The provider index cannot serve a query that names no provider,
+    -- so that read is a full scan plus a temp b-tree for the sort, on a table
+    -- that only accumulates. A partial index keeps the work proportional to the
+    -- backlog rather than to the history.
+    CREATE INDEX IF NOT EXISTS idx_learning_signals_unprocessed
+      ON learning_signals(created_at) WHERE processed_at IS NULL;
 
     CREATE TABLE IF NOT EXISTS knowledge_items (
       id                TEXT PRIMARY KEY,
@@ -706,6 +774,36 @@ function migrateLearning(d: Database.Database) {
       ON artifact_metrics(item_id, metric, at DESC);
     CREATE INDEX IF NOT EXISTS idx_artifact_metrics_provider
       ON artifact_metrics(provider_id, metric, at DESC);
+    CREATE INDEX IF NOT EXISTS idx_artifact_metrics_session
+      ON artifact_metrics(session_id, metric, at DESC);
+
+    CREATE TABLE IF NOT EXISTS session_briefings (
+      session_id       TEXT NOT NULL,
+      at               INTEGER NOT NULL,
+      delivery         TEXT NOT NULL,
+      provider_id      TEXT,
+      project_id       TEXT,
+      entries_json     TEXT NOT NULL DEFAULT '[]',
+      estimated_tokens INTEGER NOT NULL DEFAULT 0,
+      max_tokens       INTEGER NOT NULL DEFAULT 0,
+      omitted_stale    INTEGER NOT NULL DEFAULT 0,
+      omitted_budget   INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY(session_id, at)
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_briefings_at
+      ON session_briefings(at DESC);
+
+    CREATE TABLE IF NOT EXISTS consolidation_runs (
+      id           TEXT PRIMARY KEY,
+      at           INTEGER NOT NULL,
+      trigger      TEXT NOT NULL,
+      processed    INTEGER NOT NULL,
+      candidates   INTEGER NOT NULL,
+      auto_applied INTEGER NOT NULL,
+      duration_ms  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_consolidation_runs_at
+      ON consolidation_runs(at DESC);
 
     CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
       item_id UNINDEXED, title, canonical_text, path_scope
@@ -720,6 +818,15 @@ function migrateLearning(d: Database.Database) {
   addColumn(d, 'session_log', 'provider_profile_json', 'TEXT');
   addColumn(d, 'session_log', 'backend_id', 'TEXT');
   addColumn(d, 'session_log', 'harness_id', 'TEXT');
+  // The roots a projection was granted at preview time, so undo can verify the
+  // same containment even after the provider profile or project is gone.
+  // Reversibility must not depend on the thing being reversed still existing.
+  addColumn(d, 'knowledge_projections', 'allowed_roots_json', 'TEXT');
+  // Without this, evidence_level='causal' is only the caller's word for it. A
+  // metric that names the controlled experiment it came from can be checked
+  // against that run; one that names nothing is an estimate wearing a stronger
+  // label. Nullable because most metrics are honestly observational.
+  addColumn(d, 'artifact_metrics', 'experiment_id', 'TEXT');
 }
 
 /**

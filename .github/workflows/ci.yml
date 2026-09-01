@@ -10,6 +10,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# The two jobs below are `npm test` split by what each step actually needs from
+# the runner, and nothing else. Together they run the same four steps in the
+# same order: typecheck, test:package-hooks, test:local-install, smoke. A CI
+# that ran a smaller set than the command contributors are told to run is how a
+# required build script stayed untracked at HEAD without anything going red.
+
 jobs:
   check:
     name: typecheck + smoke
@@ -53,8 +59,38 @@ jobs:
       - name: Smoke
         run: xvfb-run --auto-servernum npm run smoke
 
-# No macOS packaging job here on purpose. Signing and notarisation need an
-# Apple Developer identity and an app-specific password; making CI depend on
-# secrets that only exist on a maintainer's machine turns every fork's first
-# pull request into a red build for a reason the contributor cannot fix.
-# Releases are cut with `npm run dist:mac` on a machine that has the identity.
+  packaging:
+    name: macOS packaging suites
+    # The other two thirds of `npm test`. These are fixture-only: they build no
+    # bundle, sign nothing, and never read or write /Applications. They still
+    # belong on a macOS runner because what they assert is macOS packaging
+    # behaviour — Electron fuses, the sealed-signature and asar-integrity
+    # checks, and the installer's own quit/stage/promote sequence — and the
+    # scripts under test guard several of those assertions on process.platform.
+    # Skipping them on Linux would report green for checks that never ran.
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Package hooks
+        run: npm run test:package-hooks
+
+      - name: Local install fixtures
+        run: npm run test:local-install
+
+# Still no macOS *release* job. Signing and notarisation need an Apple Developer
+# identity and an app-specific password; making CI depend on secrets that only
+# exist on a maintainer's machine turns every fork's first pull request into a
+# red build for a reason the contributor cannot fix. The packaging job above
+# needs neither — it asserts the hooks against fixtures. Releases are cut with
+# `npm run dist:mac` on a machine that has the identity.

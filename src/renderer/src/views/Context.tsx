@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
-import type { Project } from '@shared/types';
+import type { KnowledgeProjection, LearningOverview, LearningSettings, Project } from '@shared/types';
 import { Note, Section, Stat, ago, num, usd } from '../components/bits';
 
 /**
@@ -37,6 +37,8 @@ type InstructionFile = {
   importedBy: string | null;
   external: boolean;
   conditional: { kind: 'paths'; globs: string[]; matchingFiles: number } | null;
+  /** A second reference to content already counted once — its bytes never load again. */
+  duplicate: boolean;
   warnings: string[];
   excludedBy: string | null;
 };
@@ -128,6 +130,8 @@ type ProjectConfig = {
 type ContextBudget = {
   files: { path: string; label: string; bytes: number; estTokens: number }[];
   totalBytes: number;
+  /** Bytes on disk that do NOT load — past the 4 MiB skip. Kept out of totalBytes. */
+  skippedBytes: number;
   estTokens: number;
   usdPerSession: number | null;
   model: string | null;
@@ -176,7 +180,7 @@ const SCOPE: Record<InstructionScope, { glyph: string; word: string; color: stri
               blurb: 'Pulled in by an @import from another instruction file.' },
 };
 
-type Loads = 'launch' | 'demand' | 'excluded' | 'missing' | 'skipped';
+type Loads = 'launch' | 'demand' | 'excluded' | 'missing' | 'duplicate' | 'skipped';
 
 const LOADS: Record<Loads, { glyph: string; word: string; color: string; blurb: string }> = {
   launch:   { glyph: '●', word: 'at launch', color: 'var(--good)',
@@ -187,6 +191,8 @@ const LOADS: Record<Loads, { glyph: string; word: string; color: string; blurb: 
               blurb: 'Removed by claudeMdExcludes. It never reaches the agent.' },
   missing:  { glyph: '·', word: 'missing',   color: 'var(--text-faint)',
               blurb: 'Referenced but not on disk.' },
+  duplicate:{ glyph: '◇', word: 'duplicate', color: 'var(--text-faint)',
+              blurb: 'A second listing of content already loaded once. Inert — it never loads again.' },
   skipped:  { glyph: '✕', word: 'skipped',   color: 'var(--critical)',
               blurb: 'Over the 4 MiB ceiling, so it is skipped whole — not truncated.' },
 };
@@ -216,11 +222,21 @@ function Mark({ glyph, word, color, title }: { glyph: string; word: string; colo
   );
 }
 
+/** Provenance, not judgment: this file was written by an approved knowledge projection. */
+function ManagedChip() {
+  return (
+    <span className="ctx-chip" style={{ color: 'var(--series-2)', borderColor: 'var(--series-2)' }}
+          title="This file (or a managed block inside it) was written by an approved knowledge projection. It is hash-guarded and reversible from the Learning view.">
+      ✎ Wanigan-managed
+    </span>
+  );
+}
+
 /**
- * bits.tsx's <Note tone="warn"> reaches for --warn-soft, which the token sheet
- * does not define, so warnings would render on a transparent ground. Warnings
- * are the whole point of this view, so they get a local callout on the
- * --warning / --critical tokens that do exist. Info and ok reuse <Note>.
+ * A warning with a title, a glyph and room for a paragraph of what to do about
+ * it. <Note> is a one-line strip and stays the right shape for info and ok;
+ * this view's warnings are its whole point and need to carry a fix, so they get
+ * their own block on the --warning / --critical token pair.
  */
 function Callout({ level = 'warning', title, children }: {
   level?: 'warning' | 'critical'; title: React.ReactNode; children?: React.ReactNode;
@@ -310,9 +326,9 @@ function FileBody({ path, kind }: { path: string; kind: 'instruction' | 'memory'
   );
 }
 
-/* ── the six slots, for the empty state ──────────────────────────────── */
+/* ── the seven slots, for the empty state ────────────────────────────── */
 
-type SlotKey = 'chain' | 'rules' | 'agents' | 'memory' | 'config' | 'budget';
+type SlotKey = 'chain' | 'rules' | 'agents' | 'memory' | 'config' | 'budget' | 'learning';
 
 const SLOTS: { n: number; key: SlotKey; title: string; what: string; how: string }[] = [
   { n: 1, key: 'chain', title: 'CLAUDE.md',
@@ -333,6 +349,9 @@ const SLOTS: { n: number; key: SlotKey; title: string; what: string; how: string
   { n: 6, key: 'budget', title: 'Startup budget',
     what: 'Estimated tokens and cost of carrying all of the above at the start of every single session.',
     how: 'Fills in on its own as soon as anything above it exists.' },
+  { n: 7, key: 'learning', title: 'Learning briefing',
+    what: 'A token-bounded, cited capsule of approved knowledge retrieved per task.',
+    how: 'Approve proposals in the Learning Inbox; sessions then receive relevant items automatically.' },
 ];
 
 /* ── the view ────────────────────────────────────────────────────────── */
@@ -345,23 +364,60 @@ type Data = {
   config: ProjectConfig | null;
   agents: AgentsMd | null;
   budget: ContextBudget | null;
+  /** Applied knowledge projections keyed by targetPath. Empty when the read failed — the badge simply does not show. */
+  managed: Map<string, KnowledgeProjection>;
+  /** Learning engine reads are non-fatal: null means "not read this scan", never "zero". */
+  learn: { settings: LearningSettings | null; overview: LearningOverview | null };
   errors: Errors;
 };
 
-export default function Context({ projectId, projects }: { projectId?: string; projects: Project[] }) {
-  const [chosen, setChosen] = useState<string | undefined>(projectId);
-  useEffect(() => { if (projectId) setChosen(projectId); }, [projectId]);
+export default function Context({ projectId, projects, onReloadProjects, onOpenLearning }: {
+  projectId?: string;
+  projects: Project[];
+  onReloadProjects: () => Promise<void>;
+  onOpenLearning: (tab: 'overview' | 'inbox' | 'knowledge' | 'optimize') => void;
+}) {
+  /* This view's own scope control.
+     `projectId` is the app's derived project, and its only setters are opening
+     a session, adding a project and Learning's scope picker — there is no
+     global switcher. A pick made here used to be overwritten the next time that
+     derived value moved, so pointing Context at another repository meant going
+     to Learning, changing the scope there, and navigating back.
+
+     `null` means "follow whatever the app is pointed at", which is an absence
+     of a choice rather than a choice; once someone picks here, this view stops
+     following. A pin whose project has since been removed falls back to
+     following rather than rendering an empty panel for a dangling id. */
+  const [pinned, setPinned] = useState<string | null>(null);
+  const pinnedLive = pinned !== null && projects.some((p) => p.id === pinned);
 
   const project = useMemo(
-    () => projects.find((p) => p.id === chosen) ?? projects.find((p) => p.id === projectId) ?? projects[0] ?? null,
-    [projects, chosen, projectId],
+    () => (pinnedLive ? projects.find((p) => p.id === pinned) : undefined)
+      ?? projects.find((p) => p.id === projectId) ?? projects[0] ?? null,
+    [projects, pinned, pinnedLive, projectId],
   );
+
+  /* Null unless this view has been deliberately pointed somewhere other than
+     the project the rest of the app is on — the only case worth a sentence. */
+  const strayFrom = pinnedLive && projectId && pinned !== projectId
+    ? projects.find((p) => p.id === projectId) ?? null
+    : null;
 
   const [d, setD] = useState<Data | null>(null);
   const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [initMsg, setInitMsg] = useState<{ tone: 'ok' | 'info'; text: string } | null>(null);
 
+  /* The empty state's escape hatch: ask App to re-read the saved project list.
+     A failure keeps the last-good (empty) list rather than raising a banner. */
+  const checkProjects = useCallback(async () => {
+    setChecking(true);
+    try { await onReloadProjects(); } catch { /* ignore */ }
+    setChecking(false);
+  }, [onReloadProjects]);
+
   const path = project?.path;
+  const pid = project?.id;
 
   const load = useCallback(async (rescan: boolean) => {
     if (!path) { setD(null); return; }
@@ -370,11 +426,17 @@ export default function Context({ projectId, projects }: { projectId?: string; p
     if (rescan) { try { await window.wanigan.context.refresh(path); } catch { /* ignore */ } }
 
     const errors: Errors = {};
-    const [ri, rm, rc, ra] = await Promise.allSettled([
+    // The three learning reads are additive colour on this view, not its
+    // subject, so they degrade silently: a failure hides the badge or section
+    // instead of raising a banner.
+    const [ri, rm, rc, ra, rp, rls, rlo] = await Promise.allSettled([
       window.wanigan.context.instructions(path),
       window.wanigan.context.memory(path),
       window.wanigan.context.config(path),
       window.wanigan.context.agentsMd(path),
+      window.wanigan.learning.projections({ status: 'applied', limit: 500 }),
+      window.wanigan.learning.settings(),
+      window.wanigan.learning.overview(pid ?? null),
     ]);
 
     const chain = ri.status === 'fulfilled' ? (ri.value as InstructionChain) : null;
@@ -386,22 +448,68 @@ export default function Context({ projectId, projects }: { projectId?: string; p
     const agents = ra.status === 'fulfilled' ? (ra.value as AgentsMd) : null;
     if (ra.status === 'rejected') errors.agents = msg(ra.reason);
 
+    const applied = rp.status === 'fulfilled' ? (rp.value as KnowledgeProjection[]) : [];
+    const managed = new Map(applied.map((p) => [p.targetPath, p] as const));
+    const learn = {
+      settings: rls.status === 'fulfilled' ? (rls.value as LearningSettings) : null,
+      overview: rlo.status === 'fulfilled' ? (rlo.value as LearningOverview) : null,
+    };
+
     // The budget prices exactly what loads at launch, at whatever model the
-    // settings chain actually selected — not a default we invented.
+    // settings chain actually selected — not a default we invented. Files the
+    // scanner found but marked skipped-whole (over the 4 MiB ceiling — present
+    // in chain.files, absent from atLaunch/onDemand) ride along too: the main
+    // process prices them at 0 tokens and reports their size as skippedBytes,
+    // so the "Skipped whole" tile can actually fire.
     let budget: ContextBudget | null = null;
-    if (chain && chain.atLaunch.length) {
-      const picked = config?.settings.find((s) => s.key === 'model' && typeof s.value === 'string');
-      const model = picked ? String(picked.value) : undefined;
-      const files = chain.atLaunch.map((f) => ({ path: f.path, label: `${SCOPE[f.scope].word} · ${fileName(f.path)}` }));
-      try { budget = (await window.wanigan.context.budget(path, files, model)) as ContextBudget; }
-      catch (e) { errors.budget = msg(e); }
+    if (chain) {
+      const loads = new Set([...chain.atLaunch, ...chain.onDemand].map((f) => f.order));
+      const skippedWhole = chain.files.filter(
+        (f) => f.exists && !f.excludedBy && !f.duplicate && !loads.has(f.order),
+      );
+      if (chain.atLaunch.length || skippedWhole.length) {
+        const picked = config?.settings.find((s) => s.key === 'model' && typeof s.value === 'string');
+        const model = picked ? String(picked.value) : undefined;
+        const files = [...chain.atLaunch, ...skippedWhole]
+          .map((f) => ({ path: f.path, label: `${SCOPE[f.scope].word} · ${fileName(f.path)}` }));
+        try { budget = (await window.wanigan.context.budget(path, files, model)) as ContextBudget; }
+        catch (e) { errors.budget = msg(e); }
+      }
     }
 
-    setD({ chain, memory, config, agents, budget, errors });
+    setD({ chain, memory, config, agents, budget, managed, learn, errors });
     setBusy(false);
-  }, [path]);
+  }, [path, pid]);
 
   useEffect(() => { setD(null); setInitMsg(null); void load(false); }, [load]);
+
+  /* Section 7 follows the engine live: a learningChanged push re-reads ONLY
+     the learning settings/overview and swaps them into the current render —
+     no re-scan of the chain, no loading flash. A failed quiet read keeps the
+     last-good values rather than flashing the section away. */
+  useEffect(() => {
+    let live = true;
+    let timer: number | undefined;
+    const refetch = async () => {
+      const [rls, rlo] = await Promise.allSettled([
+        window.wanigan.learning.settings(),
+        window.wanigan.learning.overview(pid ?? null),
+      ]);
+      if (!live) return;
+      setD((prev) => prev === null ? prev : {
+        ...prev,
+        learn: {
+          settings: rls.status === 'fulfilled' ? (rls.value as LearningSettings) : prev.learn.settings,
+          overview: rlo.status === 'fulfilled' ? (rlo.value as LearningOverview) : prev.learn.overview,
+        },
+      });
+    };
+    const off = window.wanigan.on.learningChanged(() => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => { timer = undefined; void refetch(); }, 1000);
+    });
+    return () => { live = false; off(); if (timer !== undefined) window.clearTimeout(timer); };
+  }, [pid]);
 
   async function runInit() {
     if (!project) return;
@@ -421,17 +529,35 @@ export default function Context({ projectId, projects }: { projectId?: string; p
     }
   }
 
-  /* Empty: no projects at all. Not the same as a project with nothing in it. */
+  /* Empty: no projects at all. Not the same as a project with nothing in it —
+     and "reading the list right now" is a third state, not a claim of empty. */
   if (projects.length === 0 || !project) {
     return (
       <div className="pane ctx">
-        <Head project={null} projects={projects} onPick={setChosen} onRescan={() => load(true)} busy={busy} />
-        <div className="card" style={{ padding: 18 }}>
-          <h2 style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>No projects yet</h2>
-          <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 6, maxWidth: 560 }}>
-            This view reads a project folder from disk and shows what a session launched in it would
-            be told before you type anything. Add a folder in Sessions and it appears here.
-          </p>
+        <Head project={null} projects={projects} onPick={setPinned} strayFrom={strayFrom} onFollow={() => setPinned(null)}
+              onRescan={() => load(true)} busy={busy} />
+        <div className="card" style={{ padding: 18, maxWidth: 680 }}>
+          {checking ? (
+            <>
+              <h2 style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>Reading projects…</h2>
+              <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 6 }}>
+                Asking the main process for the saved project list. Anything added in Sessions since
+                this view loaded will show up here.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>No projects yet</h2>
+              <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 6 }}>
+                This view reads a project folder from disk and shows what a session launched in it would
+                be told before you type anything. Add a folder in Sessions and it appears here.
+              </p>
+            </>
+          )}
+          <button className="btn" style={{ marginTop: 12 }} disabled={checking}
+                  onClick={() => void checkProjects()}>
+            {checking ? 'Reading projects…' : 'Check for projects'}
+          </button>
         </div>
       </div>
     );
@@ -441,7 +567,8 @@ export default function Context({ projectId, projects }: { projectId?: string; p
   if (!d) {
     return (
       <div className="pane ctx">
-        <Head project={project} projects={projects} onPick={setChosen} onRescan={() => load(true)} busy={busy} />
+        <Head project={project} projects={projects} onPick={setPinned} strayFrom={strayFrom} onFollow={() => setPinned(null)}
+              onRescan={() => load(true)} busy={busy} />
         <div className="card chart-empty">
           Reading the instruction chain, memory and settings for <span className="mono">{project.path}</span>…
         </div>
@@ -455,7 +582,8 @@ export default function Context({ projectId, projects }: { projectId?: string; p
   if (allFailed) {
     return (
       <div className="pane ctx" key={project.id}>
-        <Head project={project} projects={projects} onPick={setChosen} onRescan={() => load(true)} busy={busy} />
+        <Head project={project} projects={projects} onPick={setPinned} strayFrom={strayFrom} onFollow={() => setPinned(null)}
+              onRescan={() => load(true)} busy={busy} />
         <Callout level="critical" title={`Wanigan could not read anything about ${project.name}.`}>
           <p>
             All four context readers failed. If every message below says there is no handler, the main
@@ -485,6 +613,13 @@ export default function Context({ projectId, projects }: { projectId?: string; p
   const inProject = (p: string) =>
     p === project.path || p.startsWith(project.path + '/') || p.startsWith(project.path + '\\');
 
+  /* The learning section shows when this project has any learning data, or the
+     engine is on and would inject a briefing. Failed reads leave both null, so
+     the section quietly stays away rather than showing invented zeros. */
+  const ov = d.learn.overview;
+  const hasLearning = (!!ov && (ov.activeKnowledge > 0 || ov.quarantined > 0 || ov.pending > 0
+      || ov.signals > 0 || ov.activeSkills > 0)) || !!d.learn.settings?.enabled;
+
   /* A panel shows when it has anything to say — inherited files included, because
      "a CLAUDE.md in your home directory is loading into this repo" is exactly the
      kind of thing this view exists to surface. */
@@ -496,6 +631,7 @@ export default function Context({ projectId, projects }: { projectId?: string; p
     config: !!d.config && (d.config.settings.length > 0 || d.config.hooks.length > 0 || d.config.mcp.length > 0
             || d.config.agents.length > 0 || d.config.commands.length > 0 || d.config.layers.some((l) => l.exists)),
     budget: !!d.budget && d.budget.files.length > 0,
+    learning: hasLearning,
   };
 
   /* A SLOT is filled only by something this project owns. Inheriting a memory
@@ -513,17 +649,19 @@ export default function Context({ projectId, projects }: { projectId?: string; p
       || d.config.agents.some((a) => a.scope === 'project')
       || d.config.commands.some((x) => x.scope === 'project')),
     budget: shows.budget,
+    learning: hasLearning,
   };
   const errored: Record<SlotKey, string | undefined> = {
     chain: e.instructions, rules: e.instructions, agents: e.agents,
-    memory: e.memory, config: e.config, budget: e.budget,
+    memory: e.memory, config: e.config, budget: e.budget, learning: undefined,
   };
   const unfilled = SLOTS.filter((s) => !filled[s.key] && !errored[s.key]);
   const nothing = !Object.values(shows).some(Boolean) && Object.keys(e).length === 0;
 
   return (
     <div className="pane ctx" key={project.id}>
-      <Head project={project} projects={projects} onPick={setChosen} onRescan={() => load(true)} busy={busy} />
+      <Head project={project} projects={projects} onPick={setPinned} strayFrom={strayFrom} onFollow={() => setPinned(null)}
+              onRescan={() => load(true)} busy={busy} />
 
       {nothing ? (
         <Setup full project={project} slots={SLOTS} onInit={runInit} initMsg={initMsg} />
@@ -535,14 +673,14 @@ export default function Context({ projectId, projects }: { projectId?: string; p
                      right={chain ? <span className="ctx-chip">{plural(chain.atLaunch.length, 'file')} at launch</span> : undefined}>
               {e.instructions
                 ? <PanelError channel="context:instructions" detail={e.instructions} onRetry={() => load(true)} />
-                : chain && <InstructionsPanel chain={chain} />}
+                : chain && <InstructionsPanel chain={chain} managed={d.managed} />}
             </Section>
           )}
 
           {shows.rules && chain && (
             <Section n={2} title="Rules"
                      hint="What loads at launch, and what waits for a matching path. A rule that matches nothing never loads at all.">
-              <RulesPanel rules={rules} root={project.path} />
+              <RulesPanel rules={rules} root={project.path} managed={d.managed} />
             </Section>
           )}
 
@@ -551,7 +689,7 @@ export default function Context({ projectId, projects }: { projectId?: string; p
                      hint="Claude Code does not read AGENTS.md on its own — it reaches context only by import or symlink.">
               {e.agents
                 ? <PanelError channel="context:agentsMd" detail={e.agents} onRetry={() => load(true)} />
-                : d.agents && <AgentsPanel a={d.agents} />}
+                : d.agents && <AgentsPanel a={d.agents} managed={d.managed} root={project.path} />}
             </Section>
           )}
 
@@ -574,13 +712,24 @@ export default function Context({ projectId, projects }: { projectId?: string; p
             </Section>
           )}
 
+          {/* No "≈ estimate" chip on section 6 any more. One claim gets one
+              notation: an estimated value carries a tilde and the word est.
+              where the number is, so a chip on the section header was a second
+              grammar for the same statement and a reader had to learn both. */}
           {(shows.budget || errored.budget) && (
             <Section n={6} title="Startup budget"
-                     hint="What carrying all of that costs at the start of every session. An estimate, not a measurement."
-                     right={<span className="ctx-chip">≈ estimate</span>}>
+                     hint="What carrying all of that costs at the start of every session. An estimate, not a measurement.">
               {e.budget
                 ? <PanelError channel="context:budget" detail={e.budget} onRetry={() => load(true)} />
                 : d.budget && <BudgetPanel b={d.budget} />}
+            </Section>
+          )}
+
+          {shows.learning && (
+            <Section n={7} title="Learning briefing"
+                     hint="Injected at launch by Wanigan, on top of everything above. Not included in the file totals.">
+              <LearningPanel settings={d.learn.settings} overview={d.learn.overview}
+                             onOpenLearning={onOpenLearning} />
             </Section>
           )}
 
@@ -593,9 +742,12 @@ export default function Context({ projectId, projects }: { projectId?: string; p
   );
 }
 
-function Head({ project, projects, onPick, onRescan, busy }: {
+function Head({ project, projects, onPick, onRescan, busy, strayFrom, onFollow }: {
   project: Project | null; projects: Project[];
   onPick: (id: string) => void; onRescan: () => void; busy: boolean;
+  /** The app's own project, when this view has been pinned away from it. */
+  strayFrom?: Project | null;
+  onFollow?: () => void;
 }) {
   return (
     <div className="pane-head">
@@ -606,6 +758,15 @@ function Head({ project, projects, onPick, onRescan, busy }: {
             ? <>What a session launched in <span className="mono">{project.path}</span> is told before you type anything.</>
             : <>What a session is told before you type anything.</>}
         </p>
+        {/* A pick made here is this view's alone. Saying so is the difference
+            between a scope control and a control that looks broken because the
+            rest of the app did not move with it. */}
+        {strayFrom && onFollow && (
+          <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5, marginTop: 3 }}>
+            Pinned on this view only — the rest of Wanigan is pointed at <strong>{strayFrom.name}</strong>.{' '}
+            <button className="link" onClick={onFollow}>Follow the app's project instead</button>
+          </p>
+        )}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         {projects.length > 1 && project && (
@@ -617,9 +778,14 @@ function Head({ project, projects, onPick, onRescan, busy }: {
             </select>
           </label>
         )}
-        <button className="btn" onClick={onRescan} disabled={busy || !project}>
-          {busy ? 'Re-scanning…' : 'Re-scan'}
-        </button>
+        {/* Re-scan reads a project's disk; with no project there is nothing it
+            owns, so it is absent rather than disabled at the wrong owner. */}
+        {project && (
+          <button className="btn" onClick={onRescan} disabled={busy}
+                  title={busy ? 'A scan of this project is already running.' : undefined}>
+            {busy ? 'Re-scanning…' : 'Re-scan'}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -627,7 +793,7 @@ function Head({ project, projects, onPick, onRescan, busy }: {
 
 /* ── 1 · instructions ────────────────────────────────────────────────── */
 
-function InstructionsPanel({ chain }: { chain: InstructionChain }) {
+function InstructionsPanel({ chain, managed }: { chain: InstructionChain; managed: Map<string, KnowledgeProjection> }) {
   const [q, setQ] = useState('');
   const [only, setOnly] = useState<'all' | Loads>('all');
   const [open, setOpen] = useState<string | null>(null);
@@ -636,18 +802,21 @@ function InstructionsPanel({ chain }: { chain: InstructionChain }) {
   const loadsOf = useMemo(() => {
     const launch = new Set(chain.atLaunch.map((f) => f.order));
     const demand = new Set(chain.onDemand.map((f) => f.order));
+    // duplicate before the 4 MiB fallback: a duplicated file is inert because
+    // its content already loaded once, not because it is oversized.
     return (f: InstructionFile): Loads =>
       launch.has(f.order) ? 'launch'
         : demand.has(f.order) ? 'demand'
         : f.excludedBy ? 'excluded'
         : !f.exists ? 'missing'
+        : f.duplicate ? 'duplicate'
         : 'skipped';
   }, [chain]);
 
   const present = useMemo(() => {
     const seen = new Set<Loads>();
     for (const f of ordered) seen.add(loadsOf(f));
-    return (['launch', 'demand', 'excluded', 'missing', 'skipped'] as Loads[]).filter((k) => seen.has(k));
+    return (['launch', 'demand', 'excluded', 'missing', 'duplicate', 'skipped'] as Loads[]).filter((k) => seen.has(k));
   }, [ordered, loadsOf]);
 
   const rank = useMemo(() => new Map(ordered.map((f, i) => [f, i + 1])), [ordered]);
@@ -746,6 +915,13 @@ function InstructionsPanel({ chain }: { chain: InstructionChain }) {
                               ⊘ excluded by {f.excludedBy}
                             </span>
                           )}
+                          {f.duplicate && (
+                            <span className="ctx-chip faint"
+                                  title="A second reference to content that already loaded once — an import reached from two files, or the losing half of the CLAUDE.md / .claude/CLAUDE.md pair. Claude Code reads the content once; this copy never loads and its bytes are not counted again.">
+                              ◇ duplicate — inert
+                            </span>
+                          )}
+                          {managed.has(f.path) && <ManagedChip />}
                           {f.conditional && (
                             <span className="ctx-chip faint mono">{f.conditional.globs.join(', ')}</span>
                           )}
@@ -772,7 +948,7 @@ function InstructionsPanel({ chain }: { chain: InstructionChain }) {
                   <p className="dim">
                     No file in the chain matches {q.trim() ? <>“<span className="mono">{q.trim()}</span>”</> : 'this filter'}
                     {only !== 'all' && <> in the <strong>{LOADS[only].word}</strong> set</>}.
-                    {' '}All {plural(ordered.length, 'file')} are still loaded.
+                    {' '}All {plural(ordered.length, 'file')} are still listed.
                   </p>
                   <button className="btn" style={{ marginTop: 10 }}
                           onClick={() => { setQ(''); setOnly('all'); }}>Clear the filter</button>
@@ -801,7 +977,9 @@ function InstructionsPanel({ chain }: { chain: InstructionChain }) {
 
 /* ── 2 · rules ───────────────────────────────────────────────────────── */
 
-function RulesPanel({ rules, root }: { rules: InstructionFile[]; root: string }) {
+function RulesPanel({ rules, root, managed }: {
+  rules: InstructionFile[]; root: string; managed: Map<string, KnowledgeProjection>;
+}) {
   const [open, setOpen] = useState<string | null>(null);
   const launch = rules.filter((r) => !r.conditional);
   const demand = rules.filter((r) => r.conditional);
@@ -840,7 +1018,10 @@ function RulesPanel({ rules, root }: { rules: InstructionFile[]; root: string })
                 {launch.map((r) => (
                   <tr key={r.path}>
                     <td><Mark {...SCOPE[r.scope]} title={SCOPE[r.scope].blurb} /></td>
-                    <td><span className="ctx-path">{rel(r.path)}</span></td>
+                    <td>
+                      <span className="ctx-path">{rel(r.path)}</span>
+                      {managed.has(r.path) && <span style={{ marginLeft: 6 }}><ManagedChip /></span>}
+                    </td>
                     <td className="r">{num(r.lines)}</td>
                     <td className="r">{bytes(r.bytes)}</td>
                   </tr>
@@ -903,6 +1084,7 @@ function RulesPanel({ rules, root }: { rules: InstructionFile[]; root: string })
                             <span className="caret" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
                             <span className="ctx-path">{rel(r.path)}</span>
                           </button>
+                          {managed.has(r.path) && <span style={{ marginLeft: 6 }}><ManagedChip /></span>}
                         </td>
                         <td className="mono" style={{ fontSize: 'var(--t-small)' }}>
                           {(r.conditional?.globs ?? []).join(', ')}
@@ -938,16 +1120,25 @@ function RulesPanel({ rules, root }: { rules: InstructionFile[]; root: string })
 
 /* ── 3 · AGENTS.md ───────────────────────────────────────────────────── */
 
-function AgentsPanel({ a }: { a: AgentsMd }) {
+function AgentsPanel({ a, managed, root }: {
+  a: AgentsMd; managed: Map<string, KnowledgeProjection>; root: string;
+}) {
+  // Same provenance mark the chain rows carry: an applied projection whose
+  // target is this project's AGENTS.md means Wanigan wrote (part of) it.
+  const isManaged = managed.has(root + '/AGENTS.md') || managed.has(root + '\\AGENTS.md');
   if (a.imported || a.symlinked) {
     return (
       <Note tone="ok">
         <strong>✓ AGENTS.md is loaded.</strong> {a.note}
+        {isManaged && <span style={{ marginLeft: 6 }}><ManagedChip /></span>}
       </Note>
     );
   }
   return (
     <>
+      {isManaged && (
+        <div style={{ marginBottom: 8 }}><ManagedChip /></div>
+      )}
       <Callout level="critical" title="Claude Code will NOT read this project’s AGENTS.md.">
         Nothing imports it and no CLAUDE.md is a symlink to it, so not one line of it reaches the agent.
         Whatever it says about this repo is being ignored on every single session.
@@ -1347,6 +1538,16 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
         </>
       )}
 
+      {/* Skills are the one thing a project puts in front of an agent that this
+          panel does not read — they are catalogued in their own view, which is
+          off the nav rail and reached by chord. Naming it here, where its
+          neighbours are listed, is the only place someone would look for it. */}
+      <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 11 }}>
+        Skills are not in this table. Everything under <span className="mono">.claude/skills</span> in this
+        repo, in your home directory and in every installed plugin is catalogued in the Skills view:{' '}
+        <span className="mono">⌘⇧S</span>, or ⌘K → Skills.
+      </p>
+
       {c.notes.length > 0 && (
         <>
           <h3 className="ctx-sub">What the scan found</h3>
@@ -1359,35 +1560,61 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
 
 /* ── 6 · budget ──────────────────────────────────────────────────────── */
 
+/**
+ * The one notation for an estimated number: a tilde on the value and the word
+ * est. beside it. Observed values — bytes on disk, a file count, a line count —
+ * render plain, so the two are told apart at a glance instead of by reading the
+ * label. This wraps the value rather than the label because the label is what
+ * gets truncated, repeated in a tooltip, or read aloud on its own.
+ */
+function Est({ children }: { children: React.ReactNode }) {
+  return (
+    <>~{children} <span style={{ fontSize: 'var(--t-small)', fontWeight: 400 }}>est.</span></>
+  );
+}
+
 function BudgetPanel({ b }: { b: ContextBudget }) {
+  // The main process prices an over-4 MiB file at 0 tokens and moves its bytes
+  // to skippedBytes; those rows are provenance for the tile, not launch cost.
+  const isSkipped = (r: ContextBudget['files'][number]) =>
+    r.estTokens === 0 && r.bytes > 4 * 1024 * 1024;
   const rows = [...b.files].sort((x, y) => y.estTokens - x.estTokens);
-  const total = rows.reduce((n, r) => n + r.estTokens, 0);
+  const loaded = rows.filter((r) => !isSkipped(r));
+  const skippedCount = rows.length - loaded.length;
+  const total = loaded.reduce((n, r) => n + r.estTokens, 0);
   const W = 100, GAP = 0.4;
   let x = 0;
 
   return (
     <>
       <div className="stat-grid">
-        <Stat label="Estimated startup tokens" value={num(b.estTokens)} sub="read in full, every session" />
-        <Stat label="Estimated cost per session"
-              value={b.usdPerSession === null ? '—' : usd(b.usdPerSession)}
+        {/* Tokens and dollars are estimated, so they carry the mark. The file
+            count and the size on disk were read off the filesystem, so they do
+            not — an observed number wearing a tilde is its own kind of lie. */}
+        <Stat label="Startup tokens" value={<Est>{num(b.estTokens)}</Est>} sub="read in full, every session" />
+        <Stat label="Cost per session"
+              value={b.usdPerSession === null ? '—' : <Est>{usd(b.usdPerSession)}</Est>}
               sub={b.usdPerSession === null
                 ? 'no price for the selected model'
-                : <>{usd(b.usdPerSession * 100)} per 100 sessions{b.model ? <> · {b.model}</> : null}</>} />
-        <Stat label="Files counted" value={num(b.files.length)} sub="everything that loads at launch" />
+                : <>~{usd(b.usdPerSession * 100)} est. per 100 sessions{b.model ? <> · {b.model}</> : null}</>} />
+        <Stat label="Files counted" value={num(loaded.length)} sub="everything that loads at launch" />
         <Stat label="On disk" value={bytes(b.totalBytes)} sub="before tokenising" />
+        {b.skippedBytes > 0 && (
+          <Stat label="Skipped whole" value={bytes(b.skippedBytes)} tone="var(--critical)"
+                sub={`${skippedCount > 0 ? plural(skippedCount, 'file') + ' ' : ''}over the 4 MiB ceiling — never loads`} />
+        )}
       </div>
 
       {total > 0 && (
         <>
           <svg className="chart-svg" viewBox={`0 0 ${W} 14`} role="img"
-               aria-label={rows.map((r) => `${r.label} ${num(r.estTokens)} tokens`).join(', ')}>
-            {rows.map((r, i) => {
+               aria-label={loaded.map((r) => `${r.label} about ${num(r.estTokens)} estimated tokens`).join(', ')}>
+            {loaded.map((r, i) => {
               const w = (r.estTokens / total) * W;
               const seg = (
                 <rect key={r.path} x={x} y="0" width={Math.max(0, w - GAP)} height="10" rx="2"
                       fill={SERIES[i % SERIES.length]}>
-                  <title>{`${r.label}: ${num(r.estTokens)} tokens (${((r.estTokens / total) * 100).toFixed(1)}%)`}</title>
+                  <title>{`${r.label}: ~${num(r.estTokens)} est. tokens (~${((r.estTokens / total) * 100).toFixed(1)}%)`}</title>
                 </rect>
               );
               x += w;
@@ -1395,10 +1622,10 @@ function BudgetPanel({ b }: { b: ContextBudget }) {
             })}
           </svg>
           <div className="legend">
-            {rows.slice(0, 8).map((r, i) => (
+            {loaded.slice(0, 8).map((r, i) => (
               <span key={r.path} className="legend-item">
                 <span className="legend-swatch" style={{ background: SERIES[i % SERIES.length] }} />
-                {r.label} <span className="mono" style={{ color: 'var(--text-faint)' }}>{num(r.estTokens)}</span>
+                {r.label} <span className="mono" style={{ color: 'var(--text-faint)' }}>~{num(r.estTokens)}</span>
               </span>
             ))}
           </div>
@@ -1411,8 +1638,10 @@ function BudgetPanel({ b }: { b: ContextBudget }) {
             <tr>
               <th>File</th><th>Scope</th>
               <th style={{ textAlign: 'right' }}>Size</th>
+              {/* "est." belongs in the header once rather than on forty rows;
+                  every value under these two still carries its own tilde. */}
               <th style={{ textAlign: 'right' }}>Est. tokens</th>
-              <th style={{ textAlign: 'right' }}>Share</th>
+              <th style={{ textAlign: 'right' }}>Est. share</th>
             </tr>
           </thead>
           <tbody>
@@ -1423,9 +1652,14 @@ function BudgetPanel({ b }: { b: ContextBudget }) {
                 </td>
                 <td className="dim">{r.label.split(' · ')[0]}</td>
                 <td className="n">{bytes(r.bytes)}</td>
-                <td className="n">{num(r.estTokens)}</td>
+                <td className="n">
+                  {isSkipped(r)
+                    ? <Mark glyph="✕" word="skipped whole" color="var(--critical)"
+                            title="Over the 4 MiB ceiling, so Claude Code skips this file entirely — 0 of its bytes load." />
+                    : `~${num(r.estTokens)}`}
+                </td>
                 <td className="n" style={{ color: 'var(--text-dim)' }}>
-                  {total > 0 ? `${((r.estTokens / total) * 100).toFixed(1)}%` : '—'}
+                  {isSkipped(r) || total === 0 ? '—' : `~${((r.estTokens / total) * 100).toFixed(1)}%`}
                 </td>
               </tr>
             ))}
@@ -1433,8 +1667,86 @@ function BudgetPanel({ b }: { b: ContextBudget }) {
         </table>
       </div>
 
+      {/* The counts come from the one estimator in src/shared/tokens.ts, which
+          the main process calls for this panel and the learning engine calls
+          for its own ledger. That is worth one sentence here: for a while a
+          file could be priced two different ways depending on which panel you
+          were looking at, and a number that contradicts its sibling is worse
+          than either of them. */}
       <div style={{ marginTop: 12 }}>
-        <Note tone="info"><strong>Estimate, not a measurement.</strong> {b.note}</Note>
+        <Note tone="info">
+          <strong>Estimate, not a measurement.</strong> {b.note} A tilde and the word est. mark every number
+          here that was estimated; sizes and counts were read off disk and carry neither. The same estimator
+          prices the Learning ledger, so a given file counts the same in both places.
+        </Note>
+      </div>
+    </>
+  );
+}
+
+/* ── 7 · learning briefing ───────────────────────────────────────────── */
+
+/**
+ * The one launch-time input that is not a file on disk: a cited capsule of
+ * approved knowledge, retrieved per task. Counts are read from stored
+ * knowledge rows; a failed read renders as "not read", never as zero.
+ */
+function LearningPanel({ settings, overview, onOpenLearning }: {
+  settings: LearningSettings | null; overview: LearningOverview | null;
+  onOpenLearning: (tab: 'knowledge' | 'optimize') => void;
+}) {
+  return (
+    <>
+      <div className="stat-grid">
+        <Stat label="Eligible knowledge"
+              value={overview ? num(overview.activeKnowledge) : '—'}
+              sub={overview ? 'active items retrieval can draw from' : 'count not read this scan'} />
+        <Stat label="Quarantined"
+              value={overview ? num(overview.quarantined) : '—'}
+              tone={overview && overview.quarantined > 0 ? 'var(--warning)' : undefined}
+              sub={overview ? 'excluded until re-validated' : 'count not read this scan'} />
+        {/* The ceiling is a setting, but it is denominated in estimated tokens,
+            so it wears the same mark as every other estimated number here. */}
+        <Stat label="Budget ceiling"
+              value={settings ? <Est>{num(settings.briefingMaxTokens)}</Est> : '—'}
+              sub={settings ? 'tokens per task' : 'settings not read this scan'} />
+        <Stat label="Briefing"
+              value={!settings ? '—'
+                : settings.enabled
+                  ? <Mark glyph="●" word="on" color="var(--good)" />
+                  : <Mark glyph="○" word="paused" color="var(--text-faint)" />}
+              sub={!settings ? 'settings not read this scan'
+                : settings.enabled ? 'a capsule is retrieved for every task'
+                : 'no briefing will be injected'} />
+      </div>
+
+      {settings && !settings.enabled && (
+        <div style={{ marginTop: 12 }}>
+          <Note tone="info">
+            Learning is paused, so no briefing will be injected at launch. Everything in the sections
+            above still loads exactly as shown.
+          </Note>
+        </div>
+      )}
+
+      <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 12, maxWidth: 660 }}>
+        Retrieval is query-scoped at launch: the first prompt is the query, and the capsule packs only
+        matching items — with their citations — under the ceiling above. Items whose cited files have
+        changed are quarantined before injection, and the capsule rides in on the invocation itself
+        (argv or hook) — it never edits files in this repository.
+      </p>
+      <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5, marginTop: 5 }}>
+        Counts are read from stored knowledge items.
+      </p>
+      <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+        <button className="btn" onClick={() => onOpenLearning('knowledge')}
+                title="The stored knowledge rows behind the counts above.">
+          Open Knowledge
+        </button>
+        <button className="btn" onClick={() => onOpenLearning('optimize')}
+                title="Retrieval settings, including the per-task budget ceiling.">
+          Open Optimize
+        </button>
       </div>
     </>
   );

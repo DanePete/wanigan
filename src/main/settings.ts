@@ -82,6 +82,53 @@ export function setTheme(value: unknown): ThemeSetting {
   return value;
 }
 
+/**
+ * The settings screen needs a small legacy key/value bridge for its switches,
+ * but it must not be a write-anything endpoint into the settings table. Keep
+ * the accepted controls explicit and validate their persisted representation
+ * at the privileged boundary.
+ */
+export function setUserPreference(key: unknown, value: unknown): WaniganSettings {
+  if (typeof key !== 'string' || typeof value !== 'string') {
+    throw new Error('Preference names and values must be text.');
+  }
+
+  const preferenceKey = key;
+  let preferenceValue = value;
+
+  switch (preferenceKey) {
+    case 'telemetry':
+    case 'hooks':
+    case 'archive_transcripts':
+    case 'notifications':
+    case 'pet':
+    case 'mcp_server':
+      if (preferenceValue !== '0' && preferenceValue !== '1') {
+        throw new Error(`${preferenceKey} must be enabled or disabled.`);
+      }
+      break;
+    case 'motion':
+      if (preferenceValue !== 'auto' && preferenceValue !== 'full' && preferenceValue !== 'off') {
+        throw new Error('Motion must be auto, full, or off.');
+      }
+      break;
+    case 'event_retention_days': {
+      if (!/^[1-9]\d{0,3}$/.test(preferenceValue)) {
+        throw new Error('Event retention must be a whole number of days.');
+      }
+      const days = Number(preferenceValue);
+      if (days > 3650) throw new Error('Event retention cannot exceed 3650 days.');
+      preferenceValue = String(days);
+      break;
+    }
+    default:
+      throw new Error('That preference cannot be changed from the renderer.');
+  }
+
+  setSetting(preferenceKey, preferenceValue);
+  return allSettings();
+}
+
 export function slotsSetting(): QueueSlots {
   try {
     const parsed = JSON.parse(getSetting('slots', JSON.stringify(DEFAULT_SLOTS))) as Partial<QueueSlots>;

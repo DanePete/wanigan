@@ -8,26 +8,36 @@ import {
   REQUIRED_LEARNING_TABLES,
   CLAUDE_ARTIFACT_COMPILER,
   CODEX_ARTIFACT_COMPILER,
+  DEFAULT_AUTOMATION_POLICY,
   addEvidence,
   applyProjection,
   automationDecision,
   buildBriefing,
+  classifySignal,
   compileCandidate,
   compileCandidateProjection,
   completeExperiment,
   createCandidate,
   createExperiment,
   doctorSkill,
+  explainCandidate,
   forgeSkill,
   getSignal,
   getKnowledgeItem,
   getProjection,
+  listConsolidationRuns,
   listEvidence,
+  listMetrics,
+  listSessionBriefings,
   listSignals,
+  pipelineStats,
   promoteCandidate,
+  recordConsolidationRun,
   recordMetric,
+  recordSessionBriefing,
   recordSignal,
   reviewCandidate,
+  sessionLearningLedger,
   searchKnowledge,
   semanticExtractionEligibility,
   startExperiment,
@@ -341,6 +351,307 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     check(bounded.entries.some((entry) => entry.itemId === budgetItem.item.id),
       'relevant canonical knowledge is retrieved just in time');
     check(bounded.estimatedTokens <= 128, 'briefing stays inside its explicit token budget', bounded.estimatedTokens);
+    check(bounded.omitted === bounded.omittedStale + bounded.omittedBudget,
+      'briefing omissions split stale from over-budget and still sum');
+
+    say('── compound · legibility ledger');
+    const ledgerSessionId = `session-ledger-${tag}`;
+    recordSessionBriefing({
+      sessionId: ledgerSessionId, delivery: 'argv', providerId: 'codex',
+      projectId: null, briefing: bounded, maxTokens: 128,
+    });
+    const ledgerBriefings = listSessionBriefings(ledgerSessionId);
+    check(ledgerBriefings.length === 1 && ledgerBriefings[0].entries.length === bounded.entries.length,
+      'briefing delivery is recorded per session with its served entries');
+    const loadedMetrics = listMetrics({ sessionId: ledgerSessionId, metric: 'tokens_loaded' });
+    check(loadedMetrics.length === bounded.entries.length
+      && loadedMetrics.every((metric) => metric.evidenceLevel === 'estimate'),
+      'served briefing entries record estimate-level tokens_loaded metrics');
+
+    const ledgerSignal = recordSignal({
+      kind: 'tool-success', providerId: 'codex', sessionId: ledgerSessionId,
+      taskHash: `task-ledger-${tag}`, summary: `Ledgerline ${tag} observation.`, semanticEligible: false,
+    });
+    const ledgerCandidate = createCandidate({
+      targetKind: 'memory', scope: 'personal', title: `Ledgerline ${tag}`,
+      proposedText: `Ledgerline ${tag}: observed once so far.`,
+      rationale: 'Legibility ledger test.', confidence: 0.9, signalIds: [ledgerSignal.id],
+    });
+    const preLedger = sessionLearningLedger(ledgerSessionId);
+    check(preLedger.signals.some((signal) => signal.id === ledgerSignal.id)
+      && preLedger.candidates.some((candidate) => candidate.candidateId === ledgerCandidate.id)
+      && preLedger.briefings.length === 1,
+      'session ledger joins recorded briefings, signals, and candidate lineage');
+    const explanation = explainCandidate(ledgerCandidate.id);
+    check(explanation.decision === 'review'
+      && explanation.checks.some((entry) => entry.label === 'Distinct observations' && !entry.ok),
+      'automation gate explanation decomposes exactly which checks fail', JSON.stringify(explanation));
+    reviewCandidate(ledgerCandidate.id, 'approve');
+    const ledgerPromoted = promoteCandidate(ledgerCandidate.id, { createdBy: 'smoke' });
+    check(sessionLearningLedger(ledgerSessionId).contributions
+      .some((entry) => entry.itemId === ledgerPromoted.item.id),
+      'promotion makes the session→knowledge contribution chain queryable');
+
+    const heartbeat = recordConsolidationRun({
+      trigger: 'manual', processed: 0, candidates: 0, autoApplied: 0, durationMs: 5,
+    });
+    check(listConsolidationRuns(5).some((run) => run.id === heartbeat.id),
+      'consolidation passes persist as an automation heartbeat');
+    const stats = pipelineStats({ windowDays: 7 });
+    check(stats.signals > 0 && stats.briefingsServed >= 1 && stats.signalsByDay.length === 7,
+      'pipeline stats count observed rows over a zero-filled local day series', JSON.stringify({
+        signals: stats.signals, briefingsServed: stats.briefingsServed, days: stats.signalsByDay.length,
+      }));
+
+    say('── compound · sweep hardening');
+    const mkHardSig = (summary: string, session: string, task: string, at: number) => recordSignal({
+      kind: 'tool-success', providerId: 'claude', backendId: 'anthropic',
+      sessionId: session, taskHash: task, projectId: project.id, projectPath: projectRoot,
+      summary, semanticEligible: false, createdAt: at,
+    });
+    const hardBase = Date.now() - 60_000;
+    const ancient = recordSignal({
+      kind: 'tool-success', providerId: 'claude', summary: `Ancientline ${tag}`,
+      taskHash: `t-old-${tag}`, projectId: project.id, semanticEligible: false,
+      createdAt: Date.now() - 50 * 24 * 3600 * 1000,
+    });
+    const poisonSummary = `毒${'学'.repeat(220)} ${tag}`;
+    const healthySummary = `Hardenline ${tag} lint passes with the pinned config.`;
+    const poisonA = mkHardSig(poisonSummary, `s-poison-a-${tag}`, `t-poison-a-${tag}`, hardBase);
+    const poisonB = mkHardSig(poisonSummary, `s-poison-b-${tag}`, `t-poison-b-${tag}`, hardBase + 1);
+    const healthyA = mkHardSig(healthySummary, `s-healthy-a-${tag}`, `t-healthy-a-${tag}`, hardBase + 2);
+    const healthyB = mkHardSig(healthySummary, `s-healthy-b-${tag}`, `t-healthy-b-${tag}`, hardBase + 3);
+    const hardPass = compound.consolidate(project.id);
+    const hardCandidates = compound.candidates({ projectId: project.id, limit: 500 });
+    const poisonCandidate = hardCandidates.find((c) => c.signalIds.includes(poisonA.id) && c.signalIds.includes(poisonB.id));
+    const healthyCandidate = hardCandidates.find((c) => c.signalIds.includes(healthyA.id) && c.signalIds.includes(healthyB.id));
+    check(!!poisonCandidate && Buffer.byteLength(poisonCandidate.title, 'utf8') <= 500,
+      'multibyte summaries consolidate with byte-safe candidate titles', JSON.stringify(hardPass));
+    check(!!healthyCandidate, 'every qualifying group in a pass consolidates independently');
+    check(getSignal(ancient.id)?.processedAt != null,
+      'never-consolidated signals age out after 45 days instead of growing the backlog forever');
+    const oversizeTeach = thrown(() => compound.teach({
+      scope: 'personal', title: '学'.repeat(400), text: 'Too-long title must fail before any write.',
+    }));
+    check(oversizeTeach !== null
+      && !listSignals({ processed: false, limit: 1000 }).some((s) => s.summary.startsWith('学学学')),
+      'teach validates byte budgets up front and never strands an orphaned signal', oversizeTeach);
+
+    const dupTitle = `Conflictline ${tag}`;
+    const confSigA = recordSignal({ kind: 'explicit-teach', summary: dupTitle, taskHash: `t-conf-a-${tag}`, semanticEligible: false });
+    const confSigB = recordSignal({ kind: 'explicit-teach', summary: dupTitle, taskHash: `t-conf-b-${tag}`, semanticEligible: false });
+    const confA = createCandidate({
+      targetKind: 'memory', scope: 'personal', title: dupTitle,
+      proposedText: `Conflictline ${tag}: the same fact twice.`, rationale: 'first of a pair',
+      confidence: 0.9, signalIds: [confSigA.id],
+    });
+    const confB = createCandidate({
+      targetKind: 'memory', scope: 'personal', title: dupTitle,
+      proposedText: `Conflictline ${tag}: the same fact twice.`, rationale: 'second of a pair',
+      confidence: 0.9, signalIds: [confSigB.id],
+    });
+    check(confA.conflicts.length === 0 && confB.conflicts.length === 0,
+      'identical pending candidates see no conflict while nothing is active yet');
+    reviewCandidate(confA.id, 'approve');
+    promoteCandidate(confA.id, { createdBy: 'smoke' });
+    reviewCandidate(confB.id, 'approve');
+    const promoteRecheck = thrown(() => promoteCandidate(confB.id, { createdBy: 'smoke' }));
+    check(promoteRecheck !== null,
+      'promotion re-checks conflicts against knowledge created after the candidate', promoteRecheck);
+
+    const reSkill = forgeSkill({
+      name: `hardline-skill-${tag}`, description: 'Reinstall coverage for versioned skill updates.',
+      trigger: 'When the smoke suite reinstalls the same skill name.', scope: 'project',
+      steps: [{ title: 'Step 1', instruction: 'Inspect the relevant files before changing them' }],
+      verification: ['Review the final diff'], providerIds: ['claude'],
+    });
+    const firstInstall = compound.installSkill(reSkill, ['claude'], project.id);
+    const secondInstall = compound.installSkill(reSkill, ['claude'], project.id);
+    const firstProj = firstInstall[0]?.projection;
+    const secondProj = secondInstall[0]?.projection;
+    check(!!firstProj && !!secondProj && firstInstall[0].error === null && secondInstall[0].error === null,
+      'reinstalling a same-named skill succeeds instead of dead-ending on its own conflict',
+      JSON.stringify(secondInstall.map((r) => ({ providerId: r.providerId, error: r.error }))));
+    check(!!firstProj && !!secondProj && secondProj.itemId === firstProj.itemId
+      && (secondProj.itemId ? getKnowledgeItem(secondProj.itemId)?.currentVersion ?? 0 : 0) >= 2,
+      'a skill reinstall writes version N+1 of the same knowledge item');
+
+    const outsideSignal = recordSignal({
+      kind: 'explicit-teach', providerId: 'claude', summary: `Outsideline ${tag}`,
+      taskHash: `t-outside-${tag}`, projectId: project.id, semanticEligible: false,
+    });
+    const outsideCand = createCandidate({
+      targetKind: 'memory', scope: 'project', providerId: 'claude', projectId: project.id,
+      title: `Outsideline ${tag}`, proposedText: `Outsideline ${tag}: cited beyond the root.`,
+      rationale: 'outside-root coverage', confidence: 0.9, signalIds: [outsideSignal.id],
+    });
+    reviewCandidate(outsideCand.id, 'approve');
+    const outsideItem = promoteCandidate(outsideCand.id, { createdBy: 'smoke' });
+    addEvidence({
+      itemId: outsideItem.item.id, versionId: outsideItem.version.id, sourceType: 'file',
+      sourceId: '/etc/hosts', citation: 'outside the project root', contentHash: hash('irrelevant'),
+    });
+    const outsideBrief = await buildBriefing({
+      query: 'outsideline', providerId: 'claude', projectId: project.id,
+      projectRoot, allowedEvidenceRoots: [projectRoot], maxTokens: 256,
+    });
+    check(!outsideBrief.entries.some((entry) => entry.itemId === outsideItem.item.id)
+      && getKnowledgeItem(outsideItem.item.id)?.status === 'active',
+      'an unverifiable-here citation withholds the item without quarantining it');
+
+    const previewSignal = recordSignal({
+      kind: 'explicit-teach', providerId: 'claude', summary: `Previewline ${tag}`,
+      taskHash: `t-preview-${tag}`, projectId: project.id, semanticEligible: false,
+    });
+    const previewCand = createCandidate({
+      targetKind: 'memory', scope: 'project', providerId: 'claude', projectId: project.id,
+      title: `Previewline ${tag}`, proposedText: `Previewline ${tag}: cited and then edited.`,
+      rationale: 'preview purity coverage', confidence: 0.9, signalIds: [previewSignal.id],
+    });
+    reviewCandidate(previewCand.id, 'approve');
+    const previewItem = promoteCandidate(previewCand.id, { createdBy: 'smoke' });
+    const previewPath = path.join(projectRoot, 'preview.txt');
+    fs.writeFileSync(previewPath, 'one\n');
+    addEvidence({
+      itemId: previewItem.item.id, versionId: previewItem.version.id, sourceType: 'file',
+      sourceId: 'preview.txt', citation: 'preview.txt:1', contentHash: hash('one\n'),
+    });
+    fs.writeFileSync(previewPath, 'two\n');
+    const previewBrief = await buildBriefing({
+      query: 'previewline', providerId: 'claude', projectId: project.id,
+      projectRoot, allowedEvidenceRoots: [projectRoot], maxTokens: 256, quarantineStale: false,
+    });
+    check(!previewBrief.entries.some((entry) => entry.itemId === previewItem.item.id)
+      && previewBrief.omittedStale >= 1
+      && getKnowledgeItem(previewItem.item.id)?.status === 'active',
+      'a briefing preview reports staleness without quarantining the item');
+
+    const punctHits = searchKnowledge({ query: 'budgetbeacon .', match: 'all', limit: 10 });
+    check(punctHits.some((hit) => hit.item.id === budgetItem.item.id),
+      'punctuation-only search tokens are dropped instead of blanking results');
+
+    say('── compound · what a briefing refuses to inject');
+    // The exact signature of the junk rows found in a live store: a summary
+    // copied into both the title and the claim, and a bare locator filed as
+    // knowledge. Both look canonical and say nothing, so injecting one spends
+    // tokens to teach noise.
+    const junkSignal = recordSignal({
+      kind: 'explicit-teach', providerId: 'codex', backendId: 'openai',
+      sessionId: `session-junk-${tag}`, taskHash: `task-junk-${tag}`,
+      summary: `Junkline ${tag} was filed without ever being synthesized.`, semanticEligible: true,
+    });
+    const echoTitle = `Junkline echo ${tag}`;
+    const echoCandidate = createCandidate({
+      targetKind: 'memory', scope: 'personal', providerId: 'codex',
+      title: echoTitle, proposedText: echoTitle,
+      rationale: 'The proposed text is the title again.', confidence: 0.9, signalIds: [junkSignal.id],
+    });
+    reviewCandidate(echoCandidate.id, 'approve');
+    const echoItem = promoteCandidate(echoCandidate.id, { createdBy: 'smoke' });
+    const locatorCandidate = createCandidate({
+      targetKind: 'memory', scope: 'personal', providerId: 'codex',
+      title: `Junkline locator ${tag}`, proposedText: '/srv/app/src/main/db.ts',
+      rationale: 'A bare absolute path is a locator, not an instruction.',
+      confidence: 0.9, signalIds: [junkSignal.id],
+    });
+    reviewCandidate(locatorCandidate.id, 'approve');
+    const locatorItem = promoteCandidate(locatorCandidate.id, { createdBy: 'smoke' });
+    const junkBrief = await buildBriefing({ query: 'junkline', providerId: 'codex', maxTokens: 512 });
+    check(!junkBrief.entries.some((entry) => entry.itemId === echoItem.item.id)
+      && !junkBrief.entries.some((entry) => entry.itemId === locatorItem.item.id)
+      && junkBrief.omittedUnsynthesized >= 2,
+    'an unsynthesized item is refused by name rather than quietly ranked low', JSON.stringify({
+      entries: junkBrief.entries.length, omittedUnsynthesized: junkBrief.omittedUnsynthesized,
+    }));
+    check(searchKnowledge({ query: 'junkline', limit: 20 }).length >= 2,
+      'while both stay retrievable in the app — refusing to inject is not deleting');
+
+    // A briefing is a system prompt, and an eval is regression evidence while a
+    // project map is topology. Neither is a sentence an agent can act on.
+    const kindSignal = recordSignal({
+      kind: 'rejected-review', providerId: 'codex', backendId: 'openai',
+      sessionId: `session-kind-${tag}`, taskHash: `task-kind-${tag}`, projectId: project.id,
+      projectPath: projectRoot, summary: `Kindline ${tag} regression evidence.`, semanticEligible: true,
+    });
+    const evalCandidate = createCandidate({
+      targetKind: 'eval', scope: 'personal', providerId: 'codex',
+      title: `Kindline eval ${tag}`, proposedText: `Kindline ${tag}: keep the case that caught the bad merge.`,
+      rationale: 'Regression evidence.', confidence: 0.95, signalIds: [kindSignal.id],
+    });
+    reviewCandidate(evalCandidate.id, 'approve');
+    const evalItem = promoteCandidate(evalCandidate.id, { createdBy: 'smoke' });
+    const mapCandidate = createCandidate({
+      targetKind: 'project-map', scope: 'project', providerId: 'codex', projectId: project.id,
+      title: `Kindline map ${tag}`, proposedText: `Kindline ${tag}: the launch path lives under src/main.`,
+      rationale: 'File topology.', confidence: 0.95, signalIds: [kindSignal.id],
+    });
+    reviewCandidate(mapCandidate.id, 'approve');
+    const mapItem = promoteCandidate(mapCandidate.id, { createdBy: 'smoke' });
+    const kindBrief = await buildBriefing({
+      query: 'kindline', providerId: 'codex', projectId: project.id,
+      projectRoot, allowedEvidenceRoots: [projectRoot], maxTokens: 512,
+    });
+    check(!kindBrief.entries.some((entry) => entry.itemId === evalItem.item.id)
+      && !kindBrief.entries.some((entry) => entry.itemId === mapItem.item.id),
+    'an eval and a project map never reach a briefing, whatever they rank', JSON.stringify(kindBrief.entries.map((e) => e.kind)));
+    const widened = await buildBriefing({
+      query: 'kindline', providerId: 'codex', projectId: project.id, kinds: ['eval', 'project-map'], maxTokens: 512,
+    });
+    check(widened.entries.length === 0,
+      'and a caller asking exclusively for those kinds gets an empty briefing, never an unfiltered one');
+    check(searchKnowledge({ query: 'kindline', kinds: ['eval', 'project-map'], projectId: project.id, limit: 20 })
+      .length === 2,
+    'both remain retrievable and inspectable through the app’s own search');
+
+    say('── compound · the auto-promotion boundary');
+    // Only reversible personal recall may skip the review inbox. That held as a
+    // data property — every session signal carries a project id, so the
+    // classifier always returned project scope — and a single signal source
+    // that forgot the project id would have opened a path from agent-produced
+    // text straight into applied memory. Hybrid is switched on here because a
+    // review-only engine proves nothing about the gate.
+    const priorAutomation = compound.settings().automation;
+    try {
+      compound.updateSettings({ automation: 'hybrid' });
+      const autoBase = Date.now() - 30_000;
+      const autoPaths = [path.join(projectRoot, 'src', 'gate', 'rules.ts')];
+      const mkAutoSig = (session: string, task: string, at: number) => recordSignal({
+        kind: 'permission-denied', providerId: 'claude', backendId: 'anthropic',
+        sessionId: session, taskHash: task, projectId: project.id, projectPath: projectRoot,
+        summary: `Autoline ${tag}: an agent write under src/gate was denied.`,
+        detail: { toolName: 'Write', ok: false, paths: autoPaths },
+        semanticEligible: false, createdAt: at,
+      });
+      const autoA = mkAutoSig(`s-auto-a-${tag}`, `t-auto-a-${tag}`, autoBase);
+      mkAutoSig(`s-auto-b-${tag}`, `t-auto-b-${tag}`, autoBase + 1);
+      mkAutoSig(`s-auto-c-${tag}`, `t-auto-c-${tag}`, autoBase + 2);
+      const unattributed = recordSignal({
+        kind: 'tool-success', providerId: 'claude', summary: `Autoline unattributed ${tag}`,
+        taskHash: `t-auto-personal-${tag}`, semanticEligible: false,
+      });
+      check(classifySignal(autoA).scope === 'project' && classifySignal(unattributed).scope === 'personal',
+        'a signal carrying a project id classifies to project scope, and only an unattributed one stays personal');
+
+      const autoPass = compound.consolidate(project.id);
+      const autoCandidate = compound.candidates({ projectId: project.id, limit: 500 })
+        .find((candidate) => candidate.signalIds.includes(autoA.id));
+      const autoDecision = autoCandidate ? automationDecision(autoCandidate) : null;
+      check(!!autoCandidate && autoCandidate.scope === 'project' && autoCandidate.projectId === project.id,
+        'consolidating project-attributed evidence produces a project-scoped candidate, never a personal one',
+        autoCandidate && { scope: autoCandidate.scope, projectId: autoCandidate.projectId });
+      check(autoDecision?.decision === 'review' && /Project and path-scoped/.test(autoDecision.reason),
+        'and the automation gate refuses it on scope, so the invariant is asserted rather than inherited',
+        autoDecision);
+      check(!!autoCandidate && autoCandidate.confidence < DEFAULT_AUTOMATION_POLICY.minConfidence,
+        'a rule-derived confidence stays under the auto-apply floor however often the observation repeats',
+        autoCandidate?.confidence);
+      check(autoPass.autoApplied === 0 && autoPass.candidates >= 1,
+        'so a hybrid pass over agent-derived evidence files candidates and auto-applies none', JSON.stringify(autoPass));
+      check(!!autoCandidate && autoCandidate.status === 'pending',
+        'the candidate waits in the review inbox for a person', autoCandidate?.status);
+    } finally {
+      compound.updateSettings({ automation: priorAutomation });
+    }
 
     say('── compound · controlled experiments and honest ROI');
     const experiment = createExperiment({
@@ -364,15 +675,42 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     check(invalidExperiment !== null && /model must remain fixed/.test(invalidExperiment),
       'experiment refuses a model change that would confound attribution', invalidExperiment);
 
-    recordMetric({ itemId: promotedSkill.item.id, versionId: promotedSkill.version.id,
-      providerId: 'codex', metric: 'tokens_saved', value: 211, evidenceLevel: 'causal' });
-    recordMetric({ itemId: promotedSkill.item.id, versionId: promotedSkill.version.id,
-      providerId: 'codex', metric: 'tokens_loaded', value: 37, evidenceLevel: 'causal' });
-    recordMetric({ itemId: promotedSkill.item.id, versionId: promotedSkill.version.id,
-      providerId: 'codex', metric: 'use_success', value: 1, evidenceLevel: 'causal' });
+    // "Causal" is the one label that claims a controlled comparison produced the
+    // number, so it is the one label a caller must not be able to assert on its
+    // own. These metrics name the completed experiment above, which fixed
+    // provider, model, effort and commit — so the claim is attributable.
+    for (const [metric, value] of [['tokens_saved', 211], ['tokens_loaded', 37], ['use_success', 1]] as const) {
+      recordMetric({ itemId: promotedSkill.item.id, versionId: promotedSkill.version.id,
+        providerId: 'codex', metric, value, evidenceLevel: 'causal', experimentId: experiment.id });
+    }
     const causalRoi = summarizeArtifactRoi(promotedSkill.item.id);
     check(causalRoi.evidenceLevel === 'causal' && causalRoi.tokensSaved === 211 && causalRoi.samples === 3,
-      'A/B-attributed metrics report causal savings', JSON.stringify(causalRoi));
+      'metrics attributed to a completed experiment with fixed controls report causal savings',
+      JSON.stringify(causalRoi));
+
+    // The negative half, and the reason this check exists at all: before the
+    // experiment link, recordMetric wrote whatever level the caller asserted, so
+    // this suite claimed causal savings that nothing had attributed. An
+    // unattached causal claim must now degrade rather than be taken on trust.
+    const unattachedCandidate = createCandidate({
+      targetKind: 'memory',
+      scope: 'project',
+      providerId: 'claude',
+      projectId: project.id,
+      title: `Unattributed saving ${tag}`,
+      proposedText: 'A claim nobody ran a controlled comparison for.',
+      rationale: 'Exists only to prove an unattached causal claim degrades.',
+      confidence: 0.9,
+      signalIds: [first.id, second.id],
+    });
+    reviewCandidate(unattachedCandidate.id, 'approve');
+    const unattached = promoteCandidate(unattachedCandidate.id, { createdBy: 'smoke' });
+    recordMetric({ itemId: unattached.item.id, versionId: unattached.version.id,
+      providerId: 'codex', metric: 'tokens_saved', value: 500, evidenceLevel: 'causal' });
+    const unattributedRoi = summarizeArtifactRoi(unattached.item.id);
+    check(unattributedRoi.evidenceLevel !== 'causal',
+      'a causal claim with no experiment behind it degrades instead of being taken on trust',
+      JSON.stringify(unattributedRoi));
     recordMetric({ itemId: promotedSkill.item.id, versionId: promotedSkill.version.id,
       providerId: 'codex', metric: 'cost_usd', value: 0.01, evidenceLevel: 'estimate' });
     check(summarizeArtifactRoi(promotedSkill.item.id).evidenceLevel === 'estimate',
@@ -498,6 +836,24 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     const shellCandidate = compound.candidates({ projectId: project.id, limit: 500 })
       .find((candidate) => candidate.signalIds.some((id) => id === shellSignalA?.id || id === shellSignalB?.id));
     check(!shellCandidate, 'redacted shell outcomes cannot become reusable learning candidates');
+
+    const connSignal = compound.observeSessionEvent({
+      id: 4,
+      sessionId: learningSession.id,
+      at: Date.now() + 3,
+      event: 'PostToolUse',
+      toolName: 'Read',
+      summary: 'Connected postgres://smokeuser:sm0kepass@db.local/app and API_KEY: smokesecret9 plus whsec_smokeabcdef123456',
+      durationMs: 3,
+      ok: true,
+      paths: [],
+    }, learningSession);
+    check(!!connSignal
+      && !connSignal.summary.includes('sm0kepass')
+      && !connSignal.summary.includes('smokesecret9')
+      && !connSignal.summary.includes('abcdef123456'),
+      'redaction covers non-http connection strings, colon-form env names, and underscore token shapes',
+      connSignal?.summary);
 
     const serviceCandidate = compound.teach({
       providerId: 'claude', projectId: project.id, projectPath: projectRoot,
