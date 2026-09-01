@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { SessionEvent } from '@shared/types';
+import type { SessionCheckpoint, SessionEvent } from '@shared/types';
 import { Note, Section, Stat, ago, num } from './bits';
 
 /**
@@ -41,15 +41,18 @@ const KINDS = [
 ] as const;
 type Kind = (typeof KINDS)[number]['id'];
 
-export default function Timeline({ sessionId, onOpenFile }: {
+export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
   sessionId: string;
   onOpenFile?: (path: string) => void;
+  /** Jump to this turn's diff in the code panel. Offered only for checkpoint-matched turns. */
+  onOpenTurnDiff?: (turn: number) => void;
 }) {
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
   const [err, setErr] = useState<string | null>(null);
   const [all, setAll] = useState<SessionEvent[]>([]);
   const [tools, setTools] = useState<ToolStat[]>([]);
   const [live, setLive] = useState<Live | null>(null);
+  const [cps, setCps] = useState<SessionCheckpoint[]>([]);
   const [hooksOn, setHooksOn] = useState<boolean | null>(null);
   const [shown, setShown] = useState(PAGE);
   const [q, setQ] = useState('');
@@ -58,14 +61,18 @@ export default function Timeline({ sessionId, onOpenFile }: {
 
   const load = useCallback(async () => {
     try {
-      const [ev, ts, lv] = await Promise.all([
+      const [ev, ts, lv, cp] = await Promise.all([
         window.wanigan.events.session(sessionId, FETCH),
         window.wanigan.events.tools(sessionId),
         window.wanigan.events.live(sessionId),
+        // Checkpoints are optional context (turn numbers, diff links); their
+        // absence must never take the whole rail down.
+        window.wanigan.checkpoints.list(sessionId).catch(() => [] as SessionCheckpoint[]),
       ]);
       setAll(ev);
       setTools(ts);
       setLive(lv);
+      setCps(cp);
       setErr(null);
       setPhase('ready');
     } catch (e) {
@@ -75,7 +82,7 @@ export default function Timeline({ sessionId, onOpenFile }: {
   }, [sessionId]);
 
   useEffect(() => {
-    setAll([]); setTools([]); setLive(null);
+    setAll([]); setTools([]); setLive(null); setCps([]);
     setShown(PAGE); setErr(null); setPhase('loading');
     void load();
   }, [load]);
@@ -104,6 +111,9 @@ export default function Timeline({ sessionId, onOpenFile }: {
           timer = undefined;
           window.wanigan.events.tools(sessionId).then(setTools).catch(() => {});
           window.wanigan.events.live(sessionId).then(setLive).catch(() => {});
+          // Captures land a beat after their boundary event; the trailing edge
+          // is where the new turn number and files-changed count exist.
+          window.wanigan.checkpoints.list(sessionId).then(setCps).catch(() => {});
         }, 1200);
       }
     });
@@ -130,6 +140,28 @@ export default function Timeline({ sessionId, onOpenFile }: {
     () => filtered.reduce((m, r) => Math.max(m, r.spanMs ?? 0), 0),
     [filtered],
   );
+
+  const groups = useMemo(() => groupTurns(rows, cps, all.length >= FETCH), [rows, cps, all.length]);
+  const [turnOverrides, setTurnOverrides] = useState<Record<string, boolean>>({});
+  useEffect(() => { setTurnOverrides({}); }, [sessionId]);
+  // The newest turn is the one being watched; older turns start folded. A new
+  // prompt changes the newest key, so the previous turn folds on its own
+  // unless the user pinned it open.
+  const newestKey = groups[0]?.key ?? null;
+  const isExpanded = useCallback(
+    (g: TurnGroup) => turnOverrides[g.key] ?? g.key === newestKey,
+    [turnOverrides, newestKey],
+  );
+  const visibleGroups = useMemo(() => {
+    const out: TurnGroup[] = [];
+    let budget = shown;
+    for (const g of groups) {
+      out.push(g);
+      budget -= isExpanded(g) ? g.rows.length : 1;
+      if (budget <= 0) break;
+    }
+    return out;
+  }, [groups, shown, isExpanded]);
 
   const folded = all.length - rows.length;
   const filtering = kind !== 'all' || q.trim() !== '';
@@ -240,13 +272,22 @@ export default function Timeline({ sessionId, onOpenFile }: {
           </div>
         ) : (
           <>
+            {/* Filters search the whole rail, so they render it flat: a match
+                hidden inside a folded turn is a match that does not exist. */}
             <div className="tl-count">
-              <span>
-                Showing <strong>{num(visible.length)}</strong> of {num(filtered.length)}
-                {filtering && rows.length !== filtered.length
-                  ? <> · {num(rows.length - filtered.length)} filtered out</>
-                  : null}
-              </span>
+              {filtering ? (
+                <span>
+                  Showing <strong>{num(visible.length)}</strong> of {num(filtered.length)}
+                  {rows.length !== filtered.length
+                    ? <> · {num(rows.length - filtered.length)} filtered out</>
+                    : null}
+                </span>
+              ) : (
+                <span>
+                  <strong>{num(groups.filter((g) => g.promptAt !== null).length)}</strong>
+                  {' '}turn{groups.filter((g) => g.promptAt !== null).length === 1 ? '' : 's'} · {num(rows.length)} events
+                </span>
+              )}
               <span className="faint">newest first</span>
             </div>
             {folded > 0 && (
@@ -256,34 +297,130 @@ export default function Timeline({ sessionId, onOpenFile }: {
               </p>
             )}
 
-            <ol className="tl-rail">
-              {visible.map((r, i) => {
-                const prev = i > 0 ? visible[i - 1] : null;
-                const newDay = !prev || !sameDay(prev.e.at, r.e.at);
-                return (
-                  <li key={r.e.id} className="tl-li">
-                    {newDay && <p className="tl-day"><span>{dayLabel(r.e.at)}</span></p>}
-                    <Row r={r} max={maxSpan} now={now} onOpenFile={onOpenFile} />
-                  </li>
-                );
-              })}
-            </ol>
+            {filtering ? (
+              <>
+                <ol className="tl-rail">
+                  {visible.map((r, i) => {
+                    const prev = i > 0 ? visible[i - 1] : null;
+                    const newDay = !prev || !sameDay(prev.e.at, r.e.at);
+                    return (
+                      <li key={r.e.id} className="tl-li">
+                        {newDay && <p className="tl-day"><span>{dayLabel(r.e.at)}</span></p>}
+                        <Row r={r} max={maxSpan} now={now} onOpenFile={onOpenFile} />
+                      </li>
+                    );
+                  })}
+                </ol>
 
-            {filtered.length > shown ? (
-              <div className="tl-foot">
-                <button className="btn tl-btn" onClick={() => setShown((s) => s + PAGE)}>
-                  Show {num(Math.min(PAGE, filtered.length - shown))} older
-                </button>
-                <span className="faint">{num(filtered.length - shown)} older not shown</span>
-              </div>
+                {filtered.length > shown ? (
+                  <div className="tl-foot">
+                    <button className="btn tl-btn" onClick={() => setShown((s) => s + PAGE)}>
+                      Show {num(Math.min(PAGE, filtered.length - shown))} older
+                    </button>
+                    <span className="faint">{num(filtered.length - shown)} older not shown</span>
+                  </div>
+                ) : (
+                  <div className="tl-foot">
+                    <span className="faint">
+                      {all.length >= FETCH
+                        ? `End of the ${num(FETCH)} most recent events. Anything older is still on disk, but not loaded here.`
+                        : 'Start of the session.'}
+                    </span>
+                  </div>
+                )}
+              </>
             ) : (
-              <div className="tl-foot">
-                <span className="faint">
-                  {all.length >= FETCH
-                    ? `End of the ${num(FETCH)} most recent events. Anything older is still on disk, but not loaded here.`
-                    : 'Start of the session.'}
-                </span>
-              </div>
+              <>
+                <ol className="tl-rail tl-turns">
+                  {visibleGroups.map((g, gi) => {
+                    const headAt = g.promptAt ?? g.rows[g.rows.length - 1]?.e.at ?? 0;
+                    const prevG = gi > 0 ? visibleGroups[gi - 1] : null;
+                    const prevAt = prevG ? (prevG.promptAt ?? prevG.rows[prevG.rows.length - 1]?.e.at ?? 0) : null;
+                    const newDay = prevAt === null || !sameDay(prevAt, headAt);
+                    const expanded = isExpanded(g);
+                    const liveTurn = g.hasOpen && busy;
+                    const span = g.promptAt !== null
+                      ? Math.max(0, (liveTurn ? now : (g.rows[0]?.e.at ?? g.promptAt)) - g.promptAt)
+                      : null;
+                    const label = g.promptAt === null
+                      ? (g.truncated ? 'Older events' : 'Launch')
+                      : g.turn !== null ? `Turn ${g.turn}` : `Prompt · ${clock(g.promptAt)}`;
+                    return (
+                      <li key={g.key} className="tl-li">
+                        {newDay && <p className="tl-day"><span>{dayLabel(headAt)}</span></p>}
+                        <div className="tl-turnhead">
+                          <button type="button" className="tl-turntoggle" aria-expanded={expanded}
+                                  onClick={() => setTurnOverrides((m) => ({ ...m, [g.key]: !expanded }))}>
+                            <span className="tl-glyph"
+                                  style={{ color: g.promptAt !== null ? 'var(--accent)' : 'var(--text-faint)',
+                                           borderColor: liveTurn ? 'var(--accent)' : 'var(--line)' }}
+                                  aria-hidden="true">{g.promptAt !== null ? '❯' : '▸'}</span>
+                            <span className="tl-turnlabel">
+                              {label}
+                              {g.turn !== null && g.promptAt !== null && (
+                                <span className="tl-turnclock mono faint">{clock(g.promptAt)}</span>
+                              )}
+                            </span>
+                            <span className="tl-turnmeta faint">
+                              {g.calls > 0 && <span>{num(g.calls)} call{g.calls === 1 ? '' : 's'}</span>}
+                              {g.failures > 0 && (
+                                <span className="tl-word"
+                                      style={{ color: 'var(--critical)', background: 'var(--critical-soft)' }}>
+                                  ✕ {num(g.failures)} failed
+                                </span>
+                              )}
+                              {liveTurn && (
+                                <span className="tl-word"
+                                      style={{ color: 'var(--accent)', background: 'var(--accent-soft)' }}>
+                                  ▶ running
+                                </span>
+                              )}
+                              {span !== null && span > 500 && <span className="mono">{dur(span)}</span>}
+                              {g.files > 0 && <span>{num(g.files)} file{g.files === 1 ? '' : 's'}</span>}
+                            </span>
+                            <span className="tl-turnchev faint" aria-hidden="true">{expanded ? '▾' : '▸'}</span>
+                          </button>
+                          {g.turn !== null && (g.filesChanged ?? 0) > 0 && onOpenTurnDiff && (
+                            <button type="button" className="tl-chip tl-turndiff"
+                                    title={`Open turn ${g.turn}'s diff in the code panel`}
+                                    onClick={() => onOpenTurnDiff(g.turn!)}>
+                              diff ↗
+                            </button>
+                          )}
+                        </div>
+                        {expanded && (
+                          <ol className="tl-rail tl-turnbody">
+                            {g.rows.map((r) => (
+                              <li key={r.e.id} className="tl-li">
+                                <Row r={r} max={maxSpan} now={now} onOpenFile={onOpenFile} />
+                              </li>
+                            ))}
+                          </ol>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ol>
+
+                {groups.length > visibleGroups.length ? (
+                  <div className="tl-foot">
+                    <button className="btn tl-btn" onClick={() => setShown((s) => s + PAGE)}>
+                      Show older turns
+                    </button>
+                    <span className="faint">
+                      {num(groups.length - visibleGroups.length)} older not shown
+                    </span>
+                  </div>
+                ) : (
+                  <div className="tl-foot">
+                    <span className="faint">
+                      {all.length >= FETCH
+                        ? `End of the ${num(FETCH)} most recent events. Anything older is still on disk, but not loaded here.`
+                        : 'Start of the session.'}
+                    </span>
+                  </div>
+                )}
+              </>
             )}
           </>
         )}
@@ -359,6 +496,88 @@ function build(all: SessionEvent[]): Row[] {
 
 const WAITING = /permission|waiting for your input|needs your|approve|confirm/i;
 const REFUSED = /refus|declin/i;
+
+/* ── turn grouping ───────────────────────────────────────────── */
+
+/** A checkpoint turn-start and the UserPromptSubmit it was captured for are
+    the same hook event; this is the slack allowed between their stamps. */
+const TURN_MATCH_TOLERANCE_MS = 15_000;
+
+export type TurnGroup = {
+  key: string;
+  /** Checkpoint-matched turn number; null when no checkpoint proves one. */
+  turn: number | null;
+  /** The prompt that opened the turn; null for the pre-prompt tail. */
+  promptAt: number | null;
+  /** Newest first, prompt row last — the same order the flat rail uses. */
+  rows: Row[];
+  calls: number;
+  failures: number;
+  files: number;
+  /** Files-changed count from the turn-end checkpoint, when one exists. */
+  filesChanged: number | null;
+  hasOpen: boolean;
+  /** True when the tail may be missing rows beyond the fetch cap. */
+  truncated: boolean;
+};
+
+/**
+ * Groups the flat rail into turns. A UserPromptSubmit opens a turn; rows
+ * newer than it belong to it, until the next prompt. Numbering is never
+ * derived by counting prompts — a capped fetch would count wrong — so a turn
+ * is numbered only when a checkpoint row proves the number by timestamp.
+ */
+export function groupTurns(rows: Row[], checkpoints: SessionCheckpoint[], capped: boolean): TurnGroup[] {
+  const starts = checkpoints
+    .filter((c) => c.kind === 'turn-start')
+    .map((c) => ({ at: c.at, turn: c.turn, used: false }));
+  const endFor = (n: number) =>
+    checkpoints.find((c) => c.turn === n && c.kind === 'turn-end' && c.filesChanged !== null)?.filesChanged ?? null;
+
+  const groups: TurnGroup[] = [];
+  let bucket: Row[] = [];
+
+  const flush = (prompt: Row | null) => {
+    const turnRows = prompt ? [...bucket, prompt] : bucket;
+    bucket = [];
+    if (!turnRows.length) return;
+    const promptAt = prompt?.e.at ?? null;
+    let turn: number | null = null;
+    let filesChanged: number | null = null;
+    if (promptAt !== null) {
+      let best: (typeof starts)[number] | null = null;
+      for (const s of starts) {
+        if (s.used) continue;
+        const d = Math.abs(s.at - promptAt);
+        if (d <= TURN_MATCH_TOLERANCE_MS && (!best || d < Math.abs(best.at - promptAt))) best = s;
+      }
+      if (best) { best.used = true; turn = best.turn; filesChanged = endFor(best.turn); }
+    }
+    const paths = new Set<string>();
+    let calls = 0;
+    let failures = 0;
+    let hasOpen = false;
+    for (const r of turnRows) {
+      if (r.e.toolName) calls++;
+      if (isProblem(r.e)) failures++;
+      if (r.open) hasOpen = true;
+      for (const p of r.e.paths) paths.add(p);
+    }
+    groups.push({
+      key: prompt ? `p${prompt.e.id}` : 'tail',
+      turn, promptAt, rows: turnRows, calls, failures,
+      files: paths.size, filesChanged, hasOpen,
+      truncated: !prompt && capped,
+    });
+  };
+
+  for (const r of rows) {
+    if (r.e.event === 'UserPromptSubmit') flush(r);
+    else bucket.push(r);
+  }
+  flush(null);
+  return groups;
+}
 
 function isWait(e: SessionEvent): boolean {
   return e.event === 'PermissionRequest'

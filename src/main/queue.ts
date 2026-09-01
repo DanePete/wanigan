@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { db } from './db';
 import { pruneEvents } from './hooks';
+import { pruneCheckpoints } from './checkpoints';
 import { eventRetentionDays, getSetting, setSetting } from './settings';
 import {
   DEFAULT_SLOTS,
@@ -605,6 +606,12 @@ function pruneRetention(): void {
     // silent multi-second delete is exactly the kind of thing that gets
     // reported as a hang. Say so once, then be quiet on the empty passes.
     if (gone > 0) console.log(`[wanigan] pruned ${gone} hook event(s) older than ${days} days`);
+    // Same window as the timeline: Settings describes one retention period,
+    // and checkpoints are session evidence like hook events are.
+    const checkpointSessions = pruneCheckpoints(days * DAY_MS);
+    if (checkpointSessions > 0) {
+      console.log(`[wanigan] pruned checkpoints for ${checkpointSessions} session(s) older than ${days} days`);
+    }
   } catch (error) {
     // Housekeeping. A busy database here must not take the dispatch loop's
     // error path and cost the rest of the tick its emit.

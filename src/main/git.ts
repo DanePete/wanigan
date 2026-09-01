@@ -73,7 +73,12 @@ export type GitRun = {
   code: number | null;
   killed: boolean;
 };
-export type GitRunOpts = { timeout?: number; maxBuffer?: number };
+export type GitRunOpts = {
+  timeout?: number;
+  maxBuffer?: number;
+  /** Extra variables (e.g. GIT_INDEX_FILE). The prompt hardening always wins. */
+  env?: Record<string, string>;
+};
 
 /**
  * The environment every git in this process runs under.
@@ -92,9 +97,12 @@ export type GitRunOpts = { timeout?: number; maxBuffer?: number };
  * own transport; the default merely refuses to sit on a passphrase prompt
  * nobody can see.
  */
-function gitEnv(): NodeJS.ProcessEnv {
+function gitEnv(overlay?: Record<string, string>): NodeJS.ProcessEnv {
   return {
     ...process.env,
+    // Overlay sits below the hardening: a caller can point git at a scratch
+    // index, never back at an interactive prompt.
+    ...overlay,
     GIT_TERMINAL_PROMPT: '0',
     GIT_ASKPASS: '',
     SSH_ASKPASS: '',
@@ -121,7 +129,7 @@ export async function runGit(cwd: string, args: string[], opts: GitRunOpts = {})
     const { stdout, stderr } = await exec('git', ['-C', cwd, ...args], {
       timeout: opts.timeout ?? 30_000,
       maxBuffer: opts.maxBuffer ?? 64 * 1024 * 1024,
-      env: gitEnv(),
+      env: gitEnv(opts.env),
     });
     return { ok: true, out: stdout, err: stderr, code: 0, killed: false };
   } catch (e) {
@@ -147,7 +155,7 @@ export function runGitSync(cwd: string, args: string[], opts: GitRunOpts = {}): 
     const out = execFileSync('git', ['-C', cwd, ...args], {
       timeout: opts.timeout ?? 8_000,
       maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
-      env: gitEnv(),
+      env: gitEnv(opts.env),
       encoding: 'utf8',
       stdio: 'pipe',
     });

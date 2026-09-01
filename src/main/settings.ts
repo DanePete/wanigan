@@ -48,6 +48,9 @@ export function flags() {
   return {
     telemetry: bool('telemetry', true),
     hooks: bool('hooks', true),
+    // Per-turn workspace snapshots; on because they are local, reversible
+    // evidence, and only captured where hooks already prove turn boundaries.
+    checkpoints: bool('checkpoints', true),
     archiveTranscripts: bool('archive_transcripts', true),
     notifications: bool('notifications', true),
     mcpServerEnabled: bool('mcp_server', false),
@@ -99,6 +102,7 @@ export function setUserPreference(key: unknown, value: unknown): WaniganSettings
   switch (preferenceKey) {
     case 'telemetry':
     case 'hooks':
+    case 'checkpoints':
     case 'archive_transcripts':
     case 'notifications':
     case 'pet':
@@ -175,6 +179,7 @@ export function allSettings(): WaniganSettings {
     theme: theme(),
     telemetry: f.telemetry,
     hooks: f.hooks,
+    checkpoints: f.checkpoints,
     archiveTranscripts: f.archiveTranscripts,
     notifications: f.notifications,
     mcpServerEnabled: f.mcpServerEnabled,

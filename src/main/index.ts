@@ -10,7 +10,7 @@ import {
   initSessions, listSessions, createSession, writeSession, resizeSession,
   killSession, closeSession, scrollback, markRead, shutdownAll, sessionBaseline, interruptSession,
   pastSessions, forgetPastSession, recoverExactCodexThread, setSessionExitObserver,
-  setSessionTuning,
+  setSessionTuning, setConversationFlag, renameSession,
 } from './sessions';
 import { listProjects, addProject, removeProject, refreshBranches, projectById } from './store';
 import * as batch from './batch';
@@ -32,6 +32,7 @@ import { assertManagedRoot, assertOpenablePath } from './roots';
 import * as otel from './otel';
 import { codexUsageSummary } from './codex-usage';
 import * as hooks from './hooks';
+import * as checkpoints from './checkpoints';
 import * as attention from './attention';
 import * as transcripts from './transcripts';
 import * as worktrees from './worktrees';
@@ -807,6 +808,9 @@ async function startServices() {
     catch (error) { console.warn('[wanigan] learning signal skipped:', error); }
     if (s && !quitDraining) notify.announceAttention(attention.attentionOf(s));
   });
+  // Turn boundaries feed the checkpoint queue. Idempotent; the subscription
+  // outlives window recreation on purpose — captures are per-session facts.
+  checkpoints.initCheckpoints();
 
   if (f.hooks) {
     try {
@@ -1366,6 +1370,27 @@ function registerIpc() {
   handle('sessions:baseline', (id: string) => sessionBaseline(id));
   handle('sessions:past', () => pastSessions());
   handle('sessions:forget', (id: string) => { forgetPastSession(id); return pastSessions(); });
+  handle('sessions:setConversationFlag', (id: string, flag: unknown, on: unknown) => {
+    if (flag !== 'pin' && flag !== 'settle') throw new Error('That is not a lifecycle flag Wanigan knows.');
+    return setConversationFlag(String(id), flag, on === true);
+  });
+  handle('sessions:rename', (id: string, title: unknown) => renameSession(String(id), title));
+
+  handle('checkpoints:list', (sessionId: string) => checkpoints.listCheckpoints(String(sessionId)));
+  handle('checkpoints:diff', (sessionId: string, fromId: number, toId: number) => {
+    if (!Number.isInteger(fromId) || !Number.isInteger(toId)) throw new Error('Those checkpoint ids are not valid.');
+    return checkpoints.checkpointDiff(String(sessionId), fromId, toId);
+  });
+  handle('checkpoints:revertPlan', (sessionId: string, checkpointId: number) => {
+    if (!Number.isInteger(checkpointId)) throw new Error('That checkpoint id is not valid.');
+    return checkpoints.checkpointRevertPlan(String(sessionId), checkpointId);
+  });
+  handle('checkpoints:revert', (sessionId: string, checkpointId: number) => {
+    if (!Number.isInteger(checkpointId)) throw new Error('That checkpoint id is not valid.');
+    return checkpoints.applyCheckpointRevert(String(sessionId), checkpointId);
+  });
+  handle('checkpoints:removeRepo', (projectPath: string, apply: boolean) =>
+    checkpoints.removeRepoCheckpoints(String(projectPath), apply === true));
 
   // ── batches ──────────────────────────────────────────────────────────
   handle('batch:presets', (projectId?: string) => batch.presetsFor(projectId));

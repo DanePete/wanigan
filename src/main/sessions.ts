@@ -16,6 +16,7 @@ import { promisify } from 'node:util';
 import type { Baseline, BudgetState, TrustLevel } from '../shared/types';
 import { otelEnv } from './otel';
 import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './hooks';
+import { finalizeSessionCheckpoints, forgetSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
 import { archiveSession } from './transcripts';
 import { createWorktree, removeWorktree, repoRootFor } from './worktrees';
 import { trustFor } from './policy';
@@ -1108,6 +1109,13 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   const initialPrompt = opts.initialPrompt?.trim()
     ? redactCredentials(opts.initialPrompt.trim()).slice(0, INITIAL_PROMPT_MAX)
     : null;
+  // Recent shows a conversation's newest row, so a resume must carry the name
+  // forward or every rename dies at the next continuation.
+  const inheritedTitle = savedResume
+    ? ((db().prepare('SELECT title FROM session_log WHERE id = ?').get(savedResume.sessionId) as { title?: string | null } | undefined)?.title ?? null)
+    : null;
+  const derivedTitle = deriveSessionTitle(initialPrompt) ?? inheritedTitle;
+  if (derivedTitle) meta.displayTitle = derivedTitle;
 
   const recordSessionHistory = () => {
     const d = db();
@@ -1118,8 +1126,8 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
                                  resumed_from, worktree, trust, bin, capabilities_json,
                                  provider_pack_id,provider_pack_version,provider_profile_json,
                                  backend_id,harness_id,baseline_head,baseline_dirty_json,
-                                 initial_prompt)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                 initial_prompt,title)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(id, conversationId, opts.providerId, project.id, project.path, project.name,
              meta.model ?? null, meta.effort ?? null, meta.permissionMode ?? null,
              meta.createdAt, savedResume?.sessionId ?? null, worktree, trust, resolvedBin,
@@ -1131,7 +1139,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
              // already done from being attributed to the agent, so it is stored
              // whole rather than capped.
              baseline.head, JSON.stringify(baseline.dirty),
-             initialPrompt);
+             initialPrompt, derivedTitle);
       // A reused isolated checkout now belongs to this live continuation for
       // reconciliation purposes. Its historical session_log rows retain the
       // original path, so moving this liveness pointer loses no provenance.
@@ -1153,6 +1161,15 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       throw new Error(`The agent started, but Wanigan could not record its session (${detail}). It was stopped.`);
     }
   }
+  // The launch snapshot is taken before the agent's first action. Gated on
+  // hooks actually being injected: without turn boundaries the chain would be
+  // one orphan commit pretending to be a feature.
+  registerSessionCheckpoints({
+    sessionId: id,
+    cwd,
+    hooksCapable: injected.includes('--settings'),
+    gitHead: baseline.head,
+  });
   let resolveExit = () => {};
   const exited = new Promise<void>((resolve) => { resolveExit = resolve; });
   let resolveExactRecovery = () => {};
@@ -1316,6 +1333,9 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
           .run(live.meta.endedAt, exitCode, id);
       } catch { /* db closing during quit */ }
     }
+    // The final tree snapshot, queued before any teardown below can alter the
+    // worktree. Kept as a promise so worktree removal can wait for it.
+    const checkpointsSettled = finalizeSessionCheckpoints(id);
 
     // The startup discovery window can elapse before a slow TUI accepts its
     // first prompt. Give the durable Codex index one final bounded pass after
@@ -1363,10 +1383,14 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       try { exitObserver?.(live.meta); } catch { /* notification policy cannot fail PTY cleanup */ }
     }
 
-    // An isolated worktree with no changes is disk cost and nothing else.
+    // An isolated worktree with no changes is disk cost and nothing else. The
+    // session-end checkpoint is captured first — removal must never race the
+    // snapshot that makes this session's last state recoverable.
     if (worktree) {
-      void removeWorktree(worktree, false).catch(() => {
-        /* dirty worktrees are kept on purpose — the human reviews and merges */
+      checkpointsSettled.finally(() => {
+        void removeWorktree(worktree, false).catch(() => {
+          /* dirty worktrees are kept on purpose — the human reviews and merges */
+        });
       });
     }
 
@@ -1465,11 +1489,33 @@ export function pastSessions(limit = 40): PastSession[] {
     if (openIds.has(String(row.id))) openLineages.add(key);
   }
 
-  return [...newest.entries()]
+  // Lifecycle flags are presentation state; a broken read costs ordering,
+  // never the list itself.
+  const flags = new Map<string, { pinnedAt: number | null; settledAt: number | null }>();
+  try {
+    const flagRows = db().prepare('SELECT key, pinned_at, settled_at FROM conversation_flags')
+      .all() as Array<{ key: string; pinned_at: number | null; settled_at: number | null }>;
+    for (const f of flagRows) {
+      flags.set(String(f.key), {
+        pinnedAt: f.pinned_at == null ? null : Number(f.pinned_at),
+        settledAt: f.settled_at == null ? null : Number(f.settled_at),
+      });
+    }
+  } catch { /* pre-migration database during quit */ }
+  const flagsOf = (key: string) => flags.get(key) ?? { pinnedAt: null, settledAt: null };
+
+  const entries = [...newest.entries()]
     // A failed duplicate launch can be newer than the still-running writer.
     // Exclude a conversation whenever any execution of it is currently live.
-    .filter(([key]) => !openLineages.has(key))
-    .slice(0, limit)
+    .filter(([key]) => !openLineages.has(key));
+  // Pins survive the cap — a pinned conversation that ages past forty newer
+  // ones is exactly the one the pin exists to keep. The other sections are
+  // capped separately so the settled shelf cannot crowd out active rows.
+  const pinned = entries.filter(([key]) => flagsOf(key).pinnedAt != null);
+  const active = entries.filter(([key]) => flagsOf(key).pinnedAt == null && flagsOf(key).settledAt == null).slice(0, limit);
+  const settled = entries.filter(([key]) => flagsOf(key).pinnedAt == null && flagsOf(key).settledAt != null).slice(0, limit);
+
+  return [...pinned, ...active, ...settled]
     .map(([key, r]) => ({
       id: String(r.id),
       conversationId: savedConversationId(r),
@@ -1486,7 +1532,79 @@ export function pastSessions(limit = 40): PastSession[] {
       exitCode: r.exit_code === null ? null : Number(r.exit_code),
       continuationCount: counts.get(key) ?? 1,
       live: fs.existsSync(String(r.project_path)),
+      pinnedAt: flagsOf(key).pinnedAt,
+      settledAt: flagsOf(key).settledAt,
+      title: r.title ? String(r.title) : null,
     }));
+}
+
+/**
+ * The name a session wears, from the launch prompt it was started with. First
+ * line only, whitespace collapsed — a sentence is a name, a pasted diff is
+ * not. The prompt was redacted before it was stored, so the title is too.
+ */
+export function deriveSessionTitle(initialPrompt: string | null): string | null {
+  if (!initialPrompt) return null;
+  const line = initialPrompt.split('\n').map((l) => l.trim()).find(Boolean) ?? '';
+  const compact = line.replace(/\s+/g, ' ').trim();
+  if (!compact) return null;
+  return compact.length > 80 ? `${compact.slice(0, 79)}…` : compact;
+}
+
+/** Renaming is durable: it writes the row, not a per-machine label. */
+export function renameSession(id: string, rawTitle: unknown): boolean {
+  if (typeof rawTitle !== 'string') throw new Error('A session name must be text.');
+  const title = rawTitle.replace(/\s+/g, ' ').trim().slice(0, 120) || null;
+  const res = db().prepare("UPDATE session_log SET title = ? WHERE id = ? AND origin = 'wanigan'").run(title, id);
+  const live = sessions.get(id);
+  if (live) live.meta.displayTitle = title;
+  if (!res.changes && !live) {
+    throw new Error('That session is no longer recorded, so it cannot be renamed.');
+  }
+  if (live) broadcast('session:list', sessionListEntries());
+  return true;
+}
+
+/**
+ * Pin keeps a conversation above the fold; settle parks it in the shelf.
+ * The two are exclusive by rule — "done" beats "keep on top" — so setting one
+ * clears the other, and clearing both deletes the row rather than leaving a
+ * flag that says nothing.
+ */
+export function setConversationFlag(id: string, flag: 'pin' | 'settle', on: boolean): PastSession[] {
+  const row = db().prepare(`
+    SELECT id, conversation_id, provider_id, harness_id
+      FROM session_log
+     WHERE id = ? AND origin = 'wanigan'
+  `).get(id) as { conversation_id: string | null; provider_id: string; harness_id: string | null } | undefined;
+  if (!row) throw new Error('That conversation is no longer recorded, so it cannot be pinned or settled.');
+  const conversationId = typeof row.conversation_id === 'string' && row.conversation_id.trim()
+    ? row.conversation_id
+    : null;
+  if (!conversationId) throw new Error('Only a resumable conversation can be pinned or settled.');
+  const key = conversationKey(row, conversationId);
+
+  const existing = db().prepare('SELECT pinned_at, settled_at FROM conversation_flags WHERE key = ?')
+    .get(key) as { pinned_at: number | null; settled_at: number | null } | undefined;
+  let pinnedAt = existing?.pinned_at ?? null;
+  let settledAt = existing?.settled_at ?? null;
+  const now = Date.now();
+  if (flag === 'pin') {
+    pinnedAt = on ? now : null;
+    if (on) settledAt = null;
+  } else {
+    settledAt = on ? now : null;
+    if (on) pinnedAt = null;
+  }
+  if (pinnedAt === null && settledAt === null) {
+    db().prepare('DELETE FROM conversation_flags WHERE key = ?').run(key);
+  } else {
+    db().prepare(`
+      INSERT INTO conversation_flags (key, pinned_at, settled_at) VALUES (?,?,?)
+      ON CONFLICT(key) DO UPDATE SET pinned_at = excluded.pinned_at, settled_at = excluded.settled_at
+    `).run(key, pinnedAt, settledAt);
+  }
+  return pastSessions();
 }
 
 export function forgetPastSession(id: string) {
@@ -1505,6 +1623,7 @@ export function forgetPastSession(id: string) {
     : null;
   if (!conversationId) {
     db().prepare('DELETE FROM session_log WHERE id = ?').run(id);
+    forgetSessionCheckpoints(id);
     return;
   }
   // Reuse the exact grouping rule from Recent. In particular, an old Codex
@@ -1524,6 +1643,11 @@ export function forgetPastSession(id: string) {
   db().transaction(() => {
     for (const candidateId of ids) remove.run(candidateId);
   })();
+  // Forgetting a conversation forgets its evidence chain too: rows and the
+  // hidden ref for every execution record that just left Recent — and its
+  // lifecycle flag, which would otherwise sit keyed to nothing forever.
+  for (const candidateId of ids) forgetSessionCheckpoints(candidateId);
+  try { db().prepare('DELETE FROM conversation_flags WHERE key = ?').run(key); } catch { /* flag rows are advisory */ }
 }
 
 /**

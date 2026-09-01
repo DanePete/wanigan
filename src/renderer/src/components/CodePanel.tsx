@@ -1,9 +1,42 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CheckpointDiff, CheckpointRevertPlan, CheckpointRevertResult, SessionCheckpoint } from '@shared/types';
 import { Note } from './bits';
-
 type Editor = { id: string; label: string; path: string };
 type Changed = { path: string; index: string; work: string; staged: boolean; untracked: boolean; preexisting?: boolean; committed?: boolean };
 type Entry = { name: string; rel: string; dir: boolean; size: number };
+
+/** One conversational turn, derived from its boundary checkpoints. */
+type TurnRow = {
+  key: string;
+  label: string;
+  turn: number;
+  start: SessionCheckpoint | null;
+  end: SessionCheckpoint | null;
+  failed: SessionCheckpoint[];
+  filesChanged: number | null;
+};
+
+function deriveTurns(rows: SessionCheckpoint[]): TurnRow[] {
+  const out: TurnRow[] = [];
+  const launch = rows.find((r) => r.kind === 'session-start') ?? null;
+  if (launch) {
+    out.push({ key: 'launch', label: 'Launch', turn: 0, start: launch, end: null,
+               failed: launch.status === 'failed' ? [launch] : [], filesChanged: null });
+  }
+  const maxTurn = rows.reduce((m, r) => Math.max(m, r.turn), 0);
+  for (let n = 1; n <= maxTurn; n++) {
+    const inTurn = rows.filter((r) => r.turn === n);
+    if (!inTurn.length) continue;
+    const start = inTurn.find((r) => r.kind === 'turn-start') ?? null;
+    const end = [...inTurn].reverse().find((r) => (r.kind === 'turn-end' || r.kind === 'session-end') && r.commitHash != null) ?? null;
+    out.push({
+      key: `t${n}`, label: `Turn ${n}`, turn: n, start, end,
+      failed: inTurn.filter((r) => r.status === 'failed'),
+      filesChanged: end?.filesChanged ?? null,
+    });
+  }
+  return out;
+}
 
 /**
  * A code view next to the terminal. The default tab is Changes, not Files:
@@ -12,11 +45,16 @@ type Entry = { name: string; rel: string; dir: boolean; size: number };
  * writers on one file while an agent is mid-edit is a merge conflict waiting
  * to happen, so everything here is read-only.
  */
-export default function CodePanel({ projectPath, projectName, sessionId, onSendToBatch }: {
+export default function CodePanel({ projectPath, projectName, sessionId, checkpointsSupported, focusTurn, onFocusTurnHandled, onSendToBatch }: {
   projectPath: string; projectName: string; sessionId?: string;
+  /** Whether this session's harness proved turn boundaries at launch. */
+  checkpointsSupported?: boolean;
+  /** A jump from the Timeline: open this turn's diff. Nonce re-fires repeats. */
+  focusTurn?: { turn: number; nonce: number } | null;
+  onFocusTurnHandled?: () => void;
   onSendToBatch?: (files: string[]) => void;
 }) {
-  const [tab, setTab] = useState<'changes' | 'files'>('changes');
+  const [tab, setTab] = useState<'changes' | 'files' | 'turns'>('changes');
   // Default to this session's work. "All" exists because pre-existing dirt is
   // still worth seeing — it just isn't the agent's doing.
   const [scope, setScope] = useState<'session' | 'all'>('session');
@@ -60,6 +98,14 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkResult, setBulkResult] = useState<{ reverted: number; failed: { file: string; detail: string }[] } | null>(null);
   const [inspector, setInspector] = useState(false);
+  // Turns: boundary checkpoints, the selected turn's diff, and the revert flow.
+  const [cps, setCps] = useState<SessionCheckpoint[]>([]);
+  const [selTurn, setSelTurn] = useState<string | null>(null);
+  const [turnDiff, setTurnDiff] = useState<CheckpointDiff | null>(null);
+  const [turnDiffNote, setTurnDiffNote] = useState<string | null>(null);
+  const [cpPlan, setCpPlan] = useState<(CheckpointRevertPlan & { targetLabel: string }) | null>(null);
+  const [cpBusy, setCpBusy] = useState(false);
+  const [cpResult, setCpResult] = useState<CheckpointRevertResult | null>(null);
 
   useEffect(() => { window.wanigan.code.editors().then(setEditors).catch(() => {}); }, []);
 
@@ -87,6 +133,86 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
   }, [loadChanges]);
 
   useEffect(() => { setSel(null); setDiff(''); setFile(null); setDir(''); }, [projectPath]);
+
+  // Captures land asynchronously after their hook events, so the Turns tab
+  // polls like Changes does rather than racing individual events.
+  const loadCheckpoints = useCallback(() => {
+    if (!sessionId) return;
+    window.wanigan.checkpoints.list(sessionId).then(setCps).catch(() => {});
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (tab !== 'turns' || !sessionId) return;
+    loadCheckpoints();
+    const t = setInterval(() => { if (!document.hidden) loadCheckpoints(); }, 4000);
+    const onVis = () => { if (!document.hidden) loadCheckpoints(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
+  }, [tab, sessionId, loadCheckpoints]);
+
+  useEffect(() => { setCps([]); setSelTurn(null); setTurnDiff(null); setTurnDiffNote(null); setCpPlan(null); setCpResult(null); }, [sessionId]);
+
+  const turns = useMemo(() => deriveTurns(cps), [cps]);
+
+  const handledFocusNonce = useRef<number | null>(null);
+  useEffect(() => {
+    if (!focusTurn || !sessionId || handledFocusNonce.current === focusTurn.nonce) return;
+    handledFocusNonce.current = focusTurn.nonce;
+    setTab('turns');
+    window.wanigan.checkpoints.list(sessionId).then((rows) => {
+      setCps(rows);
+      const row = deriveTurns(rows).find((t) => t.turn === focusTurn.turn);
+      if (row) void openTurnDiff(row);
+    }).catch(() => {});
+    // The parent clears the request once handled, so remounting this panel
+    // (pane switches) cannot replay a stale jump.
+    onFocusTurnHandled?.();
+    // openTurnDiff is stable in behaviour but not identity; the nonce guard
+    // above is what makes this effect single-fire per jump.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusTurn, sessionId]);
+
+  async function openTurnDiff(row: TurnRow) {
+    setSelTurn(row.key); setTurnDiff(null); setCpPlan(null); setCpResult(null);
+    if (!sessionId) return;
+    if (!row.start?.commitHash) {
+      setTurnDiffNote(row.failed.length
+        ? `The snapshot at this boundary failed: ${row.failed[0].detail ?? 'no detail recorded'}`
+        : 'No snapshot was captured at the start of this turn, so its diff cannot be shown.');
+      return;
+    }
+    if (!row.end?.commitHash) {
+      setTurnDiffNote(row.turn === 0
+        ? 'The launch snapshot is a restore point, not a change. Select a turn to see what it did.'
+        : 'This turn has no end snapshot yet — it is still running, or the capture failed.');
+      return;
+    }
+    setTurnDiffNote(null);
+    try { setTurnDiff(await window.wanigan.checkpoints.diff(sessionId, row.start.id, row.end.id)); }
+    catch (e) { setTurnDiffNote(e instanceof Error ? e.message : String(e)); }
+  }
+
+  async function askTurnRevert(row: TurnRow) {
+    if (!sessionId || !row.start?.commitHash) return;
+    setCpResult(null);
+    try {
+      const plan = await window.wanigan.checkpoints.revertPlan(sessionId, row.start.id);
+      setCpPlan({ ...plan, targetLabel: row.turn === 0 ? 'before the session started' : `before turn ${row.turn}` });
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  }
+
+  async function doTurnRevert() {
+    if (!sessionId || !cpPlan?.ok) return;
+    setCpBusy(true);
+    try {
+      const res = await window.wanigan.checkpoints.revert(sessionId, cpPlan.checkpointId);
+      setCpResult(res);
+      setCpPlan(null);
+      loadCheckpoints();
+      loadChanges();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setCpBusy(false); }
+  }
 
   // Absolute from the hook payload, repo-relative in the changes list.
   const toRel = useCallback((abs: string) => {
@@ -209,6 +335,12 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
         </button>
         <button className={tab === 'files' ? 'code-tab on' : 'code-tab'} onClick={() => setTab('files')}>Files</button>
         {sessionId && (
+          <button className={tab === 'turns' ? 'code-tab on' : 'code-tab'} onClick={() => setTab('turns')}
+                  title="Workspace snapshots at each prompt and reply — diff a single turn, or restore to before one">
+            Turns{turns.length > 1 ? ` (${turns.length - 1})` : ''}
+          </button>
+        )}
+        {sessionId && (
           <button
             className="pill"
             aria-pressed={follow}
@@ -326,7 +458,107 @@ export default function CodePanel({ projectPath, projectName, sessionId, onSendT
       )}
 
       <div className="code-body">
-        {tab === 'changes' ? (
+        {tab === 'turns' ? (
+          <>
+            <div className="code-list">
+              {!cps.length && (
+                <p className="faint" style={{ padding: 10, fontSize: 'var(--t-small)' }}>
+                  {checkpointsSupported === false
+                    ? 'This provider does not report turn boundaries, so per-turn checkpoints are not captured for it.'
+                    : 'No checkpoints yet. The launch snapshot appears once a hook-capable session starts in a git repository.'}
+                </p>
+              )}
+              {turns.map((row) => (
+                <button key={row.key} className={`code-file${selTurn === row.key ? ' on' : ''}`}
+                        onClick={() => void openTurnDiff(row)}>
+                  <span className="stat"
+                        title={row.failed.length ? 'a snapshot at this boundary failed'
+                          : row.end || row.turn === 0 ? 'captured' : 'no end snapshot yet'}
+                        style={{ color: row.failed.length ? 'var(--bad)'
+                          : row.end || row.turn === 0 ? 'var(--text-dim)' : 'var(--accent)' }}>
+                    {row.failed.length ? '✕' : row.end || row.turn === 0 ? '·' : '▸'}
+                  </span>
+                  <span className="trunc">{row.label}</span>
+                  <span className="faint mono" style={{ marginLeft: 'auto', fontSize: 'var(--t-micro)', flex: 'none' }}>
+                    {row.failed.length ? 'capture failed'
+                      : row.turn === 0 ? 'restore point'
+                      : row.end ? `${row.filesChanged ?? '?'} file${row.filesChanged === 1 ? '' : 's'}`
+                      : 'running…'}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="code-view">
+              {(() => {
+                const row = turns.find((t) => t.key === selTurn) ?? null;
+                return row?.start?.commitHash ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 9px',
+                                borderBottom: '1px solid var(--line)', flexWrap: 'wrap' }}>
+                    <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>
+                      snapshot <span className="mono">{row.start.commitHash.slice(0, 8)}</span>
+                    </span>
+                    <button className="btn" style={{ fontSize: 'var(--t-micro)', padding: '2px 8px', marginLeft: 'auto' }}
+                            onClick={() => void askTurnRevert(row)}>
+                      Restore to {row.turn === 0 ? 'before the session' : `before turn ${row.turn}`}…
+                    </button>
+                  </div>
+                ) : null;
+              })()}
+              {cpPlan && (
+                <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--line)' }}>
+                  <Note tone={cpPlan.ok ? 'warn' : 'error'}>
+                    <strong>Restore to {cpPlan.targetLabel}?</strong>
+                    <div style={{ marginTop: 4, lineHeight: 1.5 }}>{cpPlan.detail}</div>
+                    {cpPlan.ok && cpPlan.totalFiles > 0 && (
+                      <ul style={{ margin: '4px 0 0', paddingLeft: 18, lineHeight: 1.45, maxHeight: 140, overflowY: 'auto' }}>
+                        {cpPlan.files.slice(0, 12).map((f) => (
+                          <li key={f.path}><span className="mono">{f.path}</span> — {f.action === 'delete' ? 'deleted' : 'restored'}</li>
+                        ))}
+                        {cpPlan.totalFiles > 12 && <li className="faint">and {cpPlan.totalFiles - 12} more.</li>}
+                      </ul>
+                    )}
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                      {cpPlan.ok && cpPlan.totalFiles > 0 && (
+                        <button className="btn btn-danger" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                                disabled={cpBusy} onClick={() => void doTurnRevert()}>
+                          {cpBusy ? 'Restoring…' : `Restore ${cpPlan.totalFiles} file${cpPlan.totalFiles === 1 ? '' : 's'}`}
+                        </button>
+                      )}
+                      <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                              disabled={cpBusy} onClick={() => setCpPlan(null)}>Cancel</button>
+                    </div>
+                  </Note>
+                </div>
+              )}
+              {cpResult && (
+                <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--line)' }}>
+                  <Note tone={cpResult.ok ? 'ok' : 'warn'}>
+                    {cpResult.detail}
+                    {cpResult.failed.length > 0 && (
+                      <ul style={{ margin: '4px 0 0', paddingLeft: 18, lineHeight: 1.45 }}>
+                        {cpResult.failed.slice(0, 8).map((f) => (
+                          <li key={f.path}><span className="mono">{f.path}</span> — {f.detail}</li>
+                        ))}
+                        {cpResult.failed.length > 8 && <li className="faint">and {cpResult.failed.length - 8} more.</li>}
+                      </ul>
+                    )}
+                    <div style={{ marginTop: 6 }}>
+                      <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                              onClick={() => setCpResult(null)}>Dismiss</button>
+                    </div>
+                  </Note>
+                </div>
+              )}
+              {turnDiff?.truncated && (
+                <div className="code-err">
+                  Patch truncated for display — {turnDiff.totalFiles} file{turnDiff.totalFiles === 1 ? '' : 's'} changed in this turn.
+                </div>
+              )}
+              {turnDiff ? <Diff text={turnDiff.patch} />
+                : <p className="faint code-hint">{turnDiffNote ?? 'Select a turn to see exactly what it changed.'}</p>}
+            </div>
+          </>
+        ) : tab === 'changes' ? (
           <>
             <div className="code-list">
               {!changes.isRepo && <p className="faint" style={{ padding: 10, fontSize: 'var(--t-small)' }}>Not a git repository.</p>}

@@ -973,7 +973,35 @@ function Projects({ projects, onAddProject, onRemoveProject }: {
 }) {
   const [confirming, setConfirming] = useState<string | null>(null);
   const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [cpCleanup, setCpCleanup] = useState<{ projectId: string; refs: number; rows: number } | null>(null);
+  const [cpBusy, setCpBusy] = useState<string | null>(null);
   const target = projects.find((p) => p.id === confirming) ?? null;
+
+  const askCheckpointCleanup = async (p: Project) => {
+    setSaved(null); setConfirming(null); setCpBusy(p.id);
+    try {
+      const counted = await window.wanigan.checkpoints.removeRepo(p.path, false);
+      if (counted.refs === 0 && counted.rows === 0) {
+        setCpCleanup(null);
+        setSaved({ tone: 'ok', text: `No Wanigan checkpoints in “${p.name}” — there is nothing to remove.` });
+      } else {
+        setCpCleanup({ projectId: p.id, refs: counted.refs, rows: counted.rows });
+      }
+    } catch (e) {
+      setSaved({ tone: 'error', text: e instanceof Error ? e.message : String(e) });
+    } finally { setCpBusy(null); }
+  };
+
+  const applyCheckpointCleanup = async (p: Project) => {
+    setCpBusy(p.id);
+    try {
+      const done = await window.wanigan.checkpoints.removeRepo(p.path, true);
+      setCpCleanup(null);
+      setSaved({ tone: 'ok', text: `Removed ${done.refs} snapshot ref${done.refs === 1 ? '' : 's'} from “${p.name}”. Live sessions keep theirs; git reclaims the objects on its own schedule.` });
+    } catch (e) {
+      setSaved({ tone: 'error', text: e instanceof Error ? e.message : String(e) });
+    } finally { setCpBusy(null); }
+  };
 
   return (
     <Section title="Projects" hint="Shared by both views — an agent session and a batch run target the same repo."
@@ -987,11 +1015,34 @@ function Projects({ projects, onAddProject, onRemoveProject }: {
             {/* The path used to be a tooltip on a truncated line, which is
                 nothing at all on a touch screen. It wraps instead. */}
             <span className="faint set-path set-wrap" style={{ flex: 1 }}>{p.path}</span>
+            <button className="set-mini" disabled={cpBusy === p.id}
+                    title="Count and remove this repository's hidden per-turn snapshot refs"
+                    onClick={() => void askCheckpointCleanup(p)}>
+              {cpBusy === p.id ? 'counting…' : 'checkpoints…'}
+            </button>
             <button className="set-mini danger" aria-expanded={confirming === p.id}
-                    onClick={() => { setSaved(null); setConfirming(confirming === p.id ? null : p.id); }}>
+                    onClick={() => { setSaved(null); setCpCleanup(null); setConfirming(confirming === p.id ? null : p.id); }}>
               {confirming === p.id ? 'cancel' : 'remove…'}
             </button>
           </div>
+          {cpCleanup?.projectId === p.id && (
+            <div style={{ margin: '10px 0 4px' }}>
+              <Note tone="warn">
+                Remove {cpCleanup.refs} hidden snapshot ref{cpCleanup.refs === 1 ? '' : 's'} and the
+                recorded history for {cpCleanup.rows} session{cpCleanup.rows === 1 ? '' : 's'} from this
+                repository? Turn diffs and restores for those sessions stop working; your branches,
+                index, and files are not touched, and live sessions keep their snapshots.
+                <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                  <button className="btn btn-danger" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                          disabled={cpBusy === p.id} onClick={() => void applyCheckpointCleanup(p)}>
+                    {cpBusy === p.id ? 'Removing…' : `Remove ${cpCleanup.refs} ref${cpCleanup.refs === 1 ? '' : 's'}`}
+                  </button>
+                  <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                          disabled={cpBusy === p.id} onClick={() => setCpCleanup(null)}>Cancel</button>
+                </div>
+              </Note>
+            </div>
+          )}
           {/* Directly under the row it belongs to: a confirmation that appears
               somewhere else on the page is a confirmation of nothing in
               particular. */}
@@ -1069,6 +1120,14 @@ function Observation({ prefs, pending, setFlag }: {
             Claude-compatible CLIs post an event when a tool starts, finishes, fails, or stops to ask
             for permission. With it off, those providers lose tool-level state. Codex uses its own
             per-session approval and completed-turn notification channel instead.
+          </Toggle>
+
+          <Toggle title="Per-turn checkpoints" on={prefs.checkpoints} busy={pending === 'checkpoints'}
+                  onChange={(v) => void setFlag('checkpoints', v)}>
+            Snapshots the working tree at each prompt and reply as hidden git commits under{' '}
+            <span className="mono">refs/wanigan/</span> — never touching your branches, index, or
+            files — so the Turns tab can diff one turn or restore to before it. Captured only for
+            hook-capable providers in git repositories; deleting a session deletes its snapshots.
           </Toggle>
 
           <Toggle title="Archive transcripts" on={prefs.archiveTranscripts} busy={pending === 'archive_transcripts'}

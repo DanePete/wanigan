@@ -191,6 +191,8 @@ export type Session = {
   /** Capability snapshot at launch, so history does not reinterpret an old
    * session through a newer CLI installation. */
   capabilities?: ProviderCapabilities;
+  /** The user-facing name: renamed by hand, or derived from the launch prompt. */
+  displayTitle?: string | null;
   /** Exact pack/profile snapshot; later pack upgrades do not reinterpret it. */
   providerPackId?: string | null;
   providerPackVersion?: string | null;
@@ -240,6 +242,12 @@ export type PastSession = {
   continuationCount: number;
   /** True when the project directory still exists. */
   live: boolean;
+  /** Pinned to the top of Recent; the stamp orders the pinned section. */
+  pinnedAt: number | null;
+  /** Parked in the Settled shelf; history and evidence stay intact. */
+  settledAt: number | null;
+  /** The user-facing name; null falls back to the project name. */
+  title: string | null;
 };
 
 /** What the repo looked like when a session started, so its own work is separable. */
@@ -459,6 +467,61 @@ export type SessionEvent = {
   ok: boolean | null;
   /** Files this event touched, when it touched any. */
   paths: string[];
+};
+
+/* ── per-turn checkpoints ───────────────────────────────────────────── */
+
+export const CHECKPOINT_KINDS = ['session-start', 'turn-start', 'turn-end', 'session-end', 'pre-revert'] as const;
+export type CheckpointKind = (typeof CHECKPOINT_KINDS)[number];
+
+/**
+ * One captured working-tree snapshot, stored as a hidden git commit reachable
+ * from refs/wanigan/checkpoints/<session>. No prompt or model output is
+ * stored here — a checkpoint is repo state plus when and why it was taken.
+ */
+export type SessionCheckpoint = {
+  id: number;
+  sessionId: string;
+  /** 0 for the launch snapshot, then the 1-based turn the boundary belongs to. */
+  turn: number;
+  kind: CheckpointKind | string;
+  at: number;
+  repoRoot: string;
+  commitHash: string | null;
+  treeHash: string | null;
+  /** Paths changed since the previous checkpoint; null when unknowable. */
+  filesChanged: number | null;
+  status: 'ok' | 'failed' | 'skipped-unchanged';
+  detail: string | null;
+};
+
+export type CheckpointDiffFile = { path: string; status: string };
+export type CheckpointDiff = {
+  from: string;
+  to: string;
+  files: CheckpointDiffFile[];
+  totalFiles: number;
+  patch: string;
+  truncated: boolean;
+};
+
+export type CheckpointRevertAction = { path: string; action: 'restore' | 'delete' };
+export type CheckpointRevertPlan = {
+  ok: boolean;
+  checkpointId: number;
+  commit: string | null;
+  files: CheckpointRevertAction[];
+  totalFiles: number;
+  detail: string;
+};
+export type CheckpointRevertResult = {
+  ok: boolean;
+  reverted: number;
+  deleted: number;
+  failed: { path: string; detail: string }[];
+  /** The safety snapshot taken before anything moved, so a revert is undoable. */
+  preRevertCheckpointId: number | null;
+  detail: string;
 };
 
 /* ── P3 · attention ─────────────────────────────────────────────────── */
@@ -1073,6 +1136,8 @@ export type WaniganSettings = {
   theme: ThemeSetting;
   telemetry: boolean;
   hooks: boolean;
+  /** Per-turn workspace snapshots for hook-capable sessions in git repos. */
+  checkpoints: boolean;
   archiveTranscripts: boolean;
   notifications: boolean;
   slots: QueueSlots;

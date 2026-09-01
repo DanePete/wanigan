@@ -538,6 +538,9 @@ function migratePhases(d: Database.Database) {
   // lands: a launch prompt is exactly where a pasted key ends up, and this row
   // outlives the terminal that showed it.
   addColumn(d, 'session_log', 'initial_prompt', 'TEXT');
+  // The display name: derived from the redacted launch prompt when one was
+  // given, or set by a rename. Never derived from conversation content.
+  addColumn(d, 'session_log', 'title', 'TEXT');
   // A fire and the run it dispatched were linked only by a prefix of the run's
   // name, which is a display string a rename breaks. headless.ts writes the
   // terminal outcome back onto the fire, and that write needs an id an operator
@@ -565,6 +568,50 @@ function migratePhases(d: Database.Database) {
   migrateLearning(d);
   migrateControl(d);
   migrateImprovementScout(d);
+  migrateCheckpoints(d);
+  migrateConversationFlags(d);
+}
+
+/**
+ * Pin/settle lifecycle for Recent conversations, keyed by the same
+ * harness-scoped conversation key Recent groups by. Forgetting stays the only
+ * destructive act — these flags reorder and shelve, never delete.
+ */
+function migrateConversationFlags(d: Database.Database) {
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS conversation_flags (
+      key        TEXT PRIMARY KEY,
+      pinned_at  INTEGER,
+      settled_at INTEGER
+    );
+  `);
+}
+
+/**
+ * Per-turn workspace checkpoints. Each row names a hidden git commit kept
+ * alive by refs/wanigan/checkpoints/<session>; the table is the map from a
+ * session's turns to those commits. Rows outlive the session so diffs and
+ * reverts still work after a restart, and the migration is additive so
+ * removing the feature can never cost existing history.
+ */
+function migrateCheckpoints(d: Database.Database) {
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS session_checkpoints (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id    TEXT NOT NULL,
+      turn          INTEGER NOT NULL,
+      kind          TEXT NOT NULL,
+      at            INTEGER NOT NULL,
+      repo_root     TEXT NOT NULL,
+      commit_hash   TEXT,
+      tree_hash     TEXT,
+      files_changed INTEGER,
+      status        TEXT NOT NULL DEFAULT 'ok',
+      detail        TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_checkpoints
+      ON session_checkpoints(session_id, turn, at);
+  `);
 }
 
 /**

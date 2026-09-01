@@ -16,6 +16,7 @@ import Skills from './views/Skills';
 import Context from './views/Context';
 import { num } from './components/bits';
 import ErrorBoundary from './components/ErrorBoundary';
+import ShortcutSheet from './components/ShortcutSheet';
 import ThemeControl from './components/ThemeControl';
 import { useThemePreference } from './theme';
 import { selectedProviderStatus, selectedSessionTelemetry } from '@shared/provider-status';
@@ -171,6 +172,7 @@ export default function App() {
   const [retryingStartup, setRetryingStartup] = useState(false);
   const [palette, setPalette] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
+  const [shortcuts, setShortcuts] = useState(false);
   // The palette is a real modal. Remember where it came from so Escape and a
   // backdrop click put a keyboard user straight back where they started.
   const paletteOpenerRef = useRef<HTMLElement | null>(null);
@@ -540,6 +542,24 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [closePalette, openPalette, palette]);
 
+  // The sheet answers "what can I press" — `?` where typing it is free, ⌘/
+  // where a field would swallow the bare key. Never inside the terminal.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = document.activeElement as HTMLElement | null;
+      if (el?.closest('.terminal-host')) return;
+      const inField = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+      const bareQuestion = e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey && !inField;
+      const cmdSlash = e.key === '/' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+      if (!bareQuestion && !cmdSlash) return;
+      if (!shortcuts && document.querySelector('.modal-backdrop, .command-backdrop')) return;
+      e.preventDefault();
+      setShortcuts((open) => !open);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [shortcuts]);
+
   // Split from addProject so the failure can hand the toast the same work to
   // run again; a callback that reported its own failure could not be its retry.
   const pickProject = useCallback(async () => {
@@ -737,6 +757,13 @@ export default function App() {
       primary: true,
       haystack: 'new session start agent interactive terminal',
       run: requestNewSession,
+    }, {
+      key: 'action:shortcuts',
+      title: 'Keyboard shortcuts',
+      hint: 'Every binding, grouped by where it works',
+      meta: '?',
+      haystack: 'keyboard shortcuts keys cheat sheet bindings help',
+      run: () => setShortcuts(true),
     }];
     for (const item of TABS) {
       items.push({
@@ -1004,6 +1031,7 @@ export default function App() {
                        onConfirm={() => applyDemo(demoPrompt.next)} />
         </div>
       )}
+      {shortcuts && <ShortcutSheet onClose={() => setShortcuts(false)} />}
     </div>
   );
 }

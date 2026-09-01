@@ -4,6 +4,7 @@ import type {
 } from '@shared/types';
 import { EFFORT_LEVELS, TRUST_COPY, TRUST_LEVELS } from '@shared/types';
 import TerminalPane, { feed, disposePane } from '../components/TerminalPane';
+import Composer from '../components/Composer';
 import NewSessionDialog from '../components/NewSessionDialog';
 import CodePanel from '../components/CodePanel';
 import AttentionQueue from '../components/AttentionQueue';
@@ -156,18 +157,24 @@ export default function Sessions({
   );
   const [sessionPickerOpen, setSessionPickerOpen] = useState(false);
   const [railPane, setRailPane] = useState<Record<string, RailPane>>(readPanes);
+  // Visible by default: the composer earns its keep by being seen once.
+  // Collapsing is remembered per machine, like the code rail.
+  const [composerOpen, setComposerOpen] = useState(() => localStorage.getItem('wanigan.composer') !== '0');
+  // A "view this turn's diff" jump from the Timeline into the Code pane. The
+  // nonce makes repeat jumps to the same turn re-fire the effect.
+  const [turnFocus, setTurnFocus] = useState<{ sessionId: string; turn: number; nonce: number } | null>(null);
   /*
    * Three agents in one repo were three identical rows. The launch title is
    * assigned once and is "<provider> · <project>" for all three of them, so the
-   * only thing that can tell them apart is a name you give them. Kept on this
-   * machine, which is exactly as long as the sessions themselves last: a PTY
-   * does not survive a quit.
+   * only thing that can tell them apart is a name you give them — durable now:
+   * renames write the session row and follow the conversation into Recent.
    */
-  const [labels, setLabels] = useState<Record<string, string>>(readLabels);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [defaultTrust, setDefaultTrust] = useState<TrustLevel | null>(null);
   const [past, setPast] = useState<PastSession[]>([]);
+  const [settledOpen, setSettledOpen] = useState(false);
+  const [settledShown, setSettledShown] = useState(8);
   const [resuming, setResuming] = useState<string | null>(null);
   const [teachSession, setTeachSession] = useState<Session | null>(null);
   const activeRef = useRef<string | null>(null);
@@ -380,6 +387,15 @@ export default function Sessions({
         setShowRail((v) => { localStorage.setItem('wanigan.code', v ? '0' : '1'); return !v; });
         return;
       }
+      if (e.key === 'e') {
+        e.preventDefault();
+        setComposerOpen((v) => {
+          localStorage.setItem('wanigan.composer', v ? '0' : '1');
+          if (!v) requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.composer-area')?.focus());
+          return !v;
+        });
+        return;
+      }
       if (e.key === 'w' && activeRef.current) {
         const s = sessions.find((x) => x.id === activeRef.current);
         if (s?.status === 'exited') { e.preventDefault(); void closeTab(s.id); }
@@ -452,8 +468,8 @@ export default function Sessions({
     writePanes(merged, sessions.map((s) => s.id));
   }, [railPane, sessions]);
 
-  /** Your name for a session, or '' when you have not given it one. */
-  const nameOf = useCallback((s: Session) => labels[s.id] ?? '', [labels]);
+  /** The session's durable name, or '' when it has none. */
+  const nameOf = useCallback((s: Session) => s.displayTitle ?? '', []);
 
   const startRename = useCallback((s: Session) => {
     setDraft(nameOf(s));
@@ -476,13 +492,14 @@ export default function Sessions({
 
   const commitRename = useCallback((id: string, refocus: boolean) => {
     const value = draft.trim().slice(0, LABEL_MAX);
-    const next = { ...labels };
-    // An emptied field is how you take a name back off, not a way to store one.
-    if (value) next[id] = value; else delete next[id];
-    setLabels(next);
-    writeLabels(next, sessions.map((s) => s.id));
+    // Optimistic: the row is the truth, but the list should not flicker back
+    // to the old name while the write is in flight.
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, displayTitle: value || null } : s)));
+    window.wanigan.sessions.rename(id, value)
+      .then(() => refresh())
+      .catch((e) => onError(msg(e)));
     endRename(id, refocus);
-  }, [draft, endRename, labels, sessions]);
+  }, [draft, endRename, onError, refresh]);
 
   const att = useAttachments(active?.id ?? null);
 
@@ -582,44 +599,100 @@ export default function Sessions({
                 </div>
               );
             })}
-            {past.length > 0 && (
-              <div style={{ marginTop: 16 }}>
-                <div className="group-title">
-                  <span className="label">Recent conversations</span>
-                  <span className="faint" style={{ fontSize: 'var(--t-micro)', marginLeft: 'auto' }}>exact resume</span>
+            {past.length > 0 && (() => {
+              // Pins float (newest pin first), settled sinks into its shelf,
+              // and a missing project folder sinks within its own section —
+              // stable sorts keep newest-first inside each band.
+              const pinnedPast = [...past.filter((p) => p.pinnedAt != null)]
+                .sort((a, b) => Number(b.live) - Number(a.live) || (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0));
+              const activePast = [...past.filter((p) => p.pinnedAt == null && p.settledAt == null)]
+                .sort((a, b) => Number(b.live) - Number(a.live));
+              const settledPast = [...past.filter((p) => p.settledAt != null)]
+                .sort((a, b) => (b.settledAt ?? 0) - (a.settledAt ?? 0));
+              const setPastFlag = (p: PastSession, flag: 'pin' | 'settle', on: boolean) => {
+                window.wanigan.sessions.setConversationFlag(p.id, flag, on).then(setPast).catch((e) => onError(msg(e)));
+              };
+              const renderPast = (p: PastSession) => (
+                <div key={p.id} className="past-row">
+                  <FocusBtn className="past-main" disabled={!p.live || resuming !== null}
+                            title={p.live
+                              ? `Resume this exact conversation in ${p.projectPath}`
+                              : 'Project folder no longer exists'}
+                            onClick={() => resume(p)}>
+                    <span style={{ minWidth: 0, flex: 1 }}>
+                      <span style={{ display: 'block', fontSize: 'var(--t-small)' }}>
+                        {p.pinnedAt != null && (
+                          <span aria-label="pinned" title="Pinned" style={{ color: 'var(--accent)' }}>★ </span>
+                        )}
+                        {p.title ?? p.projectName}
+                        {!p.live && <span className="faint"> · missing</span>}
+                      </span>
+                      <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>
+                        {p.title ? `${p.projectName} · ` : ''}
+                        {providers.find((x) => x.id === p.providerId)?.label ?? p.providerId}
+                        {p.model && ` · ${p.model}`}
+                        {p.effort && ` · ${p.effort}`}
+                        {p.continuationCount > 1 && ` · ${p.continuationCount} launches`}
+                        {' · '}{ago(p.startedAt)}
+                      </span>
+                    </span>
+                    <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>
+                      {resuming === p.id ? '…' : '↻'}
+                    </span>
+                  </FocusBtn>
+                  <FocusBtn className="past-x faint"
+                            title={p.pinnedAt != null
+                              ? 'Unpin — back to its place by recency'
+                              : 'Pin above Recent, kept there across restarts'}
+                            aria-label={p.pinnedAt != null ? `Unpin ${p.projectName}` : `Pin ${p.projectName}`}
+                            onClick={() => setPastFlag(p, 'pin', p.pinnedAt == null)}>
+                    {p.pinnedAt != null ? '★' : '☆'}
+                  </FocusBtn>
+                  <FocusBtn className="past-x faint"
+                            title={p.settledAt != null
+                              ? 'Un-settle — back into Recent'
+                              : 'Settle into the shelf below. Nothing is deleted; forget is the × next door.'}
+                            aria-label={p.settledAt != null ? `Un-settle ${p.projectName}` : `Settle ${p.projectName}`}
+                            onClick={() => setPastFlag(p, 'settle', p.settledAt == null)}>
+                    {p.settledAt != null ? '⤒' : '⤓'}
+                  </FocusBtn>
+                  <FocusBtn className="past-x faint" title={`Forget this conversation and all ${p.continuationCount} saved launch record${p.continuationCount === 1 ? '' : 's'}`}
+                            onClick={() => window.wanigan.sessions.forget(p.id).then(setPast).catch((e) => onError(msg(e)))}>
+                    ×
+                  </FocusBtn>
                 </div>
-                {past.slice(0, 8).map((p) => (
-                  <div key={p.id} className="past-row">
-                    <FocusBtn className="past-main" disabled={!p.live || resuming !== null}
-                              title={p.live
-                                ? `Resume this exact conversation in ${p.projectPath}`
-                                : 'Project folder no longer exists'}
-                              onClick={() => resume(p)}>
-                      <span style={{ minWidth: 0, flex: 1 }}>
-                        <span style={{ display: 'block', fontSize: 'var(--t-small)' }}>
-                          {p.projectName}
-                          {!p.live && <span className="faint"> · missing</span>}
-                        </span>
-                        <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>
-                          {providers.find((x) => x.id === p.providerId)?.label ?? p.providerId}
-                          {p.model && ` · ${p.model}`}
-                          {p.effort && ` · ${p.effort}`}
-                          {p.continuationCount > 1 && ` · ${p.continuationCount} launches`}
-                          {' · '}{ago(p.startedAt)}
-                        </span>
-                      </span>
-                      <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>
-                        {resuming === p.id ? '…' : '↻'}
-                      </span>
-                    </FocusBtn>
-                    <FocusBtn className="past-x faint" title={`Forget this conversation and all ${p.continuationCount} saved launch record${p.continuationCount === 1 ? '' : 's'}`}
-                              onClick={() => window.wanigan.sessions.forget(p.id).then(setPast).catch((e) => onError(msg(e)))}>
-                      ×
-                    </FocusBtn>
+              );
+              return (
+                <div style={{ marginTop: 16 }}>
+                  <div className="group-title">
+                    <span className="label">Recent conversations</span>
+                    <span className="faint" style={{ fontSize: 'var(--t-micro)', marginLeft: 'auto' }}>exact resume</span>
                   </div>
-                ))}
-              </div>
-            )}
+                  {pinnedPast.map(renderPast)}
+                  {activePast.slice(0, 8).map(renderPast)}
+                  {settledPast.length > 0 && (
+                    <>
+                      <FocusBtn className="group-title" aria-expanded={settledOpen}
+                                style={{ width: '100%', marginTop: 8, cursor: 'pointer' }}
+                                onClick={() => setSettledOpen((o) => !o)}>
+                        <span className="label">Settled ({settledPast.length})</span>
+                        <span className="faint" style={{ marginLeft: 'auto' }} aria-hidden="true">
+                          {settledOpen ? '▾' : '▸'}
+                        </span>
+                      </FocusBtn>
+                      {settledOpen && settledPast.slice(0, settledShown).map(renderPast)}
+                      {settledOpen && settledPast.length > settledShown && (
+                        <FocusBtn className="faint"
+                                  style={{ width: '100%', justifyContent: 'center', fontSize: 'var(--t-small)', borderRadius: 'var(--r-sm)' }}
+                                  onClick={() => setSettledShown((n) => n + 8)}>
+                          Show {Math.min(8, settledPast.length - settledShown)} more settled
+                        </FocusBtn>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })()}
 
             <FocusBtn className="btn" style={{ width: '100%', justifyContent: 'center', marginTop: 14 }}
                       onClick={onAddProject}>+ Add project</FocusBtn>
@@ -724,9 +797,11 @@ export default function Sessions({
                 {projects.length === 0
                   ? <FocusBtn className="btn btn-primary" onClick={onAddProject}>Add your first project</FocusBtn>
                   : <FocusBtn className="btn btn-primary" onClick={() => setDialog(true)}>New session ⌘T</FocusBtn>}
-                {past.filter((p) => p.live)[0] && (
-                  <FocusBtn className="btn" onClick={() => resume(past.filter((p) => p.live)[0])}>
-                    Resume {past.filter((p) => p.live)[0].projectName}
+                {/* A settled conversation is parked by choice; the quick-resume
+                    offer respects that and reaches for the next live one. */}
+                {past.filter((p) => p.live && p.settledAt == null)[0] && (
+                  <FocusBtn className="btn" onClick={() => resume(past.filter((p) => p.live && p.settledAt == null)[0])}>
+                    Resume {past.filter((p) => p.live && p.settledAt == null)[0].projectName}
                   </FocusBtn>
                 )}
               </div>
@@ -781,6 +856,18 @@ export default function Sessions({
                   )}
                 </div>
                 {active && <AttachStrip session={active} att={att} />}
+                {active && (composerOpen ? (
+                  <Composer key={`composer-${active.id}`} session={active} onError={onError}
+                            onCollapse={() => { localStorage.setItem('wanigan.composer', '0'); setComposerOpen(false); }} />
+                ) : (
+                  <div className="composer-closed">
+                    <FocusBtn className="faint composer-reopen"
+                              title="Open the composer — drafts, queueing and stashed prompts (⌘E)"
+                              onClick={() => { localStorage.setItem('wanigan.composer', '1'); setComposerOpen(true); }}>
+                      ✎ compose ⌘E
+                    </FocusBtn>
+                  </div>
+                ))}
               </div>
 
               {railOpen && active && (
@@ -802,6 +889,11 @@ export default function Sessions({
                     {pane === 'code' ? (
                       <CodePanel key={`code-${active.id}`} projectPath={active.worktree ?? active.projectPath}
                                  projectName={active.projectName} sessionId={active.id}
+                                 checkpointsSupported={active.capabilities?.hooks === true}
+                                 focusTurn={turnFocus?.sessionId === active.id
+                                   ? { turn: turnFocus.turn, nonce: turnFocus.nonce }
+                                   : null}
+                                 onFocusTurnHandled={() => setTurnFocus(null)}
                                  onSendToBatch={(paths) => onSendToBatch({
                                    projectId: active.projectId,
                                    root: active.worktree ?? active.projectPath,
@@ -809,7 +901,11 @@ export default function Sessions({
                                  })} />
                     ) : pane === 'timeline' ? (
                       <Timeline key={`tl-${active.id}`} sessionId={active.id}
-                                onOpenFile={(p) => { window.wanigan.code.open(null, p).catch((e) => onError(msg(e))); }} />
+                                onOpenFile={(p) => { window.wanigan.code.open(null, p).catch((e) => onError(msg(e))); }}
+                                onOpenTurnDiff={(turn) => {
+                                  setTurnFocus({ sessionId: active.id, turn, nonce: Date.now() });
+                                  setPane(active.id, 'code');
+                                }} />
                     ) : (
                       <div style={{ overflowY: 'auto', minHeight: 0, borderLeft: '1px solid var(--line)', padding: 'var(--s-2)' }}>
                         <SessionLearning key={`sl-${active.id}`} sessionId={active.id}
@@ -1035,30 +1131,8 @@ function writePanes(map: Record<string, RailPane>, live: string[]) {
 
 /* ── what you called this session ─────────────────────────────────────── */
 
-const LABEL_KEY = 'wanigan.session.labels';
+/** Field cap for the rename input; the row itself allows 120. */
 const LABEL_MAX = 60;
-
-function readLabels(): Record<string, string> {
-  try {
-    const raw = localStorage.getItem(LABEL_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(parsed)) {
-      if (typeof v === 'string' && v.trim()) out[k] = v.trim().slice(0, LABEL_MAX);
-    }
-    return out;
-  } catch { return {}; }
-}
-
-/** Pruned to live sessions, exactly like the pane map: ids are per-launch. */
-function writeLabels(map: Record<string, string>, live: string[]) {
-  try {
-    const keep = new Set(live);
-    const out = Object.fromEntries(Object.entries(map).filter(([k]) => keep.has(k)));
-    localStorage.setItem(LABEL_KEY, JSON.stringify(out));
-  } catch { /* storage can be blocked; the name just stops surviving a reload */ }
-}
 
 /* ── P19 + P9 · the session header ────────────────────────────────────── */
 

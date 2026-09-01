@@ -5,6 +5,7 @@ import type {
   WorktreeInfo, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, HeadlessStartRequest,
   QueueItem, QueueSlots, QueueState,
   BackupCheck, BackupRestoreSummary, BackupSummary,
+  CheckpointDiff, CheckpointRevertPlan, CheckpointRevertResult, SessionCheckpoint,
   InteractiveSessionLoad, NotificationRoute, PluginScope,
   McpServerConfig, McpServerStatus, BudgetState, Reconciliation, TrustLevel, LedgerEntry,
   WaniganSettings, ThemeSetting, UploadedFile, EvalPair, GoldenSet,
@@ -95,11 +96,25 @@ const api = {
     baseline: (id: string) => call<{ head: string | null; dirty: string[]; at: number } | null>('sessions:baseline', id),
     past: () => call<PastSession[]>('sessions:past'),
     forget: (id: string) => call<PastSession[]>('sessions:forget', id),
+    setConversationFlag: (id: string, flag: 'pin' | 'settle', on: boolean) =>
+      call<PastSession[]>('sessions:setConversationFlag', id, flag, on),
+    rename: (id: string, title: string) => call<boolean>('sessions:rename', id, title),
     write: (id: string, data: string) => ipcRenderer.send('sessions:write', id, data),
     setTuning: (id: string, field: 'model' | 'effort', value: string) =>
       call<boolean>('sessions:setTuning', id, field, value),
     resize: (id: string, cols: number, rows: number) =>
       ipcRenderer.send('sessions:resize', id, cols, rows),
+  },
+  checkpoints: {
+    list: (sessionId: string) => call<SessionCheckpoint[]>('checkpoints:list', sessionId),
+    diff: (sessionId: string, fromId: number, toId: number) =>
+      call<CheckpointDiff>('checkpoints:diff', sessionId, fromId, toId),
+    revertPlan: (sessionId: string, checkpointId: number) =>
+      call<CheckpointRevertPlan>('checkpoints:revertPlan', sessionId, checkpointId),
+    revert: (sessionId: string, checkpointId: number) =>
+      call<CheckpointRevertResult>('checkpoints:revert', sessionId, checkpointId),
+    removeRepo: (projectPath: string, apply: boolean) =>
+      call<{ refs: number; rows: number; applied: boolean }>('checkpoints:removeRepo', projectPath, apply),
   },
   batch: {
     presets: (projectId?: string) => call<any>('batch:presets', projectId),

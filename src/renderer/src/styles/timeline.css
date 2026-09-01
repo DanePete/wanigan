@@ -189,6 +189,39 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ── turns ───────────────────────────────────────────────────────────── */
+
+.tl-turnhead {
+  position: relative; z-index: 1;
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 2px;
+}
+.tl-turntoggle {
+  flex: 1; min-width: 0;
+  display: grid; grid-template-columns: 22px minmax(0, auto) minmax(0, 1fr) 14px;
+  gap: 8px; align-items: center;
+  padding: 4px 4px 4px 3px;
+  border-radius: 7px; text-align: left;
+  font-size: 12px; cursor: pointer;
+}
+.tl-turntoggle:hover { background: var(--bg-sunk); }
+.tl-turntoggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.tl-turnlabel {
+  display: flex; align-items: baseline; gap: 7px; white-space: nowrap;
+  font-weight: 600; color: var(--text);
+}
+.tl-turnclock { font-size: 10px; font-weight: 400; }
+.tl-turnmeta {
+  min-width: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  font-size: 10.5px; font-variant-numeric: tabular-nums;
+}
+.tl-turnchev { font-size: 10px; text-align: right; }
+.tl-turndiff { flex: none; }
+/* The nested rail keeps its rows but not a second spine: one line of
+   ancestry per level reads as a tree, two read as a mistake. */
+.tl-turnbody { margin-left: 10px; padding-left: 4px; }
+.tl-turnbody::before { display: none; }
+
 @media (prefers-reduced-motion: reduce) {
   .tl-chip, .tl-row-open { transition: none; }
 }
