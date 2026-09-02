@@ -397,6 +397,30 @@ async function runPlugin(args: string[], timeoutMs = 120_000): Promise<PluginAct
   }
 }
 
+/**
+ * Rows out of `claude plugin list --json`, whatever shape this CLI version uses.
+ *
+ * The output is not a stable contract: it has been a bare array, and it is
+ * currently an object keyed `installed` and `available`. Casting the parse
+ * result to an array and mapping it is the bug that produced
+ * "rows.map is not a function" on the Plugins page — valid JSON of the wrong
+ * shape sails past a JSON.parse guard, and `as` checks nothing at runtime.
+ * Read the named key when there is one, accept a bare array when there is not,
+ * and return null for anything else so the caller can say so plainly rather
+ * than rendering an empty catalogue as though the CLI had answered "none".
+ */
+function pluginRows(output: string, key: 'installed' | 'available'): Record<string, unknown>[] | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(output || 'null'); } catch { return null; }
+  if (parsed === null || parsed === undefined) return [];
+  if (Array.isArray(parsed)) return parsed as Record<string, unknown>[];
+  if (typeof parsed === 'object') {
+    const named = (parsed as Record<string, unknown>)[key];
+    if (Array.isArray(named)) return named as Record<string, unknown>[];
+  }
+  return null;
+}
+
 /** Everything the marketplaces offer, with installed/enabled folded in. */
 export async function catalog(): Promise<{ plugins: CatalogPlugin[]; note: string | null }> {
   const avail = await runPlugin(['list', '--json', '--available'], 60_000);
@@ -405,14 +429,19 @@ export async function catalog(): Promise<{ plugins: CatalogPlugin[]; note: strin
     return { plugins: [], note: avail.error };
   }
   const installedById = new Map<string, { enabled: boolean }>();
-  try {
-    for (const r of JSON.parse(inst.output || '[]') as Record<string, unknown>[]) {
-      if (typeof r.id === 'string') installedById.set(r.id, { enabled: r.enabled !== false });
-    }
-  } catch { /* an unreadable installed list just means nothing is marked */ }
+  // An unreadable installed list just means nothing is marked as installed; the
+  // catalogue itself is still worth showing.
+  for (const r of pluginRows(inst.output, 'installed') ?? []) {
+    if (typeof r.id === 'string') installedById.set(r.id, { enabled: r.enabled !== false });
+  }
 
-  let rows: Record<string, unknown>[] = [];
-  try { rows = JSON.parse(avail.output) as Record<string, unknown>[]; } catch { return { plugins: [], note: 'The catalog did not come back as JSON.' }; }
+  const rows = pluginRows(avail.output, 'available');
+  if (rows === null) {
+    return {
+      plugins: [],
+      note: 'The catalog came back in a shape Wanigan does not recognise, so nothing below is a reliable list of what is available.',
+    };
+  }
 
   const plugins = rows.map((r) => {
     const id = String(r.pluginId ?? r.id ?? '');
