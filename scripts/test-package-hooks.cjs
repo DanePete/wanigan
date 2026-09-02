@@ -12,7 +12,7 @@ const {
   hasUsableSigningIdentity,
   signLocalMacAppIfNeeded,
 } = require('./sign-local-macos-app.cjs');
-const { assertElectronAsarIntegrity, synchronizeElectronAsarIntegrity } = require('./macos-asar-integrity.cjs');
+const { assertElectronAsarIntegrity, synchronizeElectronAsarIntegrity, asarHeaderHash } = require('./macos-asar-integrity.cjs');
 const {
   FUSE_POLICY,
   FUSE_DISABLED,
@@ -76,7 +76,16 @@ async function main() {
     await fs.writeFile(packagedHelper, 'helper');
     await fs.chmod(packagedHelper, 0o755);
     await fs.mkdir(path.dirname(packagedAsar), { recursive: true });
-    await fs.writeFile(packagedAsar, 'fixture asar bytes');
+    // A real archive, not placeholder bytes: the integrity path parses the asar
+    // header, so a fixture that only looks like a file proves nothing about the
+    // digest that actually ships in Info.plist.
+    {
+      const { createPackage } = require('@electron/asar');
+      const asarSrc = path.join(fixture, 'packaged-asar-src');
+      await fs.mkdir(asarSrc, { recursive: true });
+      await fs.writeFile(path.join(asarSrc, 'index.js'), 'module.exports = 1;\n');
+      await createPackage(asarSrc, packagedAsar);
+    }
     await fs.writeFile(packagedInfo, `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict><key>ElectronAsarIntegrity</key><dict><key>Resources/app.asar</key><dict><key>hash</key><string>${'0'.repeat(64)}</string></dict></dict></dict></plist>`);
 
@@ -209,12 +218,16 @@ async function main() {
       'disabling builder identity discovery must still leave a sealed local app');
     assert.equal(discoveryOptOutCalls.filter(([file]) => file === '/usr/bin/codesign').length, 3);
 
-    const integrityBytes = Buffer.from('archive that must be hashed exactly');
-    const expectedIntegrity = crypto.createHash('sha256').update(integrityBytes).digest('hex');
+    // The plumbing test injects the hasher, because WHICH digest goes into
+    // Info.plist is asserted separately against a real archive below. A mock
+    // that hashes fake bytes can only prove the value round-trips — it cannot
+    // notice that the value was the wrong kind of hash, which is exactly how a
+    // whole-file digest shipped here and killed every packaged build on launch.
+    const expectedIntegrity = crypto.createHash('sha256').update('header-digest-under-test').digest('hex');
     let embeddedIntegrity = 'f'.repeat(64);
     const integrityCalls = [];
     const integrityOptions = {
-      filesystem: { readFile: async (file) => { assert.match(file, /Resources\/app\.asar$/); return integrityBytes; } },
+      hashArchive: async (file) => { assert.match(file, /Resources\/app\.asar$/); return expectedIntegrity; },
       execute: async (file, args) => {
         integrityCalls.push([file, args]);
         if (args[0] !== '-c') throw new Error(`Unexpected integrity command: ${file}`);
@@ -227,12 +240,41 @@ async function main() {
       },
     };
     assert.equal(await synchronizeElectronAsarIntegrity('/fixture/Wanigan.app', integrityOptions), expectedIntegrity,
-      'afterPack derives ElectronAsarIntegrity from the exact packed archive bytes');
+      'afterPack writes the archive digest it was given into Info.plist');
     assert.equal(await assertElectronAsarIntegrity('/fixture/Wanigan.app', integrityOptions), expectedIntegrity,
       'release verification accepts a matching embedded Electron archive checksum');
     embeddedIntegrity = '0'.repeat(64);
     await assert.rejects(assertElectronAsarIntegrity('/fixture/Wanigan.app', integrityOptions), /does not match/,
       'release verification rejects a stale embedded Electron archive checksum');
+
+    // The check that matters, against a real archive. Electron's
+    // EnableEmbeddedAsarIntegrityValidation fuse hashes the asar HEADER and
+    // reports it as entry '<header>'; a whole-file digest is also a valid
+    // SHA256, so every self-consistent check above passes with either one and
+    // only the Electron runtime can tell them apart. Asserting the header
+    // digest AND that it differs from the whole-file digest is what turns a
+    // launch-time fatal into a build-time failure.
+    {
+      const { createPackage, getRawHeader } = require('@electron/asar');
+      const asarSrc = path.join(fixture, "asar-src");
+      const asarOut = path.join(fixture, "integrity-fixture.asar");
+      await fs.mkdir(asarSrc, { recursive: true });
+      await fs.writeFile(path.join(asarSrc, 'index.js'), 'module.exports = 1;\n');
+      await fs.writeFile(path.join(asarSrc, 'big.txt'), 'x'.repeat(4096));
+      await createPackage(asarSrc, asarOut);
+
+      const headerDigest = crypto.createHash('sha256')
+        .update(getRawHeader(asarOut).headerString).digest('hex');
+      const wholeFileDigest = crypto.createHash('sha256')
+        .update(await fs.readFile(asarOut)).digest('hex');
+
+      assert.equal(await asarHeaderHash(asarOut), headerDigest,
+        'the embedded integrity digest is the asar header hash Electron validates');
+      assert.notEqual(headerDigest, wholeFileDigest,
+        'header and whole-file digests differ, so hashing the wrong one is a real and silent mistake');
+      assert.notEqual(await asarHeaderHash(asarOut), wholeFileDigest,
+        'the embedded integrity digest is not the whole-file hash, which fails only at launch');
+    }
     assert.equal(integrityCalls.filter(([, args]) => args[1].startsWith('Set ')).length, 1,
       'integrity repair happens once before the app signature is sealed');
 

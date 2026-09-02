@@ -27,8 +27,20 @@ const {
   privilegedCommand,
 } = require('./install-local-macos.cjs');
 
-const FIXTURE_ASAR = Buffer.from('fixture app archive');
-const FIXTURE_ASAR_HASH = crypto.createHash('sha256').update(FIXTURE_ASAR).digest('hex');
+// A real archive, written once and reused. Verification parses the asar header
+// to derive the digest Electron's integrity fuse checks, so placeholder bytes
+// cannot stand in: they throw before any assertion here gets to run.
+let FIXTURE_ASAR_HASH = null;
+async function writeFixtureAsar(target) {
+  const { createPackage, getRawHeader } = require('@electron/asar');
+  const src = await fs.mkdtemp(path.join(os.tmpdir(), 'wanigan-fixture-asar-src-'));
+  await fs.writeFile(path.join(src, 'index.js'), 'module.exports = 1;\n');
+  await createPackage(src, target);
+  await fs.rm(src, { recursive: true, force: true });
+  FIXTURE_ASAR_HASH = crypto.createHash('sha256')
+    .update(getRawHeader(target).headerString).digest('hex');
+  return FIXTURE_ASAR_HASH;
+}
 
 const SEALED_METADATA = [
   `Identifier=${BUNDLE_IDENTIFIER}`,
@@ -67,7 +79,7 @@ async function createFixtureBundle(root) {
   await fs.writeFile(info, '<?xml version="1.0"?><plist version="1.0"><dict/></plist>');
   await fs.writeFile(executable, '#!/bin/sh\nexit 0\n');
   await fs.writeFile(helper, '#!/bin/sh\nexit 0\n');
-  await fs.writeFile(asar, FIXTURE_ASAR);
+  await writeFixtureAsar(asar);
   await Promise.all([fs.chmod(executable, 0o755), fs.chmod(helper, 0o755)]);
   return { app, helper };
 }

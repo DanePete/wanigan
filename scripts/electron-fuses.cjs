@@ -49,7 +49,15 @@ const FUSE_POLICY = Object.freeze({
   3: false, // EnableNodeCliInspectArguments
   4: true, // EnableEmbeddedAsarIntegrityValidation
   5: true, // OnlyLoadAppFromAsar
-  6: true, // LoadBrowserProcessSpecificV8Snapshot
+  // Off, and not as a relaxation: this is a build-shape switch, not a privilege
+  // control. Enabling it tells the browser process to load
+  // browser_v8_context_snapshot.<arch>.bin instead of the ordinary
+  // v8_context_snapshot.<arch>.bin, and electron-builder ships only the latter.
+  // With it on, every packaged build died before drawing a window —
+  // "FATAL:gin/v8_initializer.cc: Error loading V8 startup snapshot file" —
+  // which reads like a corrupt download rather than a fuse. Turn it on only
+  // alongside a build that actually produces the browser-specific snapshot.
+  6: false, // LoadBrowserProcessSpecificV8Snapshot
   7: true, // GrantFileProtocolExtraPrivileges
   8: true, // WasmTrapHandlers
 });

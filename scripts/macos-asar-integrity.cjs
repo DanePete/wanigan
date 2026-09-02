@@ -22,6 +22,27 @@ async function sha256File(file, filesystem = fs) {
   return crypto.createHash('sha256').update(bytes).digest('hex');
 }
 
+/**
+ * The value Electron's EnableEmbeddedAsarIntegrityValidation fuse actually
+ * checks, which is NOT the hash of the archive file.
+ *
+ * Electron validates the archive's *header* — the pickled directory listing at
+ * the front of app.asar — and reports it as entry '<header>'. Writing a
+ * whole-file digest into Info.plist produces a package that passes codesign,
+ * passes this module's own round trip, and then dies on launch with
+ * "Integrity check failed for asar archive entry '<header>'" before a window is
+ * ever drawn. The two digests are both valid SHA256 of *something*, which is
+ * exactly why a self-consistent check cannot tell them apart: only Electron
+ * knows which one it wanted.
+ */
+async function asarHeaderHash(file) {
+  // Required lazily: this module is loaded by packaging hooks that run before
+  // dependencies are guaranteed present, and only the macOS path needs it.
+  const { getRawHeader } = require('@electron/asar');
+  const { headerString } = getRawHeader(file);
+  return crypto.createHash('sha256').update(headerString).digest('hex');
+}
+
 function commandDetail(error) {
   return [error?.stderr, error?.stdout, error?.message]
     .filter((value) => typeof value === 'string' && value.trim())
@@ -46,7 +67,8 @@ async function embeddedAsarHash(appPath, execute = execFile) {
 async function synchronizeElectronAsarIntegrity(appPath, options = {}) {
   const filesystem = options.filesystem || fs;
   const execute = options.execute || execFile;
-  const actual = await sha256File(appAsarPath(appPath), filesystem);
+  const hashArchive = options.hashArchive || asarHeaderHash;
+  const actual = await hashArchive(appAsarPath(appPath), filesystem);
   try {
     await execute(PLIST_BUDDY, ['-c', `Set ${ASAR_HASH_ENTRY} ${actual}`, infoPlistPath(appPath)]);
   } catch (error) {
@@ -63,8 +85,9 @@ async function synchronizeElectronAsarIntegrity(appPath, options = {}) {
 async function assertElectronAsarIntegrity(appPath, options = {}) {
   const filesystem = options.filesystem || fs;
   const execute = options.execute || execFile;
+  const hashArchive = options.hashArchive || asarHeaderHash;
   const [actual, embedded] = await Promise.all([
-    sha256File(appAsarPath(appPath), filesystem),
+    hashArchive(appAsarPath(appPath), filesystem),
     embeddedAsarHash(appPath, execute),
   ]);
   if (embedded !== actual) {
@@ -79,5 +102,6 @@ exports.APP_ASAR = APP_ASAR;
 exports.ASAR_HASH_ENTRY = ASAR_HASH_ENTRY;
 exports.assertElectronAsarIntegrity = assertElectronAsarIntegrity;
 exports.embeddedAsarHash = embeddedAsarHash;
+exports.asarHeaderHash = asarHeaderHash;
 exports.sha256File = sha256File;
 exports.synchronizeElectronAsarIntegrity = synchronizeElectronAsarIntegrity;
