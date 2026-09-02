@@ -14,6 +14,57 @@ import type { ResolvedTheme } from '../theme-boot';
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
 type ProviderKeyStatus = { present: boolean; fingerprint: string | null };
 type SettingsTab = 'agents' | 'projects' | 'automation' | 'connections' | 'privacy' | 'backup' | 'app';
+export type { SettingsTab };
+
+/** A ⌘K result taking the operator to one settings section, once per nonce. */
+export type SettingsJump = {
+  tab: SettingsTab;
+  /** Exact Section title; a drifted title still lands on the right tab. */
+  section?: string;
+  /** For the transcript section: run this query and open this hit. */
+  transcriptQuery?: string;
+  openSessionId?: string | null;
+  nonce: number;
+};
+
+export type SettingsIndexEntry = {
+  tab: SettingsTab;
+  tabLabel: string;
+  section: string;
+  hint: string;
+  keywords: string;
+};
+
+/**
+ * What ⌘K can name inside Settings: one entry per Section, kept beside the
+ * tab definitions so a reorganisation edits both in one place. The tab ids
+ * are typed against SettingsTab, so a renamed tab fails the typecheck rather
+ * than a runtime jump; a renamed section title merely stops the scroll and
+ * still lands on the right tab.
+ */
+export const SETTINGS_INDEX: SettingsIndexEntry[] = [
+  { tab: 'agents', tabLabel: 'Agents', section: 'Claude Platform API key', hint: 'Batches API key, workspace id', keywords: 'anthropic api key batches workspace sk-ant console' },
+  { tab: 'agents', tabLabel: 'Agents', section: 'GLM Coding Plan', hint: 'Z.ai key for GLM sessions', keywords: 'glm z.ai zai coding plan key' },
+  { tab: 'agents', tabLabel: 'Agents', section: 'DeepSeek', hint: 'DeepSeek key for sessions', keywords: 'deepseek key anthropic-compatible' },
+  { tab: 'agents', tabLabel: 'Agents', section: 'Installed agent runtimes', hint: 'Which CLIs Wanigan found, and where', keywords: 'cli path version claude codex installed runtime detect' },
+  { tab: 'projects', tabLabel: 'Projects & safety', section: 'Projects', hint: 'Add and remove repositories', keywords: 'project repository folder add remove' },
+  { tab: 'projects', tabLabel: 'Projects & safety', section: 'Worktrees', hint: 'Isolated worktrees and cleanup', keywords: 'worktree isolated branch cleanup orphan' },
+  { tab: 'projects', tabLabel: 'Projects & safety', section: 'Trust and the policy ledger', hint: 'Trust levels, decisions, export', keywords: 'trust policy ledger permission audit export' },
+  { tab: 'automation', tabLabel: 'Automation', section: 'Spending', hint: 'Cap the estimated cost per batch run', keywords: 'spend cap cost limit usd budget' },
+  { tab: 'automation', tabLabel: 'Automation', section: 'Dispatcher', hint: 'Concurrency limits and the queue', keywords: 'concurrency limits queue dispatcher interactive headless batch parallel' },
+  { tab: 'connections', tabLabel: 'Connections', section: 'Phone monitor', hint: 'iPad/phone monitor, alerts, remote', keywords: 'phone ipad mobile tailscale ntfy push alerts remote pairing' },
+  { tab: 'connections', tabLabel: 'Connections', section: 'MCP servers', hint: 'Tool servers agents may use', keywords: 'mcp server tools stdio http' },
+  { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Observation', hint: 'Telemetry, hooks, checkpoints, archive', keywords: 'telemetry hooks checkpoints notifications archive transcripts observation pet retention' },
+  { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Search transcripts', hint: 'Full-text search of the archive', keywords: 'transcript search fts archive conversation history full-text' },
+  { tab: 'privacy', tabLabel: 'Privacy & data', section: 'What leaves this machine', hint: 'The egress report, host by host', keywords: 'egress network hosts privacy leaves machine report keychain' },
+  { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Storage', hint: 'Retention and locally kept data', keywords: 'storage retention delete data disk days' },
+  { tab: 'backup', tabLabel: 'Backup', section: 'Back up Wanigan’s record', hint: 'Write a verified copy', keywords: 'backup copy database export save' },
+  { tab: 'backup', tabLabel: 'Backup', section: 'Check a backup', hint: 'Verify a copy you already have', keywords: 'backup verify check integrity' },
+  { tab: 'backup', tabLabel: 'Backup', section: 'Restore a backup', hint: 'Put a copy back in place', keywords: 'backup restore replace recovery' },
+  { tab: 'app', tabLabel: 'App', section: 'Appearance', hint: 'Theme: system, light, dark', keywords: 'appearance theme light dark system colour color' },
+  { tab: 'app', tabLabel: 'App', section: 'Motion', hint: 'Animation comfort', keywords: 'motion animation reduce comfort' },
+  { tab: 'app', tabLabel: 'App', section: 'Demo mode', hint: 'Mask names before sharing a screen', keywords: 'demo mode mask screenshot share names' },
+];
 
 type SettingsTabInfo = {
   id: SettingsTab;
@@ -350,7 +401,7 @@ function SettingsTabPanel({ tab, active, children }: {
 
 export default function Settings({
   providers, projects, onKeyChange, onRemoveProject, onAddProject,
-  themePreference, resolvedTheme, onThemeChange,
+  themePreference, resolvedTheme, onThemeChange, jump,
 }: {
   providers: ProviderInfo[];
   projects: Project[];
@@ -360,6 +411,7 @@ export default function Settings({
   themePreference: ThemeSetting;
   resolvedTheme: ResolvedTheme;
   onThemeChange: (preference: ThemeSetting) => Promise<ThemeSetting>;
+  jump?: SettingsJump | null;
 }) {
   const [status, setStatus] = useState<KeyStatus | null>(null);
   const [input, setInput] = useState('');
@@ -485,6 +537,22 @@ export default function Settings({
   useEffect(() => {
     try { localStorage.setItem(SETTINGS_TAB_STORAGE_KEY, settingsTab); } catch { /* storage may be disabled */ }
   }, [settingsTab]);
+
+  // A ⌘K jump: select the tab, then scroll to the named section once it is on
+  // screen. Applied per nonce so revisiting Settings does not replay an old
+  // jump, and a section title that has drifted degrades to the right tab.
+  const appliedJump = useRef(0);
+  useEffect(() => {
+    if (!jump || jump.nonce === appliedJump.current) return;
+    appliedJump.current = jump.nonce;
+    setSettingsTab(jump.tab);
+    if (!jump.section) return;
+    const section = jump.section;
+    requestAnimationFrame(() => {
+      document.querySelector(`[data-section-title="${CSS.escape(section)}"]`)
+        ?.scrollIntoView({ block: 'start' });
+    });
+  }, [jump]);
 
   // A remembered tab can begin off-screen in the horizontal iPad strip. Keep
   // its control visible without calling scrollIntoView(), which can also move
@@ -774,7 +842,8 @@ export default function Settings({
 
           <SettingsTabPanel tab={settingsTabInfo('privacy')} active={settingsTab === 'privacy'}>
             <Observation prefs={prefs} pending={pending} setFlag={setFlag} />
-            <TranscriptSearch prefs={prefs} />
+            <TranscriptSearch prefs={prefs}
+                              preset={jump?.transcriptQuery ? { query: jump.transcriptQuery, openSessionId: jump.openSessionId ?? null, nonce: jump.nonce } : null} />
             <Egress />
             <Storage prefs={prefs} pending={pending} setPref={setPref} />
           </SettingsTabPanel>
@@ -3237,10 +3306,24 @@ function TranscriptReader({ sessionId, onClose }: { sessionId: string; onClose: 
  * This is the question that gets asked in an incident — "that session did
  * something odd, what did it actually say" — and it had no answer.
  */
-function TranscriptSearch({ prefs }: { prefs: WaniganSettings | null }) {
+function TranscriptSearch({ prefs, preset }: {
+  prefs: WaniganSettings | null;
+  preset?: { query: string; openSessionId: string | null; nonce: number } | null;
+}) {
   const [typed, setTyped] = useState('');
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState<string | null>(null);
+
+  // A palette hit arrives with its query already asked; type it into the box
+  // and run it, so what is on screen explains how it got there.
+  const appliedPreset = useRef(0);
+  useEffect(() => {
+    if (!preset || preset.nonce === appliedPreset.current) return;
+    appliedPreset.current = preset.nonce;
+    setTyped(preset.query);
+    setQuery(preset.query);
+    setOpen(preset.openSessionId);
+  }, [preset]);
 
   const hits = useLoad<TranscriptHit[]>(
     async () => (query.trim() ? window.wanigan.transcripts.search(query.trim(), 80) : []),

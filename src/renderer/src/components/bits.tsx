@@ -80,7 +80,7 @@ export function Section({ n, title, hint, right, children }: {
   n?: number; title: string; hint?: string; right?: React.ReactNode; children: React.ReactNode;
 }) {
   return (
-    <section className="card" style={{ padding: 15 }}>
+    <section className="card" style={{ padding: 15 }} data-section-title={title}>
       <div style={{ display: 'flex', gap: 10, marginBottom: 11 }}>
         {n !== undefined && (
           <span style={{ marginTop: 1, width: 19, height: 19, flex: 'none', borderRadius: 'var(--r-pill)',

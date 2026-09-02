@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import type { Attention, AttentionKind, ClaudeContextUsage, MotionSetting, Project, ProviderInfo, Session } from '@shared/types';
+import type { Attention, AttentionKind, ClaudeContextUsage, MotionSetting, Project, ProviderInfo, Session, TranscriptHit } from '@shared/types';
+import { filterPalette, groupPalette, transcriptHitRow, TRANSCRIPT_QUERY_MIN, TRANSCRIPT_RESULT_CAP, type PaletteEntry } from '@shared/palette';
 import Sessions from './views/Sessions';
 import Fleet from './views/Fleet';
 import Control from './views/Control';
@@ -11,7 +12,7 @@ import Plugins from './views/Plugins';
 import Schedules from './views/Schedules';
 import Git from './views/Git';
 import HeadlessRuns from './views/HeadlessRuns';
-import SettingsView from './views/Settings';
+import SettingsView, { SETTINGS_INDEX, type SettingsJump } from './views/Settings';
 import Skills from './views/Skills';
 import Context from './views/Context';
 import { num } from './components/bits';
@@ -172,6 +173,11 @@ export default function App() {
   const [retryingStartup, setRetryingStartup] = useState(false);
   const [palette, setPalette] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
+  // FTS answers for the current palette query — asked only while the palette
+  // is open, debounced, and cleared with it. The archive is local; still,
+  // nothing is searched until at least three characters ask for it.
+  const [paletteHits, setPaletteHits] = useState<TranscriptHit[]>([]);
+  const [settingsJump, setSettingsJump] = useState<SettingsJump | null>(null);
   const [shortcuts, setShortcuts] = useState(false);
   // The palette is a real modal. Remember where it came from so Escape and a
   // backdrop click put a keyboard user straight back where they started.
@@ -453,10 +459,10 @@ export default function App() {
     setPaletteQuery('');
     setPalette(true);
   }, []);
-
   const closePalette = useCallback((restoreFocus = true) => {
     setPalette(false);
     setPaletteQuery('');
+    setPaletteHits([]);
     if (!restoreFocus) return;
     const opener = paletteOpenerRef.current;
     requestAnimationFrame(() => opener?.focus());
@@ -748,6 +754,24 @@ export default function App() {
    * find. Sessions are filtered to the live ones: an exited session is a
    * record, and Fleet and the session rail are where records are read.
    */
+  const jumpToSettings = useCallback((jump: Omit<SettingsJump, 'nonce'>) => {
+    setSettingsJump({ ...jump, nonce: Date.now() });
+    go('settings');
+  }, [go]);
+
+  useEffect(() => {
+    if (!palette) return;
+    const q = paletteQuery.trim();
+    if (q.length < TRANSCRIPT_QUERY_MIN) { setPaletteHits([]); return; }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      window.wanigan.transcripts.search(q, TRANSCRIPT_RESULT_CAP)
+        .then((hits) => { if (!cancelled) setPaletteHits(hits); })
+        .catch(() => { if (!cancelled) setPaletteHits([]); });
+    }, 250);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [palette, paletteQuery]);
+
   const paletteItems = useMemo<PaletteItem[]>(() => {
     const items: PaletteItem[] = [{
       key: 'action:new-session',
@@ -755,6 +779,7 @@ export default function App() {
       hint: 'Start an interactive agent',
       meta: '⌘T',
       primary: true,
+      group: 'Actions',
       haystack: 'new session start agent interactive terminal',
       run: requestNewSession,
     }, {
@@ -762,6 +787,7 @@ export default function App() {
       title: 'Keyboard shortcuts',
       hint: 'Every binding, grouped by where it works',
       meta: '?',
+      group: 'Actions',
       haystack: 'keyboard shortcuts keys cheat sheet bindings help',
       run: () => setShortcuts(true),
     }];
@@ -771,6 +797,7 @@ export default function App() {
         title: item.label,
         hint: `${item.group} view`,
         meta: TAB_SHORTCUTS[item.id].label,
+        group: 'Views',
         haystack: `${item.label} ${item.group} ${item.keywords}`,
         run: () => go(item.id),
       });
@@ -782,6 +809,7 @@ export default function App() {
         title: s.title || s.projectName,
         hint: `${s.status} · ${s.projectName}${s.model ? ` · ${s.model}` : ''}`,
         meta: 'Session',
+        group: 'Live sessions',
         haystack: `${s.title} ${s.projectName} ${s.providerId} ${s.model ?? ''} session agent`,
         run: () => openSession(s.id),
       });
@@ -794,13 +822,37 @@ export default function App() {
         // so a row promising to "open" one would be describing something else.
         hint: `Make active for Learning, Context and Skills${p.branch ? ` · ${p.branch}` : ''}`,
         meta: 'Project',
+        group: 'Projects',
         staysPut: true,
         haystack: `${p.name} ${p.path} ${p.branch ?? ''} project repository folder`,
         run: () => choose(p.id),
       });
     }
+    for (const entry of SETTINGS_INDEX) {
+      items.push({
+        key: `setting:${entry.tab}:${entry.section}`,
+        title: entry.section,
+        hint: `Settings › ${entry.tabLabel} — ${entry.hint}`,
+        meta: 'Setting',
+        group: 'Settings',
+        haystack: `${entry.section} ${entry.keywords} settings ${entry.tabLabel}`,
+        run: () => jumpToSettings({ tab: entry.tab, section: entry.section }),
+      });
+    }
+    // Already matched by the archive's FTS index; the palette must not
+    // re-judge them with a substring rule that tokenises differently.
+    paletteHits.forEach((hit, index) => {
+      items.push({
+        ...transcriptHitRow(hit, index),
+        group: 'Transcripts',
+        run: () => jumpToSettings({
+          tab: 'privacy', section: 'Search transcripts',
+          transcriptQuery: paletteQuery.trim(), openSessionId: hit.sessionId,
+        }),
+      });
+    });
     return items;
-  }, [choose, go, openSession, projects, requestNewSession, sessions]);
+  }, [choose, go, jumpToSettings, openSession, paletteHits, paletteQuery, projects, requestNewSession, sessions]);
 
   return (
     <div className="shell">
@@ -985,7 +1037,7 @@ export default function App() {
           {tab === 'git' && <Git projects={projects} />}
           {tab === 'runs' && <HeadlessRuns projects={projects} providers={providers} />}
           {tab === 'settings' && (
-            <SettingsView providers={providers} projects={projects}
+            <SettingsView providers={providers} projects={projects} jump={settingsJump}
                           onKeyChange={loadShell} onRemoveProject={removeProject} onAddProject={addProject}
                           themePreference={theme.preference} resolvedTheme={theme.resolved} onThemeChange={theme.setTheme} />
           )}
@@ -1227,21 +1279,10 @@ function relativeReset(at: number): string {
  * One row of the command palette. The palette is the only complete index of
  * this app, so its corpus is built by the shell — which is the only thing that
  * knows the open projects and the live sessions — and this component just
- * renders and drives it.
+ * renders and drives it. The data half of the shape lives in shared/palette
+ * so the smoke suite can hold the filter and grouping to account.
  */
-type PaletteItem = {
-  key: string;
-  title: string;
-  hint: string;
-  /** Right-hand column: a shortcut where one exists, otherwise what this is. */
-  meta: string;
-  haystack: string;
-  primary?: boolean;
-  /** True when running this leaves the view alone, so focus has to go back to
-   *  whatever opened the palette rather than falling to the document body. */
-  staysPut?: boolean;
-  run: () => void;
-};
+type PaletteItem = PaletteEntry & { run: () => void };
 
 function CommandPalette({ query, onQuery, items, onClose, onRun }: {
   query: string; onQuery: (value: string) => void; items: PaletteItem[];
@@ -1251,9 +1292,8 @@ function CommandPalette({ query, onQuery, items, onClose, onRun }: {
   const dialog = useRef<HTMLElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const shown = useMemo(
-    () => items.filter((item) => `${item.title} ${item.hint} ${item.haystack}`.toLocaleLowerCase().includes(normalizedQuery)),
-    [items, normalizedQuery]);
+  const shown = useMemo(() => filterPalette(items, query), [items, query]);
+  const groups = useMemo(() => groupPalette(shown), [shown]);
   // Reaching the third result used to take three Tabs. One highlighted row,
   // moved with the arrow keys and taken with Enter, is what every palette on
   // this machine does; anything else is a list you have to walk.
@@ -1313,29 +1353,46 @@ function CommandPalette({ query, onQuery, items, onClose, onRun }: {
                aria-label="Go to a view, project or session"
                onKeyDown={onDialogKeyDown} onMouseDown={(e) => e.stopPropagation()}>
         <input ref={input} className="field" value={query} onChange={(e) => onQuery(e.target.value)}
-               placeholder="Go to a view, project or live session…"
-               aria-label="Search views, projects and live sessions"
+               placeholder="Go to a view, project, session or setting — or search transcripts…"
+               aria-label="Search views, projects, live sessions, settings and archived transcripts"
                role="combobox" aria-expanded={shown.length > 0} aria-autocomplete="list"
                aria-controls="wanigan-command-results"
                aria-activedescendant={active >= 0 ? `wanigan-command-${active}` : undefined} />
         <div ref={list} id="wanigan-command-results" className="command-results" role="listbox"
              aria-label="Results">
-          {shown.length === 0 ? <p className="faint">No matching view, project, session or action.</p> : shown.map((item, index) => (
-            // index.css owns the hover and focus states for these rows and has no rule
-            // for a keyboard highlight yet, so the highlight mirrors the same two
-            // tokens inline rather than inventing a second appearance for it.
-            <button key={item.key} id={`wanigan-command-${index}`} type="button" role="option"
-                    className={`command-item${item.primary ? ' command-item-primary' : ''}`}
-                    aria-selected={index === active} data-command-active={index === active}
-                    style={index === active && !item.primary
-                      ? { alignItems: 'center', background: 'var(--accent-soft)', color: 'var(--text)' }
-                      : { alignItems: 'center' }}
-                    onMouseEnter={() => setSelected(index)}
-                    onClick={() => onRun(item)}>
-              <span className="command-item-copy"><strong>{item.title}</strong><small>{item.hint}</small></span>
-              <span className="faint mono">{item.meta}</span>
-            </button>
-          ))}
+          {shown.length === 0 ? <p className="faint">No matching view, project, session, setting, transcript or action.</p> : (() => {
+            let flat = -1;
+            return groups.map((group) => (
+              <div key={group.label} role="group" aria-label={`${group.label}, ${group.items.length} results`}>
+                {/* Counts rows on screen. Transcripts are capped by the FTS ask,
+                    so a full page says "shown" rather than claiming a total. */}
+                <div role="presentation" className="faint"
+                     style={{ padding: '7px 10px 3px', fontSize: 'var(--t-micro)', letterSpacing: '.07em', textTransform: 'uppercase' }}>
+                  {group.label} · {group.items.length}{group.label === 'Transcripts' && group.items.length >= TRANSCRIPT_RESULT_CAP ? ' shown' : ''}
+                </div>
+                {group.items.map((item) => {
+                  flat += 1;
+                  const index = flat;
+                  return (
+                    // index.css owns the hover and focus states for these rows and has no rule
+                    // for a keyboard highlight yet, so the highlight mirrors the same two
+                    // tokens inline rather than inventing a second appearance for it.
+                    <button key={item.key} id={`wanigan-command-${index}`} type="button" role="option"
+                            className={`command-item${item.primary ? ' command-item-primary' : ''}`}
+                            aria-selected={index === active} data-command-active={index === active}
+                            style={index === active && !item.primary
+                              ? { alignItems: 'center', background: 'var(--accent-soft)', color: 'var(--text)' }
+                              : { alignItems: 'center' }}
+                            onMouseEnter={() => setSelected(index)}
+                            onClick={() => onRun(item)}>
+                      <span className="command-item-copy"><strong>{item.title}</strong><small>{item.hint}</small></span>
+                      <span className="faint mono">{item.meta}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ));
+          })()}
         </div>
         <p className="faint" style={{ margin: '8px 0 0', fontSize: 'var(--t-small)' }}>
           ↑↓ moves · Enter opens · Esc closes · ⌘K opens
