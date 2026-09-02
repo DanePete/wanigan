@@ -13,6 +13,7 @@ import * as instructions from './context/instructions';
 import * as memory from './context/memory';
 import * as config from './context/config';
 import { db, migrateSchema } from './db';
+import { addProject, removeProject } from './store';
 import { allSettings, getSetting, setSetting, setTheme, theme } from './settings';
 import type { HookInput, TrustLevel } from '../shared/types';
 
@@ -431,12 +432,24 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   check(!bad.ok, 'HEIC bytes are refused even when named .png');
   check(/HEIC/i.test(bad.error ?? ''), 'the refusal names the actual format', bad.error);
 
-  /* ── phase 22 · skills discovery ───────────────────────────────────── */
+  /* ── phase 22 · skills discovery ──────────────────────────── */
   say('── phase 22 · skills');
-  const cat = skills.discoverSkills();
-  check(cat.skills.length > 0, `${cat.skills.length} skills discovered on disk`);
+  // Discovery must not depend on the developer's own ~/.claude/skills — a clean
+  // CI runner has none, and asserting the ambient machine has skills is how a
+  // green suite went red on the first push to a fresh checkout. Seed a
+  // project-scoped skill and assert discovery finds exactly that.
+  const skillDir = path.join(tmp, 'skill-project', '.claude', 'skills', 'wanigan-smoke');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'),
+    '---\nname: wanigan-smoke\ndescription: A seeded skill, so discovery is tested without ambient user skills.\n---\n\nDo the smoke thing.\n');
+  const skillProject = await addProject(path.join(tmp, 'skill-project'));
+  const cat = skills.discoverSkills(skillProject.id);
+  const seeded = cat.skills.find((s) => s.name === 'wanigan-smoke');
+  check(seeded?.source === 'project' && seeded.projectId === skillProject.id,
+    'a checked-in project skill is discovered by name, source and owner', JSON.stringify(seeded));
   check(cat.roots.some((r) => r.source === 'builtin' && (r.note ?? '').includes('used')),
     'built-ins are labelled incomplete rather than presented as the full set');
+  removeProject(skillProject.id);
 
   /* ── file explorer ─────────────────────────────────────────────────── */
   say('── file explorer');
