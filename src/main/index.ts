@@ -48,6 +48,7 @@ import * as plugins from './plugins';
 import { glmModels, verifyGlmKey } from './glm';
 import { deepseekModels, verifyDeepSeekKey } from './deepseek';
 import * as gitOps from './git';
+import * as gh from './gh';
 import { demoOn, setDemo, demoMap, maskOut, unmaskIn, noteAuthors } from './demo';
 import * as schedule from './schedule';
 import * as observed from './observed';
@@ -1693,6 +1694,11 @@ function registerIpc() {
   handle('git:stashSave', (root: string, msg: string) => gitOps.stashSave(gitRoot(root), msg));
   handle('git:stashApply', (root: string, i: number, drop: boolean) => gitOps.stashApply(gitRoot(root), i, drop));
   handle('git:stashDrop', (root: string, i: number) => gitOps.stashDrop(gitRoot(root), i));
+
+  // ── pull requests via the operator's own gh CLI ─────────────────────
+  // Same confinement as git:*; auth and hosts stay inside gh itself.
+  handle('gh:prStatus', (root: string, force?: boolean) => gh.prStatusReport(gitRoot(root), force === true));
+  handle('gh:createPr', (root: string, input: unknown) => gh.createPr(gitRoot(root), input));
 
   // ══ phase 25 · schedules ════════════════════════════════════════════
   handle('schedule:list', () => schedule.listSchedules());

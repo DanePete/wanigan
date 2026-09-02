@@ -429,6 +429,7 @@ function paths(): EgressPath[] {
 const UNENUMERATED = [
   'The agent CLI is a separate program with its own network behaviour. Wanigan spawns it and sets the variables below; it does not proxy that traffic and cannot enumerate it.',
   'Git remotes. Fetch, pull and push in the Git view — and any git an agent runs itself — reach whatever remote your repository is configured for.',
+  'The GitHub CLI, when you use the PR features in the Git view: Wanigan runs the gh you installed, and gh reaches your GitHub host with credentials it stores itself — Wanigan never reads, stores, or supplies them.',
   'MCP servers you add. An http server is contacted by the agent at the URL you typed; a stdio server is a process on this machine that may reach anywhere.',
   'Links you click in Wanigan open in your own browser, which is then doing the reaching, not Wanigan.',
   'Anything a tool call does. An agent allowed to run curl can reach any host there is; the policy ledger records the decision, not the destination.',

@@ -195,6 +195,8 @@ export async function runSmoke(): Promise<void> {
     await runCheckpointSmoke(check, say);
     const { runLifecycleSmoke } = await import('./smoke7');
     await runLifecycleSmoke(check, say);
+    const { runGhSmoke } = await import('./smoke8');
+    await runGhSmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

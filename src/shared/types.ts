@@ -1743,6 +1743,46 @@ export type EgressReport = {
   keychainAvailable: boolean;
 };
 
+/* ── pull requests, read through the operator's own gh CLI ──────────── */
+
+export type GhPrChecks = { pass: number; fail: number; pending: number; total: number };
+
+export type GhPr = {
+  number: number;
+  title: string;
+  state: 'open' | 'draft' | 'merged' | 'closed';
+  /** Validated https in main, or null when gh's answer did not validate. */
+  url: string | null;
+  base: string;
+  head: string;
+  reviewDecision: 'approved' | 'changes_requested' | 'review_required' | null;
+  /** Null when the PR reports no checks at all. */
+  checks: GhPrChecks | null;
+  updatedAt: number | null;
+};
+
+/**
+ * Every arm is an honest state the Git view renders as itself — "gh is not
+ * installed" and "gh is not signed in" are answers, never simulated away.
+ */
+export type GhPrStatus =
+  | { kind: 'missing' }
+  | { kind: 'unauthenticated'; detail: string }
+  | { kind: 'no-branch'; detail: string }
+  | { kind: 'none'; branch: string }
+  | { kind: 'pr'; branch: string; pr: GhPr }
+  | { kind: 'error'; detail: string };
+
+export type GhStatusReport = {
+  status: GhPrStatus;
+  /** When this answer was produced — a cached answer keeps its original time. */
+  checkedAt: number;
+  gh: { path: string; version: string | null } | null;
+};
+
+export type GhCreateInput = { title: string; body?: string; draft?: boolean; base?: string };
+export type GhCreateResult = { url: string | null; detail: string };
+
 /* ── the renderer bridge's own shapes ────────────────────────────────── */
 
 /**

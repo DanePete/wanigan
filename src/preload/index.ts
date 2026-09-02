@@ -333,6 +333,12 @@ const api = {
     stashApply: (root: string, i: number, drop: boolean) => call<string>('git:stashApply', root, i, drop),
     stashDrop: (root: string, i: number) => call<boolean>('git:stashDrop', root, i),
   },
+  // ── pull requests via the operator's own gh CLI ─────────────────────
+  gh: {
+    prStatus: (root: string, force?: boolean) => call<any>('gh:prStatus', root, force),
+    createPr: (root: string, input: { title: string; body?: string; draft?: boolean; base?: string }) =>
+      call<{ url: string | null; detail: string }>('gh:createPr', root, input),
+  },
   // ── phase 25 · durable schedules ─────────────────────────────────────
   schedule: {
     list: () => call<any[]>('schedule:list'),

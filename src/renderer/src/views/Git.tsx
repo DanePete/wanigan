@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { Project } from '@shared/types';
+import type { GhPr, GhStatusReport, Project } from '@shared/types';
 import { Note, ago } from '../components/bits';
 import ReviewGate from '../components/ReviewGate';
 
@@ -28,6 +28,59 @@ const STAT_TONE: Record<string, string> = {
 
 /** Rendering an unbounded diff hangs the pane, so it is cut — and says so. */
 const DIFF_LINES = 4000;
+
+const PR_TONE: Record<GhPr['state'], string> = {
+  open: 'var(--accent)', draft: 'var(--text-dim)', merged: 'var(--good)', closed: 'var(--bad)',
+};
+const REVIEW_LABEL = { approved: 'approved', changes_requested: 'changes requested', review_required: 'review needed' } as const;
+
+function checksLabel(c: NonNullable<GhPr['checks']>): string {
+  if (c.fail > 0) return `✕ ${c.fail} of ${c.total} checks failing`;
+  if (c.pending > 0) return `… ${c.pass}/${c.total} checks`;
+  return `✓ ${c.total} check${c.total > 1 ? 's' : ''}`;
+}
+
+/** Every arm of GhPrStatus rendered as itself; absence is shown, not faked. */
+function PrChip({ report, onRefresh }: { report: GhStatusReport | null; onRefresh: () => void }) {
+  if (!report) return null;
+  const s = report.status;
+  if (s.kind === 'no-branch') return null;
+  const refresh = (
+    <button className="gt-chip" onClick={onRefresh}
+            title={`PR status checked ${ago(report.checkedAt)}${report.gh ? ` · gh ${report.gh.version ?? '?'} at ${report.gh.path}` : ''}. Click to check again — this asks your GitHub host through gh.`}>
+      ↻
+    </button>
+  );
+  if (s.kind === 'missing') {
+    return (
+      <span className="faint" style={{ fontSize: 'var(--t-small)' }}
+            title="Install GitHub's gh CLI and sign in with `gh auth login` to see pull requests here. Wanigan runs the gh you install; it never stores GitHub credentials itself.">
+        PRs: gh not installed
+      </span>
+    );
+  }
+  if (s.kind === 'unauthenticated') {
+    return <><span className="faint" style={{ fontSize: 'var(--t-small)' }} title={s.detail}>PRs: gh not signed in</span>{refresh}</>;
+  }
+  if (s.kind === 'error') {
+    return <><span className="faint" style={{ fontSize: 'var(--t-small)' }} title={s.detail}>PRs: unavailable</span>{refresh}</>;
+  }
+  if (s.kind === 'none') return refresh;
+  const pr = s.pr;
+  const bits = [pr.state,
+    ...(pr.checks ? [checksLabel(pr.checks)] : []),
+    ...(pr.reviewDecision ? [REVIEW_LABEL[pr.reviewDecision]] : [])];
+  return (
+    <>
+      <button className="gt-chip" style={{ color: PR_TONE[pr.state] }} disabled={!pr.url}
+              title={`${pr.title} — into ${pr.base}. ${pr.url ? 'Click to open on GitHub.' : 'gh returned no usable link.'}`}
+              onClick={() => { if (pr.url) void window.wanigan.shell.openExternal(pr.url); }}>
+        PR #{pr.number} · {bits.join(' · ')}
+      </button>
+      {refresh}
+    </>
+  );
+}
 
 function Diff({ text }: { text: string }) {
   const { lines, total } = useMemo(() => {
@@ -80,6 +133,9 @@ export default function Git({ projects }: { projects: Project[] }) {
   const [pane, setPane] = useState<'changes' | 'branches' | 'stash'>('changes');
   const [confirm, setConfirm] = useState<{ what: string; run: () => Promise<void> } | null>(null);
   const [adding, setAdding] = useState(false);
+  const [pr, setPr] = useState<GhStatusReport | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState({ title: '', body: '', draft: false, base: '' });
 
   const load = useCallback(async () => {
     if (!root) return;
@@ -98,6 +154,16 @@ export default function Git({ projects }: { projects: Project[] }) {
   }, [root, showAll]);
 
   useEffect(() => { void load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [load]);
+
+  // PR state is asked for on open, on branch change and on the explicit ↻ —
+  // never from the 8-second poll above, which stays local-only. The main
+  // process adds a 60s cache so re-renders cannot become gh spawns.
+  const loadPr = useCallback(async (force = false) => {
+    if (!root) { setPr(null); return; }
+    try { setPr(await window.wanigan.gh.prStatus(root, force)); } catch { setPr(null); }
+  }, [root]);
+  const branch = st?.branch ?? null;
+  useEffect(() => { void loadPr(); }, [loadPr, branch]);
 
   async function act(label: string, fn: () => Promise<unknown>, note?: string) {
     setBusy(label); setErr(null); setOk(null);
@@ -124,6 +190,20 @@ export default function Git({ projects }: { projects: Project[] }) {
       const d = await window.wanigan.git.fileDiff(st!.root, f.path, staged);
       setDetail({ title: f.path, patch: d || 'No textual diff (binary, or a mode change only).' });
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  }
+
+  async function createPr() {
+    if (!st?.isRepo) return;
+    setBusy('Create PR'); setErr(null); setOk(null);
+    try {
+      const r = await window.wanigan.gh.createPr(st.root, {
+        title: form.title, body: form.body, draft: form.draft, base: form.base.trim() || undefined,
+      });
+      setOk(r.url ? `Pull request created: ${r.url}` : `Pull request created. ${r.detail}`);
+      setCreating(false);
+      await loadPr(true);
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
   }
 
   async function addProject() {
@@ -169,8 +249,21 @@ export default function Git({ projects }: { projects: Project[] }) {
             {st.upstream ? <>↑<span className="a">{st.ahead}</span> ↓<span className="b">{st.behind}</span> {st.upstream}</>
               : 'no upstream'}
           </span>
+          <PrChip report={pr} onRefresh={() => void loadPr(true)} />
           {st.operation && <span className="gt-op">⚠ {st.operation} in progress</span>}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+            {pr?.status.kind === 'none' && (
+              <button className="btn" disabled={!!busy || creating || !st.upstream}
+                      title={st.upstream
+                        ? `Open a pull request for ${st.branch} with gh`
+                        : 'A pull request needs the branch on the remote — push it first.'}
+                      onClick={() => {
+                        setForm({ title: commits.find((c) => c.head)?.subject ?? '', body: '', draft: false, base: '' });
+                        setCreating(true);
+                      }}>
+                Create PR
+              </button>
+            )}
             <button className="btn" disabled={!!busy} onClick={() => void act('Fetch', () => window.wanigan.git.fetch(st.root))}>
               {busy === 'Fetch' ? '…' : 'Fetch'}
             </button>
@@ -225,6 +318,34 @@ export default function Git({ projects }: { projects: Project[] }) {
               <button className="btn btn-primary" disabled={!!busy}
                       onClick={() => { const r = confirm.run; setConfirm(null); void r(); }}>Do it</button>
               <button className="btn" onClick={() => setConfirm(null)}>Cancel</button>
+            </div>
+          </Note>
+        </div>
+      )}
+      {creating && st?.isRepo && (
+        <div style={{ padding: '8px 12px' }}>
+          <Note tone="warn">
+            Open a pull request for <span className="mono">{st.branch}</span> through gh. Creating it publishes on your GitHub host — this leaves your machine.
+            <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+              <input className="field" placeholder="Title" maxLength={300} value={form.title}
+                     onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} />
+              <textarea className="field" placeholder="Body (optional)" rows={4} value={form.body}
+                        onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))} />
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', gap: 5, alignItems: 'center', fontSize: 'var(--t-small)' }}>
+                  <input type="checkbox" checked={form.draft}
+                         onChange={(e) => setForm((f) => ({ ...f, draft: e.target.checked }))} />
+                  draft
+                </label>
+                <input className="field" style={{ width: 200 }} placeholder="Base (repo default if empty)" value={form.base}
+                       onChange={(e) => setForm((f) => ({ ...f, base: e.target.value }))} />
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                  <button className="btn btn-primary" disabled={!!busy || !form.title.trim()} onClick={() => void createPr()}>
+                    {busy === 'Create PR' ? 'Creating…' : 'Create PR on GitHub'}
+                  </button>
+                  <button className="btn" disabled={!!busy} onClick={() => setCreating(false)}>Cancel</button>
+                </div>
+              </div>
             </div>
           </Note>
         </div>
