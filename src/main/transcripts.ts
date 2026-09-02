@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { db, dataDir, ensurePrivateDir, ensurePrivateFile } from './db';
 import { runsClaudeCli } from './providers';
-import type { ProviderId, TranscriptHit, TranscriptTurn } from '../shared/types';
+import type { ClaudeContextUsage, ProviderId, TranscriptHit, TranscriptTurn } from '../shared/types';
 
 /* ── where Claude Code keeps its transcripts ─────────────────────────── */
 
@@ -588,4 +588,104 @@ export function forgetTranscript(sessionId: string): void {
   if (row) {
     try { fs.rmSync(row.stored_path, { force: true }); } catch { /* already gone */ }
   }
+}
+
+/* ── context occupancy, from the transcript's own usage records ─────── */
+
+/**
+ * Only the tail is read. The newest usage record is by construction near the
+ * end of the file, and a long session's transcript runs to hundreds of
+ * megabytes — reading all of it to answer a badge would be the exact stall
+ * MAX_PARSE_BYTES exists to prevent. A usage record older than the last
+ * 256 KiB of writes describes a context that no longer exists anyway.
+ */
+const CONTEXT_TAIL_BYTES = 256 * 1024;
+
+/**
+ * The window Wanigan will claim for a Claude-family model — an assumption,
+ * and every rendering of it says so. The 1M-token beta cannot be detected
+ * from a transcript, so it is never guessed; an unrecognised model gets a
+ * token count and no percentage at all.
+ */
+const CLAUDE_CONTEXT_WINDOW = 200_000;
+
+/**
+ * The newest context measurement in a chunk of transcript text — the last
+ * non-sidechain line whose message carries a usage record. Sidechains are
+ * subagents running in their own context; counting them would report someone
+ * else's window. A record that sums to zero is a synthetic error line, not a
+ * measurement, and is skipped for the same reason.
+ */
+export function contextUsageFromTail(text: string): { tokens: number; model: string | null; at: number | null } | null {
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    let raw: unknown;
+    try { raw = JSON.parse(line); } catch { continue; }
+    if (!isRecord(raw) || raw.isSidechain === true) continue;
+    const msg = isRecord(raw.message) ? raw.message : null;
+    if (!msg || !isRecord(msg.usage) || typeof msg.usage.input_tokens !== 'number') continue;
+    const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
+    const usage = msg.usage;
+    const tokens = n(usage.input_tokens) + n(usage.cache_read_input_tokens)
+      + n(usage.cache_creation_input_tokens) + n(usage.output_tokens);
+    if (tokens === 0) continue;
+    const at = timeOf(raw, 0);
+    return {
+      tokens,
+      model: typeof msg.model === 'string' && msg.model.trim() ? msg.model : null,
+      at: at > 0 ? at : null,
+    };
+  }
+  return null;
+}
+
+/**
+ * Context occupancy for one conversation, measured from its transcript.
+ *
+ * The exact conversation file is preferred. Claude Code forks a new file id
+ * when a conversation is resumed, so when the exact id is gone the newest
+ * transcript written since this session started stands in — bounded by the
+ * session's own lifetime rather than "whatever this repo saw last", which
+ * could be a different conversation entirely.
+ */
+export function claudeContextUsage(cwd: string, conversationId: string | null, sinceMs: number): ClaudeContextUsage {
+  const dir = claudeProjectDir(cwd);
+  let file: string | null = null;
+  if (conversationId) {
+    const exact = path.join(dir, `${conversationId}.jsonl`);
+    if (isFile(exact)) file = exact;
+  }
+  if (!file) file = newestJsonl(dir, Math.max(0, sinceMs - LIFETIME_GRACE_MS))?.path ?? null;
+  if (!file) return { kind: 'no-transcript' };
+
+  let text: string;
+  let start = 0;
+  try {
+    const size = fs.statSync(file).size;
+    start = Math.max(0, size - CONTEXT_TAIL_BYTES);
+    const buffer = Buffer.alloc(size - start);
+    const fd = fs.openSync(file, 'r');
+    try { fs.readSync(fd, buffer, 0, buffer.length, start); } finally { fs.closeSync(fd); }
+    text = buffer.toString('utf8');
+  } catch {
+    return { kind: 'no-transcript' };
+  }
+  // A cut that landed mid-line must not hand half a JSON record to the parser.
+  if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+
+  const hit = contextUsageFromTail(text);
+  if (!hit) {
+    return { kind: 'no-usage', detail: 'The transcript has no usage records yet — the agent has not completed a turn.' };
+  }
+  const window = hit.model && hit.model.startsWith('claude-') ? CLAUDE_CONTEXT_WINDOW : null;
+  return {
+    kind: 'ok',
+    tokens: hit.tokens,
+    window,
+    percent: window ? Math.min(100, Math.round((hit.tokens / window) * 100)) : null,
+    model: hit.model,
+    at: hit.at,
+  };
 }

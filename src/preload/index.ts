@@ -210,6 +210,7 @@ const api = {
     get: (id: string) => call<{ turns: TranscriptTurn[]; note: string | null; bytes: number }>('transcripts:get', id),
     list: () => call<{ sessionId: string; bytes: number; turns: number; archivedAt: number }[]>('transcripts:list'),
     forget: (id: string) => call<boolean>('transcripts:forget', id),
+    context: (sessionId: string) => call<import('../shared/types').ClaudeContextUsage>('transcripts:context', sessionId),
   },
   // ── phase 9 · worktrees ──────────────────────────────────────────────
   worktrees: {

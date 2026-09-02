@@ -1783,6 +1783,28 @@ export type GhStatusReport = {
 export type GhCreateInput = { title: string; body?: string; draft?: boolean; base?: string };
 export type GhCreateResult = { url: string | null; detail: string };
 
+/* ── context occupancy, read from the Claude Code transcript ────────── */
+
+/**
+ * What the last recorded turn measured, or an honest reason there is no
+ * measurement. `tokens` is observed (the API's own usage record); `window` is
+ * an assumption stated as one, and absent for models Wanigan cannot map.
+ */
+export type ClaudeContextUsage =
+  | {
+    kind: 'ok';
+    /** input + cache_read + cache_creation + output of the newest usage record. */
+    tokens: number;
+    window: number | null;
+    percent: number | null;
+    model: string | null;
+    /** The record's own timestamp; null when the line carried none. */
+    at: number | null;
+  }
+  | { kind: 'unsupported' }
+  | { kind: 'no-transcript' }
+  | { kind: 'no-usage'; detail: string };
+
 /* ── the renderer bridge's own shapes ────────────────────────────────── */
 
 /**

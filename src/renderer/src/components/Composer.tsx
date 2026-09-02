@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AttentionKind, Session, SessionStatus } from '@shared/types';
+import { runsClaudeHarness } from '@shared/provider-status';
 
 /**
  * A composer beside the PTY, not instead of it.
@@ -379,6 +380,19 @@ export default function Composer({ session, onError, onCollapse }: {
           {onCollapse && (
             <button type="button" className="composer-chip-btn" title="Hide the composer (⌘E brings it back)"
                     aria-label="Hide the composer" onClick={onCollapse}>⌄</button>
+          )}
+          {runsClaudeHarness(session) && (
+            <button type="button" className="btn"
+                    disabled={state.mode !== 'send'}
+                    title={state.mode === 'send'
+                      ? 'Send /compact — the agent summarises the conversation to reclaim context. Exactly the bytes typing it would send.'
+                      : `/compact is never queued — a stale compact firing later is the surprise queueing exists to prevent. ${state.reason ?? ''}`.trim()}
+                    onClick={() => {
+                      void writePayload(sessionId, buildPtyPayload('/compact'))
+                        .catch((e) => onError(e instanceof Error ? e.message : String(e)));
+                    }}>
+            /compact
+            </button>
           )}
           <button type="button" className="btn composer-stash" title="Stashed prompts"
                   aria-expanded={stashOpen} onClick={() => setStashOpen((o) => !o)}>⧉{stash.length ? ` ${stash.length}` : ''}</button>

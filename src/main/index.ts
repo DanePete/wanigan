@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  detectProviders, effectiveProviderBackendId, providerPackRegistry, refreshProviderPacks,
+  detectProviders, effectiveProviderBackendId, providerPackRegistry, refreshProviderPacks, runsClaudeCli,
 } from './providers';
 import {
   initSessions, listSessions, createSession, writeSession, resizeSession,
@@ -1520,6 +1520,16 @@ function registerIpc() {
   handle('transcripts:get', (id: string) => transcripts.transcriptFor(id));
   handle('transcripts:list', () => transcripts.archivedSessions());
   handle('transcripts:forget', (id: string) => { transcripts.forgetTranscript(id); return true; });
+  // Context occupancy for the selected session. Resolved from this process's
+  // own session record — the renderer names a session, never a path — and
+  // gated on the harness that actually writes a transcript.
+  handle('transcripts:context', (sessionId: string) => {
+    const s = listSessions().find((x) => x.id === String(sessionId));
+    if (!s) return { kind: 'no-transcript' } as const;
+    const claude = s.harnessId ? s.harnessId === 'claude-code' : runsClaudeCli(s.providerId);
+    if (!claude) return { kind: 'unsupported' } as const;
+    return transcripts.claudeContextUsage(s.worktree ?? s.projectPath, s.conversationId ?? null, s.createdAt);
+  });
 
   // ══ phase 9 · worktrees ═════════════════════════════════════════════
   handle('worktrees:list', (repoRoot: string) => worktrees.listWorktrees(repoRoot));

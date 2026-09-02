@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import type { Attention, AttentionKind, MotionSetting, Project, ProviderInfo, Session } from '@shared/types';
+import type { Attention, AttentionKind, ClaudeContextUsage, MotionSetting, Project, ProviderInfo, Session } from '@shared/types';
 import Sessions from './views/Sessions';
 import Fleet from './views/Fleet';
 import Control from './views/Control';
@@ -19,7 +19,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import ShortcutSheet from './components/ShortcutSheet';
 import ThemeControl from './components/ThemeControl';
 import { useThemePreference } from './theme';
-import { selectedProviderStatus, selectedSessionTelemetry } from '@shared/provider-status';
+import { claudeContextLabel, selectedProviderStatus, selectedSessionTelemetry } from '@shared/provider-status';
 
 type CodexStatus = {
   fetchedAt: number; plan: string | null; spendControlReached: boolean | null;
@@ -1092,6 +1092,7 @@ function ProviderUsageBadge({ session, providers }: { session: Session; provider
   const context = useMemo(() => selectedProviderStatus(session, providers), [providers, session]);
   const [status, setStatus] = useState<{ key: string; value: CodexStatus } | null>(null);
   const [usage, setUsage] = useState<{ key: string; value: Awaited<ReturnType<typeof window.wanigan.usage.session>> } | null>(null);
+  const [ctx, setCtx] = useState<{ key: string; value: ClaudeContextUsage } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
   // An account-status reply can arrive after the operator changes sessions.
@@ -1102,6 +1103,7 @@ function ProviderUsageBadge({ session, providers }: { session: Session; provider
   // behind an early return. See the guard after the hooks.
   const contextKey = context?.key ?? null;
   const usesCodexAccountLimits = context?.usesCodexAccountLimits ?? false;
+  const usesClaudeContextMeter = context?.usesClaudeContextMeter ?? false;
   const load = useCallback((force = false) => {
     const key = contextKey;
     if (!key) return;
@@ -1121,19 +1123,31 @@ function ProviderUsageBadge({ session, providers }: { session: Session; provider
       }).finally(done);
       return;
     }
-    void window.wanigan.usage.session(session.id).then((next) => {
-      if (epoch !== requestEpoch.current) return;
-      setUsage({ key, value: next });
-    }).catch((e) => {
+    // The context meter rides beside the session telemetry, never instead of
+    // it: an honest absence from the transcript still leaves tokens to show.
+    const reads: Promise<void>[] = [
+      window.wanigan.usage.session(session.id).then((next) => {
+        if (epoch !== requestEpoch.current) return;
+        setUsage({ key, value: next });
+      }),
+    ];
+    if (usesClaudeContextMeter) {
+      reads.push(window.wanigan.transcripts.context(session.id).then((next) => {
+        if (epoch !== requestEpoch.current) return;
+        setCtx({ key, value: next });
+      }));
+    }
+    void Promise.all(reads).then(() => undefined).catch((e) => {
       if (epoch !== requestEpoch.current) return;
       setError(e instanceof Error ? e.message : String(e));
     }).finally(done);
-  }, [contextKey, usesCodexAccountLimits, session.id]);
+  }, [contextKey, usesCodexAccountLimits, usesClaudeContextMeter, session.id]);
   useEffect(() => {
     // Clear the previous provider synchronously at the effect boundary. The
     // keyed reads below are the second guard against an async race.
     setStatus(null);
     setUsage(null);
+    setCtx(null);
     if (!contextKey) return;
     load();
     const timer = window.setInterval(() => load(), 60_000);
@@ -1160,9 +1174,22 @@ function ProviderUsageBadge({ session, providers }: { session: Session; provider
   };
   const codex = status?.key === context.key ? status.value : null;
   const sessionUsage = usage?.key === context.key ? usage.value : null;
+  const meter = ctx?.key === context.key ? ctx.value : null;
   const primary = label(codex?.primary ?? null, 'Now');
   const secondary = label(codex?.secondary ?? null, 'Week');
   const telemetry = selectedSessionTelemetry(sessionUsage, session.status);
+  const ctxText = claudeContextLabel(meter);
+  const ctxTitle = !context.usesClaudeContextMeter ? null
+    : meter?.kind === 'ok'
+      ? `Context: ${meter.tokens.toLocaleString('en-US')} tokens as of the last recorded turn.`
+        + (meter.window
+          ? ` The ${meter.percent}% reads against an assumed ${meter.window.toLocaleString('en-US')}-token window for ${meter.model ?? 'this model'} — the tokens are measured, the window is an assumption.`
+          : ` No context window is known for ${meter.model ?? 'this model'}, so no percentage is invented.`)
+      : meter?.kind === 'no-transcript'
+        ? 'Context meter: no transcript found for this conversation yet.'
+        : meter?.kind === 'no-usage'
+          ? `Context meter: ${meter.detail}`
+          : null;
   const loading = loadingKey === context.key;
   const sessionLine = `${context.label} · selected ${session.status} session${session.model ? ` · ${session.model}` : ''}`;
   const title = error
@@ -1170,15 +1197,18 @@ function ProviderUsageBadge({ session, providers }: { session: Session; provider
     : context.usesCodexAccountLimits
       ? [sessionLine, `Codex ${codex?.plan ?? 'account'} limits`, primary, secondary,
         'Account limits are shared across Codex sessions. Click to refresh now.'].filter(Boolean).join('\n')
-      : [sessionLine, `Session telemetry: ${telemetry}.`,
+      : [sessionLine, `Session telemetry: ${telemetry}.`, ctxTitle,
         'This provider does not expose account-plan remaining or reset time to Wanigan, so no quota is invented.',
-        'Click to refresh this selected session.'].join('\n');
+        'Click to refresh this selected session.'].filter(Boolean).join('\n');
   const visible = context.usesCodexAccountLimits
     ? primary ?? (loading ? 'limits…' : 'Status unavailable')
-    : error ? 'usage unavailable' : loading && !sessionUsage ? 'session…' : telemetry;
+    : error ? 'usage unavailable'
+      : loading && !sessionUsage && !ctxText ? 'session…'
+        : ctxText ? `${ctxText} · ${telemetry}` : telemetry;
+  const nearFull = meter?.kind === 'ok' && meter.percent !== null && meter.percent >= 80;
 
   return (
-    <button className={`nav-usage-status${codex?.primary && codex.primary.remainingPercent <= 20 ? ' low' : ''}`}
+    <button className={`nav-usage-status${(codex?.primary && codex.primary.remainingPercent <= 20) || nearFull ? ' low' : ''}`}
             title={title} aria-label={title} onClick={() => load(true)}>
       <span className="faint">{context.label}</span> {visible}
       {context.usesCodexAccountLimits && secondary && <span className="nav-usage-week">· {secondary}</span>}

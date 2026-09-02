@@ -1,4 +1,4 @@
-import type { ProviderInfo, Session, SessionUsage } from './types';
+import type { ClaudeContextUsage, ProviderInfo, Session, SessionUsage } from './types';
 
 /**
  * The compact status control in the application header is about the session
@@ -15,6 +15,8 @@ export type SelectedProviderStatus = {
   label: string;
   /** Codex is currently the only provider with a trustworthy account-limit reader. */
   usesCodexAccountLimits: boolean;
+  /** Claude-harness sessions have a transcript whose usage records measure context. */
+  usesClaudeContextMeter: boolean;
 };
 
 function humanizeProviderId(id: string): string {
@@ -23,6 +25,18 @@ function humanizeProviderId(id: string): string {
     .filter(Boolean)
     .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
     .join(' ') || 'Provider';
+}
+
+/**
+ * Whether this session runs the reviewed Claude Code harness — the one that
+ * writes a readable transcript and understands /compact. The id list covers
+ * only legacy rows from before harnessId was recorded; the main process gates
+ * again with its own provider registry before reading anything.
+ */
+export function runsClaudeHarness(session: Pick<Session, 'harnessId' | 'providerId'>): boolean {
+  return session.harnessId
+    ? session.harnessId === 'claude-code'
+    : ['claude', 'glm', 'deepseek'].includes(session.providerId);
 }
 
 /** Return null until there is an actual selected session; never default to Codex. */
@@ -43,6 +57,8 @@ export function selectedProviderStatus(
     // must never make them look like Claude. A Codex-harness profile does use
     // Codex's own account reader, while its visible label stays profile-owned.
     usesCodexAccountLimits: session.providerId === 'codex' || session.harnessId === 'codex',
+    // The meter follows the harness that writes the transcript.
+    usesClaudeContextMeter: runsClaudeHarness(session),
   };
 }
 
@@ -73,4 +89,13 @@ export function selectedSessionTelemetry(
   if (sessionStatus === 'starting') return 'starting';
   if (sessionStatus === 'exited') return 'ended';
   return 'live';
+}
+
+/** The badge text for a measured context, or null when there is nothing measured. */
+export function claudeContextLabel(usage: ClaudeContextUsage | null | undefined): string | null {
+  if (!usage || usage.kind !== 'ok') return null;
+  const tokens = compactCount(usage.tokens);
+  return usage.percent !== null && usage.window !== null
+    ? `ctx ${usage.percent}% · ${tokens}/${compactCount(usage.window)}`
+    : `ctx ${tokens}`;
 }
