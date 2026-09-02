@@ -29,6 +29,9 @@
 .spine-station b.zero { color: var(--text-faint); font-weight: 400; }
 .spine-station small { color: var(--text-faint); font-size: var(--t-micro); }
 .spine-station .spine-warn { color: var(--warning); font-weight: 650; }
+/* An optional stage reading zero is not a fault, so its note must not borrow
+ * the warning colour that sits beside it. */
+.spine-station .spine-note { color: var(--text-faint); font-style: italic; }
 .spine-arrow { flex: none; color: var(--text-faint); }
 
 .learning-tabs {
@@ -53,8 +56,8 @@
   content: ''; position: absolute; left: 3px; right: -3px; bottom: -2px; height: 2px;
   background: var(--plate-blue); opacity: .55;
 }
-/* Pipeline tabs | tool tabs; non-interactive, skipped by the roving tabindex. */
-.tab-gap { flex: none; align-self: center; width: 1px; height: 16px; margin: 0 4px; background: var(--line); }
+/* The question the open tab answers, plus the glossary link. Ordinary text
+ * beside the tablist, so it is skipped by the roving tabindex. */
 .tab-hint {
   margin-left: auto; align-self: center; padding-left: var(--s-3);
   color: var(--text-faint); font-size: var(--t-micro); white-space: nowrap;
@@ -233,7 +236,7 @@
 }
 .learning-link:hover { color: var(--text); }
 
-/* ── overview · mechanism disclosure sub-stages ──────────────────────── */
+/* ── overview · the stage counts under each step of "How this works" ─── */
 .mech-stages { display: flex; align-items: stretch; flex-wrap: wrap; gap: var(--s-2); }
 .pipeline-substage {
   display: flex; align-items: baseline; gap: 7px; padding: 4px 10px;
@@ -333,7 +336,7 @@
 .retire-backup > div { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 6px; }
 .retire-backup p { font-size: var(--t-small); line-height: 1.45; }
 
-/* ── optimize · held-back reasons (four reasons, four fixes) ──────────── */
+/* ── context · held-back reasons (four reasons, four fixes) ───────────── */
 .held-back {
   display: flex; flex-direction: column; gap: 7px; padding: var(--s-3);
   border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg-sunk);
@@ -342,7 +345,7 @@
 .held-back li { color: var(--text-dim); font-size: var(--t-small); line-height: 1.45; }
 .held-back b { margin-right: 7px; color: var(--text); font-variant-numeric: tabular-nums; }
 
-/* ── overview · glossary ─────────────────────────────────────────────── */
+/* ── glossary · a modal now, so looking up a word keeps your tab ─────── */
 .glossary-list {
   display: grid; gap: 1px; overflow: hidden;
   border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--line);
@@ -354,7 +357,7 @@
 .glossary-list dt { color: var(--text); font-weight: 650; }
 .glossary-list dd { color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
 
-/* ── optimize · switches ─────────────────────────────────────────────── */
+/* ── context · switches ──────────────────────────────────────────────── */
 /* A native checkbox drawn as a switch: label association, keyboard, and
  * VoiceOver behavior all stay stock. */
 .learning-switch {
@@ -374,10 +377,67 @@
 .learning-switch:disabled { opacity: .5; cursor: default; }
 .learning-switch-note { font-size: var(--t-small); }
 
-/* ── optimize · briefing inspector ───────────────────────────────────── */
+/* ── context · briefing inspector (shared with Knowledge's payload) ──── */
 .inspector-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, 200px) auto; gap: var(--s-2); }
 .inspector-meter { height: 6px; overflow: hidden; border-radius: var(--r-pill); background: var(--bg-sunk); }
 .inspector-meter span { display: block; height: 100%; min-width: 2px; background: var(--series-1); }
+
+/* ── four read states · loading and failure never assert a count ──────── */
+/* The empty frame doubles as the failed-read frame; the colour and the copy
+ * both change, so a reader cannot mistake one for the other. */
+.learning-empty.bad {
+  border-style: solid; border-color: color-mix(in srgb, var(--bad) 45%, var(--line));
+  background: var(--bad-soft);
+}
+.learning-empty.bad > span { color: var(--bad); }
+.learning-empty .btn { margin-top: 9px; }
+
+/* ── a domain noun defined where it is first used, in visible text ────── */
+.define {
+  padding: 8px 12px; border-left: 2px solid var(--line);
+  color: var(--text-dim); font-size: var(--t-small); line-height: 1.55;
+}
+.define b { color: var(--text); font-weight: 650; }
+.learning-head .define { max-width: 760px; margin-top: var(--s-2); padding-left: 10px; }
+
+/* ── overview · the pipeline stated as the four tabs themselves ───────── */
+.how-steps { display: grid; gap: var(--s-3); list-style: none; }
+.how-steps > li {
+  display: grid; grid-template-columns: minmax(110px, 140px) minmax(0, 1fr);
+  gap: 7px var(--s-3); align-items: start;
+}
+.how-step-tab {
+  justify-self: start; padding: 4px 10px; border: 1px solid var(--line);
+  border-radius: var(--r-sm); background: var(--bg-sunk);
+  color: var(--text); font-size: var(--t-small); font-weight: 650; white-space: nowrap;
+}
+.how-step-tab:hover { border-color: var(--accent); color: var(--accent); }
+.how-step-tab > span { margin-right: 3px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.how-steps > li > p { grid-column: 2; color: var(--text-dim); line-height: 1.5; }
+.how-steps > li > .mech-stages { grid-column: 2; }
+
+/* ── knowledge · the injected payload leads, the two panes fill the rest ─ */
+.knowledge-tab {
+  display: flex; flex-direction: column; gap: var(--s-4);
+  max-width: 1500px; min-height: 100%; margin: 0 auto;
+}
+/* The split keeps its own internal scrolling, but takes its height from what
+ * the payload panel above it leaves rather than from the viewport. */
+.knowledge-tab > .learning-split { flex: 1 1 auto; height: auto; }
+/* Verbatim bytes: selectable, wrapped rather than clipped, and never restyled
+ * into prose — what is on screen has to be what is on the command line. */
+.payload-text {
+  max-height: 340px; overflow: auto; padding: var(--s-3);
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--code-bg);
+  color: var(--text); font: 12px/1.55 ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap; overflow-wrap: anywhere; user-select: text;
+}
+.payload-delivery {
+  display: flex; flex-direction: column; gap: 5px; padding: var(--s-3);
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg-sunk);
+}
+.payload-delivery code { color: var(--accent); font-size: var(--t-small); overflow-wrap: anywhere; }
+.payload-delivery p { font-size: var(--t-small); line-height: 1.45; }
 
 @media (max-width: 1180px) {
   .learning-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -396,6 +456,9 @@
   .learning-tabs { flex-wrap: wrap; }
   .tab-hint { flex-basis: 100%; margin-left: 0; padding: 0 0 6px; white-space: normal; }
   .learning-grid.two, .skill-grid, .experiment-grid, .learning-split { grid-template-columns: 1fr; }
+  .how-steps > li { grid-template-columns: 1fr; }
+  .how-steps > li > p, .how-steps > li > .mech-stages { grid-column: 1; }
+  .knowledge-tab { min-height: 0; }
   .inspector-form { grid-template-columns: 1fr; }
   .attention-row { grid-template-columns: minmax(100px, 130px) minmax(0, 1fr); }
   .attention-row .btn { grid-column: 1 / -1; justify-self: start; }

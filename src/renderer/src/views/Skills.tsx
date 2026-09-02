@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Project } from '@shared/types';
+import type { ForgedSkill, Project, ProviderInfo, SkillDiagnostic, SkillInstallResult } from '@shared/types';
 import { Note, Section, Stat, ago, num } from '../components/bits';
 
 /**
@@ -16,6 +16,11 @@ import { Note, Section, Stat, ago, num } from '../components/bits';
  *    glyph plus the word. Hue never carries it alone.
  *  - A filter that would return nothing is DISABLED, never hidden. A control
  *    that vanishes cannot be told apart from one that never existed.
+ *
+ * Writing a skill lives here too, next to the catalogue it adds a row to. It
+ * used to be a separate destination also called "Skills", inside Learning,
+ * which meant the place you browsed skills and the place you wrote one shared
+ * a name and nothing else. It is hand-authoring and says so: see SkillWriter.
  */
 
 type SkillSource = 'user' | 'project' | 'plugin' | 'builtin';
@@ -171,8 +176,11 @@ const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /* ── view ────────────────────────────────────────────────────────────── */
 
-export default function Skills({ projectId, activeSessionId }: {
-  projectId?: string; activeSessionId?: string | null;
+export default function Skills({ projectId, providers, activeSessionId }: {
+  projectId?: string;
+  /** Where an authored SKILL.md can be written. Shell state, already loaded. */
+  providers: ProviderInfo[];
+  activeSessionId?: string | null;
 }) {
   const [cat, setCat] = useState<Catalogue | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -404,7 +412,8 @@ export default function Skills({ projectId, activeSessionId }: {
           <div>
             <h1>Skills</h1>
             <p className="dim">
-              Every skill this machine can run — searchable, and firable straight into a live agent.
+              Every skill this machine can run — searchable, firable straight into a live agent, and
+              the place to write a new one.
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -603,10 +612,11 @@ export default function Skills({ projectId, activeSessionId }: {
             <h2>No skills on this machine yet</h2>
             <p>
               Nothing exists to catalogue — not in your skills folder, this project, or any plugin.
-              Start one by creating <span className="mono">~/.claude/skills/&lt;name&gt;/SKILL.md</span> with
-              a <span className="mono">name</span> and <span className="mono">description</span> in its
-              frontmatter; it shows up here on the next scan. Skills committed under a project's
-              <span className="mono"> .claude/skills</span> travel with the repo.
+              Write one below and Wanigan creates
+              <span className="mono"> &lt;root&gt;/skills/&lt;name&gt;/SKILL.md</span> for you, or create that
+              file by hand with a <span className="mono">name</span> and <span className="mono">description</span>
+              in its frontmatter; either way it shows up here on the next scan. Skills committed under a
+              project's <span className="mono">.claude/skills</span> travel with the repo.
             </p>
             <button className="btn" onClick={() => void load(true)}>Scan again</button>
           </div>
@@ -661,11 +671,385 @@ export default function Skills({ projectId, activeSessionId }: {
           </div>
         )}
 
+        {/* Authoring sits beside the catalogue it writes into, and directly
+            above Roots, which names the exact directories these files land in. */}
+        <SkillWriter project={scope} providers={providers} onInstalled={() => void load(true)} />
+
         <Roots cat={cat} />
       </div>
 
       {selected && <Reader skill={selected} onClose={() => setSelected(null)} />}
     </div>
+  );
+}
+
+/* ── writing one ─────────────────────────────────────────────────────── */
+
+/**
+ * A form that writes a SKILL.md.
+ *
+ * The honesty constraint is the whole design here. Nothing on this panel reads
+ * your sessions, signals or transcripts: `learning.forgeSkill` renders the
+ * words you type into the Agent Skills document shape, and `installSkill`
+ * writes that exact reviewed text to a provider directory. A sibling helper
+ * that claimed to derive a skill from recorded signals never had a caller and
+ * is gone; this panel must not inherit its vocabulary. So: no "learned", no
+ * "forged from your work", and the generated body is on screen in full before
+ * anything is written.
+ *
+ * The preview has four states and they are not each other — no draft yet,
+ * building one, a build that failed, and a draft you can read. Install has its
+ * own three, per provider, because a directory that refused the write must not
+ * be hidden by one that accepted it.
+ */
+
+/** The writer's own styles. The rest of this view is in index.css, which this
+ *  panel deliberately does not reach into: it is one section, and it ships and
+ *  changes with the component that uses it. */
+const WRITER_SHEET = `
+.skills-writer { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.skills-writer-form { display: grid; gap: 10px; min-width: 0; }
+.skills-writer-form > label { display: grid; gap: 4px; min-width: 0; }
+.skills-writer-form .field { width: 100%; }
+.skills-writer-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: start; }
+.skills-writer-row > label { display: grid; gap: 4px; min-width: 0; }
+.skills-writer-targets { display: grid; gap: 5px; min-width: 0; padding: 8px 10px;
+                         border: 1px solid var(--line); border-radius: var(--r-sm); }
+.skills-writer-targets label { display: flex; align-items: center; gap: 6px; font-size: var(--t-small); }
+.skills-writer-preview { display: grid; gap: 10px; align-content: start; padding: 12px 13px; min-width: 0; }
+.skills-writer-md { max-height: 340px; overflow: auto; overscroll-behavior: contain;
+                    padding: 10px 11px; border: 1px solid var(--line); border-radius: var(--r-sm);
+                    background: var(--bg); font-size: var(--t-micro); line-height: 1.5;
+                    white-space: pre-wrap; word-break: break-word; }
+.skills-writer-doctor { display: grid; gap: 5px; font-size: var(--t-small); line-height: 1.5; }
+.skills-writer-doctor li { list-style: none; }
+.skills-writer-form > .btn, .skills-writer-preview > .btn { justify-self: start; }
+@media (max-width: 980px) {
+  .skills-writer { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 620px) {
+  .skills-writer-row { grid-template-columns: minmax(0, 1fr); }
+}
+`;
+
+type Draft =
+  | { s: 'none' }
+  | { s: 'building' }
+  | { s: 'err'; message: string }
+  | { s: 'ok'; skill: ForgedSkill; diagnostics: SkillDiagnostic[] };
+
+type Install =
+  | { s: 'idle' }
+  | { s: 'writing' }
+  | { s: 'err'; message: string }
+  | { s: 'done'; results: SkillInstallResult[] };
+
+const SEVERITY_MARK: Record<SkillDiagnostic['severity'], { glyph: string; color: string }> = {
+  error:   { glyph: '✕', color: 'var(--bad)' },
+  warning: { glyph: '⚠', color: 'var(--warn)' },
+  info:    { glyph: '·', color: 'var(--text-dim)' },
+};
+
+function SkillWriter({ project, providers, onInstalled }: {
+  /** The repository this view is scoped to — the same one whose project
+   *  skills are in the catalogue above, so a project skill written here
+   *  appears in it on the rescan rather than somewhere you are not looking. */
+  project: Project | null;
+  providers: ProviderInfo[];
+  onInstalled: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [trigger, setTrigger] = useState('');
+  const [steps, setSteps] = useState('Inspect the relevant files\nMake the smallest safe change\nRun the project review gate');
+  const [verification, setVerification] = useState('Run the relevant tests\nReview the final diff');
+  const [scope, setScope] = useState<'personal' | 'project'>('personal');
+  const [draft, setDraft] = useState<Draft>({ s: 'none' });
+  const [install, setInstall] = useState<Install>({ s: 'idle' });
+
+  /* Which providers get the file. `null` is "every runtime that was detected",
+     which is not the same answer as a list that happens to contain all of them
+     — it is the absence of a choice, and it has to survive the shell handing
+     this view a fresh `providers` array on every window focus. Keying the seed
+     to that array identity would tick a deliberately cleared checkbox back on
+     every time you switched apps and came back. */
+  const [chosen, setChosen] = useState<string[] | null>(null);
+  const detected = providers.map((p) => p.id);
+  const detectedKey = detected.join('\u0000');
+  useEffect(() => {
+    // A provider that disappeared is not a target any more; a choice that is
+    // still valid is left exactly as it was made.
+    setChosen((prev) => (prev === null
+      ? null
+      : prev.filter((id) => detectedKey.split('\u0000').includes(id))));
+  }, [detectedKey]);
+  const targets = chosen ?? detected;
+  const setTargets = setChosen;
+
+  // Losing the repository (removed, or the pin changed) must not leave a
+  // "Project skill" selection pointing at nothing.
+  useEffect(() => { if (!project) setScope('personal'); }, [project]);
+
+  const named = name.trim();
+  const ready = named !== '' && description.trim() !== '' && trigger.trim() !== '';
+
+  // A draft belongs to the words that produced it. Any edit invalidates it,
+  // rather than leaving a stale preview beside a changed form.
+  const edit = <T,>(set: (v: T) => void) => (v: T) => {
+    set(v);
+    setDraft((d) => (d.s === 'none' ? d : { s: 'none' }));
+    setInstall({ s: 'idle' });
+  };
+
+  async function build() {
+    setInstall({ s: 'idle' });
+    setDraft({ s: 'building' });
+    try {
+      const skill = await window.wanigan.learning.forgeSkill({
+        name: named,
+        description: description.trim(),
+        trigger: trigger.trim(),
+        scope,
+        steps: steps.split('\n')
+          .map((instruction, i) => ({ title: `Step ${i + 1}`, instruction: instruction.trim() }))
+          .filter((step) => step.instruction),
+        verification: verification.split('\n').map((line) => line.trim()).filter(Boolean),
+        providerIds: targets,
+      });
+      // Checked against the repository so a path-sensitive diagnostic can be
+      // real rather than generic.
+      const diagnostics = await window.wanigan.learning.doctorSkill(skill.skillMd, project?.path);
+      setDraft({ s: 'ok', skill, diagnostics });
+    } catch (e) {
+      setDraft({ s: 'err', message: msg(e) });
+    }
+  }
+
+  async function write(skill: ForgedSkill) {
+    setInstall({ s: 'writing' });
+    try {
+      const results = await window.wanigan.learning.installSkill(
+        skill, targets, scope === 'project' ? project?.id ?? null : null);
+      setInstall({ s: 'done', results });
+      // The catalogue above is now out of date by exactly this file.
+      onInstalled();
+    } catch (e) {
+      setInstall({ s: 'err', message: msg(e) });
+    }
+  }
+
+  const blocking = draft.s === 'ok' && draft.diagnostics.some((d) => d.severity === 'error');
+
+  return (
+    <Section
+      title="Write a new skill"
+      hint="A form, not a recommendation. You type the words; Wanigan formats them into the Agent Skills SKILL.md shape and writes that file. It reads nothing from your sessions, transcripts or recorded signals."
+      right={
+        <button className="btn" type="button" aria-expanded={open} aria-controls="skills-writer"
+                onClick={() => setOpen((v) => !v)}>
+          {open ? 'Close the form' : 'Write a skill'}
+        </button>
+      }>
+      <div id="skills-writer" hidden={!open}>
+        <style>{WRITER_SHEET}</style>
+        {providers.length === 0 ? (
+          <Note tone="warn">
+            <strong>⚠ No agent runtime was detected</strong>, so there is no provider skills directory to
+            write into. Install a CLI (Settings › Agents &amp; providers lists what Wanigan looked for),
+            then come back — the form is otherwise unchanged.
+          </Note>
+        ) : (
+          <div className="skills-writer">
+            <div className="skills-writer-form">
+              <label>
+                <span className="label">Skill name</span>
+                <input className="field mono" value={name} placeholder="verification-before-completion"
+                       autoComplete="off" spellCheck={false}
+                       onChange={(e) => edit(setName)(e.target.value)} />
+              </label>
+              <label>
+                <span className="label">Description</span>
+                <input className="field" value={description} placeholder="What this workflow reliably accomplishes"
+                       onChange={(e) => edit(setDescription)(e.target.value)} />
+              </label>
+              <label>
+                <span className="label">Trigger</span>
+                <textarea className="field" rows={3} value={trigger}
+                          placeholder="When should an agent discover and use it?"
+                          onChange={(e) => edit(setTrigger)(e.target.value)} />
+              </label>
+              <label>
+                <span className="label">Steps · one per line</span>
+                <textarea className="field mono" rows={6} value={steps}
+                          onChange={(e) => edit(setSteps)(e.target.value)} />
+              </label>
+              <label>
+                <span className="label">Verification · one per line</span>
+                <textarea className="field mono" rows={4} value={verification}
+                          onChange={(e) => edit(setVerification)(e.target.value)} />
+              </label>
+
+              <div className="skills-writer-row">
+                <label>
+                  <span className="label">Where it lives</span>
+                  <select className="field" value={scope} disabled={!project}
+                          onChange={(e) => edit(setScope)(e.target.value as 'personal' | 'project')}>
+                    <option value="personal">My skills — this machine only</option>
+                    {project && <option value="project">Project skill — committed with {project.name}</option>}
+                  </select>
+                </label>
+                <fieldset className="skills-writer-targets">
+                  <legend className="label">Write it for</legend>
+                  {providers.map((p) => (
+                    <label key={p.id}>
+                      <input type="checkbox" checked={targets.includes(p.id)}
+                             onChange={(e) => edit(setTargets)(e.target.checked
+                               ? [...targets, p.id]
+                               : targets.filter((id) => id !== p.id))} />
+                      {p.label}
+                    </label>
+                  ))}
+                </fieldset>
+              </div>
+
+              {!project && (
+                <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.5 }}>
+                  No repository is picked above, so only a personal skill can be written. Pick one in
+                  “Project skills from” to write into a repo instead.
+                </p>
+              )}
+
+              <button className="btn btn-primary" type="button"
+                      disabled={!ready || draft.s === 'building' || targets.length === 0}
+                      onClick={() => void build()}>
+                {draft.s === 'building' ? 'Building…' : 'Build the SKILL.md'}
+              </button>
+              {!ready && (
+                <p className="faint" style={{ fontSize: 'var(--t-micro)' }}>
+                  Name, description and trigger are required — they are the frontmatter an agent
+                  searches to find this skill at all.
+                </p>
+              )}
+              {ready && targets.length === 0 && (
+                <p className="faint" style={{ fontSize: 'var(--t-micro)' }}>
+                  Pick at least one provider. Each one is written independently, into its own directory.
+                </p>
+              )}
+            </div>
+
+            <aside className="skills-writer-preview sunk">
+              <div className="label">
+                Preview
+                {draft.s === 'ok' && (
+                  <span className="faint" style={{ marginLeft: 8, textTransform: 'none', letterSpacing: 0 }}>
+                    ~{num(draft.skill.estimatedTokens)} est. tokens
+                  </span>
+                )}
+              </div>
+
+              {draft.s === 'none' && (
+                <p className="dim">
+                  No draft yet. Fill the form and press <strong>Build the SKILL.md</strong> — the exact file
+                  that would be written appears here, in full, before anything touches disk.
+                </p>
+              )}
+              {draft.s === 'building' && <p className="dim">Building the document and checking it…</p>}
+              {draft.s === 'err' && (
+                <Note tone="error">
+                  <strong>✕ The draft could not be built.</strong> {draft.message}
+                </Note>
+              )}
+
+              {draft.s === 'ok' && (
+                <>
+                  <pre className="skills-writer-md mono">{draft.skill.skillMd}</pre>
+
+                  {draft.diagnostics.length === 0 ? (
+                    <p style={{ color: 'var(--good)', fontSize: 'var(--t-small)' }}>
+                      <span aria-hidden="true">✓</span> The checker found nothing to report.
+                    </p>
+                  ) : (
+                    <ul className="skills-writer-doctor">
+                      {draft.diagnostics.map((d, i) => {
+                        const m = SEVERITY_MARK[d.severity];
+                        return (
+                          <li key={`${d.code}-${i}`} style={{ color: m.color }}>
+                            <span aria-hidden="true">{m.glyph}</span>{' '}
+                            <span className="mono">{d.code}</span> {d.message}
+                            {d.line ? ` · line ${d.line}` : ''}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+
+                  <button className="btn btn-primary" type="button"
+                          disabled={blocking || install.s === 'writing' || targets.length === 0}
+                          onClick={() => void write(draft.skill)}>
+                    {install.s === 'writing' ? 'Writing…' : `Write ${draft.skill.name} to disk`}
+                  </button>
+                  {blocking && (
+                    <p style={{ color: 'var(--bad)', fontSize: 'var(--t-micro)', lineHeight: 1.5 }}>
+                      An error-level check has to be fixed in the form above first.
+                    </p>
+                  )}
+
+                  {install.s === 'err' && (
+                    <Note tone="error"><strong>✕ Nothing was written.</strong> {install.message}</Note>
+                  )}
+                  {install.s === 'done' && (
+                    <ul className="skills-writer-doctor">
+                      {install.results.map((r) => (
+                        <li key={r.providerId} style={{ color: r.error ? 'var(--bad)' : 'var(--good)' }}>
+                          <span aria-hidden="true">{r.error ? '✕' : '✓'}</span>{' '}
+                          {r.error
+                            ? <>{r.providerId}: {r.error}</>
+                            : <>{r.providerId} · <span className="mono">{r.projection?.targetPath ?? 'written'}</span></>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {install.s === 'done' && install.results.some((r) => !r.error) && (
+                    <WriteAftermath results={install.results} />
+                  )}
+
+                  <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.5 }}>
+                    Project: Claude <span className="mono">.claude/skills/{draft.skill.name}</span> · Codex{' '}
+                    <span className="mono">.agents/skills/{draft.skill.name}</span>. Personal skills use the
+                    matching directories under your home folder.
+                  </p>
+                </>
+              )}
+            </aside>
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+/**
+ * What actually happened, per path.
+ *
+ * The catalogue on this page scans `.claude/skills` roots and nothing else, so
+ * a file written to a Codex `.agents/skills` directory exists on disk and will
+ * never appear in the list above. Saying "rescanned" without saying that would
+ * be an implied capability, and the missing row would read as a failed write.
+ */
+function WriteAftermath({ results }: { results: SkillInstallResult[] }) {
+  const written = results.filter((r) => !r.error);
+  const unlisted = written.filter((r) => !(r.projection?.targetPath ?? '').includes('/.claude/skills/'));
+  return (
+    <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.5 }}>
+      The catalogue above has been rescanned.
+      {unlisted.length > 0 && (
+        <> It reads <span className="mono">.claude/skills</span> roots only, so{' '}
+          {unlisted.length === 1 ? 'one of these files' : `${num(unlisted.length)} of these files`} is on
+          disk but will not appear in the list — {unlisted.map((r) => r.providerId).join(', ')}.</>
+      )}
+      {' '}No git commit was made: a project skill is an untracked change until you commit it yourself.
+    </p>
   );
 }
 

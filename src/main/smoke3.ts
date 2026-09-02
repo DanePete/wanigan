@@ -2057,8 +2057,14 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && appSrc.includes('epoch !== requestEpoch.current')
     && cssSrc.includes('.nav-usage-status') && !cssSrc.includes('.nav-codex-status'),
   'the header keys provider data to the selected session, uses Codex account limits only on Codex, and ignores stale provider replies after a switch');
-  check(learningSrc.includes("id: 'scout'")
-    && learningSrc.includes('<ImprovementScout projects={projects} onOpenGoal={onOpenGoal} />')
+  // Scout moved out of Learning and became a top-level destination: it talks to
+  // window.wanigan.scout, shares no table or IPC namespace with learning, and
+  // proposes product improvements from public sources rather than recording
+  // knowledge from your own sessions. The safety properties below are unchanged
+  // and are the reason this assertion exists — only its host moved.
+  check(appSrc.includes("id: 'scout'")
+    && appSrc.includes('<ImprovementScout projects={projects} onOpenGoal={openGoal} />')
+    && !learningSrc.includes('ImprovementScout')
     && scoutViewSrc.includes("allowNetwork: true")
     && scoutViewSrc.includes("mode === 'manual'")
     && scoutViewSrc.includes('Preview locally')
@@ -2069,8 +2075,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !scoutViewSrc.includes("goal_created")
     && scoutCssSrc.includes('@media (pointer: coarse)')
     && scoutCssSrc.includes('min-height: 44px')
-    && scoutCssSrc.includes('.learning-scroll > .scout-view'),
-  'Scout is a touch-safe nested Learning surface with a hard local preview, one explicit online action, separate unattended-network consent, cited external links, and a Control Goal handoff');
+    && scoutCssSrc.includes('.scout-view'),
+  'Scout is a touch-safe top-level surface with a hard local preview, one explicit online action, separate unattended-network consent, cited external links, and a Control Goal handoff');
   check(appSrc.includes('aria-modal="true"')
     && appSrc.includes('const focusable = Array.from(dialog.current')
     // Opener restoration is explicit now rather than incidental: closing has to

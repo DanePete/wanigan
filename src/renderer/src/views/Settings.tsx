@@ -3,7 +3,8 @@ import type { KeyboardEvent } from 'react';
 import type {
   WaniganSettings, BackupCheck, BackupRestoreSummary, BackupSummary,
   EgressHost, LedgerEntry, McpServerConfig, MotionSetting, ThemeSetting,
-  MobileMonitorConfig, MobileMonitorStatus, Project, ProviderInfo, QueueItem, QueueSlots, QueueState,
+  MobileMonitorConfig, MobileMonitorStatus, Project, ProviderInfo, ProviderManifestInspection,
+  ProviderPackInfo, ProviderProfileInfo, QueueItem, QueueSlots, QueueState,
   TranscriptHit, TranscriptTurn, TrustLevel, UploadedFile, WorktreeInfo,
 } from '@shared/types';
 import { TRUST_COPY, TRUST_LEVELS } from '@shared/types';
@@ -47,6 +48,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'agents', tabLabel: 'Agents', section: 'GLM Coding Plan', hint: 'Z.ai key for GLM sessions', keywords: 'glm z.ai zai coding plan key' },
   { tab: 'agents', tabLabel: 'Agents', section: 'DeepSeek', hint: 'DeepSeek key for sessions', keywords: 'deepseek key anthropic-compatible' },
   { tab: 'agents', tabLabel: 'Agents', section: 'Installed agent runtimes', hint: 'Which CLIs Wanigan found, and where', keywords: 'cli path version claude codex installed runtime detect' },
+  { tab: 'agents', tabLabel: 'Agents', section: 'Provider packs', hint: 'Packs, profiles, trust and enablement', keywords: 'provider pack manifest profile harness backend trust digest sha256 adapter enable disable remove restore' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Projects', hint: 'Add and remove repositories', keywords: 'project repository folder add remove' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Worktrees', hint: 'Isolated worktrees and cleanup', keywords: 'worktree isolated branch cleanup orphan' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Trust and the policy ledger', hint: 'Trust levels, decisions, export', keywords: 'trust policy ledger permission audit export' },
@@ -92,9 +94,9 @@ const SETTINGS_COMPACT_QUERY = '(max-width: 1024px), (pointer: coarse) and (max-
 const SETTINGS_TABS: SettingsTabInfo[] = [
   {
     id: 'agents', label: 'Agents', eyebrow: 'Accounts & runtime', title: 'Agents & providers',
-    detail: 'Add provider keys, check their status, and see which local agent runtimes Wanigan can launch.',
-    help: 'Keys are verified before Wanigan stores them in your macOS credential store. A new key is ready for the next session; a session already running keeps the launch configuration it started with.',
-    includes: ['Claude Platform', 'GLM Coding Plan', 'DeepSeek', 'installed runtimes'],
+    detail: 'Add provider keys, check their status, and manage the provider packs whose profiles Wanigan can launch.',
+    help: 'Keys are verified before Wanigan stores them in your macOS credential store. A new key is ready for the next session; a session already running keeps the launch configuration it started with — including its frozen provider pack, even if you disable or remove that pack here.',
+    includes: ['Claude Platform', 'GLM Coding Plan', 'DeepSeek', 'installed runtimes', 'provider packs'],
   },
   {
     id: 'projects', label: 'Projects & safety', eyebrow: 'Repositories & guardrails', title: 'Projects & safety',
@@ -805,6 +807,8 @@ export default function Settings({
                 </div>
               ))}
             </Section>
+
+            <ProviderPacks providers={providers} />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('projects')} active={settingsTab === 'projects'}>
@@ -861,6 +865,412 @@ export default function Settings({
       </div>
     </div>
   );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Provider packs · what Wanigan is allowed to launch
+   ════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * This list used to be a tab inside the Learning view, which is a surface
+ * about recorded knowledge and has nothing to do with which CLIs may start.
+ * Worse, it had no loading and no error state: while the read was in flight,
+ * and again after it failed, it printed "No provider packs were found" — a
+ * claim about this machine that Wanigan had not yet made. Here it sits behind
+ * the same Load frame as the rest of the page, where reading, could-not-read
+ * and read-and-there-are-none are three different sentences.
+ *
+ * Trusted and enabled stay separate grants, as they are in the main process:
+ * trusting a manifest digest does not trust an adapter, and neither one starts
+ * anything. Consent is the exact argv, environment destinations and digests
+ * the pack declares, rendered on screen before the click that grants it —
+ * never a summary, and never a tooltip after the fact.
+ */
+
+type AdapterInspection = Awaited<ReturnType<typeof window.wanigan.providerPacks.inspectAdapter>>;
+
+/** What a pack's status means for launching, in words rather than a colour. */
+const PACK_STATE: Record<string, MarkSpec & { effect: string }> = {
+  enabled:           { glyph: '✓', word: 'enabled',         color: 'var(--good)',       effect: 'new sessions may launch its profiles' },
+  active:            { glyph: '✓', word: 'enabled',         color: 'var(--good)',       effect: 'new sessions may launch its profiles' },
+  disabled:          { glyph: '○', word: 'disabled',        color: 'var(--text-faint)', effect: 'no new session can launch its profiles' },
+  'needs-trust':     { glyph: '?', word: 'needs trust',     color: 'var(--warning)',    effect: 'this exact manifest digest has not been trusted yet' },
+  'pending-removal': { glyph: '⋯', word: 'pending removal', color: 'var(--warning)',    effect: 'removal waits for the live sessions still using it' },
+  removed:           { glyph: '⊖', word: 'removed',         color: 'var(--text-faint)', effect: 'in recoverable trash; sessions, history and knowledge were kept' },
+  invalid:           { glyph: '✕', word: 'invalid',         color: 'var(--critical)',   effect: 'the manifest did not validate, so it cannot be enabled' },
+};
+
+const packState = (pack: ProviderPackInfo): string =>
+  String(pack.status ?? pack.state ?? (pack.enabled ? 'enabled' : 'disabled'));
+
+const packName = (pack: ProviderPackInfo): string => pack.label ?? pack.name ?? pack.id;
+
+/**
+ * The consent text, ported from the dialog this panel replaces without
+ * dropping a field. Every base, version, help, launch-field and resume argv
+ * template appears, and every environment destination with its source — a
+ * literal, a named process variable with its fallback, or a stored credential
+ * whose value is never read into the renderer.
+ */
+function manifestConsentText(inspected: ProviderManifestInspection): string {
+  const commands = inspected.commands.map((command) => {
+    const launch = [command.bin, ...command.baseArgs].join(' ');
+    const probes = `\n  automatic version probe: ${command.bin} ${command.versionArgs.join(' ')}`
+      + `\n  automatic help probe: ${command.bin} ${command.helpArgs.join(' ')}`;
+    const fields = command.launchFields.length
+      ? `\n  launch-field argv: ${command.launchFields.map((field) => {
+          const templates = [
+            field.argv.length ? `value=[${field.argv.join(', ')}]` : '',
+            field.trueArgv.length ? `true=[${field.trueArgv.join(', ')}]` : '',
+            field.falseArgv.length ? `false=[${field.falseArgv.join(', ')}]` : '',
+          ].filter(Boolean).join(' ');
+          return `${field.label} (${field.id}/${field.kind}) ${templates || '(no argv)'}`;
+        }).join('; ')}`
+      : '';
+    const resume = command.resume
+      ? `\n  resume argv: conversation=[${command.resume.conversationArgs.join(', ')}]; continue=[${command.resume.continueArgs.join(', ')}]`
+      : '\n  resume argv: (none)';
+    const env = command.environment.length
+      ? `\n  environment: ${command.environment.map((entry) => {
+          if (entry.source === 'literal') return `${entry.name} ← literal ${JSON.stringify(entry.value ?? '')}`;
+          if (entry.source === 'process') {
+            return `${entry.name} ← process ${entry.processName ?? '(missing)'}`
+              + (entry.fallback !== null ? ` fallback ${JSON.stringify(entry.fallback)}` : ' (no fallback)');
+          }
+          return `${entry.name} ← stored credential ${entry.credentialId ?? '(profile default)'} (value redacted)`;
+        }).join('; ')}`
+      : '';
+    const fallbacks = command.fallbackPaths.length
+      ? `\n  bundled fallbacks: ${command.fallbackPaths.join(', ')}` : '';
+    const extensions = command.editorExtensions.length
+      ? `\n  editor lookup: ${command.editorExtensions.map((entry) => `${entry.prefix} → ${entry.executablePaths.join(', ')}`).join('; ')}` : '';
+    // A local pack cannot inherit a built-in pack's semantic memory by naming
+    // its backend id, so the isolated id is the one that has to be on screen.
+    const backend = command.declaredBackendId === command.backendId
+      ? command.backendId
+      : `${command.backendId} (declared ${command.declaredBackendId}; isolated by pack)`;
+    return `${command.profileLabel} (${command.harness}/${command.headless} → ${backend})`
+      + `\n  launch: ${launch}${probes}${fields}${resume}${fallbacks}${extensions}${env}`;
+  }).join('\n\n');
+
+  const adapter = inspected.adapter
+    ? `\n\nAdapter probe: ${inspected.adapter.executable} ${inspected.adapter.args.join(' ')}`
+      + `\nAdapter SHA-256: ${inspected.adapter.sha256 ?? 'unavailable'}`
+    : '';
+
+  return `${inspected.label}@${inspected.version ?? 'unknown'}`
+    + `\nManifest SHA-256: ${inspected.sha256 ?? 'unavailable'}`
+    + (inspected.publisher ? `\nPublisher: ${inspected.publisher}` : '')
+    + `\n\n${commands}${adapter}\n\n${inspected.warning}`;
+}
+
+function adapterConsentText(inspected: AdapterInspection): string {
+  return `${inspected.path ?? '(path unavailable)'}`
+    + `\nArguments: ${inspected.args.join(' ') || '(none)'}`
+    + `\nSHA-256: ${inspected.sha256 ?? 'unavailable'}`
+    + (inspected.warning ? `\n\n${inspected.warning}` : '');
+}
+
+type Review = {
+  packId: string;
+  kind: 'manifest' | 'adapter';
+  state:
+    | { s: 'reading' }
+    | { s: 'err'; message: string }
+    | { s: 'ready'; text: string; sha256: string | null };
+};
+
+function ProviderPacks({ providers }: { providers: ProviderInfo[] }) {
+  const [tick, setTick] = useState(0);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [review, setReview] = useState<Review | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
+
+  const packs = useLoad(() => window.wanigan.providerPacks.list(true), [tick]);
+  // Read separately from the packs. A profile list that fails must not turn a
+  // pack list that succeeded into an error page, so it carries its own states.
+  const profiles = useLoad(() => window.wanigan.providerPacks.profiles(true), [tick]);
+
+  /** Re-list from the registry snapshot. Used after a mutation, which has
+   *  already changed that snapshot; it does not re-read any manifest file. */
+  const relist = () => { setTick((t) => t + 1); setReview(null); setRemoving(null); };
+
+  async function act(key: string, fn: () => Promise<unknown>, done: string) {
+    setBusy(key);
+    setSaved(null);
+    try {
+      await fn();
+      relist();
+      setSaved({ tone: 'ok', text: done });
+    } catch (e) {
+      setSaved({ tone: 'error', text: msg(e) });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Inspect first, then show what was read. Nothing is granted by opening this. */
+  async function openReview(pack: ProviderPackInfo, kind: 'manifest' | 'adapter') {
+    setSaved(null);
+    setReview({ packId: pack.id, kind, state: { s: 'reading' } });
+    try {
+      if (kind === 'manifest') {
+        const inspected = await window.wanigan.providerPacks.inspectManifest(pack.id);
+        setReview({ packId: pack.id, kind, state: { s: 'ready', text: manifestConsentText(inspected), sha256: inspected.sha256 } });
+      } else {
+        const inspected = await window.wanigan.providerPacks.inspectAdapter(pack.id);
+        setReview({ packId: pack.id, kind, state: { s: 'ready', text: adapterConsentText(inspected), sha256: inspected.sha256 } });
+      }
+    } catch (e) {
+      setReview({ packId: pack.id, kind, state: { s: 'err', message: msg(e) } });
+    }
+  }
+
+  const profilesFor = (packId: string) => (
+    profiles.v.s === 'loading' ? <span className="dim">reading declared profiles…</span>
+      : profiles.v.s === 'err' ? <span style={{ color: 'var(--critical)' }}>declared profiles could not be read</span>
+        : (() => {
+            const mine = profiles.v.d.filter((profile) => profile.packId === packId);
+            if (mine.length === 0) return <span className="faint">no profiles declared</span>;
+            return <>{mine.map((profile) => profileLine(profile)).join(' · ')}</>;
+          })()
+  );
+
+  return (
+    <Section title="Provider packs"
+             hint="A pack is a manifest of launch profiles. Trusted and enabled are separate: trusting a digest grants nothing, and enabling one only affects sessions started afterwards."
+             right={
+               <button className="btn" disabled={busy !== null}
+                       onClick={() => void act('refresh', () => window.wanigan.providerPacks.refresh(),
+                         'Manifests re-read from disk. Trust and enablement are unchanged by a re-read.')}>
+                 {busy === 'refresh' ? 'Re-reading…' : 'Re-read from disk'}
+               </button>
+             }>
+      <Frame v={packs.v} what="the provider packs" onRetry={packs.reload}>
+        {(list) => list.length === 0 ? (
+          <Note tone="warn">
+            <strong>⚠ The pack registry answered, and it is empty</strong> — not even the built-in
+            Claude, Codex and GLM manifests, which ship inside the app and should always be listed.
+            Re-read from disk; if they are still missing, this install is incomplete and no session
+            can start.
+          </Note>
+        ) : (
+          <div className="set-packs">
+            {list.map((pack) => {
+              const state = packState(pack);
+              const mark = PACK_STATE[state] ?? { glyph: '·', word: state, color: 'var(--text-dim)', effect: 'an unrecognised status from the pack registry' };
+              const adapterTrusted = pack.adapterSha256 !== null && pack.adapterSha256 !== undefined
+                && pack.trustedAdapterSha256 === pack.adapterSha256;
+              const openHere = review?.packId === pack.id ? review : null;
+              return (
+                <article className="set-pack" key={pack.id}>
+                  <div className="set-pack-head">
+                    <div style={{ minWidth: 0 }}>
+                      <strong>{packName(pack)}</strong>
+                      <div className="faint set-path set-wrap">{pack.id}@{pack.version ?? 'no version'}</div>
+                    </div>
+                    <Mark glyph={mark.glyph} word={mark.word} color={mark.color} />
+                  </div>
+
+                  <p className="dim set-pack-blurb">
+                    {pack.description ?? 'No description in the manifest.'}
+                  </p>
+                  <p className="faint set-pack-blurb">{mark.effect}.</p>
+
+                  <dl className="set-pack-meta">
+                    <div>
+                      <dt>Origin</dt>
+                      <dd>{pack.source === 'builtin' || pack.builtIn ? 'built in' : 'installed locally'}</dd>
+                    </div>
+                    <div>
+                      <dt>Adapter</dt>
+                      <dd>{!pack.adapterSha256
+                        ? 'none — manifest only'
+                        : adapterTrusted ? 'this exact digest is trusted' : 'present, digest not trusted'}</dd>
+                    </div>
+                    <div>
+                      <dt>Manifest digest</dt>
+                      {/* A built-in pack ships inside the application bundle and
+                          has no on-disk manifest to hash. That is not a missing
+                          digest, and it must not read like one. */}
+                      <dd className={pack.manifestSha256 ? 'mono set-wrap' : 'set-wrap'}>
+                        {pack.manifestSha256
+                          ? `${String(pack.manifestSha256).slice(0, 16)}…`
+                          : pack.source === 'builtin' || pack.builtIn
+                            ? 'bundled with Wanigan — no separate manifest to trust'
+                            : 'unavailable'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Profiles</dt>
+                      <dd>{profilesFor(pack.id)}</dd>
+                    </div>
+                  </dl>
+
+                  {pack.errors && pack.errors.length > 0 && (
+                    <Callout level={state === 'invalid' ? 'critical' : 'warning'} title="The registry reported a problem with this manifest.">
+                      <ul style={{ display: 'grid', gap: 3, listStyle: 'none' }}>
+                        {pack.errors.map((e, i) => <li key={i} className="mono set-wrap">{e}</li>)}
+                      </ul>
+                    </Callout>
+                  )}
+
+                  {/* Consent is read here, in the page, at full width. */}
+                  {openHere && (
+                    <div className="set-pack-review">
+                      {openHere.state.s === 'reading' && (
+                        <p className="dim">Reading the {openHere.kind === 'manifest' ? 'manifest' : 'adapter'}…</p>
+                      )}
+                      {openHere.state.s === 'err' && (
+                        <Callout level="critical" title={`The ${openHere.kind} could not be inspected.`}>
+                          <p className="mono set-wrap">{openHere.state.message}</p>
+                          <p style={{ marginTop: 6 }}>Nothing was trusted and nothing was enabled.</p>
+                        </Callout>
+                      )}
+                      {openHere.state.s === 'ready' && (
+                        <>
+                          <div className="label">
+                            {openHere.kind === 'manifest'
+                              ? 'Exactly what enabling this pack allows Wanigan to run'
+                              : 'Exactly which executable the capability probe would run'}
+                          </div>
+                          <pre className="set-pack-consent mono">{openHere.state.text}</pre>
+                          {openHere.kind === 'adapter' && (
+                            <p className="faint set-pack-blurb">
+                              Adapter protocol v1 is a credential-free, time- and output-bounded capability
+                              probe run from an owner-only staged copy. It cannot choose the executable a
+                              session launches. It is a separate process, not an operating-system sandbox.
+                            </p>
+                          )}
+                          <div className="set-pack-actions">
+                            {openHere.kind === 'manifest' ? (
+                              <button className="btn btn-primary" disabled={busy !== null || !openHere.state.sha256}
+                                      onClick={() => {
+                                        const sha = openHere.state.s === 'ready' ? openHere.state.sha256 : null;
+                                        if (!sha) return;
+                                        void act(`trust-${pack.id}`, async () => {
+                                          await window.wanigan.providerPacks.trustManifest(pack.id, sha);
+                                          await window.wanigan.providerPacks.setEnabled(pack.id, true);
+                                        }, `${packName(pack)}: that manifest digest is trusted and the pack is enabled. Sessions already running keep the profile they launched with.`);
+                                      }}>
+                                Trust this digest and enable
+                              </button>
+                            ) : (
+                              <button className="btn btn-primary" disabled={busy !== null || !openHere.state.sha256}
+                                      onClick={() => {
+                                        const sha = openHere.state.s === 'ready' ? openHere.state.sha256 : null;
+                                        if (!sha) return;
+                                        void act(`adapter-${pack.id}`, () => window.wanigan.providerPacks.trustAdapter(pack.id, sha),
+                                          `${packName(pack)}: that adapter digest is trusted. Enabling the pack is still a separate action.`);
+                                      }}>
+                                Trust this adapter digest
+                              </button>
+                            )}
+                            <button className="btn" onClick={() => setReview(null)}>Cancel</button>
+                            {openHere.state.sha256 === null && (
+                              <span className="faint">No verifiable digest, so there is nothing to trust.</span>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="set-pack-actions">
+                    {state === 'removed' ? (
+                      <button className="btn" disabled={busy !== null || pack.recoverable === false}
+                              onClick={() => void act(`restore-${pack.id}`,
+                                () => window.wanigan.providerPacks.restore(pack.id),
+                                `${packName(pack)} is restored, and disabled. Review it before enabling it.`)}>
+                        Restore
+                      </button>
+                    ) : pack.enabled ? (
+                      <button className="btn" disabled={busy !== null}
+                              onClick={() => void act(`enable-${pack.id}`,
+                                () => window.wanigan.providerPacks.setEnabled(pack.id, false),
+                                `${packName(pack)} is disabled for new launches. A session already running keeps its frozen profile until it ends.`)}>
+                        Disable new launches
+                      </button>
+                    ) : state === 'needs-trust' ? (
+                      <button className="btn" disabled={busy !== null || openHere?.kind === 'manifest'}
+                              onClick={() => void openReview(pack, 'manifest')}>
+                        Read the manifest…
+                      </button>
+                    ) : (
+                      <button className="btn" disabled={busy !== null || state === 'pending-removal' || state === 'invalid'}
+                              onClick={() => void act(`enable-${pack.id}`,
+                                () => window.wanigan.providerPacks.setEnabled(pack.id, true),
+                                `${packName(pack)} is enabled. Sessions started from now on may launch its profiles.`)}>
+                        Enable
+                      </button>
+                    )}
+
+                    {pack.adapterSha256 && !adapterTrusted && state !== 'removed' && (
+                      <button className="btn" disabled={busy !== null || openHere?.kind === 'adapter'}
+                              onClick={() => void openReview(pack, 'adapter')}>
+                        Read the adapter…
+                      </button>
+                    )}
+                    {pack.adapterSha256 && adapterTrusted && (
+                      <button className="btn" disabled={busy !== null}
+                              onClick={() => void act(`revoke-${pack.id}`,
+                                () => window.wanigan.providerPacks.revokeAdapterTrust(pack.id),
+                                `${packName(pack)}: adapter trust revoked. The pack itself is unchanged.`)}>
+                        Revoke adapter trust
+                      </button>
+                    )}
+
+                    {pack.source !== 'builtin' && !pack.builtIn && state !== 'removed' && (
+                      <button className="btn btn-danger" disabled={busy !== null || state === 'pending-removal'}
+                              onClick={() => setRemoving(removing === pack.id ? null : pack.id)}>
+                        Remove pack
+                      </button>
+                    )}
+                  </div>
+
+                  {removing === pack.id && (
+                    <div className="set-pack-review">
+                      <Callout level="warning" title={`Remove ${packName(pack)}?`}>
+                        It stops being launchable and moves to recoverable trash once the live sessions
+                        using it have finished. Session history, credentials, recorded knowledge, evidence
+                        and projections are all kept, and a live session keeps its frozen profile.
+                      </Callout>
+                      <div className="set-pack-actions">
+                        <button className="btn btn-danger" disabled={busy !== null}
+                                onClick={() => void act(`remove-${pack.id}`,
+                                  () => window.wanigan.providerPacks.remove(pack.id),
+                                  `${packName(pack)} is blocked from new launches and moves to recoverable trash when its live sessions finish.`)}>
+                          Remove it
+                        </button>
+                        <button className="btn" onClick={() => setRemoving(null)}>Keep it</button>
+                      </div>
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </Frame>
+
+      <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 11, lineHeight: 1.5 }}>
+        A profile only becomes launchable when its pack is enabled <em>and</em> Wanigan finds the CLI it
+        names. Installed agent runtimes above is that second half:{' '}
+        {providers.length === 0
+          ? 'nothing was detected there yet.'
+          : `${providers.filter((p) => p.path).length} of ${providers.length} detected.`}
+      </p>
+
+      <Result r={saved} />
+    </Section>
+  );
+}
+
+/** One profile, as harness → backend. Both matter: the harness decides what
+ *  Wanigan can observe, the backend decides which semantic memory it may see. */
+function profileLine(profile: ProviderProfileInfo): string {
+  return `${profile.label} (${profile.harness} → ${profile.backendId})`;
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -3741,6 +4151,23 @@ const SHEET = `
 .set-key-status { display: flex; gap: 8px 11px; align-items: center; flex-wrap: wrap; margin-bottom: 11px; }
 .set-key-status .btn:first-of-type { margin-left: auto; }
 .set-runtime-row, .set-project-row { display: flex; gap: 11px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line-soft); min-width: 0; }
+
+/* Provider packs. One card per pack, because the decisions are per pack and a
+   table row cannot hold a consent block wide enough to read an argv line in. */
+.set-packs { display: grid; gap: 11px; }
+.set-pack { display: grid; gap: 8px; padding: 12px 13px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); min-width: 0; }
+.set-pack-head { display: flex; gap: 11px; align-items: flex-start; justify-content: space-between; min-width: 0; }
+.set-pack-head strong { font-size: 13px; font-weight: 650; }
+.set-pack-blurb { font-size: var(--t-small); line-height: 1.5; }
+.set-pack-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 8px 14px; margin: 2px 0; }
+.set-pack-meta dt { color: var(--text-faint); font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.set-pack-meta dd { margin-top: 2px; color: var(--text-dim); font-size: var(--t-small); line-height: 1.45; min-width: 0; }
+.set-pack-actions { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.set-pack-actions .faint { font-size: var(--t-micro); }
+.set-pack-review { display: grid; gap: 8px; padding: 10px 11px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg-soft); min-width: 0; }
+.set-pack-consent { max-height: 320px; overflow: auto; overscroll-behavior: contain; padding: 10px 11px;
+                    border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg);
+                    font-size: var(--t-micro); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 
 /* The motion setting is real on the surface that sets it. */
 .set[data-motion='off'] * { transition: none !important; animation: none !important; }

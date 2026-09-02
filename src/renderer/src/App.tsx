@@ -12,6 +12,7 @@ import Plugins from './views/Plugins';
 import Schedules from './views/Schedules';
 import Git from './views/Git';
 import HeadlessRuns from './views/HeadlessRuns';
+import ImprovementScout from './views/ImprovementScout';
 import SettingsView, { SETTINGS_INDEX, type SettingsJump } from './views/Settings';
 import Skills from './views/Skills';
 import Context from './views/Context';
@@ -49,20 +50,30 @@ type StartupStatus = {
  *    view swap holds a live session, the swap is instant on purpose.
  */
 
+/**
+ * Every destination, in ⌘1–9 order. `hint` is a sentence about what the
+ * surface does, not a restatement of its label: the palette is the only route
+ * to the views the rail cannot fit, and "Explore view" told a newcomer nothing
+ * about which of them held the thing they were looking for.
+ */
 const TABS = [
-  { id: 'sessions',  label: 'Sessions',  group: 'Work',    keywords: 'agent terminal conversation interactive' },
-  { id: 'fleet',     label: 'Fleet',     group: 'Work',    keywords: 'monitor activity status' },
-  { id: 'control',   label: 'Control',   group: 'Work',    keywords: 'goals goal dockets tasks work graph' },
-  { id: 'batches',   label: 'Batches',   group: 'Work',    keywords: 'batch api bulk fan-out' },
-  { id: 'insights',  label: 'Insights',  group: 'Explore', keywords: 'spend costs usage analytics' },
-  { id: 'learning',  label: 'Learning',  group: 'Explore', keywords: 'knowledge memory improvement' },
-  { id: 'plugins',   label: 'Plugins',   group: 'Explore', keywords: 'extensions integrations' },
-  { id: 'schedules', label: 'Schedules', group: 'Explore', keywords: 'automation cron recurring' },
-  { id: 'git',       label: 'Git',       group: 'Manage',  keywords: 'worktrees commits review' },
-  { id: 'runs',      label: 'Runs',      group: 'Manage',  keywords: 'headless fan-out automation' },
-  { id: 'settings',  label: 'Settings',  group: 'Manage',  keywords: 'preferences providers connections appearance' },
-  { id: 'skills',    label: 'Skills',    group: 'Explore', keywords: 'agent skills instructions workflows' },
-  { id: 'context',   label: 'Context',   group: 'Explore', keywords: 'instructions memory configuration' },
+  { id: 'sessions',  label: 'Sessions',  group: 'Work',    hint: 'Start and drive live agent terminals',                    keywords: 'agent terminal conversation interactive' },
+  { id: 'fleet',     label: 'Fleet',     group: 'Work',    hint: 'Every session at once, and which ones need you',          keywords: 'monitor activity status' },
+  { id: 'control',   label: 'Control',   group: 'Work',    hint: 'Goals and dockets — durable records of planned work',     keywords: 'goals goal dockets tasks work graph' },
+  { id: 'batches',   label: 'Batches',   group: 'Work',    hint: 'Fan one prompt across many inputs on the Batches API',    keywords: 'batch api bulk fan-out' },
+  { id: 'insights',  label: 'Insights',  group: 'Explore', hint: 'Recorded spend and token usage',                          keywords: 'spend costs usage analytics' },
+  { id: 'learning',  label: 'Learning',  group: 'Explore', hint: 'Knowledge items, the review inbox, and what agents get',  keywords: 'knowledge memory briefing inbox proposals' },
+  { id: 'plugins',   label: 'Plugins',   group: 'Explore', hint: 'Installed plugins and marketplaces',                      keywords: 'extensions integrations' },
+  { id: 'schedules', label: 'Schedules', group: 'Explore', hint: 'Recurring headless and batch runs',                       keywords: 'automation cron recurring' },
+  { id: 'git',       label: 'Git',       group: 'Manage',  hint: 'Worktrees, branches and diffs across your repositories',  keywords: 'worktrees commits review' },
+  { id: 'runs',      label: 'Runs',      group: 'Manage',  hint: 'Headless runs — no terminal, output recorded',            keywords: 'headless fan-out automation' },
+  { id: 'settings',  label: 'Settings',  group: 'Manage',  hint: 'Keys, provider packs, projects, privacy and backup',      keywords: 'preferences providers packs connections appearance' },
+  { id: 'skills',    label: 'Skills',    group: 'Explore', hint: 'Browse every SKILL.md on this machine, or write one',     keywords: 'agent skills instructions workflows author write' },
+  { id: 'context',   label: 'Context',   group: 'Explore', hint: 'Instructions, memory and configuration, per project',     keywords: 'instructions memory configuration' },
+  // Scout reads allow-listed public sources and proposes product changes. It
+  // shares no table, IPC namespace or scope control with Learning, and it was
+  // only ever findable as a tab inside it.
+  { id: 'scout',     label: 'Scout',     group: 'Explore', hint: 'Improvement proposals built from public sources you allow', keywords: 'improvement scout proposals ideas suggestions release notes research sources evidence' },
 ] as const;
 
 type Tab = (typeof TABS)[number]['id'];
@@ -87,10 +98,13 @@ const TAB_SHORTCUTS: Record<Tab, { label: string; aria: string }> = {
   settings:  { label: '⌘,', aria: 'Meta+, Control+,' },
   skills:    { label: '⌘⇧S', aria: 'Meta+Shift+S Control+Shift+S' },
   context:   { label: '⌘⇧C', aria: 'Meta+Shift+C Control+Shift+C' },
+  // I for Improvement Scout — S and C are taken. On macOS, the platform this
+  // ships to, ⌘⇧I is free: the inspector is ⌥⌘I there.
+  scout:     { label: '⌘⇧I', aria: 'Meta+Shift+I Control+Shift+I' },
 };
 
 /** ⌘⇧ chords for the surfaces the digit row cannot reach. */
-const SHIFT_CHORD_TABS: Record<string, Tab> = { s: 'skills', c: 'context' };
+const SHIFT_CHORD_TABS: Record<string, Tab> = { s: 'skills', c: 'context', i: 'scout' };
 
 const labelForTab = (id: Tab): string => TABS.find((item) => item.id === id)?.label ?? id;
 
@@ -111,8 +125,13 @@ function initialTabFromLocation(): Tab {
 // palette without changing the long-standing ⌘1–9 map or turning the rail into
 // a ticker — and the palette button says which of them is on screen, so an
 // off-rail view is never a surface with no visible route back to it.
+//
+// Scout is on the rail rather than behind ⌘K despite arriving last, because it
+// is the one surface here that produces work on its own schedule. An inbox
+// nobody can see is an inbox nobody reads, and it no longer has a parent view
+// to be found inside. Its ⌘⇧I chord is a second route, not its only one.
 const NAV_RAIL_TABS: readonly Tab[] = [
-  'sessions', 'fleet', 'control', 'batches', 'insights', 'learning',
+  'sessions', 'fleet', 'control', 'batches', 'insights', 'learning', 'scout',
   'plugins', 'schedules', 'git', 'runs', 'settings',
 ];
 
@@ -370,7 +389,7 @@ export default function App() {
     return () => window.removeEventListener('focus', onFocus);
   }, [loadShell]);
   useEffect(() => {
-    if (tab === 'context' || tab === 'learning') void loadShell().catch(() => {});
+    if (tab === 'context' || tab === 'learning' || tab === 'scout') void loadShell().catch(() => {});
   }, [tab, loadShell]);
 
   // ── the shared selection ───────────────────────────────────────────
@@ -795,7 +814,7 @@ export default function App() {
       items.push({
         key: `view:${item.id}`,
         title: item.label,
-        hint: `${item.group} view`,
+        hint: `${item.group} · ${item.hint}`,
         meta: TAB_SHORTCUTS[item.id].label,
         group: 'Views',
         haystack: `${item.label} ${item.group} ${item.keywords}`,
@@ -994,6 +1013,7 @@ export default function App() {
             </NavTab>
             <NavTab id="insights" tab={tab} go={go} label="Insights" roving={navRoving} onKeyDown={onNavTabKeyDown} />
             <NavTab id="learning" tab={tab} go={go} label="Learning" roving={navRoving} onKeyDown={onNavTabKeyDown} />
+            <NavTab id="scout"    tab={tab} go={go} label="Scout" roving={navRoving} onKeyDown={onNavTabKeyDown} />
             <NavTab id="plugins"  tab={tab} go={go} label="Plugins" roving={navRoving} onKeyDown={onNavTabKeyDown} />
             <NavTab id="schedules" tab={tab} go={go} label="Schedules" roving={navRoving} onKeyDown={onNavTabKeyDown} />
             <NavTab id="git"      tab={tab} go={go} label="Git" roving={navRoving} onKeyDown={onNavTabKeyDown} />
@@ -1024,10 +1044,15 @@ export default function App() {
           )}
           {tab === 'insights' && <InsightsView />}
           {tab === 'learning' && (
-            <Learning projectId={projectId} projects={projects} providers={providers} onOpenGoal={openGoal}
+            <Learning projectId={projectId} projects={projects} providers={providers}
                       onPickProject={choose} initialTarget={learningTarget} />
           )}
-          {tab === 'skills' && <Skills projectId={projectId} activeSessionId={activeSessionId} />}
+          {/* Scout talks to window.wanigan.scout and nothing else in this app
+              does. Its props are unchanged from when it hung off Learning. */}
+          {tab === 'scout' && <ImprovementScout projects={projects} onOpenGoal={openGoal} />}
+          {tab === 'skills' && (
+            <Skills projectId={projectId} providers={providers} activeSessionId={activeSessionId} />
+          )}
           {tab === 'context' && (
             <Context projectId={projectId} projects={projects}
                      onReloadProjects={loadShell} onOpenLearning={openLearning} />

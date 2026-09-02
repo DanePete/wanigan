@@ -2,7 +2,6 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import type {
   CandidateExplanation,
   ConsolidationRun,
-  ForgedSkill,
   FreshnessReport,
   KnowledgeBriefing,
   KnowledgeCandidate,
@@ -17,16 +16,28 @@ import type {
   OptimizerDiagnostic,
   Project,
   ProviderInfo,
-  ProviderPackInfo,
-  SkillDiagnostic,
-  SkillInstallResult,
 } from '@shared/types';
 import { EFFORT_LEVELS } from '@shared/types';
 import { ago } from '../components/bits';
-import ImprovementScout from './ImprovementScout';
 import '../styles/learning.css';
 
-type LearningTab = 'overview' | 'inbox' | 'knowledge' | 'optimize' | 'skills' | 'scout' | 'experiments' | 'providers';
+type LearningTab = 'overview' | 'inbox' | 'knowledge' | 'context' | 'experiments';
+
+/** The one read state every list on this page shares. All of them are fetched
+ * in a single Promise.all, so "in flight", "failed" and "observed" are
+ * properties of that one call — and a pane may only assert a count once
+ * `observed` is true. Overview's '…' / '—' / '0' treatment is this same rule
+ * applied to a single number. */
+type Read = {
+  phase: 'loading' | 'ok' | 'error';
+  /** The read failure, when the newest attempt failed. */
+  error: string | null;
+  /** True once a read has returned: only then is an empty list an observation. */
+  observed: boolean;
+  /** When that read returned, so a stale list can say how stale it is. */
+  at: number | null;
+  retry: () => void;
+};
 
 /** Runs one mutation with busy/error handling, then reloads. `done` may derive
  * the notice from the call's real result, so success copy never has to guess. */
@@ -35,7 +46,6 @@ type Act = (key: string, fn: () => Promise<unknown>, done: string | ((result: un
 type ScopeSel = 'all' | 'personal' | 'project';
 
 const SCOPE_KEY = 'wanigan.learning.scope';
-const MECHANISM_KEY = 'wanigan.learning.mechanism';
 
 /** The single scope→IPC mapper. Main already speaks this tri-state everywhere:
  * undefined = all projects + personal, null = personal-only, id = that project
@@ -44,23 +54,32 @@ const MECHANISM_KEY = 'wanigan.learning.mechanism';
 const toScopeParam = (sel: ScopeSel, projectId?: string): string | null | undefined =>
   sel === 'all' ? undefined : sel === 'personal' ? null : projectId;
 
-// Pipeline group first, tools after the divider; the divider sits before `skills`.
-const TABS: { id: LearningTab; label: string; hint: string; toolsStart?: boolean }[] = [
-  { id: 'overview', label: 'Overview', hint: 'what the engine did' },
-  { id: 'inbox', label: 'Inbox', hint: 'review proposed learning' },
-  { id: 'knowledge', label: 'Knowledge', hint: 'canonical, cited facts' },
-  { id: 'optimize', label: 'Optimize', hint: 'spend less context' },
-  { id: 'skills', label: 'Skills', hint: 'forge reusable workflows', toolsStart: true },
-  { id: 'scout', label: 'Scout', hint: 'source-backed product ideas' },
-  { id: 'experiments', label: 'Experiments', hint: 'prove what helps' },
-  { id: 'providers', label: 'Providers', hint: 'packs & harnesses' },
+/** Four tabs, each labelled with the plain-words question it answers. This
+ * order is also the pipeline — observed, decided, stored, spent — so the
+ * navigation carries the explanation a collapsed prose drawer used to hide. */
+const TABS: { id: LearningTab; label: string; hint: string }[] = [
+  { id: 'overview', label: 'Overview', hint: 'What has this actually done?' },
+  { id: 'inbox', label: 'Inbox', hint: 'What needs my decision?' },
+  { id: 'knowledge', label: 'Knowledge', hint: 'What is stored, and what goes into my agent\u2019s prompt?' },
+  { id: 'context', label: 'Context', hint: 'What is my context costing me?' },
 ];
+
+/** Appended only while `learning_experiments` holds at least one row. The table
+ * has never had one in this build, and a tab that can only ever be empty
+ * teaches a newcomer that they broke something. */
+const EXPERIMENTS_TAB: { id: LearningTab; label: string; hint: string } =
+  { id: 'experiments', label: 'Experiments', hint: 'Controlled comparisons on record' };
+
+/** Context deep-links with the old tab id; it resolves to the renamed tab
+ * rather than silently landing on Overview. */
+const TARGET_TAB: Record<string, LearningTab> = {
+  overview: 'overview', inbox: 'inbox', knowledge: 'knowledge',
+  optimize: 'context', context: 'context',
+};
 
 // Consume-once across remounts: the deep-link target lives in App state, so a
 // later visit to Learning must not replay a jump this nonce already made.
 let consumedTargetNonce = 0;
-// The same rule for the glossary link in the tab strip.
-let consumedGlossaryNonce = 0;
 
 const EMPTY_OVERVIEW: LearningOverview = {
   pending: 0,
@@ -202,16 +221,79 @@ function useWidth() {
   return [ref, w] as const;
 }
 
-export default function Learning({ projectId, projects, providers, onOpenGoal, onPickProject, initialTarget }: {
+
+/* ── four distinct read states · the rule every pane below follows ────── */
+
+/** Stamps an absence with the scope it was measured in, and — when the newest
+ * refresh failed — with how old the surviving observation actually is. */
+const framed = (frame: string, read: Read) =>
+  read.phase === 'error' && read.at !== null
+    ? `${frame} · observed ${ago(read.at)}; the newest refresh failed`
+    : frame;
+
+/** A read in flight. It names what is being read and claims no count, because
+ * none has been observed yet. */
+function Loading({ what }: { what: string }) {
+  return (
+    <div className="learning-empty">
+      <span aria-hidden="true">◌</span>
+      <div>
+        <strong>Reading {what}…</strong>
+        <p>Counted from stored rows in the local database. Nothing is claimed until the read returns.</p>
+      </div>
+    </div>
+  );
+}
+
+/** A failed read. It offers Retry and asserts no number: “none” and “not read”
+ * are different facts, and only one of them was ever observed. An error banner
+ * over a pane that simultaneously says “none have ever existed” prints a
+ * falsehood in the provenance frame of a measurement. */
+function ReadFailed({ what, read }: { what: string; read: Read }) {
+  return (
+    <div className="learning-empty bad">
+      <span aria-hidden="true">✕</span>
+      <div>
+        <strong>Could not read {what}</strong>
+        <p>
+          {read.error ?? 'The call returned nothing.'} How many exist is unknown — this is not a
+          count of zero.
+        </p>
+        <button className="btn" onClick={read.retry}>Retry</button>
+      </div>
+    </div>
+  );
+}
+
+/** Gates a list surface on the shared read: loading and a first-read failure
+ * replace the list entirely, so the empty copy inside `children` only ever
+ * speaks about a read that actually happened. Once a read has landed, a later
+ * failed refresh leaves the last observation on screen — dated by `framed`,
+ * not deleted. */
+function Pane({ read, what, children }: { read: Read; what: string; children: ReactNode }) {
+  if (read.observed) return <>{children}</>;
+  return read.phase === 'error' ? <ReadFailed what={what} read={read} /> : <Loading what={what} />;
+}
+
+/** A domain noun defined where it is first used, in visible text. A `title`
+ * tooltip is not a definition: touch never shows it and a screen reader reads
+ * it unreliably. The glossary stays the reference, not the teaching. */
+function Define({ term, children }: { term: string; children: ReactNode }) {
+  return <p className="define"><b>{term}</b> {children}</p>;
+}
+
+export default function Learning({ projectId, projects, providers, onPickProject, initialTarget }: {
   projectId?: string;
   projects: Project[];
   providers: ProviderInfo[];
-  /** Moves a Scout-created Goal into Control instead of leaving a bare hash. */
+  /** Accepted and unused: Scout is a top-level view now, and the shell may
+   * still pass this. Declared so the shell keeps type-checking either way. */
   onOpenGoal?: (id: string) => void;
   /** Picking a project scope here moves the app-global selection with it. */
   onPickProject?: (id: string) => void;
-  /** One-shot deep link from Context; consumed by nonce. */
-  initialTarget?: { tab: 'overview' | 'inbox' | 'knowledge' | 'optimize'; nonce: number } | null;
+  /** One-shot deep link from Context; consumed by nonce. `optimize` is the
+   * pre-rename id and still resolves, so an older caller is not stranded. */
+  initialTarget?: { tab: 'overview' | 'inbox' | 'knowledge' | 'optimize' | 'context'; nonce: number } | null;
 }) {
   const [tab, setTab] = useState<LearningTab>('overview');
   const [scopeSel, setScopeSel] = useState<ScopeSel>(() => {
@@ -229,10 +311,15 @@ export default function Learning({ projectId, projects, providers, onOpenGoal, o
   const [knowledge, setKnowledge] = useState<KnowledgeItem[]>([]);
   const [diagnostics, setDiagnostics] = useState<OptimizerDiagnostic[]>([]);
   const [experiments, setExperiments] = useState<LearningExperiment[]>([]);
-  const [packs, setPacks] = useState<ProviderPackInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Kept apart from `error` on purpose: a failed mutation must not make the
+  // lists below look unread. Only a failed read may do that.
+  const [readErr, setReadErr] = useState<string | null>(null);
+  // A read has returned at least once, and when. Until it has, an empty list is
+  // "not read yet" — never "there has never been one".
+  const [observedAt, setObservedAt] = useState<number | null>(null);
   // Keyed by a nonce so repeating the same action restarts the 6s timer and
   // re-announces, instead of the second toast silently inheriting the first's clock.
   const [notice, setNotice] = useState<{ text: string; key: number } | null>(null);
@@ -246,9 +333,9 @@ export default function Learning({ projectId, projects, providers, onOpenGoal, o
   // a nonce so a repeat click re-applies it even when the value is unchanged.
   const [inboxPreset, setInboxPreset] = useState<{ status: string; key: number } | null>(null);
   const presetSeq = useRef(0);
-  // The glossary lives at the foot of Overview; a bumped nonce opens and scrolls
-  // to it even when Overview is already the tab in view.
-  const [glossaryNonce, setGlossaryNonce] = useState(0);
+  // The glossary opens over the tab in view. Jumping to Overview to read one
+  // word cost the reader their place, which is the opposite of a reference.
+  const [glossaryOpen, setGlossaryOpen] = useState(false);
 
   // Project scope with no project left (all projects removed) degrades visibly
   // to Everything rather than silently narrowing to personal-only.
@@ -266,9 +353,12 @@ export default function Learning({ projectId, projects, providers, onOpenGoal, o
   const scopeParam = toScopeParam(scopeSel, projectId);
 
   const load = useCallback(async (quiet = false) => {
-    if (!quiet) setLoading(true);
+    // A deliberate re-read clears the last failure so the panes flip back to
+    // "reading" — Retry with no visible change is indistinguishable from a
+    // dead button. A quiet background refresh leaves the failure standing.
+    if (!quiet) { setLoading(true); setReadErr(null); }
     try {
-      const [ov, st, sg, cd, kn, dg, ex, pk] = await Promise.all([
+      const [ov, st, sg, cd, kn, dg, ex] = await Promise.all([
         window.wanigan.learning.overview(scopeParam),
         window.wanigan.learning.settings(),
         window.wanigan.learning.signals({ projectId: scopeParam, limit: 80 }),
@@ -276,7 +366,6 @@ export default function Learning({ projectId, projects, providers, onOpenGoal, o
         window.wanigan.learning.knowledge({ projectId: scopeParam, limit: 200 }),
         window.wanigan.learning.diagnostics(scopeParam),
         window.wanigan.learning.experiments({ projectId: scopeParam, limit: 80 }),
-        window.wanigan.providerPacks.list(true),
       ]);
       setOverview(ov);
       setSettings(st);
@@ -285,9 +374,11 @@ export default function Learning({ projectId, projects, providers, onOpenGoal, o
       setKnowledge(kn);
       setDiagnostics(dg);
       setExperiments(ex);
-      setPacks(pk);
+      setObservedAt(Date.now());
+      setReadErr(null);
       setError(null);
     } catch (e) {
+      setReadErr(message(e));
       setError(message(e));
     } finally {
       setLoading(false);
@@ -313,7 +404,7 @@ export default function Learning({ projectId, projects, providers, onOpenGoal, o
   useEffect(() => {
     if (!initialTarget || initialTarget.nonce === consumedTargetNonce) return;
     consumedTargetNonce = initialTarget.nonce;
-    setTab(initialTarget.tab);
+    setTab(TARGET_TAB[initialTarget.tab] ?? 'overview');
   }, [initialTarget]);
 
   // Background activity (a live session's signal, a consolidation pass) pushes a
@@ -343,10 +434,6 @@ export default function Learning({ projectId, projects, providers, onOpenGoal, o
     }
   }, [load]);
 
-  const openGlossary = useCallback(() => {
-    setTab('overview');
-    setGlossaryNonce((n) => n + 1);
-  }, []);
 
   const navigate = useCallback((next: LearningTab, inboxStatus?: string) => {
     if (inboxStatus) setInboxPreset({ status: inboxStatus, key: ++presetSeq.current });
@@ -364,8 +451,26 @@ export default function Learning({ projectId, projects, providers, onOpenGoal, o
   const scopeWords = scopeSel === 'all' ? 'Everything'
     : scopeSel === 'personal' ? 'Personal only'
     : `${project?.name ?? 'project'} + personal`;
+
+  const retry = useCallback(() => { setRefreshTick((t) => t + 1); void load(); }, [load]);
+  // Every list pane below receives this instead of a bare array, so no pane can
+  // print "there has never been one" for a read that is still in flight or that
+  // failed. `observed` is false until a read has actually returned.
+  const read = useMemo<Read>(() => ({
+    phase: readErr ? 'error' : observedAt === null ? 'loading' : 'ok',
+    error: readErr, observed: observedAt !== null, at: observedAt, retry,
+  }), [readErr, observedAt, retry]);
+
   // Candidate, knowledge, diagnostic, and experiment lists are all-time reads.
-  const emptyFrame = `scope: ${scopeWords} · all time`;
+  // A failed refresh does not erase the last observation — it dates it.
+  const emptyFrame = framed(`scope: ${scopeWords} · all time`, read);
+
+  // Experiments has never had a row in this build; the tab appears only once one
+  // exists, and a tab that disappears under the reader hands them back Overview.
+  const tabs = experiments.length > 0 ? [...TABS, EXPERIMENTS_TAB] : TABS;
+  useEffect(() => {
+    if (tab === 'experiments' && experiments.length === 0) setTab('overview');
+  }, [tab, experiments.length]);
 
   return (
     <div className="learning-view">
@@ -379,6 +484,10 @@ export default function Learning({ projectId, projects, providers, onOpenGoal, o
             {scopeSel === 'personal' && 'Showing personal knowledge only — items that apply in every project.'}
             {scopeSel === 'project' && <>Showing <strong>{project?.name ?? 'this project'}</strong> plus personal items. Signals and briefings count this project only.</>}
           </p>
+          <Define term="Scope">
+            is where an artifact applies — personal (everywhere), one project, or one path inside a
+            project. It decides what retrieval may inject, and it frames every count on this page.
+          </Define>
         </div>
         <div className="learning-head-actions">
           <label className="learning-scope">
@@ -404,40 +513,37 @@ export default function Learning({ projectId, projects, providers, onOpenGoal, o
       </div>
 
       <PipelineSpine overview={overview} pipeline={pipeline} pipelineBusy={pipelineBusy}
-                     windowDays={windowDays} onNavigate={navigate} />
+                     read={read} windowDays={windowDays} onNavigate={navigate} />
 
-      {/* The hint sits beside the tablist rather than inside it: it is the only
-          gloss on eight terse labels, so it is read out like any other text —
+      {/* The hint sits beside the tablist rather than inside it: it is the
+          question the open tab answers, so it is read out like any other text —
           and a tablist may not hold a focusable child that is not a tab. */}
       <div className="learning-tabs">
         <div className="learning-tablist" role="tablist" aria-label="Learning workspace"
              onKeyDown={(e) => {
                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
                e.preventDefault();
-               const i = TABS.findIndex((t) => t.id === tab);
+               const i = tabs.findIndex((t) => t.id === tab);
                const next = e.key === 'Home' ? 0
-                 : e.key === 'End' ? TABS.length - 1
-                 : e.key === 'ArrowLeft' ? (i - 1 + TABS.length) % TABS.length
-                 : (i + 1) % TABS.length;
-               setTab(TABS[next].id);
-               document.getElementById(`learning-tab-${TABS[next].id}`)?.focus();
+                 : e.key === 'End' ? tabs.length - 1
+                 : e.key === 'ArrowLeft' ? (i - 1 + tabs.length) % tabs.length
+                 : (i + 1) % tabs.length;
+               setTab(tabs[next].id);
+               document.getElementById(`learning-tab-${tabs[next].id}`)?.focus();
              }}>
-          {TABS.map((item) => (
-            <Fragment key={item.id}>
-              {item.toolsStart && <span className="tab-gap" aria-hidden="true" />}
-              <button role="tab" aria-selected={tab === item.id}
-                      id={`learning-tab-${item.id}`} aria-controls={`learning-panel-${item.id}`}
-                      tabIndex={tab === item.id ? 0 : -1} title={item.hint}
-                      className={tab === item.id ? 'on' : ''} onClick={() => setTab(item.id)}>
-                <span>{item.label}</span>
-                {item.id === 'inbox' && overview.pending > 0 && <b>{overview.pending}</b>}
-              </button>
-            </Fragment>
+          {tabs.map((item) => (
+            <button key={item.id} role="tab" aria-selected={tab === item.id}
+                    id={`learning-tab-${item.id}`} aria-controls={`learning-panel-${item.id}`}
+                    tabIndex={tab === item.id ? 0 : -1} title={item.hint}
+                    className={tab === item.id ? 'on' : ''} onClick={() => setTab(item.id)}>
+              <span>{item.label}</span>
+              {item.id === 'inbox' && overview.pending > 0 && <b>{overview.pending}</b>}
+            </button>
           ))}
         </div>
         <p className="tab-hint">
-          {TABS.find((t) => t.id === tab)?.hint} ·{' '}
-          <button className="learning-link" onClick={openGlossary}>glossary</button>
+          {tabs.find((t) => t.id === tab)?.hint} ·{' '}
+          <button className="learning-link" onClick={() => setGlossaryOpen(true)}>glossary</button>
         </p>
       </div>
 
@@ -448,51 +554,48 @@ export default function Learning({ projectId, projects, providers, onOpenGoal, o
           scroll it at all; without it the arrow keys had nothing to act on. */}
       <div className="learning-scroll" tabIndex={0} role="tabpanel" id={`learning-panel-${tab}`} aria-labelledby={`learning-tab-${tab}`}>
         {tab === 'overview' && (
-          <Overview overview={overview} settings={settings} pipeline={pipeline}
+          <Overview overview={overview} settings={settings} pipeline={pipeline} read={read}
                     pipelineErr={pipelineErr} pipelineBusy={pipelineBusy}
                     windowDays={windowDays} onWindow={setWindowDays}
                     candidates={candidates} knowledge={knowledge}
                     scopeSel={scopeSel} scopeParam={scopeParam} busy={busy} act={act}
-                    glossaryNonce={glossaryNonce}
-                    onNavigate={navigate} onRetry={() => setRefreshTick((t) => t + 1)} />
+                    onNavigate={navigate} onRetry={retry} />
         )}
-        {tab === 'scout' && <ImprovementScout projects={projects} onOpenGoal={onOpenGoal} />}
         {tab === 'inbox' && (
           <Inbox candidates={candidates} signals={signals} providers={availableProviders}
-                 busy={busy} act={act} initialStatus={inboxPreset}
+                 busy={busy} act={act} initialStatus={inboxPreset} read={read}
                  scoped={scopeSel !== 'all'} onShowAll={() => setScope('all')} emptyFrame={emptyFrame} />
         )}
         {tab === 'knowledge' && (
-          <Knowledge items={knowledge} signals={signals}
+          <Knowledge items={knowledge} signals={signals} providers={availableProviders}
                      project={scopeSel === 'personal' ? null : project}
-                     scopeParam={scopeParam} emptyFrame={emptyFrame}
-                     busy={busy} act={act} refreshTick={refreshTick} />
+                     scopeParam={scopeParam} emptyFrame={emptyFrame} settings={settings}
+                     read={read} busy={busy} act={act} refreshTick={refreshTick}
+                     onNavigate={navigate} />
         )}
-        {tab === 'skills' && (
-          <SkillForge project={project} providers={availableProviders} busy={busy} act={act} />
-        )}
-        {tab === 'optimize' && (
-          <Optimize diagnostics={diagnostics} settings={settings} providers={availableProviders}
-                    scopeParam={scopeParam} emptyFrame={emptyFrame} busy={busy} act={act} />
+        {tab === 'context' && (
+          <ContextTab diagnostics={diagnostics} settings={settings} providers={availableProviders}
+                      scopeParam={scopeParam} emptyFrame={emptyFrame} read={read}
+                      busy={busy} act={act} onNavigate={navigate} />
         )}
         {tab === 'experiments' && (
           <Experiments experiments={experiments} candidates={candidates} project={project} providers={availableProviders}
-                       busy={busy} act={act} emptyFrame={emptyFrame} />
-        )}
-        {tab === 'providers' && (
-          <Providers packs={packs} providers={providers} busy={busy} act={act} />
+                       busy={busy} act={act} read={read} emptyFrame={emptyFrame} />
         )}
       </div>
+      {glossaryOpen && <GlossaryModal onClose={() => setGlossaryOpen(false)} />}
     </div>
   );
 }
 
 /* ── The five-station spine · shared chrome on every tab ───────────────── */
 
-function PipelineSpine({ overview, pipeline, pipelineBusy, windowDays, onNavigate }: {
+function PipelineSpine({ overview, pipeline, pipelineBusy, read, windowDays, onNavigate }: {
   overview: LearningOverview;
   pipeline: LearningPipelineStats | null;
   pipelineBusy: boolean;
+  /** The store-wide read behind `overview`; the windowed one is `pipelineBusy`. */
+  read: Read;
   windowDays: number;
   onNavigate: (tab: LearningTab, inboxStatus?: string) => void;
 }) {
@@ -500,18 +603,24 @@ function PipelineSpine({ overview, pipeline, pipelineBusy, windowDays, onNavigat
   // failed read keep loading and error visibly distinct from a real zero.
   const flow = (n: number | undefined) =>
     n !== undefined ? n.toLocaleString() : pipelineBusy ? '…' : '—';
-  const stations: { key: string; label: string; value: string; sub: string; warn?: string; go: () => void; title: string }[] = [
+  // The two "now" stations come from the store-wide read, which has its own
+  // outcome — and its pre-read default is a zero that was never observed.
+  const now = (n: number) => read.observed ? n.toLocaleString() : read.phase === 'error' ? '—' : '…';
+  const stations: { key: string; label: string; value: string; sub: string; warn?: string; note?: string; go: () => void; title: string }[] = [
     { key: 'observed', label: 'Observed', value: flow(pipeline?.signals), sub: `signals · last ${windowDays}d`,
       go: () => onNavigate('overview'), title: 'Open the Overview — the day chart breaks these down' },
-    { key: 'proposed', label: 'Proposed', value: overview.pending.toLocaleString(), sub: 'await your decision · now',
+    { key: 'proposed', label: 'Proposed', value: now(overview.pending), sub: 'await your decision · now',
       go: () => onNavigate('inbox', 'open'), title: 'Open the Inbox filtered to proposals needing a decision' },
-    { key: 'approved', label: 'Approved', value: overview.activeKnowledge.toLocaleString(), sub: 'active items · now',
-      warn: overview.quarantined > 0 ? `⚠ ${overview.quarantined} quarantined` : undefined,
+    { key: 'approved', label: 'Approved', value: now(overview.activeKnowledge), sub: 'active items · now',
+      warn: read.observed && overview.quarantined > 0 ? `⚠ ${overview.quarantined} quarantined` : undefined,
       go: () => onNavigate('knowledge'), title: 'Open Knowledge' },
     { key: 'projected', label: 'Projected', value: flow(pipeline?.projectionsApplied), sub: `files written · last ${windowDays}d`,
+      // A zero here is not a fault: a briefing is injected at launch and needs
+      // no file write, so a store can brief every session and project nothing.
+      note: pipeline && pipeline.projectionsApplied === 0 ? 'optional step — a briefing needs no file write' : undefined,
       go: () => onNavigate('knowledge'), title: 'Open Knowledge — projections are listed on each item' },
     { key: 'briefed', label: 'Briefed', value: flow(pipeline?.briefingsServed), sub: `served · last ${windowDays}d`,
-      go: () => onNavigate('optimize'), title: 'Open Optimize — the briefing inspector previews one' },
+      go: () => onNavigate('context'), title: 'Open Context — the briefing inspector previews one' },
   ];
   return (
     <div className="pipeline-spine" role="group" aria-label="Learning pipeline">
@@ -523,6 +632,7 @@ function PipelineSpine({ overview, pipeline, pipelineBusy, windowDays, onNavigat
             <b className={s.value === '0' ? 'zero' : ''}>{s.value}</b>
             <small>{s.sub}</small>
             {s.warn && <small className="spine-warn">{s.warn}</small>}
+            {s.note && <small className="spine-note">{s.note}</small>}
           </button>
         </Fragment>
       ))}
@@ -532,10 +642,12 @@ function PipelineSpine({ overview, pipeline, pipelineBusy, windowDays, onNavigat
 
 /* ── Overview · the legibility surface ─────────────────────────────────── */
 
-function Overview({ overview, settings, pipeline, pipelineErr, pipelineBusy, windowDays, onWindow, candidates, knowledge, scopeSel, scopeParam, busy, act, glossaryNonce, onNavigate, onRetry }: {
+function Overview({ overview, settings, pipeline, read, pipelineErr, pipelineBusy, windowDays, onWindow, candidates, knowledge, scopeSel, scopeParam, busy, act, onNavigate, onRetry }: {
   overview: LearningOverview;
   settings: LearningSettings;
   pipeline: LearningPipelineStats | null;
+  /** The store-wide read; the windowed pipeline read is reported separately. */
+  read: Read;
   pipelineErr: string | null;
   pipelineBusy: boolean;
   windowDays: number;
@@ -546,13 +658,16 @@ function Overview({ overview, settings, pipeline, pipelineErr, pipelineBusy, win
   scopeParam: string | null | undefined;
   busy: string | null;
   act: Act;
-  /** Bumped by the tab-strip link; opens and scrolls to the glossary. */
-  glossaryNonce: number;
   onNavigate: (tab: LearningTab, inboxStatus?: string) => void;
   onRetry: () => void;
 }) {
-  // Loading is not empty; a fatal read failure is not either.
-  if (!pipeline && pipelineBusy) {
+  // Loading is not empty; a fatal read failure is not either. This page
+  // summarises two reads — the windowed pipeline and the store-wide counts —
+  // and every card below would otherwise print the pre-read zeros as observed.
+  if (!read.observed && read.phase === 'error') {
+    return <div className="learning-stack"><ReadFailed what="the learning ledger" read={read} /></div>;
+  }
+  if (!read.observed || (!pipeline && pipelineBusy)) {
     return (
       <div className="learning-stack">
         <div className="learning-empty">
@@ -619,11 +734,10 @@ function Overview({ overview, settings, pipeline, pipelineErr, pipelineBusy, win
           </ul>
           <p className="faint">Repeated observations across independent tasks are consolidated into proposals every 5 minutes while Wanigan is open.</p>
         </section>
-        <MechanismDisclosure pipeline={pipeline} windowDays={windowDays} onNavigate={onNavigate} />
+        <HowItWorks pipeline={pipeline} windowDays={windowDays} onNavigate={onNavigate} />
         <AutoPromotion pipeline={pipeline} windowDays={windowDays} onNavigate={onNavigate} />
         <NeedsAttention overview={overview} settings={settings} candidates={candidates} onNavigate={onNavigate} />
         <PrivacyCard />
-        <Glossary openNonce={glossaryNonce} />
       </div>
     );
   }
@@ -638,7 +752,13 @@ function Overview({ overview, settings, pipeline, pipelineErr, pipelineBusy, win
         </p>
       )}
 
-      <MechanismDisclosure pipeline={pipeline} windowDays={windowDays} onNavigate={onNavigate} />
+      <HowItWorks pipeline={pipeline} windowDays={windowDays} onNavigate={onNavigate} />
+
+      <Define term="Signal">
+        is one bounded, credential-redacted record of something a session did — a tool result, a
+        gate outcome, a turn ending. Shell command text is discarded: a signal is a summary plus
+        structured detail, never a transcript. Every bar below counts stored signal rows.
+      </Define>
 
       <SignalsPerDay pipeline={pipeline} windowDays={windowDays}
                      onWiden={windowDays < 90 ? () => onWindow(90) : null} />
@@ -655,75 +775,96 @@ function Overview({ overview, settings, pipeline, pipelineErr, pipelineBusy, win
       <NeedsAttention overview={overview} settings={settings} candidates={candidates} onNavigate={onNavigate} />
 
       <PrivacyCard />
-
-      <Glossary openNonce={glossaryNonce} />
     </div>
   );
 }
 
-/** The mechanism prose plus the detailed sub-stages the spine displaced — one
- * collapsed line normally, expanded by default only on a never-recorded store. */
-function MechanismDisclosure({ pipeline, windowDays, onNavigate }: {
+/** The pipeline, stated as the four tabs themselves — so the navigation is the
+ * explanation. It replaced a collapsed wall of prose whose disclosure was
+ * inverted: it defaulted open on an empty store and closed once there was data,
+ * hiding the explanation from the only reader who needed it. The observed
+ * sub-stage counts stay, because each one is the row count of the tab beside
+ * it. Each is a count over stored rows for the window, never a score. */
+function HowItWorks({ pipeline, windowDays, onNavigate }: {
   pipeline: LearningPipelineStats;
   windowDays: number;
   onNavigate: (tab: LearningTab, inboxStatus?: string) => void;
 }) {
-  const [open, setOpen] = useState<boolean>(() => {
-    try {
-      const stored = localStorage.getItem(MECHANISM_KEY);
-      if (stored === 'open') return true;
-      if (stored === 'closed') return false;
-    } catch { /* storage unavailable */ }
-    return pipeline.signalsAllTime === 0;
-  });
-  const toggle = () => {
-    const next = !open;
-    setOpen(next);
-    try { localStorage.setItem(MECHANISM_KEY, next ? 'open' : 'closed'); } catch { /* storage unavailable */ }
-  };
   const p = pipeline;
   const toReview = Math.max(0, p.candidatesCreated - p.autoPromoted);
+  const w = `last ${windowDays}d`;
+  const steps: {
+    tab: LearningTab; label: string; body: ReactNode;
+    stats: { n: number; text: string; go: () => void; title: string }[];
+  }[] = [
+    {
+      tab: 'overview', label: 'Overview',
+      body: <>A session records bounded, credential-redacted <strong>signals</strong> — a tool result, a
+        gate outcome, a turn ending. Shell command text is discarded.</>,
+      stats: [
+        { n: p.signals, text: `signals recorded · ${w}`, go: () => onNavigate('overview'), title: 'The day chart below breaks these down' },
+        { n: p.eligibleSignals, text: `eligible for consolidation · ${w}`, go: () => onNavigate('inbox'), title: 'Open the Inbox — recent signals are listed at its foot' },
+      ],
+    },
+    {
+      tab: 'inbox', label: 'Inbox',
+      body: <>A deterministic pass every 5 minutes groups repeats — at least 2 observations across 2
+        independent sessions or tasks — into <strong>candidates</strong>. A candidate changes nothing
+        until you decide on it. One narrow lane can auto-apply reversible personal memory, and nothing
+        derived from a session qualifies for it.</>,
+      stats: [
+        { n: p.candidatesCreated, text: `candidates created · ${w}`, go: () => onNavigate('inbox', 'all'), title: 'Open the Inbox filtered to every proposal' },
+        { n: toReview, text: `awaiting a decision · ${w}`, go: () => onNavigate('inbox', 'open'), title: 'Open the Inbox filtered to proposals needing a decision' },
+        { n: p.reviewed, text: `decided · ${w}`, go: () => onNavigate('inbox', 'decided'), title: 'Open the Inbox filtered to decided proposals' },
+        { n: p.autoPromoted, text: `auto-applied · ${w}`, go: () => onNavigate('knowledge'), title: 'Open Knowledge — the auto-apply lane lands there' },
+      ],
+    },
+    {
+      tab: 'knowledge', label: 'Knowledge',
+      body: <>An approved candidate becomes a versioned <strong>knowledge item</strong> carrying its
+        evidence. Its text is what retrieval may inject. Writing an item into a provider file is a
+        separate, reversible step, and an optional one.</>,
+      stats: [
+        { n: p.itemsPromoted, text: `items created · ${w}`, go: () => onNavigate('knowledge'), title: 'Open Knowledge' },
+        { n: p.projectionsApplied, text: `projections written · ${w} · optional`, go: () => onNavigate('knowledge'), title: 'Open Knowledge — projections are listed on each item' },
+      ],
+    },
+    {
+      tab: 'context', label: 'Context',
+      body: <>At launch, retrieval assembles a token-bounded, cited <strong>briefing</strong> from the
+        items that ranked for that task and hands it to the CLI. Nothing is stored inside the agent.</>,
+      stats: [
+        { n: p.briefingsServed, text: `briefings served · ${w}`, go: () => onNavigate('context'), title: 'Open Context — the briefing inspector previews one' },
+      ],
+    },
+  ];
   return (
     <section className="card learning-card">
-      <button className="drawer-toggle" aria-expanded={open} onClick={toggle}>
-        {open ? '▾' : '▸'} How signals become briefings: events → bounded signals → 5-min consolidation → your review → versioned knowledge → reversible projections → cited briefings
-      </button>
-      {open && (
-        <>
-          <p>
-            Session events become bounded, credential-redacted signals — shell command text is discarded.
-            A deterministic pass every 5 minutes groups repeats (at least 2 observations across 2 independent
-            sessions or tasks) into candidates for the review Inbox; one narrow lane can auto-apply reversible
-            personal memory, and nothing derived from a session qualifies for it. Approved
-            candidates become versioned knowledge items, projected reversibly into provider files, and
-            served back as token-bounded, cited briefings at session launch.
-          </p>
-          <div className="mech-stages">
-            <button className="pipeline-substage" onClick={() => onNavigate('inbox')} title="Open the Inbox — recent signals are listed at its foot">
-              <b>{p.eligibleSignals.toLocaleString()}</b><span>eligible for consolidation · last {windowDays}d</span>
+      <div className="learning-card-head">
+        <div><span className="label">How this works</span><h2>The four tabs are the four stages</h2></div>
+      </div>
+      <ol className="how-steps">
+        {steps.map((step, i) => (
+          <li key={step.tab}>
+            <button className="how-step-tab" onClick={() => onNavigate(step.tab)}
+                    title={`Open the ${step.label} tab`}>
+              <span aria-hidden="true">{i + 1}</span> {step.label}
             </button>
-            <button className="pipeline-substage" onClick={() => onNavigate('inbox', 'all')} title="Open the Inbox filtered to every proposal">
-              <b>{p.candidatesCreated.toLocaleString()}</b><span>candidates created · last {windowDays}d</span>
-            </button>
-            <button className="pipeline-substage" onClick={() => onNavigate('knowledge')} title="Open Knowledge — the auto-apply lane lands there">
-              <b>{p.autoPromoted.toLocaleString()}</b><span><span aria-hidden="true">✓</span> auto-applied · last {windowDays}d</span>
-            </button>
-            <button className="pipeline-substage" onClick={() => onNavigate('inbox', 'open')} title="Open the Inbox filtered to proposals needing a decision">
-              <b>{toReview.toLocaleString()}</b><span>to review · last {windowDays}d</span>
-            </button>
-            <button className="pipeline-substage" onClick={() => onNavigate('inbox', 'decided')} title="Open the Inbox filtered to decided proposals">
-              <b>{p.reviewed.toLocaleString()}</b><span>reviewed · last {windowDays}d</span>
-            </button>
-            <button className="pipeline-substage" onClick={() => onNavigate('knowledge')} title="Open Knowledge">
-              <b>{p.itemsPromoted.toLocaleString()}</b><span>knowledge items created · last {windowDays}d</span>
-            </button>
-          </div>
-          <p className="faint">
-            Every figure is a count over stored rows for this window. Signals and candidates live in the
-            Inbox tab; items and projections in Knowledge; briefings in Optimize.
-          </p>
-        </>
-      )}
+            <p>{step.body}</p>
+            <div className="mech-stages">
+              {step.stats.map((stat) => (
+                <button className="pipeline-substage" key={stat.text} onClick={stat.go} title={stat.title}>
+                  <b>{stat.n.toLocaleString()}</b><span>{stat.text}</span>
+                </button>
+              ))}
+            </div>
+          </li>
+        ))}
+      </ol>
+      <p className="faint">
+        Every figure is a count over stored rows for this window and this scope. A zero under
+        “projections written” is not a fault: a briefing is delivered at launch and needs no file write.
+      </p>
     </section>
   );
 }
@@ -857,6 +998,14 @@ function SignalsPerDay({ pipeline, windowDays, onWiden }: {
   );
 }
 
+/** The stored trigger is an enum; printing “(timer)” hands a newcomer a raw
+ * column value and asks them to guess. Unknown values are shown verbatim rather
+ * than guessed at. */
+const triggerWords = (trigger: ConsolidationRun['trigger']): string =>
+  trigger === 'timer' ? 'started by the 5-minute timer'
+    : trigger === 'manual' ? 'started by “Consolidate now”'
+    : `trigger recorded as “${trigger}”`;
+
 function Heartbeat({ runs, settings, scopeParam, busy, act }: {
   runs: ConsolidationRun[];
   settings: LearningSettings;
@@ -889,7 +1038,7 @@ function Heartbeat({ runs, settings, scopeParam, busy, act }: {
       {latest ? (
         <>
           <p>
-            Consolidation last ran <strong>{ago(latest.at)}</strong> ({latest.trigger}) ·
+            Consolidation last ran <strong>{ago(latest.at)}</strong>, {triggerWords(latest.trigger)} ·
             consumed <strong>{latest.processed.toLocaleString()}</strong> signal{pl(latest.processed)} into candidates ·
             produced <strong>{latest.candidates.toLocaleString()}</strong> candidate{pl(latest.candidates)} ·
             auto-applied <strong>{latest.autoApplied.toLocaleString()}</strong>.
@@ -899,7 +1048,7 @@ function Heartbeat({ runs, settings, scopeParam, busy, act }: {
             {strip.map((r) => (
               <span key={r.id} className={r.candidates > 0 ? 'hit' : ''}
                     style={{ height: `${4 + Math.round((r.candidates / maxC) * 18)}px` }}
-                    title={`${when(r.at)} · ${r.trigger} · consumed ${r.processed} · ${r.candidates} candidate${pl(r.candidates)} · auto-applied ${r.autoApplied} · ${r.durationMs}ms`} />
+                    title={`${when(r.at)} · ${triggerWords(r.trigger)} · consumed ${r.processed} · ${r.candidates} candidate${pl(r.candidates)} · auto-applied ${r.autoApplied} · ${r.durationMs}ms`} />
             ))}
           </div>
           {consolidateButton}
@@ -936,6 +1085,11 @@ function RetrievalCard({ settings, pipeline, windowDays, candidates, onNavigate 
           {settings.enabled ? '✓ active' : '○ paused'}
         </span>
       </div>
+      <Define term="Briefing">
+        is the token-bounded capsule retrieval assembles at session launch: the knowledge items that
+        ranked for that task, with their citations, passed to the CLI as extra instructions. It is
+        built per launch and stored nowhere inside the agent. Knowledge shows its literal text.
+      </Define>
       <p>
         <strong>{pipeline.briefingsServed.toLocaleString()} briefing{pl(pipeline.briefingsServed)} served</strong>{' '}
         in the last {windowDays} days — counted from stored briefing records.
@@ -955,7 +1109,7 @@ function RetrievalCard({ settings, pipeline, windowDays, candidates, onNavigate 
           {estTokens(pendingEst)} across {pending.length} pending proposal{pl(pending.length)} (bytes÷4 heuristic) — decided in the Inbox.
         </p>
       )}
-      <button className="btn" onClick={() => onNavigate('optimize')}>Inspect a briefing in Optimize</button>
+      <button className="btn" onClick={() => onNavigate('context')}>Inspect a briefing in Context</button>
     </article>
   );
 }
@@ -985,10 +1139,10 @@ function NeedsAttention({ overview, settings, candidates, onNavigate }: {
           text: 'Nothing waits for a decision.', tab: 'inbox', action: 'Open Inbox' },
     settings.enabled
       ? { key: 'e', ok: true, word: 'learning on',
-          text: 'Signals are recorded and briefings are served at session launch.', tab: 'optimize', action: 'Open Optimize' }
+          text: 'Signals are recorded and briefings are served at session launch.', tab: 'context', action: 'Open Context' }
       : { key: 'e', ok: false, word: 'learning paused',
           text: 'No new signals are recorded and no briefings are served while learning is off.',
-          tab: 'optimize', action: 'Open Optimize' },
+          tab: 'context', action: 'Open Context' },
   ];
   return (
     <section className="card learning-card">
@@ -1044,44 +1198,40 @@ function AutoPromotion({ pipeline, windowDays, onNavigate }: {
   );
 }
 
-/** Linked from the tab strip. The nonce opens it and scrolls it into view, so a
- * term can be looked up from any tab without hunting for the section. */
-function Glossary({ openNonce }: { openNonce: number }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLElement | null>(null);
+/** Opened from the tab strip, over whatever tab is in view. It used to jump to
+ * Overview and scroll, which cost the reader their place to look up one word —
+ * the opposite of a reference. The nouns on the decision path are also defined
+ * inline where they are first used; this is the fallback, not the teaching. */
+function GlossaryModal({ onClose }: { onClose: () => void }) {
   useEffect(() => {
-    // Consume-once across remounts, the same way the Context deep link is:
-    // returning to Overview later must not replay a jump already made.
-    if (openNonce === 0 || openNonce === consumedGlossaryNonce) return;
-    consumedGlossaryNonce = openNonce;
-    setOpen(true);
-    // Scroll after the expanded list has laid out; scrolling in this tick lands
-    // on where the collapsed header was.
-    const frame = requestAnimationFrame(() => ref.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
-    return () => cancelAnimationFrame(frame);
-  }, [openNonce]);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
   return (
-    <section className="card learning-card" id="learning-glossary" ref={ref}>
-      <button className="drawer-toggle" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-        {open ? '▾' : '▸'} Glossary — every word this workspace uses, defined once
-      </button>
-      {open && (
-        <>
-          <dl className="glossary-list">
-            {GLOSSARY.map((entry) => (
-              <div key={entry.term}>
-                <dt>{entry.term}</dt>
-                <dd>{entry.body}</dd>
-              </div>
-            ))}
-          </dl>
-          <p className="faint">
-            These are the terms the tabs and cards above use. Nothing here is a setting — it is what
-            the words mean in this app.
-          </p>
-        </>
-      )}
-    </section>
+    <div className="learning-modal-backdrop" onMouseDown={onClose}>
+      <section className="learning-modal card" role="dialog" aria-modal="true" aria-label="Glossary"
+               onMouseDown={(e) => e.stopPropagation()}>
+        <div className="learning-card-head">
+          <div>
+            <span className="label">Reference · your tab is unchanged</span>
+            <h2>Glossary</h2>
+          </div>
+          <button className="btn" autoFocus onClick={onClose}>Close</button>
+        </div>
+        <dl className="glossary-list">
+          {GLOSSARY.map((entry) => (
+            <div key={entry.term}>
+              <dt>{entry.term}</dt>
+              <dd>{entry.body}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="faint">
+          Nothing here is a setting — it is what these words mean in this app.
+        </p>
+      </section>
+    </div>
   );
 }
 
@@ -1105,128 +1255,6 @@ function PrivacyCard() {
         <li><span>✓</span> Codex-owned generated memories remain read-only</li>
       </ul>
     </article>
-  );
-}
-
-/* ── Providers · packs & harnesses (moved from Overview, unchanged) ────── */
-
-function Providers({ packs, providers, busy, act }: {
-  packs: ProviderPackInfo[];
-  providers: ProviderInfo[];
-  busy: string | null;
-  act: Act;
-}) {
-  return (
-    <div className="learning-stack">
-      <section className="card learning-card">
-        <div className="learning-card-head">
-          <div><span className="label">Provider architecture</span><h2>Harnesses + model backends</h2></div>
-          <button className="btn" disabled={busy !== null}
-                  onClick={() => void act('packs-refresh', () => window.wanigan.providerPacks.refresh(), 'Provider manifests re-read from disk.')}>
-            Refresh packs
-          </button>
-        </div>
-        <p>Profiles combine a CLI harness with a model backend. Packs can be added or removed without changing the learning schema; live sessions keep their frozen launch snapshot.</p>
-        <div className="provider-pack-grid">
-          {packs.length === 0 && <Empty title="No provider packs were found" body="Built-in Claude, Codex, and GLM profiles should appear after a refresh." />}
-          {packs.map((pack) => {
-            const state = String(pack.status ?? pack.state ?? (pack.enabled ? 'enabled' : 'disabled'));
-            return (
-              <article className="provider-pack" key={pack.id}>
-                <div><strong>{pack.label ?? pack.name ?? pack.id}</strong><span className="mono">{pack.id}@{pack.version}</span></div>
-                <span className={`learning-status ${pack.enabled ? 'good' : 'muted'}`}>{state}</span>
-                <p>{pack.description ?? 'Manifest-defined provider profiles.'}</p>
-                <div className="provider-pack-meta">
-                  <span>{pack.source === 'builtin' || pack.builtIn ? 'Built in' : pack.recoverable ? 'Recoverable' : 'Installed'}</span>
-                  <span>{pack.adapterSha256 ? (pack.trustedAdapterSha256 === pack.adapterSha256 ? 'adapter digest trusted' : 'adapter untrusted') : 'manifest only'}</span>
-                </div>
-                {pack.manifestSha256 && state === 'needs-trust' && <code className="pack-digest" title={String(pack.manifestSha256)}>manifest {String(pack.manifestSha256).slice(0, 16)}…</code>}
-                {pack.adapterSha256 && pack.trustedAdapterSha256 !== pack.adapterSha256 && state === 'needs-trust' ? (
-                  <button className="btn" disabled={busy !== null} onClick={() => void act(`pack-${pack.id}`, async () => {
-                    const inspected = await window.wanigan.providerPacks.inspectAdapter(pack.id);
-                    if (!inspected.sha256 || !inspected.path) throw new Error('This adapter could not be inspected.');
-                    const ok = window.confirm(`Trust this exact provider adapter digest?\n\n${inspected.path}\nArguments: ${inspected.args.join(' ') || '(none)'}\nSHA-256 ${inspected.sha256}\n\nAdapter v1 runs only a bounded capability probe in a separate process. It cannot select the session executable. This is not an OS sandbox.`);
-                    if (!ok) throw new Error('Adapter trust was not changed.');
-                    await window.wanigan.providerPacks.trustAdapter(pack.id, inspected.sha256);
-                  }, 'The exact adapter digest is trusted. Enable remains a separate action.')}>Inspect & trust adapter</button>
-                ) : state === 'removed' ? (
-                  <button className="btn" disabled={busy !== null || pack.recoverable === false}
-                          onClick={() => void act(`pack-${pack.id}`, () => window.wanigan.providerPacks.restore(pack.id), 'Provider pack restored disabled; review it before enabling.')}>Restore</button>
-                ) : (
-                  <button className="btn" disabled={busy !== null || state === 'pending-removal' || state === 'invalid'}
-                          onClick={() => void act(`pack-${pack.id}`, async () => {
-                            if (!pack.enabled && state === 'needs-trust') {
-                              const inspected = await window.wanigan.providerPacks.inspectManifest(pack.id);
-                              const commands = inspected.commands.map((command) => {
-                                const launch = [command.bin, ...command.baseArgs].join(' ');
-                                const probes = `\n  automatic version probe: ${command.bin} ${command.versionArgs.join(' ')}` +
-                                  `\n  automatic help probe: ${command.bin} ${command.helpArgs.join(' ')}`;
-                                const fields = command.launchFields.length
-                                  ? `\n  launch-field argv: ${command.launchFields.map((field) => {
-                                      const templates = [
-                                        field.argv.length ? `value=[${field.argv.join(', ')}]` : '',
-                                        field.trueArgv.length ? `true=[${field.trueArgv.join(', ')}]` : '',
-                                        field.falseArgv.length ? `false=[${field.falseArgv.join(', ')}]` : '',
-                                      ].filter(Boolean).join(' ');
-                                      return `${field.label} (${field.id}/${field.kind}) ${templates || '(no argv)'}`;
-                                    }).join('; ')}` : '';
-                                const resume = command.resume
-                                  ? `\n  resume argv: conversation=[${command.resume.conversationArgs.join(', ')}]; continue=[${command.resume.continueArgs.join(', ')}]`
-                                  : '\n  resume argv: (none)';
-                                const env = command.environment.length
-                                  ? `\n  environment: ${command.environment.map((entry) => {
-                                      if (entry.source === 'literal') {
-                                        return `${entry.name} ← literal ${JSON.stringify(entry.value ?? '')}`;
-                                      }
-                                      if (entry.source === 'process') {
-                                        return `${entry.name} ← process ${entry.processName ?? '(missing)'}` +
-                                          (entry.fallback !== null ? ` fallback ${JSON.stringify(entry.fallback)}` : ' (no fallback)');
-                                      }
-                                      return `${entry.name} ← stored credential ${entry.credentialId ?? '(profile default)'} (value redacted)`;
-                                    }).join('; ')}` : '';
-                                const fallbacks = command.fallbackPaths.length
-                                  ? `\n  bundled fallbacks: ${command.fallbackPaths.join(', ')}` : '';
-                                const extensions = command.editorExtensions.length
-                                  ? `\n  editor lookup: ${command.editorExtensions.map((entry) => `${entry.prefix} → ${entry.executablePaths.join(', ')}`).join('; ')}` : '';
-                                const backend = command.declaredBackendId === command.backendId
-                                  ? command.backendId
-                                  : `${command.backendId} (declared ${command.declaredBackendId}; isolated by pack)`;
-                                return `${command.profileLabel} (${command.harness}/${command.headless} → ${backend})` +
-                                  `\n  launch: ${launch}${probes}${fields}${resume}${fallbacks}${extensions}${env}`;
-                              }).join('\n\n');
-                              const adapter = inspected.adapter
-                                ? `\nAdapter probe: ${inspected.adapter.executable} ${inspected.adapter.args.join(' ')}\nAdapter SHA-256: ${inspected.adapter.sha256 ?? 'unavailable'}\n`
-                                : '';
-                              const ok = window.confirm(
-                                `Trust this exact provider manifest and enable it?\n\n` +
-                                `${inspected.label}@${inspected.version ?? 'unknown'}\n` +
-                                `SHA-256 ${inspected.sha256 ?? 'unavailable'}\n` +
-                                `${inspected.publisher ? `Publisher: ${inspected.publisher}\n` : ''}\n` +
-                                `${commands}${adapter}\n${inspected.warning}`
-                              );
-                              if (!ok) throw new Error('Provider manifest trust was not changed.');
-                              if (!inspected.sha256) throw new Error('The provider manifest has no verifiable digest.');
-                              await window.wanigan.providerPacks.trustManifest(pack.id, inspected.sha256);
-                            }
-                            return window.wanigan.providerPacks.setEnabled(pack.id, !pack.enabled);
-                          }, `${pack.label ?? pack.id} ${pack.enabled ? 'disabled' : 'enabled'}.`)}>
-                    {pack.enabled ? 'Disable new launches' : state === 'needs-trust' ? 'Trust manifest & enable' : 'Enable'}
-                  </button>
-                )}
-                {pack.source !== 'builtin' && state !== 'removed' && (
-                  <button className="btn btn-danger" disabled={busy !== null || state === 'pending-removal'}
-                          onClick={() => {
-                            if (!window.confirm(`Remove ${pack.label ?? pack.id}? Live sessions keep their frozen profile; history, knowledge, credentials, and artifacts stay.`)) return;
-                            void act(`remove-${pack.id}`, () => window.wanigan.providerPacks.remove(pack.id), 'Provider pack disabled for new launches and moved to recoverable trash when live sessions finish.');
-                          }}>Remove pack</button>
-                )}
-              </article>
-            );
-          })}
-        </div>
-        <p className="faint">Detected launch profiles: {providers.map((p) => p.label).join(', ') || 'none'}.</p>
-      </section>
-    </div>
   );
 }
 
@@ -1288,12 +1316,15 @@ function TeachButton({ project, providers, busy, onRun }: {
 
 const DECIDED_STATUSES = ['approved', 'rejected', 'promoted', 'applied', 'superseded'];
 
-function Inbox({ candidates, signals, providers, busy, act, initialStatus, scoped, onShowAll, emptyFrame }: {
+function Inbox({ candidates, signals, providers, busy, act, initialStatus, read, scoped, onShowAll, emptyFrame }: {
   candidates: KnowledgeCandidate[];
   signals: LearningSignal[];
   providers: ProviderInfo[];
   busy: string | null;
   act: Act;
+  /** Loading, failed and observed are kept apart here: neither list below may
+   * claim a proposal has never existed for a read that never returned. */
+  read: Read;
   /** Filter carried by a funnel click; the nonce key re-applies repeat clicks. */
   initialStatus: { status: string; key: number } | null;
   /** True when the Learning scope is narrower than Everything. */
@@ -1360,38 +1391,57 @@ function Inbox({ candidates, signals, providers, busy, act, initialStatus, scope
   return (
     <div className="learning-stack">
       <section className="learning-toolbar card">
-        <div><span className="label">Learning Inbox</span><strong>{visible.length} proposal{pl(visible.length)}</strong></div>
+        {/* '…' while the read is in flight, '—' when it failed, a count only
+            once one was observed — the same treatment Overview gives a number. */}
+        <div><span className="label">Learning Inbox</span><strong>
+          {read.observed ? `${visible.length} proposal${pl(visible.length)}`
+            : read.phase === 'error' ? '— proposals, not read' : '… reading proposals'}
+        </strong></div>
         {historyLine && <small className="inbox-history-line" title="Counted from stored candidate reviews.">{historyLine}</small>}
         <label><span className="label">Status</span><select className="field" value={status} onChange={(e) => setStatus(e.target.value)}><option value="open">Needs a decision</option><option value="decided">Decided</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="snoozed">Snoozed</option><option value="rejected">Rejected</option><option value="promoted">Promoted</option><option value="applied">Applied</option><option value="all">All</option></select></label>
       </section>
-      {visible.length === 0 && (candidates.length === 0
-        ? <Empty title="No proposals have ever been created in this scope"
-                 body="Run a session — tool activity records signals, and repeats across independent tasks become proposals here. Teach Wanigan directly for an immediate proposal, or run a review gate."
-                 frame={emptyFrame}>{elsewhereHint}</Empty>
-        : status === 'open'
-          ? <Empty title="The Inbox is clear" body="Nothing needs a decision in this scope. Decided proposals stay reachable through the status filter."
-                   frame={emptyFrame}>{elsewhereHint}</Empty>
-          : <Empty title="No proposals match this filter" body="Proposals exist in other states — another status filter will show them."
-                   frame={emptyFrame} />)}
-      <div className="candidate-list">
-        {visible.map((candidate) => <CandidateCard key={candidate.id} candidate={candidate} providers={providers} busy={busy} act={act} />)}
-      </div>
-      {candidates.length === 100 && (
-        <p className="faint">Showing the newest 100 proposals — older ones are not listed here.</p>
-      )}
+      <Define term="Candidate">
+        is a proposal, and nothing more: consolidation writes one when an observation repeats across
+        independent tasks, and “Teach Wanigan” writes one from your own words. A candidate is
+        inert until you approve it. Its <b>evidence</b> is the stored signals, files and commits it
+        came from — what lets its claim be checked again later.
+      </Define>
+      <Pane read={read} what="the proposal list">
+        <>
+          {visible.length === 0 && (candidates.length === 0
+            ? <Empty title="No proposals have ever been created in this scope"
+                     body="Run a session — tool activity records signals, and repeats across independent tasks become proposals here. Teach Wanigan directly for an immediate proposal, or run a review gate."
+                     frame={emptyFrame}>{elsewhereHint}</Empty>
+            : status === 'open'
+              ? <Empty title="The Inbox is clear" body="Nothing needs a decision in this scope. Decided proposals stay reachable through the status filter."
+                       frame={emptyFrame}>{elsewhereHint}</Empty>
+              : <Empty title="No proposals match this filter" body="Proposals exist in other states — another status filter will show them."
+                       frame={emptyFrame} />)}
+          <div className="candidate-list">
+            {visible.map((candidate) => <CandidateCard key={candidate.id} candidate={candidate} providers={providers} busy={busy} act={act} />)}
+          </div>
+          {candidates.length === 100 && (
+            <p className="faint">Showing the newest 100 proposals — older ones are not listed here.</p>
+          )}
+        </>
+      </Pane>
       <section className="card learning-card">
         <div className="learning-card-head"><div><span className="label">Recent evidence stream</span><h2>Operational signals</h2></div><span className="learning-status muted">content bounded</span></div>
-        {signals.length === 0
-          ? <Empty title="No learning signals have been recorded for this scope yet"
-                   body="Tool activity in a session records them." frame={emptyFrame} />
-          : (
-            <div className="signal-list">
-              {signals.slice(0, 20).map((signal) => <div key={signal.id}><span className="mono">{signal.kind}</span><strong>{signal.summary}{signal.detail['summaryRedacted'] === true && <span className="mini-badge">redacted</span>}</strong><small>{signal.providerId ?? 'provider-neutral'} · {when(signal.createdAt)} · {signal.semanticEligible ? 'same-provider eligible' : 'operational only'}</small></div>)}
-            </div>
-          )}
-        {signals.length > 20 && (
-          <p className="faint">Showing the newest 20 of {signals.length === 80 ? 'at least 80' : signals.length} signals — older ones are not listed here.</p>
-        )}
+        <Pane read={read} what="the signal stream">
+          <>
+            {signals.length === 0
+              ? <Empty title="No learning signals have been recorded for this scope yet"
+                       body="Tool activity in a session records them." frame={emptyFrame} />
+              : (
+                <div className="signal-list">
+                  {signals.slice(0, 20).map((signal) => <div key={signal.id}><span className="mono">{signal.kind}</span><strong>{signal.summary}{signal.detail['summaryRedacted'] === true && <span className="mini-badge">redacted</span>}</strong><small>{signal.providerId ?? 'provider-neutral'} · {when(signal.createdAt)} · {signal.semanticEligible ? 'same-provider eligible' : 'operational only'}</small></div>)}
+                </div>
+              )}
+            {signals.length > 20 && (
+              <p className="faint">Showing the newest 20 of {signals.length === 80 ? 'at least 80' : signals.length} signals — older ones are not listed here.</p>
+            )}
+          </>
+        </Pane>
       </section>
     </div>
   );
@@ -1563,15 +1613,173 @@ function KMark({ status }: { status: KnowledgeStatus }) {
   return <span className="knowledge-mark" style={{ color: m.color }}><span aria-hidden="true">{m.glyph}</span> {m.word}</span>;
 }
 
-function Knowledge({ items, signals, project, scopeParam, emptyFrame, busy, act, refreshTick }: {
+/** The literal bytes that reach the next session. This is the one place the
+ * payload is visible before a launch, so the string is taken from the briefing
+ * IPC verbatim (`briefing.ts` composes `text`) rather than rebuilt here: a
+ * renderer-side copy of the format would drift from what is actually injected.
+ * Nothing here mutates anything — a preview never quarantines a stale item. */
+function PayloadPanel({ providers, scopeParam, settings, items, read, onNavigate }: {
+  providers: ProviderInfo[];
+  scopeParam: string | null | undefined;
+  settings: LearningSettings;
+  /** Only used to tell “the store is empty” from “retrieval matched nothing”. */
+  items: KnowledgeItem[];
+  read: Read;
+  onNavigate: (tab: LearningTab, inboxStatus?: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [providerId, setProviderId] = useState(providers[0]?.id ?? '');
+  const [running, setRunning] = useState(providers.length > 0);
+  const [err, setErr] = useState<string | null>(null);
+  const [result, setResult] = useState<KnowledgeBriefing | null>(null);
+  // What this preview asked for, kept beside what retrieval reported: a build
+  // that does not report `queryProvided` still must not claim a query was used.
+  const [askedWithQuery, setAskedWithQuery] = useState(false);
+  useEffect(() => {
+    if (!providerId && providers[0]) setProviderId(providers[0].id);
+  }, [providerId, providers]);
+
+  const run = useCallback(async (task: string) => {
+    if (!providerId) return;
+    setRunning(true); setErr(null); setAskedWithQuery(task.length > 0);
+    try {
+      setResult(await window.wanigan.learning.briefing({ query: task, providerId, projectId: scopeParam }));
+    } catch (e) {
+      setErr(message(e));
+    } finally {
+      setRunning(false);
+    }
+  }, [providerId, scopeParam]);
+  // A prompt-less launch is the default because it needs no input to be true,
+  // and it is what a session started from the Sessions list actually receives.
+  useEffect(() => { if (providerId) void run(''); }, [providerId, run]);
+
+  const profile = providers.find((p) => p.id === providerId) ?? null;
+  const harness = profile?.harnessId ?? null;
+  // Routed by the declared harness, never by a profile id. Session launch
+  // injects a briefing for exactly these two harnesses; anything else carries
+  // none, and saying so is better than implying an integration.
+  const delivery = harness === 'codex'
+    ? { flag: '--config developer_instructions=<JSON-encoded text>', words: 'Codex receives it as an invocation-scoped developer instruction; the value above is JSON-encoded on the command line.' }
+    : harness === 'claude-code'
+      ? { flag: '--append-system-prompt <text>', words: 'Claude Code receives it appended to the system prompt for that invocation only. No file in your repository is written.' }
+      : null;
+
+  const queryUsed = result ? readQueryProvided(result) ?? askedWithQuery : null;
+  const storeEmpty = read.observed && items.every((item) => item.status !== 'active');
+  // Four different facts, four different fixes. They are ordered by how early
+  // they cut the pipeline: an empty store, then an ineligible retrieval, then
+  // items that ranked and were held, then a retrieval that simply matched none.
+  const nothingBecause = !result || result.entries.length > 0 ? null
+    : storeEmpty
+      ? { title: 'Nothing would be injected — this scope stores no active knowledge item',
+          body: 'Retrieval had nothing to rank. Approve a proposal in the Inbox to create the first item.' }
+      : queryUsed === false
+        ? { title: 'Nothing would be injected — retrieval ran without a task query',
+            body: askedWithQuery
+              ? 'Nothing in your text survived as a search term and no path could be inferred from it, so only standing artifacts (mission-kind items) were eligible — and none is active in this scope.'
+              : 'A launch with no initial prompt has nothing to be relevant to, so only standing artifacts (mission-kind items) are eligible. Project- and path-scoped knowledge is not swept in.' }
+        : result.omitted > 0
+          ? { title: 'Nothing would be injected — everything that ranked was held back',
+              body: 'Items matched this query and none of them shipped. The reasons are listed below, and each has its own fix.' }
+          : { title: 'Nothing would be injected — retrieval ran and matched nothing',
+              body: 'No active knowledge ranked for this query in this scope. That is a recorded outcome, not an error — a broader query or a wider scope may match.' };
+
+  return (
+    <section className="card learning-card">
+      <div className="learning-card-head">
+        <div>
+          <span className="label">Injected payload · verbatim</span>
+          <h2>What lands in the next session’s prompt</h2>
+        </div>
+        {result && (
+          <span className="learning-status muted">
+            {result.entries.length} entr{result.entries.length === 1 ? 'y' : 'ies'}
+          </span>
+        )}
+      </div>
+      <p>
+        This is the same retrieval a session launch runs, against the scope selected above. The text
+        below is the exact string, not a summary of it. Which flag carries it depends on the
+        profile’s harness, stated underneath.
+      </p>
+      <div className="inspector-form">
+        <input className="field" value={query} onChange={(e) => setQuery(e.target.value)}
+               onKeyDown={(e) => { if (e.key === 'Enter') void run(query.trim()); }}
+               placeholder="The task a session would start with — or leave empty for a prompt-less launch…" />
+        <select className="field" value={providerId} onChange={(e) => setProviderId(e.target.value)} aria-label="Provider profile">
+          {providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+        </select>
+        <button className="btn btn-primary" disabled={running || !providerId} onClick={() => void run(query.trim())}>
+          {running ? 'Retrieving…' : 'Show the payload'}
+        </button>
+      </div>
+      {providers.length === 0 && (
+        <p className="faint">No launch profile was detected, so there is no provider to compose a payload for.</p>
+      )}
+      {err && <p className="learning-status bad">✕ {err}</p>}
+      {!result && !err && (running
+        ? <Loading what="the composed payload" />
+        : providers.length > 0 ? <p className="faint">Choose a profile to compose the payload.</p> : null)}
+      {result && (result.text
+        ? (
+          <>
+            <pre className="payload-text">{result.text}</pre>
+            <p className="faint">
+              {/* The character count is observed; the token figure is the
+                  bytes÷4 heuristic and keeps the mark and the word. */}
+              {result.text.length.toLocaleString()} characters · ~{result.estimatedTokens.toLocaleString()} est.
+              tokens of the {settings.briefingMaxTokens.toLocaleString()}-token ceiling.{' '}
+              {queryUsed === false && 'Retrieval ran with no task query, so only standing artifacts were eligible.'}
+            </p>
+          </>
+        )
+        : nothingBecause && (
+          <Empty title={nothingBecause.title} body={nothingBecause.body} />
+        ))}
+      {result && result.omitted > 0 && <HeldBackList briefing={result} />}
+      {delivery
+        ? (
+          <div className="payload-delivery">
+            <span className="label">Delivered as</span>
+            <code className="mono">{delivery.flag}</code>
+            <p className="faint">{delivery.words}</p>
+          </div>
+        )
+        : (
+          <p className="faint">
+            {profile
+              ? <>This profile declares the harness <span className="mono">{harness ?? 'none'}</span>. Wanigan injects a
+                  briefing only for the Claude Code and Codex harnesses, so a session on this profile receives
+                  none — the payload above is what retrieval composed, not what it would deliver.</>
+              : 'No profile is selected, so which flag would carry the payload is unknown.'}
+          </p>
+        )}
+      <p className="faint">
+        Previewing changes nothing: only a real launch quarantines a stale-cited item.{' '}
+        <button className="learning-link" onClick={() => onNavigate('context')}>
+          Open Context
+        </button>{' '}
+        for the per-entry cost and the token ceiling that shaped this.
+      </p>
+    </section>
+  );
+}
+
+function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame, settings, read, busy, act, refreshTick, onNavigate }: {
   items: KnowledgeItem[];
   signals: LearningSignal[];
+  providers: ProviderInfo[];
   /** For the by-path grouping's hero; null under Personal-only scope. */
   project: Project | null;
   scopeParam: string | null | undefined;
   emptyFrame: string;
+  settings: LearningSettings;
+  /** Gates every list below: an unread store is not an empty one. */
+  read: Read;
   busy: string | null;
   act: Act;
+  onNavigate: (tab: LearningTab, inboxStatus?: string) => void;
   /** Bumped by every successful act() and every learningChanged push. */
   refreshTick: number;
 }) {
@@ -1688,7 +1896,16 @@ function Knowledge({ items, signals, project, scopeParam, emptyFrame, busy, act,
   // shown in the detail header follow it, not the stale selection object.
   const sel = selected ? items.find((i) => i.id === selected.id) ?? selected : null;
   return (
-    <div className="learning-split">
+    <div className="knowledge-tab">
+      <Define term="Knowledge item">
+        is a canonical, versioned record with its evidence — the source of truth. Provider files are
+        reversible copies of it, never a second database. Retirement is a status change, not a
+        deletion: a <b>retired</b> item keeps every version, citation and projection, and simply
+        stops being retrieved and injected.
+      </Define>
+      <PayloadPanel providers={providers} scopeParam={scopeParam} settings={settings}
+                    items={items} read={read} onNavigate={onNavigate} />
+      <div className="learning-split">
       <section className="learning-list-pane">
         <div className="knowledge-groupbar card" role="group" aria-label="Group knowledge">
           <span className="label">Group</span>
@@ -1697,7 +1914,11 @@ function Knowledge({ items, signals, project, scopeParam, emptyFrame, busy, act,
             <button type="button" aria-pressed={grouping === 'path'} onClick={() => { setGrouping('path'); setPicked([]); }}>By path</button>
           </div>
         </div>
-        {grouping === 'path' ? (
+        {!read.observed ? (
+          read.phase === 'error'
+            ? <ReadFailed what="the knowledge store" read={read} />
+            : <Loading what="the knowledge store" />
+        ) : grouping === 'path' ? (
           <ProjectMap project={project} items={items} signals={signals} onSelect={(item) => void choose(item)} />
         ) : (
           <>
@@ -1784,7 +2005,7 @@ function Knowledge({ items, signals, project, scopeParam, emptyFrame, busy, act,
         )}
       </section>
       <aside className="learning-detail card">
-        {!sel ? <Empty title="Select a knowledge item" body="Its full text, evidence, versions, relations, freshness, projections, and measured ROI will appear here." />
+        {!sel ? <Empty title="Select a knowledge item" body="Its full text, evidence, versions and freshness appear here. Relations, projection history and measured ROI appear only once that item has any — they are optional records, not missing ones." />
           : detailErr && !detail ? (
             <>
               <span className="learning-status bad">✕ read failed</span>
@@ -1892,15 +2113,23 @@ function Knowledge({ items, signals, project, scopeParam, emptyFrame, busy, act,
               </>
             ))}
 
-          <h3>Projection history</h3>
-          <div className="evidence-list">{detail.projections.map((p) => <div key={p.id}><strong>{p.providerId} → <span className="mono">{p.targetPath}</span></strong><small>{p.status} · {when(p.appliedAt ?? p.createdAt)}</small>{p.status === 'applied' && <button className="btn" disabled={busy !== null} onClick={() => void act(`undo-${p.id}`, () => window.wanigan.learning.undoProjection(p.id), 'Projection undone because the applied hash still matched. Canonical knowledge remains.')}>Undo</button>}</div>)}{detail.projections.length === 0 && <p className="faint">No projections were written for this item.</p>}</div>
-          {detail.projections.length === 100 && <p className="faint">Showing the newest 100 projections — older ones are not listed here.</p>}
+          {/* Both wings below appear only when they hold rows. A permanent
+              “no projections were written for this item” reads as a defect in
+              the item, when projecting is an optional step nobody has taken;
+              the same for a never-measured metric printed as a measured zero. */}
+          {detail.projections.length > 0 && (
+            <>
+              <h3>Projection history</h3>
+              <div className="evidence-list">{detail.projections.map((p) => <div key={p.id}><strong>{p.providerId} → <span className="mono">{p.targetPath}</span></strong><small>{p.status} · {when(p.appliedAt ?? p.createdAt)}</small>{p.status === 'applied' && <button className="btn" disabled={busy !== null} onClick={() => void act(`undo-${p.id}`, () => window.wanigan.learning.undoProjection(p.id), 'Projection undone because the applied hash still matched. Canonical knowledge remains.')}>Undo</button>}</div>)}</div>
+              {detail.projections.length === 100 && <p className="faint">Showing the newest 100 projections — older ones are not listed here.</p>}
+            </>
+          )}
 
-          <h3>Measured ROI</h3>
-          {/* metricCounts gates each figure: 0 rows means "never measured", and a never-measured metric must not print as a measured zero. */}
-          {detail.roi.samples === 0
-            ? <p className="faint">No measurements yet — nothing has recorded this item’s use.</p>
-            : <p className="faint">
+          {detail.roi.samples > 0 && (
+            <>
+              <h3>Measured ROI</h3>
+              {/* metricCounts gates each figure: 0 rows means "never measured", and a never-measured metric must not print as a measured zero. */}
+              <p className="faint">
                 {detail.roi.samples} recorded sample{pl(detail.roi.samples)}
                 {detail.roi.metricCounts.tokensLoaded > 0 && <> · tokens loaded ~{detail.roi.tokensLoaded.toLocaleString()} est.</>}
                 {detail.roi.metricCounts.uses > 0 && <> · {detail.roi.successfulUses} successful use{pl(detail.roi.successfulUses)} · {detail.roi.failedUses} failed</>}
@@ -1910,9 +2139,12 @@ function Knowledge({ items, signals, project, scopeParam, emptyFrame, busy, act,
                     : `~${detail.roi.tokensSaved.toLocaleString()} est.`}</>}
                 {(detail.roi.metricCounts.uses === 0 || detail.roi.metricCounts.tokensSaved === 0) && <> · no use outcomes or savings recorded yet</>}
                 {' '}· evidence <span className="mini-badge">{detail.roi.evidenceLevel}</span> — only causal experiments are labelled verified.
-              </p>}
+              </p>
+            </>
+          )}
         </>}
       </aside>
+      </div>
       {retiring && (
         <RetireDialog items={retiring} busy={busy}
                       onCancel={() => setRetiring(null)}
@@ -2023,68 +2255,6 @@ function BackupLink() {
   );
 }
 
-function SkillForge({ project, providers, busy, act }: {
-  project: Project | null;
-  providers: ProviderInfo[];
-  busy: string | null;
-  act: Act;
-}) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [trigger, setTrigger] = useState('');
-  const [steps, setSteps] = useState('Inspect the relevant files\nMake the smallest safe change\nRun the project review gate');
-  const [verification, setVerification] = useState('Run the relevant tests\nReview the final diff');
-  const [scope, setScope] = useState<'personal' | 'project'>(project ? 'project' : 'personal');
-  const [targets, setTargets] = useState<string[]>(providers.map((p) => p.id));
-  const [forged, setForged] = useState<ForgedSkill | null>(null);
-  const [doctor, setDoctor] = useState<SkillDiagnostic[]>([]);
-  // Per-provider install outcomes: a failed provider never hides one that applied.
-  const [installed, setInstalled] = useState<SkillInstallResult[] | null>(null);
-  const installLine = (r: SkillInstallResult) => r.error ? `✕ ${r.providerId}: ${r.error}` : `✓ ${r.providerId} applied`;
-  const forge = async () => {
-    setInstalled(null);
-    const value = await window.wanigan.learning.forgeSkill({
-      name: name.trim(), description: description.trim(), trigger: trigger.trim(), scope,
-      steps: steps.split('\n').map((instruction, i) => ({ title: `Step ${i + 1}`, instruction: instruction.trim() })).filter((s) => s.instruction),
-      verification: verification.split('\n').map((s) => s.trim()).filter(Boolean),
-      providerIds: targets,
-    });
-    setForged(value);
-    setDoctor(await window.wanigan.learning.doctorSkill(value.skillMd, project?.path));
-  };
-  return (
-    <div className="learning-grid skill-grid">
-      <section className="card learning-card">
-        <div><span className="label">Skill Forge</span><h2>Turn a repeated win into a portable skill</h2></div>
-        <p>The common body follows the Agent Skills shape. Claude and Codex receive provider-specific paths and overlays only when their harness needs one.</p>
-        <label><span className="label">Skill name</span><input className="field mono" value={name} onChange={(e) => setName(e.target.value)} placeholder="verification-before-completion" /></label>
-        <label><span className="label">Description</span><input className="field" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this workflow reliably accomplishes" /></label>
-        <label><span className="label">Trigger</span><textarea className="field" rows={3} value={trigger} onChange={(e) => setTrigger(e.target.value)} placeholder="When should an agent discover and use it?" /></label>
-        <label><span className="label">Steps · one per line</span><textarea className="field mono" rows={7} value={steps} onChange={(e) => setSteps(e.target.value)} /></label>
-        <label><span className="label">Verification · one per line</span><textarea className="field mono" rows={4} value={verification} onChange={(e) => setVerification(e.target.value)} /></label>
-        <div className="learning-form-grid"><label><span className="label">Scope</span><select className="field" value={scope} onChange={(e) => setScope(e.target.value as typeof scope)}><option value="personal">My skill</option>{project && <option value="project">Project skill</option>}</select></label><fieldset><legend className="label">Provider targets</legend>{providers.map((p) => <label className="learning-check" key={p.id}><input type="checkbox" checked={targets.includes(p.id)} onChange={(e) => setTargets((old) => e.target.checked ? [...old, p.id] : old.filter((id) => id !== p.id))} /> {p.label}</label>)}</fieldset></div>
-        <button className="btn btn-primary" disabled={busy !== null || !name.trim() || !description.trim() || !trigger.trim()} onClick={() => void act('forge', forge, 'Skill draft forged and checked. Review its exact SKILL.md before installation.')}>{busy === 'forge' ? 'Forging…' : 'Forge and diagnose'}</button>
-      </section>
-      <aside className="card learning-card skill-preview">
-        <div className="learning-card-head"><div><span className="label">Preview</span><h2>{forged?.name ?? 'SKILL.md'}</h2></div>{forged && <span className="learning-status muted">~{forged.estimatedTokens} est. tokens</span>}</div>
-        {forged ? <><pre className="candidate-patch">{forged.skillMd}</pre><div className="doctor-list">{doctor.length === 0 ? <p className="learning-status good">✓ Skill Doctor found no issues</p> : doctor.map((d, i) => <p key={`${d.code}-${i}`} className={d.severity}><strong>{d.code}</strong> {d.message}{d.line ? ` · line ${d.line}` : ''}</p>)}</div><button className="btn btn-primary" disabled={busy !== null || doctor.some((d) => d.severity === 'error') || targets.length === 0} onClick={() => void act('install-skill', async () => {
-          const results = await window.wanigan.learning.installSkill(forged, targets, scope === 'project' ? project?.id ?? null : null);
-          setInstalled(results);
-          return results;
-        }, (r) => `${(r as SkillInstallResult[]).map(installLine).join(' · ')}. No git commit was created.`)}>Install approved skill</button>{installed && (
-          <div className="doctor-list">
-            {installed.map((r) => (
-              <p key={r.providerId} className={r.error ? 'error' : ''}>
-                {installLine(r)}{!r.error && r.projection ? <> · <span className="mono">{r.projection.targetPath}</span></> : null}
-              </p>
-            ))}
-          </div>
-        )}<p className="faint">Project: Claude <span className="mono">.claude/skills/{forged.name}</span> · Codex <span className="mono">.agents/skills/{forged.name}</span>. Personal skills use the matching home-directory roots.</p></> : <Empty title="No skill draft yet" body="Describe the trigger, workflow, and checks. The Forge generates a reviewable provider-neutral body; it never invents an installation silently." />}
-      </aside>
-    </div>
-  );
-}
-
 function ProjectMap({ project, items, signals, onSelect }: {
   project: Project | null;
   items: KnowledgeItem[];
@@ -2111,7 +2281,7 @@ function ProjectMap({ project, items, signals, onSelect }: {
   );
 }
 
-/* ── Optimize ──────────────────────────────────────────────────────────── */
+/* ── Context · what retrieval costs, and the controls that bound it ───── */
 
 /** Four reasons an item ranked and still did not ship, with the fix each one
  * implies. They stay four rows because raising the token ceiling fixes exactly
@@ -2140,10 +2310,11 @@ function HeldBackList({ briefing }: { briefing: KnowledgeBriefing }) {
   );
 }
 
-function BriefingInspector({ providers, scopeParam, settings }: {
+function BriefingInspector({ providers, scopeParam, settings, onNavigate }: {
   providers: ProviderInfo[];
   scopeParam: string | null | undefined;
   settings: LearningSettings;
+  onNavigate: (tab: LearningTab, inboxStatus?: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [providerId, setProviderId] = useState(providers[0]?.id ?? '');
@@ -2181,7 +2352,11 @@ function BriefingInspector({ providers, scopeParam, settings }: {
         This is the same retrieval a session launch runs, using your text as the task. Token counts
         are the bytes÷4 heuristic — always estimates.
       </p>
-      <p className="faint">Previewing never changes an item’s status; only a real launch quarantines stale items.</p>
+      <p className="faint">
+        Previewing never changes an item’s status; only a real launch quarantines stale items.{' '}
+        <button className="learning-link" onClick={() => onNavigate('knowledge')}>Knowledge</button>{' '}
+        shows the same retrieval as the literal text a session receives.
+      </p>
       <div className="inspector-form">
         <input className="field" value={query} onChange={(e) => setQuery(e.target.value)}
                onKeyDown={(e) => { if (e.key === 'Enter') void run(); }}
@@ -2239,14 +2414,16 @@ function BriefingInspector({ providers, scopeParam, settings }: {
   );
 }
 
-function Optimize({ diagnostics, settings, providers, scopeParam, emptyFrame, busy, act }: {
+function ContextTab({ diagnostics, settings, providers, scopeParam, emptyFrame, read, busy, act, onNavigate }: {
   diagnostics: OptimizerDiagnostic[];
   settings: LearningSettings;
   providers: ProviderInfo[];
   scopeParam: string | null | undefined;
   emptyFrame: string;
+  read: Read;
   busy: string | null;
   act: Act;
+  onNavigate: (tab: LearningTab, inboxStatus?: string) => void;
 }) {
   const save = (patch: Partial<LearningSettings>) => act('learning-settings', () => window.wanigan.learning.setSettings(patch), 'Learning controls updated. New sessions use the new retrieval policy.');
   // Draft-then-commit: main rejects values outside 200–8000, so per-keystroke saves would fail mid-typing.
@@ -2257,8 +2434,19 @@ function Optimize({ diagnostics, settings, providers, scopeParam, emptyFrame, bu
     if (Number.isFinite(n) && n >= 200 && n <= 8000 && n !== settings.briefingMaxTokens) void save({ briefingMaxTokens: n });
     else setCeilingDraft(String(settings.briefingMaxTokens));
   };
+  // 'unused' fires whenever an item is older than the window and no
+  // invocation/use_success/use_failure row exists for it. Nothing in this build
+  // writes those rows — the only production writer of artifact_metrics records
+  // tokens_loaded — so the rule reduces to age and is not evidence of disuse.
+  // It is counted rather than listed: a prominent false finding is worse than
+  // no finding, and it was the most prominent one here.
+  const unusedCount = diagnostics.filter((d) => d.kind === 'unused').length;
+  const findings = diagnostics.filter((d) => d.kind !== 'unused');
   return (
     <div className="learning-stack">
+      <BriefingInspector providers={providers} scopeParam={scopeParam} settings={settings}
+                         onNavigate={onNavigate} />
+
       <section className="card learning-card">
         <div className="learning-card-head">
           <div><span className="label">Master switch</span><h2>Learning</h2></div>
@@ -2282,24 +2470,52 @@ function Optimize({ diagnostics, settings, providers, scopeParam, emptyFrame, bu
           Pausing stops recording, consolidation, and injection; nothing is deleted.
         </p>
       </section>
-      <BriefingInspector providers={providers} scopeParam={scopeParam} settings={settings} />
+
       <section className="learning-grid two">
         <article className="card learning-card"><span className="label">Adaptive context router</span><h2>Load less, later</h2><p>Structured project/path scope and full-text ranking run locally first. Progressive skills and mission briefings receive a hard token ceiling.</p><label><span className="label">Briefing ceiling · tokens</span><input className="field" type="number" min={200} max={8000} value={ceilingDraft} onChange={(e) => setCeilingDraft(e.target.value)} onBlur={commitCeiling} onKeyDown={(e) => { if (e.key === 'Enter') commitCeiling(); }} /></label><label className="learning-check"><input type="checkbox" className="learning-switch" checked={settings.consolidationEnabled} onChange={(e) => void save({ consolidationEnabled: e.target.checked })} /> Consolidate while Wanigan or its daemon is active</label></article>
         <article className="card learning-card"><span className="label">Learning budget governor</span><h2>Deterministic-only today</h2><p>Classification, hashing, routing, and diagnostics run locally without a model call. The stored opt-in and monthly ceiling reserve an explicit boundary for a future model-assisted consolidator; they do not spend or launch one in this build.</p><label className="learning-check"><input type="checkbox" className="learning-switch" checked={settings.allowModelAssistance} disabled /> Model-assisted extraction (not connected yet)</label><label><span className="label">Reserved monthly ceiling · USD</span><input className="field" type="number" min={0} step="0.25" value={settings.monthlyBudgetUsd} disabled /></label><p className="faint">Wanigan will not imply this control is active before usage metering and provider-specific consent are wired end to end.</p></article>
       </section>
-      <section className="card learning-card"><div className="learning-card-head"><div><span className="label">Context Budget Doctor · Cache Guardian · Garbage Collector</span><h2>{diagnostics.length} finding{pl(diagnostics.length)}</h2></div><span className="learning-status muted">diagnosis only</span></div><div className="diagnostic-list">{diagnostics.length === 0 && <Empty title="No context debt detected" body="Duplicate, contradictory, expired, oversized, unused, drifting, or volatile artifacts will appear here." frame={emptyFrame} />}{diagnostics.map((d, i) => <article key={`${d.kind}-${i}`} className={`diagnostic ${d.severity}`}><span aria-hidden="true">{d.severity === 'error' ? '✕' : d.severity === 'warning' ? '!' : 'i'}</span><div><strong>{d.title}</strong><p>{d.detail}</p><small>{d.kind} · {estTokens(d.estimatedTokenDelta)} · {d.itemIds.length} item{pl(d.itemIds.length)}</small></div></article>)}</div></section>
+
+      {/* Diagnosis sits below the controls it cannot change. It reads the same
+          rows as everything else on this page, so it shares the same read. */}
+      <section className="card learning-card">
+        <div className="learning-card-head">
+          <div>
+            <span className="label">Context Budget Doctor · Cache Guardian · Garbage Collector</span>
+            <h2>
+              {read.observed ? `${findings.length} finding${pl(findings.length)}`
+                : read.phase === 'error' ? '— findings, not read' : '… reading findings'}
+            </h2>
+          </div>
+          <span className="learning-status muted">diagnosis only</span>
+        </div>
+        <Pane read={read} what="the context diagnostics">
+          <div className="diagnostic-list">
+            {findings.length === 0 && <Empty title="No context debt detected" body="Duplicate, contradictory, expired, oversized, drifting, or volatile artifacts will appear here." frame={emptyFrame} />}
+            {findings.map((d, i) => <article key={`${d.kind}-${i}`} className={`diagnostic ${d.severity}`}><span aria-hidden="true">{d.severity === 'error' ? '✕' : d.severity === 'warning' ? '!' : 'i'}</span><div><strong>{d.title}</strong><p>{d.detail}</p><small>{d.kind} · {estTokens(d.estimatedTokenDelta)} · {d.itemIds.length} item{pl(d.itemIds.length)}</small></div></article>)}
+          </div>
+        </Pane>
+        {read.observed && unusedCount > 0 && (
+          <p className="faint">
+            {unusedCount} item{pl(unusedCount)} also matched the “no recorded use” rule and {unusedCount === 1 ? 'is' : 'are'} not
+            listed. Nothing in this build records a knowledge item being used, so that rule fires on
+            age alone — it is not evidence that anything is unused.
+          </p>
+        )}
+      </section>
       <p className="faint">These numbers are estimated until a controlled Context A/B experiment proves a causal saving. Wanigan does not call fewer tokens “better” unless the same evaluation still passes.</p>
     </div>
   );
 }
 
-function Experiments({ experiments, candidates, project, providers, busy, act, emptyFrame }: {
+function Experiments({ experiments, candidates, project, providers, busy, act, read, emptyFrame }: {
   experiments: LearningExperiment[];
   candidates: KnowledgeCandidate[];
   project: Project | null;
   providers: ProviderInfo[];
   busy: string | null;
   act: Act;
+  read: Read;
   emptyFrame: string;
 }) {
   const [name, setName] = useState('Context briefing A/B');
@@ -2329,7 +2545,7 @@ function Experiments({ experiments, candidates, project, providers, busy, act, e
   return (
     <div className="learning-grid experiment-grid">
       <section className="card learning-card"><span className="label">Context A/B Lab</span><h2>Register a controlled comparison</h2><p>Pin the provider, model, effort, exact commit, evaluation, and one changed artifact. This release records the protocol and outcome; it does not yet launch paired workloads or ingest their metrics automatically. A closed manual run therefore remains an estimate.</p><label><span className="label">Name</span><input className="field" value={name} onChange={(e) => setName(e.target.value)} /></label><label><span className="label">Candidate artifact</span><select className="field" value={candidateId} onChange={(e) => setCandidateId(e.target.value)}><option value="">Choose a candidate…</option>{candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.title} · {candidate.status}</option>)}</select></label><label><span className="label">Provider</span><select className="field" value={providerId} onChange={(e) => { setProviderId(e.target.value); setEffort('default'); }}>{providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select></label><label><span className="label">Model</span><input className="field mono" value={model} onChange={(e) => setModel(e.target.value)} placeholder="provider default" /></label><label><span className="label">Effort</span><select className="field" value={effort} disabled={!providers.find((p) => p.id === providerId)?.supports.effort} onChange={(e) => setEffort(e.target.value)}><option value="default">Provider default</option>{EFFORT_LEVELS.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>{candidates.length === 0 && <p className="faint">Create a Learning Inbox candidate first; an A/B test needs exactly one artifact to vary.</p>}<button className="btn btn-primary" disabled={busy !== null || !name.trim() || !providerId || !candidateId} onClick={() => void act('experiment-create', create, 'Experiment registered as a draft. No model call or run was started.')}>Create draft</button></section>
-      <section className="experiment-list">{experiments.length === 0 && <Empty title="No experiments yet" body="Create a draft to pin the comparison. Estimated and causal metrics stay visibly separate." frame={emptyFrame} />}{experiments.map((e) => <article className="card experiment-card" key={e.id}><div className="learning-card-head"><div><span className="label">{e.providerId} · {e.model}</span><h2>{e.name}</h2></div><span className={`learning-status ${e.status === 'completed' ? 'good' : e.status === 'failed' ? 'bad' : 'muted'}`}>{e.status}</span></div><p className="mono">commit {e.commitHash || 'un-pinned'} · effort {e.effort ?? 'default'}</p><small>Created {when(e.createdAt)} · started {when(e.startedAt)} · ended {when(e.endedAt)}</small><div className="learning-actions">{e.status === 'draft' && <button className="btn btn-primary" disabled={busy !== null} onClick={() => void act(`experiment-${e.id}`, () => window.wanigan.learning.setExperimentStatus(e.id, 'start'), 'Experiment marked running. Execute its pinned baseline and candidate workloads.')}>Start</button>}{e.status === 'running' && <button className="btn btn-primary" disabled={busy !== null} onClick={() => void act(`experiment-${e.id}`, () => window.wanigan.learning.setExperimentStatus(e.id, 'complete', { evidenceLevel: 'estimate', note: 'Closed from the workspace; paired metrics have not been ingested.' }), 'Experiment closed. Savings remain estimated until paired evaluation metrics prove a causal result.')}>Close run</button>}{['draft', 'running'].includes(e.status) && <button className="btn" disabled={busy !== null} onClick={() => void act(`experiment-${e.id}`, () => window.wanigan.learning.setExperimentStatus(e.id, 'cancel'), 'Experiment cancelled; its history remains.')}>Cancel</button>}</div></article>)}</section>
+      <section className="experiment-list"><Pane read={read} what="the experiment register"><>{experiments.length === 0 && <Empty title="No experiments yet" body="Create a draft to pin the comparison. Estimated and causal metrics stay visibly separate." frame={emptyFrame} />}{experiments.map((e) => <article className="card experiment-card" key={e.id}><div className="learning-card-head"><div><span className="label">{e.providerId} · {e.model}</span><h2>{e.name}</h2></div><span className={`learning-status ${e.status === 'completed' ? 'good' : e.status === 'failed' ? 'bad' : 'muted'}`}>{e.status}</span></div><p className="mono">commit {e.commitHash || 'un-pinned'} · effort {e.effort ?? 'default'}</p><small>Created {when(e.createdAt)} · started {when(e.startedAt)} · ended {when(e.endedAt)}</small><div className="learning-actions">{e.status === 'draft' && <button className="btn btn-primary" disabled={busy !== null} onClick={() => void act(`experiment-${e.id}`, () => window.wanigan.learning.setExperimentStatus(e.id, 'start'), 'Experiment marked running. Execute its pinned baseline and candidate workloads.')}>Start</button>}{e.status === 'running' && <button className="btn btn-primary" disabled={busy !== null} onClick={() => void act(`experiment-${e.id}`, () => window.wanigan.learning.setExperimentStatus(e.id, 'complete', { evidenceLevel: 'estimate', note: 'Closed from the workspace; paired metrics have not been ingested.' }), 'Experiment closed. Savings remain estimated until paired evaluation metrics prove a causal result.')}>Close run</button>}{['draft', 'running'].includes(e.status) && <button className="btn" disabled={busy !== null} onClick={() => void act(`experiment-${e.id}`, () => window.wanigan.learning.setExperimentStatus(e.id, 'cancel'), 'Experiment cancelled; its history remains.')}>Cancel</button>}</div></article>)}</></Pane></section>
     </div>
   );
 }
