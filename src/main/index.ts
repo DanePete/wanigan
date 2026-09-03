@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell, session } from 'electron';
 import type { WebContents, WebFrameMain } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   detectProviders, effectiveProviderBackendId, providerPackRegistry, refreshProviderPacks, runsClaudeCli,
@@ -423,6 +424,10 @@ type ModelChoice = { value: string; label: string };
  *
  * It is the last resort, not the rule — see providerModelChoices.
  */
+/** Bounds for the Codex model probe — it runs while a picker is rendering. */
+const CODEX_MODELS_TIMEOUT_MS = 4_000;
+const CODEX_MODELS_MAX_BYTES = 512 * 1024;
+
 const PUBLISHED_BACKEND_MODELS: Record<string, ModelChoice[]> = {
   anthropic: [
     { value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' },
@@ -440,10 +445,79 @@ const PUBLISHED_BACKEND_MODELS: Record<string, ModelChoice[]> = {
  * credential that call needs — the same two ids managedProviderCredentialId
  * governs, keyed the same way.
  */
-const LIVE_BACKEND_MODELS: Record<string, () => Promise<ModelChoice[]>> = {
+const LIVE_BACKEND_MODELS: Record<string, (provider: ProviderInfo) => Promise<ModelChoice[]>> = {
   zai: async () => (await glmModels()).models.map((m) => ({ value: m.id, label: m.label })),
   deepseek: async () => (await deepseekModels()).models.map((m) => ({ value: m.id, label: m.label })),
+  openai: (provider) => codexModels(provider),
 };
+
+/**
+ * Ask the installed Codex CLI what it can run, rather than shipping a list that
+ * is wrong the day OpenAI names a new model.
+ *
+ * `codex app-server` speaks JSON-RPC over stdio and answers `model/list` with
+ * the ids, display names and per-model reasoning efforts the binary actually
+ * accepts. That is the authority: a model this build has never heard of is a
+ * launch failure no matter what Wanigan offers, and a model it gained this
+ * morning works without anyone editing this file.
+ *
+ * Bounded on every axis, because it runs on the launch path: no credential is
+ * passed, output is capped, and the child is killed on the timeout, on a parse
+ * failure and on the success path alike — an unbounded probe that spawns a
+ * process per picker render is worse than a stale list.
+ */
+async function codexModels(provider: ProviderInfo): Promise<ModelChoice[]> {
+  const bin = provider.path;
+  if (!bin) return [];
+  return new Promise<ModelChoice[]>((resolve) => {
+    let child: ReturnType<typeof spawn> | null = null;
+    let out = '';
+    let settled = false;
+    const finish = (models: ModelChoice[]) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      // Terminate on every path, not just the error one: a probe that leaves an
+      // app-server behind on success leaks one process per refresh.
+      try { child?.kill('SIGKILL'); } catch { /* already gone is the outcome we wanted */ }
+      resolve(models);
+    };
+    const timer = setTimeout(() => finish([]), CODEX_MODELS_TIMEOUT_MS);
+    try {
+      child = spawn(bin, ['app-server'], { stdio: ['pipe', 'pipe', 'ignore'] });
+    } catch { return finish([]); }
+    child.on('error', () => finish([]));
+    child.on('exit', () => finish([]));
+    child.stdout?.on('data', (chunk: Buffer) => {
+      out += chunk.toString('utf8');
+      if (out.length > CODEX_MODELS_MAX_BYTES) return finish([]);
+      for (const line of out.split('\n')) {
+        if (!line.trim()) continue;
+        let msg: { id?: unknown; result?: { data?: unknown } };
+        try { msg = JSON.parse(line); } catch { continue; }
+        if (msg.id !== 2) continue;
+        const rows = Array.isArray(msg.result?.data) ? msg.result.data : [];
+        finish(rows
+          .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object')
+          // `hidden` is the CLI's own word for a model it lists but does not
+          // want offered; honour it rather than second-guessing it.
+          .filter((row) => row.hidden !== true)
+          .map((row) => ({
+            value: String(row.id ?? row.model ?? ''),
+            label: String(row.displayName ?? row.id ?? ''),
+          }))
+          .filter((choice) => choice.value !== ''));
+        return;
+      }
+    });
+    child.stdin?.on('error', () => finish([]));
+    child.stdin?.write(JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: { clientInfo: { name: 'wanigan', version: app.getVersion() } },
+    }) + '\n');
+    child.stdin?.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'model/list', params: {} }) + '\n');
+  });
+}
 
 /** The choices a profile's own launch field declares, which is the manifest's
  *  existing mechanism for saying what a profile accepts. */
@@ -468,7 +542,7 @@ async function providerModelChoices(provider: ProviderInfo): Promise<ModelChoice
   if (live) {
     // One backend that will not answer must not empty the whole picker, and a
     // stale cached list is better than claiming the provider has no models.
-    try { return await live(); } catch { return []; }
+    try { return await live(provider); } catch { return []; }
   }
   return (provider.backendId ? PUBLISHED_BACKEND_MODELS[provider.backendId] : undefined) ?? [];
 }
