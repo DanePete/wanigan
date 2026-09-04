@@ -27,6 +27,8 @@ import * as policy from './policy';
 import * as control from './control';
 import * as queue from './queue';
 import * as accounts from './accounts';
+import * as claudeLimits from './claude-limits';
+import * as usageAgg from './usage';
 import { listGoalTrace, recordGoalTrace } from './goal-trace';
 import * as review from './review';
 import * as revert from './revert';
@@ -1991,6 +1993,69 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       'forgetting an account leaves its directory on disk; Wanigan cannot put back a login it deletes');
     check(accounts.list('claude-code').length === 1 && !accounts.projectAccount(controlProject.id, 'claude-code'),
       'removing an account also clears the project mappings that pointed at it');
+
+    // ── P33 · limits parsing ─────────────────────────────────────────────
+    // The reply is human text, so the parser is the risk. It must read the real
+    // shape exactly and refuse anything it does not recognise, because a format
+    // change reported as "0% used" is worse than no screen at all.
+    const realUsageReply = [
+      'You are currently using your subscription to power your Claude Code usage',
+      '',
+      'Current session: 5% used · resets Sep 4 at 1:29pm (America/Chicago)',
+      'Current week (all models): 79% used · resets Sep 6 at 8:59pm (America/Chicago)',
+      'Current week (Fable): 100% used · resets Sep 6 at 8:59pm (America/Chicago)',
+      '',
+      "What's contributing to your limits usage?",
+      'Approximate, based on local sessions on this machine — does not include other devices or claude.ai.',
+      '',
+      'Last 24h · 2,857 requests · 7 sessions',
+      '  95% of your usage was at >150k context',
+      '  Top skills: /claude-api 1%',
+      '',
+      'Last 7d · 17032 requests · 32 sessions',
+      '  83% of your usage was at >150k context',
+    ].join('\n');
+    const parsedUsage = claudeLimits.__test.parseUsage(realUsageReply);
+    check(parsedUsage.windows.length === 3
+      && parsedUsage.windows[0].kind === 'session' && parsedUsage.windows[0].usedPercent === 5
+      && parsedUsage.windows[1].scope === null && parsedUsage.windows[1].usedPercent === 79
+      && parsedUsage.windows[2].scope === 'Fable' && parsedUsage.windows[2].usedPercent === 100,
+      'the three real limit windows parse, and "all models" is read as no model scope rather than a model called that',
+      parsedUsage.windows);
+    check(parsedUsage.windows.every((w) => w.resetsAtText.startsWith('Sep ')),
+      'the provider’s own reset wording is kept verbatim, so a countdown is a bonus and never a dependency');
+    check(parsedUsage.factors.length === 2
+      && parsedUsage.factors[0].requests === 2857 && parsedUsage.factors[0].sessions === 7
+      && parsedUsage.factors[0].lines.length === 2
+      && parsedUsage.factors[1].requests === 17032,
+      'the contributing blocks parse with their counts, including a thousands separator', parsedUsage.factors);
+    check(parsedUsage.plan === 'subscription',
+      'the plan wording is picked up from the provider’s own first line', parsedUsage.plan);
+
+    check(claudeLimits.__test.parseUsage('command not found: claude').windows.length === 0
+      && claudeLimits.__test.parseUsage('').windows.length === 0,
+      'unrecognised output yields no windows, so the caller reports it as unreadable rather than as zero used');
+
+    // A reset is always near, so the only inference worth making is the year
+    // the provider omitted.
+    const marNow = new Date(2026, 2, 1, 12, 0, 0).getTime();
+    const soon = claudeLimits.__test.parseResetAt('Mar 3 at 8:59pm (America/Chicago)', marNow);
+    check(soon !== null && soon > marNow && soon - marNow < 3 * 86_400_000,
+      'a reset a couple of days out parses to that moment in the current year');
+    const nextYear = claudeLimits.__test.parseResetAt('Jan 2 at 1:00am (America/Chicago)', new Date(2026, 11, 28).getTime());
+    check(nextYear !== null && nextYear > new Date(2026, 11, 28).getTime(),
+      'a reset date the provider printed without a year rolls into next year when this year would be far past');
+    const onTheHour = claudeLimits.__test.parseResetAt('Sep 6 at 9pm (America/Chicago)', new Date(2026, 8, 4).getTime());
+    check(onTheHour !== null && new Date(onTheHour).getHours() === 21 && new Date(onTheHour).getMinutes() === 0,
+      'a reset printed on the hour as "9pm", with no minutes, still parses — a runtime probe caught this returning null');
+    check(claudeLimits.__test.parseResetAt('whenever it feels like it') === null,
+      'an unparseable reset time is null, and the verbatim text carries the answer instead');
+
+    // Consumption is Wanigan's own record and must key to the account that ran.
+    const usageRows = usageAgg.consumption(7);
+    check(Array.isArray(usageRows) && usageRows.every((row) => typeof row.accountLabel === 'string'
+      && ['reported', 'partial', 'unreported'].includes(row.costStatus)),
+      'recorded consumption is grouped per account and model, and says whether its cost figure is complete');
 
     // ── P31 · a docket is a graph ────────────────────────────────────────
     // Two implement branches off one plan, each with its own verification, and

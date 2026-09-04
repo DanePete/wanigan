@@ -1004,6 +1004,101 @@ export type AccountResolution = {
   reason: string | null;
 };
 
+/* ── P33 · usage and limits ─────────────────────────────────────────── */
+
+/**
+ * One rolling limit window as the provider reported it.
+ *
+ * `resetsAtText` is verbatim and always present; `resetsAt` is an epoch only
+ * when the text parsed confidently. A countdown is worth having, but not worth
+ * inventing — a surface with no epoch shows the provider's own words instead.
+ */
+export type LimitWindow = {
+  /** 'session', 'week', or whatever the provider called it. */
+  kind: string;
+  /** null for an all-models window; a model name such as 'Fable' otherwise. */
+  scope: string | null;
+  usedPercent: number;
+  resetsAtText: string;
+  resetsAt: number | null;
+};
+
+/**
+ * A block of the provider's own explanation of what drove usage.
+ *
+ * Carried verbatim, including its caveat: Claude describes this as approximate
+ * and local-only, and a surface that reformatted it into confident figures
+ * would be making a claim the provider declined to make.
+ */
+export type UsageFactors = {
+  label: string;
+  requests: number | null;
+  sessions: number | null;
+  lines: string[];
+};
+
+/**
+ * What is left on one account.
+ *
+ * Remaining quota is never derivable from the token counters on this machine —
+ * compaction, cached input and plan-specific limits make every such
+ * calculation a guess — so this is a live read or it is an honest absence.
+ */
+/** Who a configuration directory is signed in as, from the agent's own answer. */
+export type AccountIdentity = {
+  email: string | null;
+  orgName: string | null;
+  /** The subscription tier the agent reports, such as 'max'. */
+  plan: string | null;
+  authMethod: string | null;
+};
+
+export type AccountLimits = {
+  accountId: string;
+  accountLabel: string;
+  harness: string;
+  /** null when the agent could not be asked, or reported nobody signed in. */
+  identity: AccountIdentity | null;
+  state: 'ok' | 'signed-out' | 'unreadable' | 'unsupported' | 'stale';
+  /** Why, when state is not 'ok'. */
+  detail: string | null;
+  fetchedAt: number | null;
+  plan: string | null;
+  windows: LimitWindow[];
+  factors: UsageFactors[];
+};
+
+/** What was actually spent, per account and model, from Wanigan's own records. */
+export type ModelConsumption = {
+  accountId: string | null;
+  accountLabel: string;
+  model: string;
+  requests: number;
+  inTokens: number;
+  outTokens: number;
+  cacheRead: number;
+  costUsd: number;
+  /** 'reported' only when every row carried a provider cost. */
+  costStatus: 'reported' | 'partial' | 'unreported';
+};
+
+export type ConsumptionPoint = {
+  /** Local day, YYYY-MM-DD. */
+  day: string;
+  accountLabel: string;
+  model: string;
+  tokens: number;
+  costUsd: number;
+};
+
+export type UsageSnapshot = {
+  limits: AccountLimits[];
+  consumption: ModelConsumption[];
+  daily: ConsumptionPoint[];
+  /** Days covered by `daily`. */
+  days: number;
+};
+
 /* ── P11 · dispatcher ───────────────────────────────────────────────── */
 
 export type QueueKind = 'session' | 'headless' | 'batch' | 'scout' | 'node';

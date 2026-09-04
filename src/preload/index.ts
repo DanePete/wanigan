@@ -22,7 +22,7 @@ import type {
   TeachWaniganInput,
   ImprovementScoutGoal, ImprovementScoutOverview, ImprovementScoutRun,
   ImprovementScoutSettings, ImprovementScoutSource, ImprovementScoutSuggestion, ImprovementScoutSuggestionStatus,
-  AccountResolution, AgentAccount, ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode, DocketPlanNode, DocketProof,
+  AccountResolution, AgentAccount, ControlEvent, UsageSnapshot, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode, DocketPlanNode, DocketProof,
   DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, WorkDocket,
 } from '../shared/types';
 
@@ -189,6 +189,8 @@ const api = {
 
   // ── phase 1 · telemetry ──────────────────────────────────────────────
   usage: {
+    /** The whole Usage screen: live limit windows plus recorded consumption. */
+    snapshot: (input?: { days?: number; force?: boolean }) => call<UsageSnapshot>('usage:snapshot', input),
     session: (id: string) => call<SessionUsage>('usage:session', id),
     many: (ids: string[]) => call<Record<string, SessionUsage>>('usage:many', ids),
     events: (id: string, limit?: number) => call<ApiEvent[]>('usage:events', id, limit),

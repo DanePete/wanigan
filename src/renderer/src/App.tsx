@@ -13,6 +13,7 @@ import Schedules from './views/Schedules';
 import Git from './views/Git';
 import HeadlessRuns from './views/HeadlessRuns';
 import ImprovementScout from './views/ImprovementScout';
+import UsageView from './views/Usage';
 import SettingsView, { SETTINGS_INDEX, type SettingsJump } from './views/Settings';
 import Skills from './views/Skills';
 import Context from './views/Context';
@@ -74,6 +75,11 @@ const TABS = [
   // shares no table, IPC namespace or scope control with Learning, and it was
   // only ever findable as a tab inside it.
   { id: 'scout',     label: 'Scout',     group: 'Explore', hint: 'Improvement proposals built from public sources you allow', keywords: 'improvement scout proposals ideas suggestions release notes research sources evidence' },
+  // Past the digit row deliberately. ⌘1–9 read positionally out of this list,
+  // so an entry inserted beside Insights would quietly move every shortcut
+  // after it; Usage takes a named chord instead. The rail places it where it
+  // belongs, which is a separate list.
+  { id: 'usage',     label: 'Usage',     group: 'Explore', hint: 'What is left on each account, and what you actually spent', keywords: 'usage limits quota remaining left rate limit weekly session plan account work personal model burn' },
 ] as const;
 
 type Tab = (typeof TABS)[number]['id'];
@@ -98,13 +104,14 @@ const TAB_SHORTCUTS: Record<Tab, { label: string; aria: string }> = {
   settings:  { label: '⌘,', aria: 'Meta+, Control+,' },
   skills:    { label: '⌘⇧S', aria: 'Meta+Shift+S Control+Shift+S' },
   context:   { label: '⌘⇧C', aria: 'Meta+Shift+C Control+Shift+C' },
+  usage:     { label: '⌘⇧U', aria: 'Meta+Shift+U Control+Shift+U' },
   // I for Improvement Scout — S and C are taken. On macOS, the platform this
   // ships to, ⌘⇧I is free: the inspector is ⌥⌘I there.
   scout:     { label: '⌘⇧I', aria: 'Meta+Shift+I Control+Shift+I' },
 };
 
 /** ⌘⇧ chords for the surfaces the digit row cannot reach. */
-const SHIFT_CHORD_TABS: Record<string, Tab> = { s: 'skills', c: 'context', i: 'scout' };
+const SHIFT_CHORD_TABS: Record<string, Tab> = { s: 'skills', c: 'context', i: 'scout', u: 'usage' };
 
 const labelForTab = (id: Tab): string => TABS.find((item) => item.id === id)?.label ?? id;
 
@@ -131,7 +138,7 @@ function initialTabFromLocation(): Tab {
 // nobody can see is an inbox nobody reads, and it no longer has a parent view
 // to be found inside. Its ⌘⇧I chord is a second route, not its only one.
 const NAV_RAIL_TABS: readonly Tab[] = [
-  'sessions', 'fleet', 'control', 'batches', 'insights', 'learning', 'scout',
+  'sessions', 'fleet', 'control', 'batches', 'insights', 'usage', 'learning', 'scout',
   'plugins', 'schedules', 'git', 'runs', 'settings',
 ];
 
@@ -1012,6 +1019,7 @@ export default function App() {
               )}
             </NavTab>
             <NavTab id="insights" tab={tab} go={go} label="Insights" roving={navRoving} onKeyDown={onNavTabKeyDown} />
+            <NavTab id="usage" tab={tab} go={go} label="Usage" roving={navRoving} onKeyDown={onNavTabKeyDown} />
             <NavTab id="learning" tab={tab} go={go} label="Learning" roving={navRoving} onKeyDown={onNavTabKeyDown} />
             <NavTab id="scout"    tab={tab} go={go} label="Scout" roving={navRoving} onKeyDown={onNavTabKeyDown} />
             <NavTab id="plugins"  tab={tab} go={go} label="Plugins" roving={navRoving} onKeyDown={onNavTabKeyDown} />
@@ -1043,6 +1051,7 @@ export default function App() {
                      seed={batchSeed} onSeedConsumed={() => setBatchSeed(null)} />
           )}
           {tab === 'insights' && <InsightsView />}
+          {tab === 'usage' && <UsageView />}
           {tab === 'learning' && (
             <Learning projectId={projectId} projects={projects} providers={providers}
                       onPickProject={choose} initialTarget={learningTarget} />

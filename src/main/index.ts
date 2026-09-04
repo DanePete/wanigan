@@ -81,6 +81,7 @@ import * as learning from './learning-service';
 import { retireKnowledgeItem } from './learning';
 import * as control from './control';
 import * as accounts from './accounts';
+import * as usage from './usage';
 import * as scout from './improvement-scout';
 
 // The smoke suite deliberately has no window. A rejected startup promise in
@@ -1872,6 +1873,7 @@ function registerIpc() {
   });
 
   // ══ P30 · durable agent control plane ═══════════════════════════════
+  handle('usage:snapshot', (input?: { days?: number; force?: boolean }) => usage.snapshot(input));
   handle('accounts:list', (harness: string) => accounts.list(harness));
   handle('accounts:create', (input: { harness: string; label: string; configDir: string; seedFromAccountId?: string | null }) =>
     accounts.create(input));
