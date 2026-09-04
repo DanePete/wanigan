@@ -1921,6 +1921,12 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
 
     check(accounts.launchEnv(work).CLAUDE_CONFIG_DIR === workDir && Object.keys(accounts.launchEnv(null)).length === 0,
       'an account contributes exactly the config-directory variable the harness reads');
+    // Setting the variable to the platform default is not a no-op: Claude Code
+    // then reads its state from inside the directory rather than beside it, and
+    // reports a signed-in operator as logged out.
+    const defaultDirAccount = { ...work, configDir: path.join(os.homedir(), '.claude') };
+    check(Object.keys(accounts.launchEnv(defaultDirAccount)).length === 0,
+      'the account that is the platform default sets no variable, because setting it to the default breaks the login it names');
 
     // Seeding: authored configuration is a convenience, a login is not, and a
     // transcript of everything said is not either.

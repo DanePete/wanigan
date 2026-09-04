@@ -49,6 +49,11 @@ export function configEnvVar(harness: string): string | null {
   return HARNESS_CONFIG_ENV[harness] ?? null;
 }
 
+/** Where a harness keeps its configuration when the variable is not set. */
+function platformDefaultDir(harness: string): string | null {
+  return harness === 'claude-code' ? path.join(os.homedir(), '.claude') : null;
+}
+
 /** True when this harness has a config directory Wanigan knows how to point. */
 export function supportsAccounts(harness: string): boolean {
   return configEnvVar(harness) !== null;
@@ -348,7 +353,19 @@ export function resolve(input: {
 export function launchEnv(account: AgentAccount | null): Record<string, string> {
   if (!account) return {};
   const key = configEnvVar(account.harness);
-  return key ? { [key]: account.configDir } : {};
+  if (!key) return {};
+  // Setting the variable to the platform default is NOT a no-op, which is the
+  // trap this guard exists for. With CLAUDE_CONFIG_DIR unset, Claude Code reads
+  // its state from ~/.claude.json, beside the directory. Set it to ~/.claude —
+  // the very same directory — and it reads ~/.claude/.claude.json, inside it,
+  // finds nothing, and reports a signed-in operator as logged out.
+  //
+  // Verified against `claude auth status --json`: unset reports loggedIn true
+  // with the account's email and plan; set to ~/.claude reports loggedIn false.
+  // So the account that *is* the default contributes no variable at all, which
+  // reproduces exactly what running the CLI by hand does.
+  if (account.configDir === platformDefaultDir(account.harness)) return {};
+  return { [key]: account.configDir };
 }
 
 /** The directory a recorded session used, for the readers that follow it. */
