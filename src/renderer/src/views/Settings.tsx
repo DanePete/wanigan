@@ -98,7 +98,7 @@ const SETTINGS_TABS: SettingsTabInfo[] = [
     id: 'agents', label: 'Agents', eyebrow: 'Accounts & runtime', title: 'Agents & providers',
     detail: 'Add provider keys, check their status, and manage the provider packs whose profiles Wanigan can launch.',
     help: 'Keys are verified before Wanigan stores them in your macOS credential store. A new key is ready for the next session; a session already running keeps the launch configuration it started with — including its frozen provider pack, even if you disable or remove that pack here.',
-    includes: ['Claude Platform', 'GLM Coding Plan', 'DeepSeek', 'installed runtimes', 'provider packs'],
+    includes: ['Claude Platform', 'GLM Coding Plan', 'DeepSeek', 'installed runtimes', 'provider packs', 'accounts'],
   },
   {
     id: 'projects', label: 'Projects & safety', eyebrow: 'Repositories & guardrails', title: 'Projects & safety',
