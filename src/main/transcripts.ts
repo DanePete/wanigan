@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { db, dataDir, ensurePrivateDir, ensurePrivateFile } from './db';
+import * as accounts from './accounts';
 import { runsClaudeCli } from './providers';
 import type { ClaudeContextUsage, ProviderId, TranscriptHit, TranscriptTurn } from '../shared/types';
 
@@ -33,14 +34,50 @@ export const HIT_OPEN = '«';
 export const HIT_CLOSE = '»';
 
 /**
+ * Every directory a transcript for this project could be in.
+ *
  * Claude Code slugs the working directory by replacing every non-alphanumeric
- * character with '-', so /Users/x/repo becomes -Users-x-repo. CLAUDE_CONFIG_DIR
- * is honoured because a user who has moved their config has no ~/.claude at all,
- * and the archive would otherwise silently find nothing and blame the session.
+ * character with '-', so /Users/x/repo becomes -Users-x-repo. There is one such
+ * directory per account: Claude Code keys its whole state, credential included,
+ * to CLAUDE_CONFIG_DIR, so a session run under a second account writes its
+ * transcript somewhere the default root cannot see. Looking in one root would
+ * make that session honestly report "no transcript" forever.
+ *
+ * The ambient value is the fallback for an install with no accounts recorded
+ * yet — someone who moved their config by hand has no ~/.claude at all, and the
+ * archive would otherwise find nothing and blame the session.
  */
-function claudeProjectDir(projectPath: string): string {
-  const root = process.env.CLAUDE_CONFIG_DIR?.trim() || path.join(os.homedir(), '.claude');
-  return path.join(root, 'projects', path.resolve(projectPath).replace(/[^a-zA-Z0-9]/g, '-'));
+function claudeProjectDirs(projectPath: string): string[] {
+  const slug = path.resolve(projectPath).replace(/[^a-zA-Z0-9]/g, '-');
+  return accounts.readRoots('claude-code').map((root) => path.join(root, 'projects', slug));
+}
+
+/**
+ * A conversation id is unique to the session that produced it, so finding the
+ * file named after one is exact no matter which account's directory holds it.
+ */
+function exactIn(dirs: string[], conversationId: string): string | null {
+  for (const dir of dirs) {
+    const candidate = path.join(dir, `${conversationId}.jsonl`);
+    if (isFile(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * The newest transcript in the window, across accounts.
+ *
+ * Unlike the exact lookup this stays a guess — with two accounts active in one
+ * repo the newest file may belong to the other one. Callers already mark this
+ * result inexact and say so; that label is now carrying slightly more weight.
+ */
+function newestIn(dirs: string[], from = 0, to = Infinity): { path: string; mtimeMs: number } | null {
+  let best: { path: string; mtimeMs: number } | null = null;
+  for (const dir of dirs) {
+    const found = newestJsonl(dir, from, to);
+    if (found && (!best || found.mtimeMs > best.mtimeMs)) best = found;
+  }
+  return best;
 }
 
 /** Wanigan's own copy of every archived transcript. */
@@ -75,12 +112,12 @@ function newestJsonl(dir: string, from = 0, to = Infinity): { path: string; mtim
  * normal, not an error.
  */
 export function transcriptPathFor(projectPath: string, conversationId: string | null): string | null {
-  const dir = claudeProjectDir(projectPath);
+  const dirs = claudeProjectDirs(projectPath);
   if (conversationId) {
-    const exact = path.join(dir, `${conversationId}.jsonl`);
-    if (isFile(exact)) return exact;
+    const exact = exactIn(dirs, conversationId);
+    if (exact) return exact;
   }
-  return newestJsonl(dir)?.path ?? null;
+  return newestIn(dirs)?.path ?? null;
 }
 
 /* ── defensive parsing ───────────────────────────────────────────────── */
@@ -294,15 +331,15 @@ function locate(sessionId: string, projectPath: string, conversationId: string |
     return { note: `${row.provider_id} sessions do not write a transcript file — nothing to archive.` };
   }
 
-  const dir = claudeProjectDir(projectPath);
+  const dirs = claudeProjectDirs(projectPath);
   if (conversationId) {
-    const exact = path.join(dir, `${conversationId}.jsonl`);
-    if (isFile(exact)) return { path: exact, exact: true, note: '' };
+    const exact = exactIn(dirs, conversationId);
+    if (exact) return { path: exact, exact: true, note: '' };
   }
 
   const from = row ? row.started_at - LIFETIME_GRACE_MS : 0;
   const to = (row?.ended_at ?? Date.now()) + LIFETIME_GRACE_MS;
-  const guess = newestJsonl(dir, from, to);
+  const guess = newestIn(dirs, from, to);
   if (!guess) {
     return {
       note: conversationId
@@ -651,13 +688,9 @@ export function contextUsageFromTail(text: string): { tokens: number; model: str
  * could be a different conversation entirely.
  */
 export function claudeContextUsage(cwd: string, conversationId: string | null, sinceMs: number): ClaudeContextUsage {
-  const dir = claudeProjectDir(cwd);
-  let file: string | null = null;
-  if (conversationId) {
-    const exact = path.join(dir, `${conversationId}.jsonl`);
-    if (isFile(exact)) file = exact;
-  }
-  if (!file) file = newestJsonl(dir, Math.max(0, sinceMs - LIFETIME_GRACE_MS))?.path ?? null;
+  const dirs = claudeProjectDirs(cwd);
+  let file: string | null = conversationId ? exactIn(dirs, conversationId) : null;
+  if (!file) file = newestIn(dirs, Math.max(0, sinceMs - LIFETIME_GRACE_MS))?.path ?? null;
   if (!file) return { kind: 'no-transcript' };
 
   let text: string;

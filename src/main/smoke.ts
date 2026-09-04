@@ -211,12 +211,12 @@ export async function runSmoke(): Promise<void> {
   // low-water mark rather than a target — raise it when a wave of coverage
   // lands, and never lower it to make a truncated run green.
   say('── suite coverage');
-  // Calibrated against 632 observed on 2026-09-01, with a small margin for
+  // Calibrated against 673 observed on 2026-09-04, with a small margin for
   // environment variance. Record the observed count whenever you raise this:
   // a bare number cannot tell the next reader whether it is a real floor or a
   // stale one, and a floor left far below the true count silently tolerates
   // losing whole phases — 460 was still here when the suite had grown to 632.
-  const MIN_ASSERTIONS = 620;
+  const MIN_ASSERTIONS = 660;
   const ran = pass + fail;
   check(ran >= MIN_ASSERTIONS,
     `at least ${MIN_ASSERTIONS} assertions ran, so a suite that stopped early cannot pass by running almost nothing`,

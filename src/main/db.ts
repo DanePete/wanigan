@@ -567,6 +567,7 @@ function migratePhases(d: Database.Database) {
   );
   migrateLearning(d);
   migrateControl(d);
+  migrateAccounts(d);
   migrateImprovementScout(d);
   migrateCheckpoints(d);
   migrateConversationFlags(d);
@@ -877,6 +878,52 @@ function migrateLearning(d: Database.Database) {
 }
 
 /**
+ * P32 · One operator, several agent accounts.
+ *
+ * Claude Code keys its stored login — including the macOS Keychain entry — to
+ * `CLAUDE_CONFIG_DIR`, so a session launched with a different directory reads a
+ * different credential. That is the whole mechanism: an account here is a
+ * labelled config directory for a harness, not a credential Wanigan holds.
+ * Wanigan never sees the token and cannot perform the browser login.
+ *
+ * Rows are harness-scoped rather than Claude-specific because the same shape
+ * already fits Codex (`CODEX_HOME`). Only the Claude Code mapping is wired
+ * today; a harness with no mapping simply has no accounts.
+ */
+function migrateAccounts(d: Database.Database) {
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS agent_accounts (
+      id          TEXT PRIMARY KEY,
+      harness     TEXT NOT NULL,
+      label       TEXT NOT NULL,
+      config_dir  TEXT NOT NULL,
+      -- 0 for a directory that existed before Wanigan knew about it, such as
+      -- the operator's own ~/.claude. Wanigan may point sessions at it but
+      -- must not offer to delete it.
+      adopted     INTEGER NOT NULL DEFAULT 0,
+      is_default  INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL,
+      UNIQUE(harness, config_dir)
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_accounts_harness ON agent_accounts(harness, created_at);
+
+    -- A project's saved account, per harness. A row per pair rather than a
+    -- column per harness, so adding Codex accounts later needs no migration.
+    CREATE TABLE IF NOT EXISTS project_accounts (
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      harness    TEXT NOT NULL,
+      account_id TEXT NOT NULL REFERENCES agent_accounts(id) ON DELETE CASCADE,
+      PRIMARY KEY (project_id, harness)
+    );
+  `);
+  // Which account a session actually launched under. Without this, a restart
+  // leaves Wanigan reading the default account's directory for a transcript
+  // that was written into another one, and honestly reporting nothing.
+  addColumn(d, 'session_log', 'account_id', 'TEXT');
+}
+
+/**
  * P30 · Durable agent control plane.
  *
  * A terminal is an execution detail, not the record of a piece of work. These
@@ -1040,6 +1087,28 @@ function migrateControl(d: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_work_trace_events_docket ON work_trace_events(docket_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_work_trace_events_session ON work_trace_events(session_id, created_at DESC);
   `);
+
+  // P31 · a docket is a graph, not a fixed four-step chain.
+  //
+  // `depends_json` always described an arbitrary DAG; nothing ever wrote one.
+  // Declaring the path a node intends to own is what makes fan-out safe to
+  // plan: two nodes that can run at the same time and want the same directory
+  // are a conflict the planner can be told about, instead of a merge the
+  // operator discovers later. Nullable, because a node that declares nothing
+  // simply takes no claim when it starts.
+  addColumn(d, 'work_nodes', 'claim_path', 'TEXT');
+
+  // Autopilot dispatch. The provider/model are frozen per docket at the moment
+  // consent is given, so a later default change cannot silently redirect work
+  // already running unattended.
+  addColumn(d, 'work_dockets', 'autopilot', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(d, 'work_dockets', 'autopilot_provider', 'TEXT');
+  addColumn(d, 'work_dockets', 'autopilot_model', 'TEXT');
+  // Marks a node the sweep has already handed to the queue. Without a durable
+  // marker the sweep re-enqueues the same node every tick until the runner
+  // wins the race, and the losers burn queue attempts on an error.
+  addColumn(d, 'work_nodes', 'dispatch_state', 'TEXT');
+  d.exec('CREATE INDEX IF NOT EXISTS idx_work_nodes_dispatch ON work_nodes(dispatch_state) WHERE dispatch_state IS NOT NULL');
 }
 
 /**

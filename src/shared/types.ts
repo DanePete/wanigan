@@ -168,6 +168,16 @@ export type Session = {
   model?: string;
   effort?: string;
   permissionMode?: string;
+  /**
+   * The account this session actually launched under, frozen at launch.
+   *
+   * Frozen rather than resolved on read: the project's default can change while
+   * a session is running, and a badge that followed the current setting would
+   * relabel a live session as an account it never authenticated with. Absent
+   * when no account applied, such as a profile pointed at another vendor.
+   */
+  accountId?: string | null;
+  accountLabel?: string | null;
   /** Repo state at launch — lets the code panel show only this session's work. */
   baseline?: Baseline;
   /**
@@ -220,6 +230,8 @@ export type LaunchOptions = {
   resumeFrom?: { sessionId: string; conversationId: string | null };
   /** Run in a dedicated git worktree so parallel agents stop overwriting each other. */
   isolate?: boolean;
+  /** Which agent account to launch as. Omitted uses the project's, then the default. */
+  accountId?: string | null;
 };
 
 /** A finished session, recoverable after a quit. */
@@ -783,6 +795,41 @@ export type WorkDocket = {
   status: DocketStatus;
   createdAt: number;
   updatedAt: number;
+  autopilot: DocketAutopilot;
+};
+
+/**
+ * Unattended dispatch for one docket.
+ *
+ * `spendUsd` counts only what a provider actually reported. `spendStatus` says
+ * how much of the docket that covers, because a cap enforced against a
+ * partially reported total is a weaker promise than it looks, and the surface
+ * has to be able to say which one it is showing.
+ */
+export type DocketAutopilot = {
+  enabled: boolean;
+  providerId: string | null;
+  model: string | null;
+  budgetUsd: number | null;
+  spendUsd: number;
+  spendStatus: 'reported' | 'partial' | 'unreported' | 'none';
+};
+
+/**
+ * One node in a proposed task graph, before the docket exists.
+ *
+ * Dependencies are indices into the same array rather than ids, because the
+ * ids do not exist yet. The main process validates the whole shape — range,
+ * cycles, the terminal review node and claim overlap — before writing a row.
+ */
+export type DocketPlanNode = {
+  kind: DocketNodeKind;
+  title: string;
+  instructions: string;
+  /** Indices into the plan array this node waits on. */
+  dependsOn?: number[];
+  /** Project-relative path this node intends to own while it runs. */
+  claimPath?: string | null;
 };
 
 export type DocketNode = {
@@ -792,6 +839,8 @@ export type DocketNode = {
   title: string;
   instructions: string;
   dependsOn: string[];
+  /** Declared at planning time; taken as a real claim when the node starts. */
+  claimPath: string | null;
   status: DocketNodeStatus;
   providerId: string | null;
   model: string | null;
@@ -907,9 +956,57 @@ export type GoalTraceEvent = {
   createdAt: number;
 };
 
+/* ── P32 · agent accounts ───────────────────────────────────────────── */
+
+/**
+ * A labelled config directory for one harness.
+ *
+ * Wanigan holds no credential here. Claude Code keys its stored login — the
+ * macOS Keychain entry included — to `CLAUDE_CONFIG_DIR`, so pointing a session
+ * at a different directory is what selects a different account. Wanigan cannot
+ * perform the browser login; the operator signs in once inside each directory.
+ */
+export type AgentAccount = {
+  id: string;
+  /** Which harness this directory belongs to, e.g. 'claude-code'. */
+  harness: string;
+  label: string;
+  configDir: string;
+  /** False for a directory Wanigan created; true for one it adopted, like ~/.claude. */
+  adopted: boolean;
+  isDefault: boolean;
+  /** Whether the directory is present on disk right now. */
+  present: boolean;
+  /**
+   * Whether a login has ever been stored here, as far as Wanigan can tell from
+   * the files it can read. On macOS the credential itself lives in the Keychain,
+   * so this is evidence of use, never proof of a valid session.
+   */
+  signedIn: 'yes' | 'unknown';
+  createdAt: number;
+  updatedAt: number;
+};
+
+/**
+ * Which account a launch will actually use, and why.
+ *
+ * `override` names an ambient environment credential that outranks the stored
+ * login. Claude Code's own precedence puts `ANTHROPIC_AUTH_TOKEN` and
+ * `ANTHROPIC_API_KEY` above the account's `/login`, so when one is exported the
+ * account picker would otherwise be showing a choice the session ignores.
+ */
+export type AccountResolution = {
+  account: AgentAccount | null;
+  source: 'explicit' | 'project' | 'default' | 'none';
+  /** Set when an inherited environment credential outranks the account's login. */
+  override: string | null;
+  /** Why no account applies, when `account` is null. */
+  reason: string | null;
+};
+
 /* ── P11 · dispatcher ───────────────────────────────────────────────── */
 
-export type QueueKind = 'session' | 'headless' | 'batch' | 'scout';
+export type QueueKind = 'session' | 'headless' | 'batch' | 'scout' | 'node';
 export type QueueState = 'waiting' | 'running' | 'done' | 'failed' | 'canceled';
 
 export type QueueItem = {
@@ -929,8 +1026,13 @@ export type QueueItem = {
   error: string | null;
 };
 
-export type QueueSlots = { session: number; headless: number; batch: number; scout: number };
-export const DEFAULT_SLOTS: QueueSlots = { session: 4, headless: 3, batch: 2, scout: 1 };
+export type QueueSlots = { session: number; headless: number; batch: number; scout: number; node: number };
+/**
+ * `node` is deliberately the narrowest terminal lane. Autopilot starts real
+ * PTY sessions that spend real money without anyone watching, so its default
+ * concurrency is below what a person driving sessions by hand would pick.
+ */
+export const DEFAULT_SLOTS: QueueSlots = { session: 4, headless: 3, batch: 2, scout: 1, node: 2 };
 
 /* ── P12 · MCP ──────────────────────────────────────────────────────── */
 

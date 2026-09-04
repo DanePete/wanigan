@@ -25,6 +25,8 @@ import * as observed from './observed';
 import * as otel from './otel';
 import * as policy from './policy';
 import * as control from './control';
+import * as queue from './queue';
+import * as accounts from './accounts';
 import { listGoalTrace, recordGoalTrace } from './goal-trace';
 import * as review from './review';
 import * as revert from './revert';
@@ -50,7 +52,7 @@ import { dataDir, db, resultsDir } from './db';
 import { addProject } from './store';
 import { selectedProviderStatus, selectedSessionTelemetry } from '../shared/provider-status';
 import { MAX_TERMINAL_INPUT_CHUNK_BYTES, splitTerminalInput } from '../shared/terminal-input';
-import { EMPTY_USAGE, type HookInput, type ProviderInfo, type RunConfig, type Session, type SessionUsage } from '../shared/types';
+import { EMPTY_USAGE, type DocketPlanNode, type HookInput, type ProviderInfo, type RunConfig, type Session, type SessionUsage } from '../shared/types';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 type Say = (s: string) => void;
@@ -1695,6 +1697,16 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   fs.mkdirSync(obsReg, { recursive: true });
   const obsPrevDir = process.env.CLAUDE_CONFIG_DIR;
   process.env.CLAUDE_CONFIG_DIR = obsHome;
+  // Accounts are part of "where Claude config lives" now, so the sandbox has to
+  // cover them too. The observer reads every account directory on purpose — a
+  // session started under the work account is still a running agent — which
+  // means leaving the adopted account pointed at the real ~/.claude would make
+  // these assertions depend on what is genuinely running on this machine, the
+  // exact coupling the sandbox exists to remove. Written directly because the
+  // fixture path is deliberately outside the roots create() will accept.
+  const obsPrevDirs = (db().prepare('SELECT id, config_dir FROM agent_accounts WHERE harness=?')
+    .all('claude-code') as { id: string; config_dir: string }[]);
+  db().prepare("UPDATE agent_accounts SET config_dir=? WHERE harness='claude-code'").run(obsHome);
   const obsWasOn = observed.observedEnabled();
   try {
     // This process is the only pid whose start time we can state, so it stands
@@ -1775,6 +1787,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     observed.setObservedEnabled(obsWasOn);
     if (obsPrevDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
     else process.env.CLAUDE_CONFIG_DIR = obsPrevDir;
+    for (const row of obsPrevDirs) {
+      db().prepare('UPDATE agent_accounts SET config_dir=? WHERE id=?').run(row.config_dir, row.id);
+    }
     fs.rmSync(obsHome, { recursive: true, force: true });
   }
 
@@ -1872,6 +1887,233 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     control.completeNode(reviewNode.id, { detail: 'Checked proof bundle.', decision: 'approve' });
     check(control.docket(docket.id).status === 'accepted',
       'a docket is accepted only after verification evidence and a human review decision');
+    // ── P32 · agent accounts ─────────────────────────────────────────────
+    // An account is a labelled config directory, never a credential Wanigan
+    // holds. These assertions cover the boundary rules; the browser sign-in
+    // that puts a login in the directory is the operator's, not Wanigan's.
+    const seeded = accounts.list('claude-code');
+    const ambientConfig = process.env.CLAUDE_CONFIG_DIR?.trim();
+    check(seeded.length === 1 && seeded[0].adopted && seeded[0].isDefault
+      && seeded[0].configDir === (ambientConfig ? path.resolve(ambientConfig) : path.join(os.homedir(), '.claude')),
+      'the operator’s existing configuration directory is adopted as the default account, not replaced', seeded[0]);
+    check(!accounts.supportsAccounts('generic-cli') && accounts.configEnvVar('claude-code') === 'CLAUDE_CONFIG_DIR',
+      'accounts exist only for a harness whose configuration directory Wanigan knows how to point');
+
+    const workDir = path.join(dataDir(), 'claude-work-smoke');
+    const refusedDir = (dir: string) => {
+      try { accounts.create({ harness: 'claude-code', label: 'Bad', configDir: dir }); return false; } catch { return true; }
+    };
+    check(refusedDir('/etc/wanigan-smoke') && refusedDir('relative/path') && refusedDir(os.homedir()),
+      'an account directory outside the owned roots, relative, or home itself is refused in the main process');
+
+    const work = accounts.create({ harness: 'claude-code', label: 'Work', configDir: workDir });
+    check(work.label === 'Work' && !work.isDefault && work.present && work.signedIn === 'unknown',
+      'a new account directory is created and present, with no evidence of a login', work);
+    fs.writeFileSync(`${workDir}.json`, '{"seen":true}');
+    check(accounts.byId(work.id)?.signedIn === 'yes',
+      'the sibling state file counts as evidence of a login — it sits beside the directory, not inside it');
+    fs.rmSync(`${workDir}.json`);
+    check((fs.statSync(workDir).mode & 0o777) === 0o700,
+      'the directory a credential file lands in is created owner-only');
+    let duplicateRefused = false;
+    try { accounts.create({ harness: 'claude-code', label: 'Same dir', configDir: workDir }); } catch { duplicateRefused = true; }
+    check(duplicateRefused, 'two accounts cannot share one directory, because they would share one login');
+
+    check(accounts.launchEnv(work).CLAUDE_CONFIG_DIR === workDir && Object.keys(accounts.launchEnv(null)).length === 0,
+      'an account contributes exactly the config-directory variable the harness reads');
+
+    // Seeding: authored configuration is a convenience, a login is not, and a
+    // transcript of everything said is not either.
+    const sourceDir = path.join(dataDir(), 'claude-seed-source');
+    fs.mkdirSync(path.join(sourceDir, 'skills', 'demo'), { recursive: true });
+    fs.mkdirSync(path.join(sourceDir, 'projects'), { recursive: true });
+    fs.writeFileSync(path.join(sourceDir, 'settings.json'), '{"theme":"dark"}');
+    fs.writeFileSync(path.join(sourceDir, 'skills', 'demo', 'SKILL.md'), '# demo\n');
+    fs.writeFileSync(path.join(sourceDir, '.credentials.json'), '{"secret":"do-not-copy"}');
+    fs.writeFileSync(path.join(sourceDir, 'projects', 'history.jsonl'), '{"said":"do-not-copy"}\n');
+    const source = accounts.create({ harness: 'claude-code', label: 'Seed source', configDir: sourceDir });
+    const seededDir = path.join(dataDir(), 'claude-seed-target');
+    accounts.create({ harness: 'claude-code', label: 'Seeded', configDir: seededDir, seedFromAccountId: source.id });
+    check(fs.existsSync(path.join(seededDir, 'settings.json'))
+      && fs.existsSync(path.join(seededDir, 'skills', 'demo', 'SKILL.md')),
+      'a new account can be seeded with authored configuration, so it does not start empty');
+    check(!fs.existsSync(path.join(seededDir, '.credentials.json')) && !fs.existsSync(path.join(seededDir, 'projects')),
+      'seeding never copies a stored login or the conversation history — separating those is the whole point');
+    check(!fs.lstatSync(path.join(seededDir, 'skills')).isSymbolicLink(),
+      'seeded configuration is copied, not linked, so deleting one account cannot reach into the other');
+    accounts.remove(source.id);
+    accounts.remove(accounts.list('claude-code').find((row) => row.label === 'Seeded')!.id);
+
+    const personal = seeded[0];
+    const byDefault = accounts.resolve({ harness: 'claude-code', projectId: controlProject.id });
+    check(byDefault.account?.id === personal.id && byDefault.source === 'default',
+      'a launch with no choice resolves to the default account and says that is where the answer came from');
+    accounts.setProjectAccount(controlProject.id, 'claude-code', work.id);
+    const byProject = accounts.resolve({ harness: 'claude-code', projectId: controlProject.id });
+    check(byProject.account?.id === work.id && byProject.source === 'project',
+      'a project’s saved account beats the default, and the source is reported rather than guessed');
+    const byExplicit = accounts.resolve({ harness: 'claude-code', projectId: controlProject.id, explicitAccountId: personal.id });
+    check(byExplicit.account?.id === personal.id && byExplicit.source === 'explicit',
+      'a per-launch choice beats the project’s saved account');
+
+    check(accounts.resolve({ harness: 'codex', projectId: controlProject.id }).account === null,
+      'a harness with no known configuration directory offers no accounts instead of pretending');
+    // GLM runs the reviewed Claude harness but bills another vendor, and its
+    // environment is empty until a key is stored — so the runtime environment
+    // alone cannot answer this. The declared backend can.
+    check(providers.usesAnthropicAccount({ harness: 'claude-code', backendId: 'anthropic' })
+      && !providers.usesAnthropicAccount({ harness: 'claude-code', backendId: 'zai' })
+      && !providers.usesAnthropicAccount({ harness: 'claude-code', backendId: 'deepseek' })
+      && !providers.usesAnthropicAccount({ harness: 'codex', backendId: 'openai' }),
+      'whether a profile signs in with a Claude account is keyed on its declared backend, not on a key it happens to have stored');
+    const redirected = accounts.resolve({ harness: 'claude-code', projectId: controlProject.id, appliesToAnthropic: false });
+    check(redirected.account === null && (redirected.reason ?? '').includes('another vendor'),
+      'a profile that redirects the Anthropic API gets no Claude account, because it would name a login it never uses');
+
+    const priorKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-smoke';
+    const overridden = accounts.resolve({ harness: 'claude-code', projectId: controlProject.id });
+    if (priorKey === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = priorKey;
+    check(overridden.override === 'ANTHROPIC_API_KEY' && overridden.account !== null,
+      'an ambient API key outranks the stored login, and the resolution says so rather than showing a choice the session ignores');
+
+    let defaultRemovalRefused = false;
+    try { accounts.remove(personal.id); } catch { defaultRemovalRefused = true; }
+    check(defaultRemovalRefused, 'the default account cannot be removed while another account would be left without one');
+    const forgotten = accounts.remove(work.id);
+    check(forgotten.removed && fs.existsSync(workDir),
+      'forgetting an account leaves its directory on disk; Wanigan cannot put back a login it deletes');
+    check(accounts.list('claude-code').length === 1 && !accounts.projectAccount(controlProject.id, 'claude-code'),
+      'removing an account also clears the project mappings that pointed at it');
+
+    // ── P31 · a docket is a graph ────────────────────────────────────────
+    // Two implement branches off one plan, each with its own verification, and
+    // a single review that both reach. This is the shape a planner proposes;
+    // everything below asserts it is safe to write and safe to finish.
+    const fanPlan: DocketPlanNode[] = [
+      { kind: 'plan', title: 'Scope both branches', instructions: 'Split the work.', dependsOn: [] },
+      { kind: 'implement', title: 'Branch A', instructions: 'Own src/a.', dependsOn: [0], claimPath: 'src/a' },
+      { kind: 'implement', title: 'Branch B', instructions: 'Own src/b.', dependsOn: [0], claimPath: 'src/b' },
+      // Shares Branch A's path, but runs after it — a handover, not a conflict.
+      { kind: 'verify', title: 'Verify A', instructions: 'Gate branch A.', dependsOn: [1], claimPath: 'src/a' },
+      { kind: 'verify', title: 'Verify B', instructions: 'Gate branch B.', dependsOn: [2] },
+      { kind: 'review', title: 'Decide', instructions: 'Read both branches.', dependsOn: [3, 4] },
+    ];
+    const fan = control.createDocket({ projectId: controlProject.id, title: 'Fan-out smoke',
+      objective: 'Prove a docket can hold a real task graph.', acceptance: ['Both branches are verified.'], plan: fanPlan });
+    const byTitle = (detail: typeof fan, title: string) => detail.nodes.find((node) => node.title === title)!;
+    check(fan.nodes.length === 6 && byTitle(fan, 'Scope both branches').status === 'ready'
+      && byTitle(fan, 'Branch A').status === 'blocked' && byTitle(fan, 'Branch B').status === 'blocked',
+      'a proposed task graph is written as a real dependency graph, not a fixed four-step chain');
+    check(byTitle(fan, 'Branch A').claimPath === 'src/a' && byTitle(fan, 'Scope both branches').claimPath === null,
+      'a planned path claim is stored per task and absent when none was declared');
+
+    const rejectedPlan = (plan: unknown, label: string) => {
+      try {
+        control.createDocket({ projectId: controlProject.id, title: label, objective: label, acceptance: ['n/a'], plan: plan as DocketPlanNode[] });
+        return false;
+      } catch { return true; }
+    };
+    check(rejectedPlan([
+      { kind: 'implement', title: 'A', instructions: 'x', dependsOn: [1] },
+      { kind: 'implement', title: 'B', instructions: 'x', dependsOn: [0] },
+      { kind: 'review', title: 'R', instructions: 'x', dependsOn: [0, 1] },
+    ], 'Cycle'), 'a cyclic task graph is refused instead of being written as permanently blocked work');
+    check(rejectedPlan([
+      { kind: 'implement', title: 'A', instructions: 'x', dependsOn: [] },
+    ], 'No review'), 'a task graph without a review task is refused; the human decision is the final gate');
+    check(rejectedPlan([
+      { kind: 'implement', title: 'Reviewed', instructions: 'x', dependsOn: [] },
+      { kind: 'implement', title: 'Unreviewed', instructions: 'x', dependsOn: [] },
+      { kind: 'review', title: 'R', instructions: 'x', dependsOn: [0] },
+    ], 'Unreachable'), 'a task the review cannot reach is refused rather than accepted unreviewed');
+    check(rejectedPlan([
+      { kind: 'implement', title: 'A', instructions: 'x', dependsOn: [], claimPath: 'src' },
+      { kind: 'implement', title: 'B', instructions: 'x', dependsOn: [], claimPath: 'src/nested' },
+      { kind: 'review', title: 'R', instructions: 'x', dependsOn: [0, 1] },
+    ], 'Concurrent claims'), 'two tasks that can run at once cannot claim overlapping paths');
+
+    control.completeNode(byTitle(fan, 'Scope both branches').id, { detail: 'Split.' });
+    const afterPlan = control.docket(fan.id);
+    check(byTitle(afterPlan, 'Branch A').status === 'ready' && byTitle(afterPlan, 'Branch B').status === 'ready',
+      'completing one prerequisite releases every dependent branch at once, which is what fan-out is for');
+    control.completeNode(byTitle(afterPlan, 'Branch A').id, { detail: 'A done.' });
+    control.completeNode(byTitle(afterPlan, 'Branch B').id, { detail: 'B done.' });
+    const verifyA = byTitle(control.docket(fan.id), 'Verify A');
+    const verifyB = byTitle(control.docket(fan.id), 'Verify B');
+    let unprovenVerifyRefused = false;
+    try { control.completeNode(verifyB.id, { detail: 'Trust me.' }); } catch { unprovenVerifyRefused = true; }
+    check(unprovenVerifyRefused, 'a verification task still cannot be completed without command evidence');
+    await control.runProof(verifyA.id); control.completeNode(verifyA.id, { detail: 'A gate passed.' });
+    await control.runProof(verifyB.id); control.completeNode(verifyB.id, { detail: 'B gate passed.' });
+    const decide = byTitle(control.docket(fan.id), 'Decide');
+    check(decide.status === 'ready', 'the review task becomes ready only once every branch has completed');
+    // A later red run on one branch must outvote both earlier greens.
+    review.saveRecipe(controlProject.id, ['false']);
+    await control.runProof(verifyB.id);
+    review.saveRecipe(controlProject.id, ['true']);
+    let partialApprovalRefused = false;
+    try { control.completeNode(decide.id, { decision: 'approve', detail: 'Looks fine.' }); } catch { partialApprovalRefused = true; }
+    check(partialApprovalRefused,
+      'one green branch cannot approve a docket whose other branch last failed its gate');
+    await control.runProof(verifyB.id);
+    control.completeNode(decide.id, { decision: 'approve', detail: 'Both branches verified.' });
+    check(control.docket(fan.id).status === 'accepted',
+      'a fanned-out docket is accepted once every verification task holds a passing proof');
+
+    // ── P31 · autopilot dispatch ─────────────────────────────────────────
+    // The sweep writes queue rows; it never launches anything itself. These
+    // assertions run it directly, because the timer that normally calls it is
+    // off under smoke — it would start real provider sessions mid-suite.
+    const autoPlan: DocketPlanNode[] = [
+      { kind: 'implement', title: 'Auto A', instructions: 'Own auto/a.', dependsOn: [], claimPath: 'auto/a' },
+      { kind: 'implement', title: 'Auto B', instructions: 'Own auto/b.', dependsOn: [], claimPath: 'auto/b' },
+      { kind: 'verify', title: 'Auto verify', instructions: 'Gate both.', dependsOn: [0, 1] },
+      { kind: 'review', title: 'Auto review', instructions: 'Decide.', dependsOn: [2] },
+    ];
+    const unbudgeted = control.createDocket({ projectId: controlProject.id, title: 'Unbudgeted',
+      objective: 'Autopilot without a cap.', acceptance: ['Refused.'], plan: autoPlan });
+    let uncappedRefused = false;
+    try { control.setAutopilot(unbudgeted.id, { enabled: true, providerId: 'claude' }); } catch { uncappedRefused = true; }
+    check(uncappedRefused && !control.docket(unbudgeted.id).autopilot.enabled,
+      'unattended dispatch without a spend cap is refused rather than started');
+
+    const auto = control.createDocket({ projectId: controlProject.id, title: 'Autopilot smoke',
+      objective: 'Dispatch ready work without an operator.', acceptance: ['Both branches land.'],
+      budgetUsd: 5, plan: autoPlan });
+    const armed = control.setAutopilot(auto.id, { enabled: true, providerId: 'claude', model: 'smoke-model' });
+    check(armed.autopilot.enabled && armed.autopilot.providerId === 'claude' && armed.autopilot.model === 'smoke-model'
+      && armed.autopilot.budgetUsd === 5 && armed.autopilot.spendStatus === 'none',
+      'arming autopilot freezes the provider, model and cap it will dispatch against');
+
+    const swept = control.sweepAutopilot();
+    const queuedLabels = queue.listQueue(200).filter((item) => item.kind === 'node').map((item) => item.label);
+    check(swept === 2 && queuedLabels.filter((label) => label.startsWith('Autopilot smoke · ')).length === 2,
+      'the sweep queues every ready branch at once, and only the ready ones', { swept, queuedLabels });
+    check(!queuedLabels.some((label) => label.includes('Auto review')),
+      'the review task is never dispatched to an agent; approving its own docket is the gate autopilot must not cross');
+    check(control.sweepAutopilot() === 0,
+      'a second sweep re-queues nothing, so a task cannot be started twice by two ticks');
+
+    // Turning autopilot off cannot un-queue a row a runner may already hold, so
+    // the runner itself is the thing that has to refuse.
+    control.setAutopilot(auto.id, { enabled: false });
+    const autoA = control.docket(auto.id).nodes.find((node) => node.title === 'Auto A')!;
+    await control.startQueuedNode(autoA.id);
+    check(control.docket(auto.id).nodes.find((node) => node.id === autoA.id)?.status === 'ready',
+      'a queued task whose autopilot was switched off returns without starting a paid session');
+    check(control.sweepAutopilot() === 0,
+      'a disarmed docket is skipped by later sweeps, so switching autopilot off actually stops it');
+    for (const item of queue.listQueue(200).filter((row) => row.kind === 'node')) queue.cancelQueued(item.id);
+
+    const capped = control.createDocket({ projectId: controlProject.id, title: 'Spent out',
+      objective: 'A cap already reached.', acceptance: ['Halts.'], budgetUsd: 0, plan: autoPlan });
+    control.setAutopilot(capped.id, { enabled: true, providerId: 'claude' });
+    check(control.sweepAutopilot() === 0 && !control.docket(capped.id).autopilot.enabled,
+      'a docket at its cap stops dispatching instead of continuing on unreported cost');
+    check(control.docket(capped.id).proofs.some((proof) => proof.summary.startsWith('Autopilot stopped:')),
+      'the halt is written into the docket’s own evidence, not just a flipped flag');
+
     const event = control.addEvent({ projectId: controlProject.id, source: 'ci', kind: 'failure', summary: 'Smoke CI failed.' });
     const triaged = control.triageEvent(event.id, {});
     check(control.listEvents('triaged').some((item) => item.docketId === triaged.id),

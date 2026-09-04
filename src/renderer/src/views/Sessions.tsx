@@ -173,6 +173,21 @@ export default function Sessions({
   const [draft, setDraft] = useState('');
   const [defaultTrust, setDefaultTrust] = useState<TrustLevel | null>(null);
   const [past, setPast] = useState<PastSession[]>([]);
+  /**
+   * Whether this machine has more than one account at all.
+   *
+   * With one account its label is a constant, and stamping a constant on every
+   * session row is noise. The badge appears exactly when it can distinguish two
+   * sessions from each other.
+   */
+  const [multiAccount, setMultiAccount] = useState(false);
+  useEffect(() => {
+    let live = true;
+    window.wanigan.accounts.list('claude-code')
+      .then((rows) => { if (live) setMultiAccount(rows.length > 1); })
+      .catch(() => { if (live) setMultiAccount(false); });
+    return () => { live = false; };
+  }, []);
   const [settledOpen, setSettledOpen] = useState(false);
   const [settledShown, setSettledShown] = useState(8);
   const [resuming, setResuming] = useState<string | null>(null);
@@ -580,6 +595,12 @@ export default function Sessions({
                                   it runs, so the second line picks it up. */}
                               {name ? `${providerLabel} · ` : ''}
                               {s.status === 'running' ? `pid ${s.pid}` : `exited ${s.exitCode}`}
+                              {/* Which login this session is actually signed in
+                                  as. Shown only when more than one account
+                                  exists: with a single account the label is a
+                                  constant, and a constant on every row is
+                                  noise rather than information. */}
+                              {multiAccount && s.accountLabel && ` · ${s.accountLabel}`}
                             </span>
                           </span>
                           {s.unread > 0 && s.id !== activeId && (

@@ -3,7 +3,7 @@ import { BrowserWindow } from 'electron';
 import type { LaunchOptions, Session, ProviderId } from '../shared/types';
 import { EFFORT_LEVELS } from '../shared/types';
 import {
-  providerById, shellPath, detectProviders, refreshProviderPacks, runsClaudeCli,
+  providerById, shellPath, detectProviders, refreshProviderPacks, runsClaudeCli, usesAnthropicAccount,
 } from './providers';
 import { projectById } from './store';
 import { db } from './db';
@@ -15,6 +15,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { Baseline, BudgetState, TrustLevel } from '../shared/types';
 import { otelEnv } from './otel';
+import * as accounts from './accounts';
 import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './hooks';
 import { finalizeSessionCheckpoints, forgetSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
 import { archiveSession } from './transcripts';
@@ -156,7 +157,7 @@ const ANTHROPIC_API_HOST = 'api.anthropic.com';
 const ANTHROPIC_AMBIENT_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_ADMIN_KEY'];
 
 /** True when the resolved provider environment aims the Anthropic API somewhere else. */
-function redirectsAnthropicApi(providerEnv: Record<string, string>): boolean {
+export function redirectsAnthropicApi(providerEnv: Record<string, string>): boolean {
   const base = providerEnv.ANTHROPIC_BASE_URL?.trim();
   if (!base) return false;
   try {
@@ -173,12 +174,24 @@ function redirectsAnthropicApi(providerEnv: Record<string, string>): boolean {
 }
 
 /**
+ * The same question asked about a profile rather than an already-built
+ * environment, so the account surfaces can ask it without reproducing how a
+ * provider's environment is assembled.
+ */
+export function redirectsAnthropicApiFor(def: { env?: () => Record<string, string> }): boolean {
+  try { return redirectsAnthropicApi(def.env?.() ?? {}); } catch { return false; }
+}
+
+/**
  * Telemetry and hooks are how Wanigan knows anything about a running agent, and
  * both are set here rather than asked of the user, because Wanigan spawns the
  * CLI and therefore owns its environment. Content logging stays off: prompt and
  * response text are redacted by default and Wanigan does not opt in.
  */
-function agentEnv(PATH: string, sessionId: string, providerEnv: Record<string, string> = {}): Record<string, string> {
+function agentEnv(
+  PATH: string, sessionId: string, providerEnv: Record<string, string> = {},
+  accountEnv: Record<string, string> = {},
+): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
@@ -205,6 +218,13 @@ function agentEnv(PATH: string, sessionId: string, providerEnv: Record<string, s
   // from the shell — an ANTHROPIC_BASE_URL in your profile must not silently
   // point a GLM session back at Anthropic, or the other way round.
   Object.assign(out, providerEnv);
+  // After the pack, deliberately. A manifest is untrusted data, and the config
+  // directory is where a harness keeps its credential — a pack that could set
+  // it could point this session's login at a directory it chose, or read the
+  // operator's by naming theirs. Wanigan's account decision wins, and it also
+  // beats an inherited CLAUDE_CONFIG_DIR from the operator's shell, so the
+  // account shown at launch is the one the session actually uses.
+  Object.assign(out, accountEnv);
   if (redirectsAnthropicApi(providerEnv)) {
     // A provider pack chooses this host, and a pack is untrusted data. Consent
     // is otherwise the only control on where it points, and a consent dialog
@@ -1071,6 +1091,27 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     }
   }
 
+  // Called once and reused: this is the value the account decision is made
+  // against as well as the value the child receives, and a second call could
+  // legitimately return something different.
+  const providerEnvValues = def.env?.() ?? {};
+  // Which account this session authenticates as. GLM and DeepSeek run the same
+  // `claude-code` harness but point ANTHROPIC_BASE_URL at another vendor and
+  // authenticate with that vendor's own credential, so naming a Claude account
+  // for them would name a login the session never uses. Asking whether the
+  // profile still talks to Anthropic is the provider-neutral form of that test.
+  const account = accounts.resolve({
+    harness: def.harness,
+    projectId: project.id,
+    explicitAccountId: opts.accountId ?? null,
+    appliesToAnthropic: usesAnthropicAccount(def) && !redirectsAnthropicApi(providerEnvValues),
+  }).account;
+  // Frozen onto the live session. The project's default can change while this
+  // runs, and a badge that re-resolved on every read would relabel a running
+  // session as an account it never authenticated with.
+  meta.accountId = account?.id ?? null;
+  meta.accountLabel = account?.label ?? null;
+
   let proc: IPty;
   try {
     proc = pty.spawn(resolvedBin, args, {
@@ -1078,7 +1119,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       cols: 120,
       rows: 32,
       cwd,
-      env: agentEnv(PATH, id, def.env?.() ?? {}),
+      env: agentEnv(PATH, id, providerEnvValues, accounts.launchEnv(account)),
     });
   } catch (e) {
     if (resumeKey) resumingConversations.delete(resumeKey);
@@ -1126,8 +1167,8 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
                                  resumed_from, worktree, trust, bin, capabilities_json,
                                  provider_pack_id,provider_pack_version,provider_profile_json,
                                  backend_id,harness_id,baseline_head,baseline_dirty_json,
-                                 initial_prompt,title)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                 initial_prompt,title,account_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(id, conversationId, opts.providerId, project.id, project.path, project.name,
              meta.model ?? null, meta.effort ?? null, meta.permissionMode ?? null,
              meta.createdAt, savedResume?.sessionId ?? null, worktree, trust, resolvedBin,
@@ -1139,7 +1180,11 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
              // already done from being attributed to the agent, so it is stored
              // whole rather than capped.
              baseline.head, JSON.stringify(baseline.dirty),
-             initialPrompt, derivedTitle);
+             // Recorded because the transcript, observed-session and team
+             // readers have to look in the directory this session actually
+             // used. Resolving it again later from the default would send them
+             // to the wrong account's files and honestly report nothing.
+             initialPrompt, derivedTitle, account?.id ?? null);
       // A reused isolated checkout now belongs to this live continuation for
       // reconciliation purposes. Its historical session_log rows retain the
       // original path, so moving this liveness pointer loses no provenance.

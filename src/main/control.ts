@@ -8,9 +8,11 @@ import { createSession, killSession, listSessions } from './sessions';
 import * as review from './review';
 import * as otel from './otel';
 import { listGoalTrace } from './goal-trace';
+import { enqueue } from './queue';
 import type {
   ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode,
-  DocketNodeKind, DocketNodeStatus, DocketProof, DocketRisk, DocketStatus, GoalResumeReceipt, GoalTraceEvent,
+  DocketAutopilot, DocketNodeKind, DocketNodeStatus, DocketPlanNode, DocketProof, DocketRisk, DocketStatus,
+  GoalResumeReceipt, GoalTraceEvent,
   McpTaskRecord, ModelOutcome, WorkDocket,
 } from '../shared/types';
 
@@ -18,15 +20,21 @@ type DocketRow = {
   id: string; project_id: string; title: string; objective: string; acceptance_json: string;
   risk: string; budget_usd: number | null; base_commit: string | null; status: string;
   created_at: number; updated_at: number;
+  autopilot: number; autopilot_provider: string | null; autopilot_model: string | null;
 };
 type NodeRow = {
   id: string; docket_id: string; kind: string; title: string; instructions: string; depends_json: string;
   status: string; provider_id: string | null; model: string | null; session_id: string | null;
   worktree: string | null; started_at: number | null; ended_at: number | null; detail: string | null;
+  claim_path: string | null; dispatch_state: string | null;
 };
 
 const MAX_OBJECTIVE = 12_000;
 const MAX_NOTE = 4_000;
+const MAX_INSTRUCTIONS = 8_000;
+/** A docket is one reviewable contract. Past this, split it. */
+const MAX_PLAN_NODES = 40;
+const MAX_NODE_DEPENDENCIES = 16;
 const NODE_KINDS: DocketNodeKind[] = ['plan', 'implement', 'verify', 'review'];
 const RISKS: DocketRisk[] = ['low', 'elevated', 'high'];
 
@@ -66,6 +74,39 @@ function mapDocket(row: DocketRow): WorkDocket {
     risk: RISKS.includes(row.risk as DocketRisk) ? row.risk as DocketRisk : 'elevated',
     budgetUsd: row.budget_usd, baseCommit: row.base_commit,
     status: row.status as DocketStatus, createdAt: row.created_at, updatedAt: row.updated_at,
+    autopilot: autopilotState(row),
+  };
+}
+
+/**
+ * What a docket has actually spent, and how much of that we can vouch for.
+ *
+ * Only reported provider cost is counted. A provider that reports nothing is
+ * not treated as free — it moves `spendStatus` down so the surface, and the
+ * budget refusal below, can say the cap covers part of the work rather than
+ * implying it covers all of it.
+ */
+function autopilotSpend(docketId: string): Pick<DocketAutopilot, 'spendUsd' | 'spendStatus'> {
+  const sessions = (db().prepare("SELECT session_id FROM work_nodes WHERE docket_id=? AND session_id IS NOT NULL")
+    .all(docketId) as { session_id: string }[]).map((row) => row.session_id);
+  if (!sessions.length) return { spendUsd: 0, spendStatus: 'none' };
+  let spendUsd = 0; let reported = 0;
+  for (const id of sessions) {
+    const usage = otel.usageFor(id);
+    if (usage.costStatus === 'reported') { spendUsd += usage.costUsd; reported++; }
+  }
+  const spendStatus: DocketAutopilot['spendStatus'] = reported === sessions.length ? 'reported'
+    : reported === 0 ? 'unreported' : 'partial';
+  return { spendUsd, spendStatus };
+}
+
+function autopilotState(row: DocketRow): DocketAutopilot {
+  return {
+    enabled: row.autopilot === 1,
+    providerId: row.autopilot_provider,
+    model: row.autopilot_model,
+    budgetUsd: row.budget_usd,
+    ...autopilotSpend(row.id),
   };
 }
 
@@ -88,7 +129,7 @@ function mapNodes(rows: NodeRow[]): DocketNode[] {
     return {
       id: row.id, docketId: row.docket_id, kind: NODE_KINDS.includes(row.kind as DocketNodeKind)
         ? row.kind as DocketNodeKind : 'implement',
-      title: row.title, instructions: row.instructions, dependsOn, status,
+      title: row.title, instructions: row.instructions, dependsOn, claimPath: row.claim_path, status,
       providerId: row.provider_id, model: row.model, sessionId: row.session_id,
       worktree: row.worktree, startedAt: row.started_at, endedAt: row.ended_at, detail: row.detail,
     };
@@ -167,8 +208,138 @@ export function docket(id: string): DocketDetail {
   return { ...base, nodes: mapNodes(rawNodes(id)), claims: claimRows(id), proofs: proofRows(id), checkpoints: checkpointRows(id) };
 }
 
+type PlannedNode = { kind: DocketNodeKind; title: string; instructions: string; dependsOn: number[]; claimPath: string | null };
+
+/**
+ * The shape a docket gets when nobody proposed a graph.
+ *
+ * It is the same four phases Control always created, expressed as a plan so
+ * there is exactly one code path that writes nodes. A planner that proposes
+ * something richer is validated by the same rules this passes trivially.
+ */
+const DEFAULT_PLAN: DocketPlanNode[] = [
+  { kind: 'plan', title: 'Plan and identify risks', dependsOn: [],
+    instructions: 'Produce an implementation plan, identify affected areas, unknowns, and evidence needed for acceptance. Do not make changes until the plan is accepted.' },
+  { kind: 'implement', title: 'Implement in an isolated worktree', dependsOn: [0],
+    instructions: 'Make the smallest changes that satisfy the accepted plan and the docket acceptance checks. Keep the worktree reviewable and report intentional trade-offs.' },
+  { kind: 'verify', title: 'Verify the change', dependsOn: [1],
+    instructions: 'Run the project review gate and targeted checks in the implementation worktree. Record failures as evidence; do not claim success without command results.' },
+  { kind: 'review', title: 'Independent review and decision', dependsOn: [2],
+    instructions: 'Review the diff, the acceptance checks, and the recorded evidence. Approve only with a passed verification proof; otherwise request changes or reject.' },
+];
+
+/**
+ * Validate a proposed task graph before a single row is written.
+ *
+ * Three invariants, each here because breaking it produces a docket that looks
+ * fine on the board and can never finish:
+ *
+ *  - **Acyclic.** `mapNodes` derives readiness from stored rows every read, so
+ *    a cycle is not a crash — it is four tasks quietly waiting on each other
+ *    until a person notices nothing has moved.
+ *  - **Exactly one terminal review task, reachable from everything.** A docket
+ *    reaches `accepted` through its review node. A graph without one can never
+ *    be accepted; a graph whose review node does not depend on some branch
+ *    would accept that branch's work without anyone having looked at it.
+ *  - **No overlapping claims between tasks that can run at once.** Two nodes
+ *    ordered by a dependency hand the path over and may share it safely, so
+ *    this compares reachability rather than paths alone. Getting this wrong in
+ *    the strict direction would forbid the ordinary implement-then-verify pair
+ *    from naming the same directory.
+ *
+ * The errors name the offending task numbers, because a planner agent reads
+ * them and has to be able to fix its own proposal.
+ */
+function buildPlan(raw: unknown): PlannedNode[] {
+  if (!Array.isArray(raw)) throw new Error('A task graph must be an array of tasks.');
+  if (!raw.length) throw new Error('A task graph needs at least one task.');
+  if (raw.length > MAX_PLAN_NODES) {
+    throw new Error(`A docket holds at most ${MAX_PLAN_NODES} tasks; this graph has ${raw.length}. Split the work across dockets.`);
+  }
+
+  const nodes: PlannedNode[] = raw.map((entry, index) => {
+    const value = entry as Partial<DocketPlanNode> | null;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`Task ${index + 1} is not a task object.`);
+    if (!NODE_KINDS.includes(value.kind as DocketNodeKind)) {
+      throw new Error(`Task ${index + 1} has kind "${String(value.kind)}"; use one of: ${NODE_KINDS.join(', ')}.`);
+    }
+    const depends = Array.isArray(value.dependsOn) ? value.dependsOn : [];
+    if (depends.length > MAX_NODE_DEPENDENCIES) {
+      throw new Error(`Task ${index + 1} has ${depends.length} dependencies; the maximum is ${MAX_NODE_DEPENDENCIES}.`);
+    }
+    const dependsOn = [...new Set(depends.map((dep) => Number(dep)))];
+    for (const dep of dependsOn) {
+      if (!Number.isInteger(dep) || dep < 0 || dep >= raw.length) {
+        throw new Error(`Task ${index + 1} depends on a task that is not in this graph.`);
+      }
+      if (dep === index) throw new Error(`Task ${index + 1} cannot depend on itself.`);
+    }
+    // '' is a real value here — the root claim — so an empty string after
+    // cleaning must not collapse back to "declared nothing".
+    const rawClaim = value.claimPath;
+    const claimPath = typeof rawClaim === 'string' && rawClaim.trim() ? cleanClaim(rawClaim) : null;
+    return {
+      kind: value.kind as DocketNodeKind,
+      title: safeText(value.title, `Task ${index + 1} title`, 180),
+      instructions: safeText(value.instructions, `Task ${index + 1} instructions`, MAX_INSTRUCTIONS),
+      dependsOn, claimPath,
+    };
+  });
+
+  const ancestors = nodes.map(() => new Set<number>());
+  const visiting = new Set<number>();
+  const done = new Set<number>();
+  const walk = (index: number, trail: number[]): Set<number> => {
+    if (visiting.has(index)) {
+      const cycle = [...trail.slice(trail.indexOf(index)), index].map((i) => `task ${i + 1}`).join(' → ');
+      throw new Error(`This task graph has a cycle (${cycle}); those tasks would wait on each other forever.`);
+    }
+    if (done.has(index)) return ancestors[index];
+    visiting.add(index);
+    for (const dep of nodes[index].dependsOn) {
+      ancestors[index].add(dep);
+      for (const older of walk(dep, [...trail, index])) ancestors[index].add(older);
+    }
+    visiting.delete(index); done.add(index);
+    return ancestors[index];
+  };
+  for (let index = 0; index < nodes.length; index++) walk(index, []);
+
+  const reviews = nodes.map((node, index) => (node.kind === 'review' ? index : -1)).filter((index) => index >= 0);
+  if (reviews.length !== 1) {
+    throw new Error(reviews.length === 0
+      ? 'A docket needs one review task; the human decision is its final gate.'
+      : `A docket needs exactly one review task; this graph has ${reviews.length}.`);
+  }
+  const terminal = reviews[0];
+  const unreviewed = nodes
+    .map((_, index) => index)
+    .filter((index) => index !== terminal && !ancestors[terminal].has(index));
+  if (unreviewed.length) {
+    const names = unreviewed.map((index) => `task ${index + 1} ("${nodes[index].title}")`).join(', ');
+    throw new Error(`The review task must depend on every other task, directly or through another. ${names} would be accepted without anyone reviewing it.`);
+  }
+
+  for (let a = 0; a < nodes.length; a++) {
+    const left = nodes[a].claimPath;
+    if (left === null) continue;
+    for (let b = a + 1; b < nodes.length; b++) {
+      const right = nodes[b].claimPath;
+      if (right === null) continue;
+      if (ancestors[a].has(b) || ancestors[b].has(a)) continue;
+      if (overlaps(left, right)) {
+        throw new Error(`Task ${a + 1} and task ${b + 1} can run at the same time and both claim "${left || '.'}" and "${right || '.'}". Order them with a dependency, or narrow one of the paths.`);
+      }
+    }
+  }
+
+  return nodes;
+}
+
 export function createDocket(input: {
   projectId: string; title: string; objective: string; acceptance?: string[]; risk?: DocketRisk; budgetUsd?: number | null;
+  /** A proposed task graph. Omitted or empty keeps the standard four phases. */
+  plan?: DocketPlanNode[];
 }): DocketDetail {
   const project = projectById(input.projectId);
   if (!project) throw new Error('Choose a project before creating a docket.');
@@ -182,24 +353,25 @@ export function createDocket(input: {
   if (budgetUsd !== null && (!Number.isFinite(budgetUsd) || budgetUsd < 0 || budgetUsd > 100_000)) {
     throw new Error('Budget must be a number between 0 and 100,000 USD.');
   }
+  // Validate the whole graph before opening a transaction: a rejected plan
+  // must leave no docket behind, and validation is where untrusted planner
+  // output is refused.
+  const planned = buildPlan(input.plan?.length ? input.plan : DEFAULT_PLAN);
   const id = uid('doc'); const at = now();
-  const plan = uid('node'); const implement = uid('node'); const verify = uid('node'); const reviewer = uid('node');
+  const nodeIds = planned.map(() => uid('node'));
   // Read before the transaction opens. Spawning git inside it holds SQLite's
   // write lock for as long as git takes, and git is the slow, external half.
   const baseCommit = gitHead(project.path);
   const insert = db().transaction(() => {
     db().prepare(`INSERT INTO work_dockets (id, project_id, title, objective, acceptance_json, risk, budget_usd, base_commit, status, created_at, updated_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(id, project.id, title, objective, JSON.stringify(acceptance), risk, budgetUsd, baseCommit, 'draft', at, at);
-    const add = (nodeId: string, kind: DocketNodeKind, nodeTitle: string, instructions: string, depends: string[]) => {
-      db().prepare(`INSERT INTO work_nodes (id,docket_id,kind,title,instructions,depends_json,status)
-        VALUES (?,?,?,?,?,?,?)`).run(nodeId, id, kind, nodeTitle, instructions, JSON.stringify(depends), 'pending');
+    planned.forEach((node, index) => {
+      db().prepare(`INSERT INTO work_nodes (id,docket_id,kind,title,instructions,depends_json,status,claim_path)
+        VALUES (?,?,?,?,?,?,?,?)`).run(nodeIds[index], id, node.kind, node.title, node.instructions,
+          JSON.stringify(node.dependsOn.map((dep) => nodeIds[dep])), 'pending', node.claimPath);
       db().prepare(`INSERT INTO mcp_task_records (id,docket_id,node_id,title,status,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?)`).run(uid('task'), id, nodeId, nodeTitle, 'input_required', at, at);
-    };
-    add(plan, 'plan', 'Plan and identify risks', 'Produce an implementation plan, identify affected areas, unknowns, and evidence needed for acceptance. Do not make changes until the plan is accepted.', []);
-    add(implement, 'implement', 'Implement in an isolated worktree', 'Make the smallest changes that satisfy the accepted plan and the docket acceptance checks. Keep the worktree reviewable and report intentional trade-offs.', [plan]);
-    add(verify, 'verify', 'Verify the change', 'Run the project review gate and targeted checks in the implementation worktree. Record failures as evidence; do not claim success without command results.', [implement]);
-    add(reviewer, 'review', 'Independent review and decision', 'Review the diff, the acceptance checks, and the recorded evidence. Approve only with a passed verification proof; otherwise request changes or reject.', [verify]);
+        VALUES (?,?,?,?,?,?,?)`).run(uid('task'), id, nodeIds[index], node.title, 'input_required', at, at);
+    });
   });
   insert();
   return docket(id);
@@ -250,6 +422,16 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
   const project = projectById(parent.project_id);
   if (!project) throw new Error('This docket’s project no longer exists.');
   const providerId = safeText(input.providerId, 'Provider', 120);
+  // Take the declared claim before anything is spawned. A conflict found after
+  // the PTY is up has already cost tokens and left an agent editing a
+  // directory another node owns; found here it costs one refused click.
+  // A reopened node may still hold its own claim, which is not a conflict.
+  let takenClaim: DocketClaim | null = null;
+  if (node.claimPath !== null) {
+    const held = db().prepare('SELECT id FROM work_claims WHERE node_id=? AND path=? AND released_at IS NULL')
+      .get(nodeId, node.claimPath) as { id: string } | undefined;
+    if (!held) takenClaim = claimPath(nodeId, node.claimPath);
+  }
   const acceptance = parseStrings(parent.acceptance_json).map((value, index) => `${index + 1}. ${value}`).join('\n');
   const prompt = [
     `You are working on docket: ${parent.title}.`, `Objective:\n${parent.objective}`,
@@ -257,18 +439,25 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
     `Acceptance checks:\n${acceptance}`,
     'Work only in the isolated worktree Wanigan provided. Report evidence and unresolved risks; do not claim a passed check you did not run.',
   ].join('\n\n');
-  const session = await createSession({ providerId, projectId: project.id, model: input.model?.trim() || undefined,
-    effort: input.effort?.trim() || undefined, permissionMode: input.permissionMode?.trim() || (node.kind === 'implement' ? 'acceptEdits' : 'plan'),
-    isolate: true, initialPrompt: prompt });
+  let session: Awaited<ReturnType<typeof createSession>>;
+  try {
+    session = await createSession({ providerId, projectId: project.id, model: input.model?.trim() || undefined,
+      effort: input.effort?.trim() || undefined, permissionMode: input.permissionMode?.trim() || (node.kind === 'implement' ? 'acceptEdits' : 'plan'),
+      isolate: true, initialPrompt: prompt });
+  } catch (error) {
+    if (takenClaim) releaseClaim(takenClaim.id);
+    throw error;
+  }
   // Readiness was checked before a multi-second await (worktree creation,
   // provider probe, PTY spawn). Two starts can both pass that check, and an
   // unconditional write would leave the loser's agent running, spending
   // tokens, attached to nothing. Claiming the row atomically decides it.
-  const claimed = db().prepare(`UPDATE work_nodes SET status='running',provider_id=?,model=?,session_id=?,worktree=?,started_at=?,detail=NULL
+  const claimed = db().prepare(`UPDATE work_nodes SET status='running',provider_id=?,model=?,session_id=?,worktree=?,started_at=?,detail=NULL,dispatch_state=NULL
     WHERE id=? AND session_id IS NULL AND status!='running'`)
     .run(providerId, input.model?.trim() || null, session.id, session.worktree ?? null, now(), nodeId);
   if (claimed.changes === 0) {
     try { killSession(session.id); } catch { /* the duplicate is already gone */ }
+    if (takenClaim) releaseClaim(takenClaim.id);
     throw new Error('This task was already started by another action; the duplicate session was stopped.');
   }
   db().prepare(`INSERT INTO work_resume_receipts
@@ -400,13 +589,20 @@ export function completeNode(nodeId: string, input: { detail?: string; decision?
   if (!['running', 'ready'].includes(current.status)) throw new Error(`Only a ready or running task can be completed; this task is ${current.status}.`);
   const detail = input.detail?.trim() ? safeText(input.detail, 'Completion note', MAX_NOTE) : null;
   const decision = input.decision ?? 'approve';
-  const testsPassed = node.kind === 'verify' ? hasPassedProof(parent.id, nodeId) : true;
+  // A fanned-out docket can hold several verification tasks. Reading only the
+  // first would let one green branch speak for a tree whose other branch failed
+  // its gate, both in the approval check below and in the evidence stored for
+  // the router — so the whole set decides.
+  const verifyNodes = node.kind === 'review' ? mapNodes(rawNodes(parent.id)).filter((value) => value.kind === 'verify') : [];
+  const testsPassed = node.kind === 'verify' ? hasPassedProof(parent.id, nodeId)
+    : node.kind === 'review' ? verifyNodes.length > 0 && verifyNodes.every((value) => hasPassedProof(parent.id, value.id))
+      : true;
   if (node.kind === 'verify' && !testsPassed) throw new Error('Run and pass the review gate before completing verification. A claim without command evidence is not proof.');
-  if (node.kind === 'review') {
-    const verifyNode = mapNodes(rawNodes(parent.id)).find((value) => value.kind === 'verify');
-    if (decision === 'approve' && (!verifyNode || !hasPassedProof(parent.id, verifyNode.id))) {
-      throw new Error('Approval requires a passed verification proof. Record the review gate before accepting this docket.');
-    }
+  if (node.kind === 'review' && decision === 'approve' && !testsPassed) {
+    const unproven = verifyNodes.filter((value) => !hasPassedProof(parent.id, value.id));
+    throw new Error(verifyNodes.length === 0
+      ? 'Approval requires a passed verification proof, and this docket has no verification task.'
+      : `Approval requires a passed verification proof for every verification task. Still unproven: ${unproven.map((value) => value.title).join(', ')}.`);
   }
   const failed = decision !== 'approve';
   db().prepare('UPDATE work_nodes SET status=?,ended_at=?,detail=? WHERE id=?')
@@ -538,13 +734,140 @@ export function retryNode(nodeId: string): DocketNode {
     try { killSession(node.session_id); } catch { /* already exited */ }
   }
   db().prepare(`UPDATE work_nodes SET status='pending',session_id=NULL,started_at=NULL,ended_at=NULL,
-    detail=? WHERE id=?`).run(`Reopened after ${node.status}.`, nodeId);
+    dispatch_state=NULL,detail=? WHERE id=?`).run(`Reopened after ${node.status}.`, nodeId);
   releaseClaims(nodeId);
   // The MCP task vocabulary has no 'pending': a reopened task is one waiting
   // to be started again, which is exactly what input_required means here.
   setTaskStatus(nodeId, 'input_required');
   setDocketPhase(node.docket_id);
   return mapNodes(rawNodes(node.docket_id)).find((value) => value.id === nodeId)!;
+}
+
+/* ── autopilot ───────────────────────────────────────────────────────── */
+
+function clearDispatch(nodeId: string): void {
+  db().prepare("UPDATE work_nodes SET dispatch_state=NULL WHERE id=? AND dispatch_state='queued'").run(nodeId);
+}
+
+/**
+ * Stop dispatching this docket and say why, in its own evidence.
+ *
+ * A halt that only flips a flag leaves the operator looking at a stalled board
+ * with no account of what happened, so the reason is written where the rest of
+ * the docket's history already lives.
+ */
+function haltAutopilot(docketId: string, reason: string): void {
+  db().prepare('UPDATE work_dockets SET autopilot=0,updated_at=? WHERE id=? AND autopilot=1').run(now(), docketId);
+  db().prepare('INSERT INTO work_proofs (id,docket_id,node_id,kind,status,summary,created_at) VALUES (?,?,?,?,?,?,?)')
+    .run(uid('proof'), docketId, null, 'decision', 'recorded', `Autopilot stopped: ${reason}`, now());
+}
+
+/**
+ * Turn unattended dispatch on or off for one docket.
+ *
+ * A budget is a precondition rather than an option. Autopilot starts real
+ * sessions against a real provider with nobody at the keyboard, and the house
+ * rule is that Wanigan does not silently spend tokens — an uncapped unattended
+ * run is exactly that. The provider and model are frozen here so a later
+ * change to the operator's default cannot redirect work already in flight.
+ */
+export function setAutopilot(docketId: string, input: { enabled: boolean; providerId?: string; model?: string | null }): DocketDetail {
+  const row = docketRow(docketId);
+  if (!input.enabled) {
+    // Rows already handed to the queue are left alone: cancelling them here
+    // would race a runner that may already be mid-launch. They check the flag
+    // again before they start, which is the point that can safely refuse.
+    db().prepare('UPDATE work_dockets SET autopilot=0,updated_at=? WHERE id=?').run(now(), docketId);
+    return docket(docketId);
+  }
+  if (['accepted', 'rejected'].includes(row.status)) throw new Error('This docket is finished; autopilot has nothing left to dispatch.');
+  if (row.budget_usd === null) {
+    throw new Error('Set a budget on this docket before enabling autopilot. Unattended dispatch spends against a real provider with nobody watching, and Wanigan will not start an uncapped run.');
+  }
+  const providerId = safeText(input.providerId, 'Provider', 120);
+  const model = input.model?.trim() || null;
+  db().prepare('UPDATE work_dockets SET autopilot=1,autopilot_provider=?,autopilot_model=?,updated_at=? WHERE id=?')
+    .run(providerId, model, now(), docketId);
+  return docket(docketId);
+}
+
+/**
+ * Hand every eligible ready task to the dispatcher. Called on a timer.
+ *
+ * This does not start anything itself. It writes queue rows, and the existing
+ * dispatcher applies the slot limit, the durable claim and the lease — so an
+ * autopilot task is recovered after a crash by exactly the same machinery that
+ * recovers a headless run, and a second Wanigan process cannot double-start it.
+ *
+ * Two tasks are never dispatched. A `review` task is the human decision, and an
+ * agent sent to it would let the docket approve its own work — the gate this
+ * whole module exists to hold. And a docket whose reported spend has reached
+ * its budget stops, rather than continuing on the strength of costs nobody
+ * reported.
+ */
+export function sweepAutopilot(): number {
+  const dockets = db().prepare("SELECT * FROM work_dockets WHERE autopilot=1 AND status NOT IN ('accepted','rejected')")
+    .all() as DocketRow[];
+  let queued = 0;
+  for (const row of dockets) {
+    if (!row.autopilot_provider) {
+      haltAutopilot(row.id, 'no provider is recorded for unattended dispatch.');
+      continue;
+    }
+    if (row.budget_usd === null) {
+      haltAutopilot(row.id, 'the docket no longer has a budget.');
+      continue;
+    }
+    const spend = autopilotSpend(row.id);
+    if (spend.spendUsd >= row.budget_usd) {
+      haltAutopilot(row.id, `reported spend of $${spend.spendUsd.toFixed(2)} reached the $${row.budget_usd.toFixed(2)} budget.`);
+      continue;
+    }
+    for (const node of mapNodes(rawNodes(row.id))) {
+      if (node.status !== 'ready' || node.kind === 'review') continue;
+      // The marker is claimed in the same statement that tests it, so two
+      // ticks — or two processes on this database — cannot both enqueue it.
+      const claimed = db().prepare(`UPDATE work_nodes SET dispatch_state='queued'
+        WHERE id=? AND dispatch_state IS NULL AND status='pending' AND session_id IS NULL`).run(node.id);
+      if (claimed.changes !== 1) continue;
+      try {
+        enqueue('node', `${row.title} · ${node.title}`, { nodeId: node.id });
+        queued++;
+      } catch (error) {
+        clearDispatch(node.id);
+        throw error;
+      }
+    }
+  }
+  return queued;
+}
+
+/**
+ * Run one queued autopilot task.
+ *
+ * Everything about the docket can have changed between the sweep and the
+ * dispatcher reaching this row: autopilot turned off, the task cancelled, a
+ * prerequisite reopened. Each of those returns quietly rather than throwing,
+ * because a throw here is retried five times with backoff against a task that
+ * is no longer eligible, and five refusals are not more informative than one.
+ * The task's own row in Control remains the record of what actually happened.
+ */
+export async function startQueuedNode(nodeId: string): Promise<void> {
+  const node = nodeRow(nodeId);
+  const parent = docketRow(node.docket_id);
+  const mapped = mapNodes(rawNodes(node.docket_id)).find((value) => value.id === nodeId);
+  if (parent.autopilot !== 1 || !parent.autopilot_provider || !mapped || mapped.status !== 'ready' || mapped.kind === 'review') {
+    clearDispatch(nodeId);
+    return;
+  }
+  try {
+    await startNode(nodeId, { providerId: parent.autopilot_provider, model: parent.autopilot_model ?? undefined });
+  } catch (error) {
+    // A real launch failure — no provider, a taken claim, a dead worktree —
+    // releases the marker so a later sweep can try again once it is fixed.
+    clearDispatch(nodeId);
+    throw error;
+  }
 }
 
 /**
@@ -561,7 +884,7 @@ export function reconcileRunningNodes(): number {
   let reopened = 0;
   for (const node of running) {
     if (node.session_id && live.has(node.session_id)) continue;
-    db().prepare(`UPDATE work_nodes SET status='failed',ended_at=?,detail=? WHERE id=? AND status='running'`)
+    db().prepare(`UPDATE work_nodes SET status='failed',ended_at=?,dispatch_state=NULL,detail=? WHERE id=? AND status='running'`)
       .run(now(), 'The session running this task ended before it was completed. Reopen it to continue.', node.id);
     releaseClaims(node.id);
     reopened++;

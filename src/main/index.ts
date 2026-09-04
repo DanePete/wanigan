@@ -5,13 +5,14 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  detectProviders, effectiveProviderBackendId, providerPackRegistry, refreshProviderPacks, runsClaudeCli,
+  detectProviders, effectiveProviderBackendId, providerById, providerPackRegistry, refreshProviderPacks,
+  runsClaudeCli, usesAnthropicAccount,
 } from './providers';
 import {
   initSessions, listSessions, createSession, writeSession, resizeSession,
   killSession, closeSession, scrollback, markRead, shutdownAll, sessionBaseline, interruptSession,
   pastSessions, forgetPastSession, recoverExactCodexThread, setSessionExitObserver,
-  setSessionTuning, setConversationFlag, renameSession,
+  setSessionTuning, setConversationFlag, renameSession, redirectsAnthropicApiFor,
 } from './sessions';
 import { listProjects, addProject, removeProject, refreshBranches, projectById } from './store';
 import * as batch from './batch';
@@ -20,7 +21,7 @@ import { getSetting, setSetting, setTheme, setUserPreference, spendCap } from '.
 import { hasKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailable, getWorkspaceId,
          hasProviderKey, setProviderKey, clearProviderKey, providerKeyFingerprint } from './keys';
 import type {
-  BackupCheck, BackupRestoreSummary, BackupSummary,
+  BackupCheck, BackupRestoreSummary, BackupSummary, DocketPlanNode,
   HeadlessRowDetail, HeadlessRowSummary, HeadlessStartRequest, HookInput,
   InteractiveSessionLoad, LaunchOptions, McpServerConfig, PluginScope,
   ProviderInfo, ProviderManifestInspection, QueueSlots, RunConfig, Session,
@@ -79,6 +80,7 @@ import * as learning from './learning-service';
 // wraps consolidation and briefing, and has no retirement path of its own.
 import { retireKnowledgeItem } from './learning';
 import * as control from './control';
+import * as accounts from './accounts';
 import * as scout from './improvement-scout';
 
 // The smoke suite deliberately has no window. A rejected startup promise in
@@ -219,6 +221,9 @@ const SCHEDULED_BUDGET_USD = 2;
 const SCHEDULED_TIMEOUT_MS = 15 * 60_000;
 
 let win: BrowserWindow | null = null;
+/** Slower than the dispatcher: a docket becomes eligible when work finishes. */
+const AUTOPILOT_SWEEP_MS = 10_000;
+let autopilotTimer: NodeJS.Timeout | null = null;
 let uiInitialized = false;
 
 /**
@@ -1038,10 +1043,38 @@ async function startServices() {
     const w = win;
     if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
   });
+  queue.registerRunner('node', async (payload) => {
+    const nodeId = (payload as { nodeId?: unknown } | null)?.nodeId;
+    if (typeof nodeId !== 'string' || !nodeId) {
+      throw new Error('This autopilot queue item names no Goal task. Remove it and re-enable autopilot on the docket.');
+    }
+    await control.startQueuedNode(nodeId);
+  });
   queue.startDispatcher(() => {
     const w = win;
     if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
   });
+  // The sweep only writes queue rows; the dispatcher above still decides when
+  // one may start. It runs on its own slower interval because a docket becomes
+  // eligible through work finishing, not through the queue moving.
+  //
+  // Guarded against smoke as defence in depth. The suite returns before
+  // service startup today, so this line is unreachable there — but a sweep
+  // firing inside the suite's own process would start real paid sessions
+  // against its fixtures, and that is not a hazard to leave resting on the
+  // order of two early returns. The suite calls sweepAutopilot() directly.
+  if (!smokeMode) autopilotTimer = setInterval(() => {
+    try {
+      if (control.sweepAutopilot() > 0) {
+        const w = win;
+        if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
+      }
+    } catch (e) {
+      // Same reasoning as the dispatcher's own guarded tick: a throw here has
+      // no handler and would take Electron down with every live PTY.
+      console.warn('[wanigan] autopilot sweep failed; skipping this pass:', e);
+    }
+  }, AUTOPILOT_SWEEP_MS);
 
   if (f.mcpServerEnabled) {
     try {
@@ -1182,6 +1215,7 @@ function stopServices() {
   hooks.setLearningBriefingHook(null);
   try { schedule.stopScheduler(); } catch { /* already down */ }
   try { queue.stopDispatcher(); } catch { /* already down */ }
+  if (autopilotTimer) { clearInterval(autopilotTimer); autopilotTimer = null; }
   try { hooks.stopHookServer(); } catch { /* already down */ }
   try { otel.stopCollector(); } catch { /* already down */ }
   try { mcpServer.stopMcpServer(); } catch { /* already down */ }
@@ -1838,11 +1872,40 @@ function registerIpc() {
   });
 
   // ══ P30 · durable agent control plane ═══════════════════════════════
+  handle('accounts:list', (harness: string) => accounts.list(harness));
+  handle('accounts:create', (input: { harness: string; label: string; configDir: string; seedFromAccountId?: string | null }) =>
+    accounts.create(input));
+  handle('accounts:rename', (id: string, label: string) => accounts.rename(id, label));
+  handle('accounts:setDefault', (id: string) => accounts.setDefault(id));
+  handle('accounts:remove', (id: string) => accounts.remove(id));
+  handle('accounts:forProject', (projectId: string, harness: string) => accounts.projectAccount(projectId, harness));
+  handle('accounts:setForProject', (projectId: string, harness: string, accountId: string | null) =>
+    accounts.setProjectAccount(projectId, harness, accountId));
+  // Takes a provider id, not a harness: whether a Claude account even applies
+  // depends on the profile's resolved environment, and that is a main-process
+  // fact. A renderer that answered it would be guessing on the trust boundary's
+  // wrong side, and guessing wrong shows an account picker for a profile that
+  // authenticates against another vendor entirely.
+  handle('accounts:resolveForLaunch', (providerId: string, projectId?: string | null, explicitAccountId?: string | null) => {
+    const def = providerById(providerId);
+    if (!def) return { account: null, source: 'none', override: null, reason: 'That provider is not installed.' };
+    return accounts.resolve({
+      harness: def.harness,
+      projectId: projectId ?? null,
+      explicitAccountId: explicitAccountId ?? null,
+      appliesToAnthropic: usesAnthropicAccount(def) && !redirectsAnthropicApiFor(def),
+    });
+  });
+  handle('accounts:listForProvider', (providerId: string) => {
+    const def = providerById(providerId);
+    if (!def || !usesAnthropicAccount(def) || redirectsAnthropicApiFor(def)) return [];
+    return accounts.list(def.harness);
+  });
   handle('control:list', (projectId?: string | null, limit?: number) => control.listDockets(projectId, limit));
   handle('control:get', (id: string) => control.docket(id));
   handle('control:create', (input: {
     projectId: string; title: string; objective: string; acceptance?: string[];
-    risk?: 'low' | 'elevated' | 'high'; budgetUsd?: number | null;
+    risk?: 'low' | 'elevated' | 'high'; budgetUsd?: number | null; plan?: DocketPlanNode[];
   }) => control.createDocket(input));
   handle('control:claim', (nodeId: string, relPath: string) => control.claimPath(nodeId, relPath));
   handle('control:releaseClaim', (id: string) => control.releaseClaim(id));
@@ -1853,6 +1916,8 @@ function registerIpc() {
   handle('control:runProof', (nodeId: string) => control.runProof(nodeId));
   handle('control:complete', (nodeId: string, input?: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }) =>
     control.completeNode(nodeId, input ?? {}));
+  handle('control:setAutopilot', (docketId: string, input: { enabled: boolean; providerId?: string; model?: string | null }) =>
+    control.setAutopilot(docketId, input));
   handle('control:outcomes', (projectId?: string | null) => control.outcomes(projectId));
   handle('control:events', (status?: 'new' | 'triaged' | 'dismissed' | 'all', limit?: number) => control.listEvents(status ?? 'all', limit));
   handle('control:addEvent', (input: { projectId?: string | null; source: string; kind: string; summary: string }) => control.addEvent(input));

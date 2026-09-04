@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type {
+  AgentAccount,
   WaniganSettings, BackupCheck, BackupRestoreSummary, BackupSummary,
   EgressHost, LedgerEntry, McpServerConfig, MotionSetting, ThemeSetting,
   MobileMonitorConfig, MobileMonitorStatus, Project, ProviderInfo, ProviderManifestInspection,
@@ -49,6 +50,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'agents', tabLabel: 'Agents', section: 'DeepSeek', hint: 'DeepSeek key for sessions', keywords: 'deepseek key anthropic-compatible' },
   { tab: 'agents', tabLabel: 'Agents', section: 'Installed agent runtimes', hint: 'Which CLIs Wanigan found, and where', keywords: 'cli path version claude codex installed runtime detect' },
   { tab: 'agents', tabLabel: 'Agents', section: 'Provider packs', hint: 'Packs, profiles, trust and enablement', keywords: 'provider pack manifest profile harness backend trust digest sha256 adapter enable disable remove restore' },
+  { tab: 'agents', tabLabel: 'Agents', section: 'Accounts', hint: 'Work and personal logins, and which is default', keywords: 'account login work personal switch claude config dir credentials organisation organization sign in profile' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Projects', hint: 'Add and remove repositories', keywords: 'project repository folder add remove' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Worktrees', hint: 'Isolated worktrees and cleanup', keywords: 'worktree isolated branch cleanup orphan' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Trust and the policy ledger', hint: 'Trust levels, decisions, export', keywords: 'trust policy ledger permission audit export' },
@@ -809,6 +811,7 @@ export default function Settings({
             </Section>
 
             <ProviderPacks providers={providers} />
+            <Accounts />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('projects')} active={settingsTab === 'projects'}>
@@ -2535,6 +2538,10 @@ const KIND_COPY: { id: keyof QueueSlots; label: string; detail: string; overLimi
     id: 'scout', label: 'Improvement Scout', detail: 'One bounded official-source research pass at a time.',
     overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
   },
+  {
+    id: 'node', label: 'Goal autopilot', detail: 'Unattended Goal tasks started without you at the keyboard.',
+    overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
+  },
 ];
 
 /**
@@ -2582,6 +2589,139 @@ function SlotMeter({ load, limit, enforcedLimit, source }: {
   );
 }
 
+/* ────────────────────────────────────────────────────────────────────────
+   Accounts · one operator, several logins
+   ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * An account is a labelled configuration directory, not a credential.
+ *
+ * Everything this panel can honestly say comes from files it can read. Whether
+ * a login is valid, whose organisation it belongs to, and when it expires are
+ * all inside a credential Wanigan does not hold — on macOS it is in the
+ * Keychain — so the panel reports "a login has been stored here" and stops. The
+ * browser sign-in belongs to the agent, and the copy says so rather than
+ * offering a button that could not work.
+ */
+function Accounts() {
+  const HARNESS = 'claude-code';
+  const [rows, setRows] = useState<AgentAccount[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [label, setLabel] = useState('');
+  const [dir, setDir] = useState('');
+  const [seed, setSeed] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    window.wanigan.accounts.list(HARNESS)
+      .then((next) => { setRows(next); setErr(null); })
+      .catch((e) => setErr(msg(e)));
+  };
+  useEffect(load, []);
+
+  const act = async (run: () => Promise<unknown>, ok: string) => {
+    setBusy(true); setNote(null);
+    try { await run(); load(); setNote({ tone: 'ok', text: ok }); }
+    catch (e) { setNote({ tone: 'error', text: msg(e) }); }
+    finally { setBusy(false); }
+  };
+
+  const defaultAccount = rows?.find((row) => row.isDefault) ?? null;
+
+  return (
+    <Section title="Accounts"
+             hint="Run a work login and a personal login side by side. Each account is its own configuration directory, and the agent keys its stored sign-in to that directory — so two sessions can be signed in as two different people at the same time.">
+      {err && <Note tone="error">{err}</Note>}
+      {rows && (
+        <>
+          <div style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
+            {rows.map((row) => (
+              <div key={row.id} className="sunk" style={{ padding: '10px 12px', display: 'grid', gap: 6 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                  <strong style={{ fontSize: 'var(--t-small)' }}>{row.label}</strong>
+                  {row.isDefault && <span className="pill" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>Default</span>}
+                  {row.adopted && <span className="pill" title="This directory existed before Wanigan knew about it. Removing the account never deletes it.">Adopted</span>}
+                  {!row.present && <span className="pill" style={{ color: 'var(--danger)' }}>Directory missing</span>}
+                </div>
+                <div className="faint mono" style={{ fontSize: 'var(--t-micro)', wordBreak: 'break-all' }}>{row.configDir}</div>
+                <div className="dim" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>
+                  {row.signedIn === 'yes'
+                    ? 'A sign-in has been stored for this directory. Whether it is still valid, and which organisation it belongs to, are inside the credential itself — Wanigan does not hold it and cannot read it.'
+                    : 'Wanigan cannot tell whether this directory is signed in. On macOS the credential lives in the Keychain, keyed to the directory, and Wanigan neither holds it nor reads it. If a session here asks you to sign in, run /login once — the browser flow belongs to the agent, not to Wanigan.'}
+                </div>
+                <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 2 }}>
+                  {!row.isDefault && (
+                    <button className="btn" disabled={busy} style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                            onClick={() => act(() => window.wanigan.accounts.setDefault(row.id), `New sessions now use ${row.label} unless a project or launch says otherwise.`)}>
+                      Make default
+                    </button>
+                  )}
+                  <button className="btn" disabled={busy} style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                          onClick={() => {
+                            const next = window.prompt('Account label', row.label);
+                            if (next && next !== row.label) void act(() => window.wanigan.accounts.rename(row.id, next), 'Label updated.');
+                          }}>
+                    Rename
+                  </button>
+                  <button className="btn" disabled={busy} style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                          title="Wanigan stops using this directory. The directory, its sign-in and its history stay on disk."
+                          onClick={() => act(
+                            () => window.wanigan.accounts.remove(row.id),
+                            `Wanigan will not use ${row.label} any more. Its directory is untouched — delete it yourself if you meant to.`,
+                          )}>
+                    Forget
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="label">Add an account</div>
+          <div style={{ display: 'grid', gap: 7, marginBottom: 8 }}>
+            <input className="field" placeholder="Label, such as Work" value={label}
+                   onChange={(e) => setLabel(e.target.value)} />
+            <input className="field mono" placeholder="~/.claude-work" value={dir}
+                   onChange={(e) => setDir(e.target.value)} />
+            {defaultAccount && (
+              <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
+                <input type="checkbox" checked={seed} onChange={(e) => setSeed(e.target.checked)}
+                       style={{ marginTop: 3, accentColor: 'var(--accent)', width: 14, height: 14, flex: 'none' }} />
+                <span>
+                  Copy settings, skills, commands and subagents from <strong>{defaultAccount.label}</strong>.
+                  <span className="dim" style={{ display: 'block', marginTop: 2 }}>
+                    A new directory is otherwise empty. Copied, not linked, so editing one account's skills never
+                    edits the other's. Sign-ins are never copied — that is the point of a second account — and
+                    neither is conversation history.
+                  </span>
+                </span>
+              </label>
+            )}
+            <div>
+              <button className="btn btn-primary" disabled={busy || !label.trim() || !dir.trim()}
+                      onClick={() => act(async () => {
+                        await window.wanigan.accounts.create({
+                          harness: HARNESS, label: label.trim(), configDir: dir.trim(),
+                          seedFromAccountId: seed ? defaultAccount?.id ?? null : null,
+                        });
+                        setLabel(''); setDir('');
+                      }, 'Account added. Start a session on it and run /login once to sign in.')}>
+                Add account
+              </button>
+            </div>
+          </div>
+          {note && <Note tone={note.tone === 'ok' ? 'ok' : 'error'}>{note.text}</Note>}
+          <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 9, lineHeight: 1.45 }}>
+            A session picks its account from the launcher, then the project's saved account, then the default.
+            An <code>ANTHROPIC_API_KEY</code> or <code>ANTHROPIC_AUTH_TOKEN</code> in Wanigan's environment outranks
+            every stored sign-in; the launcher says so when one is set.
+          </p>
+        </>
+      )}
+    </Section>
+  );
+}
+
 function Dispatcher({ active }: { active: boolean }) {
   const [draft, setDraft] = useState<QueueSlots | null>(null);
   const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
@@ -2605,7 +2745,7 @@ function Dispatcher({ active }: { active: boolean }) {
   }, [active]);
 
   const running = useMemo(() => {
-    const by: Record<string, number> = { session: 0, headless: 0, batch: 0, scout: 0 };
+    const by: Record<string, number> = { session: 0, headless: 0, batch: 0, scout: 0, node: 0 };
     if (queue.v.s === 'ok') for (const q of queue.v.d) if (q.state === 'running') by[q.kind] = (by[q.kind] ?? 0) + 1;
     return by;
   }, [queue.v]);
@@ -2644,7 +2784,7 @@ function Dispatcher({ active }: { active: boolean }) {
       <Frame v={slots.v} what="the slot limits" onRetry={slots.reload}>
         {(loaded) => {
           const d = draft ?? loaded;
-          const dirty = (['session', 'headless', 'batch', 'scout'] as const).some((k) => d[k] !== loaded[k]);
+          const dirty = (['session', 'headless', 'batch', 'scout', 'node'] as const).some((k) => d[k] !== loaded[k]);
           return (
           <>
             {KIND_COPY.map(({ id, label, detail, overLimit }) => {

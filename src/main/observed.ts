@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { db } from './db';
 import { getSetting, setSetting } from './settings';
+import * as accounts from './accounts';
 import { listSessions } from './sessions';
 import type { ObservedSession, ObservedState } from '../shared/types';
 
@@ -90,16 +91,23 @@ export function setObservedEnabled(on: boolean): boolean {
 }
 
 /**
- * CLAUDE_CONFIG_DIR is honoured for the same reason transcripts.ts honours it:
- * a user who has moved their config has no ~/.claude at all, and an observer
- * that looked there would report "nothing running" on a machine with nine.
+ * Every config directory a running Claude Code process could be registered in.
+ *
+ * One per account: Claude Code keys its whole state to CLAUDE_CONFIG_DIR, so a
+ * session started under a second account writes its registry entry where the
+ * default root cannot see it, and an observer looking in one place would report
+ * "nothing running" on a machine with nine.
+ *
+ * The ambient value remains the fallback for an install with no accounts
+ * recorded yet, which is also the case of a user who moved their config by hand
+ * and has no ~/.claude at all.
  */
-function claudeHome(): string {
-  return process.env.CLAUDE_CONFIG_DIR?.trim() || path.join(os.homedir(), '.claude');
+function claudeHomes(): string[] {
+  return accounts.readRoots('claude-code');
 }
 
-function registryDir(): string {
-  return path.join(claudeHome(), 'sessions');
+function registryDirs(): string[] {
+  return claudeHomes().map((home) => path.join(home, 'sessions'));
 }
 
 /* ── reading the registry ────────────────────────────────────────────── */
@@ -281,20 +289,20 @@ function projectFor(cwd: string, projects: Known[], roots: Map<string, string>):
  * has no business handing its credential to a renderer.
  */
 function editorFolders(): { folder: string; ide: string }[] {
-  const dir = path.join(claudeHome(), 'ide');
-  let names: string[];
-  try { names = fs.readdirSync(dir).filter((n) => n.endsWith('.lock')); } catch { return []; }
-
   const out: { folder: string; ide: string }[] = [];
-  for (const n of names) {
-    const j = readJson(path.join(dir, n));
-    if (!j) continue;
-    const ide = str(j.ideName);
-    const folders: unknown[] = Array.isArray(j.workspaceFolders) ? (j.workspaceFolders as unknown[]) : [];
-    if (!ide) continue;
-    for (const f of folders) {
-      const s = str(f);
-      if (s) out.push({ folder: canon(s), ide });
+  for (const dir of claudeHomes().map((home) => path.join(home, 'ide'))) {
+    let names: string[];
+    try { names = fs.readdirSync(dir).filter((n) => n.endsWith('.lock')); } catch { continue; }
+    for (const n of names) {
+      const j = readJson(path.join(dir, n));
+      if (!j) continue;
+      const ide = str(j.ideName);
+      const folders: unknown[] = Array.isArray(j.workspaceFolders) ? (j.workspaceFolders as unknown[]) : [];
+      if (!ide) continue;
+      for (const f of folders) {
+        const s = str(f);
+        if (s) out.push({ folder: canon(s), ide });
+      }
     }
   }
   return out;
@@ -323,41 +331,49 @@ type Candidate = {
 };
 
 function candidates(): Candidate[] {
-  const dir = registryDir();
-  let names: string[];
-  try { names = fs.readdirSync(dir).filter((n) => n.endsWith('.json')); } catch { return []; }
-
   const out: Candidate[] = [];
-  for (const n of names) {
-    const j = readJson(path.join(dir, n));
-    if (!j) continue;
+  const seen = new Set<string>();
+  for (const dir of registryDirs()) {
+    let names: string[];
+    try { names = fs.readdirSync(dir).filter((n) => n.endsWith('.json')); } catch { continue; }
 
-    // The filename is the pid, but the field inside is the one the process
-    // wrote about itself; a renamed or copied file must not invent a session.
-    const pid = num(j.pid);
-    const fromName = Number(n.replace(/\.json$/, ''));
-    if (!pid || !Number.isInteger(pid) || pid !== fromName) continue;
+    for (const n of names) {
+      const j = readJson(path.join(dir, n));
+      if (!j) continue;
 
-    const sessionId = str(j.sessionId);
-    const cwd = str(j.cwd);
-    if (!sessionId || !cwd) continue;
+      // The filename is the pid, but the field inside is the one the process
+      // wrote about itself; a renamed or copied file must not invent a session.
+      const pid = num(j.pid);
+      const fromName = Number(n.replace(/\.json$/, ''));
+      if (!pid || !Number.isInteger(pid) || pid !== fromName) continue;
 
-    // A pid from another kernel — a remote or container session — is not one
-    // this process can test for liveness, and a row we cannot verify must not
-    // be shown as running.
-    const domain = str(j.pidDomain);
-    if (domain && domain !== process.platform) continue;
+      const sessionId = str(j.sessionId);
+      const cwd = str(j.cwd);
+      if (!sessionId || !cwd) continue;
 
-    out.push({
-      pid,
-      sessionId,
-      cwd: canon(cwd),
-      startedAt: num(j.startedAt),
-      name: str(j.name),
-      entrypoint: str(j.entrypoint),
-      kind: str(j.kind),
-      version: str(j.version),
-    });
+      // Two accounts can name the same directory — an adopted ~/.claude listed
+      // twice, or a symlinked registry — and one process must not be reported
+      // as two running sessions.
+      if (seen.has(sessionId)) continue;
+      seen.add(sessionId);
+
+      // A pid from another kernel — a remote or container session — is not one
+      // this process can test for liveness, and a row we cannot verify must not
+      // be shown as running.
+      const domain = str(j.pidDomain);
+      if (domain && domain !== process.platform) continue;
+
+      out.push({
+        pid,
+        sessionId,
+        cwd: canon(cwd),
+        startedAt: num(j.startedAt),
+        name: str(j.name),
+        entrypoint: str(j.entrypoint),
+        kind: str(j.kind),
+        version: str(j.version),
+      });
+    }
   }
   return out;
 }
@@ -426,8 +442,12 @@ export async function listObserved(): Promise<ObservedSession[]> {
  * different answers and a UI that cannot tell them apart will say the wrong one.
  */
 export function observedState(): ObservedState {
-  const registry = registryDir();
-  const available = fs.existsSync(registry);
+  // The first registry that exists is the one named in the surface. With two
+  // accounts there are two, and naming one while counting both would be a
+  // half-truth; the count below is what the operator acts on.
+  const registries = registryDirs();
+  const registry = registries.find((dir) => fs.existsSync(dir)) ?? registries[0];
+  const available = registries.some((dir) => fs.existsSync(dir));
   const enabled = observedEnabled();
   return {
     enabled,

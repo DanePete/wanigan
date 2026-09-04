@@ -22,7 +22,7 @@ import type {
   TeachWaniganInput,
   ImprovementScoutGoal, ImprovementScoutOverview, ImprovementScoutRun,
   ImprovementScoutSettings, ImprovementScoutSource, ImprovementScoutSuggestion, ImprovementScoutSuggestionStatus,
-  ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode, DocketProof,
+  AccountResolution, AgentAccount, ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode, DocketPlanNode, DocketProof,
   DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, WorkDocket,
 } from '../shared/types';
 
@@ -384,16 +384,32 @@ const api = {
     run: (projectId: string) => call<ReviewRun>('review:run', projectId),
   },
   // ── P30 · durable agent control plane ───────────────────────────────
+  accounts: {
+    list: (harness: string) => call<AgentAccount[]>('accounts:list', harness),
+    create: (input: { harness: string; label: string; configDir: string; seedFromAccountId?: string | null }) =>
+      call<AgentAccount>('accounts:create', input),
+    rename: (id: string, label: string) => call<AgentAccount>('accounts:rename', id, label),
+    setDefault: (id: string) => call<AgentAccount>('accounts:setDefault', id),
+    remove: (id: string) => call<{ removed: boolean; configDir: string }>('accounts:remove', id),
+    forProject: (projectId: string, harness: string) => call<AgentAccount | null>('accounts:forProject', projectId, harness),
+    setForProject: (projectId: string, harness: string, accountId: string | null) =>
+      call<AgentAccount | null>('accounts:setForProject', projectId, harness, accountId),
+    resolveForLaunch: (providerId: string, projectId?: string | null, explicitAccountId?: string | null) =>
+      call<AccountResolution>('accounts:resolveForLaunch', providerId, projectId, explicitAccountId),
+    listForProvider: (providerId: string) => call<AgentAccount[]>('accounts:listForProvider', providerId),
+  },
   control: {
     list: (projectId?: string | null, limit?: number) => call<WorkDocket[]>('control:list', projectId, limit),
     get: (id: string) => call<DocketDetail>('control:get', id),
-    create: (input: { projectId: string; title: string; objective: string; acceptance: string[]; risk?: DocketRisk; budgetUsd?: number | null }) =>
+    create: (input: { projectId: string; title: string; objective: string; acceptance: string[]; risk?: DocketRisk; budgetUsd?: number | null; plan?: DocketPlanNode[] }) =>
       call<DocketDetail>('control:create', input),
     claim: (nodeId: string, relPath: string) => call<DocketClaim>('control:claim', nodeId, relPath),
     releaseClaim: (id: string) => call<boolean>('control:releaseClaim', id),
     start: (nodeId: string, input: { providerId: string; model?: string; effort?: string; permissionMode?: string }) =>
       call<DocketNode>('control:start', nodeId, input),
     retry: (nodeId: string) => call<DocketNode>('control:retry', nodeId),
+    setAutopilot: (docketId: string, input: { enabled: boolean; providerId?: string; model?: string | null }) =>
+      call<DocketDetail>('control:setAutopilot', docketId, input),
     checkpoint: (nodeId: string, note: string) => call<DocketCheckpoint>('control:checkpoint', nodeId, note),
     runProof: (nodeId: string) => call<DocketProof>('control:runProof', nodeId),
     complete: (nodeId: string, input?: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }) =>

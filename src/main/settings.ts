@@ -141,6 +141,7 @@ export function slotsSetting(): QueueSlots {
       headless: Math.max(1, Number(parsed.headless) || DEFAULT_SLOTS.headless),
       batch: Math.max(1, Number(parsed.batch) || DEFAULT_SLOTS.batch),
       scout: Math.max(1, Number(parsed.scout) || DEFAULT_SLOTS.scout),
+      node: Math.max(1, Number(parsed.node) || DEFAULT_SLOTS.node),
     };
   } catch { return DEFAULT_SLOTS; }
 }
