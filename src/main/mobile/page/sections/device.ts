@@ -4,23 +4,39 @@ import type { MobileSection } from '../sections';
 
 /**
  * The screen about the device you are holding, rather than about the fleet it
- * is watching.
+ * is watching. It is this phone's settings screen, and the settings it has are
+ * the phone's own: what this device can do, how it is paired, what an alert to
+ * it can actually be, and what it deliberately cannot change.
  *
- * It answers three questions the rest of the page leaves the operator to infer.
+ * It answers four questions the rest of the page leaves the operator to infer.
  * What is this connection actually doing — including that the poll steps itself
  * out towards a minute while the Mac is asleep, which is the difference between
  * "checking twenty times a minute" and "checking once". What is this device
  * allowed to do, from what Wanigan reported rather than from what the page
- * hopes. And which desktop surfaces are deliberately not here: an operator who
- * opens the sheet, finds no Settings and no Skills, and is told nothing has to
- * decide for themselves whether that is a decision or an unfinished build.
- * Naming the absent four with a reason each is the point of the screen.
+ * hopes. Whether anything will reach this phone once the page is closed, from
+ * the alert path's own last attempt rather than from the fact that it is
+ * switched on — a phone showing a calm fleet and a phone whose alerts have been
+ * failing for two days look identical, and only one of them is safe to walk
+ * away from. And which desktop surfaces are deliberately not here: an operator
+ * who opens the sheet, finds no Settings and no Skills, and is told nothing has
+ * to decide for themselves whether that is a decision or an unfinished build.
+ *
+ * That last section is the only place the product's shape is stated from the
+ * phone's side, so it states it once and properly: a pairing token is proof a
+ * device may read this fleet, not consent to spend money or widen what Wanigan
+ * may do, which is why the switches are read here and changed at the Mac and
+ * why four desktop screens have no phone version at all.
  *
  * Everything it shows already crosses on /api/status or lives in this browser,
  * so it adds no route and puts nothing new on the wire — no path, no process
- * id, no ntfy topic. Unpairing is local for the same reason: a device can
- * forget its own token, and revoking that token for every device is a rotation
- * at the Mac.
+ * id, no ntfy topic. The alert state is the case worth naming: the phone is
+ * told whether the path works and how the last publish ended, never the topic
+ * or the server that make it work, and the two sentences it does print
+ * (`blocked` and `lastReason`) have had every URL and the topic itself stripped
+ * out of them twice before they reach here — once where the result is retained
+ * in mobile/push.ts, once at the wire in mobile/snapshot.ts. Unpairing is local
+ * for the same family of reasons: a device can forget its own token, and
+ * revoking that token for every device is a rotation at the Mac.
  *
  * It draws no ui.reading/failed/off/empty box, and that is not an oversight.
  * Those four are renderings of an absence, and this screen has none: every row
@@ -41,7 +57,7 @@ function esc(value: string): string {
  * exactly when an operator is most likely to be wondering why a screen they
  * expected is missing.
  */
-const ABSENT_ROWS = MOBILE_ABSENT.map((entry) => `            <div class="device-absent-row">
+const ABSENT_ROWS = MOBILE_ABSENT.map((entry) => `            <div class="device-item">
               <strong>${esc(labelForTab(entry.tab))}</strong>
               <span>${esc(entry.reason)}</span>
             </div>`).join('\n');
@@ -76,9 +92,39 @@ export const DEVICE_SECTION: DeviceSection = {
           <h2>What this device can do</h2>
           <div id="device-can" class="device-can"></div>
 
+          <h2>Alerts to this device</h2>
+          <div id="device-alert-row" class="device-can"></div>
+          <div class="notice device-alert-note">
+            <strong>What an alert can actually be on this phone.</strong>
+            <div class="device-facts">
+              <div class="device-fact"><span>Last attempt</span><strong id="device-alert-last">Not read yet</strong></div>
+              <div class="device-fact"><span>This page</span><strong id="device-alert-mode">Not read yet</strong></div>
+            </div>
+            <p class="why">While this page is open it can raise the notice at the top of Fleet and put a count in the tab title, and that is the whole of what a page can do. Installing it to the Home Screen adds nothing to it: iOS delivers a web app's notification only through Web Push, which Wanigan has not built — this page has never asked for notification permission and holds no push subscription. Anything that has to reach you with this page closed goes through the ntfy app instead, which Wanigan publishes to from the Mac.</p>
+          </div>
+
           <h2>What stays on the Mac</h2>
+          <p class="device-lead">This phone holds a pairing token. That is proof a device may read this fleet — it is not consent to spend money, to trust a plugin, or to widen what Wanigan is allowed to do, and a token lifted off a lost phone must not be able to do those things either. So the switches below are read here and changed only at the Mac, and the screens under them have no phone version at all.</p>
+          <div class="device-list">
+            <div class="device-item">
+              <strong>Remote control</strong>
+              <span>Whether this device may type into a session at all, rather than only watch one. Wanigan Settings → Phone monitor.</span>
+            </div>
+            <div class="device-item">
+              <strong>Phone alerts</strong>
+              <span>The ntfy server and topic Wanigan publishes to. Neither ever crosses to this device — the phone is told whether the path works, and nothing that would let it, or anyone else holding this token, subscribe to that topic. Wanigan Settings → Phone monitor.</span>
+            </div>
+            <div class="device-item">
+              <strong>Repository review</strong>
+              <span>Whether the Git screen may read which files changed and what changed in them. It is the one thing that puts a file path on this wire, so it is off on every install and every upgrade, and switching the agent console on does not switch it on.</span>
+            </div>
+            <div class="device-item">
+              <strong>The pairing link</strong>
+              <span>Rotating it revokes every paired device at once, this one included. That is the only way to take a lost phone's access away, and only the Mac can do it.</span>
+            </div>
+          </div>
           <p class="device-lead">These Wanigan screens have no phone version, on purpose. Each is here with its reason, so a gap in the menu is a decision you can read rather than one you have to guess at.</p>
-          <div class="device-absent">
+          <div class="device-list">
 ${ABSENT_ROWS}
           </div>
 
@@ -105,11 +151,13 @@ ${ABSENT_ROWS}
     .device-row.cannot .device-row-state { color:var(--dim); }
     .device-row.unknown .device-row-state { color:var(--serious); }
     .device-row p { color:var(--dim); font-size:13px; }
+    .device-alert-note { margin-top:9px; }
     .device-lead { color:var(--dim); font-size:12px; margin-bottom:10px; }
-    .device-absent { display:grid; gap:9px; }
-    .device-absent-row { padding:14px; border:1px solid var(--line); border-radius:13px; background:var(--panel); }
-    .device-absent-row strong { display:block; color:var(--ink); margin-bottom:3px; }
-    .device-absent-row span { color:var(--dim); font-size:13px; }
+    .device-list + .device-lead { margin-top:18px; }
+    .device-list { display:grid; gap:9px; }
+    .device-item { padding:14px; border:1px solid var(--line); border-radius:13px; background:var(--panel); }
+    .device-item strong { display:block; color:var(--ink); margin-bottom:3px; }
+    .device-item span { color:var(--dim); font-size:13px; }
     .device-unpair.armed { border-color:color-mix(in srgb,var(--critical) 55%,var(--line)); }
     .device-unpair button { margin-top:13px; }
     .device-unpair-note:empty { display:none; }`,
@@ -117,6 +165,7 @@ ${ABSENT_ROWS}
       let deviceHost = '';
       let deviceVersion = '';
       let deviceAlerts = null;
+      let deviceGeneratedAt = 0;
       let deviceFault = '';
       let deviceArmedAt = 0;
       const DEVICE_ARM_MS = 8000;
@@ -188,26 +237,126 @@ ${ABSENT_ROWS}
           ', so this device can only watch. Turn it on in Wanigan Settings → Phone monitor.');
       }
 
+      // How long ago the alert was attempted, without ever subtracting one
+      // machine's clock from another's.
+      //
+      // lastAt is stamped by the Mac and everything else dated on this screen is
+      // stamped here, so Date.now() - lastAt would print however far the two
+      // clocks disagree as an age — and it fails in the direction that matters,
+      // because a Mac running a few minutes ahead makes a publish that failed an
+      // hour ago read as 'just now'. Both differences below are taken inside a
+      // single clock: how long before that reading the attempt happened, on the
+      // Mac, plus how long ago that reading arrived, here. Their sum is the age
+      // whatever the clocks think of each other.
+      function deviceAlertAge(at) {
+        if (!at || !deviceGeneratedAt || !lastGoodAt) return null;
+        return Math.max(0, deviceGeneratedAt - at) + Math.max(0, Date.now() - lastGoodAt);
+      }
+
+      function deviceAlertAgo(at) {
+        const age = deviceAlertAge(at);
+        return age === null ? '' : ago(Date.now() - age) + ' ago';
+      }
+
+      // The reason usually already names the status it came back with, and
+      // 'failed (HTTP 403): ntfy returned HTTP 403' reads as two failures.
+      function deviceAlertFailure(state) {
+        // The trailing full stop goes because this string is always followed by
+        // the clause saying whether Wanigan will try again, and 'within 8
+        // seconds. — Wanigan will try the next one' reads as a typo. Done with
+        // endsWith rather than a regex on purpose: this fragment is a template
+        // literal, which eats a lone backslash, so /\\.$/ written here reaches
+        // the browser as /.$/ and quietly truncates every reason by one
+        // character — 'HTTP 403' served as 'HTTP 40'.
+        const raw = state.lastReason || 'no reason was recorded';
+        const why = raw.endsWith('.') ? raw.slice(0, -1) : raw;
+        const code = state.lastHttpStatus && why.indexOf('HTTP ' + state.lastHttpStatus) < 0
+          ? ' (HTTP ' + state.lastHttpStatus + ')' : '';
+        return code + ': ' + why;
+      }
+
       // What this device gets once the page is closed, framed as a property of
       // the device rather than of the outbound path — the alert panel on the
-      // Fleet screen owns that path's own report. The last branch is the one
-      // that matters: Wanigan publishes to a topic, and which devices are
-      // subscribed to that topic is not something it can observe, so this screen
-      // must not turn 'the publish succeeded' into 'your phone was told'.
+      // Fleet screen owns that path's own report. Every branch below is read
+      // from the state the Mac sent: a path that is switched on and has been
+      // rejected for two days is a different answer from one that is switched on
+      // and working, and a screen that stopped at 'enabled' would have given
+      // both of them the same one. The last branch is the one that matters:
+      // Wanigan publishes to a topic, and which devices are subscribed to that
+      // topic is not something it can observe, so this screen must not turn 'the
+      // publish succeeded' into 'your phone was told'.
       function deviceAlertRow() {
         const name = 'Reach you with this page closed';
         const state = deviceAlerts;
-        if (!state) return deviceRow(name, 'unknown', 'Not known', 'Wanigan has not said yet whether it can alert you.');
+        if (!state) {
+          return deviceRow(name, 'unknown', 'Not known',
+            'Wanigan has not said yet whether it can alert you. That answer arrives with the first reading rather than being assumed here.');
+        }
+        // Whether the path is switched on is a fact about the Mac, so it moves
+        // into the past tense the moment the Mac stops answering — the same rule
+        // the drive row above follows. What the last publish did is already
+        // past, and stays in the tense it happened in.
+        const fresh = ui.fresh();
         if (!state.enabled) {
           return deviceRow(name, 'cannot', 'No',
-            'Phone alerts are switched off at the Mac, so nothing reaches this device once this page is closed.');
+            'Phone alerts ' + (fresh ? 'are switched off at the Mac' : 'were switched off ' + deviceAsOf()) +
+            ', so nothing reaches this device once this page is closed. Wanigan Settings → Phone monitor is where they are switched back on.');
         }
         if (!state.ready) {
           return deviceRow(name, 'unknown', 'Not working',
-            'Alerts are on, but Wanigan cannot publish one right now. The alert panel on the Fleet screen carries the reason it gave.');
+            (fresh ? 'Alerts are on, but Wanigan cannot publish one right now' : 'Alerts were on, but Wanigan could not publish one ' + deviceAsOf()) +
+            ': ' + (state.blocked || 'it did not say why.'));
+        }
+        const when = deviceAlertAgo(state.lastAt);
+        if (state.lastOutcome === 'failed') {
+          return deviceRow(name, 'unknown', 'Failing',
+            'The last alert did not get through' + (when ? ' ' + when : '') +
+            deviceAlertFailure(state) +
+            (state.retryable ? ' — Wanigan will try the next one by itself.' : ' — Wanigan will not try again until that is fixed.'));
+        }
+        if (state.lastOutcome === 'sent') {
+          return deviceRow(name, 'can', 'Through ntfy',
+            'Your ntfy server accepted an alert' + (when ? ' ' + when : '') +
+            '. Whether this device showed it is not reported back: Wanigan publishes to a topic and cannot see which devices are subscribed to it.');
+        }
+        if (state.lastOutcome === 'skipped') {
+          return deviceRow(name, 'can', 'Through ntfy',
+            'The last alert' + (when ? ' ' + when : '') +
+            ' was not sent, because alerts were switched off at the moment it happened. Nothing has been published since.');
         }
         return deviceRow(name, 'can', 'Through ntfy',
-          'Wanigan publishes to your ntfy topic and the ntfy app is what shows the alert. Whether this device is subscribed to that topic is not something Wanigan can see from here, and this page cannot notify you by itself once it is closed.');
+          (fresh ? 'Wanigan can publish to your ntfy topic' : 'Wanigan could publish to your ntfy topic ' + deviceAsOf()) +
+          ', and nothing has needed an alert yet, so this path has not been proved end to end from this device. A test send from Wanigan Settings → Phone monitor is what proves it.');
+      }
+
+      // Dated from the reading, and worded from the outcome the Mac reported.
+      // 'None yet' is the one value here that is a claim rather than a
+      // measurement, and it is only ever printed for lastOutcome 'none', which
+      // is what the Mac says when it has never attempted a publish at all.
+      function deviceAlertLast(state) {
+        if (!state) return 'Not read yet';
+        if (state.lastOutcome === 'none') return 'None yet';
+        const word = state.lastOutcome === 'sent' ? 'Sent'
+          : state.lastOutcome === 'failed' ? 'Failed' : 'Skipped';
+        const when = deviceAlertAgo(state.lastAt);
+        return when ? word + ' ' + when : word + ' · not dated';
+      }
+
+      // Whether this page is running as an installed Home Screen app is a fact
+      // about this browser, so it is asked of this browser rather than inferred
+      // from the user agent. It matters next to the sentence below it: the
+      // answer to 'would installing it fix my alerts' is no either way, and an
+      // operator who has already installed it deserves to see the page say so
+      // about the app they are actually holding. A browser that can be asked
+      // neither question is told it is not known rather than assumed to be a
+      // tab.
+      function deviceDisplayWords() {
+        if (navigator.standalone === true) return 'Home Screen app';
+        try {
+          if (window.matchMedia('(display-mode: standalone)').matches) return 'Home Screen app';
+          if (window.matchMedia('(display-mode: browser)').matches) return 'Browser tab';
+        } catch (ignored) { /* a browser with no matchMedia cannot be asked */ }
+        return navigator.standalone === false ? 'Browser tab' : 'Not known';
       }
 
       function paintDevice() {
@@ -230,7 +379,10 @@ ${ABSENT_ROWS}
             ' spends radio and battery for nothing, so the wait doubles towards ' + devicePollWords(POLL_SLOW_MS) +
             ' and drops straight back on the first answer. Bringing this page to the front asks again immediately.'
           : 'Bringing this page back to the front asks again immediately, and the wait doubles towards ' + devicePollWords(POLL_SLOW_MS) + ' for as long as the Mac is not answering.');
-        byId('device-can').replaceChildren(deviceWatchRow(), deviceDriveRow(), deviceAlertRow());
+        byId('device-can').replaceChildren(deviceWatchRow(), deviceDriveRow());
+        byId('device-alert-row').replaceChildren(deviceAlertRow());
+        deviceWords('device-alert-last', deviceAlertLast(deviceAlerts));
+        deviceWords('device-alert-mode', deviceDisplayWords());
       }
 
       // Store only. The paint is left to applyFreshness below, which poll()
@@ -241,6 +393,10 @@ ${ABSENT_ROWS}
         deviceHost = String(snapshot.host || '');
         deviceVersion = String(snapshot.version || '');
         deviceAlerts = snapshot.alerts || null;
+        // Kept for deviceAlertAge() alone: it is the Mac's own clock at the
+        // moment it read the alert path, which is the only thing lastAt can
+        // honestly be subtracted from.
+        deviceGeneratedAt = Number(snapshot.generatedAt) || 0;
       }
 
       function deviceDisarm() {

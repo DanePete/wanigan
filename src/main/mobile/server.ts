@@ -26,6 +26,9 @@ import './git';
 import './explore';
 import './manage';
 import './manage-runs';
+import './goals';
+import './learning';
+import './scout';
 
 /**
  * The listener's lifecycle. It intentionally binds to loopback: reach it from

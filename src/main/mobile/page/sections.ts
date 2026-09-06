@@ -1,6 +1,9 @@
 import { ALERTS_SECTION } from './sections/alerts';
 import { DEVICE_SECTION } from './sections/device';
+import { GOALS_SECTION } from './sections/goals';
+import { LEARNING_SECTION } from './sections/learning';
 import { MANAGE_SECTION } from './sections/manage';
+import { SCOUT_SECTION } from './sections/scout';
 import { SPEND_SECTION } from './sections/spend';
 import { CONSOLE_SECTION } from './sections/console';
 import { FLEET_SECTION } from './sections/fleet';
@@ -55,7 +58,9 @@ import { LAUNCH_SECTION } from './sections/launch';
  * and a slot of its own is what keeps that surface one grep away rather than
  * folded into a panel on a screen about something else.
  */
-export type MobileSectionSlot = 'dashboard' | 'controls' | 'device' | 'git' | 'spend' | 'manage';
+export type MobileSectionSlot =
+  | 'dashboard' | 'controls' | 'device' | 'git' | 'spend' | 'manage'
+  | 'goals' | 'learning' | 'scout';
 
 export type MobileSection = {
   id: string;
@@ -78,7 +83,7 @@ export type MobileSection = {
 // remote-control slot on the Agent screen. The last two each own a screen.
 export const MOBILE_SECTIONS: readonly MobileSection[] = [
   ALERTS_SECTION, FLEET_SECTION, CONSOLE_SECTION, LAUNCH_SECTION, GIT_SECTION,
-  SPEND_SECTION, MANAGE_SECTION, DEVICE_SECTION,
+  SPEND_SECTION, MANAGE_SECTION, GOALS_SECTION, LEARNING_SECTION, SCOUT_SECTION, DEVICE_SECTION,
 ];
 
 export const MOBILE_SECTION_ANCHORS: readonly string[] = MOBILE_SECTIONS.map((section) => section.anchorId);

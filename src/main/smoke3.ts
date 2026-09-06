@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { createServer as createNetServer } from 'node:net';
 import Database from 'better-sqlite3';
 import { SIDEBAR_GROUPS, TABS, TAB_ICONS, TAB_SHORTCUTS } from '../shared/routes';
-import { MOBILE_ABSENT, MOBILE_VIEWS } from '../shared/mobile-nav';
+import { MOBILE_ABSENT, MOBILE_VIEWS, mobileViewLabel } from '../shared/mobile-nav';
 import * as limits from './limits';
 import { TRUST_COPY, TRUST_LEVELS, trustCopy, trustGlyph } from '../shared/types';
 import * as worktrees from './worktrees';
@@ -1805,6 +1805,57 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'a read-only phone can see the fan-out that is spending money right now but cannot stop it: the run list answers on the monitor scope, and cancelling is refused by the remote-control switch with the exact sentence the page matches on — with the repository still running afterwards',
     `${monitorRuns.status} / cancel ${lockedCancel.status}:${lockedCancelBody.error} row=${lockedRunRow?.status}`);
     db().prepare('DELETE FROM runs WHERE id=?').run(lockedRunId);
+    /* ── the review inbox · seeing the queue and clearing it are two gates ──
+     * What is waiting for a person is a fact about this Mac, and a monitor that
+     * cannot say how much has piled up behind them has a hole in exactly the
+     * place someone opens it to look. Taking the decision is a write — it
+     * changes what Wanigan will tell agents about this work — so it sits behind
+     * the separate remote-control opt-in. Both verbs are checked, because a
+     * gate that only refuses one of them is not a gate. Neither POST below
+     * spends the write budget: the dispatcher refuses a control-scope route
+     * before the rate limiter is reached.
+     */
+    const learnRepo = await import('./learning/repository');
+    const learnSignals = await import('./learning/signals');
+    setSetting('learning_enabled', '1');
+    const learnLockedSignal = learnSignals.recordSignal({
+      kind: 'tool-failure', summary: 'smoke phone learning observation',
+      taskHash: 'smoke-phone-learning-locked', detail: { ok: false },
+    });
+    const learnLocked = learnRepo.createCandidate({
+      targetKind: 'memory', scope: 'personal',
+      title: 'smoke phone locked proposal',
+      proposedText: 'Run the offline suite before handing off a main-process change.',
+      rationale: 'Recorded by the smoke suite.',
+      confidence: 0.9, signalIds: [learnLockedSignal.id],
+    });
+    type PhoneLearningRow = { id: string; approvable: boolean;
+      citations: { named: number; found: number; checked: boolean } };
+    const learnMonitorRead = await fetch(new URL('api/learning', monitor.localUrl), { headers: { authorization: `Bearer ${token}` } });
+    const learnMonitorBody = await learnMonitorRead.json() as { enabled?: boolean; modelAssisted?: boolean; proposals?: PhoneLearningRow[] };
+    const learnLockedApprove = await fetch(new URL('api/learning', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'approve', id: learnLocked.id }),
+    });
+    const learnLockedApproveBody = await learnLockedApprove.json() as { error?: string };
+    const learnLockedReject = await fetch(new URL('api/learning', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'reject', id: learnLocked.id }),
+    });
+    const learnLockedRejectBody = await learnLockedReject.json() as { error?: string };
+    const learnLockedAfter = learnRepo.getCandidate(learnLocked.id);
+    check(learnMonitorRead.status === 200 && learnMonitorBody.enabled === true
+      && learnMonitorBody.modelAssisted === false
+      && (learnMonitorBody.proposals ?? []).some((row) => row.id === learnLocked.id)
+      && learnLockedApprove.status === 403
+      && learnLockedApproveBody.error === 'Remote control is disabled in Wanigan Settings.'
+      && learnLockedReject.status === 403
+      && learnLockedRejectBody.error === 'Remote control is disabled in Wanigan Settings.'
+      && learnLockedAfter?.status === 'pending' && learnLockedAfter.reviewedAt === null,
+    'a read-only phone can see what is waiting for a decision but cannot take one: the review inbox answers on the monitor scope, and both approving and rejecting are refused by the remote-control switch with the exact sentence the page matches on — with the proposal still pending and unreviewed afterwards',
+    `${learnMonitorRead.status} / approve ${learnLockedApprove.status}:${learnLockedApproveBody.error} / reject ${learnLockedReject.status}:${learnLockedRejectBody.error} status=${learnLockedAfter?.status}`);
+    db().prepare('DELETE FROM knowledge_candidates WHERE id=?').run(learnLocked.id);
+    db().prepare('DELETE FROM learning_signals WHERE id=?').run(learnLockedSignal.id);
     const unknownRoute = await fetch(new URL('api/not-a-route', monitor.localUrl), { headers: { authorization: `Bearer ${token}` } });
     const unknownRouteBody = await unknownRoute.json() as { error?: string };
     const wrongVerb = await fetch(controlUrl, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: '{}' });
@@ -1854,6 +1905,138 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && composedShell.split('data-spend-days=').length === 4,
     'the Spend screen is composed exactly once, carrying both what is left and what it cost, and all three consumption windows',
     `${composedShell.split('id="spend"').length - 1} spend screens`);
+    /* ── the Scout screen · composed once, and honest about being a read ──
+     * The generic anchor sweep above passes vacuously for a screen that was
+     * never registered, so this one is named here as Spend and the alert
+     * panel are. The second half is the part that matters more: every write
+     * the Scout offers is either egress against a source allow-list or a
+     * commitment against a working tree this device does not have, so the
+     * screen makes exactly one GET and says so rather than offering a Create
+     * Goal button that would do something smaller than its label. */
+    const scoutScreen = (await import('./mobile/page/sections/scout')).SCOUT_SECTION;
+    const scoutCalls = scoutScreen.script.match(/api\([^)]*\)/g) ?? [];
+    check(sectionAnchors.includes('scout') && composedShell.split('id="scout"').length === 2
+      && composedShell.includes('id="scout-run"') && composedShell.includes('id="scout-list"')
+      && composedShell.includes('creating a Goal from a proposal is a Mac action')
+      && scoutCalls.length === 1 && scoutCalls[0] === "api('api/scout')",
+    'the Scout screen is composed exactly once and is a read and nothing else: one GET, no write of any kind, and it says plainly that starting a scan and creating a Goal are Mac actions',
+    `${composedShell.split('id="scout"').length - 1} scout screens, calls: ${scoutCalls.join(' | ') || 'none'}`);
+    /* ── the Scout digest · three outcomes that are not one outcome ──────
+     * A scan reports 'running', 'completed', 'blocked' or 'failed'. 'blocked'
+     * means a consent gate stopped the pass before it contacted anything, so
+     * drawing it as a completed scan is the app announcing an online check at
+     * the moment the code declined to make one — the bug the desktop view
+     * carried until it finally read its own run record. The phone is built
+     * from the fixed version, and these hold it there: at the wire, where the
+     * status and the stored reason both travel, and in the screen's own
+     * script, where the three outcomes get three different sentences. */
+    const scoutWire = await import('./mobile/scout');
+    const scoutSection = (await import('./mobile/page/sections/scout')).SCOUT_SECTION;
+    const scoutAt = Date.now();
+    const scoutRunBase = {
+      id: 'scout_run_smoke', mode: 'scheduled', status: 'completed', networkAllowed: true,
+      sourceCount: 3, evidenceCount: 3, suggestionCount: 2, analysisMethod: 'deterministic-rules',
+      startedAt: scoutAt - 600_000, endedAt: scoutAt, detail: null, error: null,
+    } as const;
+    const scoutBlocked = scoutWire.mobileScoutRun({
+      ...scoutRunBase, status: 'blocked', networkAllowed: false,
+      sourceCount: 0, evidenceCount: 0, suggestionCount: 0,
+      detail: 'Weekly research was paused before this queued pass began. No official source was contacted.',
+    });
+    const scoutFailedRun = scoutWire.mobileScoutRun({
+      ...scoutRunBase, status: 'failed', evidenceCount: 0, suggestionCount: 0,
+      detail: 'No official source could be read. Nothing was proposed.',
+      error: 'Official sources returned no readable content.',
+    });
+    const scoutLocalPass = scoutWire.mobileScoutRun({
+      ...scoutRunBase, mode: 'preview', networkAllowed: false, evidenceCount: 0, suggestionCount: 0,
+    });
+    check(scoutBlocked.status === 'blocked' && scoutBlocked.detail !== null && scoutBlocked.error === null
+      && scoutFailedRun.status === 'failed' && scoutFailedRun.error !== null
+      && scoutLocalPass.status === 'completed' && scoutLocalPass.networkAllowed === false
+      && scoutSection.script.includes("if (run.status === 'blocked') {")
+      && scoutSection.script.includes("if (run.status !== 'completed') {")
+      && scoutSection.script.includes('A consent gate stopped this scan before it contacted anything, so no online check was made.')
+      && scoutSection.script.includes('A local pass: the capability inventory was refreshed and no official source was contacted.'),
+    'a scan a consent gate blocked reaches the phone as blocked and carries the reason it was written with, a scan that broke keeps its error, and a completed pass that was never allowed online is drawn as the local refresh it was — none of the three can be read as an online check that happened',
+    `${scoutBlocked.status}/${scoutFailedRun.status}/${scoutLocalPass.status}`);
+
+    /* ── the deterministic analyser · a promise the phone may not drop ────
+     * The desktop says in so many words that no source text is sent to a
+     * model. A second surface that quietly stops saying it is worse than one
+     * that never said it, so the claim travels with the analyser that earns
+     * it — and only with that one. */
+    const scoutOverviewBase = {
+      enabled: true, weeklyEnabled: true, networkEnabled: true, cadenceLabel: 'Every Saturday at 9am',
+      lastRunAt: scoutAt - 3_600_000, nextRunAt: scoutAt + 3_600_000, pendingSuggestions: 2,
+      sourceCount: 3, enabledSourceCount: 3, analysisMethod: 'deterministic-rules', latestRun: null,
+    } as const;
+    const scoutDigest = scoutWire.mobileScoutPayload(
+      { overview: { ...scoutOverviewBase }, sources: [], open: [] }, scoutAt, scoutAt);
+    // Forced in, because the type holds exactly one analyser today. That is
+    // the case worth proving: a method this build has never seen must not
+    // inherit the sentence written for the one it has.
+    const scoutFutureDigest = scoutWire.mobileScoutPayload({
+      overview: {
+        ...scoutOverviewBase,
+        analysisMethod: 'model-assisted' as unknown as (typeof scoutOverviewBase)['analysisMethod'],
+      },
+      sources: [], open: [],
+    }, scoutAt, scoutAt);
+    check(scoutDigest.analysisMethod === 'deterministic-rules' && scoutDigest.deterministic
+      && scoutFutureDigest.analysisMethod === 'model-assisted' && !scoutFutureDigest.deterministic
+      && scoutSection.script.includes('if (scoutPayload.deterministic) {')
+      && scoutSection.script.includes('Proposals are built by local deterministic rules. No source text is sent to a model.')
+      && scoutSection.script.includes('which this screen cannot describe'),
+    'the promise that no source text is sent to a model reaches the phone with the analyser that earns it, and an analyser this build has never seen is named and left undescribed rather than inheriting the promise',
+    `${scoutDigest.analysisMethod} → ${scoutDigest.deterministic}, ${scoutFutureDigest.analysisMethod} → ${scoutFutureDigest.deterministic}`);
+
+    /* ── evidence · bounded, and the cut is announced ─────────────────────
+     * The Scout stores up to 900 characters per evidence row. Twenty
+     * proposals with three sources each would put tens of kilobytes of source
+     * prose on a cellular radio, so the passage is cut — and an excerpt that
+     * stops mid-sentence with nothing said about it is indistinguishable from
+     * a source that trailed off there. */
+    const scoutEvidenceBase = {
+      id: 'scout_ev_smoke', runId: 'scout_run_smoke', suggestionId: 'scout_idea_smoke',
+      sourceId: 'claude-code-changelog', title: 'Claude Code changelog',
+      url: 'https://code.claude.com/docs/en/changelog', publisher: 'Anthropic',
+      excerpt: '', contentHash: 'smoke', publishedAt: null, retrievedAt: scoutAt,
+    } as const;
+    const scoutProposal = scoutWire.mobileScoutProposal({
+      id: 'scout_idea_smoke', status: 'new', category: 'Capability', title: 'Smoke proposal',
+      summary: 'A proposal the offline suite built.', whyNow: 'The suite built it.',
+      recommendation: 'Scope it before doing it.', score: 71, confidence: 0.6,
+      effort: 'small', risk: 'low', analysisMethod: 'deterministic-rules',
+      createdAt: scoutAt, updatedAt: scoutAt, reviewedAt: null, note: null, goalId: null,
+      evidence: [
+        { ...scoutEvidenceBase, excerpt: 'x'.repeat(4_000) },
+        { ...scoutEvidenceBase, id: 'scout_ev_2', excerpt: 'A short passage that was never cut.' },
+        { ...scoutEvidenceBase, id: 'scout_ev_3', excerpt: 'A third passage.' },
+        { ...scoutEvidenceBase, id: 'scout_ev_4', excerpt: 'A fourth passage.' },
+      ],
+    });
+    check(scoutProposal.evidence.length === scoutWire.MOBILE_SCOUT_LIMITS.evidencePerProposal
+      && scoutProposal.evidenceCount === 4 && scoutProposal.evidenceTruncated
+      && scoutProposal.evidence[0].excerpt.length === scoutWire.MOBILE_SCOUT_LIMITS.excerptChars
+      && scoutProposal.evidence[0].excerptTruncated
+      && !scoutProposal.evidence[1].excerptTruncated
+      && !('score' in scoutProposal)
+      && scoutSection.script.includes('This passage was cut at ')
+      && scoutSection.script.includes('attached sources. The rest are on the Mac.'),
+    'an oversized source excerpt is cut to the phone bound and the row says it was cut rather than trailing off silently, a proposal with more sources than fit says how many are missing, and the rule-table score never crosses the wire at all',
+    `${scoutProposal.evidence[0].excerpt.length} chars, ${scoutProposal.evidence.length} of ${scoutProposal.evidenceCount} sources`);
+    // The generic anchor sweep above passes vacuously for a screen that was
+    // never registered, so the Goals screen is named here too — with the two
+    // sentences it exists to say. Both meanings of 'blocked' and the absence a
+    // goal with no base commit reports are in the served bytes, so a refactor
+    // that drops them fails here rather than on someone's phone.
+    check(sectionAnchors.includes('goals') && composedShell.split('id="goals"').length === 2
+      && composedShell.includes('no base commit recorded')
+      && composedShell.includes('Held by a prerequisite that failed or was canceled.')
+      && composedShell.includes('Waiting on a prerequisite that has not finished.'),
+    'the Goals screen is composed exactly once and carries both meanings of blocked, plus the sentence a goal with no base commit gets instead of a cause nothing observed',
+    `${composedShell.split('id="goals"').length - 1} goals screens`);
     // Every phone destination is a real panel on the served page, exactly one
     // of them, whether or not it is built yet: the eight unbuilt ones render a
     // sentence naming what will be there. A view in MOBILE_VIEWS with no panel
@@ -1861,11 +2044,18 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // an empty fleet on a sleeping Mac — it looks like an answer and it is the
     // absence of one.
     const missingViews = MOBILE_VIEWS.filter((view) => composedShell.split(`id="view-${view.id}"`).length !== 2);
+    // Goals, Learning and Scout have real screens now, so the placeholder text
+    // this used to pin is correctly gone. What is still worth pinning is the
+    // rule rather than any one screen's sentence: whatever remains unbuilt must
+    // name itself and say what will be there. Batches is the last one, and it
+    // is deliberately last — composing a fan-out is a Mac job.
+    const placeholderViews = MOBILE_VIEWS
+      .filter((view) => composedShell.includes(`${mobileViewLabel(view.id)} is not built for the phone yet.`));
     check(MOBILE_VIEWS.length === 10 && missingViews.length === 0
-      && composedShell.includes('Goals is not built for the phone yet.')
-      && composedShell.includes("it will show a goal's contract, its task graph, and the decision waiting on you."),
-    'the served page carries one panel per phone destination, and the destinations with no screen yet say so and name what will be there',
-    missingViews.map((view) => view.id).join(', ') || 'none');
+      && placeholderViews.every((view) => composedShell.includes(`id="view-${view.id}"`))
+      && !composedShell.includes('is not built for the phone yet.</p></section>'),
+    'the served page carries one panel per phone destination, and any destination with no screen yet names itself and says what will be there rather than rendering blank',
+    `${missingViews.map((view) => view.id).join(', ') || 'no missing panels'}; placeholders: ${placeholderViews.map((v) => v.id).join(', ') || 'none'}`);
     // NOTE for the integrator: this needs TAB_SHORTCUTS added to the existing
     // routes import at the top of this file —
     //   import { SIDEBAR_GROUPS, TABS, TAB_ICONS, TAB_SHORTCUTS } from '../shared/routes';
@@ -1886,6 +2076,23 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // bootRoute() seeds its state after the strip rather than before it, so the
     // first Back out of a pushed route cannot restore the pairing link.
     const composedJs = composedShell.slice(composedShell.indexOf('<script nonce='), composedShell.indexOf('</script>'));
+    // The generic anchor sweep above passes vacuously for a screen that was
+    // never registered, so the Learning screen is named here — with the two
+    // sentences that keep it honest. Model-assisted consolidation is not
+    // connected in this build, and a review queue that let someone infer a model
+    // had already looked would be claiming a capability Wanigan does not have.
+    // The second is what an approval reports: this route records the review and
+    // stops, so a page implying the knowledge had been written would leave
+    // someone believing a job was finished that nobody has started.
+    check(sectionAnchors.includes('learning')
+      && composedShell.split('id="learning"').length === 2
+      && composedJs.includes('No model read them.')
+      && composedJs.includes('Wanigan records the approval and stops there')
+      && composedJs.includes('Nothing has been written into knowledge or into a file')
+      && !/model (?:reviewed|checked|approved|agreed)/i.test(composedJs)
+      && composedJs.includes('learnRefresh = ui.watch(LEARNING_VIEW, learnLoad);'),
+    'the review inbox is composed exactly once, says in words that no model read these proposals, reports an approval as the decision it is rather than as knowledge already written, and follows the frame’s shared poll instead of holding a radio-waking timer of its own',
+    `${composedShell.split('id="learning"').length - 1} learning screens`);
     // with it rather than leaving one number meaning two screens.
     const barChords = MOBILE_VIEWS.filter((view) => view.bar).map((view) => ({
       id: view.id,
@@ -1951,6 +2158,72 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && composedShell.includes('These Wanigan screens have no phone version, on purpose.'),
     'the Device screen is composed exactly once and prints every deliberately-absent desktop destination with its name and its reason, so a phone with no Settings screen says why rather than leaving a hole',
     unprintedAbsent.map((entry) => entry.tab).join(', ') || 'none');
+    // The boundary, stated once and in the only place it can be read from the
+    // phone: a pairing token is proof a device may read this fleet, not consent
+    // to spend or to widen what Wanigan may do. The switches that stay at the
+    // Mac are named with it, because 'you cannot change this here' without
+    // saying what 'this' is sends someone hunting through preferences on a
+    // screen they are not holding.
+    const deviceMacSwitches = ['Remote control', 'Phone alerts', 'Repository review', 'The pairing link']
+      .filter((switchName) => !composedShell.includes(`<strong>${switchName}</strong>`));
+    check(deviceMacSwitches.length === 0
+      && composedShell.includes('That is proof a device may read this fleet')
+      && composedShell.includes('the switches below are read here and changed only at the Mac'),
+    'the phone says once and plainly what a pairing token is not — consent to spend, to trust a plugin, or to widen what Wanigan may do — and names every switch that stays at the Mac beside the screens that do',
+    deviceMacSwitches.join(', ') || 'none');
+    // An alert this phone will never receive is worse than no alert at all, so
+    // the screen states the limit instead of implying it away: a web page can
+    // raise something only while it is open, and installing it to the Home
+    // Screen does not change that while Web Push is unbuilt. It also reports
+    // which of the two this browser is, so an operator who has already installed
+    // it is not left working out whether the sentence is about them.
+    check(composedShell.includes('Installing it to the Home Screen adds nothing to it')
+      && composedShell.includes('only through Web Push, which Wanigan has not built')
+      && composedShell.includes('has never asked for notification permission and holds no push subscription')
+      && composedJs.includes("window.matchMedia('(display-mode: standalone)').matches")
+      && composedJs.includes("deviceWords('device-alert-mode', deviceDisplayWords());"),
+    'the phone settings screen says outright that an installed web page still cannot notify this device, naming Web Push as the thing Wanigan has not built rather than leaving a background alert implied',
+    'stated');
+    // The two values that make the alert path work must never reach the phone:
+    // the topic is the ntfy subscription credential — anyone holding it receives
+    // every alert — and the server is network-identifying metadata the page has
+    // no use for. /api/status is checked for both above; this is the served
+    // page, which now discusses that path in prose and could leak one in a
+    // sentence rather than in a field.
+    const devicePathSecrets = mobile.mobileConfig();
+    const deviceScreenAt = composedShell.indexOf('<section id="device"');
+    const deviceScreenHtml = composedShell.slice(deviceScreenAt, composedShell.indexOf('</section>', deviceScreenAt));
+    check(deviceScreenHtml.length > 1000
+      && devicePathSecrets.pushTopic.length > 0
+      && !composedShell.includes(devicePathSecrets.pushTopic)
+      && (devicePathSecrets.pushServer.length === 0 || !composedShell.includes(devicePathSecrets.pushServer))
+      && !/https?:\/\//.test(deviceScreenHtml),
+    'the phone settings screen describes the alert path without carrying it: neither the ntfy topic nor the configured server appears anywhere in the served page, and the screen itself holds no URL of any kind',
+    `${deviceScreenHtml.length} bytes, topic ${devicePathSecrets.pushTopic.length} chars`);
+    // The Device screen's alert row answers 'will anything reach me once I put
+    // this down', so it has to be decided from the state the Mac sent rather
+    // than from the fact that the switch is on: a path that is enabled and has
+    // been rejected for two days looks exactly like a healthy one until the last
+    // attempt is what writes the sentence. Every field the wire carries about
+    // that attempt is read here, the row is built only from what render()
+    // stored, and the served markup ships no verdict of its own — the alert
+    // facts leave the Mac saying 'Not read yet'.
+    const deviceAlertJs = composedJs.slice(composedJs.indexOf('function deviceAlertAge'), composedJs.indexOf('function paintDevice'));
+    const deviceAlertBlock = composedShell.slice(composedShell.indexOf('<h2>Alerts to this device</h2>'), composedShell.indexOf('<h2>What stays on the Mac</h2>'));
+    const unreadAlertFields = ['state.enabled', 'state.ready', 'state.blocked', 'state.lastOutcome',
+      'state.lastAt', 'state.lastReason', 'state.lastHttpStatus', 'state.retryable']
+      .filter((field) => !deviceAlertJs.includes(field));
+    check(deviceAlertJs.length > 500 && unreadAlertFields.length === 0
+      && composedJs.includes('deviceAlerts = snapshot.alerts || null;')
+      && composedShell.includes('<strong id="device-alert-last">Not read yet</strong>')
+      && ['Through ntfy', 'Failing', 'Not working'].every((verdict) => !deviceAlertBlock.includes(verdict))
+      // The attempt is stamped by the Mac and the reading by this device, so the
+      // age is the sum of two same-clock differences rather than one subtraction
+      // across both: a Mac running an hour fast would otherwise date an alert
+      // that failed an hour ago as 'just now'.
+      && composedJs.includes('return Math.max(0, deviceGeneratedAt - at) + Math.max(0, Date.now() - lastGoodAt);'),
+    'the Device screen decides its alert verdict from the reading the Mac sent — every field of the alert state, including how the last publish ended and when — rather than shipping a verdict in the markup or stopping at the switch being on',
+    unreadAlertFields.join(', ') || 'none');
     // One radio, one cadence. Ten screens each holding their own interval is a
     // battery bug on a phone: nine of them fetch for panels nobody is looking
     // at, and none of them knows about the backoff the shell already applies
@@ -3050,6 +3323,54 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     control.completeNode(reviewNode.id, { detail: 'Checked proof bundle.', decision: 'approve' });
     check(control.docket(docket.id).status === 'accepted',
       'a docket is accepted only after verification evidence and a human review decision');
+    /* ── the phone's read of one goal ─────────────────────────────────── */
+    // mobile/goals.ts rebuilds a docket for a paired device. These three are
+    // asserted against the builder rather than over HTTP, because they are
+    // properties of what the phone is told and not of the transport.
+    const phoneGoals = await import('./mobile/goals');
+    const phoneGoal = control.createDocket({ projectId: controlProject.id, title: 'Phone goal read',
+      objective: 'o'.repeat(4_000), acceptance: ['The phone says what is holding each task.'], risk: 'high' });
+    const phonePlan = phoneGoal.nodes.find((node) => node.kind === 'plan')!;
+    const phoneImplement = phoneGoal.nodes.find((node) => node.kind === 'implement')!;
+    control.claimPath(phoneImplement.id, 'src/phone-goal-claim.ts');
+    control.completeNode(phonePlan.id, { decision: 'request_changes', detail: 'The plan needs rework.' });
+    const phoneRecord = control.docket(phoneGoal.id);
+    const phoneWire = phoneGoals.mobileGoal(phoneRecord);
+    const phoneHeld = phoneWire.tasks.find((task) => task.title === phoneImplement.title);
+    const phoneWaiting = phoneWire.tasks.find((task) => task.kind === 'verify');
+    // 'blocked' is two situations in one word — a prerequisite that failed, and
+    // one that has not finished yet — and the operator's next move differs.
+    // Flattening them on the phone sends someone looking for a broken task when
+    // the graph is merely queued, or leaves them waiting on one that will never
+    // finish because nobody reopened the task above it.
+    check(phoneHeld?.hold === 'prerequisite-failed' && phoneHeld.waitsOn.some((prereq) => prereq.status === 'failed')
+      && phoneWaiting?.hold === 'prerequisite-unfinished' && phoneWaiting.waitsOn.every((prereq) => prereq.status !== 'failed'),
+    "the phone tells a task held by a failed prerequisite apart from one whose prerequisite has not finished, naming each prerequisite with its own status rather than sending 'blocked' twice",
+    `${phoneHeld?.hold} / ${phoneWaiting?.hold}`);
+    // A null base commit has several causes this process cannot tell apart, so
+    // it crosses as an absence — never '' and never a guessed cause. A long
+    // objective is bounded with the remainder counted, because a paragraph cut
+    // to fit reads exactly like a paragraph that ended.
+    check(phoneGoals.mobileGoal({ ...phoneRecord, baseCommit: null }).baseCommit === null
+      && phoneWire.objective.omitted === 2_800,
+    'a goal with no base commit crosses to the phone as an absence rather than a diagnosis, and a long objective says how much of it stayed on the Mac',
+    `${phoneWire.objective.text.length} characters sent, ${phoneWire.objective.omitted} left behind`);
+    // Asserted against a record deliberately carrying a worktree, a session id
+    // and a conversation id: those fields are null on a goal whose tasks never
+    // launched, and an assertion over nulls would prove nothing.
+    const phoneLeaky = phoneGoals.mobileGoal({
+      ...phoneRecord,
+      nodes: phoneRecord.nodes.map((node) => ({ ...node, worktree: path.join(controlRepo, 'worktree'), sessionId: 's_phone_leak' })),
+      checkpoints: [{ id: 'ck_phone', docketId: phoneRecord.id, nodeId: phonePlan.id, sessionId: 's_phone_leak',
+        conversationId: 'conversation-PHONE-GOAL-LEAK', repoCommit: 'abc1234567', worktree: path.join(controlRepo, 'worktree'),
+        note: 'Handoff saved.', createdAt: Date.now() }],
+    });
+    const phoneLeakyJson = JSON.stringify(phoneLeaky);
+    check(!phoneLeakyJson.includes(controlRepo) && !phoneLeakyJson.includes('src/phone-goal-claim.ts')
+      && !phoneLeakyJson.includes('conversation-') && phoneLeaky.checkpoints[0]?.thread === true
+      && phoneWire.claimsHeld === 1,
+    'no absolute path, claimed path or conversation id reaches the phone with a goal — it is told that a claim is held and that a thread exists, and nothing that names either',
+    phoneLeakyJson.slice(0, 240));
     // ── P32 · agent accounts ─────────────────────────────────────────────
     // An account is a labelled config directory, never a credential Wanigan
     // holds. These assertions cover the boundary rules; the browser sign-in
