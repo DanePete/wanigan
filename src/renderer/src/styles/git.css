@@ -1,5 +1,22 @@
 /* git — tokens come from index.css; no colour declared here. */
 
+/* Git is a workbench, not a document, so it opts out of the measure index.css
+   holds every document view to. --page-max is right for a column of prose and
+   wrong here: it stopped the toolbar rule, the divider between the two columns
+   and the diff a third of the way across a wide window while the scrollbar sat
+   out at the edge, so the surface read as a narrow card floating in the tab.
+   `max-width: none` rather than className="pane wide" — .pane.wide only raises
+   the cap to --page-wide, which no breakpoint lifts, so the same truncation
+   would come back above ~1708px.
+   The pane keeps no gutter of its own, which is how this view has always sat
+   on the window edge, so the head supplies one. Both selectors outrank the
+   index.css rules they replace (and the compact.css ladder) on specificity
+   alone, which matters: git.css is @imported at the top of index.css and so
+   loses every tie on source order. */
+.pane.gt-view { padding: 0; }
+.pane.gt-view > * { max-width: none; }
+.pane.gt-view > .pane-head:first-child { padding: var(--s-3); }
+
 .gt { display: grid; grid-template-columns: minmax(0,1fr) minmax(320px, 38%);
       width: 100%; min-height: 0; }
 .gt-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -71,5 +88,7 @@
 .gt-filter-note { padding: 8px 12px; font-size: var(--t-micro); line-height: 1.5; }
 
 /* The one confirmation this view shares between push, discard, merge, delete
-   branch and drop stash. Inset to the same gutter as the panes it interrupts. */
+   branch and drop stash, and the error/result notices that appear either side
+   of it. Inset to the same gutter as the panes they interrupt. */
+.gt-notice,
 .gt-confirm { padding: var(--s-2) var(--s-3); }

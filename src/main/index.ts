@@ -223,7 +223,7 @@ const SCHEDULED_BUDGET_USD = 2;
 const SCHEDULED_TIMEOUT_MS = 15 * 60_000;
 
 let win: BrowserWindow | null = null;
-/** Slower than the dispatcher: a docket becomes eligible when work finishes. */
+/** Slower than the dispatcher: a goal becomes eligible when work finishes. */
 const AUTOPILOT_SWEEP_MS = 10_000;
 let autopilotTimer: NodeJS.Timeout | null = null;
 let uiInitialized = false;
@@ -1054,7 +1054,7 @@ async function startServices() {
   queue.registerRunner('node', async (payload) => {
     const nodeId = (payload as { nodeId?: unknown } | null)?.nodeId;
     if (typeof nodeId !== 'string' || !nodeId) {
-      throw new Error('This autopilot queue item names no Goal task. Remove it and re-enable autopilot on the docket.');
+      throw new Error('This autopilot queue item names no Goal task. Remove it and re-enable autopilot on the goal.');
     }
     await control.startQueuedNode(nodeId);
   });
@@ -1063,7 +1063,7 @@ async function startServices() {
     if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
   });
   // The sweep only writes queue rows; the dispatcher above still decides when
-  // one may start. It runs on its own slower interval because a docket becomes
+  // one may start. It runs on its own slower interval because a goal becomes
   // eligible through work finishing, not through the queue moving.
   //
   // Guarded against smoke as defence in depth. The suite returns before
@@ -1108,12 +1108,12 @@ async function startServices() {
 
   // Worktrees survive a crash; a stale one costs disk forever, so surface them.
   void worktrees.reconcileWorktrees().catch(() => {});
-  // A docket task left 'running' by a crash describes an agent that no longer
+  // A goal task left 'running' by a crash describes an agent that no longer
   // exists — and holds path claims nobody can release until it is reopened.
   try {
     const reopened = control.reconcileRunningNodes();
-    if (reopened) console.warn(`[wanigan] reopened ${reopened} docket task(s) whose session did not survive the last run`);
-  } catch (e) { console.warn('[wanigan] docket reconciliation skipped:', e); }
+    if (reopened) console.warn(`[wanigan] reopened ${reopened} goal task(s) whose session did not survive the last run`);
+  } catch (e) { console.warn('[wanigan] goal reconciliation skipped:', e); }
   // Deterministic consolidation runs only while the app or its launchd daemon
   // is alive. The service checks the visible controls on every pass.
   learning.startConsolidator();

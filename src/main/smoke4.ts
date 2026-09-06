@@ -1516,6 +1516,61 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     registry.restore('orbit.pack');
     check(fs.existsSync(packDir) && registry.listPacks()[0]?.status === 'disabled',
       'removed pack can be restored without implicitly launching or enabling it');
+
+    /* ── a picker may only offer what the profile declares ────────────
+     * The New session dialog offered Codex the reasoning level 'ultra'
+     * because its own static model table listed one; the shipped Codex
+     * profile declares low…max and its launch compiler refuses anything
+     * else, so the extra pill only ever bought a failed launch.
+     * launchFieldChoices is the renderer's half of that rule, and pure,
+     * so the offer can be checked here without a window. */
+    const { launchFieldChoices, intersectChoices } = await import('../shared/launch-fields');
+    const codexShaped = {
+      supports: { model: true, effort: true, permissionMode: false, resume: true },
+      launchFields: [
+        { id: 'model', label: 'Model', kind: 'text' as const },
+        {
+          id: 'effort', label: 'Reasoning effort', kind: 'select' as const, allowCustom: false,
+          options: ['low', 'medium', 'high', 'xhigh', 'max'].map((value) => ({ value, label: value })),
+        },
+      ],
+    };
+    const effortOffer = launchFieldChoices(codexShaped, 'effort');
+    check(effortOffer.supported && effortOffer.declared && effortOffer.label === 'Reasoning effort'
+      && effortOffer.choices.map((choice) => choice.value).join() === 'low,medium,high,xhigh,max',
+      'a launch picker offers exactly the efforts the profile declares, under the profile’s own label',
+      effortOffer.choices);
+    check(intersectChoices(effortOffer.choices, ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+      .every((choice) => choice.value !== 'ultra'),
+      'an effort a CLI catalog reports but the profile never declared is not offered');
+    check(intersectChoices(effortOffer.choices, ['low', 'medium']).map((choice) => choice.value).join() === 'low,medium',
+      'and a model with a narrower reasoning range narrows the offer to the overlap');
+    const legacyShaped = {
+      supports: { model: true, effort: true, permissionMode: true, resume: true },
+      launchFields: [],
+    };
+    const legacyEffort = launchFieldChoices(legacyShaped, 'effort');
+    const legacyModes = launchFieldChoices(legacyShaped, 'permissionMode');
+    check(!legacyEffort.declared && legacyEffort.choices.length === 5 && !legacyModes.declared
+      && legacyModes.choices.some((choice) => choice.value === 'bypassPermissions'),
+      'a definition that declares no launch fields still falls back to Wanigan’s own lists',
+      [legacyEffort.choices.length, legacyModes.choices.length]);
+    check(launchFieldChoices({
+      supports: { model: false, effort: false, permissionMode: false, resume: false }, launchFields: [],
+    }, 'effort').supported === false,
+      'and a profile that does not take the field at all reports it unsupported rather than offering a list');
+    const openShaped = {
+      supports: { model: true, effort: false, permissionMode: false, resume: false },
+      launchFields: [{
+        id: 'model', label: 'Model', kind: 'select' as const, allowCustom: true, defaultValue: 'orbit-2',
+        options: [{ value: 'orbit-1', label: 'Orbit 1' }, { value: 'orbit-2', label: 'Orbit 2' }],
+      }],
+    };
+    const openOffer = launchFieldChoices(openShaped, 'model');
+    check(openOffer.custom && openOffer.declared && openOffer.defaultValue === 'orbit-2'
+      && openOffer.choices.length === 2 && !effortOffer.custom && effortOffer.defaultValue === '',
+      'a select the manifest opened with allowCustom keeps free text and its declared default; a closed one keeps neither',
+      openOffer);
   } catch (error) {
     check(false, `provider pack suite threw: ${error instanceof Error ? error.message : String(error)}`);
   } finally {

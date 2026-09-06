@@ -935,6 +935,12 @@ function editorExtensionRoots(homeDir: string): string[] {
 }
 
 function expandFallbacks(profile: ProviderProfile, homeDir: string): string[] {
+  // A local manifest never chooses an executable by filesystem path. Discovery
+  // already refuses both fallbackPaths and editorExtensions, so a local profile
+  // that reaches here has either been compiled ad hoc — bypassing the registry
+  // — or carries a field discovery would have rejected. Either way the honest
+  // answer is no candidates: `bin` must resolve on PATH or the launch fails.
+  if (profile.source === 'local') return [];
   const variables = {
     home: homeDir,
     packDir: profile.packDir ?? '',
@@ -960,14 +966,7 @@ function expandFallbacks(profile: ProviderProfile, homeDir: string): string[] {
     }
   }
   for (const entry of profile.command.fallbackPaths ?? []) {
-    const expanded = substitute(entry, variables);
-    if (profile.source === 'local') {
-      // Local fallback executables are refused during discovery; retain the
-      // fail-closed behavior if a caller compiles an ad-hoc profile directly.
-      continue;
-    } else {
-      out.push(expanded);
-    }
+    out.push(substitute(entry, variables));
   }
   return [...new Set(out.filter(Boolean))];
 }
@@ -1348,6 +1347,17 @@ export class ProviderPackRegistry {
         if (profile.command.fallbackPaths?.length) {
           errors.push(
             `${profile.id}: local packs cannot declare executable fallbackPaths. ` +
+            'Install the dedicated provider CLI on PATH instead.'
+          );
+        }
+        // editorExtensions is the same grant wearing a different name: it names
+        // a directory prefix under the operator's editor extension roots and a
+        // path inside it, so a manifest that declared one could still point the
+        // launch at an executable of its choosing after `bin` failed to resolve
+        // on PATH. Refusing only fallbackPaths left that route open.
+        if (profile.command.editorExtensions?.length) {
+          errors.push(
+            `${profile.id}: local packs cannot select an executable by editor-extension path. ` +
             'Install the dedicated provider CLI on PATH instead.'
           );
         }

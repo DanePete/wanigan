@@ -141,6 +141,11 @@
 .scout-filter-copy { min-width: 0; }
 .scout-filter-copy h3 { margin-top: 2px; font-size: var(--t-lead); }
 .scout-filter-copy p { margin-top: 2px; color: var(--text-faint); font-size: var(--t-small); }
+/* The queue’s one announced line, and the only thing on this surface that
+   speaks. It reads as the sentence under the heading rather than as a badge:
+   a count that moves with every filter keystroke has no business drawing the
+   eye, and nothing here animates. */
+.scout-filter-copy .scout-filter-status { margin-top: var(--s-1); color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .scout-filter-controls { display: flex; flex: none; flex-wrap: wrap; align-items: end; justify-content: flex-end; gap: var(--s-2); }
 .scout-filter-controls label { display: flex; min-width: 130px; flex-direction: column; gap: 4px; }
 .scout-filter-controls label:last-child { min-width: min(280px, 34vw); }

@@ -59,7 +59,7 @@ const INLINE_STYLE_BASELINE = {
   'views/Context.tsx': 115,
   'views/Control.tsx': 0,
   'views/Fleet.tsx': 29,
-  'views/Git.tsx': 41,
+  'views/Git.tsx': 32,
   'views/HeadlessRuns.tsx': 0,
   'views/ImprovementScout.tsx': 1,
   'views/Insights.tsx': 62,
@@ -100,7 +100,7 @@ const FONT_PX_BASELINE = {
   'queue.css': 15, 'plugins.css': 15,
   'schedule.css': 8,
   'session-learning.css': 1,
-  'settings.css': 28,
+  'settings.css': 27,
   'sessions.css': 2,
   'timeline.css': 26,
 };

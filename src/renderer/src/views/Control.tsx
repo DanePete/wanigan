@@ -19,6 +19,26 @@ async function copyText(value: string): Promise<void> {
 }
 
 /**
+ * What the main process actually did, said in words.
+ *
+ * The notice used to run the wire enum through replace('_', ' '), so a reviewer
+ * asking for changes was told "Task marked request changes.", and someone who
+ * had merely finished a plan or verify task was told a decision had been
+ * recorded. completeNode writes different things depending on the kind: a
+ * review stores a `decision` proof, and a reject also flips the goal itself to
+ * 'rejected', while every other kind just closes one node. So the kind, not
+ * only the decision, chooses the sentence.
+ */
+function decisionNotice(kind: DocketNodeKind, decision: 'approve' | 'request_changes' | 'reject'): string {
+  if (kind !== 'review') {
+    return decision === 'approve' ? 'Task marked complete.' : 'Task marked failed. Reopen it when the next pass is ready.';
+  }
+  if (decision === 'approve') return 'Decision recorded: approved.';
+  if (decision === 'request_changes') return 'Changes requested. The review task is marked failed; reopen it when the revised work is ready for another pass.';
+  return 'Rejected. The review task is marked failed and this goal is recorded as rejected.';
+}
+
+/**
  * Dockets are intentionally not a second terminal surface. They make the
  * contract, evidence and human decision visible before the operator opens the
  * agent that does the work.
@@ -179,7 +199,7 @@ export default function Control({ projects, providers, onOpenSession }: {
   const complete = (node: DocketNode, decision: 'approve' | 'request_changes' | 'reject' = 'approve') => act(`complete-${node.id}-${decision}`, async () => {
     await window.wanigan.control.complete(node.id, { detail: notes[node.id] || undefined, decision });
     setNotes((previous) => ({ ...previous, [node.id]: '' })); await load(detail?.id);
-  }, decision === 'approve' ? 'Task decision recorded.' : `Task marked ${decision.replace('_', ' ')}.`);
+  }, decisionNotice(node.kind, decision));
   const addEvent = () => act('event', async () => {
     await window.wanigan.control.addEvent({ projectId: projectId || null, source: eventSource, kind: eventKind, summary: eventSummary });
     setEventSummary(''); await load(detail?.id);
@@ -269,7 +289,13 @@ export default function Control({ projects, providers, onOpenSession }: {
       </article>
     </section>
 
-    {detail && <section className="control-detail card" id={`goal-${detail.id}`}><div className="control-card-head"><div><span className="label">Goal · {detail.status} · {detail.risk} risk{detail.budgetUsd !== null ? ` · ${usd(detail.budgetUsd)} budget` : ''}</span><h2>{detail.title}</h2></div><div className="control-goal-meta"><span className="mono">base {detail.baseCommit?.slice(0, 10) ?? 'not a git repo'}</span><span className="mono">id {detail.id}</span><button className="btn btn-small" onClick={() => void copyGoalId(detail.id)} disabled={busy !== null}>Copy goal ID</button></div></div>
+    {detail && <section className="control-detail card" id={`goal-${detail.id}`}><div className="control-card-head"><div><span className="label">Goal · {detail.status} · {detail.risk} risk{detail.budgetUsd !== null ? ` · ${usd(detail.budgetUsd)} budget` : ''}</span><h2>{detail.title}</h2></div><div className="control-goal-meta">{detail.baseCommit
+        ? <span className="mono">base {detail.baseCommit.slice(0, 10)}</span>
+        /* A null base commit has several causes — no repository, a repository
+           with no commit yet, a git read that failed — and the renderer has no
+           way to tell them apart, so it reports the absence and does not name a
+           cause it cannot observe. */
+        : <span className="faint">no base commit recorded</span>}<span className="mono">id {detail.id}</span><button className="btn btn-small" onClick={() => void copyGoalId(detail.id)} disabled={busy !== null}>Copy goal ID</button></div></div>
       <p>{detail.objective}</p><ol className="control-acceptance">{detail.acceptance.map((check, index) => <li key={index}>{check}</li>)}</ol>
       <div className="control-launch"><label><span className="label">Provider for next task</span><select className="field" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{enabledProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label><span className="label">Model override</span><input className="field" value={model} onChange={(event) => setModel(event.target.value)} placeholder="provider default" /></label></div>
       <div className="control-nodes">{detail.nodes.map((node) => <NodeCard key={node.id} node={node} busy={busy} note={notes[node.id] ?? ''} claim={claims[node.id] ?? ''}

@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AttentionKind, Session, SessionStatus } from '@shared/types';
+import type { AttentionKind, Session } from '@shared/types';
 import { runsClaudeHarness } from '@shared/provider-status';
+import {
+  deriveSendState,
+  observeQueueTargets,
+  queueWatcherWanted,
+  type QueueTargetState,
+  type SessionListReading,
+} from '@shared/composer-queue';
 import {
   COMPOSER_DRAFTS_KEY,
   COMPOSER_DRAFT_PREFIX,
@@ -34,40 +41,6 @@ const QUEUE_POLL_MS = 2_000;
 const STASH_KEY = 'wanigan.promptStash';
 const STASH_MAX = 50;
 
-export type ComposerSendState = {
-  mode: 'send' | 'queue' | 'blocked';
-  /** The sentence behind the button label; null when mode is plain send. */
-  reason: string | null;
-};
-
-/**
- * When a send is safe. Idle and finished mean the TUI is at its own prompt.
- * A permission prompt must never be answered by queued text, an errored
- * session should hear from a human first, and an unknown state fails closed —
- * queueing costs seconds, a mis-send costs a wrong approval.
- */
-export function deriveSendState(input: {
-  status: SessionStatus | null;
-  attention: AttentionKind | null;
-}): ComposerSendState {
-  if (input.status !== 'running') {
-    return { mode: 'blocked', reason: 'This session has exited, so there is no prompt to type into.' };
-  }
-  switch (input.attention) {
-    case 'idle':
-    case 'finished':
-      return { mode: 'send', reason: null };
-    case 'permission':
-      return { mode: 'queue', reason: 'The agent is waiting on a permission prompt — queued text must not answer it.' };
-    case 'error':
-      return { mode: 'queue', reason: 'The agent stopped on an error; queued messages hold until it is idle again.' };
-    case 'working':
-      return { mode: 'queue', reason: 'The agent is mid-turn; this sends when it goes idle.' };
-    default:
-      return { mode: 'queue', reason: 'The agent’s state is not known yet; queued until it reads idle.' };
-  }
-}
-
 /**
  * The bytes a send writes. A single line is text plus Enter, exactly like the
  * launch-prompt path. A multi-line body goes as one bracketed paste — the same
@@ -98,6 +71,14 @@ let queueSeq = 1;
 const queues = new Map<string, QueuedMessage[]>();
 const queueListeners = new Set<() => void>();
 let watcher: number | undefined;
+/** The last trustworthy word on each session a queue is aimed at. Only ever
+    keyed by ids that still hold messages, so it stays the size of the queues. */
+let observed: ReadonlyMap<string, QueueTargetState> = new Map();
+
+/** Forget what was concluded about one session, so the next poll re-decides. */
+function forgetObserved(sessionId: string) {
+  observed = new Map([...observed].filter(([id]) => id !== sessionId));
+}
 /** One send per idle sighting: the drained message makes the agent busy again,
     and the next queued one waits for the next real idle. */
 let draining = false;
@@ -113,6 +94,11 @@ export function queuedFor(sessionId: string): QueuedMessage[] {
 
 function enqueue(sessionId: string, text: string) {
   queues.set(sessionId, [...queuedFor(sessionId), { id: queueSeq++, text, queuedAt: Date.now() }]);
+  // A human aiming a message at this session is fresher evidence than whatever
+  // the last poll concluded about it, so the verdict is dropped rather than
+  // trusted. Worst case the timer wakes for one tick and re-learns the session
+  // is gone; the alternative is a queue nobody is watching.
+  forgetObserved(sessionId);
   notifyQueues();
 }
 
@@ -120,13 +106,22 @@ function unqueue(sessionId: string, id: number): QueuedMessage | null {
   const list = queuedFor(sessionId);
   const found = list.find((m) => m.id === id) ?? null;
   queues.set(sessionId, list.filter((m) => m.id !== id));
-  if (!queues.get(sessionId)?.length) queues.delete(sessionId);
+  if (!queues.get(sessionId)?.length) { queues.delete(sessionId); forgetObserved(sessionId); }
   notifyQueues();
   return found;
 }
 
+/**
+ * Start or stop the drain timer.
+ *
+ * A non-empty queue used to be the whole condition, which meant a message
+ * queued against a session that then exited kept the app asking two IPC
+ * questions a second, for the rest of the run, about a PTY that no longer
+ * exists. The queue itself is untouched — the messages stay on screen saying
+ * they were not sent — and only the asking stops.
+ */
 function syncWatcher() {
-  const wanted = queues.size > 0;
+  const wanted = queueWatcherWanted([...queues.keys()], observed);
   if (wanted && watcher === undefined) {
     watcher = window.setInterval(() => { void drainOnce(); }, QUEUE_POLL_MS);
   } else if (!wanted && watcher !== undefined) {
@@ -138,11 +133,15 @@ function syncWatcher() {
 async function drainOnce(): Promise<void> {
   if (draining || queues.size === 0) return;
   draining = true;
+  // Nothing until a read actually lands. A poll that threw is not evidence
+  // that a session disappeared, and must not be allowed to look like one.
+  let reading: SessionListReading = { ok: false };
   try {
     const [attention, sessions] = await Promise.all([
       window.wanigan.attention.list(),
       window.wanigan.sessions.list(),
     ]);
+    reading = { ok: true, sessions };
     const kindOf = new Map(attention.map((a) => [a.sessionId, a.kind]));
     const statusOf = new Map(sessions.map((s) => [s.id, s.status]));
     for (const [sessionId, list] of [...queues.entries()]) {
@@ -157,7 +156,13 @@ async function drainOnce(): Promise<void> {
       await writePayload(sessionId, buildPtyPayload(head.text));
     }
   } catch { /* the next tick re-reads; a failed poll must not drop a message */ }
-  finally { draining = false; }
+  finally {
+    draining = false;
+    // Fold in what this tick learned before deciding whether there is a next
+    // one: the exit that makes the timer pointless is visible only here.
+    observed = observeQueueTargets([...queues.keys()], reading, observed);
+    syncWatcher();
+  }
 }
 
 /* ── drafts ──────────────────────────────────────────────────────────────
@@ -328,21 +333,39 @@ export default function Composer({ session, onError, onCollapse }: {
     });
   }, [draft, menu]);
 
-  const send = useCallback(async (forced?: string) => {
-    const text = (forced ?? draft).trim();
+  // Sends the box, and only the box. This used to take an optional `forced`
+  // string so a queue chip could reuse it, which meant every guard below had a
+  // second meaning and the blocked early-return silently ate an already
+  // unqueued message. Re-sending a queued one is sendQueued's job now.
+  const send = useCallback(async () => {
+    const text = draft.trim();
     if (!text || state.mode === 'blocked') return;
     if (text.length > COMPOSER_MAX_CHARS) return;
-    if (forced === undefined) {
-      setDraft('');
-      setMenu(null);
-    }
-    if (state.mode === 'queue' && forced === undefined) {
+    setDraft('');
+    setMenu(null);
+    if (state.mode === 'queue') {
       enqueue(sessionId, text);
       return;
     }
     try { await writePayload(sessionId, buildPtyPayload(text)); }
     catch (e) { onError(e instanceof Error ? e.message : String(e)); }
   }, [draft, onError, sessionId, state.mode]);
+
+  /**
+   * "Send now" jumps the idle gate on purpose — the operator can see the
+   * terminal and is taking responsibility for the timing. It cannot jump a
+   * dead session, and used to pretend otherwise: the chip unqueued the message
+   * and then called send(), which returns early once the mode is blocked, so
+   * the text vanished with nothing typed anywhere. sessions:write is
+   * fire-and-forget, so there is no rejection to catch either. The guard here
+   * and the button's own disabled state are what keep the message on screen.
+   */
+  const sendQueued = useCallback(async (m: QueuedMessage) => {
+    if (state.mode === 'blocked') return;
+    unqueue(sessionId, m.id);
+    try { await writePayload(sessionId, buildPtyPayload(m.text)); }
+    catch (e) { onError(e instanceof Error ? e.message : String(e)); }
+  }, [onError, sessionId, state.mode]);
 
   const stashDraft = useCallback(() => {
     const text = draft.trim();
@@ -376,6 +399,9 @@ export default function Composer({ session, onError, onCollapse }: {
 
   const buttonLabel = state.mode === 'queue' ? 'Queue' : 'Send';
   const disabled = state.mode === 'blocked' || !draft.trim() || over > 0;
+  // Only an exit is permanent. 'starting' is blocked too, and a queue aimed at
+  // a session that has not finished launching really does still send.
+  const exited = session.status === 'exited';
 
   return (
     <div className="composer" data-state={state.mode}>
@@ -385,8 +411,11 @@ export default function Composer({ session, onError, onCollapse }: {
             <span key={m.id} className="composer-chip" role="listitem" title={m.text}>
               <span className="composer-chip-text">{m.text}</span>
               <button type="button" className="composer-chip-btn"
-                      title="Send now, regardless of the agent’s state — you can see the terminal"
-                      onClick={() => { const taken = unqueue(sessionId, m.id); if (taken) void send(taken.text); }}>
+                      disabled={state.mode === 'blocked'}
+                      title={state.mode === 'blocked'
+                        ? 'There is no prompt to type into — this message can only be copied out or removed.'
+                        : 'Send now, regardless of the agent’s state — you can see the terminal'}
+                      onClick={() => void sendQueued(m)}>
                 send now
               </button>
               <button type="button" className="composer-chip-btn" title="Remove without sending"
@@ -394,8 +423,13 @@ export default function Composer({ session, onError, onCollapse }: {
                       onClick={() => unqueue(sessionId, m.id)}>×</button>
             </span>
           ))}
-          <span className="faint composer-queue-note">
-            {state.mode === 'send' ? 'sending…' : 'sends when the agent is idle'}
+          {/* The old note said "sends when the agent is idle" no matter what,
+              including to a queue whose session had already exited — a promise
+              the composer could never keep, kept on screen forever. */}
+          <span className={`composer-queue-note${exited ? ' composer-queue-lost' : ' faint'}`}>
+            {exited
+              ? '✕ not sent — this session exited'
+              : state.mode === 'send' ? 'sending…' : 'sends when the agent is idle'}
           </span>
         </div>
       )}

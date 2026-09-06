@@ -94,7 +94,7 @@ inherit the built-in Claude backend's semantic memory.
 | `versionArgs` | ≤ 20; defaults to `["--version"]` |
 | `helpArgs` | ≤ 20; defaults to `["--help"]`. Wanigan runs it automatically during discovery, as it does `versionArgs` |
 | `fallbackPaths` | ≤ 100. **Refused for local packs** — declaring any makes the pack `invalid`. Built-ins use it for things like `{home}/.claude/local/claude` |
-| `editorExtensions` | ≤ 20 × `{ prefix, executablePaths }` (≤ 20 paths each) |
+| `editorExtensions` | ≤ 20 × `{ prefix, executablePaths }` (≤ 20 paths each). **Refused for local packs** on the same terms as `fallbackPaths`. Built-ins use it to find the Claude and Codex binaries shipped inside an editor extension |
 
 The command-name denylist is defense in depth, not proof that an unfamiliar
 executable is safe. It stops a manifest turning a general-purpose interpreter
@@ -106,8 +106,17 @@ than on `PATH`. Wanigan scans the `extensions` directory under `~/.vscode`,
 starting with `prefix`, newest-first, and resolves each `executablePaths` entry
 inside the matched directory. A path that resolves outside it is dropped.
 
+`fallbackPaths` and `editorExtensions` are the only two ways a manifest can name
+an executable by filesystem path, and **a local pack may declare neither**.
+Together with the `bin` rules that is the whole boundary: a local manifest picks
+its agent by naming an installed command, and nothing else. Declaring either
+field makes the pack `invalid`, and a local profile expands no path candidates
+even when something compiles it outside discovery, so `bin` must resolve on
+`PATH` or the launch fails.
+
 Both `executablePaths` and `fallbackPaths` substitute `{home}`, `{packDir}`,
-`{arch}` and `{platform}`.
+`{arch}` and `{platform}`. Since only built-ins expand them and a built-in has
+no pack directory, `{packDir}` resolves to the empty string today.
 
 ## `launchFields`
 
@@ -341,6 +350,8 @@ Be clear-eyed about what a third-party pack reaches today.
   what the manifest says. The declaration cannot turn a claim into support.
 - A local pack that is not `generic-cli` is `invalid` without an adapter, and
   an adapter needs its own digest approval.
+- A local pack cannot choose its executable by path: `bin` is an installed
+  command name, and both `fallbackPaths` and `editorExtensions` are refused.
 - `hooks`, `mcp`, `policy` and `transcript` additionally require harness
   `claude-code` — the wiring is Claude-shaped, and a probe cannot widen it.
 - So a manifest-only third-party pack today is **a well-configured terminal**:

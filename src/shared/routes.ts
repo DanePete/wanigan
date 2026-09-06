@@ -7,20 +7,28 @@
  * read the same record rather than four copies that drift.
  *
  * Every destination, in ⌘1–9 order. `hint` is a sentence about what the
- * surface does, not a restatement of its label: the palette is the only route
- * to the views the rail cannot fit, and "Explore view" told a newcomer nothing
- * about which of them held the thing they were looking for.
+ * surface does, not a restatement of its label: the palette prints it under
+ * the view's name, and "Explore view" told a newcomer nothing about which of
+ * them held the thing they were looking for. The palette was once the only
+ * route to the views the rail could not fit; SIDEBAR_GROUPS carries all
+ * fifteen now, so the hint earns its keep by being searched rather than by
+ * being the only description anywhere. It is matched, not just printed:
+ * filterPalette tests the query against the title, the hint and the keywords
+ * as one string, and surviving rows keep their order in this table rather than
+ * being ranked. So a word left in a hint after the feature it named moved
+ * somewhere else does not merely mislead a reader — it puts this view in the
+ * results above the row that actually owns the thing they typed.
  */
 export const TABS = [
   { id: 'sessions',  label: 'Sessions',  group: 'Work',    hint: 'Start and drive live agent terminals',                    keywords: 'agent terminal conversation interactive' },
   { id: 'fleet',     label: 'Fleet',     group: 'Work',    hint: 'Every session at once, and which ones need you',          keywords: 'monitor activity status' },
-  { id: 'control',   label: 'Control',   group: 'Work',    hint: 'Goals and dockets — durable records of planned work',     keywords: 'goals goal dockets tasks work graph' },
+  { id: 'control',   label: 'Control',   group: 'Work',    hint: 'Goals — a contract, a task graph, evidence and your decision', keywords: 'goals goal dockets tasks work graph' },
   { id: 'batches',   label: 'Batches',   group: 'Work',    hint: 'Fan one prompt across many inputs on the Batches API',    keywords: 'batch api bulk fan-out' },
   { id: 'insights',  label: 'Insights',  group: 'Explore', hint: 'Recorded spend and token usage',                          keywords: 'spend costs usage analytics' },
   { id: 'learning',  label: 'Learning',  group: 'Explore', hint: 'Knowledge items, the review inbox, and what agents get',  keywords: 'knowledge memory briefing inbox proposals' },
   { id: 'plugins',   label: 'Plugins',   group: 'Explore', hint: 'Installed plugins and marketplaces',                      keywords: 'extensions integrations' },
   { id: 'schedules', label: 'Schedules', group: 'Explore', hint: 'Recurring headless and batch runs',                       keywords: 'automation cron recurring' },
-  { id: 'git',       label: 'Git',       group: 'Manage',  hint: 'Worktrees, branches and diffs across your repositories',  keywords: 'worktrees commits review' },
+  { id: 'git',       label: 'Git',       group: 'Manage',  hint: 'History, working tree, branches, stashes and the review gate for one repository', keywords: 'commits diffs stashes review' },
   { id: 'runs',      label: 'Runs',      group: 'Manage',  hint: 'Headless runs — no terminal, output recorded',            keywords: 'headless fan-out automation' },
   { id: 'settings',  label: 'Settings',  group: 'Manage',  hint: 'Keys, provider packs, projects, privacy and backup',      keywords: 'preferences providers packs connections appearance' },
   { id: 'skills',    label: 'Skills',    group: 'Explore', hint: 'Browse every SKILL.md on this machine, or write one',     keywords: 'agent skills instructions workflows author write' },

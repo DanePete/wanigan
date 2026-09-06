@@ -743,6 +743,7 @@ export async function detectProviders(): Promise<ProviderInfo[]> {
           description: field.description,
           options: field.choices,
           defaultValue: field.defaultValue,
+          allowCustom: field.allowCustom,
         })),
       };
     })

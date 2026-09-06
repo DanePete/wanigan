@@ -9,7 +9,7 @@ import type {
   TranscriptHit, TranscriptTurn, TrustLevel, UploadedFile, WorktreeInfo,
 } from '@shared/types';
 import { TRUST_COPY, TRUST_LEVELS, trustCopy } from '@shared/types';
-import { ConfirmNote, Explainer, Note, Section, Stat, ago, num } from '../components/bits';
+import { ConfirmNote, Explainer, Note, PageHead, Section, Stat, ago, num } from '../components/bits';
 import ThemeControl from '../components/ThemeControl';
 import type { ResolvedTheme } from '../theme-boot';
 import '../styles/settings.css';
@@ -649,13 +649,8 @@ export default function Settings({
           again about drafts — three explanations of the page before the first
           control. The rule is one line; the rest is a guide the operator can
           hide. Per-control captions stay where they are. */}
-      <header className="set-hero">
-        <div>
-          <div className="set-kicker">Wanigan control center</div>
-          <h1>Settings</h1>
-          <p>Grouped by the job you are doing. Switches save at once; a Save button applies the fields beside it.</p>
-        </div>
-      </header>
+      <PageHead compact title="Settings"
+                lead="Grouped by the job you are doing. Switches save at once; a Save button applies the fields beside it." />
       <Explainer id="settings-how" title="How settings work">
         <p>
           Most switches save immediately. A button labelled Save applies the fields beside it, and each
@@ -4428,17 +4423,6 @@ function Backup() {
     </>
   );
 }
-
-/* ════════════════════════════════════════════════════════════════════════
-   Styles
-
-   Settings owns no feature stylesheet: index.css belongs to the shell and each
-   styles/*.css belongs to the phase that made it. So the rules this surface
-   needs, and only this surface needs, live here, scoped to .set. Not one colour
-   is declared — every value is a token from index.css.
-   ════════════════════════════════════════════════════════════════════════ */
-
-
 
 /* ── demo mode ────────────────────────────────────────────────────────────
    For screenshots. Masking happens in the main process at the IPC boundary,

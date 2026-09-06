@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountResolution, AgentAccount, LaunchOptions, Project, ProviderId, ProviderInfo, TrustLevel } from '@shared/types';
-import { EFFORT_LEVELS, PERMISSION_MODES, TRUST_LEVELS, trustCopy, trustGlyph } from '@shared/types';
+import { TRUST_LEVELS, trustCopy, trustGlyph } from '@shared/types';
+import { intersectChoices, launchFieldChoices, type LaunchChoice } from '@shared/launch-fields';
 import { providerTint } from '@shared/provider-status';
 import { useDialog } from './useDialog';
 
@@ -41,6 +42,36 @@ function FocusBtn({ style, onFocus, onBlur, children, ...rest }: React.ButtonHTM
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * A launch field the profile leaves open: free text, with whatever it did name
+ * offered as suggestions rather than as the whole set.
+ *
+ * A manifest select that sets `allowCustom` is saying its list is a starting
+ * point, not a contract — the launch compiler only rejects an unlisted value
+ * when `allowCustom` is false. Rendering it as a closed picker made the pack's
+ * own escape hatch unreachable. A native datalist keeps the suggestions
+ * without adding a second control to tab through.
+ */
+function OpenField({ id, value, choices, placeholder, onChange }: {
+  id: string;
+  value: string;
+  choices: LaunchChoice[];
+  placeholder?: string;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <>
+      <input className="field mono" style={{ margin: '6px 0 14px' }} value={value} placeholder={placeholder}
+             list={choices.length ? id : undefined} onChange={(e) => onChange(e.target.value)} />
+      {choices.length > 0 && (
+        <datalist id={id}>
+          {choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+        </datalist>
+      )}
+    </>
   );
 }
 
@@ -195,9 +226,15 @@ export default function NewSessionDialog({
   const genericHarness = provider?.harnessId === 'generic-cli';
   const zaiBackend = provider?.backendId === 'zai' || providerId === 'glm';
   const deepseekBackend = provider?.backendId === 'deepseek' || providerId === 'deepseek';
-  const manifestModelField = provider?.launchFields?.find((field) => field.id === 'model');
-  const modelChoices = genericHarness
-    ? (manifestModelField?.options ?? [])
+  /*
+   * What Wanigan can vouch for when a profile names no models of its own.
+   * The built-in Claude and Codex profiles declare `model` as free text, so
+   * this list is Wanigan's suggestion and not the profile's contract; a pack
+   * that declares its own models replaces it wholesale rather than being
+   * matched against a table keyed on a harness id it has never heard of.
+   */
+  const fallbackModels: LaunchChoice[] = genericHarness
+    ? []
     : codexHarness
     ? codexModels
     : zaiBackend
@@ -205,11 +242,34 @@ export default function NewSessionDialog({
       : deepseekBackend
         ? [{ value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' }, { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' }, { value: '', label: 'Provider default' }]
     : [{ value: '', label: 'default' }, { value: 'opus', label: 'opus' }, { value: 'sonnet', label: 'sonnet' }, { value: 'haiku', label: 'haiku' }, { value: 'fable', label: 'fable' }];
+  const modelField = launchFieldChoices(provider, 'model', fallbackModels);
+  const effortField = launchFieldChoices(provider, 'effort');
+  const permissionField = launchFieldChoices(provider, 'permissionMode');
+  const modelChoices = modelField.choices;
+  /*
+   * A free-text control appears only where the profile's own declaration is
+   * the whole story: it declared a list and opened it with `allowCustom`, or
+   * it named nothing and Wanigan has no list to stand in with. Where the
+   * choices below are Wanigan's fallback, the picker is what Wanigan can
+   * actually vouch for and typing past it would be a promise nobody made.
+   */
+  const openField = (field: typeof modelField) =>
+    field.custom && (field.declared || field.choices.length === 0);
 
+  /*
+   * A provider switch re-seeds these three from the new profile's own declared
+   * defaults. They used to be carried across untouched — the model alias was
+   * dropped only when the new list did not contain it, effort only for Codex,
+   * and the permission mode never at all, so a Claude `plan` followed you onto
+   * a profile that had never heard of it. `defaultValue` is a manifest field
+   * the Headless page already honours and this dialog ignored.
+   */
   useEffect(() => {
-    setModel((current) => modelChoices.some((choice) => choice.value === current) ? current : '');
-  // A provider switch is the only event that can make an otherwise valid
-  // model alias invalid; modelChoices is derived wholly from it.
+    setModel(modelField.defaultValue);
+    setEffort(effortField.defaultValue);
+    setPermissionMode(permissionField.defaultValue);
+  // Derived wholly from the selected profile. The three field objects are
+  // rebuilt on every render, so naming them here would restart this each time.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerId]);
 
@@ -235,14 +295,27 @@ export default function NewSessionDialog({
     return () => { live = false; };
   }, [codexHarness]);
 
-  const effortChoices = useMemo(() => codexHarness
-    ? (codexModels.find((choice) => choice.value === model)?.efforts ?? ['low', 'medium', 'high', 'xhigh', 'max'])
-    : [...EFFORT_LEVELS], [codexHarness, model, codexModels]);
+  /*
+   * Two claims about one launch, so the offer is where they agree: the profile
+   * says which efforts it will compile, and Codex's catalog says which ones the
+   * chosen model accepts. Reading only the catalog is how 'ultra' reached this
+   * picker for a profile that declares low…max, and the launch it armed died in
+   * the compiler with "unsupported value".
+   */
+  const effortChoices = useMemo(
+    () => intersectChoices(
+      launchFieldChoices(provider, 'effort').choices,
+      codexHarness ? codexModels.find((choice) => choice.value === model)?.efforts : null,
+    ),
+    [provider, codexHarness, model, codexModels],
+  );
 
+  // An effort the current offer no longer contains cannot be launched, so it is
+  // dropped rather than sent: moving Codex to a model with a narrower reasoning
+  // range used to leave the wider level selected and armed.
   useEffect(() => {
-    if (!codexHarness) return;
-    setEffort((current) => effortChoices.includes(current) ? current : '');
-  }, [codexHarness, model, codexModels]);
+    setEffort((current) => (!current || effortChoices.some((choice) => choice.value === current) ? current : ''));
+  }, [effortChoices]);
 
   // ⌘↵ submits from anywhere in the form. Everything else this listener used to
   // do — Escape, the Tab trap, restoring focus to the opener — is useDialog's,
@@ -455,15 +528,18 @@ export default function NewSessionDialog({
           )}
         </div>
 
-        {provider?.supports.model && <>
-          <div className="label">Model <span style={{ textTransform: 'none' }}>— {codexHarness ? 'Auto uses Codex’s current default' : 'blank uses the CLI default'}</span></div>
-          {genericHarness && manifestModelField?.kind !== 'select' ? (
-            <input className="field mono" style={{ margin: '6px 0 14px' }} value={model}
-                   placeholder={manifestModelField?.required ? 'Required by provider' : 'Provider default'}
-                   onChange={(e) => setModel(e.target.value)} />
+        {modelField.supported && <>
+          <div className="label">{modelField.label} <span style={{ textTransform: 'none' }}>— {codexHarness ? 'Auto uses Codex’s current default' : 'blank uses the CLI default'}</span></div>
+          {openField(modelField) ? (
+            <OpenField id="new-session-model" value={model} choices={modelChoices}
+                       placeholder={modelField.required ? 'Required by provider' : 'Provider default'}
+                       onChange={setModel} />
           ) : (
             <div style={{ display: 'flex', gap: 5, margin: '6px 0 14px', flexWrap: 'wrap' }}>
-              {!manifestModelField?.required && genericHarness && (
+              {/* A declared list that never names the empty value has no way
+                  back to the CLI default; the built-in profiles carry one of
+                  their own, so this appears only for a pack that does not. */}
+              {!modelField.required && !modelChoices.some((choice) => choice.value === '') && (
                 <FocusBtn className="pill" onClick={() => setModel('')} aria-pressed={model === ''}
                           style={model === '' ? { background: 'var(--accent)', color: 'var(--accent-ink)' } : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
                   Provider default
@@ -474,26 +550,32 @@ export default function NewSessionDialog({
                           aria-pressed={model === choice.value}
                           style={model === choice.value ? { background: 'var(--accent)', color: 'var(--accent-ink)' }
                                              : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
-                  <span title={(choice as { description?: string | null }).description ?? undefined}>{choice.label}</span>
+                  <span title={choice.description ?? undefined}>{choice.label}</span>
                 </FocusBtn>
               ))}
             </div>
           )}
         </>}
 
-        {provider?.supports.effort && (
+        {effortField.supported && (
           <>
-            <div className="label">Effort <span style={{ textTransform: 'none' }}>— governs thinking depth, tool calls and length</span></div>
-            <div style={{ display: 'flex', gap: 5, margin: '6px 0 14px', flexWrap: 'wrap' }}>
-              {['', ...effortChoices].map((l) => (
-                <FocusBtn key={l || 'default'} className="pill" onClick={() => setEffort(l)}
-                          aria-pressed={effort === l}
-                          style={effort === l ? { background: 'var(--accent)', color: 'var(--accent-ink)' }
-                                              : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
-                  {l || 'default'}
-                </FocusBtn>
-              ))}
-            </div>
+            <div className="label">{effortField.label} <span style={{ textTransform: 'none' }}>— governs thinking depth, tool calls and length</span></div>
+            {openField(effortField) ? (
+              <OpenField id="new-session-effort" value={effort} choices={effortChoices}
+                         placeholder={effortField.required ? 'Required by provider' : 'Provider default'}
+                         onChange={setEffort} />
+            ) : (
+              <div style={{ display: 'flex', gap: 5, margin: '6px 0 14px', flexWrap: 'wrap' }}>
+                {[{ value: '', label: 'default' }, ...effortChoices.filter((choice) => choice.value !== '')].map((choice) => (
+                  <FocusBtn key={choice.value || 'default'} className="pill" onClick={() => setEffort(choice.value)}
+                            aria-pressed={effort === choice.value}
+                            style={effort === choice.value ? { background: 'var(--accent)', color: 'var(--accent-ink)' }
+                                                : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
+                    {choice.label}
+                  </FocusBtn>
+                ))}
+              </div>
+            )}
           </>
         )}
 
@@ -511,14 +593,21 @@ export default function NewSessionDialog({
           </div>
         )}
 
-        {provider?.supports.permissionMode && (
+        {permissionField.supported && (
           <>
-            <div className="label">Permission mode</div>
-            <select className="field" style={{ margin: '6px 0 14px' }} value={permissionMode}
-                    onChange={(e) => setPermissionMode(e.target.value)}>
-              <option value="">default</option>
-              {PERMISSION_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
+            <div className="label">{permissionField.label}</div>
+            {openField(permissionField) ? (
+              <OpenField id="new-session-permission-mode" value={permissionMode} choices={permissionField.choices}
+                         placeholder={permissionField.required ? 'Required by provider' : 'Provider default'}
+                         onChange={setPermissionMode} />
+            ) : (
+              <select className="field" style={{ margin: '6px 0 14px' }} value={permissionMode}
+                      onChange={(e) => setPermissionMode(e.target.value)}>
+                <option value="">default</option>
+                {permissionField.choices.filter((choice) => choice.value !== '')
+                  .map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+              </select>
+            )}
             {(permissionMode === 'bypassPermissions' || permissionMode === 'dontAsk') && (
               <p style={{ color: 'var(--warn)', fontSize: 'var(--t-micro)', marginTop: -8, marginBottom: 12, lineHeight: 1.45 }}>
                 This session will not ask before running commands or editing files. Only use it in a
@@ -538,16 +627,26 @@ export default function NewSessionDialog({
                        onChange={(e) => setProviderOptions((old) => ({ ...old, [field.id]: e.target.checked }))} />
                 {providerOptions[field.id] === true ? 'Enabled' : 'Disabled'}
               </span>
-            ) : field.kind === 'select' ? (
+            ) : field.kind === 'select' && !field.allowCustom ? (
               <select className="field" value={String(providerOptions[field.id] ?? '')}
                       onChange={(e) => setProviderOptions((old) => ({ ...old, [field.id]: e.target.value }))}>
                 {!field.required && <option value="">Provider default</option>}
                 {(field.options ?? []).map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
               </select>
             ) : (
-              <input className="field mono" type={field.kind === 'secret' ? 'password' : 'text'}
-                     value={String(providerOptions[field.id] ?? '')}
-                     onChange={(e) => setProviderOptions((old) => ({ ...old, [field.id]: e.target.value }))} />
+              // A select the manifest opened is a suggestion list, not a set;
+              // its options stay reachable through the datalist.
+              <>
+                <input className="field mono" type={field.kind === 'secret' ? 'password' : 'text'}
+                       list={field.options?.length ? `new-session-field-${field.id}` : undefined}
+                       value={String(providerOptions[field.id] ?? '')}
+                       onChange={(e) => setProviderOptions((old) => ({ ...old, [field.id]: e.target.value }))} />
+                {!!field.options?.length && (
+                  <datalist id={`new-session-field-${field.id}`}>
+                    {field.options.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+                  </datalist>
+                )}
+              </>
             )}
           </label>
         ))}

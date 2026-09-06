@@ -2887,6 +2887,35 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && scoutCssSrc.includes('min-height: 44px')
     && scoutCssSrc.includes('.scout-view'),
   'Scout is a touch-safe top-level surface with a hard local preview, one explicit online action, separate unattended-network consent, cited external links, and a Control Goal handoff');
+  // The proposal queue is a list, not an announcement. The results section was
+  // aria-live, so a first load, a broadened filter, a reorder and every status
+  // change read up to 150 proposals aloud — each one's title, summary, four
+  // reason codes and five button labels. A reader who moved one proposal to
+  // "reviewed" was told about the other hundred. What actually changed is a
+  // count, so one sentence beside the filter controls that change it is the
+  // announced channel, and the heading holds the total a scan changes.
+  check(!scoutViewSrc.includes('aria-live')
+    && scoutViewSrc.includes('<section className="scout-results">')
+    && scoutViewSrc.includes('<p className="scout-filter-status" role="status">{filterStatus}</p>')
+    && scoutViewSrc.includes('<h3>{suggestions.length} proposal')
+    && /if \(loading\) return 'Reading local Scout records/.test(scoutViewSrc)
+    && scoutViewSrc.includes("if (suggestions.length === 0) return 'Nothing proposed yet.'")
+    && scoutViewSrc.includes("if (filteredSuggestions.length === 0) return 'No proposal matches these filters.'")
+    && scoutCssSrc.includes('.scout-filter-status'),
+  'the Scout queue announces one count sentence beside its filters — loading, nothing proposed, no match, or filtered of total — instead of speaking every proposal article on load, filter, reorder and status change');
+
+  // Command-K used to introduce a second kind of record for one table ("Goals
+  // and dockets"), and to answer a search for "worktrees" with Git, which has
+  // no worktree UI at all — those controls are the Worktrees row in Settings.
+  // filterPalette tests title + hint + keywords as one string and leaves the
+  // survivors in table order, so the stale word had to leave both halves of
+  // the Git row, not just the keywords; "working tree" is two words on purpose
+  // and matches nothing.
+  check(routesSrc.includes("hint: 'Goals — a contract, a task graph, evidence and your decision'")
+    && routesSrc.includes("hint: 'History, working tree, branches, stashes and the review gate for one repository'")
+    && !/keywords: '[^']*worktree/.test(routesSrc)
+    && !/hint: '[^']*[Dd]ocket/.test(routesSrc),
+  'the palette calls Control’s record a goal, and no route row claims worktrees, so searching for one lands in Settings rather than on a Git view that cannot show it');
   check(appSrc.includes('aria-modal="true"')
     && appSrc.includes('const focusable = Array.from(dialog.current')
     // Opener restoration is explicit now rather than incidental: closing has to
@@ -3084,6 +3113,31 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && gitViewSrc.includes('function findFile(status: Status, path: string)')
     && gitViewSrc.includes("setProjectId(e.target.value); setSel(null); setDetail(null); setMsg('');"),
   'the Git detail pane is re-resolved against the status each action returns, and a commit message does not follow you into another project');
+
+  // Git was the only .pane document route that never named itself. All three of
+  // its states — no project, a project that is not a repository, and the
+  // workbench — opened straight onto their content with no h1 for the route, so
+  // the sidebar was the only thing on screen saying which view you were in. One
+  // head is shared by all three, so the answer does not depend on whether the
+  // selected project happens to be a repository.
+  // The pane opts out of the --page-max prose measure in the sheet rather than
+  // wearing className="pane wide": .pane.wide only raises the cap to
+  // --page-wide and no breakpoint lifts that, so the toolbar rule, the divider
+  // between the two columns and the diff would go back to stopping short of the
+  // window edge on a wide display. Specificity, not source order, is what makes
+  // these win — git.css is @imported at the top of index.css and loses ties.
+  const gitCssSrc = sourceOf('src/renderer/src/styles/git.css');
+  check((gitViewSrc.match(/\{head\}/g) ?? []).length === 3
+    && gitViewSrc.includes('<PageHead')
+    && gitViewSrc.includes('title="Git"')
+    && (gitViewSrc.match(/className="pane gt-view"/g) ?? []).length === 3
+    // No state may fall back to the bare document pane: that is the measure
+    // this view exists outside of.
+    && !/className="pane"/.test(gitViewSrc)
+    && gitCssSrc.includes('.pane.gt-view { padding: 0; }')
+    && gitCssSrc.includes('.pane.gt-view > * { max-width: none; }')
+    && gitCssSrc.includes('.pane.gt-view > .pane-head:first-child { padding: var(--s-3); }'),
+  'every Git state opens with the shared page head, and its workbench runs to the window edge rather than stopping at the prose measure');
 
   // ── what is left, for every agent ───────────────────────────────────
   // The Usage screen said "read live from each account" and read only the
@@ -3359,6 +3413,18 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !/^const DEFAULT_PLAN\b/m.test(controlSrc) && !/^const NODE_KINDS\b/m.test(controlSrc),
     'control.ts reads the shared default plan and node kinds rather than keeping a second copy that can drift');
 
+  // 'docket' is the schema word and nothing else now. Every refusal, launch
+  // prompt and halt reason control.ts can put in front of an operator says
+  // 'goal' — what Control, the palette and the MCP tools all call the record.
+  // This scans the literals rather than listing today's sentences, because the
+  // regression it guards against is a NEW sentence arriving in the old
+  // vocabulary; the tables and columns it is built on are exempt by name.
+  const docketProse = (controlSrc.match(/"[^"\n]*"|'[^'\n]*'|`[^`\n]*`/g) ?? [])
+    .filter((text) => /docket/i.test(text) && !/work_dockets|docket_id|listDockets/.test(text));
+  check(docketProse.length === 0,
+    'no sentence control.ts hands an operator calls a goal a docket; the word survives only as the tables and columns underneath it',
+    docketProse);
+
   // Control's goal header once copied `file:///…#goal=<id>` under the notice
   // "Opening it in Wanigan returns to this exact durable goal". Nothing in
   // src/main registers a URL scheme and the app has no address bar, so that
@@ -3396,6 +3462,24 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !controlViewSrc.includes('Start <em>Plan</em> first.'),
     'every task card names the prerequisites it waits on and how each one stands, so a blocked task reads as "reopen that one" or "wait for that one" rather than a single ambiguous word');
 
+  // Control was the only view whose scroll container floated in the middle of a
+  // wide window. control.css capped .control-view at 1500px and centred it with
+  // margin: 0 auto, while index.css was already capping Control's *children* at
+  // --page-wide. The private rule sat on the container, so it also ate the two
+  // 24px page gutters and the content column it was meant to protect never got
+  // past 1452px. The container rule is gone; the class on the view is not, and
+  // must not be, because .pane.control-view > * is the selector that carries the
+  // cap now and dropping the class would silently remove it. Comments are
+  // stripped before the test — the prose left above the deleted rule still names
+  // 1500px, and matching that would pass a re-added declaration. Source contract
+  // because the smoke process has no renderer to measure.
+  const controlCssRules = controlCssSrc.replace(/\/\*[\s\S]*?\*\//g, '');
+  check(!/\.control-view\s*\{[^}]*max-width/.test(controlCssRules)
+    && !/\.control-view\s*\{[^}]*margin:\s*0 auto/.test(controlCssRules)
+    && cssSrc.includes('.pane.control-view > *, .pane.set > *, .pane.wide > * { max-width: var(--page-wide); }')
+    && controlViewSrc.includes('className="pane control-view"'),
+    'Control is held flush left at --page-wide by the shared .pane rule every document surface uses, not centred by a private 1500px cap of its own');
+
   // Opening a goal's session unmounts Control, and the status filter used to be
   // component-local state: narrow the list to one status, press a task's Start,
   // come back, and the list had widened to every goal with nothing having said
@@ -3407,6 +3491,24 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !/const \[statusFilter, setStatusFilter\] = useState/.test(controlViewSrc)
     && controlViewSrc.includes("onToggle={() => setStatusFilter('all')}"),
     'Control remembers which status the goal list is filtered to across a tab swap, instead of silently widening to every goal when the operator comes back from a session');
+
+  // Two sentences in Control described writes the main process never made. The
+  // completion notice ran the decision enum through replace('_', ' '), so a
+  // reviewer asking for changes read "Task marked request changes." and an
+  // operator finishing a plan task was told a decision had been recorded —
+  // completeNode only stores a `decision` proof for a review node. And a goal
+  // with no base commit rendered "base not a git repo", which diagnoses one
+  // cause of several: gitHead also returns null for a repository with no commit
+  // yet, or a git read that failed. Source contract because the smoke process
+  // has no renderer to read a notice in.
+  check(/function decisionNotice\(kind: DocketNodeKind, decision: /.test(controlViewSrc)
+    && controlViewSrc.includes('}, decisionNotice(node.kind, decision));')
+    && controlViewSrc.includes("if (decision === 'approve') return 'Decision recorded: approved.';")
+    && controlViewSrc.includes("return decision === 'approve' ? 'Task marked complete.' : 'Task marked failed. Reopen it when the next pass is ready.';")
+    && !/Task marked \$\{decision\.replace/.test(controlViewSrc)
+    && controlViewSrc.includes('no base commit recorded')
+    && !controlViewSrc.includes('not a git repo'),
+    'Control announces a review decision in words that match what control.ts wrote, and a goal with no recorded base commit says so instead of naming a cause the renderer cannot observe');
 
   // Fleet is the view most likely to be left behind, because its cards exist to
   // be clicked into and every click unmounts it. Sort, status filter and scroll
@@ -3479,6 +3581,23 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !settingsSrc.includes('<style>')
     && !settingsSrc.includes('<div className="pane set" style={{ maxWidth'),
   'Settings keeps every operator surface in seven labelled persistent full-width tab panels, with keyboard navigation and no draft-destroying unmount');
+
+  // Settings was the last view wearing a private page head: an accent kicker
+  // reading 'Wanigan control center' over an h1 that spelled its own font size,
+  // in a two-column grid still reserving most of a third of the header band for
+  // an aside deleted a phase earlier. It is the shared PageHead now, compact, so
+  // the title steps down through .pane-head.compact rather than a per-view size.
+  // No eyebrow: bits.tsx records that the eyebrow is the view's section noun or
+  // nothing, never an app-name slogan, and 'Settings' over 'Settings' is an echo.
+  // Pinned in both files, because a rule that outlives its markup is the thing
+  // that grows the markup back.
+  const settingsSheet = sourceOf('src/renderer/src/styles/settings.css');
+  check(settingsSrc.includes('<PageHead compact title="Settings"')
+    && !settingsSrc.includes('set-hero') && !settingsSrc.includes('set-kicker')
+    && !settingsSheet.includes('.set-hero') && !settingsSheet.includes('.set-save-guide')
+    // The per-panel kicker is a section label, not the page eyebrow, and stays.
+    && settingsSrc.includes('set-panel-kicker') && settingsSheet.includes('.set-panel-kicker'),
+  'Settings heads with the shared compact PageHead and no eyebrow, and neither the view nor its sheet keeps the old hero');
 
   // Settings' Dispatcher shipped a "slots" row for the 'node' lane — Goal
   // autopilot — while nothing in the renderer could arm it. control.setAutopilot

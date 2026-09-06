@@ -48,9 +48,22 @@
   border: 0; background: none; cursor: pointer;
   color: var(--text-dim); font-size: var(--t-micro); padding: 0 2px;
 }
-.composer-chip-btn:hover { color: var(--text); }
+.composer-chip-btn:hover:not(:disabled) { color: var(--text); }
 .composer-chip-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* "Send now" against an exited session has nowhere to write. It stays in the
+   DOM rather than disappearing, because the chip beside it is the only copy of
+   the message left and a button that vanishes reads as one that fired. */
+.composer-chip-btn:disabled { opacity: 0.55; cursor: default; }
+
 .composer-queue-note { font-size: var(--t-micro); }
+/* Undelivered, and permanently so. The glyph and the words carry it; this is
+   the third copy, for the eye that scans the strip rather than reads it. */
+.composer-queue-lost { color: var(--critical); }
+/* The pending amber on a chip means "any moment now". Once the PTY is gone the
+   chips are a record of what never went, so they lose the promise colour. */
+.composer[data-state='blocked'] .composer-chip {
+  background: var(--bg-sunk); border-color: var(--line); color: var(--text-dim);
+}
 
 .composer-menu {
   position: absolute; left: 0; right: 0; bottom: calc(100% + 4px);

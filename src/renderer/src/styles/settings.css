@@ -8,13 +8,11 @@
 .set :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 5px; }
 
 .set.pane { width: 100%; max-width: none; flex: 1 1 auto; align-self: stretch; min-width: 0; box-sizing: border-box; overscroll-behavior: contain; }
-.set-kicker, .set-panel-kicker { color: var(--accent); font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
-.set-kicker { margin-bottom: 4px; }
-.set-hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(270px, .72fr); gap: var(--s-4); align-items: start; }
-.set-hero h1 { font-size: var(--t-title); font-weight: 600; letter-spacing: -.015em; }
-.set-hero > div > p { max-width: 640px; margin-top: 4px; color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
-.set-save-guide { padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
-.set-save-guide strong { display: block; color: var(--text); font-size: 12px; margin-bottom: 3px; }
+/* The panel kicker is a section label above a tab panel's title. Settings has
+   no page eyebrow of its own: its head is the shared PageHead, and the accent
+   kicker that used to sit over the h1 read as an app-name slogan rather than
+   the view's section noun. */
+.set-panel-kicker { color: var(--accent); font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 
 .set-layout { display: grid; grid-template-columns: clamp(196px, 18vw, 232px) minmax(0, 1fr); gap: var(--s-4); align-items: start; align-self: stretch; min-width: 0; width: 100%; }
 .set-tabs { position: sticky; top: 0; display: flex; flex-direction: column; gap: 4px; padding: 7px; max-height: calc(100vh - 104px); overflow-y: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); scrollbar-width: thin; }
@@ -211,8 +209,6 @@
 /* A full-width desktop carries a rail. An iPad or a desktop split view gets a
    scrollable touch tab strip instead of a narrow second column. */
 @media (max-width: 1024px), (pointer: coarse) and (max-width: 1180px) {
-  .set-hero { grid-template-columns: 1fr; gap: 10px; }
-  .set-save-guide { max-width: none; }
   .set-layout { display: flex; flex-direction: column; gap: var(--s-4); }
   .set-tabs { position: relative; top: auto; flex-direction: row; width: 100%; max-height: none; overflow-x: auto; overflow-y: hidden; padding: 5px; scroll-padding-inline: 8px; scroll-snap-type: x proximity; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; touch-action: pan-x; }
   .set-tabs-intro { display: none; }

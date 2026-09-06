@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { GhPr, GhStatusReport, Project } from '@shared/types';
-import { ConfirmNote, Note, ago } from '../components/bits';
+import { ConfirmNote, EmptyState, Note, PageHead, ago } from '../components/bits';
 import ReviewGate from '../components/ReviewGate';
 
 type GFile = { path: string; index: string; work: string; staged: boolean; untracked: boolean; conflicted: boolean };
@@ -274,23 +274,32 @@ export default function Git({ projects }: { projects: Project[] }) {
     finally { setAdding(false); }
   }
 
+  // Git was the only .pane route that never named itself: three states, no h1,
+  // and the rail was the sole thing on screen saying which view you were in.
+  // The same head opens all three so the answer does not depend on whether the
+  // selected project happens to be a repository. Compact, because what sits
+  // under it is a dense working surface rather than a page of prose.
+  const head = (
+    <PageHead
+      compact
+      title="Git"
+      lead="One project's repository: history, working tree, branches, stashes and the review gate. Wanigan only reads it until you press a button here." />
+  );
+
   if (!options.length) {
     return (
-      <div className="pane">
-        {err && <div style={{ padding: '8px 12px' }}><Note tone="error">{err}</Note></div>}
-        <div className="empty">
-          <div>
-            <h1 style={{ fontSize: 'var(--t-title)', fontWeight: 600 }}>No project to read git from</h1>
-            <p className="dim" style={{ marginTop: 6, maxWidth: 460, lineHeight: 1.55 }}>
-              This view reads one project's repository: history, working tree, branches, stashes and its
-              review gate. Add a folder and it opens on that repository — nothing is written until you press
-              a button here.
-            </p>
-          </div>
-          <button className="btn btn-primary" disabled={adding} onClick={() => void addProject()}>
-            {adding ? 'Choosing…' : 'Add your first project'}
-          </button>
-        </div>
+      <div className="pane gt-view">
+        {head}
+        {err && <div className="gt-notice"><Note tone="error">{err}</Note></div>}
+        <EmptyState
+          posture="nothing-yet"
+          title="No project to read git from"
+          cue="Add a folder and this opens on that repository."
+          action={(
+            <button className="btn btn-primary" disabled={adding} onClick={() => void addProject()}>
+              {adding ? 'Choosing…' : 'Add your first project'}
+            </button>
+          )} />
       </div>
     );
   }
@@ -355,15 +364,16 @@ export default function Git({ projects }: { projects: Project[] }) {
 
   if (st && !st.isRepo) {
     return (
-      <div className="pane">
+      <div className="pane gt-view">
+        {head}
         {bar}
-        <div className="empty"><div>
-          <h1 style={{ fontSize: 'var(--t-title)', fontWeight: 600 }}>Not a git repository</h1>
-          <p className="dim" style={{ marginTop: 6, maxWidth: '52ch', lineHeight: 1.55 }}>
+        <EmptyState
+          posture="nothing-in-scope"
+          title="Not a git repository"
+          cue={<>
             {project?.path} has no <span className="mono">.git</span>. Wanigan reads and writes git for projects that
             are repositories; everything else in the app works either way.
-          </p>
-        </div></div>
+          </>} />
       </div>
     );
   }
@@ -374,10 +384,11 @@ export default function Git({ projects }: { projects: Project[] }) {
     : commits.filter((c) => c.subject.toLowerCase().includes(commitNeedle) || c.author.toLowerCase().includes(commitNeedle));
 
   return (
-    <div className="pane" style={{ padding: 0, display: 'flex', flexDirection: 'column' }}>
+    <div className="pane gt-view">
+      {head}
       {bar}
-      {err && <div style={{ padding: '8px 12px' }}><Note tone="error">{err}</Note></div>}
-      {ok && <div style={{ padding: '8px 12px' }}><Note tone="ok">{ok}</Note></div>}
+      {err && <div className="gt-notice"><Note tone="error">{err}</Note></div>}
+      {ok && <div className="gt-notice"><Note tone="ok">{ok}</Note></div>}
       {confirm && (
         <div className="gt-confirm">
           <ConfirmNote tone="warn" what={confirm.what} verb={confirm.verb} busy={!!busy}
@@ -386,7 +397,7 @@ export default function Git({ projects }: { projects: Project[] }) {
         </div>
       )}
       {creating && st?.isRepo && (
-        <div style={{ padding: '8px 12px' }}>
+        <div className="gt-notice">
           <Note tone="warn">
             Open a pull request for <span className="mono">{st.branch}</span> through gh. Creating it publishes on your GitHub host — this leaves your machine.
             <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>

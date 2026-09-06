@@ -1,6 +1,7 @@
 import { filterPalette, groupPalette, transcriptHitRow, TRANSCRIPT_RESULT_CAP, type PaletteEntry } from '../shared/palette';
 import type { TranscriptHit } from '../shared/types';
 import { COMPOSER_DRAFT_MAX, COMPOSER_DRAFT_TOTAL_CHARS, parseDraftMap, pruneDrafts, putDraft, type ComposerDraftMap } from '../shared/composer-drafts';
+import { deriveSendState, observeQueueTargets, queueWatcherWanted, type QueueTargetState } from '../shared/composer-queue';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 type Say = (s: string) => void;
@@ -93,6 +94,39 @@ export async function runPaletteSmoke(check: Check, say: Say): Promise<void> {
       && Object.keys(parseDraftMap('not json')).length === 0
       && Object.keys(parseDraftMap(JSON.stringify({ 's-1': { text: 7, at: 1 } }))).length === 0,
       'a missing, unparseable or malformed key reads as no drafts rather than throwing at the composer');
+
+    say('── composer queue · a send the session can no longer take');
+
+    const dead = deriveSendState({ status: 'exited', attention: 'idle' });
+    check(dead.mode === 'blocked' && typeof dead.reason === 'string' && dead.reason.length > 0,
+      'a queue aimed at an exited session is blocked, with a sentence saying why rather than a bare disabled button',
+      dead);
+    check(deriveSendState({ status: 'running', attention: 'idle' }).mode === 'send'
+      && deriveSendState({ status: 'running', attention: 'working' }).mode === 'queue',
+      'a running agent at its prompt takes the send directly, and a busy one still queues');
+
+    const seenLive = observeQueueTargets(['s-1'], { ok: true, sessions: [{ id: 's-1', status: 'running' }] }, new Map());
+    check(seenLive.get('s-1') === 'live' && queueWatcherWanted(['s-1'], seenLive),
+      'the two-second drain poll keeps running while the session it is aimed at is alive');
+
+    const seenExited = observeQueueTargets(['s-1'], { ok: true, sessions: [{ id: 's-1', status: 'exited' }] }, seenLive);
+    check(seenExited.get('s-1') === 'exited' && !queueWatcherWanted(['s-1'], seenExited),
+      'an observed exit stops the poll — an exited session stays in the list, so a missing-id guard would never have fired');
+
+    const seenGone = observeQueueTargets(['s-1'], { ok: true, sessions: [{ id: 's-2', status: 'running' }] }, seenLive);
+    check(seenGone.get('s-1') === 'gone' && !queueWatcherWanted(['s-1'], seenGone),
+      'a closed session disappears from a completed list read, and that stops the poll too');
+
+    const readFailed = observeQueueTargets(['s-1'], { ok: false }, seenLive);
+    check(readFailed.get('s-1') === 'live' && queueWatcherWanted(['s-1'], readFailed),
+      'a list read that came back short leaves the last verdict alone — one failed IPC call must not strand a live queue');
+    const neverRead = observeQueueTargets(['s-1'], { ok: false }, new Map<string, QueueTargetState>());
+    check(neverRead.get('s-1') === 'unknown' && queueWatcherWanted(['s-1'], neverRead),
+      'a queue nothing has been observed about yet keeps its watcher rather than being written off');
+
+    const mixed = observeQueueTargets(['s-1', 's-2'], { ok: true, sessions: [{ id: 's-2', status: 'running' }] }, seenLive);
+    check(queueWatcherWanted(['s-1', 's-2'], mixed) && !queueWatcherWanted([], mixed),
+      'one live session keeps the shared poll alive for every queue, and an empty queue set stops it');
   } catch (e) {
     check(false, `palette smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

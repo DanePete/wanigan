@@ -133,6 +133,13 @@ export type ProviderLaunchField = {
   description?: string;
   options?: { value: string; label: string }[];
   defaultValue?: string | boolean;
+  /**
+   * Whether a select accepts a value it did not list. The manifest schema has
+   * carried this since packs landed and the launch compiler already enforces
+   * it; it simply never reached the renderer, so a picker had no way to tell a
+   * closed set from a suggested one and rendered every select as closed.
+   */
+  allowCustom?: boolean;
 };
 
 /** Effort levels the Claude Code CLI accepts. */
