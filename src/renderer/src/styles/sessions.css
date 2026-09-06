@@ -265,6 +265,27 @@
   flex: 1 1 140px;
 }
 
+/* Both "show more" controls in the Recent list are one rule rather than two
+   inline style objects that could drift apart — the active band's control is
+   new and the settled shelf's was inline until it joined this class. Kept
+   outside every media query so the coarse-pointer block below still raises its
+   finger target: two classes here would otherwise beat a one-class rule inside
+   that block as well. */
+.sessions-view .rail-more {
+  width: 100%;
+  justify-content: center;
+  border-radius: var(--r-sm);
+  font-size: var(--t-small);
+}
+
+/* The sentence that names main's per-section cap once every row the renderer
+   holds is on screen. */
+.sessions-view .rail-cap-note {
+  padding: var(--s-1) var(--s-2);
+  font-size: var(--t-micro);
+  line-height: 1.45;
+}
+
 /* iPad and other coarse pointers need controls that do not demand a precise
    mouse target. xterm has its own input surface, so this only touches app UI. */
 @media (pointer: coarse) {

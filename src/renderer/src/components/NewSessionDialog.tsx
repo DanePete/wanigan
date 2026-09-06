@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AccountResolution, AgentAccount, LaunchModelCatalogue, LaunchOptions, Project, ProviderId, ProviderInfo, TrustLevel } from '@shared/types';
+import type { AccountResolution, AgentAccount, LaunchModelCatalogue, LaunchOptions, Project, ProviderId, ProviderInfo, Session, TrustLevel } from '@shared/types';
 import { TRUST_LEVELS, permissionModeCopy, trustCopy, trustGlyph } from '@shared/types';
 import { intersectChoices, launchFieldChoices, type LaunchChoice } from '@shared/launch-fields';
 import { providerTint } from '@shared/provider-status';
@@ -77,11 +77,13 @@ function OpenField({ id, value, choices, placeholder, onChange }: {
 }
 
 export default function NewSessionDialog({
-  providers, projects, defaultProjectId, onClose, onCreate, onAddProject,
+  providers, projects, defaultProjectId, liveSessions, onClose, onCreate, onAddProject,
 }: {
   providers: ProviderInfo[];
   projects: Project[];
   defaultProjectId?: string;
+  /** The session list as Sessions.tsx holds it, so this dialog can say what is already open. */
+  liveSessions: Session[];
   onClose: () => void;
   onCreate: (opts: LaunchOptions) => Promise<void>;
   onAddProject: () => Promise<void>;
@@ -189,6 +191,39 @@ export default function NewSessionDialog({
 
   const project = options.find((p) => p.id === projectId) ?? null;
   const isRepo = !!project?.branch;
+
+  /*
+   * Which live sessions are already sitting in the checkout this launch would
+   * enter — and only that, because only that is observed.
+   *
+   * The comparison is checkout to checkout, not project to project. A session's
+   * working directory is its worktree when it has one and its project path when
+   * it does not, so an isolated session on this very project is correctly not
+   * counted (it has its own checkout, which is the whole point of the control
+   * below), and a session filed under another project whose worktree happens to
+   * be this folder correctly is. The launch being configured lands in
+   * `project.path` unless `isolate` is ticked, which is why that flag hides the
+   * warning rather than the warning blocking the launch.
+   *
+   * It compares recorded path strings, not filesystem identity: a symlinked
+   * alias or a differently-cased volume path gives two strings for one
+   * directory and this misses it. Equal strings always name the same directory,
+   * so the error runs one way — it can under-report, it cannot invent.
+   *
+   * The docket claim system was checked and is not a better answer here.
+   * `work_claims` rows are written only through control.ts's claimPath(), whose
+   * two callers (startNode and claimForSession) both require a docket node, and
+   * startNode launches every node with `isolate: true` — so a claim can never
+   * describe a session running in the project's own checkout. A claim is also a
+   * declared relative path, not an observed write, and no preload API lists the
+   * live ones. What is stated below is therefore the session fact, and it is
+   * described as a session fact.
+   */
+  const sharing = useMemo(() => {
+    const root = project?.path;
+    if (!root) return [];
+    return liveSessions.filter((s) => s.status !== 'exited' && (s.worktree ?? s.projectPath) === root);
+  }, [liveSessions, project]);
   // Do not offer Claude aliases to a Codex process.  Empty deliberately means
   /**
    * Which account this launch will use, asked of the main process rather than
@@ -850,6 +885,27 @@ export default function NewSessionDialog({
         )}
 
         {/* ── P9 · isolation ───────────────────────────────────────────── */}
+        {/* Sits above the control it is the reason for, and disappears the moment
+            isolation is ticked — the hazard is gone, so the warning is. It never
+            touches `blocker` or `go()`: the operator may well have a reason, and a
+            state Wanigan can show is worth more than a click it refuses. */}
+        {sharing.length > 0 && !isolate && (
+          <Note tone="warn">
+            <span aria-hidden="true">⚠ </span>
+            <strong>
+              {sharing.length === 1 ? 'One session is' : `${sharing.length} sessions are`} already open on
+              the same checkout
+            </strong>
+            {' — '}
+            {sharing.map((s) => s.displayTitle || s.title).join(', ')}. Wanigan can see that they are running
+            in {project?.name ?? 'this folder'}; it does not watch what they write, so it cannot say whether
+            they are editing anything right now. Started as configured, this session runs in that same
+            directory rather than one of its own.
+            {isRepo
+              ? ' Tick “Isolate in a worktree” below to give it a private checkout instead.'
+              : ' This folder is not a git repository, so there is no worktree to cut.'}
+          </Note>
+        )}
         <div className="label">Working tree</div>
         <label className="sunk"
                style={{ display: 'flex', gap: 9, alignItems: 'flex-start', margin: '6px 0 14px',

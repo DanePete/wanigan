@@ -99,6 +99,19 @@ const CODE_RAIL_COMPACT_WIDTH = 900;
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
+ * How many unsettled conversations the Recent read can return at all.
+ *
+ * This is main's number, not the renderer's: `sessions:past` calls
+ * `pastSessions()` with no argument, and `pastSessions(limit = 40)` slices its
+ * active and settled sections at `limit` each while pins bypass both. Repeating
+ * it here is a duplicate of a main-process default across the IPC boundary, and
+ * the only reason it is acceptable is that the row set carries no total — a
+ * `PastSession[]` of forty cannot say whether forty-one were recorded. So the
+ * cap is named, and what is behind it is explicitly not counted.
+ */
+const PAST_ACTIVE_CAP = 40;
+
+/**
  * Selecting the already-active session is still a useful action on a tablet:
  * it closes the picker and returns the keyboard to xterm. TerminalPane does
  * this itself when the active id changes; this covers the same-id case without
@@ -170,6 +183,17 @@ export default function Sessions({
   // would be a claim Wanigan has not checked.
   const [ready, setReady] = useState(false);
   const [listErr, setListErr] = useState<string | null>(null);
+  /*
+   * Recent conversations has its own failure, because it has its own read.
+   *
+   * `sessions:list` is an in-memory map read (sessions.ts sessionListEntries)
+   * and `sessions:past` is a SQLite query over session_log (sessions.ts
+   * pastSessions). They used to share one try block, so an error thrown by the
+   * database read set listErr and replaced the whole view — live terminals,
+   * their tabs and the composer — with 'The session list did not load', a
+   * heading that was then false about which read had failed.
+   */
+  const [pastErr, setPastErr] = useState<string | null>(null);
   // Remembered per machine: whether the side rail is open is a working
   // preference, not session state.
   const [showRail, setShowRail] = useState(() => localStorage.getItem('wanigan.code') === '1');
@@ -213,6 +237,10 @@ export default function Sessions({
   }, []);
   const [settledOpen, setSettledOpen] = useState(false);
   const [settledShown, setSettledShown] = useState(8);
+  // The settled shelf could already be paged; the active band above it could
+  // not, so the ninth-newest resumable conversation was reachable only by
+  // settling, pinning or forgetting a newer one.
+  const [activeShown, setActiveShown] = useState(8);
   const [resuming, setResuming] = useState<string | null>(null);
   const [teachSession, setTeachSession] = useState<Session | null>(null);
   const activeRef = useRef<string | null>(null);
@@ -238,17 +266,27 @@ export default function Sessions({
     onNewSessionRequestConsumed();
   }, [newSessionRequest, onNewSessionRequestConsumed]);
 
+  const refreshPast = useCallback(async () => {
+    try {
+      setPast(await window.wanigan.sessions.past());
+      setPastErr(null);
+    } catch (e) {
+      setPastErr(msg(e));
+    }
+  }, []);
+  // Declared after refreshPast so the dependency is the real callback, and
+  // awaited last so a throw from the Recent read cannot reach this catch.
   const refresh = useCallback(async () => {
     try {
       setSessions(await window.wanigan.sessions.list());
-      setPast(await window.wanigan.sessions.past());
       setListErr(null);
     } catch (e) {
       setListErr(msg(e));
     } finally {
       setReady(true);
     }
-  }, []);
+    await refreshPast();
+  }, [refreshPast]);
   useEffect(() => { void refresh(); }, [refresh]);
 
   // Both rails, from one measurement of the room this view actually has.
@@ -660,6 +698,13 @@ export default function Sessions({
                 </div>
               );
             })}
+            {pastErr && (
+              <Note tone="error" action={{ label: 'Retry', run: refreshPast }}>
+                <span aria-hidden="true">✕ </span>Recent conversations did not load: {pastErr} The
+                sessions above are unaffected — this is Wanigan's own record of past ones, and nothing
+                running has changed.
+              </Note>
+            )}
             {past.length > 0 && (() => {
               // Pins float (newest pin first), settled sinks into its shelf,
               // and a missing project folder sinks within its own section —
@@ -671,7 +716,9 @@ export default function Sessions({
               const settledPast = [...past.filter((p) => p.settledAt != null)]
                 .sort((a, b) => (b.settledAt ?? 0) - (a.settledAt ?? 0));
               const setPastFlag = (p: PastSession, flag: 'pin' | 'settle', on: boolean) => {
-                window.wanigan.sessions.setConversationFlag(p.id, flag, on).then(setPast).catch((e) => onError(msg(e)));
+                window.wanigan.sessions.setConversationFlag(p.id, flag, on)
+                  .then((rows) => { setPast(rows); setPastErr(null); })
+                  .catch((e) => onError(msg(e)));
               };
               const renderPast = (p: PastSession) => (
                 <div key={p.id} className="past-row">
@@ -718,7 +765,9 @@ export default function Sessions({
                     {p.settledAt != null ? '⤒' : '⤓'}
                   </FocusBtn>
                   <FocusBtn className="past-x faint" title={`Forget this conversation and all ${p.continuationCount} saved launch record${p.continuationCount === 1 ? '' : 's'}`}
-                            onClick={() => window.wanigan.sessions.forget(p.id).then(setPast).catch((e) => onError(msg(e)))}>
+                            onClick={() => window.wanigan.sessions.forget(p.id)
+                              .then((rows) => { setPast(rows); setPastErr(null); })
+                              .catch((e) => onError(msg(e)))}>
                     ×
                   </FocusBtn>
                 </div>
@@ -730,7 +779,26 @@ export default function Sessions({
                     <span className="faint" style={{ fontSize: 'var(--t-micro)', marginLeft: 'auto' }}>exact resume</span>
                   </div>
                   {pinnedPast.map(renderPast)}
-                  {activePast.slice(0, 8).map(renderPast)}
+                  {activePast.slice(0, activeShown).map(renderPast)}
+                  {/* The count is read off the array this render already holds,
+                      so it is what is hidden, not an estimate of it. */}
+                  {activePast.length > activeShown && (
+                    <FocusBtn className="faint rail-more"
+                              onClick={() => setActiveShown((n) => n + 8)}>
+                      Show {Math.min(8, activePast.length - activeShown)} more — {activePast.length - activeShown} not shown
+                    </FocusBtn>
+                  )}
+                  {/* Only once nothing the renderer holds is still hidden. Past
+                      this point the number withheld is main's, and main did not
+                      send it — so this names the cap and refuses to count. */}
+                  {activeShown >= activePast.length && activePast.length >= PAST_ACTIVE_CAP && (
+                    <p className="faint rail-cap-note">
+                      All {activePast.length} unsettled conversations Wanigan sent are shown. Its Recent read
+                      returns at most {PAST_ACTIVE_CAP} of them and does not report how many are older, so this
+                      is not a count of everything recorded. Pin one while it is here and it stays after it ages
+                      past that.
+                    </p>
+                  )}
                   {settledPast.length > 0 && (
                     <>
                       <FocusBtn className="group-title" aria-expanded={settledOpen}
@@ -743,10 +811,9 @@ export default function Sessions({
                       </FocusBtn>
                       {settledOpen && settledPast.slice(0, settledShown).map(renderPast)}
                       {settledOpen && settledPast.length > settledShown && (
-                        <FocusBtn className="faint"
-                                  style={{ width: '100%', justifyContent: 'center', fontSize: 'var(--t-small)', borderRadius: 'var(--r-sm)' }}
+                        <FocusBtn className="faint rail-more"
                                   onClick={() => setSettledShown((n) => n + 8)}>
-                          Show {Math.min(8, settledPast.length - settledShown)} more settled
+                          Show {Math.min(8, settledPast.length - settledShown)} more settled — {settledPast.length - settledShown} not shown
                         </FocusBtn>
                       )}
                     </>
@@ -840,8 +907,9 @@ export default function Sessions({
                 <h1 style={{ fontSize: 'var(--t-title)', fontWeight: 600 }}>The session list did not load</h1>
                 <p className="dim" style={{ marginTop: 6, lineHeight: 1.55 }}>{listErr}</p>
                 <p className="faint" style={{ marginTop: 6, lineHeight: 1.5 }}>
-                  Running sessions are unaffected — this is Wanigan's own record of them. Retry below;
-                  if it keeps failing, quit and reopen Wanigan to rebuild the connection to its database.
+                  Wanigan could not read its own list of live sessions. Any agent already running is still
+                  running, and its terminal returns as soon as this read succeeds. Retry below; if it keeps
+                  failing, quit and reopen Wanigan so it rebuilds the connection to its database.
                 </p>
               </div>
               <FocusBtn className="btn btn-primary" onClick={() => void refresh()}>Retry</FocusBtn>
@@ -1019,6 +1087,7 @@ export default function Sessions({
 
       {dialog && (
         <NewSessionDialog providers={providers} projects={projects} defaultProjectId={dialogProject ?? active?.projectId}
+                          liveSessions={sessions}
                           onClose={() => { setDialog(false); setDialogProject(undefined); }} onCreate={createSession} onAddProject={onAddProject} />
       )}
       {exactRecoveryDialog && (

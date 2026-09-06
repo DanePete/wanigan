@@ -6009,6 +6009,75 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && mobileSrc.includes('id="monitor-note"')
     && mobileSrc.includes('if (!remoteControlEnabled) {'),
   'tablet sessions keep the terminal full width behind an accessible picker while document surfaces reflow instead of clipping or silently offering unavailable remote controls');
+
+  say('── Recent conversations · its own read, its own failure, its own note');
+
+  // The negative that fails if this split is ever reverted or dropped: the
+  // literal shape of the old shared try is what let a SQLite error inside
+  // pastSessions() take every live terminal off screen.
+  const oldSharedPastRead = 'setSessions(await window.wanigan.sessions.list());\n      setPast(await window.wanigan.sessions.past());';
+  check(sessionsSrc.includes('const refreshPast = useCallback(async () => {')
+    && sessionsSrc.includes('const [pastErr, setPastErr] = useState<string | null>(null);')
+    && sessionsSrc.includes('await refreshPast();')
+    && !sessionsSrc.includes(oldSharedPastRead),
+  'the Recent conversations read and the live session list read are two callbacks with two failure states, and the Recent read is awaited after the session-list try block closes rather than inside it, so a SQLite error in pastSessions() can no longer unmount every live terminal, tab and composer behind a heading that says the session list did not load',
+  sessionsSrc.includes(oldSharedPastRead));
+
+  check(sessionsSrc.split('setPastErr(null)').length - 1 >= 3
+    && sessionsSrc.includes("action={{ label: 'Retry', run: refreshPast }}")
+    && sessionsSrc.includes('Recent conversations did not load:')
+    && !sessionsSrc.includes("Running sessions are unaffected — this is Wanigan's own record of them"),
+  'all three paths that successfully re-read Recent — the refresh, a pin or settle, and a forget — clear its failure flag, so a retry that worked stops showing the error, and the reassurance that running sessions are untouched now sits on the note describing the read it was always about rather than on a view-wide heading it never applied to',
+  sessionsSrc.split('setPastErr(null)').length - 1);
+
+  say('── Recent conversations · the ninth row is reachable, and what is hidden is counted');
+
+  check(sessionsSrc.includes('activePast.slice(0, activeShown)')
+    && !sessionsSrc.includes('activePast.slice(0, 8)')
+    && sessionsSrc.includes('{activePast.length - activeShown} not shown')
+    && sessionsSrc.includes('{settledPast.length - settledShown} not shown')
+    && sessionsSrc.split('rail-more').length - 1 >= 2
+    && /'views\/Sessions\.tsx': 125,/.test(styleGateSrc),
+  'both bands of Recent conversations page rather than truncate, each control states the rows still hidden as a subtraction over the array that render already holds rather than as an estimate or a bare button, the two controls share one class instead of two inline style objects that could drift apart, and the inline-style debt that paydown settled was recorded in the gate rather than left as headroom for the next regression',
+  sessionsSrc.split('rail-more').length - 1);
+
+  // Three files have to agree about one number, and only one of them defines
+  // it. Raising main's cap without touching the view fails here rather than
+  // printing a stale forty at the operator.
+  check(sessionsSrc.includes('const PAST_ACTIVE_CAP = 40;')
+    && sessionsMainSrc.includes('export function pastSessions(limit = 40): PastSession[] {')
+    && mainSrc.includes("handle('sessions:past', () => pastSessions());")
+    && sessionsSrc.includes('does not report how many are older')
+    && !/Wanigan lists (?:all|every)/.test(sessionsSrc),
+  'the cap the renderer prints is the number main actually defaults to and the number the IPC handler actually passes, and the sentence names that cap while explicitly declining to count what sits behind it — a PastSession[] of forty cannot say whether forty-one were recorded, so the renderer states the limit rather than inventing a total',
+  sessionsSrc.includes('const PAST_ACTIVE_CAP = 40;'));
+
+  const railMoreRules = sessionsCssSrc.slice(sessionsCssSrc.indexOf('.sessions-view .rail-more {'),
+    sessionsCssSrc.indexOf('@media (pointer: coarse)'));
+  check(sessionsCssSrc.includes('.sessions-view .rail-more {')
+    && sessionsCssSrc.includes('.sessions-view .rail-cap-note {')
+    && railMoreRules.length > 0
+    && !/[0-9]+px/.test(railMoreRules)
+    && !/#[0-9a-fA-F]{3,8}|rgb\(|hsl\(/.test(railMoreRules)
+    && sessionsCssSrc.indexOf('.sessions-view .rail-more {') < sessionsCssSrc.indexOf('@media (pointer: coarse)'),
+  'the two new rail rules spell every size, radius and space as a token rather than a px literal or a colour, and sit above the coarse-pointer block rather than inside it — two-class selectors placed after it would have beaten that block’s one-class rule and silently taken the 44px finger target away from the only controls on that surface a thumb has to hit',
+  railMoreRules.length);
+
+  say('── launch · two agents in one checkout is stated before the launch, not after the merge');
+
+  // The launch gate, start to finish. `sharing` appearing anywhere in it would
+  // mean the warning had become a refusal.
+  const launchGateSlice = dialogSrc.slice(dialogSrc.indexOf('const blocker = list.length === 0'),
+    dialogSrc.indexOf('const elevated = !!trust && !!trustDefault'));
+  check(dialogSrc.includes("liveSessions.filter((s) => s.status !== 'exited' && (s.worktree ?? s.projectPath) === root)")
+    && dialogSrc.includes('{sharing.length > 0 && !isolate && (')
+    && dialogSrc.includes('it does not watch what they write')
+    && dialogSrc.includes('if (blocker || busy) return;')
+    && launchGateSlice.length > 0
+    && !launchGateSlice.includes('sharing')
+    && !/another agent is editing|agents? (?:is|are) editing this checkout/i.test(dialogSrc),
+  'the shared-checkout warning counts live sessions by the directory they actually run in — worktree when they have one, project path when they do not, the same expression sessions.ts uses to pick a cwd — so an isolated session on the same project does not raise it; it says in the same breath that Wanigan does not watch file writes rather than upgrading an observed session into a claim about edits; and the word sharing appears nowhere between the blocker expression and the end of go(), so it warns and can never refuse a launch the operator has a reason for',
+  launchGateSlice.includes('sharing'));
   // The private chip families in compact.css's coarse block had a 40px finger
   // target; .chip and .seg button, the shared primitives the house style tells
   // every new view to compose, did not — so adopting the primitive shrank the
