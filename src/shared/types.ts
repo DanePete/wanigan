@@ -178,6 +178,15 @@ export type Session = {
    */
   accountId?: string | null;
   accountLabel?: string | null;
+  /**
+   * A fact about the account decision the badge should say out loud — today,
+   * that a resumed conversation was recorded before Wanigan tracked accounts,
+   * so the account it was started under is unknown. Absent when nothing needs
+   * saying.
+   */
+  accountNote?: string | null;
+  /** How the docket goal capsule reached this session, when one was requested. */
+  goalCapsule?: GoalCapsuleDelivery | null;
   /** Repo state at launch — lets the code panel show only this session's work. */
   baseline?: Baseline;
   /**
@@ -232,6 +241,11 @@ export type LaunchOptions = {
   isolate?: boolean;
   /** Which agent account to launch as. Omitted uses the project's, then the default. */
   accountId?: string | null;
+  /**
+   * Set only by Control when the session runs a docket node. Delivered as
+   * instructions, recorded as a work-trace row, never mutated by the renderer.
+   */
+  goalCapsule?: GoalCapsule;
 };
 
 /** A finished session, recoverable after a quit. */
@@ -444,8 +458,18 @@ export const HOOK_EVENTS = [
   'PostToolUseFailure', 'PermissionRequest', 'PermissionResponse', 'PermissionDenied', 'Notification',
   'Stop', 'StopFailure', 'PreCompact', 'PostCompact', 'FileChanged',
   'SubagentStart', 'SubagentStop',
+  // Fires when a CLAUDE.md or .claude/rules/*.md file enters context (Claude
+  // Code changelog 2.1.69; present in the 2.1.261 binary). hooks.ts asks for it
+  // only from a CLI whose reported version is at least that, because the CLI
+  // rejects a whole settings file over one unknown event name.
+  'InstructionsLoaded',
 ] as const;
 export type HookEventName = (typeof HOOK_EVENTS)[number];
+
+/** The documented `load_reason` values of an InstructionsLoaded hook (docs/en/hooks). */
+export const INSTRUCTION_LOAD_REASONS = [
+  'session_start', 'nested_traversal', 'path_glob_match', 'include', 'compact',
+] as const;
 
 /** The JSON a hook handler posts to Wanigan's loopback listener. */
 export type HookInput = {
@@ -462,8 +486,50 @@ export type HookInput = {
   agent_id?: string;
   agent_type?: string;
   message?: string;
+  /** InstructionsLoaded only: the instruction file that entered context. */
+  file_path?: string;
+  /** InstructionsLoaded only: which memory slot the file filled (user, project, …). */
+  memory_type?: string;
+  /** InstructionsLoaded only: why it loaded — one of INSTRUCTION_LOAD_REASONS, or a value a newer CLI adds. */
+  load_reason?: string;
   /** Wanigan's own session id, carried through the generated hook config. */
   wanigan_session_id?: string;
+};
+
+/**
+ * One InstructionsLoaded row, read back from session_events. The path is the
+ * stored fact; memory type and load reason are decoded from the row summary and
+ * are null when the CLI omitted them.
+ */
+export type LoadedInstruction = {
+  sessionId: string;
+  at: number;
+  path: string;
+  memoryType: string | null;
+  loadReason: string | null;
+};
+
+/**
+ * The static CLAUDE.md prediction laid beside what one session's
+ * InstructionsLoaded hooks reported. `observed` is null for a predicted file
+ * no hook named; `predicted` is null for a file a hook named that the scan did
+ * not foresee. Neither null is an error: the prediction is from disk now, the
+ * observation is from a launch then.
+ */
+export type InstructionReconciliation = {
+  sessionId: string;
+  /** When the newest InstructionsLoaded row for this session arrived. */
+  at: number;
+  rows: {
+    path: string;
+    predicted: 'launch' | 'on-demand' | null;
+    /** 'launch' for session_start, 'lazy' for every other load reason. */
+    observed: 'launch' | 'lazy' | null;
+    loadReason: string | null;
+    memoryType: string | null;
+  }[];
+  predictedOnly: number;
+  observedOnly: number;
 };
 
 /** A hook event as stored — the durable record behind the timeline. */
@@ -576,6 +642,25 @@ export type TranscriptTurn = {
   text: string;
   toolName?: string;
 };
+
+/**
+ * What the opt-in `wanigan_recall_transcripts` MCP tool returns to a session.
+ *
+ * Scoped to the caller's own project, frozen backend and frozen account, so a
+ * GLM session cannot read Claude transcripts, and a work-account session cannot
+ * read the personal account's. Snippets pass through credential redaction.
+ */
+export type TranscriptRecall =
+  | {
+    kind: 'ok';
+    scope: { projectId: string; harnessId: string; backendId: string | null; accountId: string | null };
+    /** Archived sessions inside the scope, before the query is applied. */
+    archivedSessions: number;
+    hits: { sessionId: string; title: string | null; startedAt: number; role: 'user' | 'assistant'; at: number; snippet: string }[];
+    note: string | null;
+  }
+  | { kind: 'disabled'; note: string }
+  | { kind: 'unsupported'; harnessId: string | null; note: string };
 
 /* ── P7 · fleet ─────────────────────────────────────────────────────── */
 
@@ -713,6 +798,13 @@ export type HeadlessRow = {
   projectPath: string;
   status: 'pending' | 'running' | 'succeeded' | 'errored' | 'timeout' | 'canceled' | 'blocked';
   costUsd: number;
+  /**
+   * Whether the CLI named a cost at all. `costUsd` cannot answer this: a run
+   * that reported nothing is stored as 0, exactly like one that reported
+   * $0.00. `null` for rows written before the column existed — unknown, which
+   * a total must treat as "not reported", never as reported.
+   */
+  costReported: boolean | null;
   durationMs: number | null;
   exitCode: number | null;
   output: string | null;
@@ -755,6 +847,8 @@ export type HeadlessRun = {
   model: string;
   status: 'submitting' | 'in_progress' | 'ended' | 'failed';
   costUsd: number;
+  /** How complete `costUsd` is. Shares its vocabulary with the Usage screen. */
+  costStatus: 'reported' | 'partial' | 'unreported';
   totalRequests: number;
   createdAt: number;
   submittedAt: number | null;
@@ -860,6 +954,40 @@ export type DocketClaim = {
   releasedAt: number | null;
 };
 
+/**
+ * The facts a docket node's agent needs and cannot otherwise reach: which node
+ * it is, what it may touch, what it waits on and what its siblings hold.
+ *
+ * A snapshot taken at launch, and every rendering says so — a sibling claim
+ * released a minute later is not reflected, and a harness without Wanigan's
+ * MCP tools (Codex today) cannot take or release a claim from inside the
+ * session. The objective, instructions and acceptance checks travel in the
+ * first prompt as before; this carries only what was missing there.
+ */
+export type GoalCapsule = {
+  docketId: string;
+  docketTitle: string;
+  nodeId: string;
+  nodeTitle: string;
+  nodeKind: DocketNodeKind;
+  /** The path this node holds while it runs, or null when it declared none. */
+  claimPath: string | null;
+  /** Prerequisites as they stood at launch. */
+  dependsOn: { nodeId: string; title: string; status: DocketNodeStatus }[];
+  /** Live claims held by other nodes in the same project at launch. */
+  siblingClaims: { nodeId: string; title: string; path: string }[];
+  /** Whether this harness can claim/checkpoint through Wanigan's MCP tools. */
+  canClaimLive: boolean;
+  recordedAt: number;
+};
+
+/** How (or whether) a goal capsule reached a session — a recorded fact, not a guess. */
+export type GoalCapsuleDelivery = {
+  channel: 'developer-instructions' | 'system-prompt' | 'none';
+  /** Why nothing was delivered, when `channel` is 'none'. */
+  reason: string | null;
+};
+
 export type DocketProof = {
   id: string;
   docketId: string;
@@ -944,7 +1072,8 @@ export type GoalTraceEvent = {
   docketId: string;
   nodeId: string;
   sessionId: string;
-  source: 'hook' | 'telemetry';
+  /** 'launch' rows are written by Control itself when a node starts (the goal capsule). */
+  source: 'hook' | 'telemetry' | 'launch';
   kind: string;
   status: 'recorded' | 'failed';
   toolName: string | null;
@@ -1004,14 +1133,55 @@ export type AccountResolution = {
   reason: string | null;
 };
 
+/**
+ * Hook-observed writes into a harness's own auto-memory directory for one
+ * session. Paths only — Wanigan never reads what the agent wrote there.
+ * `count` is a COUNT over PostToolUse rows whose path sits inside one of
+ * `memoryDirs`; it is not the number of memories that exist.
+ */
+export type NativeMemoryWrites = {
+  harness: string | null;
+  /** The directories checked, resolved from the session's frozen account. */
+  memoryDirs: string[];
+  /** False when the row predates account recording or the account was removed. */
+  accountKnown: boolean;
+  count: number;
+  /** Basenames of the files touched, at most 50. */
+  files: string[];
+  note: string | null;
+};
+
+/**
+ * The AGENTS.md files Wanigan's Codex compiler can write to for one project,
+ * read from disk. Which of them Codex actually loads, and in what order, is
+ * not predicted here: Codex's loader was not consulted.
+ */
+export type CodexAgentsChain = {
+  projectRoot: string;
+  /** The account directory whose AGENTS.md heads the list, or the ambient/default one. */
+  codexHome: string;
+  files: {
+    path: string;
+    scope: 'home' | 'project' | 'nested';
+    exists: boolean;
+    bytes: number | null;
+    /** True when an applied Wanigan projection targets this exact path. */
+    managed: boolean;
+    projectionId: string | null;
+  }[];
+  note: string;
+};
+
 /* ── P33 · usage and limits ─────────────────────────────────────────── */
 
 /**
  * One rolling limit window as the provider reported it.
  *
- * `resetsAtText` is verbatim and always present; `resetsAt` is an epoch only
- * when the text parsed confidently. A countdown is worth having, but not worth
- * inventing — a surface with no epoch shows the provider's own words instead.
+ * `resetsAtText` is the provider's own words when it gave any; it is null on a
+ * window with nothing used yet, where the agent announces no reset at all.
+ * `resetsAt` is an epoch only when that text parsed confidently. A countdown is
+ * worth having, but not worth inventing — a surface with no epoch shows the
+ * provider's own words, and one with neither says only the percentage.
  */
 export type LimitWindow = {
   /** 'session', 'week', or whatever the provider called it. */
@@ -1019,7 +1189,7 @@ export type LimitWindow = {
   /** null for an all-models window; a model name such as 'Fable' otherwise. */
   scope: string | null;
   usedPercent: number;
-  resetsAtText: string;
+  resetsAtText: string | null;
   resetsAt: number | null;
 };
 
@@ -1292,6 +1462,50 @@ export const TRUST_COPY: Record<TrustLevel, { label: string; detail: string }> =
   },
 };
 
+/**
+ * The copy for a trust level, or an honest unknown.
+ *
+ * `TRUST_COPY[level]` was indexed directly in five places with a level that
+ * came from a database row, a session record or a setting rather than from
+ * TRUST_LEVELS. A value outside the three — an older row, a hand-edited
+ * database, a level added later and read by an older build — made that
+ * expression `undefined`, and the next `.label` took the whole view into its
+ * error boundary. A blank screen is the worst possible answer to "what is this
+ * repository allowed to do".
+ *
+ * This mirrors `markOf` in components/bits.tsx and mirrors it deliberately: an
+ * unrecognised value is shown as itself, and the copy says plainly that Wanigan
+ * does not know what it means, because the alternative is quietly relabelling
+ * an unknown permission as one of the three the reader already trusts.
+ */
+export function trustCopy(level: string): { label: string; detail: string } {
+  const known = (TRUST_COPY as Record<string, { label: string; detail: string }>)[level];
+  if (known) return known;
+  return {
+    label: level || 'unknown',
+    detail: `Wanigan does not recognise the trust level “${level || 'unknown'}”, so it cannot say what it allows. `
+      + 'Set this project to Read only, Project or Trusted to get a level this build enforces.',
+  };
+}
+
+/** The glyph for a trust level, or a neutral mark for one this build does not know. */
+export function trustGlyph(level: string): string {
+  return ({ readonly: '◇', project: '◈', trusted: '◆' } as Record<string, string>)[level] ?? '·';
+}
+
+/**
+ * The name to print for a harness id.
+ *
+ * Once accounts from more than one agent share a surface, two rows both labelled
+ * "Personal" are two different logins to two different products, and the label
+ * is the operator's word for it rather than the agent's. An unknown harness
+ * prints as itself: a pack can declare one this build has never heard of, and
+ * inventing a friendly name for it would be a guess printed as a fact.
+ */
+export function harnessLabel(harness: string): string {
+  return ({ 'claude-code': 'Claude Code', codex: 'Codex' } as Record<string, string>)[harness] ?? harness;
+}
+
 export type PolicyDecision = {
   decision: 'allow' | 'deny' | 'ask';
   reason: string;
@@ -1328,8 +1542,12 @@ export type ThemeSetting = 'system' | 'light' | 'dark';
 /* ── shell settings ─────────────────────────────────────────────────── */
 
 export type WaniganSettings = {
+  /** Explainer visibility flags, one flat key per guide the operator hid. */
+  [explainer: `explainer.${string}`]: 'hidden' | 'shown';
   spendCapUsd: number;
   motion: MotionSetting;
+  /** Whether the destination sidebar is showing. Persisted, not per-window. */
+  navSidebar: 'open' | 'closed';
   theme: ThemeSetting;
   telemetry: boolean;
   hooks: boolean;
@@ -1473,6 +1691,42 @@ export type ImprovementScoutGoal = {
 export type KnowledgeKind =
   | 'instruction' | 'rule' | 'memory' | 'skill' | 'mission'
   | 'gate' | 'eval' | 'project-map';
+
+/**
+ * Only these kinds are instructions a session can act on, so only these ever
+ * reach a briefing. An 'eval' is regression evidence and a 'project-map' is
+ * topology; a 'skill' compiles to its own provider file and a 'gate' to a
+ * Wanigan review gate. The briefing builder in the main process reads this
+ * same list — one definition, so the Knowledge view and the injector cannot
+ * disagree about which rows can be briefed.
+ */
+export const INJECTABLE_KINDS: readonly KnowledgeKind[] = ['mission', 'instruction', 'rule', 'memory'];
+/** With no query and no path there is nothing to be relevant to; only a standing artifact qualifies. */
+export const STANDING_KINDS: readonly KnowledgeKind[] = ['mission'];
+
+/**
+ * How a kind reaches an agent — a property of the kind, never a score. 'never'
+ * carries what the kind compiles to instead, so a row can say "never briefed —
+ * compiles to a Wanigan review gate" rather than looking like a broken item.
+ */
+export type KnowledgeKindDelivery =
+  | { briefed: 'standing' }
+  | { briefed: 'on-query' }
+  | { briefed: 'never'; compilesTo: string };
+
+const NEVER_BRIEFED_COMPILES_TO: Record<string, string> = {
+  skill: 'a provider skill file (SKILL.md) per harness',
+  gate: 'a Wanigan review gate',
+  eval: 'a Wanigan evaluation case',
+  'project-map': 'nothing yet — retrievable in Wanigan only, no provider file',
+};
+
+export function kindDelivery(kind: KnowledgeKind): KnowledgeKindDelivery {
+  if (STANDING_KINDS.includes(kind)) return { briefed: 'standing' };
+  if (INJECTABLE_KINDS.includes(kind)) return { briefed: 'on-query' };
+  return { briefed: 'never', compilesTo: NEVER_BRIEFED_COMPILES_TO[kind] ?? 'no provider mapping' };
+}
+
 export type ArtifactScope = 'personal' | 'project' | 'path';
 export type CandidateStatus =
   | 'pending' | 'approved' | 'rejected' | 'snoozed'
@@ -1538,6 +1792,20 @@ export type KnowledgeCandidate = {
   updatedAt: number;
   reviewedAt: number | null;
   reviewerNote: string | null;
+  /** Consolidation's cluster facet key; null for taught, forged or legacy rows. */
+  clusterKey: string | null;
+  /** First time a person snoozed it; never cleared. A snoozed candidate never auto-applies. */
+  snoozedAt: number | null;
+  /** Why a snoozed candidate came back to pending — a reason code, never the operator's note. */
+  wake: CandidateWake | null;
+};
+
+/** The wake transition as a code with the counts behind it. */
+export type CandidateWake = {
+  code: 'observed-again';
+  newSignals: number;
+  newTasks: number;
+  at: number;
 };
 
 export type CreateKnowledgeCandidate = {
@@ -1644,6 +1912,10 @@ export type KnowledgeBriefing = {
     text: string;
     citations: string[];
     estimatedTokens: number;
+    /** File citations re-hashed at retrieval; 0 means the entry passed with nothing checkable. */
+    checked: number;
+    /** Citations carried with no checkable file (learning-signal rows) — never verified. */
+    skipped: number;
   }[];
   estimatedTokens: number;
   /** Total items ranked but not admitted: the sum of the four counters below. */
@@ -1672,6 +1944,26 @@ export type KnowledgeBriefing = {
   queryProvided: boolean;
 };
 
+/**
+ * What the read-only briefing preview returns. The same shape as a launch
+ * briefing plus the state a launch dialog needs to say what would happen:
+ * a disabled engine is a distinct state, not an empty briefing.
+ */
+export type BriefingPreview = KnowledgeBriefing & {
+  /** False: retrieval did not run; every counter is 0 because nothing was asked, not because nothing matched. */
+  learningEnabled: boolean;
+  /** The provider profile's declared harness, or null for an unknown profile. */
+  harnessId: string | null;
+  /**
+   * How a launch would deliver this text: Claude Code's --append-system-prompt,
+   * Codex's developer_instructions config, or none for a harness Wanigan does
+   * not brief. A launch also requires the harness proof below.
+   */
+  launchDelivery: 'append-system-prompt' | 'developer-instructions' | 'none';
+  /** 'builtin': reviewed harness. 'probe-required': a local pack must pass its adapter probe at launch first. */
+  harnessProof: 'builtin' | 'probe-required' | null;
+};
+
 /** One recorded briefing delivery — what a session was actually told. */
 export type SessionBriefingRecord = {
   sessionId: string;
@@ -1685,11 +1977,19 @@ export type SessionBriefingRecord = {
     kind: KnowledgeKind;
     title: string;
     estimatedTokens: number;
+    /** Null on rows recorded before per-entry citation counts were persisted: "not recorded", never 0. */
+    checked: number | null;
+    skipped: number | null;
   }[];
   estimatedTokens: number;
   maxTokens: number;
   omittedStale: number;
   omittedBudget: number;
+  /** Null on rows recorded before these counters were persisted; render "not recorded", never 0. */
+  omittedUnsynthesized: number | null;
+  omittedUnverified: number | null;
+  /** Hook deliveries only: the SessionStart event this capsule answered, paired by time. */
+  sessionStartAt: number | null;
 };
 
 /** One persisted consolidation pass — the automation heartbeat. */
@@ -1710,6 +2010,27 @@ export type SessionLearningLedger = {
   signals: LearningSignal[];
   contributions: { itemId: string; title: string; kind: KnowledgeKind; status: KnowledgeStatus; evidenceCount: number }[];
   candidates: { candidateId: string; title: string; status: CandidateStatus; targetKind: KnowledgeKind }[];
+  /** Hook-observed `Skill` tool calls — tool calls, not "skills invoked"; a typed `/name` is unobservable. */
+  skillToolCalls: SkillToolCalls;
+  /** Counts of `wanigan:<id>` tags quoted in the archived transcript; never a claim about use. */
+  transcriptCitations: TranscriptCitationSummary;
+  /** Native auto-memory writes observed through hooks; absent until the ledger reads them. */
+  nativeMemory?: NativeMemoryWrites | null;
+};
+
+export type SkillToolCalls = {
+  observed: number;
+  identifiers: string[];
+  /** Calls whose identifier was not recorded (older hook rows carry a null summary). */
+  unrecorded: number;
+};
+
+export type TranscriptCitationSummary = {
+  status: 'scanned' | 'not-scanned' | 'unsupported';
+  reason: string | null;
+  total: number;
+  truncated: boolean;
+  items: { itemId: string; title: string; n: number }[];
 };
 
 /** The automation gate's checks, decomposed so a verdict is never magic. */
@@ -1784,6 +2105,91 @@ export type SkillDiagnostic = {
   message: string;
   line?: number;
 };
+
+/* ── skills catalogue ───────────────────────────────────────────────── */
+
+/**
+ * Where a skill was read from. The first four are Claude Code's own loader
+ * roots; the `agents-*` pair is the `.agents/skills` family the Codex harness
+ * reads, catalogued by Wanigan without consulting Codex's loader.
+ */
+export type SkillSource = 'user' | 'project' | 'plugin' | 'builtin' | 'agents-user' | 'agents-project';
+
+/**
+ * Glyph and word per source, shared by the Skills view and the composer's `$`
+ * menu so the same source never wears two marks. Slot order is the
+ * colourblind-safety mechanism in the renderer — never reordered to suit
+ * meaning — so the renderer maps `id` to a colour token and this table stays
+ * colour-free. `harness` names whose loader reads the root.
+ */
+export const SKILL_SOURCES: readonly {
+  id: SkillSource; word: string; glyph: string; blurb: string; harness: 'claude-code' | 'codex';
+}[] = [
+  { id: 'user',           word: 'user',           glyph: '◆', blurb: 'yours, on this machine',              harness: 'claude-code' },
+  { id: 'project',        word: 'project',        glyph: '■', blurb: 'checked into the repo',               harness: 'claude-code' },
+  { id: 'plugin',         word: 'plugin',         glyph: '▲', blurb: 'installed by a plugin',               harness: 'claude-code' },
+  { id: 'builtin',        word: 'built-in',       glyph: '○', blurb: 'bundled with Claude Code',            harness: 'claude-code' },
+  { id: 'agents-user',    word: '.agents user',   glyph: '◇', blurb: 'in ~/.agents/skills, read by Codex',  harness: 'codex' },
+  { id: 'agents-project', word: '.agents project', glyph: '□', blurb: 'in <repo>/.agents/skills, read by Codex', harness: 'codex' },
+];
+
+/**
+ * Whether a skill can be invoked, predicted from disk: SKILL.md frontmatter
+ * (`user-invocable`, `disable-model-invocation`) and the `skillOverrides`
+ * settings key, resolved through the settings layers. 'unknown' is a real
+ * answer — plugin and bundled skills are keyed differently and Wanigan has not
+ * verified the form — and is never collapsed into true or false.
+ */
+export type SkillInvocability = {
+  user: boolean | 'unknown';
+  model: boolean | 'unknown';
+  /** The effective skillOverrides value for this skill, null when none names it. */
+  override: 'on' | 'name-only' | 'user-invocable-only' | 'off' | null;
+  /** The file whose declaration decided `user` or `model`; null when both are defaults. */
+  decidedBy: string | null;
+  /** True when more than one settings layer names this skill in skillOverrides. */
+  ambiguous: boolean;
+};
+
+/** A skill file Wanigan itself wrote, joined from knowledge_projections by target path. */
+export type SkillProjectionLink = {
+  projectionId: string;
+  itemId: string | null;
+  status: ProjectionStatus;
+  providerId: string;
+  appliedAt: number | null;
+};
+
+/** A skill that exists on disk but is not the file that runs for its command. */
+export type ShadowedSkill = {
+  invoke: string;
+  source: SkillSource;
+  path: string;
+  shadowedBy: { source: SkillSource; path: string };
+};
+
+/** One `skillOverrides` entry after settings-layer resolution. */
+export type SkillOverrideEntry = {
+  skill: string;
+  value: 'on' | 'name-only' | 'user-invocable-only' | 'off' | string;
+  from: 'user' | 'project' | 'local' | 'managed';
+  path: string;
+  /** Other layers that also name this skill, highest precedence first. */
+  shadowed: { from: 'user' | 'project' | 'local' | 'managed'; value: string; path: string }[];
+};
+
+/**
+ * The main process's verdict on typing a skill into a live session. Only the
+ * Claude Code harness has a verified `/name ` form; everything else is an
+ * honest unsupported state, with the reason the button can mirror.
+ */
+export type SkillSendDecision =
+  | { ok: true; invoke: string }
+  | {
+      ok: false;
+      code: 'no-session' | 'session-exited' | 'unsupported-harness' | 'unknown-skill' | 'not-user-invocable' | 'no-invocation-form';
+      reason: string;
+    };
 
 export type LearningExperiment = {
   id: string;
@@ -1997,6 +2403,15 @@ export type ClaudeContextUsage =
     model: string | null;
     /** The record's own timestamp; null when the line carried none. */
     at: number | null;
+    /**
+     * Where `window` came from. 'assumed-…' is Wanigan's assumption from the
+     * model id; 'cli-reported' is the figure the Claude CLI itself reported in
+     * a headless run for the same model, backend and account — reported by the
+     * CLI, still not measured. Absent means no window is claimed.
+     */
+    windowSource?: 'assumed-200k' | 'assumed-1m' | 'cli-reported' | null;
+    /** A sentence the badge can show about the window, e.g. why none is claimed. */
+    windowNote?: string | null;
   }
   | { kind: 'unsupported' }
   | { kind: 'no-transcript' }
@@ -2015,6 +2430,18 @@ export type ClaudeContextUsage =
 export type NotificationRoute =
   | { kind: 'session'; sessionId: string }
   | { kind: 'run'; runId: string };
+
+/**
+ * What a macOS menu item asked for. The menu bar is built in the main process
+ * from shared/routes.ts, but it changes nothing there: it names an intent and
+ * the renderer, which owns the router and the dialogs, decides what that means.
+ */
+export type MenuRoute =
+  | { kind: 'tab'; tab: import('./routes').Tab }
+  | { kind: 'new-session' }
+  | { kind: 'palette' }
+  | { kind: 'shortcuts' }
+  | { kind: 'sidebar' };
 
 /** Where the Claude CLI installs a plugin. Validated in main, not just typed. */
 export type PluginScope = 'user' | 'project' | 'local';
@@ -2078,4 +2505,19 @@ export type BackupRestoreSummary = {
   discardedNewer: boolean;
   /** Always true: the swap closed this process's database connection. */
   relaunchRequired: true;
+};
+
+/**
+ * A finished run whose results stop being downloadable soon.
+ *
+ * The clock is 29 days from batch creation, not from when the run ended, so a
+ * batch that took a day to run has already spent a day of it. Only runs with
+ * something still to lose appear: once the .jsonl is archived locally the
+ * server-side deadline cannot take anything away.
+ */
+export type ExpiringResults = {
+  runId: string;
+  runName: string;
+  endedAt: number;
+  downloadableUntil: number;
 };

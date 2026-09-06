@@ -1,12 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  ExpiringResults,
   LaunchOptions, PastSession, Project, ProviderInfo, Session, RunConfig, SourceConfig,
   SessionUsage, ApiEvent, SessionEvent, Attention, TranscriptHit, TranscriptTurn,
   WorktreeInfo, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, HeadlessStartRequest,
   QueueItem, QueueSlots, QueueState,
   BackupCheck, BackupRestoreSummary, BackupSummary,
   CheckpointDiff, CheckpointRevertPlan, CheckpointRevertResult, SessionCheckpoint,
-  InteractiveSessionLoad, NotificationRoute, PluginScope,
+  InteractiveSessionLoad, MenuRoute, NotificationRoute, PluginScope,
   McpServerConfig, McpServerStatus, BudgetState, Reconciliation, TrustLevel, LedgerEntry,
   WaniganSettings, ThemeSetting, UploadedFile, EvalPair, GoldenSet,
   EgressReport, ObservedSession, ObservedState,
@@ -276,7 +277,7 @@ const api = {
   // ── phase 14 · notifications ─────────────────────────────────────────
   notify: {
     expiring: () => call<unknown[]>('notify:expiring'),
-    resultsExpiring: () => call<unknown[]>('notify:resultsExpiring'),
+    resultsExpiring: () => call<ExpiringResults[]>('notify:resultsExpiring'),
     enabled: () => call<boolean>('notify:enabled'),
     setEnabled: (on: boolean) => call<boolean>('notify:setEnabled', on),
     // Which session is on screen right now, so main can keep quiet about the
@@ -348,6 +349,8 @@ const api = {
     create: (input: { name: string; cron: string; kind: 'headless' | 'session' | 'batch'; payload: unknown; projectId?: string | null }) =>
       call<any>('schedule:create', input),
     setEnabled: (id: string, on: boolean) => call<any>('schedule:setEnabled', id, on),
+    update: (id: string, patch: { name?: string; cron?: string; payload?: unknown; projectId?: string | null }) =>
+      call<any>('schedule:update', id, patch),
     remove: (id: string) => call<boolean>('schedule:delete', id),
     history: (id: string, limit?: number) => call<{ at: number; status: string; detail: string | null }[]>('schedule:history', id, limit),
     preview: (cron: string) => call<{ fires: number[]; describe: string }>('schedule:preview', cron),
@@ -677,6 +680,15 @@ const api = {
       const h = (_e: unknown, route: NotificationRoute) => cb(route);
       ipcRenderer.on('notify:open', h);
       return () => ipcRenderer.removeListener('notify:open', h);
+    },
+    // A menu item was chosen. Main builds the menu bar from the route table but
+    // owns none of the routing: the renderer holds the router, the dialogs and
+    // the knowledge of what is on screen, so the menu says what was asked for
+    // and this window decides what that means.
+    menuRoute: (cb: (route: MenuRoute) => void) => {
+      const h = (_e: unknown, route: MenuRoute) => cb(route);
+      ipcRenderer.on('menu:route', h);
+      return () => ipcRenderer.removeListener('menu:route', h);
     },
   },
 };

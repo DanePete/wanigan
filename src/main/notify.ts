@@ -534,7 +534,9 @@ export function expiringSoon(withinMs: number = EXPIRY_WARNING_MS): ExpiringBatc
 
 /* ── clock two: results expiry ───────────────────────────────────────── */
 
-export type ExpiringResults = { runId: string; runName: string; endedAt: number; downloadableUntil: number };
+/** Shared, because the Batches view is what finally reads it. */
+import type { ExpiringResults } from '../shared/types';
+export type { ExpiringResults };
 
 /**
  * Finished runs whose results stop being downloadable inside `withinMs`.

@@ -7,12 +7,12 @@ import { projectById } from './store';
 import { createSession, killSession, listSessions } from './sessions';
 import * as review from './review';
 import * as otel from './otel';
-import { listGoalTrace } from './goal-trace';
+import { listGoalTrace, recordGoalTrace } from './goal-trace';
 import { enqueue } from './queue';
 import type {
   ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode,
   DocketAutopilot, DocketNodeKind, DocketNodeStatus, DocketPlanNode, DocketProof, DocketRisk, DocketStatus,
-  GoalResumeReceipt, GoalTraceEvent,
+  GoalCapsule, GoalResumeReceipt, GoalTraceEvent,
   McpTaskRecord, ModelOutcome, WorkDocket,
 } from '../shared/types';
 
@@ -417,6 +417,47 @@ function readyNode(id: string): DocketNode {
   return node;
 }
 
+/**
+ * The facts a node's agent cannot otherwise reach, read from the stored rows
+ * at the moment of launch. The objective, instructions and acceptance checks
+ * already travel in the first prompt; this adds the node's own id (which the
+ * MCP checkpoint and claim tools take), its declared claim, its prerequisites
+ * and every live claim held by another node in the same project. `canClaimLive`
+ * is left false here — sessions.ts sets it from what the launch actually wired.
+ */
+export function goalCapsuleFor(nodeId: string): GoalCapsule {
+  const node = nodeRow(nodeId); const parent = docketRow(node.docket_id);
+  const nodes = mapNodes(rawNodes(parent.id));
+  const byId = new Map(nodes.map((value) => [value.id, value]));
+  const self = byId.get(nodeId);
+  if (!self) throw new Error('Docket task not found.');
+  // Project-wide, like the overlap check in claimPath(): a claim in another
+  // docket of the same project is exactly what a parallel agent must not cross.
+  const siblings = db().prepare(`SELECT c.path, c.node_id, n.title FROM work_claims c
+    JOIN work_dockets d ON d.id=c.docket_id JOIN work_nodes n ON n.id=c.node_id
+    WHERE d.project_id=? AND c.released_at IS NULL AND c.node_id!=? ORDER BY c.created_at`)
+    .all(parent.project_id, nodeId) as { path: string; node_id: string; title: string }[];
+  // What this task holds right now, not only what its plan declared: a path
+  // taken later through Control (or by startNode) lives in work_claims, and a
+  // capsule that reported "none declared" while the agent held src/ would be
+  // telling it the opposite of the truth. The declared path remains the
+  // fallback, so a node that has not started yet still names its intent.
+  const held = db().prepare(
+    'SELECT path FROM work_claims WHERE node_id=? AND released_at IS NULL ORDER BY created_at LIMIT 1',
+  ).get(nodeId) as { path: string } | undefined;
+  return {
+    docketId: parent.id, docketTitle: parent.title,
+    nodeId, nodeTitle: self.title, nodeKind: self.kind, claimPath: held?.path ?? self.claimPath,
+    dependsOn: self.dependsOn.map((id) => {
+      const dep = byId.get(id);
+      return { nodeId: id, title: dep?.title ?? id, status: dep?.status ?? 'pending' };
+    }),
+    siblingClaims: siblings.map((row) => ({ nodeId: row.node_id, title: row.title, path: row.path })),
+    canClaimLive: false,
+    recordedAt: now(),
+  };
+}
+
 export async function startNode(nodeId: string, input: { providerId: string; model?: string; effort?: string; permissionMode?: string }): Promise<DocketNode> {
   const node = readyNode(nodeId); const parent = docketRow(node.docketId);
   const project = projectById(parent.project_id);
@@ -439,11 +480,14 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
     `Acceptance checks:\n${acceptance}`,
     'Work only in the isolated worktree Wanigan provided. Report evidence and unresolved risks; do not claim a passed check you did not run.',
   ].join('\n\n');
+  // Built after this node's own claim is taken, so its sibling list is what the
+  // agent will actually be running beside.
+  const capsule = goalCapsuleFor(nodeId);
   let session: Awaited<ReturnType<typeof createSession>>;
   try {
     session = await createSession({ providerId, projectId: project.id, model: input.model?.trim() || undefined,
       effort: input.effort?.trim() || undefined, permissionMode: input.permissionMode?.trim() || (node.kind === 'implement' ? 'acceptEdits' : 'plan'),
-      isolate: true, initialPrompt: prompt });
+      isolate: true, initialPrompt: prompt, goalCapsule: capsule });
   } catch (error) {
     if (takenClaim) releaseClaim(takenClaim.id);
     throw error;
@@ -467,6 +511,24 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
       provider_id=excluded.provider_id,model=excluded.model,base_commit=excluded.base_commit,worktree=excluded.worktree,updated_at=excluded.updated_at`)
     .run(nodeId, parent.id, session.id, session.conversationId, providerId, input.model?.trim() || null,
       parent.base_commit, session.worktree ?? null, now(), now());
+  // How the capsule reached the agent is a work-trace fact, recorded once the
+  // node row owns the session (recordGoalTrace resolves the node through it).
+  // It is not a session briefing: nothing here came from the learning engine.
+  const delivery = session.goalCapsule ?? null;
+  const delivered = delivery !== null && delivery.channel !== 'none';
+  recordGoalTrace({
+    sessionId: session.id, source: 'launch', kind: 'goal_capsule',
+    status: delivered ? 'recorded' : 'failed', toolName: null,
+    summary: delivered
+      ? `Goal capsule delivered via ${delivery.channel} at launch — a snapshot, not live: node ${capsule.nodeId}, `
+        + `claim ${capsule.claimPath === null ? 'none declared' : capsule.claimPath || '(the whole project)'}, `
+        + `${capsule.dependsOn.length} prerequisite(s), ${capsule.siblingClaims.length} sibling claim(s). `
+        + (session.harnessId === 'codex'
+          ? 'This harness cannot claim or release a path from inside the session.'
+          : 'Claims and checkpoints go through Wanigan’s MCP tools.')
+      : `Goal capsule not delivered: ${delivery?.reason ?? 'the launch reported no delivery channel.'}`,
+    durationMs: null, costUsd: 0, inTokens: 0, outTokens: 0,
+  });
   setTaskStatus(nodeId, 'working'); setDocketPhase(node.docketId);
   return mapNodes(rawNodes(node.docketId)).find((value) => value.id === nodeId)!;
 }

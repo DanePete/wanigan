@@ -158,11 +158,22 @@ export function runResults(id: string, status = 'all', q = '', offset = 0, pageS
   return { rows, total, offset, pageSize };
 }
 
+/**
+ * Statuses where the remote batch may still be spending. Deleting the local row
+ * does not reach the API, so it would drop the only record of a run that is
+ * still costing money.
+ *
+ * 'canceling' belongs here and was missing: cancelRun sets it while the remote
+ * batches wind down, so a run in that state is exactly the case the error
+ * sentence below describes — cancelled locally, not yet stopped remotely.
+ */
+const UNDELETABLE = new Set(['in_progress', 'submitting', 'canceling']);
+
 export function deleteRun(id: string) {
   const run = db().prepare('SELECT status FROM runs WHERE id = ?').get(id) as { status: string } | undefined;
   if (!run) throw new Error(`Run ${id} not found.`);
-  if (run.status === 'in_progress' || run.status === 'submitting') {
-    throw new Error('Cancel the run before deleting it — deleting locally would not stop the batch or its spend.');
+  if (UNDELETABLE.has(run.status)) {
+    throw new Error('Cancel the run and let it finish stopping before deleting it — deleting locally would not stop the batch or its spend.');
   }
   db().prepare('DELETE FROM runs WHERE id = ?').run(id);
 }

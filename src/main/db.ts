@@ -875,6 +875,24 @@ function migrateLearning(d: Database.Database) {
   // against that run; one that names nothing is an estimate wearing a stronger
   // label. Nullable because most metrics are honestly observational.
   addColumn(d, 'artifact_metrics', 'experiment_id', 'TEXT');
+  // The briefing builder has reported four held-back reasons since it learned
+  // to distinguish them, but only two were persisted, so a session held for
+  // the freshness-check quota read back as "nothing matched". Nullable: a row
+  // recorded before these columns existed says "not recorded", never 0.
+  addColumn(d, 'session_briefings', 'omitted_unsynthesized', 'INTEGER');
+  addColumn(d, 'session_briefings', 'omitted_unverified', 'INTEGER');
+  // Waking a snoozed candidate needs three facts the row never carried: the
+  // deterministic cluster key a later observation can match without touching
+  // a title a person may have edited, when it was first snoozed (a snoozed
+  // candidate never auto-applies afterwards), and the wake reason as its own
+  // column so automation never writes over the operator's reviewer_note.
+  addColumn(d, 'knowledge_candidates', 'cluster_key', 'TEXT');
+  addColumn(d, 'knowledge_candidates', 'snoozed_at', 'INTEGER');
+  addColumn(d, 'knowledge_candidates', 'wake_json', 'TEXT');
+  d.exec(`
+    CREATE INDEX IF NOT EXISTS idx_knowledge_candidates_cluster
+      ON knowledge_candidates(cluster_key, status);
+  `);
 }
 
 /**
@@ -921,6 +939,15 @@ function migrateAccounts(d: Database.Database) {
   // leaves Wanigan reading the default account's directory for a transcript
   // that was written into another one, and honestly reporting nothing.
   addColumn(d, 'session_log', 'account_id', 'TEXT');
+  // The same fact for a fan-out row, so a context window the CLI reported in a
+  // headless run is matched only to interactive sessions under the same login.
+  addColumn(d, 'headless_rows', 'account_id', 'TEXT');
+  // Whether the CLI named a cost at all, which `cost_usd` alone cannot say: a
+  // run that reported nothing and a run that genuinely reported $0.00 both
+  // land as 0, and the Runs total claimed to be "CLI-reported; never
+  // estimated" over the sum of both. Nullable on purpose — a row written
+  // before this column existed reads as unknown, never as reported.
+  addColumn(d, 'headless_rows', 'cost_reported', 'INTEGER');
 }
 
 /**
@@ -1254,7 +1281,6 @@ function migrateImprovementScout(d: Database.Database) {
     refresh.run(label, description, url, publisher, kind, at, id);
   }
 }
-
 export function logEvent(runId: string, level: 'info' | 'warn' | 'error', message: string) {
   db().prepare('INSERT INTO events (run_id, at, level, message) VALUES (?,?,?,?)')
     .run(runId, Date.now(), level, message);
