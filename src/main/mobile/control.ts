@@ -7,15 +7,59 @@ import { readTerminalScreen } from './terminal';
 /**
  * The separately opt-in agent console: three routes, each declared with the
  * 'control' scope so the dispatcher refuses them outright while remote control
- * is off. Permission decisions are deliberately absent — approving a tool call
- * stays at the Mac.
+ * is off.
+ *
+ * What a paired device can do through them is one thing, said plainly: type
+ * into a running session's terminal, the same act as typing at the Mac. This
+ * file used to claim the opposite in a comment — that permission decisions
+ * stayed at the Mac — while `prompt` was a raw PTY write that would happily
+ * send "1" into a permission menu and choose the first option. Nothing
+ * enforced the claim; it was a sentence. Wanigan does not get to describe a
+ * boundary it has not built, so the sentence is gone and what is left says
+ * where the boundary actually runs: the remote-control opt-in, the bearer
+ * token, the loopback check and the shared write budget.
+ *
+ * The keys below exist because typing is not only text. An agent TUI blocks on
+ * keystrokes a text box cannot produce — an arrow, an Escape, a bare Enter —
+ * so a phone that could send only "some text and a newline" could watch an
+ * agent wait and still not answer it. The page names a key; this module owns
+ * the bytes.
  */
+
+/**
+ * The keys a paired device may press, and the only place their byte sequences
+ * exist. A phone sends a name from this list and never a sequence of its own:
+ * a page that could post an arbitrary escape sequence would be posting
+ * arbitrary terminal input, and the closed list is what keeps "the phone can
+ * press Down" a smaller statement than "the phone can write anything into a
+ * PTY".
+ *
+ * A Map rather than an object literal, so a name arriving from a browser —
+ * `constructor`, `__proto__`, `toString` — resolves to nothing rather than to
+ * something inherited from Object.prototype.
+ */
+const REMOTE_KEYS = new Map<string, { glyph: string; label: string; sequence: string }>([
+  ['up', { glyph: '↑', label: 'Up', sequence: '\u001b[A' }],
+  ['down', { glyph: '↓', label: 'Down', sequence: '\u001b[B' }],
+  ['left', { glyph: '←', label: 'Left', sequence: '\u001b[D' }],
+  ['right', { glyph: '→', label: 'Right', sequence: '\u001b[C' }],
+  ['enter', { glyph: '⏎', label: 'Enter', sequence: '\r' }],
+  ['escape', { glyph: '⎋', label: 'Esc', sequence: '\u001b' }],
+]);
 
 export type MobileControlSource = {
   projects: () => Promise<{ id: string; name: string; branch: string | null }[]>;
   providers: () => Promise<{ id: string; label: string; available: boolean; models: { value: string; label: string }[]; efforts: string[] }[]>;
   launch: (input: { projectId: string; providerId: string; model?: string; effort?: string; prompt: string }) => Promise<{ id: string; title: string }>;
   prompt: (sessionId: string, prompt: string) => Promise<void>;
+  /**
+   * Write one already-validated key sequence into the session's terminal.
+   * Optional, and deliberately so: a bridge with no PTY behind it — a test
+   * stub, or a future headless one — leaves it out, and /api/control then
+   * advertises no keys at all. That is the difference between an honestly
+   * absent capability and six buttons on a phone that fail one at a time.
+   */
+  key?: (sessionId: string, sequence: string) => Promise<void>;
   interrupt: (sessionId: string) => Promise<boolean>;
   terminal: (sessionId: string) => Promise<{ title: string; running: boolean; text: string }>;
 };
@@ -41,6 +85,20 @@ function actionText(value: unknown, label: string): string {
   return text;
 }
 
+/**
+ * A key name from the page, resolved to the entry that carries its bytes.
+ * Nothing here is constructed out of the request: an unrecognised name is
+ * refused outright rather than trimmed, lower-cased or coerced towards
+ * something in the list, because a near miss that still presses a key on a
+ * live agent is worse than a rejection the operator can read.
+ */
+function actionKey(value: unknown): { glyph: string; label: string; sequence: string } {
+  if (typeof value !== 'string') throw new Error('Key is required.');
+  const key = REMOTE_KEYS.get(value);
+  if (!key) throw new Error('That is not a key this console can send.');
+  return key;
+}
+
 function optionalLaunchValue(value: unknown, label: string): string | undefined {
   if (value === undefined || value === null || value === '') return undefined;
   if (typeof value !== 'string' || value.trim().length > 120 || /[\u0000-\u001f\x7f]/.test(value)) throw new Error(`${label} is invalid.`);
@@ -62,7 +120,15 @@ async function serveControlOptions(res: http.ServerResponse): Promise<void> {
   const source = requireSource(res);
   if (!source) return;
   const [projects, providers] = await Promise.all([source.projects(), source.providers()]);
-  json(res, 200, { projects, providers });
+  // The key row is advertised, not assumed. The page draws exactly the buttons
+  // this answer names, so the closed list here is also the list on screen and
+  // the two cannot drift into a button posting a name the main process would
+  // refuse. The sequences stay behind: the page has no use for them and no
+  // business holding them.
+  const keys = source.key
+    ? [...REMOTE_KEYS].map(([name, key]) => ({ name, glyph: key.glyph, label: key.label }))
+    : [];
+  json(res, 200, { projects, providers, keys });
 }
 
 async function serveTerminal(res: http.ServerResponse, url: URL): Promise<void> {
@@ -98,6 +164,17 @@ async function serveAction(req: http.IncomingMessage, res: http.ServerResponse):
     if (action === 'prompt') {
       await source.prompt(actionText(body?.sessionId, 'Session'), actionText(body?.prompt, 'Prompt'));
       json(res, 200, { ok: true }); return;
+    }
+    if (action === 'key') {
+      // The name is checked before the capability, so an unrecognised key is
+      // refused the same way on every build. A phone told "this Wanigan cannot
+      // press keys" when the real fault was a mistyped name would go looking
+      // in the wrong place entirely.
+      const sessionId = actionText(body?.sessionId, 'Session');
+      const key = actionKey(body?.key);
+      if (!source.key) { json(res, 501, { error: 'This Wanigan build cannot press a key in a session.' }); return; }
+      await source.key(sessionId, key.sequence);
+      json(res, 200, { ok: true, label: key.label }); return;
     }
     if (action === 'interrupt') {
       const interrupted = await source.interrupt(actionText(body?.sessionId, 'Session'));

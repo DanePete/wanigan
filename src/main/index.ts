@@ -48,6 +48,7 @@ import * as notify from './notify';
 import * as mobile from './mobile';
 import { mobileFleetSnapshot } from './fleet-snapshot';
 import * as tailnet from './tailnet';
+import { mobileLaunchProviders } from './mobile/launch-options';
 import * as awake from './awake';
 import { qrSvg } from '../shared/qr';
 import * as skills from './skills';
@@ -1175,14 +1176,7 @@ function configureMobileSources(): void {
   });
   mobile.configureMobileControlSource({
     projects: async () => listProjects().map((project) => ({ id: project.id, name: project.name, branch: project.branch })),
-    providers: async () => {
-      const providers = await detectProviders();
-      return Promise.all(providers.map(async (provider) => ({
-        id: provider.id, label: provider.label, available: Boolean(provider.path),
-        models: await providerModelChoices(provider),
-        efforts: providerEffortChoices(provider),
-      })));
-    },
+    providers: async () => mobileLaunchProviders(await detectProviders()),
     launch: async ({ projectId, providerId, model, effort, prompt }) => {
       const session = await createSession({ providerId, projectId, model, effort, initialPrompt: prompt });
       return { id: session.id, title: session.title };
@@ -1191,6 +1185,15 @@ function configureMobileSources(): void {
       const session = listSessions().find((value) => value.id === sessionId && value.status !== 'exited');
       if (!session) throw new Error('That session is no longer running.');
       writeSession(sessionId, `${prompt}\r`);
+    },
+    key: async (sessionId, sequence) => {
+      // The sequence came out of mobile/control.ts's closed list, so it is not
+      // rechecked here; what is left is the same liveness question `prompt`
+      // asks, for the same reason. A key written into an exited session is a
+      // keystroke into nothing that the phone would see reported as sent.
+      const session = listSessions().find((value) => value.id === sessionId && value.status !== 'exited');
+      if (!session) throw new Error('That session is no longer running.');
+      writeSession(sessionId, sequence);
     },
     interrupt: async (sessionId) => interruptSession(sessionId),
     terminal: async (sessionId) => {

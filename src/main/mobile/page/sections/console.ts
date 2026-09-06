@@ -1,9 +1,17 @@
 import type { MobileSection } from '../sections';
 
 /**
- * The selected agent: readable terminal output and the next instruction. It
- * appears only when remote control is separately enabled, which is why its
- * markup ships inside the hidden control slot rather than being injected.
+ * The selected agent: readable terminal output, the next instruction, and the
+ * single keys a blocked agent is actually waiting for. It appears only when
+ * remote control is separately enabled, which is why its markup ships inside
+ * the hidden control slot rather than being injected.
+ *
+ * The key row is here because a text box with a newline on the end is not a
+ * keyboard. An agent stopped on a permission prompt wants an arrow and an
+ * Enter, or an Escape; typing "1" and pressing send is a different act that
+ * happens to work on one provider's menu and on nothing else. The names come
+ * from the Mac and so do the bytes — this page posts a name and never a
+ * sequence.
  */
 export const CONSOLE_SECTION: MobileSection = {
   id: 'console',
@@ -11,7 +19,8 @@ export const CONSOLE_SECTION: MobileSection = {
   slot: 'controls',
   markup: `        <div id="agent-console" class="control-card agent-console" tabindex="-1">
           <div class="console-kicker">Selected agent</div>
-          <div class="terminal-head"><div><h3 id="terminal-title">Live terminal output</h3><p>Readable live output from the selected session. Send the next instruction below; permission decisions stay at the Mac.</p></div><button id="terminal-refresh" type="button" class="secondary">Refresh</button></div><p id="terminal-note" class="terminal-note hidden"></p><pre id="terminal" class="terminal">Choose a running session to open its terminal.</pre>
+          <div class="terminal-head"><div><h3 id="terminal-title">Live terminal output</h3><p>Readable live output from the selected session. Whatever you send below is typed into this agent&rsquo;s terminal, exactly as it would be at the Mac: a message, or one of the single keys a prompt is waiting on.</p></div><button id="terminal-refresh" type="button" class="secondary">Refresh</button></div><p id="terminal-note" class="terminal-note hidden"></p><pre id="terminal" class="terminal">Choose a running session to open its terminal.</pre>
+          <div id="terminal-keys" class="terminal-keys hidden" role="group" aria-label="Press one key in this session terminal"></div>
           <form id="prompt-form" class="fields"><label class="field-label"><span>Session</span><select id="session" aria-label="Running session"></select></label><div></div><textarea id="session-prompt" aria-label="Message for the selected agent" maxlength="8000" required placeholder="Type the next instruction for this agent…"></textarea><button>Send message</button><button id="interrupt" type="button" class="secondary">Interrupt turn</button></form>
         </div>`,
   style: `    .agent-console { scroll-margin-top:16px; border-color:color-mix(in srgb,var(--accent) 45%,var(--line)); }
@@ -19,6 +28,14 @@ export const CONSOLE_SECTION: MobileSection = {
     .terminal-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
     .terminal-head p { margin-bottom:0; }
     .terminal-note { color:var(--serious); font-size:12px; margin:9px 0 0; }
+    .terminal-keys { display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+    /* Section styles are appended after the shared sheet, so this rule beats
+       .hidden at equal specificity and the row would show before /api/control
+       has said whether the bridge advertises any keys. Re-stated here for the
+       same reason nav.ts re-states it for the sheet. */
+    .terminal-keys.hidden { display:none; }
+    .terminal-keys button { flex:1 1 84px; display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:8px 10px; }
+    .terminal-key-glyph { color:var(--faint); font-size:15px; line-height:1; }
     @media (max-width:680px) { .terminal { min-height:46vh; max-height:62vh; } }`,
   script: `
       // The terminal used to be re-read whole every 1.5 seconds. Now the page
@@ -66,6 +83,64 @@ export const CONSOLE_SECTION: MobileSection = {
       // them is ordinary, so the page says which. A console that quietly swapped
       // its contents would look identical to one that had been appending all
       // along, and the operator would read a jump as continuous output.
+      // A blocked agent is not always waiting for a sentence. Claude Code's
+      // permission prompt is a numbered menu and a Codex approval is a
+      // keypress; both want an arrow, an Escape or a bare Enter, and a text box
+      // that always appends a newline can send none of the three. So the keys
+      // are here as their own buttons — named by the Mac, because the byte
+      // sequence behind each one lives in the main process and this page only
+      // ever posts the name it was given.
+      let keyRowSignature = '';
+
+      function terminalKeyButton(key) {
+        const label = String(key.label || key.name || '');
+        const button = node('button', 'secondary');
+        button.type = 'button';
+        // Glyph and word together. An arrowhead on its own is a guess about
+        // what a button does, and this button does something to a live agent.
+        const glyph = node('span', 'terminal-key-glyph', String(key.glyph || ''));
+        glyph.setAttribute('aria-hidden', 'true');
+        button.append(glyph, node('span', '', label));
+        button.setAttribute('aria-label', 'Press ' + label + ' in this session terminal');
+        button.addEventListener('click', () => void sendKey(key));
+        return button;
+      }
+
+      // Rebuilt only when the Mac's list changes, but re-enabled on every
+      // terminal read. A keypress spends the same twenty-a-minute action budget
+      // as a launch, and a button that still looks live while another action is
+      // in flight is how one intended press becomes two.
+      function refreshKeyRow() {
+        const row = byId('terminal-keys');
+        const keys = controlOptions && Array.isArray(controlOptions.keys) ? controlOptions.keys : [];
+        const signature = keys.map((key) => key.name + ' ' + key.label).join('|');
+        if (signature !== keyRowSignature) {
+          keyRowSignature = signature;
+          row.replaceChildren(...keys.map(terminalKeyButton));
+          // No keys advertised means this Mac cannot press one, and a row of
+          // buttons that each fail in turn would be worse than no row at all.
+          row.classList.toggle('hidden', keys.length === 0);
+        }
+        const ready = Boolean(byId('session').value) && !actionBusy;
+        row.querySelectorAll('button').forEach((button) => { button.disabled = !ready; });
+      }
+
+      async function sendKey(key) {
+        const sessionId = byId('session').value;
+        if (!sessionId || actionBusy) return;
+        const label = String(key.label || key.name || '');
+        controlResult.textContent = 'Pressing ' + label + '…';
+        setActionBusy(true);
+        refreshKeyRow();
+        try {
+          await api('api/action', { method:'POST', headers:{ 'content-type':'application/json', authorization:'Bearer ' + localStorage.getItem(KEY) }, body:JSON.stringify({ action:'key', sessionId:sessionId, key:key.name }) });
+          controlResult.textContent = 'Pressed ' + label + '.';
+          void loadTerminal();
+        }
+        catch (error) { controlResult.textContent = error instanceof Error ? error.message : 'Could not press that key.'; }
+        finally { setActionBusy(false); refreshKeyRow(); }
+      }
+
       function terminalGap(detail) {
         if (detail.screenReason === 'too-much-output') return 'This session printed more than one refresh can carry. Output between this screen and the last one is not shown.';
         if (detail.screenReason === 'behind') return 'Wanigan could not continue from what was on screen, so this is a fresh screen rather than more of the same one.';
@@ -77,6 +152,9 @@ export const CONSOLE_SECTION: MobileSection = {
         const sessionId = byId('session').value;
         const output = byId('terminal');
         const note = byId('terminal-note');
+        // Before the busy guard below, so the row still settles into its
+        // disabled state while a read is in flight.
+        refreshKeyRow();
         if (!sessionId) {
           byId('terminal-title').textContent = 'Live terminal output';
           note.classList.add('hidden');

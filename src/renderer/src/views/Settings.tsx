@@ -2371,7 +2371,7 @@ function PhoneMonitor() {
         Read-only monitoring receives the Mac hostname, Wanigan version, an internal session id, project/session
         names, provider/model, state, timestamps, spend and aggregate usage. With paired iPad control enabled,
         the selected session’s terminal output is also shown and may contain paths, prompt text, or other sensitive
-        text printed by an agent. Treat every paired device as trusted. It does not expose permission approval.
+        text printed by an agent. Treat every paired device as trusted: whatever it sends is typed into the agent’s terminal, exactly as it would be at the Mac.
       </Callout>
 
       {!status ? (
@@ -2391,7 +2391,7 @@ function PhoneMonitor() {
           <Toggle title="Allow paired iPad control" on={status.config.remoteControlEnabled} busy={busy !== null}
                   onChange={(on) => void configure({ remoteControlEnabled: on }, on ? 'Paired iPad control enabled' : 'Paired iPad control disabled')}>
             Requires the dashboard above. A paired browser can start an agent session, view its live terminal,
-            send its next instruction, or interrupt a turn. It cannot approve permissions, manage files, or change settings.
+            send its next instruction, or interrupt a turn. Typing is the whole of it: a message, or one of the arrow, Enter and Escape keys a waiting prompt needs — which is how a permission prompt gets answered. It cannot manage files or change Wanigan’s settings.
           </Toggle>
 
           {status.config.dashboardEnabled && (

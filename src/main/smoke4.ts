@@ -1571,6 +1571,48 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
       && openOffer.choices.length === 2 && !effortOffer.custom && effortOffer.defaultValue === '',
       'a select the manifest opened with allowCustom keeps free text and its declared default; a closed one keeps neither',
       openOffer);
+
+    /* ── and the phone makes the same offer, not a second weaker one ─
+     * The launch form on the phone used to answer this question for itself:
+     * one flat array of efforts per provider, captioned 'Reasoning effort'
+     * whoever was launching. So it offered the shipped Codex profile the level
+     * only the CLI catalog named, drew a disabled picker for a profile that
+     * takes no effort at all, and could not narrow the list when the chosen
+     * model accepts fewer. mobile/launch-options.ts is the phone's half of the
+     * rule checked above, and pure for the same reason: no spawn, no fetch, so
+     * the offer can be driven from the very fixtures the window's half used. */
+    const { launchOffer } = await import('./mobile/launch-options');
+    const codexCatalog = [
+      { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], isDefault: true },
+      { value: 'gpt-5.5', label: 'GPT-5.5', efforts: ['low', 'medium'] },
+    ];
+    const phoneCodex = launchOffer(codexShaped, codexCatalog);
+    // '' is the CLI's own default model, and the efforts it leaves standing are
+    // the default model's; the empty value is dropped from the comparison
+    // because it is the "pass no flag" row rather than a level.
+    const phoneEfforts = (model: string) =>
+      (phoneCodex.model.choices.find((choice) => choice.value === model)?.efforts ?? phoneCodex.effort.choices)
+        .map((choice) => choice.value).filter(Boolean).join();
+    check(phoneCodex.effort.supported && phoneCodex.effort.label === 'Reasoning effort'
+      && phoneEfforts('') === 'low,medium,high,xhigh,max',
+      'the phone offers exactly the efforts the Codex profile declares, under the profile’s own label, with the level only the CLI catalog named dropped',
+      phoneCodex.effort.choices);
+    check(phoneEfforts('gpt-5.5') === intersectChoices(
+      launchFieldChoices(codexShaped, 'effort').choices, ['low', 'medium'],
+    ).map((choice) => choice.value).join(),
+      'and a model with a narrower reasoning range narrows the phone to exactly the list the window computes for the same profile',
+      phoneEfforts('gpt-5.5'));
+    const phoneLegacy = launchOffer(legacyShaped, []);
+    check(phoneLegacy.effort.supported && !phoneLegacy.effort.open
+      && phoneLegacy.effort.choices.filter((choice) => choice.value).length === 5,
+      'a definition that declares no launch fields falls back to Wanigan’s own effort list on the phone too, rather than to an empty picker',
+      phoneLegacy.effort.choices);
+    const phoneOpen = launchOffer(openShaped, []);
+    check(phoneOpen.model.open && phoneOpen.model.defaultValue === 'orbit-2'
+      && phoneOpen.model.choices.length === 2
+      && !phoneOpen.effort.supported && phoneOpen.effort.choices.length === 0,
+      'a select the manifest opened with allowCustom keeps free text on the phone, and a field the profile does not take is offered no choices at all',
+      phoneOpen.model);
   } catch (error) {
     check(false, `provider pack suite threw: ${error instanceof Error ? error.message : String(error)}`);
   } finally {

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createServer as createNetServer } from 'node:net';
 import Database from 'better-sqlite3';
-import { SIDEBAR_GROUPS, TABS, TAB_ICONS } from '../shared/routes';
+import { SIDEBAR_GROUPS, TABS, TAB_ICONS, TAB_SHORTCUTS } from '../shared/routes';
 import { MOBILE_ABSENT, MOBILE_VIEWS } from '../shared/mobile-nav';
 import * as limits from './limits';
 import { TRUST_COPY, TRUST_LEVELS, trustCopy, trustGlyph } from '../shared/types';
@@ -1564,6 +1564,20 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && lockedTerminalBody.error === 'Remote control is disabled in Wanigan Settings.',
     'every control-scope route is refused with the exact sentence the page matches on, not just the first one the console asks for',
     `${lockedControl.status}:${lockedControlBody.error} / ${lockedTerminal.status}:${lockedTerminalBody.error}`);
+    // A key press is a PTY write, so it is refused by the same switch and with
+    // the same sentence as the two routes above — and refused before the rate
+    // limiter, so a phone probing a switched-off console cannot spend the
+    // operator's action budget on a run of 403s.
+    const lockedKey = await fetch(new URL('api/action', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'key', sessionId: 's_mobile', key: 'down' }),
+    });
+    const lockedKeyBody = await lockedKey.json() as { error?: string };
+    check(lockedKey.status === 403
+      && lockedKeyBody.error === 'Remote control is disabled in Wanigan Settings.'
+      && /disabled/.test(lockedKeyBody.error),
+    'pressing a key from a phone is refused by the remote-control switch with the exact sentence the page matches on, so a switched-off console reads as switched off rather than broken',
+    `${lockedKey.status}:${lockedKeyBody.error}`);
     const unknownRoute = await fetch(new URL('api/not-a-route', monitor.localUrl), { headers: { authorization: `Bearer ${token}` } });
     const unknownRouteBody = await unknownRoute.json() as { error?: string };
     const wrongVerb = await fetch(controlUrl, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: '{}' });
@@ -1579,6 +1593,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       launch: async (input) => { remoteActions.push(`launch:${input.projectId}:${input.providerId}:${input.model ?? ''}:${input.effort ?? ''}:${input.prompt}`); return { id: 's_mobile', title: 'Codex · Mobile repo' }; },
       prompt: async (id, prompt) => { remoteActions.push(`prompt:${id}:${prompt}`); },
       interrupt: async (id) => { remoteActions.push(`interrupt:${id}`); return true; },
+      key: async (id, sequence) => { remoteActions.push(`key:${id}:${JSON.stringify(sequence)}`); },
       terminal: async (id) => ({ title: `Terminal ${id}`, running: true, text: `\x1b[38;5;214msafe output\x1b[0m for ${id}\x1b]8;;https://example.com\x07` }),
     });
     await mobile.setMobileConfig({ remoteControlEnabled: true });
@@ -1614,7 +1629,18 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && composedShell.includes("it will show a goal's contract, its task graph, and the decision waiting on you."),
     'the served page carries one panel per phone destination, and the destinations with no screen yet say so and name what will be there',
     missingViews.map((view) => view.id).join(', ') || 'none');
-    // A reload has to land on the screen you were on, and it must not do that
+    // NOTE for the integrator: this needs TAB_SHORTCUTS added to the existing
+    // routes import at the top of this file —
+    //   import { SIDEBAR_GROUPS, TABS, TAB_ICONS, TAB_SHORTCUTS } from '../shared/routes';
+    // MOBILE_VIEWS is already imported.
+    //
+    // An iPad keyboard reaches all four thumb-bar destinations directly, and
+    // the chord printed on the button is the chord that fires: one string,
+    // used as aria-keyshortcuts and as the handler's test. The digits are the
+    // desktop's, taken from the Control alternative shared/routes.ts already
+    // publishes beside each ⌘ one — ⌘1–9 is Safari's tab switcher on an iPad
+    // and never reaches a page — so ⌃2 is Fleet on the phone because ⌘2 is
+    // Fleet on the Mac. A renumbered desktop digit row has to move the phone    // A reload has to land on the screen you were on, and it must not do that
     // through the address. The fragment is where the pairing token arrives and
     // tokenFromFragment() deletes it on the first tick, so routing through the
     // hash would mean this page writing to that same field on every tap. The
@@ -1623,6 +1649,19 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // bootRoute() seeds its state after the strip rather than before it, so the
     // first Back out of a pushed route cannot restore the pairing link.
     const composedJs = composedShell.slice(composedShell.indexOf('<script nonce='), composedShell.indexOf('</script>'));
+    // with it rather than leaving one number meaning two screens.
+    const barChords = MOBILE_VIEWS.filter((view) => view.bar).map((view) => ({
+      id: view.id,
+      chord: TAB_SHORTCUTS[view.narrows[0]].aria.split(/\s+/).find((alt) => alt.startsWith('Control+')) ?? '',
+    }));
+    const unreachable = barChords.filter((entry) => !entry.chord
+      || composedShell.split(`data-goto="${entry.id}" aria-keyshortcuts="${entry.chord}"`).length !== 3
+      || !composedJs.includes(`{"view":"${entry.id}","chord":"${entry.chord}","key":"${entry.chord.slice(-1).toLowerCase()}","shift":false}`));
+    check(barChords.length === 4 && unreachable.length === 0
+      && composedJs.includes("if (!event.ctrlKey || event.metaKey || event.altKey || event.repeat) return '';")
+      && composedJs.includes('const hit = NAV_CHORDS.find((entry) => entry.key === key && entry.shift === event.shiftKey);'),
+    'every thumb-bar destination is one keystroke away on an iPad keyboard, published on both the bar and the rail as the same chord the key handler matches, and taken from the desktop route that screen narrows',
+    unreachable.map((entry) => `${entry.id}:${entry.chord || 'none'}`).join(', ') || 'none');
     const historyWrites = composedJs.match(/history\.(?:push|replace)State\([^;]*?\);/g) ?? [];
     check(historyWrites.length === 3
       && historyWrites.every((call) => call.endsWith('location.href);') || call.endsWith('location.pathname + location.search);'))
@@ -1745,6 +1784,57 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const terminalBody = JSON.parse(await terminal.text()) as { text?: string };
     check(terminal.ok && terminalBody.text === 'safe output for s_mobile' && !terminalBody.text.includes('\x1b'),
       'a paired device receives readable terminal text with ANSI and terminal metadata removed');
+    // A blocked agent is not always waiting for a sentence. A Claude Code
+    // permission prompt is a numbered menu and a Codex approval is a keypress;
+    // both want an arrow, an Escape or a bare Enter, and "some text plus a
+    // newline" can produce none of the three. So the phone can press keys — and
+    // because that is a live PTY write, it sends a name out of a closed list
+    // and the main process, not the page, decides what bytes that name is.
+    const advertised = JSON.parse(await (await fetch(controlUrl, { headers: { authorization: `Bearer ${token}` } })).text()) as { keys?: { name: string; glyph: string; label: string }[] };
+    const advertisedKeys = advertised.keys ?? [];
+    const pressedKeys: number[] = [];
+    for (const name of ['down', 'enter', 'escape']) {
+      const press = await fetch(new URL('api/action', monitor.localUrl), {
+        method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'key', sessionId: 's_mobile', key: name }),
+      });
+      pressedKeys.push(press.status);
+      await press.arrayBuffer();
+    }
+    // Wrong case, a leading space, a plausible name that is simply not on the
+    // list, a non-string — and the two that would exist on any object literal.
+    // A key table reached through Object.prototype answers `constructor` with a
+    // function and `__proto__` with an object, and either one is the phone
+    // choosing what reaches the PTY instead of the Mac.
+    const refusedKeys: { status: number; error?: string }[] = [];
+    for (const name of ['Down', ' down', 'ctrl-c', '__proto__', 'constructor', 27]) {
+      const refused = await fetch(new URL('api/action', monitor.localUrl), {
+        method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'key', sessionId: 's_mobile', key: name }),
+      });
+      refusedKeys.push({ status: refused.status, ...(JSON.parse(await refused.text()) as { error?: string }) });
+    }
+    const keyWrites = remoteActions.filter((entry) => entry.startsWith('key:'));
+    check(advertisedKeys.length === 6
+      && advertisedKeys.every((key) => key.name && key.glyph && key.label)
+      && pressedKeys.every((status) => status === 200)
+      && refusedKeys.every((refused) => refused.status === 400 && Boolean(refused.error))
+      && keyWrites.join('|') === 'key:s_mobile:"\\u001b[B"|key:s_mobile:"\\r"|key:s_mobile:"\\u001b"',
+    'a paired device presses a key by name from a closed list, and the sequence that reaches the PTY is the one the main process chose — an unlisted name, a differently-cased one and an inherited Object.prototype name are all refused',
+    `${advertisedKeys.length} advertised, pressed ${pressedKeys.join(',')}, refused ${refusedKeys.map((refused) => refused.status).join(',')}`);
+    // The page carries no escape sequence at all, in any form: it posts the
+    // name of a key and the bytes stay behind. And every button says the word
+    // for what it sends, because a bare arrowhead is a guess about what a
+    // control does and this one does something to a live agent. The last clause
+    // is the promise this suite used to pin: nothing served to a phone may
+    // claim a boundary between typing and approving that no code enforces.
+    check(composedShell.split('id="terminal-keys"').length === 2
+      && composedJs.includes("body:JSON.stringify({ action:'key', sessionId:sessionId, key:key.name })")
+      && composedJs.includes("button.append(glyph, node('span', '', label));")
+      && composedJs.includes("glyph.setAttribute('aria-hidden', 'true');")
+      && !composedShell.includes('u001b') && !composedShell.includes('\x1b')
+      && !/permission decisions stay at the Mac|decision stays at the Mac/.test(composedShell),
+    'the phone page offers the keys a waiting agent needs, each labelled with the word for what it sends, carries no terminal escape sequence of its own, and no longer tells the operator that a decision it can in fact type stays at the Mac');
     // The console polls /api/terminal every 1.5 seconds and /api/control on
     // every render. Charging those reads to the same 20-per-minute budget as a
     // launch would 429 a console that is working perfectly, within seconds of
@@ -1758,6 +1848,33 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(pollCodes.every((status) => status === 200),
       'polling the console reads never spends the remote-action write budget, so an iPad left open does not rate-limit itself out of its own terminal',
       pollCodes.filter((status) => status !== 200).length);
+    // Keys are writes, and they travel the one POST route every other remote
+    // action travels, so they spend the same twenty-a-minute budget rather than
+    // an allowance of their own. The proof is the action at the end: it is a
+    // plain instruction, and if key presses had a private window it would still
+    // be affordable. This is deliberately the LAST /api/action POST in this
+    // block, because it leaves the shared window drained for the rest of the
+    // minute — put a new remote-action assertion above it, never below.
+    let keyPresses = 0;
+    let firstRefusal = 0;
+    while (keyPresses < 40 && firstRefusal === 0) {
+      const burst = await fetch(new URL('api/action', monitor.localUrl), {
+        method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'key', sessionId: 's_mobile', key: 'down' }),
+      });
+      keyPresses++;
+      if (burst.status === 429) firstRefusal = keyPresses;
+      await burst.arrayBuffer();
+    }
+    const afterBurst = await fetch(new URL('api/action', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'prompt', sessionId: 's_mobile', prompt: 'Continue' }),
+    });
+    const afterBurstBody = JSON.parse(await afterBurst.text()) as { error?: string };
+    check(firstRefusal > 0 && afterBurst.status === 429
+      && afterBurstBody.error === 'Too many remote actions. Wait a minute and try again.',
+    'pressing a key spends the same remote-action budget as a launch or an instruction, so a phone cannot machine-gun keystrokes into a live agent and cannot buy itself a second allowance by calling them keys',
+    `refused after ${firstRefusal} presses; the instruction that followed: ${afterBurst.status}`);
 
     const rotated = await mobile.regenerateMobileToken();
     const oldToken = await fetch(apiUrl, { headers: { authorization: `Bearer ${token}` } });
@@ -3891,6 +4008,37 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && mobileSrc.includes('pollDelay = POLL_FAST_MS;')
     && !mobileSrc.includes('setInterval(() => { void poll(); }, 3000)'),
   'the phone page only claims an empty fleet about a poll that returned, and steps its retry out to a ceiling while the Mac is not answering');
+  // A mark is a glyph and a number wide, with nowhere to print 'as of eleven
+  // minutes ago' — so when the Mac stops answering it leaves rather than keeps
+  // a count nothing is confirming any more. The dashboard behind it may go on
+  // showing its dated reading because it says in words how old that is; the
+  // nav cannot, and this is the same rule the empty fleet already follows.
+  // Both hooks are named because render() alone cannot enforce it: a poll that
+  // fails never renders, so the freshness pass is the only thing that ever
+  // learns the Mac went quiet. And neither may become a second cadence — one
+  // radio, one poll.
+  check(mobileSrc.includes("const live = navMarksFollowThePoll && navReading !== null && lastGoodAt > 0 && connectionState === 'connected';")
+    && mobileSrc.includes("mark.classList.toggle('hidden', total <= 0);")
+    && mobileSrc.includes('render = (snapshot) => { renderWithoutMarks(snapshot); navMarks(snapshot); };')
+    && mobileSrc.includes('applyFreshness = () => { freshnessWithoutMarks(); navMarks(null); };')
+    && mobileSrc.includes('.nav-mark.hidden { display:none; }')
+    && !/setInterval\([^;]*navMarks/.test(mobileSrc),
+  'a nav mark disappears when the Mac stops answering instead of printing a count it can no longer confirm, and it follows the poll the page already makes rather than a cadence of its own');
+  // The bar's Fleet mark is the same claim as the tile behind it, made where
+  // it can be read without opening the screen — so it sums the same three
+  // kinds the desktop calls NEEDS_YOU and wears the glyph of the worst one
+  // present. The order is load-bearing, not cosmetic: spec.kinds.find() picks
+  // the glyph, so a list reordered here would show '✓' over a fleet whose real
+  // answer is '?'. A fourth kind, or the desktop's list moving without this
+  // one, would send someone to a screen whose own headline disagreed with the
+  // number that sent them.
+  check(appSrc.includes("const NEEDS_YOU: AttentionKind[] = ['permission', 'error', 'finished'];")
+    && appSrc.includes("permission: '?', error: '✕', finished: '✓', idle: '◦', working: '▸',")
+    && mobileSrc.includes("{ id: 'fleet', label: mobileViewLabel('fleet'), kinds: ['permission', 'error', 'finished'], word: 'need you' },")
+    && mobileSrc.includes('const total = live ? spec.kinds.reduce((sum, kind) => sum + (navReading[kind] || 0), 0) : 0;')
+    && mobileSrc.includes("const worst = total > 0 ? spec.kinds.find((kind) => (navReading[kind] || 0) > 0) : '';")
+    && mobileSrc.includes("const NAV_GLYPH = { permission: '?', error: '✕', finished: '✓', running: '▸' };"),
+  'the phone nav sums the same three attention kinds the desktop calls NEEDS_YOU and wears the same glyph for the worst one, so the mark and the Needs-you tile behind it cannot disagree about who is waiting');
   check(/setSessionExitObserver/.test(mainSrc) && /exitObserver\?\./.test(sessionManagerSrc),
     'PTY exits reach the notification classifier even for providers with no hook bus');
   check(/tui\.notifications=/.test(sessionManagerSrc) && /scanCodexNotifications/.test(sessionManagerSrc)

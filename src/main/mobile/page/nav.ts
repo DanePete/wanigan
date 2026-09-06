@@ -1,7 +1,8 @@
 import {
-  MOBILE_BAR_VIEWS, MOBILE_DEFAULT_VIEW, MOBILE_NAV_GROUPS, MOBILE_VIEWS,
+  MOBILE_BAR_VIEWS, MOBILE_DEFAULT_VIEW, MOBILE_NAV_GROUPS, MOBILE_VIEWS, mobileViewLabel,
 } from '../../../shared/mobile-nav';
 import type { MobileNavEntry, MobileNavIcon, MobileViewId } from '../../../shared/mobile-nav';
+import { TAB_SHORTCUTS } from '../../../shared/routes';
 
 /**
  * The phone's navigation, rendered three ways from the one record in
@@ -14,6 +15,11 @@ import type { MobileNavEntry, MobileNavIcon, MobileViewId } from '../../../share
  * Every target is at least 44px, and state is carried by a filled pill plus
  * aria-current rather than by a hover rule: on the device this page was written
  * for, hover is a state that only exists for the instant before a tap.
+ *
+ * Two things here are about a destination rather than about the act of
+ * navigating: the mark a row carries, which answers 'which screen should I
+ * open' before one is open, and the chord an attached keyboard reaches a bar
+ * slot with. Both are described where they are built, below.
  */
 
 /**
@@ -53,6 +59,87 @@ function icon(name: MobileNavIcon | 'more'): string {
 }
 
 /**
+ * What a destination is allowed to say about itself before you open it.
+ *
+ * Fleet's three kinds are the desktop's NEEDS_YOU, in the desktop's order: a
+ * human is the blocker for a permission prompt, a run that stopped on an error
+ * and a turn that finished, and for nothing else. It is deliberately the same
+ * sum the Needs-you tile prints on the screen behind the mark — a bar that
+ * counted a fourth kind would send someone to a screen whose own headline
+ * disagreed with the number that sent them. Agent carries the running count
+ * for the reason the desktop's Sessions row does: the question that gets asked
+ * from a pocket is whether anything is working at all.
+ *
+ * The glyphs are the desktop's ATTENTION_GLYPH shapes, so one session reads the
+ * same on both surfaces, and the glyph is drawn before the number rather than
+ * beside a colour — a mark that is only red is invisible to the people who most
+ * need to see it, and on a phone held in sunlight the shape is the channel that
+ * survives.
+ */
+type NavMarkSpec = { id: MobileViewId; label: string; kinds: readonly string[]; word: string };
+const NAV_MARK_VIEWS: readonly NavMarkSpec[] = [
+  { id: 'fleet', label: mobileViewLabel('fleet'), kinds: ['permission', 'error', 'finished'], word: 'need you' },
+  { id: 'agent', label: mobileViewLabel('agent'), kinds: ['running'], word: 'running' },
+];
+
+const NAV_MARKED_VIEWS = new Set(NAV_MARK_VIEWS.map((spec) => spec.id));
+
+/**
+ * Empty and hidden in the served bytes. The count belongs to a poll this phone
+ * made, not to the moment the Mac rendered the page: a number baked in here
+ * would be true when it was written and a claim about now by the time anyone
+ * read it, which is the same lie the dashboard refuses to tell.
+ */
+function markMarkup(id: MobileViewId): string {
+  return NAV_MARKED_VIEWS.has(id) ? `<span class="nav-mark hidden" data-mark="${id}" aria-hidden="true"></span>` : '';
+}
+
+/**
+ * The chord an iPad keyboard reaches a bar destination with.
+ *
+ * The natural chord is the desktop's digit row, and on an iPad that row is
+ * Safari's: Command-1 through Command-9 switch tabs there, so the page never
+ * sees the event and a chord published as ⌘2 would be one that never fires.
+ * Rather than invent a phone-only vocabulary, this takes the other alternative
+ * shared/routes.ts already publishes for the very same destination — Fleet's
+ * aria string is 'Meta+2 Control+2'. So ⌃2 is Fleet here because ⌘2 is Fleet on
+ * the Mac, ⌃1 is the agent terminal because ⌘1 is Sessions, ⌃9 is Git, and
+ * Spend takes Insights' ⌃5 because Insights is the half of what Spend narrows
+ * that sits on the digit row. The digits are not renumbered for the bar's four
+ * slots on purpose: a number that meant one screen on the Mac and another in
+ * the hand is a worse shortcut than no shortcut.
+ *
+ * The published string is the matched string. navChordView() tests the same
+ * value that goes into aria-keyshortcuts, so the sheet of chords a screen
+ * reader reads out cannot drift from the ones that work.
+ */
+type NavChord = { view: MobileViewId; chord: string; key: string; shift: boolean };
+
+function navChord(view: MobileNavEntry): NavChord | null {
+  const tab = view.narrows[0];
+  if (!tab) return null;
+  const alternative = TAB_SHORTCUTS[tab].aria.split(/\s+/).find((candidate) => candidate.startsWith('Control+'));
+  if (!alternative) return null;
+  const key = alternative.split('+').pop() ?? '';
+  // A named key ('Control+Shift+Escape') would need a matcher this page has no
+  // use for; every bar destination narrows to a single-character route today,
+  // and one that stopped doing so should lose its chord rather than gain a
+  // half-implemented one.
+  if (key.length !== 1) return null;
+  return { view: view.id, chord: alternative, key: key.toLowerCase(), shift: alternative.includes('Shift+') };
+}
+
+const NAV_CHORDS: readonly NavChord[] = MOBILE_BAR_VIEWS.flatMap((view) => {
+  const chord = navChord(view);
+  return chord ? [chord] : [];
+});
+
+function chordAttr(id: MobileViewId): string {
+  const chord = NAV_CHORDS.find((entry) => entry.view === id);
+  return chord ? ` aria-keyshortcuts="${chord.chord}"` : '';
+}
+
+/**
  * A destination that has no phone screen yet says so, names what will be there,
  * and points at the machine that can do it today. A blank panel behind a live
  * tab is the same lie as an empty fleet on a sleeping Mac: it looks like an
@@ -87,7 +174,7 @@ ${inner}
 export function navRailMarkup(): string {
   const groups = MOBILE_NAV_GROUPS.map((section) => `    <div class="rail-group">
       <h2 class="rail-group-title">${esc(section.group)}</h2>
-${section.views.map((view) => `      <button type="button" class="rail-row" data-goto="${view.id}">${icon(view.icon)}<span>${esc(view.label)}</span></button>`).join('\n')}
+${section.views.map((view) => `      <button type="button" class="rail-row" data-goto="${view.id}"${chordAttr(view.id)}>${icon(view.icon)}<span>${esc(view.label)}</span>${markMarkup(view.id)}</button>`).join('\n')}
     </div>`).join('\n');
   return `  <nav id="nav-rail" class="rail" aria-label="Screens">
 ${groups}
@@ -97,7 +184,7 @@ ${groups}
 /** The thumb bar: the four destinations that carry `bar`, then More. */
 export function navBarMarkup(): string {
   const slots = MOBILE_BAR_VIEWS.map((view) =>
-    `    <button type="button" class="tab" data-goto="${view.id}">${icon(view.icon)}<span class="tab-label">${esc(view.label)}</span></button>`).join('\n');
+    `    <button type="button" class="tab" data-goto="${view.id}"${chordAttr(view.id)}>${icon(view.icon)}<span class="tab-label">${esc(view.label)}</span>${markMarkup(view.id)}</button>`).join('\n');
   return `  <nav id="nav-bar" class="tabbar" aria-label="Main">
 ${slots}
     <button type="button" class="tab" id="nav-more" aria-haspopup="dialog" aria-expanded="false" aria-controls="nav-sheet">${icon('more')}<span class="tab-label">More</span></button>
@@ -124,9 +211,28 @@ export function navStyle(): string {
     .placeholder { margin-top:6px; }
     .placeholder span { display:block; }
     .nav-icon { width:22px; height:22px; flex:none; }
+    .nav-mark { display:inline-flex; align-items:center; gap:4px; min-height:18px; padding:0 6px; border:1px solid currentColor; border-radius:999px; font-size:11px; font-weight:760; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    /* The same tie the sheet has to break below, and for a worse reason: nav
+       rules are appended after the shared sheet, so a display of its own would
+       outlive .hidden — and a mark that keeps its shape after the Mac stops
+       confirming the number is exactly the stale claim it is meant to avoid. */
+    .nav-mark.hidden { display:none; }
+    .nav-mark[data-tone="alert"] { color:var(--critical); background:var(--critical-soft); }
+    .nav-mark[data-tone="serious"] { color:var(--serious); background:var(--panel-raised); }
+    .nav-mark[data-tone="ok"] { color:var(--good); background:var(--good-soft); }
+    .nav-mark[data-tone="quiet"] { color:var(--dim); background:var(--panel-raised); }
+    /* Beside the icon, not over it. A badge pinned to the slot's corner is the
+       phone convention, but this one is a glyph and a number rather than a dot,
+       and at 320px it covered the picture it was meant to annotate. The two
+       share a row and the pair is centred, so a slot with nothing to say still
+       centres its icon exactly as before. */
+    .tabbar .tab > .nav-icon { grid-area:icon; }
+    .tabbar .tab > .nav-mark { grid-area:mark; padding:0 3px; border:0; font-size:10px; }
+    .tabbar .tab > .tab-label { grid-area:label; }
+    .rail-row .nav-mark { margin-left:auto; }
     .rail { display:none; }
     .tabbar { position:fixed; inset:auto 0 0 0; z-index:5; display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:2px; border-top:1px solid var(--line); background:var(--panel); box-shadow:0 -10px 30px var(--shadow); padding:6px max(6px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left)); }
-    .tabbar .tab { display:grid; justify-items:center; align-content:center; gap:3px; min-height:52px; padding:6px 2px; border:1px solid transparent; border-radius:11px; background:transparent; color:var(--dim); font-size:11px; font-weight:700; }
+    .tabbar .tab { display:grid; grid-template-columns:auto auto; grid-template-areas:"icon mark" "label label"; justify-items:center; justify-content:center; align-content:center; gap:3px; min-height:52px; padding:6px 2px; border:1px solid transparent; border-radius:11px; background:transparent; color:var(--dim); font-size:11px; font-weight:700; }
     .tabbar .tab.on { color:var(--accent); background:var(--accent-soft); border-color:color-mix(in srgb,var(--accent) 35%,transparent); }
     .tabbar .tab:active { background:var(--panel-raised); }
     .tab-label { letter-spacing:.02em; }
@@ -252,6 +358,79 @@ export function navScript(): string {
         // pushed route lands on a tokenless URL rather than on the pairing link.
         setView(rememberedView(), 'boot');
         history.replaceState({ wanigan: currentView }, '', location.href);
+      }
+
+      // ── who needs you, before you open the screen ───────────────────
+      // The bar's job is to answer 'which screen should I open' without being
+      // opened. Fleet's mark is the desktop's three NEEDS_YOU kinds summed, the
+      // same sum the tile behind it prints; Agent's is what is running. Both
+      // are drawn glyph first, worst kind first, because a mark that is only a
+      // colour is not a mark for everyone.
+      //
+      // No view owns this. A screen renders when it is the screen on show, and
+      // the whole point of a mark is to be true about a destination you are not
+      // looking at, so the nav updates itself from the same snapshot the shell
+      // already polls for.
+      const NAV_MARKS = ${JSON.stringify(NAV_MARK_VIEWS)};
+      const NAV_GLYPH = { permission: '?', error: '✕', finished: '✓', running: '▸' };
+      const NAV_TONE = { permission: 'alert', error: 'serious', finished: 'ok', running: 'quiet' };
+      let navReading = null;
+      // False until the wiring below has both hooks. A mark that cannot be
+      // trusted to leave must never arrive.
+      let navMarksFollowThePoll = false;
+
+      function navMarks(snapshot) {
+        if (snapshot) {
+          const totals = snapshot.totals || {};
+          navReading = {};
+          Object.keys(NAV_GLYPH).forEach((kind) => {
+            navReading[kind] = Math.max(0, Math.round(Number(totals[kind]) || 0));
+          });
+        }
+        // A count from a Mac that stopped answering is not a fact about now.
+        // The dashboard dates its whole reading when that happens and says so
+        // in words; a mark is a glyph and a number wide and has nowhere to put
+        // 'as of eleven minutes ago', so it leaves instead of lying. Same rule
+        // the empty fleet follows, applied to the one number you get to see
+        // without opening anything.
+        const live = navMarksFollowThePoll && navReading !== null && lastGoodAt > 0 && connectionState === 'connected';
+        NAV_MARKS.forEach((spec) => {
+          const total = live ? spec.kinds.reduce((sum, kind) => sum + (navReading[kind] || 0), 0) : 0;
+          const worst = total > 0 ? spec.kinds.find((kind) => (navReading[kind] || 0) > 0) : '';
+          document.querySelectorAll('[data-mark="' + spec.id + '"]').forEach((mark) => {
+            mark.classList.toggle('hidden', total <= 0);
+            // Capped, and capped in the grammar that says so. A thumb slot is
+            // about sixty pixels wide and a fourth digit wrapped the glyph onto
+            // a line of its own; '99+' is still true, and the exact number is
+            // one tap away on the screen the mark is pointing at.
+            mark.textContent = total > 0 ? NAV_GLYPH[worst] + ' ' + (total > 99 ? '99+' : total) : '';
+            if (total > 0) mark.setAttribute('data-tone', NAV_TONE[worst]);
+            else mark.removeAttribute('data-tone');
+            // The mark itself is aria-hidden: a screen reader announcing
+            // '✕ 3' between an icon and a tab label teaches nobody anything.
+            // The count reaches it as the button's name instead, in words, and
+            // leaves from there on exactly the same condition.
+            const button = mark.closest('[data-goto]');
+            if (!button) return;
+            if (total > 0) button.setAttribute('aria-label', spec.label + ', ' + total + ' ' + spec.word);
+            else button.removeAttribute('aria-label');
+          });
+        });
+      }
+
+      // The bar from an iPad keyboard. The table is built from the desktop's
+      // own published alternatives — see navChord() for why it is the Control
+      // half and not the Command one — and the key handler matches nothing that
+      // is not in it.
+      const NAV_CHORDS = ${JSON.stringify(NAV_CHORDS)};
+
+      function navChordView(event) {
+        // A held key would push a history entry per repeat, which turns Back
+        // into a way out of nothing.
+        if (!event.ctrlKey || event.metaKey || event.altKey || event.repeat) return '';
+        const key = String(event.key || '').toLowerCase();
+        const hit = NAV_CHORDS.find((entry) => entry.key === key && entry.shift === event.shiftKey);
+        return hit ? hit.view : '';
       }`;
 }
 
@@ -262,12 +441,39 @@ export function navWiring(): string {
       navMore.addEventListener('click', () => { if (navSheet.classList.contains('hidden')) openSheet(); else closeSheet(false); });
       byId('nav-sheet-close').addEventListener('click', () => closeSheet(false));
       byId('nav-sheet-scrim').addEventListener('click', () => closeSheet(false));
-      document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeSheet(false); });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') { closeSheet(false); return; }
+        const routed = navChordView(event);
+        if (!routed) return;
+        // Swallowed whether or not it moves: a chord this page publishes should
+        // never also do whatever the browser would have done with it.
+        event.preventDefault();
+        if (routed !== currentView) setView(routed, 'push');
+      });
       // The edge swipe and the Back button are the same gesture to this page:
       // the entry's own state names the screen, and a first entry that predates
       // bootRoute() falls back to what was remembered rather than to nothing.
       window.addEventListener('popstate', (event) => {
         const restored = event.state && typeof event.state.wanigan === 'string' ? event.state.wanigan : rememberedView();
         setView(restored, 'pop');
-      });`;
+      });
+      // Two hooks, because a mark goes wrong in two different ways. render()
+      // is the only thing that carries counts, and it runs only when a poll
+      // came back; the freshness pass is what runs when one did not, and it is
+      // the only place that learns the Mac has gone quiet. Extending both is
+      // the move the frame already makes on render() for the view watchers,
+      // and for the same reason: this page has one cadence and a mark must not
+      // become a second one.
+      try {
+        const renderWithoutMarks = render;
+        render = (snapshot) => { renderWithoutMarks(snapshot); navMarks(snapshot); };
+        const freshnessWithoutMarks = applyFreshness;
+        applyFreshness = () => { freshnessWithoutMarks(); navMarks(null); };
+        navMarksFollowThePoll = true;
+      } catch (ignored) {
+        // If a later refactor makes either unassignable, the nav shows no
+        // marks at all rather than a count nothing is left to retract. An
+        // absent mark reads as 'nothing to tell you here'; a frozen one reads
+        // as a fact.
+      }`;
 }

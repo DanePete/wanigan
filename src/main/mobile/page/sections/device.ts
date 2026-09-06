@@ -181,7 +181,7 @@ ${ABSENT_ROWS}
         if (remoteControlEnabled) {
           return deviceRow('Drive a session', fresh ? 'can' : 'unknown', fresh ? 'Yes' : 'Was on',
             'Remote control ' + (fresh ? 'is on at the Mac' : 'was on ' + deviceAsOf()) +
-            ', so this device can open a terminal, send the next instruction and interrupt a turn. Approving a permission prompt is not one of them: that decision stays at the Mac.');
+            ', so this device can open a terminal, interrupt a turn, and type into the session — a message, or one of the arrow, Enter and Escape keys a waiting prompt needs. That is how a permission prompt gets answered from here: by typing the same answer you would type at the Mac.');
         }
         return deviceRow('Drive a session', 'cannot', 'No',
           'Remote control ' + (fresh ? 'is off at the Mac' : 'was off ' + deviceAsOf()) +
