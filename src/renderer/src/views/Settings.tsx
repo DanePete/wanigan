@@ -58,6 +58,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'automation', tabLabel: 'Automation', section: 'Spending', hint: 'Cap the estimated cost per batch run', keywords: 'spend cap cost limit usd budget' },
   { tab: 'automation', tabLabel: 'Automation', section: 'Dispatcher', hint: 'Concurrency limits and the queue', keywords: 'concurrency limits queue dispatcher interactive headless batch parallel' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Phone monitor', hint: 'iPad/phone monitor, alerts, remote', keywords: 'phone ipad mobile tailscale ntfy push alerts remote pairing' },
+  { tab: 'connections', tabLabel: 'Connections', section: 'Before you leave', hint: 'Can this Mac be left alone and still answer', keywords: 'sleep awake battery power lid closed walk away leave readiness restart resume reachable overnight' },
   { tab: 'connections', tabLabel: 'Connections', section: 'MCP servers', hint: 'Tool servers agents may use', keywords: 'mcp server tools stdio http' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Observation', hint: 'Telemetry, hooks, checkpoints, archive', keywords: 'telemetry hooks checkpoints notifications archive transcripts observation pet retention' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Search transcripts', hint: 'Full-text search of the archive', keywords: 'transcript search fts archive conversation history full-text' },
@@ -2170,6 +2171,10 @@ function PhoneMonitor() {
   }, []);
   useEffect(() => { readTransport(); }, [readTransport]);
 
+  /* The readiness block below reads both of these and neither of them alone,
+     so its one 'Check again' has to move both. */
+  const recheck = useCallback(() => { load(); readTransport(); }, [load, readTransport]);
+
   const configure = useCallback(async (patch: Partial<MobileMonitorConfig>, label: string) => {
     setBusy(label); setResult(null);
     try {
@@ -2355,7 +2360,11 @@ function PhoneMonitor() {
     );
   }
 
+  /* Two sections from one component, deliberately: the readiness block below
+     answers a different question but off the same readings, and a second pair
+     of reads would disagree with these switches the moment one is flipped. */
   return (
+    <>
     <Section title="Phone monitor"
              hint="Walk away without losing the fleet: a private read-only status page and opt-in phone alerts for the same states as desktop notifications.">
       <Callout title="The dashboard is read-only until you explicitly enable iPad control.">
@@ -2551,9 +2560,281 @@ function PhoneMonitor() {
       )}
       <Result r={result} />
     </Section>
+    <BeforeYouLeave status={status} net={net} onStatus={absorb} onRecheck={recheck} />
+    </>
   );
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+   Before you leave
+   ════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * What macOS is doing about sleep, as Wanigan observes it.
+ *
+ * The awake bridge lands in the same wave as this block, so this file can be
+ * compiled against a preload surface that does not carry it yet — the same
+ * position the transport panel above is in, and it takes the same shape: a
+ * narrow optional read, and an honest "unreadable" when the handler is absent.
+ *
+ * The value is then narrowed field by field rather than trusted through the
+ * cast. A bridge that lands beside this one with a different shape would
+ * otherwise turn an absent field into `false` and print "plugged in, held
+ * awake" about a laptop that is neither — and a confidently wrong "you can
+ * walk away" is the one answer this panel must never give.
+ */
+type AwakeReading = {
+  /** macOS reports no wall power: this Mac is running off its battery. */
+  onBattery: boolean;
+  /** Wanigan is currently holding an assertion against idle sleep. */
+  held: boolean;
+  /** What holds it, in Wanigan's own words — "3 sessions running". */
+  reason: string | null;
+};
+
+type AwakeBridge = { state: () => Promise<unknown> };
+
+function awakeBridge(): AwakeBridge | null {
+  return (window.wanigan as unknown as { awake?: AwakeBridge }).awake ?? null;
+}
+
+function awakeReading(value: unknown): AwakeReading | null {
+  if (!value || typeof value !== 'object') return null;
+  const d = value as Record<string, unknown>;
+  if (typeof d.onBattery !== 'boolean' || typeof d.held !== 'boolean') return null;
+  const reason = typeof d.reason === 'string' && d.reason.trim() ? d.reason.trim() : null;
+  return { onBattery: d.onBattery, held: d.held, reason };
+}
+
+/** Reading, unsupported and unreadable are three answers, and none of them is "no". */
+type Awake =
+  | { s: 'unsupported' }
+  | { s: 'reading' }
+  | { s: 'ok'; d: AwakeReading }
+  | { s: 'unreadable'; e: string };
+
+/* A reading that has not arrived and a reading that cannot arrive look
+   identical if both render as a blank, so both get a mark of their own. */
+const STILL_READING: MarkSpec = { glyph: '·', word: 'reading', color: 'var(--text-faint)' };
+const UNREADABLE: MarkSpec = { glyph: '?', word: 'unreadable', color: 'var(--text-faint)' };
+
+/** One line of the check: what it is, what was observed, and what follows. */
+type Check = { what: string; mark: MarkSpec; say: React.ReactNode; act?: React.ReactNode };
+
+/**
+ * The question an operator actually has before closing the lid, answered once.
+ *
+ * It is a readiness check rather than a settings group: every row is something
+ * Wanigan observed a moment ago, in the order that decides the answer — power,
+ * then sleep, then the carrier, then the listener — and only a row Wanigan can
+ * itself change carries a button. Nothing here is a default or an assumption;
+ * a fact that could not be read says so instead of passing.
+ *
+ * The readings are borrowed from the panel above rather than fetched again.
+ * Two independent reads of the same listener disagree the moment someone flips
+ * the switch twenty pixels higher, and this block would be the one still
+ * saying the reassuring half of it.
+ */
+function BeforeYouLeave({ status, net, onStatus, onRecheck }: {
+  status: MobileMonitorStatus | null;
+  net: Transport;
+  onStatus: (next: MobileMonitorStatus) => void;
+  onRecheck: () => void;
+}) {
+  const [awake, setAwake] = useState<Awake>({ s: 'reading' });
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+
+  const readAwake = useCallback(() => {
+    const bridge = awakeBridge();
+    if (!bridge) { setAwake({ s: 'unsupported' }); return; }
+    setAwake({ s: 'reading' });
+    bridge.state()
+      .then((value) => {
+        const d = awakeReading(value);
+        setAwake(d ? { s: 'ok', d } : {
+          s: 'unreadable',
+          e: 'The sleep reading came back in a shape this panel does not recognise, so it is not reporting one.',
+        });
+      })
+      .catch((e) => setAwake({ s: 'unreadable', e: msg(e) }));
+  }, []);
+  useEffect(() => { readAwake(); }, [readAwake]);
+
+  function recheck() {
+    setResult(null);
+    readAwake();
+    onRecheck();
+  }
+
+  /**
+   * The one repair this block owns. It goes through the same configure call the
+   * switch above uses and hands the answer back to that panel, so the switch and
+   * this row can never end up describing different listeners.
+   */
+  async function startDashboard() {
+    setBusy(true); setResult(null);
+    try {
+      const next = await window.wanigan.mobile.configure({ dashboardEnabled: true });
+      onStatus(next);
+      setResult(next.running
+        ? { tone: 'ok', text: `The dashboard is listening on ${next.localUrl}.` }
+        : { tone: 'error', text: next.error ?? 'The loopback listener did not start.' });
+      // Starting the dashboard is one of the things that asks macOS to stay
+      // awake, so the sleep row above this one is stale the moment it returns.
+      readAwake();
+    } catch (e) {
+      setResult({ tone: 'error', text: `The dashboard did not start: ${msg(e)}` });
+    } finally { setBusy(false); }
+  }
+
+  const again = <button className="btn" onClick={recheck}>Check again</button>;
+
+  function powerCheck(): Check {
+    const what = 'Power';
+    if (awake.s === 'reading') return { what, mark: STILL_READING, say: 'Asking macOS what this Mac is running on.' };
+    if (awake.s === 'unsupported') {
+      return { what, mark: UNREADABLE, say: 'This build of Wanigan cannot see whether this Mac is on wall power, so it cannot tell you what closing the lid will do.' };
+    }
+    if (awake.s === 'unreadable') return { what, mark: UNREADABLE, say: awake.e, act: again };
+    return awake.d.onBattery
+      ? {
+          what,
+          mark: { glyph: '⚠', word: 'on battery', color: 'var(--warning)' },
+          say: 'A Mac on battery sleeps when the lid closes, whatever any application asks for. This is the one line here that Wanigan cannot fix from inside the app: put it on wall power, or leave the lid open.',
+        }
+      : {
+          what,
+          mark: { glyph: '✓', word: 'plugged in', color: 'var(--good)' },
+          say: 'On wall power a request to stay awake can hold. Closing the lid still sleeps this Mac unless an external display keeps it in clamshell mode.',
+        };
+  }
+
+  function sleepCheck(): Check {
+    const what = 'Sleep';
+    if (awake.s === 'reading') return { what, mark: STILL_READING, say: 'Asking macOS whether anything is holding this Mac awake.' };
+    if (awake.s === 'unsupported') {
+      return { what, mark: UNREADABLE, say: 'This build of Wanigan cannot see whether anything is holding this Mac awake.' };
+    }
+    if (awake.s === 'unreadable') return { what, mark: UNREADABLE, say: awake.e, act: again };
+    if (awake.d.held) {
+      return {
+        what,
+        mark: { glyph: '✓', word: 'held awake', color: 'var(--good)' },
+        say: (
+          <>
+            Wanigan is asking macOS not to idle-sleep this Mac{awake.d.reason ? <> — {awake.d.reason}</> : null}.
+            {' '}The hold ends when that does, and the Mac goes back to its own sleep schedule.
+          </>
+        ),
+      };
+    }
+    return {
+      what,
+      mark: { glyph: '○', word: 'not held', color: 'var(--text-faint)' },
+      say: 'Nothing is asking macOS to stay awake, so this Mac may sleep on its own schedule and drop off the tailnet until something wakes it. A running session is what holds it awake, and so is the phone dashboard below.',
+    };
+  }
+
+  /* The five transport states are the transport panel's, read from the same
+     status it read. Naming a sixth here would be a second vocabulary for one
+     fact, and the two would drift the first time Tailscale changed. */
+  function transportCheck(): Check {
+    const what = 'Transport';
+    if (net.s === 'reading') return { what, mark: STILL_READING, say: 'Asking Tailscale where this Mac is published.' };
+    if (net.s === 'unsupported') {
+      return { what, mark: UNREADABLE, say: 'This build of Wanigan cannot see whether Tailscale is installed or running. A private HTTPS address you set by hand still works; Wanigan just cannot confirm it from here.' };
+    }
+    if (net.s === 'unreadable') return { what, mark: UNREADABLE, say: net.e, act: again };
+    const { state, url, message } = net.d;
+    const say: React.ReactNode =
+      state === 'serving'
+        ? <>This Mac answers at <code className="set-path set-wrap">{url ?? 'an address Tailscale did not report'}</code> inside your tailnet, and only inside it.</>
+        : state === 'error'
+          ? <>Tailscale reported: <code className="set-path set-wrap">{message ?? 'a failure with no message'}</code></>
+          : state === 'ready'
+            ? 'Tailscale is signed in but this Mac is not published, so the pairing link points at an address no iPad can open. Connect it in the panel above.'
+            : state === 'logged-out'
+              ? 'Tailscale is installed but signed out, so nothing is published. Sign in from its menu-bar item, then connect above.'
+              : 'Tailscale is not installed, so the dashboard stays on loopback and no device off this network can reach it.';
+    return { what, mark: TRANSPORT_MARK[state], say };
+  }
+
+  function reachCheck(): Check {
+    const what = 'Reachability';
+    if (!status) return { what, mark: STILL_READING, say: 'Reading the dashboard listener.' };
+    if (!status.config.dashboardEnabled) {
+      return {
+        what,
+        mark: OFF,
+        say: 'The read-only Fleet page is switched off, so a paired iPad has nothing to open however well the rest of this reads.',
+        act: (
+          <button className="btn btn-primary" disabled={busy} onClick={() => void startDashboard()}>
+            {busy ? 'Starting…' : 'Start the dashboard'}
+          </button>
+        ),
+      };
+    }
+    if (!status.running) {
+      return {
+        what,
+        mark: { glyph: '✕', word: 'not listening', color: 'var(--critical)' },
+        say: status.error ?? 'The switch is on but the loopback listener is not answering, so a published address maps to nothing.',
+        act: again,
+      };
+    }
+    // Listening and faulted at once is a real combination — a credential the
+    // keychain refused leaves the server up and the requests rejected — so it
+    // gets its own reading rather than being rounded up to a tick.
+    if (status.error) {
+      return {
+        what,
+        mark: { glyph: '⚠', word: 'faulted', color: 'var(--warning)' },
+        say: <>The listener is up but reported: {status.error}</>,
+        act: again,
+      };
+    }
+    return {
+      what,
+      mark: { glyph: '✓', word: 'listening', color: 'var(--good)' },
+      say: <>The dashboard is answering on <code className="set-path">{status.localUrl}</code>, which is what anything published above points at.</>,
+    };
+  }
+
+  const checks = [powerCheck(), sleepCheck(), transportCheck(), reachCheck()];
+
+  return (
+    <Section title="Before you leave"
+             hint="Whether the iPad still finds this Mac once the lid is closed. Every line is something Wanigan observed just now, not a setting."
+             right={<button className="set-mini" onClick={recheck}>Check again</button>}>
+      <ul className="set-leave">
+        {checks.map((c) => (
+          <li key={c.what} className="sunk set-leave-row">
+            <div className="set-leave-what">{c.what}</div>
+            <div className="set-leave-say">
+              <Mark {...c.mark} />
+              <p className="dim">{c.say}</p>
+            </div>
+            {c.act ? <div className="set-leave-do">{c.act}</div> : null}
+          </li>
+        ))}
+      </ul>
+
+      <div className="set-stack">
+        <Note tone="info" role="none">
+          <strong>What a restart would cost.</strong> A queued job that never started is still queued, and
+          Wanigan dispatches it once it is running again. A schedule keeps its next fire and catches up
+          once after the Mac is awake — once, not once for every interval it slept through. A headless
+          repository that was mid-run is not resumed: its agent went with the app, and the row is marked
+          interrupted so you restart that repository deliberately rather than have an unwatched agent
+          spend again. An interactive session is a live terminal process, so it ends when the process
+          that owns it ends; nothing re-attaches to it afterwards.
+        </Note>
+      </div>
+      <Result r={result} />
+    </Section>
+  );
+}
 /* ════════════════════════════════════════════════════════════════════════
    2 · Trust and the policy ledger
    ════════════════════════════════════════════════════════════════════════ */
@@ -2928,19 +3209,10 @@ const KIND_COPY: { id: keyof QueueSlots; label: string; detail: string; overLimi
     id: 'scout', label: 'Improvement Scout', detail: 'One bounded official-source research pass at a time.',
     overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
   },
-  // The 'node' lane — Goal autopilot — deliberately has no row here.
-  //
-  // Main owns the whole lane already: a 'node' runner, the sweep that writes
-  // its queue rows, control.setAutopilot behind a budget precondition, and a
-  // preload binding for it. What nothing owns is arming it. No renderer surface
-  // calls control.setAutopilot, so no docket is ever autopilot=1, so the sweep
-  // never enqueues a node row and the meter for it could only ever read "none
-  // of 2 running". A slot limit for a lane the operator cannot switch on is a
-  // control for a feature that does not exist yet, and it reads as a promise
-  // that unattended dispatch is a thing you have. The key stays in QueueSlots
-  // because the stored shape is shared with main and the draft carries it
-  // through a save untouched; only the control is gone. Bring the row back in
-  // the same change that gives the Control goal card a way to arm autopilot.
+  {
+    id: 'node', label: 'Goal autopilot', detail: 'Tasks a goal dispatches on its own, unattended.',
+    overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
+  },
 ];
 
 /**

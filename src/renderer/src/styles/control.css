@@ -49,6 +49,17 @@
 .control-acceptance { margin: 0; padding-left: 20px; color: var(--text-dim); display: grid; gap: 4px; }
 .control-launch { align-items: end; padding: 12px; border-radius: 8px; background: var(--bg-sunk); }
 .control-launch label { flex: 1; }
+/* Unattended dispatch sits on the same sunk plate as the launch row directly
+   above it, because arming freezes exactly the provider and model chosen
+   there — two controls on one surface is the visual claim that they are one
+   decision. The cap field is narrowed rather than left to .control-inline's
+   flex:1, which would stretch a five-character dollar amount across the whole
+   goal card and read as the most important field on it. */
+.control-autopilot { display: grid; gap: var(--s-2); padding: var(--s-3); border-radius: var(--r-md); background: var(--bg-sunk); }
+.control-autopilot > p { margin: 0; color: var(--text-dim); }
+.control-autopilot-facts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); }
+.control-autopilot-cap { max-width: 360px; }
+.control-autopilot-act { display: grid; gap: var(--s-2); justify-items: start; }
 .control-nodes { display: grid; gap: 9px; }
 .control-node { justify-content: space-between; align-items: start; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg-raised); }
 .control-node > div:first-child { min-width: 0; flex: 1; }
@@ -79,7 +90,6 @@
 .control-table th { text-align: left; color: var(--text-faint); font: 700 10px var(--mono); text-transform: uppercase; }
 .control-table td, .control-table th { padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .control-table small { display: block; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.btn-small { padding: 3px 7px; font-size: 11px; }
 /* Prose inside the create card — the empty-state route and the stated reason
    the Create button is disabled — is not a labelled field, so it sits tight to
    the control it explains instead of taking a full 11px grid step. */

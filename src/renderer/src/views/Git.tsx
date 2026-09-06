@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GhPr, GhStatusReport, Project } from '@shared/types';
 import { ConfirmNote, EmptyState, Note, PageHead, ago } from '../components/bits';
 import ReviewGate from '../components/ReviewGate';
+import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 
 type GFile = { path: string; index: string; work: string; staged: boolean; untracked: boolean; conflicted: boolean };
 type Status = {
@@ -131,7 +132,16 @@ function findFile(status: Status, path: string): { file: GFile; staged: boolean 
 }
 
 export default function Git({ projects }: { projects: Project[] }) {
-  const [projectId, setProjectId] = useState(projects[0]?.id ?? '');
+  // Six things here are view memory rather than component state: the
+  // repository, the right-hand pane, the commit filter, the selected row, the
+  // all-branches toggle and the commit message. Every one of them is a place
+  // an operator was, and every button in the frame unmounts this view. The
+  // message box is the plainest case — a sentence typed about these staged
+  // changes, lost because they went to read the session that made them before
+  // pressing Commit. Remembering it does not weaken the rule below it: the
+  // draft still belongs to one repository and is still cleared when the
+  // selected project changes.
+  const [projectId, setProjectId] = useViewMemory('projectId', projects[0]?.id ?? '');
   // A folder picked from the empty state below. The shell owns the project list
   // and re-reads it on window focus; merging it here as well is what makes this
   // view usable in the frame after the dialog closes rather than one refresh later.
@@ -147,17 +157,17 @@ export default function Git({ projects }: { projects: Project[] }) {
   const [commits, setCommits] = useState<Commit[]>([]);
   const [brs, setBrs] = useState<Branch[]>([]);
   const [stash, setStash] = useState<Stash[]>([]);
-  const [sel, setSel] = useState<Sel>(null);
+  const [sel, setSel] = useViewMemory<Sel>('sel', null);
   // A filter over the commits already in memory: no new gh or git process
   // runs for a keystroke, and the footer says how many rows it searched.
-  const [commitFilter, setCommitFilter] = useState('');
+  const [commitFilter, setCommitFilter] = useViewMemory('commitFilter', '');
   const [detail, setDetail] = useState<{ title: string; patch: string } | null>(null);
-  const [msg, setMsg] = useState('');
+  const [msg, setMsg] = useViewMemory('commitMsg', '');
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(true);
-  const [pane, setPane] = useState<'changes' | 'branches' | 'stash'>('changes');
+  const [showAll, setShowAll] = useViewMemory('showAll', true);
+  const [pane, setPane] = useViewMemory<'changes' | 'branches' | 'stash'>('pane', 'changes');
   // Five acts share this one confirm — push, discard all, merge, delete branch,
   // drop stash — so it carries the verb as well as the sentence. It used to
   // render a single button reading “Do it”, which is the T2 tier's own failure
@@ -168,6 +178,33 @@ export default function Git({ projects }: { projects: Project[] }) {
   const [pr, setPr] = useState<GhStatusReport | null>(null);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ title: '', body: '', draft: false, base: '' });
+
+  // Four elements carry .gt-scroll, not one: the log on the left, and the pane
+  // on the right that changes, branches and stash take turns filling. A single
+  // remembered offset would put the log's position onto a three-row stash list
+  // and drop the reader somewhere they had never been, so the right-hand key
+  // carries the open pane. That the hook's cleanup writes nothing is what makes
+  // a keyed scroller safe: the outgoing element detaches in the same commit
+  // that changes the key, and a save at that moment would store the detached
+  // node's 0 over the offset being left behind.
+  const logRef = useRememberedScrollRef('log');
+  const paneRef = useRememberedScrollRef(`pane:${pane}`);
+
+  // A remembered project can be gone by the time this view is opened again,
+  // removed from the list while another tab was on screen. `project` above
+  // already falls back to the first option so the pane reads a real
+  // repository, but projectId kept the dead id: the picker matched no option
+  // of its own and named one repository while everything below it read
+  // another. Rewriting the id puts the two back in agreement. The draft and
+  // the selection go with it for the reason the picker's own onChange gives —
+  // a message written about the removed repository's changes must not be left
+  // waiting over a different tree.
+  useEffect(() => {
+    if (!project || project.id === projectId) return;
+    const hadProject = projectId !== '';
+    setProjectId(project.id);
+    if (hadProject) { setSel(null); setDetail(null); setMsg(''); }
+  }, [project, projectId, setProjectId, setSel, setMsg]);
 
   // Hands the status back as well as storing it. A caller that has just run a
   // git action has to read the result in the same tick to reconcile the diff
@@ -250,6 +287,33 @@ export default function Git({ projects }: { projects: Project[] }) {
     if (!hit) { setSel(null); setDetail(null); return; }
     await openFile(hit.file, hit.staged, status.root);
   }
+
+  // The patch itself is deliberately not remembered: a diff is a read of the
+  // repository, and one held across a tab swap can be minutes stale by the time
+  // it is shown again. The selection is remembered and the diff re-fetched for
+  // it here, once per mount. Without this the view came back with a row
+  // highlighted over an empty pane, which reads as a file with no changes
+  // rather than a diff nobody had asked for yet.
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current || !st?.isRepo) return;
+    // A remembered commit waits for the log. `load` stores the status one await
+    // before the commits, so the first pass through here would search an empty
+    // list and discard a selection that is about to be on screen.
+    if (sel?.kind === 'commit' && commits.length === 0) return;
+    restored.current = true;
+    if (!sel) return;
+    if (sel.kind === 'commit') {
+      const c = commits.find((x) => x.hash === sel.hash);
+      if (c) void openCommit(c);
+      else { setSel(null); setDetail(null); }
+      return;
+    }
+    // The same resolution a git action gets: the side it was left on wins, a
+    // path that moved is followed, and a path git no longer lists is dropped.
+    void syncSelection(st);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [st, commits, sel]);
 
   async function createPr() {
     if (!st?.isRepo) return;
@@ -444,7 +508,7 @@ export default function Git({ projects }: { projects: Project[] }) {
           {/* Arrow keys move through the loaded log and Enter opens the
               highlighted commit; opening is an IPC round trip, so movement
               alone never fetches a diff. */}
-          <div className="gt-scroll" onKeyDown={(e) => {
+          <div className="gt-scroll" ref={logRef} onKeyDown={(e) => {
             if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
             e.preventDefault();
             const rows = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button.gt-row'));
@@ -512,7 +576,7 @@ export default function Git({ projects }: { projects: Project[] }) {
           </div>
 
           {pane === 'changes' && st && (
-            <div className="gt-scroll">
+            <div className="gt-scroll" ref={paneRef}>
               {st.conflicted.length > 0 && (
                 <div className="gt-sec">
                   <div className="gt-sec-h"><span className="t" style={{ color: 'var(--bad)' }}>Conflicted</span><span className="c">{st.conflicted.length}</span></div>
@@ -611,7 +675,7 @@ export default function Git({ projects }: { projects: Project[] }) {
           )}
 
           {pane === 'branches' && st && (
-            <div className="gt-scroll">
+            <div className="gt-scroll" ref={paneRef}>
               {brs.map((b) => (
                 <div key={b.name} className="gt-file" style={{ cursor: 'default' }}>
                   <span className="st" style={{ color: b.current ? 'var(--good)' : 'var(--text-faint)' }}>
@@ -650,7 +714,7 @@ export default function Git({ projects }: { projects: Project[] }) {
           )}
 
           {pane === 'stash' && st && (
-            <div className="gt-scroll">
+            <div className="gt-scroll" ref={paneRef}>
               {stash.map((s) => (
                 <div key={s.index} className="gt-file" style={{ cursor: 'default' }}>
                   <span className="st">≡</span>

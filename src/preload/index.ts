@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  AwakeState,
   ExpiringResults,
   LaunchOptions, PastSession, Project, ProviderInfo, Session, RunConfig, SourceConfig,
   SessionUsage, ApiEvent, SessionEvent, Attention, TranscriptHit, TranscriptTurn,
@@ -305,6 +306,14 @@ const api = {
     /** The pairing QR as an SVG string. Main chooses what it encodes, never the
      *  renderer — see the handler for why that is the whole safety property. */
     qrSvg: () => call<string>('tailnet:qr'),
+  },
+  // ── keeping the Mac awake for the agents on the other end of that ────
+  // Read-only on purpose. The renderer cannot ask for a hold: the conditions
+  // are a live agent and the dashboard toggle, main observes both, and a
+  // screen that could pin a laptop awake by itself is a battery nobody can
+  // account for.
+  awake: {
+    state: () => call<AwakeState>('awake:state'),
   },
   // ── phase 19 · trust and the ledger ──────────────────────────────────
   policy: {

@@ -1551,6 +1551,46 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && tailnet.__test.serveUrl('nonsense', '/') === null,
     'a serve mapping becomes an https URL, and a mapping it cannot parse becomes null rather than a guessed address');
 
+  /* Keeping the Mac awake is a state machine, and only the state machine is
+   * asserted here. Whether macOS actually stayed up is not observable from
+   * this process, and a check that cannot fail is worse than none. What can
+   * fail is the bookkeeping: a hold taken when nothing is running, a second
+   * blocker stacked on the first — which is a laptop that never sleeps again
+   * with no id left in this process to release it — or a release that reports
+   * itself while an id is still outstanding. */
+  say('── keeping the Mac awake · the hold and its release');
+  const awake = await import('./awake');
+  const awakeIdle = awake.reconcileAwake({ sessions: 0, dashboard: false });
+  check(awakeIdle.held === false && awakeIdle.reason === null && awakeIdle.since === null,
+    'an open Wanigan with nothing running holds nothing: the condition is a live agent or the dashboard, never the app being launched',
+    awakeIdle);
+  const holding = awake.reconcileAwake({ sessions: 2, dashboard: false });
+  const firstBlockerId = awake.__test.blockerId();
+  check(holding.held === true && holding.reason === 'sessions' && holding.sessions === 2
+    && typeof holding.since === 'number' && holding.error === null,
+    'two live agents take the blocker, and the state names the reason and the count rather than answering with a bare boolean',
+    holding);
+  const again = awake.reconcileAwake({ sessions: 3, dashboard: false });
+  check(again.held === true && again.sessions === 3 && awake.__test.blockerId() === firstBlockerId,
+    'reconciling again while already holding keeps the same blocker id — powerSaveBlocker.start() hands out a new one on every call, and a leaked id is a Mac that never sleeps again',
+    { firstBlockerId, now: awake.__test.blockerId() });
+  const awakeBoth = awake.reconcileAwake({ sessions: 1, dashboard: true });
+  check(awakeBoth.reason === 'both' && awake.__test.blockerId() === firstBlockerId,
+    'an agent and the dashboard together read as both, because either one going away still leaves a reason to hold',
+    awakeBoth.reason);
+  const dashboardOnly = awake.reconcileAwake({ sessions: 0, dashboard: true });
+  check(dashboardOnly.held === true && dashboardOnly.reason === 'dashboard' && dashboardOnly.sessions === 0,
+    'the phone dashboard holds the Mac on its own: a device polling a suspended laptop gets nothing',
+    dashboardOnly);
+  const released = awake.reconcileAwake(null);
+  check(released.held === false && released.reason === null && released.since === null
+    && released.sessions === 0 && awake.__test.blockerId() === null,
+    'releasing gives the id back and reports no hold, no reason and no since — the quit path is this call and nothing else',
+    released);
+  check(typeof released.onBattery === 'boolean',
+    'the power source travels with the state, because a blocker cannot stop a closed lid on battery from suspending',
+    released.onBattery);
+
   say('── phone fleet · bounded outbound alert');
   const originalFetch = globalThis.fetch;
   const pushCapture: { published: Record<string, unknown> | null; count: number } = {
@@ -3653,6 +3693,64 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !controlViewSrc.includes('not a git repo'),
     'Control announces a review decision in words that match what control.ts wrote, and a goal with no recorded base commit says so instead of naming a cause the renderer cannot observe');
 
+  // Only provider-reported cost is counted against the cap (autopilotSpend),
+  // so "$0.00 reported" beside a $20 ceiling can mean nothing was spent or that
+  // nothing was reported — different facts, and the second one is the cap being
+  // a weaker promise than it looks. The card says which, in words beside the
+  // number, instead of letting the figure imply the stronger claim. The tables
+  // are keyed on DocketAutopilot's own union so a fifth spend status is a
+  // compile error here rather than a row that is silently missing at runtime.
+  check(/const SPEND_MARKS: Record<DocketAutopilot\['spendStatus'\], MarkSpec>/.test(controlViewSrc)
+    && /const SPEND_READING: Record<DocketAutopilot\['spendStatus'\], string>/.test(controlViewSrc)
+    && controlViewSrc.includes('which is not the same as nothing having been spent')
+    && controlViewSrc.includes('{usd(auto.spendUsd)} reported')
+    && controlSrc.includes("spendStatus: DocketAutopilot['spendStatus'] = reported === sessions.length"),
+    'the autopilot card reports what a provider actually vouched for: reported spend beside the cap, with a mark and a sentence saying how much of the goal that figure covers');
+
+  // control.ts refuses to arm a goal with no cap, and a card that offered the
+  // button anyway would meet that refusal as an error after the press. The
+  // no-cap branch is ordered ahead of the confirmation branch, so the button is
+  // not merely disabled, it is not rendered — and what stands in its place is
+  // the field that fixes the missing ceiling, because the create card makes a
+  // budget optional and nothing else could set one afterwards.
+  const capBranchAt = controlViewSrc.indexOf('cap === null ? <Hint>Autopilot needs a spend cap');
+  const armConfirmAt = controlViewSrc.indexOf('confirming ? <ConfirmNote verb="Arm autopilot"');
+  check(capBranchAt > 0 && armConfirmAt > capBranchAt
+    && controlViewSrc.includes("window.wanigan.control.setBudget(docket.id, Number(budgetDrafts[docket.id] ?? ''))")
+    && /\{cap === null \? 'Set cap' : 'Update cap'\}/.test(controlViewSrc)
+    && controlSrc.includes('Set a budget on this goal before enabling autopilot.'),
+    'a goal with no spend cap cannot arm autopilot from Control — the card renders the cap field in place of the button, matching the precondition control.ts enforces');
+
+  // Arming is the control that lets an agent spend real money with nobody at
+  // the keyboard, so it is the one action on this screen behind a T2
+  // confirmation — and the sentence is the point of the tier rather than
+  // decoration. It names the cap that will stop the run and says outright that
+  // tasks dispatch without being asked about again. The visible button opens
+  // that prompt and never arms: onArm is reachable only from ConfirmNote's Run.
+  check(controlViewSrc.includes('<ConfirmNote verb="Arm autopilot"')
+    && /onRun=\{onArm\}/.test(controlViewSrc)
+    && !/onClick=\{onArm\}/.test(controlViewSrc)
+    && controlViewSrc.includes('onClick={onAsk}')
+    && controlViewSrc.includes('the {usd(cap)} cap')
+    && controlViewSrc.includes('without asking again')
+    && controlViewSrc.includes('spend money with nobody watching'),
+    'arming autopilot is confirmed by a prompt that names the spend cap and says tasks dispatch without further approval, and the Arm button opens that prompt rather than arming');
+
+  // control.setAutopilot had every part of its lane built and no way in: the
+  // sweep timer, the 'node' queue runner, the budget precondition and the halt
+  // that writes its own reason were all reachable only from a flag no renderer
+  // surface could set, so no docket was ever autopilot=1 and none of it ever
+  // ran. A channel nobody calls looks exactly like a feature nobody uses, which
+  // is why this is a source contract rather than a UI test.
+  check(/window\.wanigan\.control\.setAutopilot\(docket\.id, \{ enabled: true, providerId, model: model\.trim\(\) \|\| undefined \}\)/.test(controlViewSrc)
+    && controlViewSrc.includes('window.wanigan.control.setAutopilot(docket.id, { enabled: false })')
+    && controlViewSrc.includes('>Arm autopilot<')
+    && controlViewSrc.includes('>Disarm autopilot<')
+    && preloadSrc.includes("call<DocketDetail>('control:setAutopilot'")
+    && mainSrc.includes("handle('control:setAutopilot'")
+    && controlSrc.includes('export function setAutopilot('),
+    'Control can arm and disarm goal autopilot, so the sweep, the node queue runner and the halt behind control.setAutopilot have a caller instead of being a finished lane no screen could enter');
+
   // Fleet is the view most likely to be left behind, because its cards exist to
   // be clicked into and every click unmounts it. Sort, status filter and scroll
   // offset were component state, so narrowing to "Asking", opening the one agent
@@ -3724,6 +3822,48 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !settingsSrc.includes('<style>')
     && !settingsSrc.includes('<div className="pane set" style={{ maxWidth'),
   'Settings keeps every operator surface in seven labelled persistent full-width tab panels, with keyboard navigation and no draft-destroying unmount');
+
+  // The paragraph under those rows is the answer to 'what does walking away
+  // cost', and it is only honest if it names both halves. Each clause was
+  // written against the code that decides it: queue.recoverExpiredLeases
+  // requeues a row that had not started, tickSchedules catches a schedule up
+  // once rather than once per missed interval, headless.sweepInterruptedRows
+  // errors a mid-run repository instead of re-spawning an unwatched agent, and
+  // CLAUDE.md's rule that a live PTY cannot survive a quit covers the last.
+  // The headless half is pinned against that module's own message, so a
+  // paragraph that keeps only the reassuring clauses — or a sweep that quietly
+  // starts resuming runs — fails here rather than on someone's lock screen.
+  check(settingsSrc.includes('<strong>What a restart would cost.</strong>')
+    && settingsSrc.includes('A queued job that never started is still queued')
+    && settingsSrc.includes('A schedule keeps its next fire and catches up')
+    && settingsSrc.includes('repository that was mid-run is not resumed')
+    && settingsSrc.includes('An interactive session is a live terminal process')
+    && sourceOf('src/main/headless.ts').includes('Nothing was resumed — start the fan-out again for this repository.'),
+    "the 'Before you leave' restart paragraph names both what survives a restart (a queued job, a schedule's next fire) and what does not (a headless repository that was mid-run, an interactive session), and its headless claim still matches the sweep that errors those rows");
+
+  // 'Before you leave' answers whether the lid can close, so a row that could
+  // not be read must never render as a pass. Three things hold that up, and a
+  // renderer-free smoke process can only pin them as a source contract.
+  //
+  // The sleep bridge lands in a different phase, so this view reads it through
+  // an optional cast and then narrows it field by field: without the typeof
+  // guard an absent `onBattery` coerces to false and the panel prints 'plugged
+  // in' about a laptop running on its battery, which is the one wrong answer
+  // this block exists to prevent. 'reading' and 'unreadable' carry marks of
+  // their own rather than rendering as a blank a reader completes as a pass.
+  // And the transport row draws TRANSPORT_MARK rather than naming a sixth
+  // state for a fact the transport panel above already has five words for.
+  check(settingsSrc.includes('<Section title="Before you leave"')
+    && settingsSrc.includes("if (typeof d.onBattery !== 'boolean' || typeof d.held !== 'boolean') return null;")
+    && !/onBattery\s*(\?\?|\|\|)/.test(settingsSrc)
+    && settingsSrc.includes("const STILL_READING: MarkSpec = { glyph: '·', word: 'reading'")
+    && settingsSrc.includes("const UNREADABLE: MarkSpec = { glyph: '?', word: 'unreadable'")
+    && settingsSrc.includes('return { what, mark: TRANSPORT_MARK[state], say };')
+    && settingsSrc.includes("word: 'on battery'") && settingsSrc.includes("word: 'plugged in'")
+    && settingsSrc.includes("word: 'held awake'") && settingsSrc.includes("word: 'not held'")
+    && settingsSrc.includes("word: 'listening'") && settingsSrc.includes("word: 'not listening'")
+    && settingsSrc.includes('const checks = [powerCheck(), sleepCheck(), transportCheck(), reachCheck()];'),
+    "the 'Before you leave' check renders four rows from observed readings — the sleep bridge narrowed field by field so an absent value cannot read as 'plugged in', a mark of its own for reading and for unreadable, and the transport row reusing the five states the transport panel already defined");
 
   // Settings was the last view wearing a private page head: an accent kicker
   // reading 'Wanigan control center' over an h1 that spelled its own font size,

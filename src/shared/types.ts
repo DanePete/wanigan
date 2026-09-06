@@ -784,6 +784,47 @@ export type TailnetStatus = { port: number; checkedAt: number } & (
   | { state: 'error'; message: string }
 );
 
+/**
+ * Why Wanigan is holding this Mac awake. Both conditions can be true at once
+ * and they stop being true independently, so 'both' is a state of its own: a
+ * panel that collapsed it would announce a release when only half the reason
+ * went away.
+ */
+export type AwakeReason = 'sessions' | 'dashboard' | 'both';
+
+/**
+ * What Wanigan is doing to this Mac's power management right now.
+ *
+ * Reported rather than assumed, because an app that quietly keeps a laptop
+ * awake drains a battery its owner believes is idle. `held` is read back from
+ * the blocker Electron actually holds, never set from the fact that one was
+ * requested, and `reason` and `since` are null whenever `held` is false — so no
+ * screen can describe a hold that did not happen. `error` carries why a wanted
+ * hold could not be taken.
+ *
+ * `onBattery` is the one thing software cannot fix and the reason it travels
+ * here at all. A power-save blocker stops the machine idling to sleep; it does
+ * not stop a closed lid on battery from suspending. A screen that promises
+ * overnight work has to say which of those two situations the operator is in.
+ * False is also what an unreadable power source reports: warning someone about
+ * a battery Wanigan could not actually ask about would be inventing the one
+ * fact they are most likely to act on.
+ */
+export type AwakeState = {
+  /** True only while Electron still reports the blocker started. */
+  held: boolean;
+  /** Non-null only while `held` — see the note above. */
+  reason: AwakeReason | null;
+  /** Live agents at the last reconcile: interactive PTYs plus headless rows. */
+  sessions: number;
+  /** When the current hold began, or null when nothing is held. */
+  since: number | null;
+  /** True only when Wanigan read the power source and it said battery. */
+  onBattery: boolean;
+  /** Bounded reason a wanted hold could not be taken, or null. */
+  error: string | null;
+};
+
 /* ── P9 · worktrees ─────────────────────────────────────────────────── */
 
 export type WorktreeInfo = {

@@ -283,3 +283,24 @@
 
 /* A link wearing a button or a mini-button is still a link to the browser. */
 a.set-mini, a.btn { text-decoration: none; }
+
+/* ── Before you leave ─────────────────────────────────────────────────
+   A readiness check, not a settings group, so it is a list of observations
+   rather than a new card family: the name of the fact, what was observed,
+   and — only where Wanigan can change the answer — the button that does.
+   The row wears .sunk like the transport plate above it, which is why there
+   is no background or border spelled here. */
+.set-leave { display: grid; gap: var(--s-2); margin: var(--s-3) 0 0; padding: 0; list-style: none; }
+.set-leave-row { display: grid; grid-template-columns: minmax(84px, 112px) minmax(0, 1fr) auto;
+                 gap: var(--s-2) var(--s-3); align-items: start; padding: var(--card-pad-tight); }
+.set-leave-what { font-size: var(--t-small); font-weight: 650; }
+.set-leave-say { min-width: 0; display: grid; gap: var(--s-1); justify-items: start; }
+.set-leave-say p { font-size: var(--t-small); line-height: 1.5; }
+.set-leave-do { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; }
+
+/* Below the settings phone breakpoint the action would be a button squeezed
+   into whatever the sentence left over, so the row becomes three stacked
+   bands instead. */
+@media (max-width: 640px) {
+  .set-leave-row { grid-template-columns: minmax(0, 1fr); }
+}

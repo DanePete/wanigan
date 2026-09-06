@@ -1,12 +1,57 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
-  ControlEvent, DocketDetail, DocketNode, DocketNodeKind, DocketNodeStatus, DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
+  ControlEvent, DocketAutopilot, DocketDetail, DocketNode, DocketNodeKind, DocketNodeStatus, DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
 } from '@shared/types';
-import { Chip, EmptyState, Explainer, Mark, Note, PageHead, Reading, ago, markOf, usd } from '../components/bits';
+import { Chip, ConfirmNote, EmptyState, Explainer, Hint, Mark, Note, PageHead, Reading, SectionHead, ago, markOf, usd } from '../components/bits';
+import type { MarkSpec } from '../components/bits';
 import { useViewMemory } from '../components/viewMemory';
 
 const errText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const risks: DocketRisk[] = ['low', 'elevated', 'high'];
+
+/**
+ * Whether unattended dispatch is on, and whether it last stopped itself.
+ *
+ * Three states rather than a boolean because `haltedReason` outlives the halt:
+ * a goal that stopped at its cap and a goal that was never armed both read
+ * `enabled: false`, and only one of them is asking the operator for a decision.
+ * `halted` is the tone that carries colour, because that is the one that waits
+ * on a person. `armed` carries the accent for a narrower reason than the
+ * attention queue's rule against painting a live agent: what this marks is not
+ * an agent that is running, it is a standing authorisation to spend with
+ * nobody at the keyboard, and the whole point of the card is that the operator
+ * can see at a glance that it is on.
+ */
+const AUTOPILOT_MARKS: Record<'armed' | 'halted' | 'off', MarkSpec> = {
+  armed:  { glyph: '▸', word: 'armed',  tone: 'accent' },
+  halted: { glyph: '■', word: 'halted', tone: 'warn' },
+  off:    { glyph: '○', word: 'off',    tone: 'quiet' },
+};
+
+/**
+ * How much of a goal's spend a provider actually vouched for.
+ *
+ * Keyed on DocketAutopilot's own union rather than inferred: an inferred table
+ * widens `tone` to string and Mark's Tone parameter refuses it, and naming the
+ * union makes a fifth spend status a compile error here instead of a row that
+ * is quietly missing at runtime. The words never round an absence up to a
+ * measurement — control.ts counts only reported cost against the cap, so
+ * "nothing reported" is a statement about what Wanigan can see, not a claim
+ * that nothing was spent.
+ */
+const SPEND_MARKS: Record<DocketAutopilot['spendStatus'], MarkSpec> = {
+  reported:   { glyph: '✓', word: 'all reported',     tone: 'ok' },
+  partial:    { glyph: '?', word: 'partly reported',  tone: 'warn' },
+  unreported: { glyph: '?', word: 'nothing reported', tone: 'warn' },
+  none:       { glyph: '○', word: 'no session yet',   tone: 'quiet' },
+};
+
+const SPEND_READING: Record<DocketAutopilot['spendStatus'], string> = {
+  reported: 'Every session this goal has launched reported its cost, so the figure beside the cap is the whole of it.',
+  partial: 'Some of this goal’s sessions reported no cost. The cap is enforced against the part that was reported, which makes it a weaker ceiling than it looks.',
+  unreported: 'No session on this goal has reported a cost. Nothing has been counted against the cap — which is not the same as nothing having been spent.',
+  none: 'No session has been launched for this goal yet, so there is nothing to count against the cap.',
+};
 const goalHash = (id: string) => `#goal=${encodeURIComponent(id)}`;
 const goalFromHash = () => new URLSearchParams(window.location.hash.slice(1)).get('goal');
 async function copyText(value: string): Promise<void> {
@@ -95,6 +140,17 @@ export default function Control({ projects, providers, onOpenSession }: {
   // it on window focus, so this is not a second source of truth — it is what
   // keeps the form usable in the frame after the dialog closes.
   const [picked, setPicked] = useState<Project[]>([]);
+  /**
+   * Which goal's arm-autopilot confirmation is open, if any.
+   *
+   * It holds an id rather than a boolean so that choosing a different goal
+   * cancels the confirmation instead of leaving a live "spend money unattended"
+   * prompt pointing at work the operator has already navigated away from.
+   */
+  const [armAsk, setArmAsk] = useState<string | null>(null);
+  // Per-goal spend-cap drafts, keyed like `notes` and `claims` so a half-typed
+  // number does not follow the operator to the next goal they open.
+  const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({});
 
   const enabledProviders = useMemo(() => providers.filter((provider) => !!provider.path), [providers]);
   const projectOptions = useMemo(() => {
@@ -196,6 +252,33 @@ export default function Control({ projects, providers, onOpenSession }: {
     await load(detail?.id);
   }, 'Task reopened. Start it again when you are ready; its dependents are unblocked.');
 
+  /**
+   * Arm unattended dispatch, with the provider and model chosen just above.
+   *
+   * control.setAutopilot had no caller anywhere in the renderer, so the sweep
+   * timer, the node queue runner, the budget precondition and the halt that
+   * writes its own reason were a complete lane that no goal could ever enter.
+   * The provider and model are frozen by the main process at this moment, so
+   * what the confirmation names is what will actually run.
+   */
+  const arm = (docket: DocketDetail) => act(`autopilot-${docket.id}`, async () => {
+    await window.wanigan.control.setAutopilot(docket.id, { enabled: true, providerId, model: model.trim() || undefined });
+    setArmAsk(null); await load(docket.id);
+  }, 'Autopilot armed. Ready tasks other than Review are dispatched without further approval until reported spend reaches the cap or a halt is recorded.');
+  // Stopping is the safe direction, so it is not confirmed. It is also not a
+  // kill switch: startQueuedNode re-reads the flag, so a queued task will not
+  // launch, but a session already running is a live PTY that keeps running.
+  const disarm = (docket: DocketDetail) => act(`autopilot-${docket.id}`, async () => {
+    await window.wanigan.control.setAutopilot(docket.id, { enabled: false });
+    setArmAsk(null); await load(docket.id);
+  }, 'Autopilot disarmed. Nothing new is dispatched; a session already running keeps running until it ends.');
+  // A goal created without a budget could otherwise never arm at all: the cap
+  // is a precondition in control.ts and the create card makes it optional.
+  const saveBudget = (docket: DocketDetail) => act(`budget-${docket.id}`, async () => {
+    await window.wanigan.control.setBudget(docket.id, Number(budgetDrafts[docket.id] ?? ''));
+    setBudgetDrafts((previous) => ({ ...previous, [docket.id]: '' })); await load(docket.id);
+  }, 'Spend cap saved. Autopilot stops when reported spend reaches it.');
+
   const complete = (node: DocketNode, decision: 'approve' | 'request_changes' | 'reject' = 'approve') => act(`complete-${node.id}-${decision}`, async () => {
     await window.wanigan.control.complete(node.id, { detail: notes[node.id] || undefined, decision });
     setNotes((previous) => ({ ...previous, [node.id]: '' })); await load(detail?.id);
@@ -295,25 +378,118 @@ export default function Control({ projects, providers, onOpenSession }: {
            with no commit yet, a git read that failed — and the renderer has no
            way to tell them apart, so it reports the absence and does not name a
            cause it cannot observe. */
-        : <span className="faint">no base commit recorded</span>}<span className="mono">id {detail.id}</span><button className="btn btn-small" onClick={() => void copyGoalId(detail.id)} disabled={busy !== null}>Copy goal ID</button></div></div>
+        : <span className="faint">no base commit recorded</span>}<span className="mono">id {detail.id}</span><button className="btn" onClick={() => void copyGoalId(detail.id)} disabled={busy !== null}>Copy goal ID</button></div></div>
       <p>{detail.objective}</p><ol className="control-acceptance">{detail.acceptance.map((check, index) => <li key={index}>{check}</li>)}</ol>
       <div className="control-launch"><label><span className="label">Provider for next task</span><select className="field" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{enabledProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label><span className="label">Model override</span><input className="field" value={model} onChange={(event) => setModel(event.target.value)} placeholder="provider default" /></label></div>
+      <AutopilotCard docket={detail} busy={busy} confirming={armAsk === detail.id}
+        armWith={enabledProviders.find((provider) => provider.id === providerId)?.label ?? null} armWithModel={model}
+        armedWith={providers.find((provider) => provider.id === detail.autopilot.providerId)?.label ?? detail.autopilot.providerId}
+        budgetDraft={budgetDrafts[detail.id] ?? ''}
+        onBudgetDraft={(value) => setBudgetDrafts((previous) => ({ ...previous, [detail.id]: value }))}
+        onAsk={() => setArmAsk(detail.id)} onCancelAsk={() => setArmAsk(null)}
+        onArm={() => void arm(detail)} onDisarm={() => void disarm(detail)} onSetBudget={() => void saveBudget(detail)} />
       <div className="control-nodes">{detail.nodes.map((node) => <NodeCard key={node.id} node={node} busy={busy} note={notes[node.id] ?? ''} claim={claims[node.id] ?? ''}
         prereqs={node.dependsOn.map((id) => detail.nodes.find((other) => other.id === id)).filter((other): other is DocketNode => !!other).map((other) => ({ title: other.title, status: other.status }))}
         onNote={(value) => setNotes((previous) => ({ ...previous, [node.id]: value }))} onClaim={(value) => setClaims((previous) => ({ ...previous, [node.id]: value }))}
         onStart={() => start(node)} onCheckpoint={() => checkpoint(node)} onClaimAdd={() => addClaim(node)} onProof={() => proof(node)} onComplete={(decision) => complete(node, decision)} onRetry={() => retry(node)} />)}</div>
       <div className="control-evidence"><div><span className="label">Proof bundle</span><h3>{detail.proofs.length} record{detail.proofs.length === 1 ? '' : 's'}</h3>{detail.proofs.length === 0 ? <p className="faint">No evidence yet. A review gate result is required before verification can pass.</p> : detail.proofs.map((proof) => <p key={proof.id}><span className={`control-status ${proof.status}`}>{proof.status}</span> {proof.summary} <small>{ago(proof.createdAt)}</small></p>)}</div><div><span className="label">Continuity</span><h3>{detail.checkpoints.length} checkpoint{detail.checkpoints.length === 1 ? '' : 's'}</h3>{detail.checkpoints.length === 0 ? <p className="faint">Save a checkpoint before handoff or interruption. It records the exact provider conversation when one exists.</p> : detail.checkpoints.slice(0, 4).map((checkpoint) => <p key={checkpoint.id}>{checkpoint.note}<small>{checkpoint.conversationId ? ` · thread ${checkpoint.conversationId.slice(0, 12)}…` : ''} · {ago(checkpoint.createdAt)}</small></p>)}</div></div>
       <div className="control-evidence"><div><span className="label">Safe recovery</span><h3>{receipts.length === 0 ? 'No launched task yet' : `${receipts.filter((receipt) => receipt.state === 'exact').length} exact resume${receipts.filter((receipt) => receipt.state === 'exact').length === 1 ? '' : 's'}`}</h3>{receipts.map((receipt) => <p key={receipt.nodeId}><span className={`control-status ${receipt.state === 'exact' ? 'passed' : receipt.state === 'writer_active' ? 'working' : 'blocked'}`}>{receipt.state.replace('_', ' ')}</span> {receipt.detail}<small>{receipt.conversationId ? ` · thread ${receipt.conversationId.slice(0, 12)}…` : ''}</small></p>)}</div><div><span className="label">Goal trace</span><h3>{traces.length} recent signal{traces.length === 1 ? '' : 's'}</h3>{traces.length === 0 ? <p className="faint">Operational events appear here without copying prompts or responses into Control.</p> : traces.slice(0, 5).map((trace) => <p key={trace.id}><span className={`control-status ${trace.status}`}>{trace.status}</span> {trace.toolName ?? trace.kind}{trace.summary ? ` · ${trace.summary}` : ''}<small>{trace.durationMs !== null ? ` · ${trace.durationMs}ms` : ''}{trace.costUsd ? ` · ${usd(trace.costUsd)}` : ''} · {ago(trace.createdAt)}</small></p>)}</div></div>
-      <div className="control-claims"><span className="label">Active file claims</span>{detail.claims.filter((claim) => !claim.releasedAt).length === 0 ? <p className="faint">No paths claimed. Claims are optional but prevent overlapping parallel edits.</p> : detail.claims.filter((claim) => !claim.releasedAt).map((claim) => <span key={claim.id} className="control-claim">{claim.path} <button className="btn btn-small" onClick={() => void act(`release-${claim.id}`, async () => { await window.wanigan.control.releaseClaim(claim.id); await load(detail.id); })}>release</button></span>)}</div>
+      <div className="control-claims"><span className="label">Active file claims</span>{detail.claims.filter((claim) => !claim.releasedAt).length === 0 ? <p className="faint">No paths claimed. Claims are optional but prevent overlapping parallel edits.</p> : detail.claims.filter((claim) => !claim.releasedAt).map((claim) => <span key={claim.id} className="control-claim">{claim.path} <button className="btn" onClick={() => void act(`release-${claim.id}`, async () => { await window.wanigan.control.releaseClaim(claim.id); await load(detail.id); })}>release</button></span>)}</div>
     </section>}
 
     <section className="control-grid control-lower"><article className="card"><span className="label">Local event inbox</span><h2>Triage, don’t auto-run</h2><p className="faint">Use this for CI, incident, or issue signals. Remote webhooks are intentionally not opened until their identity and replay controls are designed.</p><div className="control-inline"><label><span className="label">Event source</span><input className="field" value={eventSource} onChange={(event) => setEventSource(event.target.value)} /></label><label><span className="label">Event kind</span><input className="field" value={eventKind} onChange={(event) => setEventKind(event.target.value)} /></label></div><textarea className="field control-textarea" value={eventSummary} onChange={(event) => setEventSummary(event.target.value)} placeholder="What happened? Include the observable failure, not a solution guess." /><button className="btn" disabled={busy !== null || !eventSummary.trim()} onClick={() => void addEvent()}>Add event</button>{/* Dismiss existed in main and in the preload and was reachable from
     nothing, so an event added by mistake could only be cleared by creating
     a Goal nobody wanted. Dismissed rows are also filtered out rather than
     left to consume the six visible slots. */}
-{events.filter((event) => event.status !== 'dismissed').slice(0, 6).map((event) => <div className="control-event" key={event.id}><span className={`control-status ${event.status}`}>{event.status}</span><strong>{event.kind}</strong><p>{event.summary}</p>{event.status === 'new' && <><button className="btn btn-small" onClick={() => void triage(event)}>Create goal</button><button className="btn btn-small" disabled={busy !== null} onClick={() => void act(`dismiss-${event.id}`, async () => { await window.wanigan.control.dismissEvent(event.id); await load(detail?.id); })}>Dismiss</button></>}</div>)}</article>
+{events.filter((event) => event.status !== 'dismissed').slice(0, 6).map((event) => <div className="control-event" key={event.id}><span className={`control-status ${event.status}`}>{event.status}</span><strong>{event.kind}</strong><p>{event.summary}</p>{event.status === 'new' && <><button className="btn" onClick={() => void triage(event)}>Create goal</button><button className="btn" disabled={busy !== null} onClick={() => void act(`dismiss-${event.id}`, async () => { await window.wanigan.control.dismissEvent(event.id); await load(detail?.id); })}>Dismiss</button></>}</div>)}</article>
       <article className="card"><span className="label">Model evidence</span><h2>Outcome router</h2><p className="faint">This ranks only completed goal evidence; it does not invent a winner from token volume or a single run.</p>{outcomes.length === 0 ? <p className="faint">No completed provider outcomes yet.</p> : <table className="control-table"><thead><tr><th>Model</th><th>Task</th><th>Accept</th><th>Tests</th><th>Cost</th></tr></thead><tbody>{outcomes.map((outcome) => <tr key={`${outcome.providerId}-${outcome.model}-${outcome.taskKind}`}><td>{outcome.providerId}<small>{outcome.model}</small></td><td>{outcome.taskKind}<small>{outcome.samples} sample{outcome.samples === 1 ? '' : 's'}</small></td><td>{outcome.acceptedRate === null ? '—' : `${Math.round(outcome.acceptedRate * 100)}%`}</td><td>{outcome.testPassRate === null ? '—' : `${Math.round(outcome.testPassRate * 100)}%`}</td><td>{usd(outcome.totalCostUsd)}</td></tr>)}</tbody></table>}
-        <span className="label">MCP task compatibility</span><p className="faint">Goal tasks have durable working/input-required/completed/cancelled state ready for the evolving MCP Tasks adapter.</p>{tasks.slice(0, 5).map((task) => <p key={task.id}><span className={`control-status ${task.status}`}>{task.status}</span> {task.title} {['working', 'input_required'].includes(task.status) && <button className="btn btn-small" onClick={() => void act(`cancel-task-${task.id}`, async () => { await window.wanigan.control.cancelMcpTask(task.id); await load(detail?.id); })}>cancel</button>}</p>)}</article></section>
+        <span className="label">MCP task compatibility</span><p className="faint">Goal tasks have durable working/input-required/completed/cancelled state ready for the evolving MCP Tasks adapter.</p>{tasks.slice(0, 5).map((task) => <p key={task.id}><span className={`control-status ${task.status}`}>{task.status}</span> {task.title} {['working', 'input_required'].includes(task.status) && <button className="btn" onClick={() => void act(`cancel-task-${task.id}`, async () => { await window.wanigan.control.cancelMcpTask(task.id); await load(detail?.id); })}>cancel</button>}</p>)}</article></section>
+  </div>;
+}
+
+/**
+ * Arm or disarm unattended dispatch for one goal.
+ *
+ * Everything under this card was already built and unreachable: the sweep
+ * timer, the node queue runner, the budget precondition, the review task the
+ * dispatcher refuses to touch, and the halt that writes its own reason into
+ * the goal's evidence. No renderer surface called control.setAutopilot, so no
+ * goal was ever armed, so none of it ever ran. This is the switch.
+ *
+ * It is the one action in Control behind a confirmation, and the sentence in
+ * that confirmation is the point of the tier rather than decoration: this is
+ * the control that lets an agent spend real money with nobody at the keyboard,
+ * so the prompt names the cap, names the provider that was frozen, and says
+ * outright that no further approval will be asked for.
+ *
+ * A goal with no cap cannot arm. control.ts is where that is enforced; the
+ * card carries the same rule so the operator meets it as a ceiling to set
+ * rather than as an error after pressing a button that looked available.
+ */
+function AutopilotCard({ docket, busy, confirming, armWith, armWithModel, armedWith, budgetDraft, onBudgetDraft, onAsk, onCancelAsk, onArm, onDisarm, onSetBudget }: {
+  docket: DocketDetail; busy: string | null; confirming: boolean;
+  /** The provider that would be frozen if the operator armed right now, from
+   *  the launch row above, or null when no provider is enabled at all. */
+  armWith: string | null; armWithModel: string;
+  /** The provider already frozen on an armed goal. Falls back to the recorded
+   *  id when that provider has since been disabled, because the id is still
+   *  what is running and a blank is not. */
+  armedWith: string | null;
+  budgetDraft: string; onBudgetDraft: (value: string) => void;
+  onAsk: () => void; onCancelAsk: () => void; onArm: () => void; onDisarm: () => void; onSetBudget: () => void;
+}) {
+  const auto = docket.autopilot;
+  const cap = auto.budgetUsd;
+  const finished = ['accepted', 'rejected'].includes(docket.status);
+  const state = auto.enabled ? AUTOPILOT_MARKS.armed
+    : auto.haltedReason !== null ? AUTOPILOT_MARKS.halted : AUTOPILOT_MARKS.off;
+  const spend = SPEND_MARKS[auto.spendStatus];
+  const model = armWithModel.trim();
+  return <div className="control-autopilot">
+    <SectionHead label="Unattended dispatch" right={<Mark glyph={state.glyph} word={state.word} tone={state.tone} />} />
+    <p>{auto.enabled
+      ? `Wanigan is starting this goal’s ready tasks on its own${armedWith ? ` with ${armedWith}` : ''}${auto.model ? ` · ${auto.model}` : ''}, without asking again. A Review task is never dispatched.`
+      : 'Nothing is dispatched on its own. Every task below waits for you to start it.'}</p>
+    <div className="control-autopilot-facts">
+      <span className="mono">{cap === null ? 'no cap set' : `${usd(cap)} cap`}</span>
+      <span className="mono">{usd(auto.spendUsd)} reported</span>
+      <Mark glyph={spend.glyph} word={spend.word} tone={spend.tone} />
+    </div>
+    <Hint>{SPEND_READING[auto.spendStatus]}</Hint>
+    {/* The halt outlives the flag on purpose, so an armed goal that stopped
+        once still shows why. Role "none": this is recorded evidence the card
+        renders on mount, not the result of something the operator just did. */}
+    {auto.haltedReason !== null && <Note tone="warn" role="none">
+      {auto.enabled ? 'Last automatic stop' : 'Autopilot stopped'}{auto.haltedAt !== null ? ` ${ago(auto.haltedAt)}` : ''}: {auto.haltedReason}
+    </Note>}
+    <div className="control-inline control-autopilot-cap">
+      <label><span className="label">Spend cap · USD</span>
+        <input className="field" inputMode="decimal" value={budgetDraft} placeholder={cap === null ? '20.00' : cap.toFixed(2)}
+               onChange={(event) => onBudgetDraft(event.target.value)} /></label>
+      <button className="btn" disabled={busy !== null || !budgetDraft.trim()} onClick={onSetBudget}>{cap === null ? 'Set cap' : 'Update cap'}</button>
+    </div>
+    {/* Every branch that cannot offer the button says why in visible text. A
+        disabled Arm with no sentence beside it is the dead end this view has
+        already been fixed for twice. */}
+    {finished ? <Hint>This goal is finished, so autopilot has nothing left to dispatch.</Hint>
+      : auto.enabled ? <div className="control-autopilot-act">
+          <button className="btn" disabled={busy !== null} onClick={onDisarm}>Disarm autopilot</button>
+          <Hint>Disarming stops new dispatch, including tasks already queued. A session that is already running keeps running until it ends.</Hint>
+        </div>
+      : cap === null ? <Hint>Autopilot needs a spend cap before it can arm. Wanigan will not start an unattended run with no ceiling.</Hint>
+      : armWith === null ? <Hint>No provider is enabled, so unattended dispatch would have nothing to launch.</Hint>
+      : confirming ? <ConfirmNote verb="Arm autopilot" busy={busy !== null} onRun={onArm} onCancel={onCancelAsk}
+          what={<>Arming lets this goal spend money with nobody watching. Wanigan will start an agent session
+            for every ready task except Review, one after another and without asking again, using <strong>{armWith}</strong>
+            {model ? <> on <span className="mono">{model}</span></> : null}. It stops when reported spend reaches
+            the {usd(cap)} cap, when the goal is accepted or rejected, or when it halts itself and records why.
+            {auto.spendStatus === 'partial' || auto.spendStatus === 'unreported'
+              ? ' Reported cost is all the cap can count, and this goal already has sessions that reported none.'
+              : ''}</>} />
+      : <div className="control-autopilot-act">
+          <button className="btn" disabled={busy !== null} onClick={onAsk}>Arm autopilot</button>
+          <Hint>Tasks would dispatch with {armWith}{model ? ` on ${model}` : ''}, frozen at the moment you arm. A Review task is never dispatched.</Hint>
+        </div>}
   </div>;
 }
 
@@ -336,8 +512,8 @@ function NodeCard({ node, busy, note, claim, prereqs, onNote, onClaim, onStart, 
 }) {
   const actionable = ['ready', 'running'].includes(node.status);
   const reopenable = ['failed', 'canceled'].includes(node.status);
-  return <article className="control-node"><div><span className={`control-status ${node.status}`}>{node.status}</span><span className="label">{node.kind}</span><h3>{node.title}</h3>{prereqs.length > 0 && <p className="control-node-waits">Waits on {prereqs.map((prereq, index) => { const mark = markOf(prereq.status); return <span key={`${prereq.title}-${index}`}>{index > 0 ? ', ' : ''}{prereq.title} <Mark glyph={mark.glyph} word={mark.word} tone={mark.tone} /></span>; })}</p>}<p>{node.instructions}</p>{node.sessionId && <button className="btn btn-small" onClick={onCheckpoint} disabled={busy !== null}>Checkpoint</button>}</div>
+  return <article className="control-node"><div><span className={`control-status ${node.status}`}>{node.status}</span><span className="label">{node.kind}</span><h3>{node.title}</h3>{prereqs.length > 0 && <p className="control-node-waits">Waits on {prereqs.map((prereq, index) => { const mark = markOf(prereq.status); return <span key={`${prereq.title}-${index}`}>{index > 0 ? ', ' : ''}{prereq.title} <Mark glyph={mark.glyph} word={mark.word} tone={mark.tone} /></span>; })}</p>}<p>{node.instructions}</p>{node.sessionId && <button className="btn" onClick={onCheckpoint} disabled={busy !== null}>Checkpoint</button>}</div>
     <div className="control-node-actions">{node.status === 'ready' && <button className="btn btn-primary" onClick={onStart} disabled={busy !== null}>Start isolated task</button>}{reopenable && <button className="btn" onClick={onRetry} disabled={busy !== null}
-      title="Reopen this task so it can be started again. Its dependents stop being blocked.">Reopen task</button>}{node.kind === 'verify' && actionable && <button className="btn" onClick={onProof} disabled={busy !== null}>Run review gate</button>}<input className="field" value={note} onChange={(event) => onNote(event.target.value)} placeholder="Evidence or handoff note" disabled={!actionable} />{node.kind === 'implement' && actionable && <div className="control-inline"><input className="field" value={claim} onChange={(event) => onClaim(event.target.value)} placeholder="src/path.ts" /><button className="btn btn-small" onClick={onClaimAdd} disabled={busy !== null || !claim.trim()}>Claim</button></div>}{node.kind === 'review' && actionable ? <div className="control-review-actions"><button className="btn btn-primary" onClick={() => onComplete('approve')} disabled={busy !== null}>Approve</button><button className="btn" onClick={() => onComplete('request_changes')} disabled={busy !== null}>Request changes</button><button className="btn btn-danger" onClick={() => onComplete('reject')} disabled={busy !== null}>Reject</button></div> : actionable && <button className="btn" onClick={() => onComplete('approve')} disabled={busy !== null}>Mark complete</button>}</div>
+      title="Reopen this task so it can be started again. Its dependents stop being blocked.">Reopen task</button>}{node.kind === 'verify' && actionable && <button className="btn" onClick={onProof} disabled={busy !== null}>Run review gate</button>}<input className="field" value={note} onChange={(event) => onNote(event.target.value)} placeholder="Evidence or handoff note" disabled={!actionable} />{node.kind === 'implement' && actionable && <div className="control-inline"><input className="field" value={claim} onChange={(event) => onClaim(event.target.value)} placeholder="src/path.ts" /><button className="btn" onClick={onClaimAdd} disabled={busy !== null || !claim.trim()}>Claim</button></div>}{node.kind === 'review' && actionable ? <div className="control-review-actions"><button className="btn btn-primary" onClick={() => onComplete('approve')} disabled={busy !== null}>Approve</button><button className="btn" onClick={() => onComplete('request_changes')} disabled={busy !== null}>Request changes</button><button className="btn btn-danger" onClick={() => onComplete('reject')} disabled={busy !== null}>Reject</button></div> : actionable && <button className="btn" onClick={() => onComplete('approve')} disabled={busy !== null}>Mark complete</button>}</div>
   </article>;
 }

@@ -89,9 +89,9 @@ const STYLE_TAG_BASELINE = new Set([]);
 const FONT_PX_BASELINE = {
   'attention.css': 11,
   'batches.css': 0,
-  'control.css': 12,
+  'control.css': 11,
   'insights.css': 17,
-  'evals.css': 21, 'skills.css': 21,
+  'evals.css': 20, 'skills.css': 20,
   'fleet.css': 15,
   'git.css': 13,
   'learning.css': 2,

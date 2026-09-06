@@ -21,6 +21,7 @@ import { getSetting, setSetting, setTheme, setUserPreference, spendCap } from '.
 import { hasKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailable, getWorkspaceId,
          hasProviderKey, setProviderKey, clearProviderKey, providerKeyFingerprint } from './keys';
 import type {
+  AwakeState,
   BackupCheck, BackupRestoreSummary, BackupSummary, DocketPlanNode,
   HeadlessRowDetail, HeadlessRowSummary, HeadlessStartRequest, HookInput,
   InteractiveSessionLoad, LaunchOptions, McpServerConfig, PluginScope,
@@ -47,6 +48,7 @@ import * as notify from './notify';
 import * as mobile from './mobile';
 import { mobileFleetSnapshot } from './fleet-snapshot';
 import * as tailnet from './tailnet';
+import * as awake from './awake';
 import { qrSvg } from '../shared/qr';
 import * as skills from './skills';
 import * as plugins from './plugins';
@@ -158,6 +160,32 @@ let quitDraining = false;
 let quitReady = false;
 let stopHookEventListener: (() => void) | null = null;
 
+/**
+ * Tell awake.ts what is running, so it can hold or release the Mac.
+ *
+ * Both facts are read here rather than in awake.ts because both already live
+ * here: index.ts is the one module that sees the session list, the headless
+ * children and the phone monitor's configuration at once. Giving the power
+ * module its own opinion about what counts as a live agent would create a
+ * second answer that could disagree with the quit dialog's.
+ *
+ * Headless runs count. A detached overnight fan-out is precisely the work that
+ * "I left the laptop at home" is about, and a machine that suspends through it
+ * loses the run without reporting anything.
+ */
+function syncAwake(): AwakeState {
+  const live = listSessions().filter((s) => s.status === 'starting' || s.status === 'running').length;
+  let dashboard = false;
+  try {
+    dashboard = mobile.mobileConfig().dashboardEnabled;
+  } catch {
+    // Reading the setting opens the database, which is exactly what is broken
+    // in recovery mode. An unreadable dashboard flag is not a reason to keep a
+    // Mac awake, so it reads as off and the live-agent half still decides.
+  }
+  return awake.reconcileAwake({ sessions: live + headless.liveHeadlessCount(), dashboard });
+}
+
 function startPoller() {
   if (pollTimer) return;
   const tick = async () => {
@@ -175,6 +203,12 @@ function startPoller() {
     // monitor keep running. Phone delivery/retry cannot depend on a renderer.
     announceCurrentAttention();
     try { finalizeProviderRemovals(); } catch { /* an active profile is expected */ }
+    // The backstop for every lifecycle this file cannot see the end of. A
+    // headless row finishing writes no IPC message and a PTY that dies with the
+    // exit observer detached reports to nobody, so a reconcile that is cheap
+    // when nothing changed is what stops a released hold from being missed —
+    // and what starts one in the daemon, which has no window and no handlers.
+    try { syncAwake(); } catch { /* power management is never worth a dead poll */ }
   };
   pollTimer = setInterval(tick, 10_000);
   void tick();
@@ -846,6 +880,12 @@ app.on('before-quit', (event) => {
   stopServices();
   void Promise.allSettled([shutdownAll(), headless.shutdownHeadless()]).finally(() => {
     quitReady = true;
+    // Released here rather than at the top of the drain: the machine should
+    // stay up long enough for Codex to flush its rollout and node-pty to
+    // observe the exits. This is the one path every quit passes through, and a
+    // blocker is process-scoped, so leaving without giving it back is the
+    // difference between a Mac that sleeps tonight and one that does not.
+    try { awake.reconcileAwake(null); } catch { /* nothing may block the quit */ }
     app.quit();
   });
 });
@@ -1177,7 +1217,13 @@ async function startAttendedServices(): Promise<StartupState> {
   const attempt = (async () => {
     try {
       initSessions(() => win);
-      setSessionExitObserver((value) => notify.announceAttention(attention.attentionOf(value)));
+      setSessionExitObserver((value) => {
+        notify.announceAttention(attention.attentionOf(value));
+        // The last agent exiting is the moment the Mac should be allowed to
+        // sleep again, and waiting up to a poll interval for that is ten
+        // seconds of battery spent on nothing.
+        syncAwake();
+      });
       // Clicking a banner already raises the window; this is the half that was
       // missing. Without a route the operator lands on whichever tab happened
       // to be open and still has to hunt for the agent they were told about.
@@ -1516,7 +1562,14 @@ function registerIpc() {
     live: listSessions().filter((value) => value.status !== 'exited').length,
     limit: queue.slots().session,
   }));
-  handle('sessions:create', (opts: LaunchOptions) => createSession(opts));
+  handle('sessions:create', async (opts: LaunchOptions) => {
+    const created = await createSession(opts);
+    // The first live agent is what takes the power-save blocker. Doing it here
+    // rather than waiting for the poller means the Mac is already held before
+    // the operator has finished closing the lid.
+    syncAwake();
+    return created;
+  });
   // Separate from sessions:create: only the exact UUID + selected project
   // cross this boundary, so arbitrary launch flags cannot turn recovery into a
   // broad Codex picker or a second writer.
@@ -1746,7 +1799,14 @@ function registerIpc() {
   handle('worktrees:forSession', (id: string) => worktrees.worktreeForSession(id));
 
   // ══ phase 10 · headless fan-out ═════════════════════════════════════
-  handle('headless:start', (cfg: HeadlessStartRequest) => headless.startHeadlessRun(cfg));
+  handle('headless:start', async (cfg: HeadlessStartRequest) => {
+    const started = await headless.startHeadlessRun(cfg);
+    // startHeadlessRun returns once the children are spawned, not when the
+    // fan-out finishes, so this reconcile happens with the run genuinely live.
+    // Its completion has no IPC boundary at all — the poller releases it.
+    syncAwake();
+    return started;
+  });
   // Status without the transcript. The run view refires this every three
   // seconds and renders none of the agent's stdout in the list, so the text
   // stays in SQLite until a row is expanded — see HeadlessRowSummary.
@@ -1830,6 +1890,10 @@ function registerIpc() {
     // another lifecycle transition (or up to one poll interval) to be useful.
     if (deliveryChanged) notify.resetMobileAttentionDelivery();
     if (deliveryChanged && status.config.pushEnabled) queueMicrotask(announceCurrentAttention);
+    // Switching the phone dashboard on is a promise that this Mac will answer a
+    // device that is not in the room, which it cannot keep while suspended;
+    // switching it off is one of the two ways the hold is released.
+    if (before.dashboardEnabled !== status.config.dashboardEnabled) syncAwake();
     return status;
   });
   handle('mobile:regenerateToken', () => mobile.regenerateMobileToken());
@@ -1909,6 +1973,17 @@ function registerIpc() {
     }
     return status;
   });
+
+  /**
+   * Whether Wanigan is keeping this Mac awake, and why.
+   *
+   * A read, not a switch: there is no channel here for the renderer to demand a
+   * hold, because the only things allowed to cause one are a live agent and the
+   * dashboard toggle, and both of those are already observed in main. Reading
+   * reconciles rather than returning a remembered answer, so the panel cannot
+   * show a hold that was released between polls.
+   */
+  handle('awake:state', () => syncAwake());
 
   // ══ phase 19 · trust and the ledger ═════════════════════════════════
   handle('policy:trust', (projectId: string | null) => policy.trustFor(projectId));
