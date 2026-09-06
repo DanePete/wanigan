@@ -1,4 +1,5 @@
 import type http from 'node:http';
+import { devNull } from 'node:os';
 import { runGit, status, type GitFile, type GitStatus } from '../git';
 import { listProjects } from '../store';
 import { mobileRepositoryReview } from '../settings';
@@ -32,18 +33,25 @@ import { safeString } from './snapshot';
  *     absolute, anything beginning `~`, and anything containing `..`. A home
  *     directory is a username; where a checkout sits on someone's disk is not
  *     part of what "which files changed" means.
- *   - No file contents. The phone is told git's own status letters and how many
- *     lines each file differs from HEAD. It is never sent a hunk, a line of
- *     source, or the text of an untracked file. That is a second promise, and
- *     this module is the only thing keeping it, so it is spelled out here: there
- *     is no patch route, on purpose.
+ *   - No contents arrive unasked, and none are ever written. A repository
+ *     reading is status letters and line counts. Source lines travel for one
+ *     file at a time, as git's own patch, and only because the operator tapped
+ *     that file — a review that hides what changed is not a review, and an
+ *     operator deciding about an agent's work from a phone is deciding about
+ *     the hunks. The widening stops there: the path asked for has to be one git
+ *     itself has just reported as changed, matched against that reading rather
+ *     than resolved against the filesystem, so this route cannot be pointed at a
+ *     file the screen never offered — an ignored `.env` among them. There is
+ *     still nothing here that stages, applies, commits or writes, on purpose.
  *
  * Everything is bounded, and every bound is *said* rather than applied quietly.
  * A capped list reports how many rows it did not send; a change set too large to
  * count refuses its line counts as a whole rather than shipping half of them as
- * if they were the total; a response that will not fit the JSON cap is refused
- * rather than trimmed until it does. A truncated answer that looks whole is
- * worse than no answer, because nothing on the screen says which one it is.
+ * if they were the total; a diff too large to send names the size it was and the
+ * size allowed instead of arriving as a patch that stops mid-hunk; a response
+ * that will not fit the JSON cap is refused rather than trimmed until it does. A
+ * truncated answer that looks whole is worse than no answer, because nothing on
+ * the screen says which one it is.
  */
 
 /** Every bound this module applies, in one place so the page can be told them. */
@@ -58,6 +66,19 @@ export const MOBILE_REPO_LIMITS = {
   timeoutMs: 12_000,
   /** git's own stdout ceiling for the numstat that produces the line counts. */
   diffBytes: 1024 * 1024,
+  /** One file's patch, as sent. Deliberately well under the JSON cap below. */
+  patchBytes: 128 * 1024,
+  /**
+   * How much of one file's patch git is allowed to print before it is killed.
+   *
+   * Two ceilings rather than one, because the refusal has to be able to say
+   * *how big* the diff was, and a read stopped at the send cap cannot: it only
+   * knows the diff was bigger than the number already on the screen. Reading up
+   * to this and then refusing turns 'too large' into '1.4 MB, and Wanigan sends
+   * at most 128 KB', which is the difference between a bound and an excuse. Past
+   * this the honest answer really is 'larger than 4 MB', and it says that.
+   */
+  patchReadBytes: 4 * 1024 * 1024,
   /** The same JSON ceiling /api/status holds itself to. */
   jsonBytes: 512 * 1024,
 } as const;
@@ -98,6 +119,26 @@ export type MobileRepoFile = {
   uncounted: 'binary' | 'untracked' | 'not-counted' | null;
 };
 
+/**
+ * One file's diff, as the phone receives it.
+ *
+ * `patch` and `reason` are exclusive and one of them is always null: either
+ * git's own patch text, unedited, or Wanigan's sentence for why there is none.
+ * A response carrying neither would be a screen that shows nothing and explains
+ * nothing, which is the state this whole surface exists to refuse.
+ */
+export type MobileRepoFileDiff = {
+  path: string;
+  status: string;
+  where: MobileRepoFile['where'];
+  added: number | null;
+  removed: number | null;
+  /** git's own unified diff for this one path, or null. Never truncated. */
+  patch: string | null;
+  /** Why there is no patch — binary, too large, changed back. Never git's text. */
+  reason: string | null;
+};
+
 /* ── the gate ────────────────────────────────────────────────────────── */
 
 /**
@@ -132,6 +173,25 @@ function wirePath(value: unknown): string {
 }
 
 /**
+ * The one refusal every path crosses this wire through, in both directions.
+ *
+ * Going out, an absolute, `~` or `..` path is not reachable from git's own
+ * porcelain output — this stands there anyway, because it is the single function
+ * between a filesystem and a phone and the cost of being wrong once is a home
+ * directory, which is a username, leaving the machine. Coming in, from a device
+ * asking for one file's diff, exactly the same shapes are exactly the attack,
+ * and they are refused by this function rather than by a second copy of it: two
+ * guards is how one of them ends up a character weaker than the other.
+ */
+function safeRelative(raw: unknown): string | null {
+  const value = wirePath(raw);
+  if (!value) return null;
+  if (value.startsWith('/') || value.startsWith('~') || /^[A-Za-z]:[\\/]/.test(value)) return null;
+  if (value.split('/').some((part) => part === '..')) return null;
+  return value;
+}
+
+/**
  * git's repository-relative path, re-rooted onto the project, or refused.
  *
  * Wanigan projects are whole repositories today — store.ts refuses to add a
@@ -139,17 +199,10 @@ function wirePath(value: unknown): string {
  * reports paths from the *repository* root while this screen is titled after the
  * project. Re-rooting is what keeps the label and the paths talking about the
  * same directory.
- *
- * The absolute, `~` and `..` refusals below are not reachable from git's own
- * porcelain output. They are here because this is the single function standing
- * between a filesystem and a phone, and the cost of it being wrong once is a
- * home directory — which is a username — leaving the machine.
  */
 function projectRelative(raw: unknown, subpath: string | null): string | null {
-  const value = wirePath(raw);
+  const value = safeRelative(raw);
   if (!value) return null;
-  if (value.startsWith('/') || value.startsWith('~') || /^[A-Za-z]:[\\/]/.test(value)) return null;
-  if (value.split('/').some((part) => part === '..')) return null;
   if (!subpath) return value;
   const prefix = subpath.endsWith('/') ? subpath : `${subpath}/`;
   if (!value.startsWith(prefix)) return null;
@@ -249,6 +302,81 @@ export function numstatCounts(out: string, limitBytes = MOBILE_REPO_LIMITS.diffB
     });
   }
   return { counted: true, byPath };
+}
+
+/* ── one file's patch ────────────────────────────────────────────────── */
+
+export type MobileRepoPatch =
+  | { ok: true; patch: string }
+  | { ok: false; reason: string };
+
+/** What one `git diff` of one file came back as, with git's own words dropped. */
+export type MobileRepoPatchRead = {
+  /**
+   * Did git answer this question at all. Not `run.ok`: `diff --no-index` exits 1
+   * when the two files differ, which is the answer rather than a failure, so the
+   * caller decides what an exit status meant and this function is told.
+   */
+  answered: boolean;
+  out: string;
+  /** git was killed for printing past the read ceiling, so `out` is a fragment. */
+  overRead: boolean;
+};
+
+/**
+ * The one place a file's diff becomes something to send, or a sentence saying
+ * why it is not.
+ *
+ * Every branch here refuses whole. A patch cut to fit is the worst artefact this
+ * screen could produce: a hunk that ends early reads exactly like a hunk that
+ * ended, and an operator deciding whether an agent's change is safe would be
+ * deciding about a change they have only seen part of, with nothing on the
+ * screen saying so.
+ *
+ * `run.err` is never read here, and that is deliberate rather than incidental:
+ * git's failure text routinely carries absolute paths (`fatal: … /Users/…`), so
+ * the reasons below are Wanigan's own sentences and the operator is pointed at
+ * the Mac, where git's words are available in full.
+ *
+ * Exported for the offline suite, which would otherwise need a repository with a
+ * four-megabyte diff in it to reach the branches that matter most.
+ */
+export function patchFor(read: MobileRepoPatchRead, limits = MOBILE_REPO_LIMITS): MobileRepoPatch {
+  if (read.overRead) {
+    return {
+      ok: false,
+      reason: `This file's diff is larger than the ${Math.round(limits.patchReadBytes / (1024 * 1024))} MB ` +
+        'Wanigan will read for a phone, so none of it was sent and its exact size is not known. Nothing ' +
+        'was cut short: half a patch reads like a whole one. Open this file on the Mac to see the change.',
+    };
+  }
+  if (!read.answered) {
+    return {
+      ok: false,
+      reason: 'git did not produce a diff for this file. It may have been moved or removed since this ' +
+        'list was read. Open the project on the Mac to see what git said.',
+    };
+  }
+  const bytes = Buffer.byteLength(read.out);
+  if (bytes > limits.patchBytes) {
+    return {
+      ok: false,
+      reason: `This file's diff is ${Math.round(bytes / 1024)} KB and Wanigan sends at most ` +
+        `${Math.round(limits.patchBytes / 1024)} KB to a phone, so it was refused rather than cut short. ` +
+        'Open this file on the Mac to read all of it.',
+    };
+  }
+  // git printing nothing is not an empty diff, it is no diff: between the file
+  // list this device is showing and the tap that asked about one row, the file
+  // was changed back. Saying that is more use than an empty monospace box.
+  if (!read.out.trim()) {
+    return {
+      ok: false,
+      reason: 'git reports no difference in this file now. The list you tapped was read a moment ' +
+        'earlier, so it may have been changed back since.',
+    };
+  }
+  return { ok: true, patch: read.out };
 }
 
 /* ── reading working trees ───────────────────────────────────────────── */
@@ -381,9 +509,18 @@ async function serveRepos(res: http.ServerResponse): Promise<void> {
  * One row per distinct path. git reports a file that is modified in both the
  * index and the working tree twice, and two rows for one file reads as two
  * changed files; the second sighting upgrades the row to 'both' instead.
+ *
+ * `gitPaths` maps each row back to the path git actually said, which is what the
+ * diff route runs git against. The two differ in two ways that both matter: a
+ * row's path is re-rooted onto the project, and it is cut at PATH_MAX. Diffing
+ * the wire form would ask git about a shortened path — a file that does not
+ * exist — so the wire form is what a request is *matched* against and git's own
+ * form is what it is *run* with.
  */
-function wireFiles(tree: GitStatus, counts: MobileRepoCounts): { files: MobileRepoFile[]; dropped: number } {
+function wireFiles(tree: GitStatus, counts: MobileRepoCounts):
+{ files: MobileRepoFile[]; dropped: number; gitPaths: Map<string, string> } {
   const rows = new Map<string, MobileRepoFile>();
+  const gitPaths = new Map<string, string>();
   let dropped = 0;
   const mark = (file: GitFile, where: MobileRepoFile['where']) => {
     const relative = projectRelative(file.path, tree.subpath);
@@ -403,6 +540,7 @@ function wireFiles(tree: GitStatus, counts: MobileRepoCounts): { files: MobileRe
     const index = typeof file.index === 'string' ? file.index.slice(0, 1) || ' ' : ' ';
     const work = typeof file.work === 'string' ? file.work.slice(0, 1) || ' ' : ' ';
     const measured = counts.counted ? counts.byPath.get(file.path) : undefined;
+    gitPaths.set(relative, file.path);
     rows.set(relative, {
       path: relative,
       status: `${index}${work}`,
@@ -422,7 +560,7 @@ function wireFiles(tree: GitStatus, counts: MobileRepoCounts): { files: MobileRe
   for (const file of tree.untracked) mark(file, 'untracked');
   for (const file of tree.staged) mark(file, 'staged');
   for (const file of tree.unstaged) mark(file, 'unstaged');
-  return { files: [...rows.values()], dropped };
+  return { files: [...rows.values()], dropped, gitPaths };
 }
 
 async function serveRepo(res: http.ServerResponse, url: URL): Promise<void> {
@@ -505,5 +643,164 @@ async function serveRepo(res: http.ServerResponse, url: URL): Promise<void> {
   });
 }
 
+/* ── one file ────────────────────────────────────────────────────────── */
+
+/**
+ * One refusal for every 'you may not ask about that path'.
+ *
+ * A malformed path, a path outside the project, and a path git simply has not
+ * reported as changed are three findings and one answer, deliberately: told
+ * apart, they would make this route an oracle for whether a file exists on
+ * someone's Mac, which is a question a changed-file list never asked.
+ */
+const NOT_A_CHANGED_FILE =
+  'git does not report a change to that file in this project, so there is nothing here to show.';
+
+/**
+ * No count, no patch — and this is the sentence for it.
+ *
+ * The line count is also how a binary is recognised, so a read that failed to
+ * count cannot be followed by a read of the bytes: Wanigan would not know
+ * whether it was about to render a source file or a PNG as text.
+ */
+const UNCOUNTED_SO_UNREAD =
+  'git did not count this file\'s lines, so Wanigan did not read its diff either. Without that count ' +
+  'it cannot tell a binary file from a text one, and a binary rendered as text is worse than a file ' +
+  'left unread. Open the project on the Mac to see the change.';
+
+async function serveRepoFile(res: http.ServerResponse, url: URL): Promise<void> {
+  const projectId = safeString(url.searchParams.get('project'), 160);
+  if (!projectId) { json(res, 400, { error: 'Choose a project.' }); return; }
+  const project = listProjects().find((value) => value.id === projectId);
+  if (!project) { json(res, 404, { error: 'Wanigan has no project with that id.' }); return; }
+  // The same guard the outbound paths cross, run before anything reaches a
+  // filesystem: an absolute path, a leading `~` or any `..` segment is refused
+  // rather than cleaned into something that resolves.
+  const asked = safeRelative(url.searchParams.get('file'));
+  if (!asked) { json(res, 404, { error: NOT_A_CHANGED_FILE }); return; }
+
+  let tree: GitStatus;
+  try {
+    tree = await withTimeout(status(project.path), MOBILE_REPO_LIMITS.timeoutMs);
+  } catch {
+    json(res, 503, { error: UNREADABLE });
+    return;
+  }
+  if (!tree.isRepo) { json(res, 404, { error: NOT_A_CHANGED_FILE }); return; }
+
+  // The list is rebuilt here rather than trusted from the request, and the row
+  // is looked up inside it. Membership in git's own reading is the real guard on
+  // this route: a path git did not just report as changed is refused whatever it
+  // looks like, which is what keeps an ignored `.env` sitting beside the changed
+  // files out of reach even though it is a perfectly ordinary relative path.
+  const { files, gitPaths } = wireFiles(tree, { counted: false, reason: '' });
+  const row = files.find((file) => file.path === asked);
+  const gitPath = gitPaths.get(asked);
+  if (!row || !gitPath) { json(res, 404, { error: NOT_A_CHANGED_FILE }); return; }
+
+  const answer = (added: number | null, removed: number | null, patch: MobileRepoPatch): void => {
+    sendRepoJson(res, {
+      generatedAt: Date.now(),
+      id: safeString(project.id, 160),
+      name: safeString(project.name, 160, 'Unnamed project'),
+      path: row.path,
+      status: row.status,
+      where: row.where,
+      added,
+      removed,
+      patch: patch.ok ? patch.patch : null,
+      reason: patch.ok ? null : patch.reason,
+    } satisfies MobileRepoFileDiff & { generatedAt: number; id: string; name: string });
+  };
+
+  // The one project shape this route declines. git writes a patch header from
+  // the *repository* root — `--- a/packages/app/src/x.ts` — and this screen's
+  // promise is that its paths are relative to the project. Rewriting git's own
+  // diff text to re-root it would mean the promise was being kept by an edit to
+  // the patch rather than by the patch, so the honest answer is that this shape
+  // is readable on the Mac instead. store.ts refuses to create such a project;
+  // only rows added before that rule can reach here.
+  if (tree.subpath) {
+    answer(null, null, {
+      ok: false,
+      reason: 'This project is a subdirectory of a larger repository, and git writes a diff header from ' +
+        'that repository\'s root. Wanigan only sends paths relative to the project, so this file\'s ' +
+        'diff is readable on the Mac rather than here.',
+    });
+    return;
+  }
+  // git collapses an entirely new directory into a single row with a trailing
+  // slash, so the row an operator tapped can be a folder rather than a file.
+  if (gitPath.endsWith('/')) {
+    answer(null, null, {
+      ok: false,
+      reason: 'git reports this whole folder as new, so it lists the folder rather than each file in ' +
+        'it. Open the project on the Mac to read what is inside.',
+    });
+    return;
+  }
+
+  // An untracked file has no counterpart in HEAD, so `diff HEAD` says nothing at
+  // all about it — and on a screen watching agents work, the file that matters
+  // is very often the one that was just created. `--no-index` against the null
+  // device is git's own way of asking what adding it would look like, and it is
+  // reached only for a path git itself listed as untracked, which is never a
+  // file the repository ignores.
+  const noIndex = row.where === 'untracked';
+  // `--no-ext-diff` because a repository's own config can name an external diff
+  // program, and reading a file for a phone must not become the way a checked-out
+  // repo gets one run. `--no-textconv` closes the same door one step in: a
+  // .gitattributes filter is a program too, and what belongs on this screen is
+  // git's own bytes rather than whatever a repository configured to stand in for
+  // them.
+  const diffArgs = (extra: string[]): string[] => (noIndex
+    ? ['diff', '--no-index', ...extra, '--no-ext-diff', '--no-textconv', '--', devNull, gitPath]
+    : ['diff', 'HEAD', ...extra, '--no-ext-diff', '--no-textconv', '--', gitPath]);
+  // `diff --no-index` exits 1 when the two files differ, which is the answer
+  // rather than a failure; anywhere else a non-zero status is a failure.
+  const answered = (run: { ok: boolean; code: number | null }): boolean => run.ok || (noIndex && run.code === 1);
+
+  // Counted first, and the patch read only if that succeeded. The count carries
+  // two facts this needs: the +/- pair the header shows, and whether git will
+  // diff the file at all — a binary's counts are `-`, in every locale, whereas
+  // spotting `Binary files … differ` in the patch would be spotting an English
+  // sentence and calling it a fact.
+  const measured = await runGit(tree.repoRoot, diffArgs(['--numstat', '-z']), {
+    timeout: MOBILE_REPO_LIMITS.timeoutMs,
+    maxBuffer: MOBILE_REPO_LIMITS.diffBytes,
+  });
+  if (!answered(measured)) { answer(null, null, { ok: false, reason: UNCOUNTED_SO_UNREAD }); return; }
+  const counts = numstatCounts(measured.out);
+  if (!counts.counted) { answer(null, null, { ok: false, reason: UNCOUNTED_SO_UNREAD }); return; }
+  const entry = counts.byPath.get(gitPath);
+  // git counted the change set and this path was not in it: it was changed back
+  // between the list this device is showing and the tap that asked about it.
+  if (!entry) { answer(null, null, patchFor({ answered: true, out: '', overRead: false })); return; }
+  if (entry.added === null) {
+    answer(entry.added, entry.removed, {
+      ok: false,
+      reason: 'This is a binary file. git does not diff one line by line, so there are no hunks to ' +
+        'read — and Wanigan will not render its bytes as text to fill the space.',
+    });
+    return;
+  }
+
+  const run = await runGit(tree.repoRoot, diffArgs([]), {
+    timeout: MOBILE_REPO_LIMITS.timeoutMs,
+    maxBuffer: MOBILE_REPO_LIMITS.patchReadBytes,
+  });
+  answer(entry.added, entry.removed, patchFor({
+    answered: answered(run),
+    out: run.out,
+    // execFile reports an over-cap read by killing git and saying so in stderr,
+    // which leaves a fragment of a patch in stdout that must not be used.
+    overRead: /maxbuffer/i.test(run.err),
+  }));
+}
+
 registerApiRoute({ path: '/api/repos', method: 'GET', scope: 'repo', handler: (_req, res) => serveRepos(res) });
 registerApiRoute({ path: '/api/repo', method: 'GET', scope: 'repo', handler: (_req, res, url) => serveRepo(res, url) });
+// The third and last route on this scope, and the only one that carries source
+// lines. It is registered beside the other two so `grep "scope: 'repo'"` still
+// answers the whole question of what a paired phone can be shown of a repository.
+registerApiRoute({ path: '/api/repo/file', method: 'GET', scope: 'repo', handler: (_req, res, url) => serveRepoFile(res, url) });

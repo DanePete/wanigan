@@ -1445,6 +1445,28 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && smallReply.ok === true,
   'an oversized working-tree reading is refused with a sentence rather than truncated: no half-counted diff, and no file list silently shortened to fit the wire',
   hugeDiff.counted ? 'counted' : hugeDiff.reason);
+  // One file's diff is the only thing on this wire made of source lines, so its
+  // ceilings refuse whole and say what they refused. Two ceilings, because the
+  // sentence has to be able to name a size: a read stopped at the send cap only
+  // ever knows the diff was bigger than the number already on the screen, while
+  // a read that got further can say 158 KB. Past the read ceiling the honest
+  // answer really is 'larger than', and it says that instead of guessing.
+  const repoGit = await import('./mobile/git');
+  const oversizedPatch = repoGit.patchFor({
+    answered: true, out: '+ leaked-hunk-line\n'.repeat(9_000), overRead: false,
+  });
+  const unreadablePatch = repoGit.patchFor({ answered: true, out: '+ fragment of a hunk', overRead: true });
+  const readablePatch = repoGit.patchFor({ answered: true, out: '@@ -1 +1,2 @@\n one\n+two\n', overRead: false });
+  const revertedPatch = repoGit.patchFor({ answered: true, out: '', overRead: false });
+  const failedPatch = repoGit.patchFor({ answered: false, out: '', overRead: false });
+  const oversizedReason = oversizedPatch.ok ? '' : oversizedPatch.reason;
+  check(!oversizedPatch.ok && /refused rather than cut short/.test(oversizedReason)
+    && / \d+ KB and Wanigan sends at most \d+ KB /.test(oversizedReason)
+    && !oversizedReason.includes('leaked-hunk-line')
+    && !unreadablePatch.ok && /larger than (?:the )?\d+ MB/.test(unreadablePatch.ok ? '' : unreadablePatch.reason)
+    && !revertedPatch.ok && !failedPatch.ok && readablePatch.ok,
+  "a file's diff too large for the phone is refused with the size it was and the size allowed, carrying none of the patch it refused — never a hunk truncated into something that reads complete",
+  oversizedReason);
 
   say('── phone fleet · authenticated loopback transport');
   const mobilePort = await unusedLoopbackPort();
@@ -1591,6 +1613,56 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && !withReviewText.includes('conversation-') && !/[/\\][Uu]sers[/\\]/.test(withReviewText),
       'turning repository review on does not widen /api/status: the fleet route still carries no path, pid or conversation id',
       withReviewText.slice(0, 300));
+    // Reading one file's diff is the widest thing this scope does — it is the
+    // only route on this wire that carries source lines — so it is driven from
+    // the outside, over HTTP, with the opt-in flipped both ways.
+    const reviewRepo = path.join(tmp, 'phone-review-repo');
+    fs.mkdirSync(reviewRepo, { recursive: true });
+    const gitReview = (...args: string[]) =>
+      execFileSync('git', ['-C', reviewRepo, ...args], { stdio: 'pipe' }).toString();
+    gitReview('init', '-q', '-b', 'main');
+    gitReview('config', 'user.email', 'smoke@wanigan.test');
+    gitReview('config', 'user.name', 'Smoke');
+    fs.writeFileSync(path.join(reviewRepo, 'kept.txt'), 'one\n');
+    fs.writeFileSync(path.join(reviewRepo, 'blob.bin'), Buffer.from([0, 1, 2, 0, 255, 7]));
+    gitReview('add', '-A');
+    gitReview('commit', '-qm', 'base');
+    fs.writeFileSync(path.join(reviewRepo, 'kept.txt'), 'one\ntwo\n');
+    fs.writeFileSync(path.join(reviewRepo, 'blob.bin'), Buffer.from([0, 1, 2, 0, 255, 9, 9]));
+    const reviewProject = await addProject(reviewRepo);
+    const asPhone = { headers: { authorization: `Bearer ${token}` } };
+    const fileUrl = (file: string) => new URL(
+      `api/repo/file?project=${encodeURIComponent(reviewProject.id)}&file=${encodeURIComponent(file)}`,
+      monitor.localUrl,
+    );
+    const refusedWhileOff = await fetch(fileUrl('kept.txt'), asPhone);
+    const refusedWhileOffBody = await refusedWhileOff.json() as { error?: string };
+    setSetting('mobile_repository_review', '1');
+    const diffResponse = await fetch(fileUrl('kept.txt'), asPhone);
+    const filePatch = await diffResponse.json() as { patch?: string | null; reason?: string | null; added?: number | null };
+    const binaryResponse = await fetch(fileUrl('blob.bin'), asPhone);
+    const binaryFile = await binaryResponse.json() as { patch?: string | null; reason?: string | null };
+    // Every shape the guard exists for, asked with the opt-in ON so a refusal
+    // here is the path guard answering rather than the scope.
+    const escapes = await Promise.all(
+      ['/etc/passwd', '../../../etc/passwd', '~/.ssh/id_rsa', 'kept.txt/../kept.txt', 'never-changed.txt']
+        .map(async (attempt) => (await fetch(fileUrl(attempt), asPhone)).status),
+    );
+    setSetting('mobile_repository_review', '0');
+    check(refusedWhileOff.status === 403 && /disabled/.test(refusedWhileOffBody.error ?? ''),
+      "one file's diff is refused with the repository-review opt-in off, by the dispatcher's declared scope rather than by anything inside the handler",
+      refusedWhileOff.status);
+    check(diffResponse.ok && (filePatch.patch ?? '').includes('@@') && (filePatch.patch ?? '').includes('+two')
+      && filePatch.added === 1 && filePatch.reason === null
+      && !JSON.stringify(filePatch).includes(reviewRepo),
+    "with the opt-in on, tapping a changed file returns git's own hunks and the count that goes with them, and no path to where the repository sits on the Mac",
+    filePatch.patch);
+    check(binaryResponse.ok && binaryFile.patch === null && /binary/i.test(binaryFile.reason ?? ''),
+      'a binary file answers with a sentence saying it is one rather than rendering its bytes as text',
+      binaryFile.reason);
+    check(escapes.every((status) => status === 404),
+      'a path this screen never offered is refused whatever it looks like — absolute, traversing, home-relative, or simply a file git has not reported as changed',
+      escapes.join(', '));
     check(!body.includes(privateMarker) && !body.includes('42424'),
       'the HTTP allow-list drops extra paths, commands, transcripts and pids even if its source grows', body);
     // Whether the operator will actually be told is part of every reading now,
@@ -1700,6 +1772,39 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'a read-only phone can see what this Mac starts on a timer but cannot change it: the schedule list answers on the monitor scope, and both pausing and resuming are refused by the remote-control switch with the exact sentence the page matches on — with the schedule still armed afterwards',
     `${monitorSchedules.status} / pause ${lockedPause.status}:${lockedPauseBody.error} / resume ${lockedResume.status}:${lockedResumeBody.error}`);
     schedule.deleteSchedule(readOnlySchedule.id);
+    /* ── the runs panel · seeing the spend and stopping it are two gates ──
+     * A headless fan-out is the work in Wanigan that costs money with nobody
+     * at the keyboard, which makes seeing it a monitor question and killing it
+     * a control one. Both verbs are checked, because a gate that only refuses
+     * the destructive-sounding one is not a gate.
+     */
+    const lockedRunId = 'run_smoke_phone_locked';
+    db().prepare(
+      `INSERT INTO runs (id,name,model,status,config_json,kind,created_at,submitted_at)
+       VALUES (?,?,'smoke-phone-model',?,'{}','headless',?,?)`
+    ).run(lockedRunId, 'smoke phone locked fan-out', 'in_progress', Date.now() - 120_000, Date.now() - 120_000);
+    db().prepare(
+      `INSERT INTO headless_rows (run_id,project_id,project_name,project_path,status)
+       VALUES (?,?,?,'/private/tmp/smoke-phone-repo','running')`
+    ).run(lockedRunId, 'p_smoke_phone_locked', 'smoke phone repo');
+    type PhoneRunRow = { id: string; cancelable: boolean };
+    const monitorRuns = await fetch(new URL('api/runs', monitor.localUrl), { headers: { authorization: `Bearer ${token}` } });
+    const monitorRunsBody = await monitorRuns.json() as { runs?: PhoneRunRow[] };
+    const lockedCancel = await fetch(new URL('api/runs', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'cancel', id: lockedRunId }),
+    });
+    const lockedCancelBody = await lockedCancel.json() as { error?: string };
+    const lockedRunRow = db().prepare('SELECT status FROM headless_rows WHERE run_id=?')
+      .get(lockedRunId) as { status: string } | undefined;
+    check(monitorRuns.status === 200
+      && (monitorRunsBody.runs ?? []).some((row) => row.id === lockedRunId && row.cancelable === true)
+      && lockedCancel.status === 403
+      && lockedCancelBody.error === 'Remote control is disabled in Wanigan Settings.'
+      && lockedRunRow?.status === 'running',
+    'a read-only phone can see the fan-out that is spending money right now but cannot stop it: the run list answers on the monitor scope, and cancelling is refused by the remote-control switch with the exact sentence the page matches on — with the repository still running afterwards',
+    `${monitorRuns.status} / cancel ${lockedCancel.status}:${lockedCancelBody.error} row=${lockedRunRow?.status}`);
+    db().prepare('DELETE FROM runs WHERE id=?').run(lockedRunId);
     const unknownRoute = await fetch(new URL('api/not-a-route', monitor.localUrl), { headers: { authorization: `Bearer ${token}` } });
     const unknownRouteBody = await unknownRoute.json() as { error?: string };
     const wrongVerb = await fetch(controlUrl, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: '{}' });
@@ -1902,6 +2007,20 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(controls.ok && JSON.parse(await controls.text()).projects?.[0]?.id === 'prj_mobile'
       && launch.status === 201 && remoteActions[0] === 'launch:prj_mobile:codex:gpt-5.6-sol:high:Run the check',
     'a paired iPad receives model and effort choices and can start an explicitly requested session');
+    // An account id is untrusted input on the same POST route as a launch, and
+    // this is the one case where refusing beats recovering: a session that
+    // signs in as the wrong login writes to the wrong history and spends the
+    // wrong subscription, so the refusal has to happen before anything starts
+    // rather than resolving quietly to the default.
+    const launchWrongAccount = await fetch(new URL('api/action', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'launch', projectId: 'prj_mobile', providerId: 'codex', prompt: 'Run the check', accountId: 'acct_not_a_real_account' }),
+    });
+    const launchWrongAccountBody = await launchWrongAccount.json() as { error?: string };
+    check(launchWrongAccount.status === 400 && /no longer exists/.test(launchWrongAccountBody.error ?? '')
+      && remoteActions.length === 1,
+    'a launch naming an account this Mac does not have is refused before anything starts, rather than quietly signing in as whatever the default resolves to',
+    `${launchWrongAccount.status}:${launchWrongAccountBody.error} after ${remoteActions.length} action(s)`);
     const remotePrompt = await fetch(new URL('api/action', monitor.localUrl), {
       method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ action: 'prompt', sessionId: 's_mobile', prompt: 'Continue' }),
@@ -2047,6 +2166,69 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     `${unknownPause.status}:${unknownPauseBody.error} / pause ${phonePause.status} enabled=${pausedRow?.enabled} / resume ${phoneResume.status} enabled=${resumedRow?.enabled}`);
     schedule.deleteSchedule(freshSchedule.id);
     schedule.deleteSchedule(firedSchedule.id);
+    /* ── the runs panel · stopping is not stopped, and silent is not free ──
+     * cancelHeadless signals the agents and leaves the run 'canceling' while
+     * they wind down — a repository whose agent is running closes itself out
+     * through its own exit path. A phone that reported "stopped" the moment the
+     * tap landed would be inventing the outcome it wanted, and the person
+     * holding it would put it down over a run that is still spending. The same
+     * mistake pointed the other way is the cost line: a repository whose CLI
+     * named no cost and a repository that was free are the same stored 0, and
+     * this is the surface someone would act on the difference from.
+     */
+    const stoppingRunId = 'run_smoke_phone_stopping';
+    const silentRunId = 'run_smoke_phone_silent';
+    const seedPhoneRun = db().prepare(
+      `INSERT INTO runs (id,name,model,status,config_json,kind,created_at,submitted_at)
+       VALUES (?,?,'smoke-phone-model',?,'{}','headless',?,?)`
+    );
+    const seedPhoneRow = db().prepare(
+      `INSERT INTO headless_rows (run_id,project_id,project_name,project_path,status,cost_usd,cost_reported)
+       VALUES (?,?,?,'/private/tmp/smoke-phone-repo',?,0,NULL)`
+    );
+    seedPhoneRun.run(stoppingRunId, 'smoke phone stopping fan-out', 'canceling', Date.now() - 90_000, Date.now() - 90_000);
+    seedPhoneRow.run(stoppingRunId, 'p_smoke_stopping', 'smoke stopping repo', 'running');
+    seedPhoneRun.run(silentRunId, 'smoke phone silent fan-out', 'in_progress', Date.now() - 80_000, Date.now() - 80_000);
+    // One repository finished and named no cost, one is still running. Stored,
+    // both of those are the same 0.
+    seedPhoneRow.run(silentRunId, 'p_smoke_silent_done', 'smoke silent repo', 'succeeded');
+    seedPhoneRow.run(silentRunId, 'p_smoke_silent_open', 'smoke open repo', 'running');
+    type PhoneRunState = { id: string; status: string; open: number; live: boolean; cancelable: boolean;
+      costUsd: number; costStatus: string; costFinal: boolean };
+    const phoneRuns = await fetch(new URL('api/runs', monitor.localUrl), { headers: { authorization: `Bearer ${token}` } });
+    const phoneRunsBody = await phoneRuns.json() as { runs?: PhoneRunState[] };
+    const listedRuns = phoneRunsBody.runs ?? [];
+    const stoppingRun = listedRuns.find((row) => row.id === stoppingRunId);
+    const silentRun = listedRuns.find((row) => row.id === silentRunId);
+    const unknownCancel = await fetch(new URL('api/runs', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'cancel', id: 'run_does_not_exist' }),
+    });
+    const unknownCancelBody = await unknownCancel.json() as { error?: string };
+    const stoppingCancel = await fetch(new URL('api/runs', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'cancel', id: stoppingRunId }),
+    });
+    const stoppingCancelBody = await stoppingCancel.json() as { error?: string };
+    const stoppingAfter = db().prepare('SELECT status FROM runs WHERE id=?')
+      .get(stoppingRunId) as { status: string } | undefined;
+    const stoppingRowAfter = db().prepare('SELECT status FROM headless_rows WHERE run_id=?')
+      .get(stoppingRunId) as { status: string } | undefined;
+    check(unknownCancel.status === 404
+      && unknownCancelBody.error === 'That is not a run this device can cancel.'
+      && stoppingRun?.status === 'canceling' && stoppingRun.live === true && stoppingRun.cancelable === false
+      && stoppingCancel.status === 409
+      && stoppingCancelBody.error === 'That run is already stopping. Wanigan has asked its agents to quit and is waiting for them to go.'
+      && stoppingAfter?.status === 'canceling' && stoppingRowAfter?.status === 'running'
+      && composedJs.includes('is still stopping: the agents have been asked to quit'),
+    'a run id from a phone is checked against the real list in main before anything is signalled — an unknown one is refused outright — and a run already winding down is reported as stopping rather than stopped: it is offered no cancel button, a second cancel is refused with a sentence that says why, and the page carries the branch that reports "still stopping" from what the Mac answered',
+    `${unknownCancel.status}:${unknownCancelBody.error} / stopping ${stoppingCancel.status}:${stoppingCancelBody.error} run=${stoppingAfter?.status} row=${stoppingRowAfter?.status}`);
+    check(silentRun?.costStatus === 'unreported' && silentRun.costUsd === 0
+      && silentRun.costFinal === false && silentRun.open === 1
+      && composedJs.includes('That is not the same as this run having been free.')
+      && composedJs.includes('That is not the same as nothing having been spent.'),
+    'a fan-out whose finished repository named no cost reads as unreported rather than as free: the wire carries "unreported" beside the stored zero and says a repository is still open, and the page has both sentences that keep a silent CLI and a run still in flight from being printed as $0.00',
+    JSON.stringify(silentRun));
     // The console polls /api/terminal every 1.5 seconds and /api/control on
     // every render. Charging those reads to the same 20-per-minute budget as a
     // launch would 429 a console that is working perfectly, within seconds of
@@ -2109,6 +2291,25 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'pausing a schedule spends the same remote-action budget as a launch or a keystroke: with that window already drained the pause is refused with the shared sentence and the schedule is still armed, so a phone cannot buy itself a second allowance by calling a write a schedule change',
     `${pauseAfterBurst.status}:${pauseAfterBurstBody.error} enabled=${stillArmed?.enabled}`);
     schedule.deleteSchedule(budgetSchedule.id);
+    // Deliberately BELOW the key burst above, beside the schedule pause and for
+    // the same reason. Cancelling ends work the operator paid for, so it has to
+    // draw on the same twenty-a-minute budget as a launch, an instruction or a
+    // keystroke — refused in the dispatcher, before ../headless is reached at
+    // all. This depends on the window the burst drained, so it stays here.
+    const cancelAfterBurst = await fetch(new URL('api/runs', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'cancel', id: silentRunId }),
+    });
+    const cancelAfterBurstBody = await cancelAfterBurst.json() as { error?: string };
+    const silentStillOpen = db().prepare(
+      "SELECT COUNT(*) n FROM headless_rows WHERE run_id=? AND status='running'"
+    ).get(silentRunId) as { n: number };
+    check(cancelAfterBurst.status === 429
+      && cancelAfterBurstBody.error === 'Too many remote actions. Wait a minute and try again.'
+      && silentStillOpen.n === 1,
+    'cancelling a run spends the same remote-action budget as a launch or a keystroke: with that window already drained the cancel is refused with the shared sentence and the repository is still running, so a phone cannot buy itself a second allowance by calling a write a cancellation',
+    `${cancelAfterBurst.status}:${cancelAfterBurstBody.error} open=${silentStillOpen.n}`);
+    db().prepare('DELETE FROM runs WHERE id IN (?,?)').run(stoppingRunId, silentRunId);
 
     const rotated = await mobile.regenerateMobileToken();
     const oldToken = await fetch(apiUrl, { headers: { authorization: `Bearer ${token}` } });
@@ -2991,6 +3192,55 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && !phoneAccountJson.includes('CLAUDE_CONFIG_DIR') && !phoneAccountJson.includes('Gone'),
     'and an account crosses to the phone as an identity only — never the config directory that selects the login',
     phoneAccountJson);
+    // ── the phone chooses the login too ──────────────────────────────────
+    // Starting work from the iPad took whatever the project or the app default
+    // resolved to, with no way to say "the work login, not the personal one"
+    // and no way to see which one it would be. The half that is easy to get
+    // wrong is the option meaning "I did not choose": it has to name the
+    // FALLBACK, which here is the account this project is pinned to and not the
+    // default at all — the same sentence the desktop dialog got wrong until it
+    // started asking for a second, choice-free resolution.
+    const phoneLaunch = await import('./mobile/launch-options');
+    const phoneAccounts = phoneLaunch.mobileAccountOffer('claude', [controlProject.id]);
+    const phoneFollow = phoneAccounts.follow.find((row) => row.projectId === controlProject.id);
+    check(phoneAccounts.supported
+      && [...phoneAccounts.choices.map((row) => row.id)].sort().join() === [personal.id, work.id].sort().join()
+      && phoneFollow?.accountId === work.id && phoneFollow?.source === 'project',
+    'the phone offers both logins, and the option that means no choice names the account this project would actually resolve to rather than “the default”',
+    phoneFollow);
+    const phoneGlmAccounts = phoneLaunch.mobileAccountOffer('glm', [controlProject.id]);
+    check(!phoneGlmAccounts.supported && phoneGlmAccounts.choices.length === 0
+      && phoneGlmAccounts.follow.length === 0
+      && (phoneGlmAccounts.reason ?? '').includes('another vendor'),
+    'a profile that authenticates against another vendor offers the phone no account either, and says why instead of drawing an empty picker',
+    phoneGlmAccounts.reason);
+    const phoneAccountRefusal = (providerId: string, accountId: string): string => {
+      try { phoneLaunch.resolveMobileLaunchAccount(providerId, accountId); return ''; }
+      catch (error) { return error instanceof Error ? error.message : String(error); }
+    };
+    const phoneCodexAccount = accounts.list('codex')[0]?.id ?? '';
+    check(phoneAccountRefusal('claude', 'acct_not_a_real_account').includes('no longer exists')
+      && phoneAccountRefusal('claude', phoneCodexAccount).includes('different harness')
+      && phoneAccountRefusal('glm', work.id).includes('another vendor')
+      && phoneLaunch.resolveMobileLaunchAccount('claude', work.id) === work.id
+      && phoneLaunch.resolveMobileLaunchAccount('claude', '') === null,
+    'an account id from a phone is checked against the real account list: unknown, belonging to another harness, or named for a profile with no account decision are all refused rather than falling back to the default — and no choice at all stays no choice',
+    phoneAccountRefusal('claude', 'acct_not_a_real_account'));
+    const phoneAccountsJson = JSON.stringify(phoneAccounts);
+    check(!phoneAccountsJson.includes(work.configDir) && !phoneAccountsJson.includes(personal.configDir)
+      && !phoneAccountsJson.includes('configDir') && !phoneAccountsJson.includes('CLAUDE_CONFIG_DIR')
+      && !phoneAccountsJson.includes(os.homedir()) && !phoneAccountsJson.includes(dataDir()),
+    'an account reaches the phone as an id and a label only — never the config directory that selects the login',
+    phoneAccountsJson);
+    const priorPhoneKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-phone-smoke';
+    const phoneOverridden = phoneLaunch.mobileAccountOffer('claude', [controlProject.id]);
+    if (priorPhoneKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = priorPhoneKey;
+    check(phoneOverridden.override === 'ANTHROPIC_API_KEY'
+      && !JSON.stringify(phoneOverridden).includes('sk-ant-phone-smoke'),
+    'the phone is told by name that an exported credential outranks the account it is picking, and the value of that credential never leaves the Mac',
+    phoneOverridden.override);
     // GLM runs the reviewed Claude harness but bills another vendor, and its
     // environment is empty until a key is stored — so the runtime environment
     // alone cannot answer this. The declared backend can.
@@ -4251,10 +4501,23 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(mobileSrc.includes("export type MobileApiScope = 'monitor' | 'control' | 'repo';")
     && mobileSrc.includes("if (route.scope === 'repo' && !repoScopeAllowed()) {")
     && mobileSrc.includes('registerRepoGate(repoReviewAllowed);')
-    && repoScopedRoutes === 2
+    // Three now, not two: the file-diff route joined this scope, which is the
+    // deliberate friction — a widening of the set that can put a path, or now a
+    // hunk, on a phone has to be typed here by hand before the suite goes green.
+    && repoScopedRoutes === 3
     && !mobileSrc.includes('if (!repoReviewAllowed())'),
   'the repository-review widening is enforced by the dispatcher’s declared scope rather than by a condition inside a handler, so the routes that can send a file path stay enumerable',
   `${repoScopedRoutes} repo-scope routes`);
+  // The third repo-scope route is the one that carries source lines rather
+  // than only paths, and the count above has to move with it: 'which routes can
+  // put a file path — or a hunk — on a phone' stays answerable by grep only
+  // while the number in this suite is the number in the route table.
+  const repoScopedRouteLines = (mobileSrc.match(/scope: 'repo', handler:/g) ?? []).length;
+  check(repoScopedRouteLines === 3
+    && mobileSrc.includes("registerApiRoute({ path: '/api/repo/file', method: 'GET', scope: 'repo'")
+    && !mobileSrc.includes('if (!repoReviewAllowed())'),
+  "one file's diff is declared on the dispatcher's repo scope like the two routes beside it, so everything that can send a file path or its contents stays enumerable",
+  `${repoScopedRouteLines} repo-scope routes`);
   // A mark is a glyph and a number wide, with nowhere to print 'as of eleven
   // minutes ago' — so when the Mac stops answering it leaves rather than keeps
   // a count nothing is confirming any more. The dashboard behind it may go on

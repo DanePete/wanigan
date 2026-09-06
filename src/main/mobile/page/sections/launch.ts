@@ -18,6 +18,15 @@ import type { MobileSection } from '../sections';
  * input, with exactly one of them on screen. Swapping the control inside a
  * single label would leave the caption pointing at a hidden element, and a
  * caption that focuses nothing when tapped is worse on a phone than anywhere.
+ *
+ * The account row answers the question the phone could not ask at all: which
+ * login this session signs in as. An operator with a work account and a
+ * personal one had no way to say from here, and a launch that silently takes
+ * whatever the app default resolves to writes to the wrong history and spends
+ * the wrong subscription. Its first option is the ABSENCE of a choice, so it
+ * names the account this project would actually fall back to — a sentence only
+ * the Mac can write, because the project's pin lives in its database — and the
+ * caption below never calls a deliberately chosen account "your default".
  */
 export const LAUNCH_SECTION: MobileSection = {
   id: 'launch',
@@ -25,14 +34,17 @@ export const LAUNCH_SECTION: MobileSection = {
   slot: 'controls',
   markup: `        <div class="control-card">
           <div class="console-kicker">New work</div><h3>Start an agent</h3><p>Launches a normal Wanigan session on your Mac with the model and reasoning effort you choose.</p>
-          <form id="launch-form" class="fields"><label class="field-label"><span>Project</span><select id="project" aria-label="Project"></select></label><label class="field-label"><span>Provider</span><select id="provider" aria-label="Provider"></select></label><label class="field-label" id="model-field"><span id="model-label">Model</span><select id="model" aria-label="Model"></select></label><label class="field-label hidden" id="model-open-field"><span id="model-open-label">Model</span><input id="model-open" type="text" aria-label="Model" maxlength="120" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="CLI default"></label><label class="field-label" id="effort-field"><span id="effort-label">Reasoning effort</span><select id="effort" aria-label="Reasoning effort"></select></label><label class="field-label hidden" id="effort-open-field"><span id="effort-open-label">Reasoning effort</span><input id="effort-open" type="text" aria-label="Reasoning effort" maxlength="120" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="CLI default"></label><textarea id="launch-prompt" aria-label="Task for the new agent" maxlength="8000" required placeholder="What should this agent do?"></textarea><button>Start session</button></form>
+          <form id="launch-form" class="fields"><label class="field-label"><span>Project</span><select id="project" aria-label="Project"></select></label><label class="field-label"><span>Provider</span><select id="provider" aria-label="Provider"></select></label><label class="field-label" id="model-field"><span id="model-label">Model</span><select id="model" aria-label="Model"></select></label><label class="field-label hidden" id="model-open-field"><span id="model-open-label">Model</span><input id="model-open" type="text" aria-label="Model" maxlength="120" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="CLI default"></label><label class="field-label" id="effort-field"><span id="effort-label">Reasoning effort</span><select id="effort" aria-label="Reasoning effort"></select></label><label class="field-label hidden" id="effort-open-field"><span id="effort-open-label">Reasoning effort</span><input id="effort-open" type="text" aria-label="Reasoning effort" maxlength="120" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="CLI default"></label><label class="field-label hidden" id="account-field"><span>Account</span><select id="account" aria-label="Account"></select></label><p id="account-note" class="account-note hidden" role="status"></p><textarea id="launch-prompt" aria-label="Task for the new agent" maxlength="8000" required placeholder="What should this agent do?"></textarea><button>Start session</button></form>
         </div>`,
   /* `.field-label` sets a display of its own and is declared after the shared
      `.hidden`, so the two tie on specificity and the later rule wins: a field
      marked hidden would stay laid out, showing both halves of a pair and a
      picker for a field the profile does not take. nav.ts re-states the rule for
      `.sheet` for exactly this reason. */
-  style: `    .field-label.hidden { display:none; }`,
+  style: `    .field-label.hidden { display:none; }
+    /* The caption declares no display of its own, so the shared hidden rule is
+       the only thing that decides whether it is on screen. */
+    .account-note { grid-column:1 / -1; color:var(--dim); font-size:12px; }`,
   script: `
       // Which profile the two dependent fields are currently drawn for. A poll
       // returns every three seconds and re-renders this form; without this the
@@ -84,6 +96,7 @@ export const LAUNCH_SECTION: MobileSection = {
         renderLaunchField('model', offer && offer.model, offer && offer.model.choices || [],
           previous && previous.model || byId('model').value, reseed);
         renderLaunchEfforts(reseed);
+        renderLaunchAccount(reseed);
       }
 
       // Two claims about one launch, and the offer is where they agree: the
@@ -97,18 +110,91 @@ export const LAUNCH_SECTION: MobileSection = {
         renderLaunchField('effort', offer && offer.effort,
           chosen && chosen.efforts || (offer && offer.effort.choices) || [],
           byId('effort').value, reseed === true);
+      }
+
+      function launchAccounts() {
+        const provider = (controlOptions && controlOptions.providers || []).find((value) => value.id === byId('provider').value);
+        return provider && provider.accounts || null;
+      }
+
+      // What this launch signs in as with nothing chosen here, for the project
+      // that is chosen. Looked up, never worked out: which account a project
+      // falls back to depends on a pin held in the database on the Mac, and a
+      // page that guessed would say "your default" for a project deliberately
+      // pinned to the other login.
+      function launchAccountFollow(offer) {
+        const projectId = byId('project').value;
+        return offer && (offer.follow || []).find((row) => row.projectId === projectId) || null;
+      }
+
+      function renderLaunchAccount(reseed) {
+        const offer = launchAccounts();
+        const select = byId('account');
+        const supported = !!offer && offer.supported === true && (offer.choices || []).length > 0;
+        byId('account-field').classList.toggle('hidden', !supported);
+        byId('account-note').classList.toggle('hidden', !supported);
+        // A profile that signs in against another vendor has no account to
+        // choose, and a leftover id from the profile before it would be an id
+        // the Mac refuses.
+        if (!supported) { select.replaceChildren(); select.value = ''; sayAccount(''); return; }
+        const follow = launchAccountFollow(offer);
+        // Switching profile drops the pick: an account belongs to a harness,
+        // and carrying one across would post an id this launch has to refuse.
+        const previous = reseed ? '' : select.value;
+        select.replaceChildren(option('', follow
+          ? 'Follow ' + (follow.source === 'project' ? 'this project' : 'your default') + ' — ' + follow.label
+          : 'Follow this project or your default'),
+          ...offer.choices.map((row) => option(row.id,
+            row.label + (row.isDefault ? ' · default' : '') + (row.present ? '' : ' · directory missing'))));
+        // An account removed at the Mac since this page loaded is simply no
+        // longer in the list, so restoreValue leaves the follow option selected
+        // — and the caption below then says which login that is, rather than
+        // letting a stale name stand.
+        restoreValue(select, previous);
+        sayAccount(launchAccountSentence(offer, follow));
+      }
+
+      // The poll re-renders this form every three seconds, and the caption is a
+      // live region: writing the same sentence back into it would announce it
+      // again on every pass, so only a real change is written.
+      function sayAccount(sentence) {
+        const note = byId('account-note');
+        if (note.textContent !== sentence) note.textContent = sentence;
+      }
+
+      // One sentence, in the order the operator needs it: which login, then why
+      // that one, then anything that would stop it being true. A chosen account
+      // reads as chosen — never as the default, which it may well not be.
+      function launchAccountSentence(offer, follow) {
+        const chosen = (offer.choices || []).find((row) => row.id === byId('account').value);
+        let sentence = chosen
+          ? 'Signs in as ' + chosen.label + ' — chosen for this session only.'
+          : follow
+            ? 'Signs in as ' + follow.label + (follow.source === 'project' ? ' — this project is set to it.' : ' — your default account.')
+            : 'Choose a project to see which login this would sign in as.';
+        if (chosen && chosen.present === false) sentence += ' Its directory is no longer on the Mac.';
+        // Absence of evidence: on macOS the login lives in the Keychain, which
+        // Wanigan does not read, so this is never "signed out".
+        if (chosen && chosen.signedIn === 'unknown') sentence += ' Wanigan cannot see whether it is signed in; if the session asks, run /login once.';
+        // The agent ranks an exported credential above a stored login, so with
+        // one set the row above is not what the session authenticates with.
+        if (offer.override) sentence += ' ' + offer.override + ' is set on the Mac and outranks a stored login, so this session uses that credential and not the account above.';
+        return sentence;
       }`,
   wiring: `      byId('provider').addEventListener('change', () => { renderLaunchChoices(); syncActionButtons(); });
       byId('model').addEventListener('change', () => renderLaunchEfforts(false));
       byId('model-open').addEventListener('input', () => renderLaunchEfforts(false));
-      byId('project').addEventListener('change', syncActionButtons);
+      byId('account').addEventListener('change', () => renderLaunchAccount(false));
+      // The fallback account is a fact about the project, so changing the
+      // project changes the sentence under the picker.
+      byId('project').addEventListener('change', () => { renderLaunchAccount(false); syncActionButtons(); });
       byId('launch-prompt').addEventListener('input', syncActionButtons);
       byId('launch-form').addEventListener('submit', async (event) => {
         event.preventDefault(); controlResult.textContent = 'Starting session…';
         if (actionBusy) return;
         setActionBusy(true);
         try {
-          const result = await api('api/action', { method:'POST', headers:{ 'content-type':'application/json', authorization:'Bearer ' + localStorage.getItem(KEY) }, body:JSON.stringify({ action:'launch', projectId:byId('project').value, providerId:byId('provider').value, model:launchValue('model'), effort:launchValue('effort'), prompt:byId('launch-prompt').value }) });
+          const result = await api('api/action', { method:'POST', headers:{ 'content-type':'application/json', authorization:'Bearer ' + localStorage.getItem(KEY) }, body:JSON.stringify({ action:'launch', projectId:byId('project').value, providerId:byId('provider').value, model:launchValue('model'), effort:launchValue('effort'), accountId:byId('account').value, prompt:byId('launch-prompt').value }) });
           byId('launch-prompt').value = ''; syncActionButtons(); controlResult.textContent = 'Started ' + result.session.title + '.';
           requestedSessionId = result.session.id; await poll(); openSession(result.session.id);
         } catch (error) { controlResult.textContent = error instanceof Error ? error.message : 'Could not start the session.'; }

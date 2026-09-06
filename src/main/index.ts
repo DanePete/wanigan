@@ -1177,8 +1177,12 @@ function configureMobileSources(): void {
   mobile.configureMobileControlSource({
     projects: async () => listProjects().map((project) => ({ id: project.id, name: project.name, branch: project.branch })),
     providers: async () => mobileLaunchProviders(await detectProviders()),
-    launch: async ({ projectId, providerId, model, effort, prompt }) => {
-      const session = await createSession({ providerId, projectId, model, effort, initialPrompt: prompt });
+    launch: async ({ projectId, providerId, model, effort, accountId, prompt }) => {
+      // Which login the phone chose, already checked against the real account
+      // list in mobile/control.ts. null is the absence of a choice and resolves
+      // exactly as a desktop launch with no account picked: the project's pin
+      // first, then the default.
+      const session = await createSession({ providerId, projectId, model, effort, accountId, initialPrompt: prompt });
       return { id: session.id, title: session.title };
     },
     prompt: async (sessionId, prompt) => {

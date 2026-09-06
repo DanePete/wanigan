@@ -1,6 +1,7 @@
 import type http from 'node:http';
 import { mobileConfig } from './config';
 import { json, registerApiRoute, registerControlGate, requestJson } from './dispatch';
+import { resolveMobileLaunchAccount } from './launch-options';
 import { safeString } from './snapshot';
 import { readTerminalScreen } from './terminal';
 
@@ -50,7 +51,17 @@ const REMOTE_KEYS = new Map<string, { glyph: string; label: string; sequence: st
 export type MobileControlSource = {
   projects: () => Promise<{ id: string; name: string; branch: string | null }[]>;
   providers: () => Promise<{ id: string; label: string; available: boolean; models: { value: string; label: string }[]; efforts: string[] }[]>;
-  launch: (input: { projectId: string; providerId: string; model?: string; effort?: string; prompt: string }) => Promise<{ id: string; title: string }>;
+  /**
+   * `accountId` is which login the session signs in as, already checked here
+   * against the real account list — null means the operator made no choice and
+   * the Mac resolves it the way a desktop launch would. It is an id and nothing
+   * more: the config directory that actually selects the login is resolved on
+   * the Mac and never crosses to a paired device in either direction.
+   */
+  launch: (input: {
+    projectId: string; providerId: string; model?: string; effort?: string;
+    accountId?: string | null; prompt: string;
+  }) => Promise<{ id: string; title: string }>;
   prompt: (sessionId: string, prompt: string) => Promise<void>;
   /**
    * Write one already-validated key sequence into the session's terminal.
@@ -158,7 +169,21 @@ async function serveAction(req: http.IncomingMessage, res: http.ServerResponse):
   const action = typeof body?.action === 'string' ? body.action : '';
   try {
     if (action === 'launch') {
-      const session = await source.launch({ projectId: actionText(body?.projectId, 'Project'), providerId: actionText(body?.providerId, 'Provider'), model: optionalLaunchValue(body?.model, 'Model'), effort: optionalLaunchValue(body?.effort, 'Effort'), prompt: actionText(body?.prompt, 'Prompt') });
+      // The account is resolved before anything is started, against the
+      // database rather than against the payload this server just served: a
+      // phone can post any id, and an id that names no account — or names one
+      // belonging to another harness, or one removed since the page loaded —
+      // ends the launch here. Falling back to the default would sign in as the
+      // wrong operator, which is worse than a refusal the phone can read.
+      const providerId = actionText(body?.providerId, 'Provider');
+      const session = await source.launch({
+        projectId: actionText(body?.projectId, 'Project'),
+        providerId,
+        model: optionalLaunchValue(body?.model, 'Model'),
+        effort: optionalLaunchValue(body?.effort, 'Effort'),
+        accountId: resolveMobileLaunchAccount(providerId, optionalLaunchValue(body?.accountId, 'Account')),
+        prompt: actionText(body?.prompt, 'Prompt'),
+      });
       json(res, 201, { ok: true, session: { id: safeString(session.id, 160), title: safeString(session.title, 200) } }); return;
     }
     if (action === 'prompt') {

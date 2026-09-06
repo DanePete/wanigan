@@ -6,9 +6,12 @@ import {
   type LaunchFieldProvider,
 } from '../../shared/launch-fields';
 import type { ProviderInfo } from '../../shared/types';
+import * as accounts from '../accounts';
 import { readCodexModels } from '../codex-status';
 import { deepseekModels } from '../deepseek';
 import { glmModels } from '../glm';
+import { providerById, type ProviderDef } from '../providers';
+import { listProjects } from '../store';
 
 /**
  * What the phone's launch form may honestly offer for model and effort.
@@ -33,6 +36,12 @@ import { glmModels } from '../glm';
  * `launchOffer` is deliberately pure — no spawn, no fetch, no Electron — so the
  * offer can be driven from a fabricated profile in the smoke suite, exactly as
  * the window's half is.
+ *
+ * The account offer below is the second question a launch asks and the first
+ * one the phone could not answer at all: which login the session signs in as.
+ * It is not a launch field — no manifest declares it, and it compiles to an
+ * environment variable rather than to argv — so it is built here rather than
+ * folded into `launchOffer`, which stays pure and stays about argv.
  */
 
 /** A model as a live CLI catalogue describes it, reduced to what a picker needs. */
@@ -75,6 +84,64 @@ export type MobileLaunchOffer = {
   effort: MobileLaunchField<LaunchChoice>;
 };
 
+/**
+ * One account a phone may launch as, reduced to an identity.
+ *
+ * The config directory is deliberately absent, and its absence is the rule
+ * rather than an oversight: an account IS a labelled config directory, that
+ * directory is what selects the stored login, and a paired browser has no
+ * business holding either. What crosses is an id the Mac issued and a label the
+ * operator wrote; the directory stays on the Mac, and so does the credential
+ * Wanigan never sees in the first place.
+ */
+export type MobileAccountChoice = {
+  id: string;
+  label: string;
+  isDefault: boolean;
+  /** False when the directory Wanigan recorded for this account is gone. */
+  present: boolean;
+  /**
+   * Whether a stored login is visible on disk. 'unknown' is not "signed out":
+   * on macOS the credential is in the Keychain, keyed to the directory, and
+   * Wanigan neither holds nor reads it.
+   */
+  signedIn: 'yes' | 'unknown';
+};
+
+/**
+ * What a launch with NO explicit choice resolves to, for one project.
+ *
+ * The whole reason this crosses the wire: the option that means "I did not
+ * choose" has to describe the fallback, and the fallback depends on a project
+ * pin that lives in the database on the Mac. A phone that labelled that option
+ * "the default" would be wrong exactly when it matters — a project pinned to
+ * the work login, with the personal one as the app default — and that is the
+ * same sentence the desktop dialog got wrong until it started asking for a
+ * second, choice-free resolution instead of reading its own selection back out.
+ */
+export type MobileAccountFollow = {
+  projectId: string;
+  accountId: string;
+  label: string;
+  source: 'project' | 'default';
+};
+
+export type MobileAccountOffer = {
+  /** False when this profile has no account decision to make at all. */
+  supported: boolean;
+  /** Why there is nothing to choose, in words the phone can print. */
+  reason: string | null;
+  /**
+   * The NAME of an inherited environment credential that outranks a stored
+   * login, never its value. With one exported, every account resolves to the
+   * same organisation, so a picker that said nothing would be describing a
+   * choice the session ignores.
+   */
+  override: string | null;
+  choices: MobileAccountChoice[];
+  follow: MobileAccountFollow[];
+};
+
 /** One row of /api/control's provider list. */
 export type MobileLaunchProvider = {
   id: string;
@@ -88,6 +155,7 @@ export type MobileLaunchProvider = {
   models: { value: string; label: string }[];
   efforts: string[];
   launch: MobileLaunchOffer;
+  accounts: MobileAccountOffer;
 };
 
 /**
@@ -213,6 +281,126 @@ export function launchOffer(
 }
 
 /**
+ * Whether a Claude account applies to this profile, by the test ./mobile can
+ * actually reach.
+ *
+ * accounts.appliesTo() takes "does this profile's environment aim the Anthropic
+ * API somewhere else" from its caller, because sessions.ts owns how a provider
+ * environment is built. This module cannot ask sessions.ts: sessions.ts reaches
+ * notify.ts, notify.ts imports the ./mobile facade, and the import would close
+ * a cycle through the very split mobile.ts is written to keep free of one.
+ *
+ * So the answer here is the declared backend alone, and for every profile that
+ * can exist the two agree. A local pack's backend id is namespaced by its pack
+ * id (effectiveProviderBackendId), so 'anthropic' can only name a reviewed
+ * built-in; the one built-in that declares it contributes no environment at
+ * all; and GLM and DeepSeek are refused on their own backend ids before their
+ * base URLs are consulted, which is the case the redirect test could not catch
+ * on its own anyway — their environment is empty until a key is stored.
+ *
+ * Where a future profile could make the two disagree, this errs towards
+ * offering a picker rather than hiding one, and the launch itself re-asks with
+ * the full environment test before a single variable is set. An offer that is
+ * dropped at launch is a bad screen; an account picker missing for the profile
+ * an operator actually uses is a feature that does not work.
+ */
+function anthropicApplies(def: ProviderDef): boolean | undefined {
+  return accounts.appliesTo(def, false);
+}
+
+/** No decision to make, and the sentence saying why, where there is one. */
+const NO_ACCOUNTS: MobileAccountOffer = {
+  supported: false, reason: null, override: null, choices: [], follow: [],
+};
+
+/**
+ * Which logins this profile can sign in as, and what it would sign in as on its
+ * own — both asked of the same resolver the launch itself uses.
+ *
+ * Whether an account applies at all is a question about the profile, not about
+ * its id — GLM runs the reviewed Claude Code harness and authenticates with
+ * another vendor's credential, so a Claude account there would name a login the
+ * session never uses — and anthropicApplies() above is where that is decided.
+ * A profile with no account decision comes back as a sentence rather than an
+ * empty list, because "there is nothing to choose here, and here is why" is a
+ * different screen from "loading".
+ *
+ * The follow answers are resolved one project at a time rather than derived
+ * from a rule restated here. It costs a few directory stats per page load,
+ * against a launch path that already spawns a CLI to read its model catalogue —
+ * and it means there is exactly one implementation of "which account would this
+ * be", so the phone cannot drift from what pressing the button actually does.
+ */
+export function mobileAccountOffer(
+  providerId: string, projectIds: readonly string[],
+): MobileAccountOffer {
+  const def = providerById(providerId);
+  if (!def) return NO_ACCOUNTS;
+  const applies = accounts.resolve({
+    harness: def.harness,
+    appliesToAnthropic: anthropicApplies(def),
+  });
+  if (!applies.account) return { ...NO_ACCOUNTS, reason: applies.reason };
+  return {
+    supported: true,
+    reason: null,
+    override: applies.override,
+    choices: accounts.list(def.harness).map((account) => ({
+      id: account.id,
+      label: account.label,
+      isDefault: account.isDefault,
+      present: account.present,
+      signedIn: account.signedIn,
+    })),
+    follow: projectIds.flatMap((projectId): MobileAccountFollow[] => {
+      const resolution = accounts.resolve({ harness: def.harness, projectId });
+      const source = resolution.source;
+      // 'explicit' cannot appear — nothing was chosen here — and 'none' is a
+      // profile with no account decision, which the guard above already
+      // returned. Both are dropped rather than coerced: a follow row is a claim
+      // about what would happen, and there is no honest row to write for a
+      // project this launch would resolve no account for.
+      if (!resolution.account || (source !== 'project' && source !== 'default')) return [];
+      return [{
+        projectId, accountId: resolution.account.id, label: resolution.account.label, source,
+      }];
+    }),
+  };
+}
+
+/**
+ * An account id a phone asked to launch as, checked against the real account
+ * list before it can reach a launch.
+ *
+ * Untrusted input on the trust boundary, and the one case where refusing beats
+ * recovering: accounts.resolve() drops an explicit id that does not apply to
+ * the profile and returns the fallback instead, which is right for a launch
+ * nobody chose an account for and wrong for one where somebody did. A session
+ * that signs in as the wrong login writes to the wrong history, spends the
+ * wrong subscription and may commit under the wrong identity, so an unknown,
+ * removed or cross-harness id ends the launch here with a sentence rather than
+ * quietly becoming the default. An empty value is not a failure: it is the
+ * absence of a choice, and main resolves it exactly as a desktop launch would.
+ */
+export function resolveMobileLaunchAccount(
+  providerId: string, requested: string | null | undefined,
+): string | null {
+  const chosen = typeof requested === 'string' ? requested.trim() : '';
+  if (!chosen) return null;
+  const def = providerById(providerId);
+  if (!def) throw new Error('That provider is not installed on this Mac.');
+  const resolution = accounts.resolve({
+    harness: def.harness,
+    explicitAccountId: chosen,
+    appliesToAnthropic: anthropicApplies(def),
+  });
+  if (!resolution.account || resolution.source !== 'explicit') {
+    throw new Error(resolution.reason ?? 'This profile does not sign in with an account you can choose.');
+  }
+  return resolution.account.id;
+}
+
+/**
  * Ask the backend what it can run. One backend that will not answer must not
  * empty the picker, so a failed live read falls back to what Wanigan can vouch
  * for rather than to a claim that the provider has no models.
@@ -233,11 +421,18 @@ async function backendCatalog(backendId: string | undefined): Promise<CatalogMod
  * The provider rows /api/control serves, offer included.
  *
  * An uninstalled profile is filtered out of the phone's picker before it is
- * drawn, so its catalogue is not read: probing one would spend a process spawn
- * or a network round trip per page load on a row nobody can select.
+ * drawn, so neither its catalogue nor its accounts are read: probing one would
+ * spend a process spawn or a network round trip per page load on a row nobody
+ * can select.
+ *
+ * The projects default to the ones this Mac has, because the account a launch
+ * falls back to depends on which project it is for and the phone's form makes
+ * both choices on one screen. Passing them in is what lets the smoke suite ask
+ * the same question about a fixed set.
  */
 export async function mobileLaunchProviders(
   providers: readonly ProviderInfo[],
+  projectIds: readonly string[] = listProjects().map((project) => project.id),
 ): Promise<MobileLaunchProvider[]> {
   return Promise.all(providers.map(async (provider) => {
     const available = Boolean(provider.path);
@@ -251,6 +446,7 @@ export async function mobileLaunchProviders(
         .map((choice) => ({ value: choice.value, label: choice.label })),
       efforts: offer.effort.choices.filter((choice) => choice.value !== '').map((choice) => choice.value),
       launch: offer,
+      accounts: available ? mobileAccountOffer(provider.id, projectIds) : NO_ACCOUNTS,
     };
   }));
 }
