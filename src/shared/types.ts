@@ -686,6 +686,16 @@ export type FleetCard = {
 export type MobileFleetSession = {
   /** Opaque rendering key only; no remote action accepts it. */
   id: string;
+  /**
+   * Which login this session is signed in as, so an operator with a work and a
+   * personal Claude account can tell them apart from the phone. An identity and
+   * nothing more: `id` is opaque and `label` is the same word the desktop
+   * prints. The account's config directory — the thing that actually selects
+   * the login, and the only part worth stealing — deliberately never crosses.
+   * `id: null` means no account applied, which is different from an account
+   * that has since been removed.
+   */
+  account?: { id: string | null; label: string };
   projectName: string;
   title: string;
   providerId: ProviderId;

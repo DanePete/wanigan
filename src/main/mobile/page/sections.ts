@@ -1,4 +1,5 @@
 import { ALERTS_SECTION } from './sections/alerts';
+import { DEVICE_SECTION } from './sections/device';
 import { CONSOLE_SECTION } from './sections/console';
 import { FLEET_SECTION } from './sections/fleet';
 import { LAUNCH_SECTION } from './sections/launch';
@@ -7,6 +8,30 @@ import { LAUNCH_SECTION } from './sections/launch';
  * The registry of screens the phone page is made of. A screen owns its markup,
  * its style and its script fragment together, so adding one is a new module
  * plus one line here rather than an edit in four places of a single template.
+ *
+ * What a screen does not own is the four states it can be in. shell.ts defines
+ * a `ui` helper ahead of every fragment in the same closure, and a screen draws
+ * its absences through it rather than inventing a box:
+ *
+ *   ui.reading(what)             still reading — `what` is the noun phrase the
+ *                                desktop Reading primitive takes, so the two
+ *                                surfaces say the same sentence about the same
+ *                                read: ui.reading('the working tree').
+ *   ui.failed(what, why, retry)  the read failed; `retry` becomes the button.
+ *   ui.off(title, sentence)      the capability is off at the Mac, and the
+ *                                sentence names the exact setting.
+ *   ui.empty(claim, note)        there is genuinely nothing — only ever after
+ *                                ui.observed(), because that claim is about the
+ *                                Mac and a poll has to have established it.
+ *   ui.observed() / ui.fresh()   has any poll returned, and is this one live.
+ *   ui.watch(viewId, load)       register the screen's read. The frame runs it
+ *                                when that view is on screen and again on each
+ *                                poll that returns while it still is; it
+ *                                returns the same read on demand, which is what
+ *                                a retry button wants. A screen must not hold
+ *                                an interval of its own — eighteen of those is
+ *                                a phone radio kept awake for seventeen panels
+ *                                nobody is looking at.
  */
 
 /**
@@ -18,7 +43,13 @@ import { LAUNCH_SECTION } from './sections/launch';
  * when remote control is separately enabled, which is a different question from
  * which screen it appears on.
  */
-export type MobileSectionSlot = 'dashboard' | 'controls';
+/**
+ * Where a section's markup lands. 'dashboard' fills the Fleet view and
+ * 'controls' the remote-control block inside Agent; 'device' is its own screen,
+ * which is why it is a slot rather than a second dashboard panel — it is about
+ * this phone rather than about the Mac's fleet.
+ */
+export type MobileSectionSlot = 'dashboard' | 'controls' | 'device';
 
 export type MobileSection = {
   id: string;
@@ -40,7 +71,7 @@ export type MobileSection = {
 // you did not need it — then the console and the launch form fill the
 // remote-control slot on the Agent screen.
 export const MOBILE_SECTIONS: readonly MobileSection[] = [
-  ALERTS_SECTION, FLEET_SECTION, CONSOLE_SECTION, LAUNCH_SECTION,
+  ALERTS_SECTION, FLEET_SECTION, CONSOLE_SECTION, LAUNCH_SECTION, DEVICE_SECTION,
 ];
 
 export const MOBILE_SECTION_ANCHORS: readonly string[] = MOBILE_SECTIONS.map((section) => section.anchorId);

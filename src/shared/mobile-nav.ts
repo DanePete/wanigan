@@ -85,7 +85,14 @@ export const MOBILE_VIEWS: readonly MobileNavEntry[] = [
 
 export type MobileAbsentView = {
   tab: Tab;
-  /** Printed verbatim on the Device screen, under the destination's name. */
+  /**
+   * Printed verbatim on the Device screen, under the destination's name. The
+   * name is not repeated here: the Device screen reads it from the route table
+   * with labelForTab(), so renaming a desktop view renames it on the phone in
+   * the same change rather than leaving two surfaces calling one screen two
+   * things. This field carries only what the route table cannot — why the Mac
+   * is the right place for it.
+   */
   reason: string;
 };
 

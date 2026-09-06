@@ -1633,6 +1633,96 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && composedJs.indexOf('bootRoute();') > composedJs.indexOf("history.replaceState(null, '', location.pathname + location.search);"),
     'a reload restores the phone route from localStorage and history.state, and no navigation writes the route — or the pairing token it would sit beside — into the URL',
     historyWrites.join(' | '));
+    // Unpairing is local, and the copy says so. The token stays valid on the
+    // Mac — revoking it for every device is a rotation in Settings — so a screen
+    // that implied otherwise would leave someone who lost their phone believing
+    // they had cut it off.
+    const unpairAt = composedJs.indexOf("byId('device-unpair').addEventListener");
+    const unpairEnd = composedJs.indexOf('paintDevice();', unpairAt + 1);
+    const unpairBody = unpairAt >= 0 && unpairEnd > unpairAt ? composedJs.slice(unpairAt, unpairEnd) : '';
+    check(composedShell.includes('It does not revoke that token on the Mac.')
+      && composedShell.includes('rotate the pairing link in Wanigan Settings → Phone monitor')
+      && unpairBody.includes('localStorage.removeItem(KEY);')
+      && !unpairBody.includes('api(') && !unpairBody.includes('fetch('),
+    'unpairing says plainly that it does not revoke the token on the Mac, and the handler matches the words: it drops the token from this browser and issues no request of its own',
+    unpairBody ? 'handler read' : 'handler not found');
+    // The interval it shows is the one the page will actually wait. poll()
+    // doubles pollDelay towards POLL_SLOW_MS on every failure, so a screen that
+    // printed the nominal POLL_FAST_MS would tell an operator whose Mac is
+    // asleep that Wanigan is checking twenty times a minute while it is in fact
+    // checking once — on the one screen whose whole job is this connection.
+    check(composedJs.includes("deviceWords('device-poll', devicePollWords(pollDelay));")
+      && composedJs.includes('pollTimer = setTimeout(() => { pollTimer = null; void poll(); }, pollDelay);')
+      && composedJs.includes('pollDelay = Math.min(POLL_SLOW_MS, pollDelay * 2);')
+      && !/setInterval\([^;]*paintDevice/.test(composedJs),
+    'the Device screen prints the poll interval the page will really wait — the backed-off one — and ages it on the shared cadence rather than on a second timer of its own',
+    composedJs.includes('devicePollWords(pollDelay)') ? 'reads pollDelay' : 'does not read pollDelay');
+    // ── the Device screen: what this phone is, and what it deliberately is not ──
+    // Every desktop destination Wanigan chose not to bring to the phone is
+    // printed here with its reason, under the name the route table gives it. A
+    // phone that simply has no Settings screen is indistinguishable from an
+    // unfinished build, and the operator has to infer which — so a fifth entry
+    // added to MOBILE_ABSENT has to reach the screen, not just the record.
+    const escHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const unprintedAbsent = MOBILE_ABSENT.filter((entry) => {
+      const label = TABS.find((tab) => tab.id === entry.tab)?.label ?? entry.tab;
+      return !composedShell.includes(escHtml(entry.reason))
+        || !composedShell.includes(`<strong>${escHtml(label)}</strong>`);
+    });
+    check(MOBILE_ABSENT.length > 0 && unprintedAbsent.length === 0
+      && composedShell.split('id="device"').length === 2
+      && composedShell.includes('These Wanigan screens have no phone version, on purpose.'),
+    'the Device screen is composed exactly once and prints every deliberately-absent desktop destination with its name and its reason, so a phone with no Settings screen says why rather than leaving a hole',
+    unprintedAbsent.map((entry) => entry.tab).join(', ') || 'none');
+    // One radio, one cadence. Ten screens each holding their own interval is a
+    // battery bug on a phone: nine of them fetch for panels nobody is looking
+    // at, and none of them knows about the backoff the shell already applies
+    // while the Mac is asleep. So a screen registers its read and the frame
+    // decides when — on the poll it already makes, and only for the screen
+    // actually on show. The dashboard being hidden counts as no screen at all:
+    // before pairing a read would collect nothing but 401s.
+    const uiFragment = composedJs.slice(composedJs.indexOf('// ── the four states'), composedJs.indexOf('// ── the route'));
+    check(uiFragment.length > 500 && !uiFragment.includes('setInterval')
+      && composedJs.includes('viewWatchers.forEach((watcher) => { if (watcher.viewId === shown) void runWatcher(watcher); });')
+      && composedJs.includes("if (dashboard.classList.contains('hidden')) return '';")
+      && composedJs.includes('render = (snapshot) => { renderWithoutViews(snapshot); refreshVisibleView(); };')
+      && composedJs.includes("attributeFilter: ['class'], subtree: true });")
+      && composedJs.indexOf('const ui = {') < composedJs.indexOf('const VIEW_IDS'),
+    'a phone screen reads only while it is the screen on show, on the poll the frame already makes rather than a timer of its own',
+    uiFragment.length);
+    // The failed state is the only one with an action in it. A read that
+    // failed and drew an empty box leaves someone holding a phone whose only
+    // way forward is a reload, which throws away every other screen's reading
+    // too — so that state, and only that state, hands back the read itself as
+    // a button.
+    const retryButtons = composedJs.split("node('button', 'secondary state-retry', 'Try again')").length - 1;
+    check(retryButtons === 1
+      && composedJs.includes("again.addEventListener('click', () => { void retry(); });")
+      && composedJs.indexOf("node('button', 'secondary state-retry', 'Try again')") > composedJs.indexOf("uiBox('failed'")
+      && composedJs.indexOf("node('button', 'secondary state-retry', 'Try again')") < composedJs.indexOf('off(title, sentence)')
+      && composedShell.includes('.state-retry { grid-column:2;'),
+    'a phone view whose read failed offers that read again as a button, and no other state pretends to',
+    retryButtons);
+    // Four absences, four renderings. A screen that is still reading, one
+    // whose read failed, one whose capability is switched off at the Mac and
+    // one with genuinely nothing on it used to arrive as the same blank panel,
+    // and blank reads as broken — the empty fleet on a sleeping Mac, wearing
+    // eighteen other screens' names. They are told apart four ways at once so
+    // the distinction survives sunlight, greyscale and a screen reader: a
+    // different glyph, different words, a different shape, a different role.
+    const stateGlyphs = [...(composedJs.match(/const UI_GLYPH = \{[^}]*\};/)?.[0] ?? '').matchAll(/'([^']*)'/g)].map((m) => m[1]);
+    check(stateGlyphs.length === 4 && new Set(stateGlyphs).size === 4
+      && composedJs.includes("const box = uiBox('reading', 'Reading ' + what + '…', '');")
+      && composedJs.includes("box.setAttribute('aria-busy', 'true');")
+      && composedJs.includes("const box = uiBox('failed', 'Could not read ' + what + '.', message || 'Wanigan did not say why.');")
+      && composedJs.includes("box.setAttribute('role', 'alert');")
+      && composedJs.includes("off(title, sentence) { return uiBox('off', title, sentence); },")
+      && composedJs.includes("const box = uiBox('empty', claim, note);")
+      && composedJs.includes("node('div', 'state state-' + kind)")
+      && composedShell.includes('.state-failed { border-color:'),
+    'the phone frame draws still-reading, a failed read, a switched-off capability and a genuine absence as four different things rather than four blank panels',
+    stateGlyphs.join(' '));
     const controls = await fetch(controlUrl, { headers: { authorization: `Bearer ${token}` } });
     const launch = await fetch(new URL('api/action', monitor.localUrl), {
       method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -2526,6 +2616,30 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(accounts.byConfigDir('codex', codexWorkDir)?.id === codexWork.id && accounts.byConfigDir('codex', path.join(dataDir(), 'nowhere')) === null,
       'a Codex home resolves back to its account only when Wanigan knows that directory as one');
     accounts.remove(codexWork.id);
+    // The phone names the account each session is signed in as: an operator
+    // with a work login and a personal one cannot tell two rows apart without
+    // it. Three readings, because they are three different facts — the account
+    // a session has, never having had one, and one Wanigan no longer has.
+    const phoneRows = mobileFleetSnapshot([
+      { ...quiet, id: 's_smoke_phone_work', accountId: work.id, accountLabel: work.label },
+      { ...quiet, id: 's_smoke_phone_none' },
+      { ...quiet, id: 's_smoke_phone_gone', accountId: 'acct_removed_smoke', accountLabel: 'Gone' },
+    ], [], {}).sessions;
+    const phoneAccount = (id: string) => phoneRows.find((row) => row.id === id)?.account;
+    check(phoneAccount('s_smoke_phone_work')?.label === 'Work'
+      && phoneAccount('s_smoke_phone_work')?.id === work.id,
+    'the phone names the account each session is signed in as, by label', phoneAccount('s_smoke_phone_work'));
+    check(phoneAccount('s_smoke_phone_none')?.label === 'No account'
+      && phoneAccount('s_smoke_phone_none')?.id === null,
+    'a session that never had an account reads as none, not as a blank label', phoneAccount('s_smoke_phone_none'));
+    check(phoneAccount('s_smoke_phone_gone')?.label === 'Removed account'
+      && phoneAccount('s_smoke_phone_gone')?.id === 'acct_removed_smoke',
+    'and an account since removed reads as removed rather than as the label it carried at launch', phoneAccount('s_smoke_phone_gone'));
+    const phoneAccountJson = JSON.stringify(phoneRows);
+    check(!phoneAccountJson.includes(work.configDir) && !phoneAccountJson.includes(dataDir())
+      && !phoneAccountJson.includes('CLAUDE_CONFIG_DIR') && !phoneAccountJson.includes('Gone'),
+    'and an account crosses to the phone as an identity only — never the config directory that selects the login',
+    phoneAccountJson);
     // GLM runs the reviewed Claude harness but bills another vendor, and its
     // environment is empty until a key is stored — so the runtime environment
     // alone cannot answer this. The declared backend can.

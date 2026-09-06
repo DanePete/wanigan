@@ -1,8 +1,10 @@
 /**
  * The shared half of the page's stylesheet: the colour tokens, the frame, the
- * connection dot, the notices, and every form control. A screen's own rules
- * live with that screen's markup, and are appended after these — so a section
- * rule always wins over the shared one it refines.
+ * connection dot, the notices, every form control, and the four states any
+ * screen can be in — reading, failed, off, empty — which shell.ts's ui helper
+ * builds and which therefore have to look the same on all of them. A screen's
+ * own rules live with that screen's markup, and are appended after these — so a
+ * section rule always wins over the shared one it refines.
  *
  * Everything here is a literal because it is served to a browser that has no
  * access to the app's design tokens; this is not renderer CSS.
@@ -26,7 +28,7 @@ export function mobileStyle(): string {
     .dot.live { background:var(--good); }
     .dot.bad { background:var(--critical); }
     .dot.stale { background:var(--serious); }
-    .stat,.card,.notice { border:1px solid var(--line); background:linear-gradient(145deg,var(--panel),var(--panel-raised)); border-radius:13px; box-shadow:0 12px 35px var(--shadow); }
+    .stat,.card,.notice,.state { border:1px solid var(--line); background:linear-gradient(145deg,var(--panel),var(--panel-raised)); border-radius:13px; box-shadow:0 12px 35px var(--shadow); }
     .session-card:focus-visible,button:focus-visible,select:focus-visible,textarea:focus-visible,input:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
     .notice { padding:18px; color:var(--dim); }
     .notice strong { color:var(--ink); display:block; margin-bottom:4px; }
@@ -47,6 +49,15 @@ export function mobileStyle(): string {
     button.secondary { color:var(--ink); background:transparent; border-color:var(--line); }
     button:disabled { opacity:.55; }
     .control-result { color:var(--dim); min-height:20px; font-size:12px; margin-top:8px; }
+    .state { display:grid; grid-template-columns:auto minmax(0,1fr); gap:4px 10px; align-items:start; padding:16px; margin-top:10px; color:var(--dim); }
+    .state-glyph { color:var(--faint); font-size:15px; line-height:1.4; }
+    .state-body { display:grid; gap:4px; min-width:0; }
+    .state-claim { color:var(--ink); font-weight:720; }
+    .state-note { font-size:13px; }
+    .state-dated,.state-fault { grid-column:2; color:var(--serious); font-size:12px; font-weight:700; }
+    .state-retry { grid-column:2; justify-self:start; margin-top:6px; }
+    .state-failed { border-color:color-mix(in srgb,var(--critical) 50%,var(--line)); }
+    .state-failed .state-glyph { color:var(--critical); }
     footer { color:var(--faint); font-size:11px; margin-top:24px; text-align:center; }
     @media (max-width:680px) { header { align-items:flex-start; flex-direction:column; gap:8px; } .fields { grid-template-columns:1fr; } }
     @media (prefers-reduced-motion:no-preference) { .dot.live { animation:pulse 2.4s ease-in-out infinite; } @keyframes pulse { 50% { box-shadow:0 0 0 6px #70ca9114; } } }`;

@@ -145,6 +145,13 @@ function privacyFilterSnapshot(input: MobileFleetSnapshot): MobileFleetSnapshot 
       projectName: safeString(row.projectName, 160, 'Unknown project'),
       title: safeString(row.title, 200, 'Agent session'),
       providerId: safeString(row.providerId, 100, 'unknown'),
+      // Rebuilt like every other field rather than passed through: the label is
+      // bounded and the id is carried only so two accounts with the same label
+      // stay distinguishable. Nothing else about an account crosses.
+      account: row.account
+        ? { id: row.account.id === null ? null : safeString(row.account.id, 120) || null,
+            label: safeString(row.account.label, 120, 'Unknown account') }
+        : undefined,
       model: row.model === null ? null : safeString(row.model, 120) || null,
       status,
       createdAt: finite(row.createdAt),
