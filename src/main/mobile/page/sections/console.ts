@@ -12,6 +12,15 @@ import type { MobileSection } from '../sections';
  * happens to work on one provider's menu and on nothing else. The names come
  * from the Mac and so do the bytes — this page posts a name and never a
  * sequence.
+ *
+ * The sizing below is the other half of that thought. This is the one screen
+ * someone uses standing up, one-handed, because an agent stopped and is waiting
+ * — so the key row, the send button and the interrupt are laid out for a thumb
+ * rather than for a cursor: a larger target than the shared sheet's floor on a
+ * coarse pointer, a gap wide enough that a thumb aimed at Escape cannot land on
+ * Enter, the two actions side by side rather than stacked eight pixels apart,
+ * and a shorter terminal on a short phone so the controls are still reachable
+ * without scrolling past the output they act on.
  */
 export const CONSOLE_SECTION: MobileSection = {
   id: 'console',
@@ -21,10 +30,13 @@ export const CONSOLE_SECTION: MobileSection = {
           <div class="console-kicker">Selected agent</div>
           <div class="terminal-head"><div><h3 id="terminal-title">Live terminal output</h3><p>Readable live output from the selected session. Whatever you send below is typed into this agent&rsquo;s terminal, exactly as it would be at the Mac: a message, or one of the single keys a prompt is waiting on.</p></div><button id="terminal-refresh" type="button" class="secondary">Refresh</button></div><p id="terminal-note" class="terminal-note hidden"></p><pre id="terminal" class="terminal">Choose a running session to open its terminal.</pre>
           <div id="terminal-keys" class="terminal-keys hidden" role="group" aria-label="Press one key in this session terminal"></div>
-          <form id="prompt-form" class="fields"><label class="field-label"><span>Session</span><select id="session" aria-label="Running session"></select></label><div></div><textarea id="session-prompt" aria-label="Message for the selected agent" maxlength="8000" required placeholder="Type the next instruction for this agent…"></textarea><button>Send message</button><button id="interrupt" type="button" class="secondary">Interrupt turn</button></form>
+          <form id="prompt-form" class="fields"><label class="field-label"><span>Session</span><select id="session" aria-label="Running session"></select></label><textarea id="session-prompt" aria-label="Message for the selected agent" maxlength="8000" required placeholder="Type the next instruction for this agent…"></textarea><button>Send message</button><button id="interrupt" type="button" class="secondary">Interrupt turn</button></form>
         </div>`,
   style: `    .agent-console { scroll-margin-top:16px; border-color:color-mix(in srgb,var(--accent) 45%,var(--line)); }
-    .terminal { margin-top:10px; min-height:210px; max-height:58vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; padding:13px; border-radius:10px; background:var(--terminal); border:1px solid var(--line); color:var(--terminal-ink); font:15px/1.58 ui-monospace,SFMono-Regular,Menlo,monospace; -webkit-text-size-adjust:100%; }
+    /* overscroll-behavior keeps a flick inside the terminal. Without it, reading
+       to the end of the output carries straight on into scrolling the page, and
+       the live screen someone was reading slides away under their thumb. */
+    .terminal { margin-top:10px; min-height:210px; max-height:58vh; overflow:auto; overscroll-behavior:contain; white-space:pre-wrap; overflow-wrap:anywhere; padding:13px; border-radius:10px; background:var(--terminal); border:1px solid var(--line); color:var(--terminal-ink); font:15px/1.58 ui-monospace,SFMono-Regular,Menlo,monospace; -webkit-text-size-adjust:100%; }
     .terminal-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
     .terminal-head p { margin-bottom:0; }
     .terminal-note { color:var(--serious); font-size:12px; margin:9px 0 0; }
@@ -34,9 +46,36 @@ export const CONSOLE_SECTION: MobileSection = {
        has said whether the bridge advertises any keys. Re-stated here for the
        same reason nav.ts re-states it for the sheet. */
     .terminal-keys.hidden { display:none; }
-    .terminal-keys button { flex:1 1 84px; display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:8px 10px; }
+    .terminal-keys button { flex:1 1 84px; display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:8px 10px; user-select:none; -webkit-user-select:none; }
     .terminal-key-glyph { color:var(--faint); font-size:15px; line-height:1; }
-    @media (max-width:680px) { .terminal { min-height:46vh; max-height:62vh; } }`,
+    /* Refresh keeps its own width. Flex would otherwise let the paragraph beside
+       it squeeze the button to the width of one wrapped word, which is a target
+       nobody can hit and a label nobody can read. */
+    .terminal-head button { flex:none; }
+    /* The session picker takes the whole row and the two actions share the one
+       below it, at every width. Stacked full-width buttons put Interrupt turn
+       directly under Send message with eight pixels between them, which is a
+       mis-tap that ends a turn; side by side, position tells them apart as well
+       as the label does. */
+    #prompt-form { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    #prompt-form .field-label { grid-column:1 / -1; }
+    @media (max-width:680px) { .terminal { min-height:46vh; max-height:62vh; } }
+    /* A short phone held one-handed cannot show a 62vh terminal and still put
+       the keys and the send button within a thumb's reach, and those are what
+       someone standing up came here for. Give the reading back to the controls
+       when there is not enough height for both. */
+    @media (max-width:680px) and (max-height:720px) { .terminal { min-height:32vh; max-height:42vh; } }
+    /* A finger is not a cursor. The shared sheet's 44px is the floor Apple and
+       Google both publish; this console is the one screen someone uses while
+       standing up holding a phone, so its controls take the larger target and
+       the key row takes a gap wide enough that a thumb aimed at Escape cannot
+       land on Enter. */
+    @media (pointer:coarse) {
+      .agent-console button { min-height:48px; }
+      .agent-console select { min-height:48px; }
+      .terminal-keys { gap:9px; }
+      .terminal-keys button { flex:1 1 96px; }
+    }`,
   script: `
       // The terminal used to be re-read whole every 1.5 seconds. Now the page
       // holds the settled part of the screen and the server holds the cursor
@@ -44,6 +83,12 @@ export const CONSOLE_SECTION: MobileSection = {
       // a tick. Both pieces of state are per session: switching sessions in the
       // picker must never append one agent's output onto another's.
       const TERMINAL_KEEP = 240 * 1024;
+      // How far off the bottom still counts as following the output. A mouse
+      // wheel lands where it is aimed and 24px was enough for it; a thumb flick
+      // with momentum routinely stops a few dozen pixels short, and the tighter
+      // slack read that as 'the operator scrolled up to read something' — so the
+      // terminal quietly stopped following a live agent and stayed that way.
+      const TERMINAL_FOLLOW_SLACK = 56;
       let terminalSessionId = '';
       let terminalCursor = '';
       let terminalNodes = null;
@@ -164,7 +209,7 @@ export const CONSOLE_SECTION: MobileSection = {
         }
         if (terminalBusy) return;
         terminalBusy = true;
-        const follow = output.scrollTop + output.clientHeight >= output.scrollHeight - 24;
+        const follow = output.scrollTop + output.clientHeight >= output.scrollHeight - TERMINAL_FOLLOW_SLACK;
         try {
           if (sessionId !== terminalSessionId) resetTerminal(sessionId);
           const detail = await api('api/terminal?session=' + encodeURIComponent(sessionId) +

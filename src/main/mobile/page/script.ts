@@ -54,6 +54,15 @@ export function mobileScript(
       let pollDelay = POLL_FAST_MS;
       let pollTimer = null;
 
+      // The fourth case, and the only one the browser will state outright:
+      // navigator.onLine false means THIS DEVICE has no network. That is a
+      // different sentence from a Mac that stopped answering, and the page used
+      // to print the second one for both — telling someone on a train with no
+      // signal that their laptop had probably gone to sleep. Only false is
+      // trusted: onLine true means a radio is attached, not that anything on
+      // the other end of it is awake, so it decides nothing here.
+      function deviceOffline() { return navigator.onLine === false; }
+
       function setRemoteMode(next) {
         remoteControlEnabled = next === true;
         modeLabel.textContent = remoteControlEnabled ? 'Private remote control' : 'Private fleet monitor';
@@ -219,6 +228,21 @@ export function mobileScript(
           state('live', 'Live · polling every ' + Math.round(POLL_FAST_MS / 1000) + 's');
           staleNote.classList.add('hidden');
           dashboard.classList.remove('stale');
+        } else if (connectionState === 'offline') {
+          // Nothing here blames the Mac. This device has no radio, so what the
+          // Mac is doing is unknown rather than suspected — the shell is being
+          // served by the worker's cache, and the last reading is dated for the
+          // same reason the stale branch dates it.
+          state('bad', 'Offline · this device has no network');
+          text('error-title', 'This device has no network.');
+          text('error-why', 'Wanigan cannot be reached from here, so nothing on this screen is a reading of the fleet right now. It will reconnect on its own when a network comes back.');
+          if (lastGoodAt) {
+            text('stale-note', 'Last reading from ' + age + ' ago · not the fleet right now.');
+            staleNote.classList.remove('hidden');
+            dashboard.classList.add('stale');
+          } else {
+            staleNote.classList.add('hidden');
+          }
         } else if (connectionState === 'stale') {
           // The numbers below are still worth showing - the last thing the fleet
           // was doing is real information - but a tile reading '3 running'
@@ -287,7 +311,8 @@ export function mobileScript(
           // Having heard from the Mac earlier in this session and having never
           // heard from it are different problems with different fixes, and the
           // page is the only thing that knows which one this is.
-          setConnection(lastGoodAt ? 'stale' : 'never');
+          if (deviceOffline()) setConnection('offline');
+          else setConnection(lastGoodAt ? 'stale' : 'never');
         } finally { clearTimeout(timeout); busy = false; schedulePoll(); }
       }
 ${sections.script}
@@ -318,5 +343,21 @@ ${sections.wiring}
       // answer, so drop the backoff and try immediately rather than making them
       // wait out the current ceiling.
       document.addEventListener('visibilitychange', () => { if (!document.hidden) { pollDelay = POLL_FAST_MS; void poll(); } });
+      // A radio coming back is the one event worth abandoning the backoff for:
+      // the ceiling exists to stop a dead poll draining a battery, and there is
+      // nothing dead about a phone that just found a network.
+      addEventListener('online', () => { pollDelay = POLL_FAST_MS; void poll(); });
+      addEventListener('offline', () => { setConnection('offline'); });
+
+      // The worker caches the shell and nothing else — never an /api/ reply, so
+      // this can make the app open with no network without ever replaying a
+      // fleet reading as though it were current. A registration that fails is
+      // not worth a word on screen: everything still works, it just needs a
+      // network to open.
+      if ('serviceWorker' in navigator) {
+        addEventListener('load', () => {
+          navigator.serviceWorker.register('sw.js', { scope: './' }).catch(() => {});
+        });
+      }
     })();`;
 }

@@ -2,6 +2,7 @@ import type http from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { theme } from '../settings';
 import { ensureMobileToken, pairingCodeValid } from './secrets';
+import { MOBILE_SERVICE_WORKER_PATH, mobileServiceWorker } from './page/sw';
 import { dashboardHtml, dashboardIcon, dashboardManifest } from './page';
 
 /**
@@ -14,12 +15,25 @@ import { dashboardHtml, dashboardIcon, dashboardManifest } from './page';
  * way to reach a handler except through handle().
  */
 
-export type MobileApiScope = 'monitor' | 'control';
+/**
+ * Every widening of what a paired device may reach is a scope, and there are
+ * three: the fleet monitor, the agent console, and the repository review.
+ *
+ * Naming the widening in the route table rather than inside a handler is the
+ * point. `grep "scope: 'repo'"` is the complete list of routes that can put a
+ * file path on this wire, and no handler edit can add to it or quietly relax
+ * one — the gate below runs before a handler is called at all.
+ */
+export type MobileApiScope = 'monitor' | 'control' | 'repo';
 
 export type MobileApiRoute = {
   path: string;
   method: 'GET' | 'POST';
-  /** 'control' routes are refused unless the separate remote-control opt-in is on. */
+  /**
+   * 'control' routes are refused unless the separate remote-control opt-in is
+   * on; 'repo' routes unless the separate repository-review opt-in is. Neither
+   * implies the other, and neither is implied by the monitor.
+   */
   scope: MobileApiScope;
   /**
    * Only /api/pair: the endpoint that hands out the bearer token cannot itself
@@ -65,6 +79,22 @@ export function controlScopeAllowed(): boolean {
   return controlGate ? controlGate() : false;
 }
 
+// The second widening, kept as its own gate rather than folded into the first.
+// A single "the phone may do more" flag would have meant that enabling the agent
+// console also handed out working-tree paths, which is a different decision with
+// a different blast radius; two gates is what makes them two decisions.
+let repoGate: (() => boolean) | null = null;
+
+/** Called once by the module that owns the repository-review routes. */
+export function registerRepoGate(gate: () => boolean): void {
+  repoGate = gate;
+}
+
+/** Whether repo-scope routes are available right now. Fails closed when unwired. */
+export function repoScopeAllowed(): boolean {
+  return repoGate ? repoGate() : false;
+}
+
 function isLoopback(address: string | undefined): boolean {
   if (!address) return false;
   const unwrapped = address.replace(/^::ffff:/, '');
@@ -97,7 +127,10 @@ export function securityHeaders(nonce?: string): Record<string, string> {
     expires: '0',
     'content-security-policy':
       `default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; ` +
-      `script-src ${script}; style-src ${style}; connect-src 'self'; img-src 'self' data:`,
+      // worker-src is separate on purpose: a nonce cannot be attached to a
+      // worker's script URL, so without this the page would refuse the very
+      // registration it just asked for.
+      `script-src ${script}; style-src ${style}; connect-src 'self'; img-src 'self' data:; worker-src 'self'`,
     'x-frame-options': 'DENY',
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
@@ -182,6 +215,22 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse): Pr
     send(res, 200, 'application/manifest+json; charset=utf-8', dashboardManifest(theme()));
     return;
   }
+  // The shell worker. It caches the frame and NEVER an /api/ response — a
+  // fleet reading replayed from a cache is the one lie this whole surface is
+  // built to refuse — so it is served as ordinary script from the same origin.
+  if (url.pathname === MOBILE_SERVICE_WORKER_PATH) {
+    if (req.method !== 'GET') { json(res, 405, { error: 'Method not allowed.' }, { allow: 'GET' }); return; }
+    // The worker's own policy, not the page's. A worker inherits the policy of
+    // the response its script arrived in, and securityHeaders() writes
+    // script-src 'none' when there is no nonce — which would leave this worker
+    // unable to fetch the one thing it exists to cache. It gets 'self' for its
+    // own script and the same-origin shell it reads, and nothing else.
+    send(res, 200, 'text/javascript; charset=utf-8', mobileServiceWorker(theme()), undefined, {
+      'content-security-policy': "default-src 'none'; script-src 'self'; connect-src 'self'",
+      'service-worker-allowed': '/',
+    });
+    return;
+  }
   if (url.pathname === '/icon.svg') {
     if (req.method !== 'GET') { json(res, 405, { error: 'Method not allowed.' }, { allow: 'GET' }); return; }
     send(res, 200, 'image/svg+xml; charset=utf-8', dashboardIcon());
@@ -203,10 +252,18 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse): Pr
     return;
   }
 
-  // The page tests this message with /disabled/ to tell a switched-off console
+  // The page tests these messages with /disabled/ to tell a switched-off screen
   // apart from a broken one, so the wording is part of the contract.
   if (route.scope === 'control' && !controlScopeAllowed()) {
     json(res, 403, { error: 'Remote control is disabled in Wanigan Settings.' });
+    return;
+  }
+
+  // The repository review is the one scope that can put a file path on this
+  // wire. It is refused here, before the handler, so the refusal is a property
+  // of the route table and not of any code inside ./git.
+  if (route.scope === 'repo' && !repoScopeAllowed()) {
+    json(res, 403, { error: 'Repository review is disabled in Wanigan Settings.' });
     return;
   }
 

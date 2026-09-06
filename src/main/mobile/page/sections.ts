@@ -1,7 +1,10 @@
 import { ALERTS_SECTION } from './sections/alerts';
 import { DEVICE_SECTION } from './sections/device';
+import { MANAGE_SECTION } from './sections/manage';
+import { SPEND_SECTION } from './sections/spend';
 import { CONSOLE_SECTION } from './sections/console';
 import { FLEET_SECTION } from './sections/fleet';
+import { GIT_SECTION } from './sections/git';
 import { LAUNCH_SECTION } from './sections/launch';
 
 /**
@@ -47,9 +50,12 @@ import { LAUNCH_SECTION } from './sections/launch';
  * Where a section's markup lands. 'dashboard' fills the Fleet view and
  * 'controls' the remote-control block inside Agent; 'device' is its own screen,
  * which is why it is a slot rather than a second dashboard panel — it is about
- * this phone rather than about the Mac's fleet.
+ * this phone rather than about the Mac's fleet. 'git' is its own screen for a
+ * sharper reason: it is the only slot whose routes put a file path on the wire,
+ * and a slot of its own is what keeps that surface one grep away rather than
+ * folded into a panel on a screen about something else.
  */
-export type MobileSectionSlot = 'dashboard' | 'controls' | 'device';
+export type MobileSectionSlot = 'dashboard' | 'controls' | 'device' | 'git' | 'spend' | 'manage';
 
 export type MobileSection = {
   id: string;
@@ -69,9 +75,10 @@ export type MobileSection = {
 // Order is render order: the alert panel sits above the fleet on the Fleet
 // screen — an alert below the session it is about is an alert you find after
 // you did not need it — then the console and the launch form fill the
-// remote-control slot on the Agent screen.
+// remote-control slot on the Agent screen. The last two each own a screen.
 export const MOBILE_SECTIONS: readonly MobileSection[] = [
-  ALERTS_SECTION, FLEET_SECTION, CONSOLE_SECTION, LAUNCH_SECTION, DEVICE_SECTION,
+  ALERTS_SECTION, FLEET_SECTION, CONSOLE_SECTION, LAUNCH_SECTION, GIT_SECTION,
+  SPEND_SECTION, MANAGE_SECTION, DEVICE_SECTION,
 ];
 
 export const MOBILE_SECTION_ANCHORS: readonly string[] = MOBILE_SECTIONS.map((section) => section.anchorId);

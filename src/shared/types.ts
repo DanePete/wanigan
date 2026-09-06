@@ -1701,6 +1701,13 @@ export type WaniganSettings = {
   defaultTrust: TrustLevel;
   mcpServerEnabled: boolean;
   pet: boolean;
+  /**
+   * Whether a paired phone may read this Mac's working trees. Off by default and
+   * separate from every other mobile switch: it is the one setting that widens
+   * the promise mobile/snapshot.ts states, because a changed-file list is made
+   * of paths. See settings.ts's mobileRepositoryReview().
+   */
+  mobileRepositoryReview: boolean;
   learning: LearningSettings;
 };
 

@@ -1432,6 +1432,19 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const redrawnTerminal = mobile.readableTerminal('building 100%\rDone\x1b[K\nvisible\x1bPprivate-control-data\x1b\\ text');
   check(redrawnTerminal === 'Done\nvisible text',
     'the mobile terminal renderer applies carriage-return/erase redraws and removes opaque control strings', redrawnTerminal);
+  // Both caps refuse rather than trim, and say so in a sentence. A phone shown
+  // half a diff's line counts, or a file list quietly cut to fit, reads as a
+  // complete answer, and there is nothing on the screen to tell it from one.
+  const hugeDiff = mobile.numstatCounts('x'.repeat(mobile.MOBILE_REPO_LIMITS.diffBytes + 1));
+  const smallDiff = mobile.numstatCounts('4\t1\tsrc/kept.txt\0');
+  const hugeReply = mobile.repoJson({ files: new Array(40_000).fill({ path: 'a'.repeat(80) }) });
+  const smallReply = mobile.repoJson({ files: [] });
+  check(hugeDiff.counted === false && /larger than/.test(hugeDiff.counted ? '' : hugeDiff.reason)
+    && hugeReply.ok === false && /refused rather than cut short/.test(hugeReply.ok ? '' : hugeReply.error)
+    && smallDiff.counted === true && smallDiff.counted && smallDiff.byPath.get('src/kept.txt')?.added === 4
+    && smallReply.ok === true,
+  'an oversized working-tree reading is refused with a sentence rather than truncated: no half-counted diff, and no file list silently shortened to fit the wire',
+  hugeDiff.counted ? 'counted' : hugeDiff.reason);
 
   say('── phone fleet · authenticated loopback transport');
   const mobilePort = await unusedLoopbackPort();
@@ -1477,6 +1490,73 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && pageJs.includes("setConnection(lastGoodAt ? 'stale' : 'never')")
       && shellText.includes('id="stale-note"'),
     'the phone page separates a live Mac, a Mac that has gone quiet with the age of the last reading, and a device that has never reached it — and the script it ships parses as JavaScript');
+    // The shell worker's whole risk is one line long: a cached /api/ response
+    // would let this page replay a fleet reading tomorrow, which is the lie the
+    // rest of this block exists to prevent. Grepping for the guard would prove
+    // only that a guard was written, so the worker as served is run here in a
+    // stubbed ServiceWorkerGlobalScope and driven with a real fetch event for
+    // the status endpoint. It must neither answer it nor store it.
+    const workerResponse = await fetch(new URL('sw.js', monitor.localUrl));
+    const workerSource = await workerResponse.text();
+    check(workerResponse.ok
+      && (workerResponse.headers.get('content-type') ?? '').includes('javascript')
+      && (shell.headers.get('content-security-policy') ?? '').includes("worker-src 'self'"),
+    "the page routes serve the shell worker as JavaScript and the shell's own policy admits it — a nonce cannot be attached to a worker script URL, so without worker-src the page would refuse the registration it just asked for",
+    `${workerResponse.status} ${workerResponse.headers.get('content-type') ?? ''}`);
+
+    const workerCache = new Map<string, Response>();
+    const workerEvents = new Map<string, (event: unknown) => void>();
+    const workerScope = {
+      location: { href: `${monitor.localUrl}sw.js` },
+      addEventListener: (type: string, fn: (event: unknown) => void) => { workerEvents.set(type, fn); },
+      skipWaiting: () => {},
+      caches: {
+        open: async () => ({
+          put: async (key: string, value: Response) => { workerCache.set(String(key), value); },
+          match: async (key: string) => workerCache.get(String(key)),
+        }),
+        keys: async () => [] as string[],
+        delete: async () => true,
+      },
+      clients: { claim: async () => {} },
+      crypto: globalThis.crypto,
+      // Every network call this worker can make fails, so what follows measures
+      // the worker rather than the listener that is still running beside it.
+      fetch: async () => { throw new TypeError('Load failed'); },
+    };
+    new Function('self', workerSource)(workerScope);
+    const workerFetch = workerEvents.get('fetch');
+    let apiAnswered = false;
+    if (workerFetch) {
+      workerFetch({
+        request: { url: `${monitor.localUrl}api/status`, mode: 'cors', method: 'GET' },
+        respondWith: () => { apiAnswered = true; },
+      });
+    }
+    check(typeof workerFetch === 'function' && !apiAnswered && workerCache.size === 0
+      && !workerSource.includes('api/status'),
+    'the shell service worker leaves every /api/ request on the network untouched — it neither answers one nor puts one in its cache, so no reading of the fleet can be replayed to this device later',
+    `${workerCache.size} cached entries, answered: ${apiAnswered}`);
+
+    // And what it does instead. A navigation with nothing cached gets Wanigan's
+    // own screen, which names this device's radio rather than guessing at the
+    // Mac, and deliberately carries no fleet number to soften the blow.
+    const navigation: Promise<Response>[] = [];
+    if (workerFetch) {
+      workerFetch({
+        request: { url: monitor.localUrl, mode: 'navigate', method: 'GET' },
+        respondWith: (value: Promise<Response>) => { navigation.push(value); },
+      });
+    }
+    const offlineScreen = navigation.length ? await navigation[0] : null;
+    const offlineHtml = offlineScreen ? await offlineScreen.text() : '';
+    check(offlineScreen !== null && offlineScreen.status === 200
+      && offlineHtml.includes('This device has no network.')
+      && offlineHtml.includes('not a reading about the Mac')
+      && !offlineHtml.includes('%NONCE%')
+      && !/\brunning\b|\bsessions\b|\btokens\b/i.test(offlineHtml),
+    "opening the phone app with no network lands on Wanigan's own offline screen rather than the browser's error page, and that screen states this device's missing radio without showing one fleet number",
+    offlineScreen ? `${offlineScreen.status} ${offlineHtml.length} bytes` : 'no response');
     const manifest = await fetch(new URL('manifest.webmanifest', monitor.localUrl));
     check(manifest.ok && JSON.parse(await manifest.text()).display === 'standalone',
       'the paired dashboard is installable as an iPad Home Screen web app');
@@ -1499,6 +1579,18 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(accepted.ok && acceptedSnapshot.sessions?.[0]?.attention?.kind === 'permission'
       && ['system', 'light', 'dark'].includes(acceptedSnapshot.appearance ?? '') && acceptedSnapshot.remoteControl === false,
       'the paired phone receives the current privacy-filtered fleet');
+    // The widened scope must not have widened the one beside it. /api/status is
+    // re-read with repository review switched on, because a shared sanitiser
+    // quietly relaxed to serve the new screen would surface here first and
+    // nothing else about this route would look any different.
+    setSetting('mobile_repository_review', '1');
+    const withReviewOn = await fetch(apiUrl, { headers: { authorization: `Bearer ${token}` } });
+    const withReviewText = await withReviewOn.text();
+    setSetting('mobile_repository_review', '0');
+    check(withReviewOn.ok && !withReviewText.includes(privateMarker) && !withReviewText.includes('42424')
+      && !withReviewText.includes('conversation-') && !/[/\\][Uu]sers[/\\]/.test(withReviewText),
+      'turning repository review on does not widen /api/status: the fleet route still carries no path, pid or conversation id',
+      withReviewText.slice(0, 300));
     check(!body.includes(privateMarker) && !body.includes('42424'),
       'the HTTP allow-list drops extra paths, commands, transcripts and pids even if its source grows', body);
     // Whether the operator will actually be told is part of every reading now,
@@ -1578,6 +1670,36 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && /disabled/.test(lockedKeyBody.error),
     'pressing a key from a phone is refused by the remote-control switch with the exact sentence the page matches on, so a switched-off console reads as switched off rather than broken',
     `${lockedKey.status}:${lockedKeyBody.error}`);
+    // The Manage hub reads through the monitor and writes through remote
+    // control, and the split is the whole point: what this Mac starts on a
+    // timer is a fact a read-only phone must be able to see, and stopping one
+    // is a write that must not be reachable until the operator has separately
+    // turned remote control on. Both verbs are checked, because a gate that
+    // only refuses the destructive-sounding one is not a gate.
+    const readOnlySchedule = schedule.createSchedule({
+      name: 'smoke phone read-only schedule', cron: '0 3 * * *', kind: 'headless',
+      payload: { prompt: 'audit', allProjects: true },
+    });
+    const monitorSchedules = await fetch(new URL('api/schedules', monitor.localUrl), { headers: { authorization: `Bearer ${token}` } });
+    const monitorScheduleBody = await monitorSchedules.json() as { schedules?: { id: string; name: string }[] };
+    const lockedPause = await fetch(new URL('api/schedules', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'pause', id: readOnlySchedule.id }),
+    });
+    const lockedPauseBody = await lockedPause.json() as { error?: string };
+    const lockedResume = await fetch(new URL('api/schedules', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'resume', id: readOnlySchedule.id }),
+    });
+    const lockedResumeBody = await lockedResume.json() as { error?: string };
+    check(monitorSchedules.status === 200
+      && (monitorScheduleBody.schedules ?? []).some((row) => row.id === readOnlySchedule.id)
+      && lockedPause.status === 403 && lockedPauseBody.error === 'Remote control is disabled in Wanigan Settings.'
+      && lockedResume.status === 403 && lockedResumeBody.error === 'Remote control is disabled in Wanigan Settings.'
+      && schedule.listSchedules().find((row) => row.id === readOnlySchedule.id)?.enabled === true,
+    'a read-only phone can see what this Mac starts on a timer but cannot change it: the schedule list answers on the monitor scope, and both pausing and resuming are refused by the remote-control switch with the exact sentence the page matches on — with the schedule still armed afterwards',
+    `${monitorSchedules.status} / pause ${lockedPause.status}:${lockedPauseBody.error} / resume ${lockedResume.status}:${lockedResumeBody.error}`);
+    schedule.deleteSchedule(readOnlySchedule.id);
     const unknownRoute = await fetch(new URL('api/not-a-route', monitor.localUrl), { headers: { authorization: `Bearer ${token}` } });
     const unknownRouteBody = await unknownRoute.json() as { error?: string };
     const wrongVerb = await fetch(controlUrl, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: '{}' });
@@ -1617,6 +1739,16 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && composedShell.includes('iOS does not deliver a web page'),
     'the alert screen is composed exactly once and says plainly that a closed page cannot be notified on iOS, rather than implying a background alert that will never arrive',
     `${composedShell.split('id="alerts"').length - 1} alert screens`);
+    // The generic sweep above passes vacuously for a screen that was never
+    // registered, so the Spend screen is named here too. It is the one Explore
+    // destination the phone builds, and both of its halves have to be there:
+    // a Spend tab that navigates to a blank panel looks exactly like a fleet
+    // that cost nothing, which is the one thing this screen must never say.
+    check(sectionAnchors.includes('spend') && composedShell.split('id="spend"').length === 2
+      && composedShell.includes('id="spend-limits"') && composedShell.includes('id="spend-cost"')
+      && composedShell.split('data-spend-days=').length === 4,
+    'the Spend screen is composed exactly once, carrying both what is left and what it cost, and all three consumption windows',
+    `${composedShell.split('id="spend"').length - 1} spend screens`);
     // Every phone destination is a real panel on the served page, exactly one
     // of them, whether or not it is built yet: the eight unbuilt ones render a
     // sentence naming what will be there. A view in MOBILE_VIEWS with no panel
@@ -1835,6 +1967,86 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && !composedShell.includes('u001b') && !composedShell.includes('\x1b')
       && !/permission decisions stay at the Mac|decision stays at the Mac/.test(composedShell),
     'the phone page offers the keys a waiting agent needs, each labelled with the word for what it sends, carries no terminal escape sequence of its own, and no longer tells the operator that a decision it can in fact type stays at the Mac');
+    // navigator.onLine === false is the one thing a browser will state outright
+    // about the connection, and it is a different sentence from the Mac having
+    // gone quiet. Every failed poll used to be reported as the Mac — 'the usual
+    // reasons are that the Mac went to sleep' — which on a phone with no signal
+    // is this page guessing about a machine it cannot see, in the one place
+    // someone away from their desk has to trust it. So device-offline is its own
+    // state beside connected, stale and never, and the two sentences may not be
+    // confused: the offline branch must not reach for the Mac at all.
+    const offlineAt = composedJs.indexOf("connectionState === 'offline'");
+    const staleAt = composedJs.indexOf("connectionState === 'stale'");
+    const offlineWords = offlineAt >= 0 && staleAt > offlineAt ? composedJs.slice(offlineAt, staleAt) : '';
+    check(composedJs.includes('function deviceOffline() { return navigator.onLine === false; }')
+      && composedJs.includes("if (deviceOffline()) setConnection('offline');")
+      && composedJs.includes("state('bad', 'Offline · this device has no network')")
+      && offlineWords.includes('This device has no network.')
+      && !offlineWords.includes('the Mac went to sleep')
+      && composedJs.includes("addEventListener('online', () => { pollDelay = POLL_FAST_MS; void poll(); });")
+      && composedJs.includes("navigator.serviceWorker.register('sw.js', { scope: './' })"),
+    'a phone with no network is told that its own radio is gone rather than that the Mac is probably asleep, in a fourth state beside the three about the Mac, and the page registers the worker that lets it say so with no network at all',
+    offlineWords ? `${offlineWords.length} bytes of offline branch` : 'offline branch not found');
+    /* ── the Manage hub · how the last fire actually ended ──────────────
+     * A schedule that has never fired and one whose last fire succeeded are
+     * different facts about this Mac, and the phone is the surface someone
+     * checks precisely because they cannot see it. So the two are different
+     * values on the wire rather than one field that can go absent — an absent
+     * field, an empty string or a zero would let 'nothing has ever proved this
+     * works' render as 'all clear'.
+     */
+    say('── phone fleet · the Manage hub');
+    const freshSchedule = schedule.createSchedule({
+      name: 'smoke phone never fired', cron: '0 3 * * *', kind: 'headless',
+      payload: { prompt: 'audit', allProjects: true },
+    });
+    const firedSchedule = schedule.createSchedule({
+      name: 'smoke phone last fire ok', cron: '0 4 * * *', kind: 'headless',
+      payload: { prompt: 'audit', allProjects: true },
+    });
+    // Straight onto the schedule row, which is what a finished fire leaves
+    // behind: recordFireOutcome writes last_status through touchSchedule, and
+    // driving a whole fan-out here would prove less about the wire shape.
+    db().prepare("UPDATE schedules SET last_at=?, last_status='ok', last_detail=?, runs=1 WHERE id=?")
+      .run(Date.now() - 60_000, 'Handed off without error.', firedSchedule.id);
+    type PhoneSchedule = { id: string; paused: boolean; nextAt: number | null; last: { outcome: string; at: number | null } };
+    const phoneSchedules = await fetch(new URL('api/schedules', monitor.localUrl), { headers: { authorization: `Bearer ${token}` } });
+    const phoneScheduleBody = await phoneSchedules.json() as { schedules?: PhoneSchedule[] };
+    const listedSchedules = phoneScheduleBody.schedules ?? [];
+    const neverFired = listedSchedules.find((row) => row.id === freshSchedule.id);
+    const lastFireOk = listedSchedules.find((row) => row.id === firedSchedule.id);
+    check(neverFired?.last.outcome === 'never' && neverFired.last.at === null
+      && lastFireOk?.last.outcome === 'ok' && typeof lastFireOk.last.at === 'number',
+    'a schedule that has never fired does not read as one whose last run succeeded: the phone is told "never" with no time attached, and a fire that finished is a different value carrying the time it ended',
+    JSON.stringify({ neverFired: neverFired?.last, lastFireOk: lastFireOk?.last }));
+
+    const unknownPause = await fetch(new URL('api/schedules', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'pause', id: 'sch_does_not_exist' }),
+    });
+    const unknownPauseBody = await unknownPause.json() as { error?: string };
+    const phonePause = await fetch(new URL('api/schedules', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'pause', id: freshSchedule.id }),
+    });
+    const phonePauseBody = await phonePause.json() as { schedule?: PhoneSchedule };
+    const pausedRow = schedule.listSchedules().find((row) => row.id === freshSchedule.id);
+    const phoneResume = await fetch(new URL('api/schedules', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'resume', id: freshSchedule.id }),
+    });
+    const phoneResumeBody = await phoneResume.json() as { schedule?: PhoneSchedule };
+    const resumedRow = schedule.listSchedules().find((row) => row.id === freshSchedule.id);
+    check(unknownPause.status === 404
+      && unknownPauseBody.error === 'That is not a schedule this device can pause.'
+      && phonePause.status === 200 && phonePauseBody.schedule?.paused === true && phonePauseBody.schedule.nextAt === null
+      && pausedRow?.enabled === false && pausedRow.nextAt === null
+      && phoneResume.status === 200 && phoneResumeBody.schedule?.paused === false
+      && resumedRow?.enabled === true && typeof resumedRow.nextAt === 'number',
+    'a schedule id from a phone is checked against the real list in main before anything is written — an unknown one is refused outright — and a pause the Mac reports actually disarms the row, with a resume that arms it again rather than only saying so',
+    `${unknownPause.status}:${unknownPauseBody.error} / pause ${phonePause.status} enabled=${pausedRow?.enabled} / resume ${phoneResume.status} enabled=${resumedRow?.enabled}`);
+    schedule.deleteSchedule(freshSchedule.id);
+    schedule.deleteSchedule(firedSchedule.id);
     // The console polls /api/terminal every 1.5 seconds and /api/control on
     // every render. Charging those reads to the same 20-per-minute budget as a
     // launch would 429 a console that is working perfectly, within seconds of
@@ -1875,6 +2087,28 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && afterBurstBody.error === 'Too many remote actions. Wait a minute and try again.',
     'pressing a key spends the same remote-action budget as a launch or an instruction, so a phone cannot machine-gun keystrokes into a live agent and cannot buy itself a second allowance by calling them keys',
     `refused after ${firstRefusal} presses; the instruction that followed: ${afterBurst.status}`);
+    // Deliberately BELOW the burst above, and the only assertion here that is.
+    // A spent window is the one state in which a private allowance would show
+    // itself: pausing a schedule changes what this Mac does while nobody is
+    // watching it, so it has to draw on the same twenty-a-minute budget as a
+    // launch, an instruction or a keystroke — refused in the dispatcher, before
+    // the scheduler is touched at all.
+    const budgetSchedule = schedule.createSchedule({
+      name: 'smoke phone shared write budget', cron: '0 5 * * *', kind: 'headless',
+      payload: { prompt: 'audit', allProjects: true },
+    });
+    const pauseAfterBurst = await fetch(new URL('api/schedules', monitor.localUrl), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'pause', id: budgetSchedule.id }),
+    });
+    const pauseAfterBurstBody = await pauseAfterBurst.json() as { error?: string };
+    const stillArmed = schedule.listSchedules().find((row) => row.id === budgetSchedule.id);
+    check(pauseAfterBurst.status === 429
+      && pauseAfterBurstBody.error === 'Too many remote actions. Wait a minute and try again.'
+      && stillArmed?.enabled === true,
+    'pausing a schedule spends the same remote-action budget as a launch or a keystroke: with that window already drained the pause is refused with the shared sentence and the schedule is still armed, so a phone cannot buy itself a second allowance by calling a write a schedule change',
+    `${pauseAfterBurst.status}:${pauseAfterBurstBody.error} enabled=${stillArmed?.enabled}`);
+    schedule.deleteSchedule(budgetSchedule.id);
 
     const rotated = await mobile.regenerateMobileToken();
     const oldToken = await fetch(apiUrl, { headers: { authorization: `Bearer ${token}` } });
@@ -4008,6 +4242,19 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && mobileSrc.includes('pollDelay = POLL_FAST_MS;')
     && !mobileSrc.includes('setInterval(() => { void poll(); }, 3000)'),
   'the phone page only claims an empty fleet about a poll that returned, and steps its retry out to a ceiling while the Mac is not answering');
+  // The widening is a property of the route table, not of any handler. Two
+  // things keep that meaning something: the dispatcher is where a 'repo' route
+  // is refused, and mobile/git.ts holds no second copy of the condition that
+  // could drift out of step with it. The count is the point — 'which routes can
+  // put a file path on a phone' has to stay answerable by grep.
+  const repoScopedRoutes = (mobileSrc.match(/scope: 'repo', handler:/g) ?? []).length;
+  check(mobileSrc.includes("export type MobileApiScope = 'monitor' | 'control' | 'repo';")
+    && mobileSrc.includes("if (route.scope === 'repo' && !repoScopeAllowed()) {")
+    && mobileSrc.includes('registerRepoGate(repoReviewAllowed);')
+    && repoScopedRoutes === 2
+    && !mobileSrc.includes('if (!repoReviewAllowed())'),
+  'the repository-review widening is enforced by the dispatcher’s declared scope rather than by a condition inside a handler, so the routes that can send a file path stay enumerable',
+  `${repoScopedRoutes} repo-scope routes`);
   // A mark is a glyph and a number wide, with nowhere to print 'as of eleven
   // minutes ago' — so when the Mac stops answering it leaves rather than keeps
   // a count nothing is confirming any more. The dashboard behind it may go on

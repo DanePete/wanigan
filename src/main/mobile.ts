@@ -27,6 +27,13 @@ export { configureSnapshotSource } from './mobile/snapshot';
 export { configureMobileControlSource } from './mobile/control';
 export type { MobileControlSource } from './mobile/control';
 
+// The repository review: the one route family that puts a file path on this
+// wire, behind an opt-in of its own. The two pure functions are exported for the
+// offline suite, which has to prove the caps refuse rather than truncate and has
+// no cheap way to build a repository large enough to reach them.
+export { MOBILE_REPO_LIMITS, numstatCounts, repoJson, repoReviewAllowed } from './mobile/git';
+export type { MobileRepoCounts, MobileRepoFile, MobileRepoSummary } from './mobile/git';
+
 export {
   mobileStatus,
   regenerateMobilePushTopic,

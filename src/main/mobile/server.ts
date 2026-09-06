@@ -22,6 +22,9 @@ import type { MobileMonitorConfig, MobileMonitorStatus } from '../../shared/type
 // route module explicitly rather than trusting the facade's re-exports, so a
 // listener can never come up with an empty route table.
 import './control';
+import './git';
+import './explore';
+import './manage';
 
 /**
  * The listener's lifecycle. It intentionally binds to loopback: reach it from
