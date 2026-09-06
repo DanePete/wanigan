@@ -1,3 +1,4 @@
+import { ALERTS_SECTION } from './sections/alerts';
 import { CONSOLE_SECTION } from './sections/console';
 import { FLEET_SECTION } from './sections/fleet';
 import { LAUNCH_SECTION } from './sections/launch';
@@ -8,6 +9,15 @@ import { LAUNCH_SECTION } from './sections/launch';
  * plus one line here rather than an edit in four places of a single template.
  */
 
+/**
+ * Where in the frame a section's markup is composed. The two slots predate the
+ * phone's navigation and the shell now places each into a named screen from
+ * shared/mobile-nav.ts: 'dashboard' fills the Fleet view, 'controls' fills the
+ * remote-control block inside the Agent view. The names are kept because they
+ * describe the *frame* — the control slot is still the part that only exists
+ * when remote control is separately enabled, which is a different question from
+ * which screen it appears on.
+ */
 export type MobileSectionSlot = 'dashboard' | 'controls';
 
 export type MobileSection = {
@@ -25,9 +35,13 @@ export type MobileSection = {
   wiring: string;
 };
 
-// Order is render order: the fleet fills the dashboard, then the two console
-// screens fill the remote-control slot inside it.
-export const MOBILE_SECTIONS: readonly MobileSection[] = [FLEET_SECTION, CONSOLE_SECTION, LAUNCH_SECTION];
+// Order is render order: the alert panel sits above the fleet on the Fleet
+// screen — an alert below the session it is about is an alert you find after
+// you did not need it — then the console and the launch form fill the
+// remote-control slot on the Agent screen.
+export const MOBILE_SECTIONS: readonly MobileSection[] = [
+  ALERTS_SECTION, FLEET_SECTION, CONSOLE_SECTION, LAUNCH_SECTION,
+];
 
 export const MOBILE_SECTION_ANCHORS: readonly string[] = MOBILE_SECTIONS.map((section) => section.anchorId);
 

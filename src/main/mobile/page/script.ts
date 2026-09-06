@@ -1,7 +1,8 @@
 /**
  * The page's shared script: pairing, the authenticated fetch helper, the
  * three-state connection machine, and the control shell both console screens
- * populate.
+ * populate. Navigation between screens is nav.ts's fragment, spliced in with
+ * the sections below.
  *
  * Every screen's fragment is concatenated into this one closure rather than
  * shipped as a separate script. Function declarations hoist, so a screen can
@@ -36,6 +37,7 @@ export function mobileScript(
       const control = byId('controls');
       const controlResult = byId('control-result');
       const monitorNote = byId('monitor-note');
+      const agentLocked = byId('agent-locked');
       const staleNote = byId('stale-note');
       // Three different situations used to render identically here: the Mac is
       // awake with nothing running, the Mac has stopped answering, and this
@@ -56,6 +58,24 @@ export function mobileScript(
         remoteControlEnabled = next === true;
         modeLabel.textContent = remoteControlEnabled ? 'Private remote control' : 'Private fleet monitor';
         monitorNote.classList.toggle('hidden', remoteControlEnabled);
+        syncAgentNotice();
+      }
+
+      // The Agent screen is a destination in its own right now, so it is
+      // reachable before there is a console to put on it. An empty screen would
+      // read as a broken one, and the two reasons it can be empty have
+      // different fixes: the opt-in is off at the Mac, or this device has not
+      // reached the Mac yet. Say which.
+      function syncAgentNotice() {
+        const locked = control.classList.contains('hidden');
+        agentLocked.classList.toggle('hidden', !locked);
+        if (!locked) return;
+        text('agent-locked-claim', remoteControlEnabled
+          ? 'The agent console has not opened yet.'
+          : 'Remote control is off.');
+        text('agent-locked-note', remoteControlEnabled
+          ? 'It opens as soon as this device reaches the Mac and reads the sessions it is running.'
+          : 'Enable it in Wanigan Settings → Phone monitor to open a terminal, send a message, or interrupt a turn from this device.');
       }
 
       function syncActionButtons() {
@@ -177,7 +197,10 @@ export function mobileScript(
         text('updated', 'Updated ' + new Date(snapshot.generatedAt || Date.now()).toLocaleTimeString() +
           (snapshot.version ? ' · Wanigan ' + snapshot.version : ''));
         if (remoteControlEnabled) void renderControls(sessions);
-        else control.classList.add('hidden');
+        // setRemoteMode ran at the top of this render, so hiding the console
+        // here happens after the notice was last synced; re-sync or a console
+        // that has just been switched off leaves the screen blank.
+        else { control.classList.add('hidden'); syncAgentNotice(); }
       }
 
       function state(kind, label) {
@@ -270,6 +293,11 @@ export function mobileScript(
 ${sections.script}
 
       tokenFromFragment();
+      // Order matters: bootRoute() seeds history.state on the entry
+      // tokenFromFragment() has just stripped, so the credential never returns
+      // to the address on a Back.
+      bootRoute();
+      syncAgentNotice();
       byId('pair-form').addEventListener('submit', (event) => {
         event.preventDefault();
         const token = pairingToken(byId('pair-token').value);

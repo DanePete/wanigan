@@ -2,7 +2,7 @@ import type http from 'node:http';
 import { mobileConfig } from './config';
 import { json, registerApiRoute, registerControlGate, requestJson } from './dispatch';
 import { safeString } from './snapshot';
-import { readableTerminal } from './terminal-text';
+import { readTerminalScreen } from './terminal';
 
 /**
  * The separately opt-in agent console: three routes, each declared with the
@@ -10,8 +10,6 @@ import { readableTerminal } from './terminal-text';
  * is off. Permission decisions are deliberately absent — approving a tool call
  * stays at the Mac.
  */
-
-const MAX_TERMINAL_BYTES = 240 * 1024;
 
 export type MobileControlSource = {
   projects: () => Promise<{ id: string; name: string; branch: string | null }[]>;
@@ -73,11 +71,18 @@ async function serveTerminal(res: http.ServerResponse, url: URL): Promise<void> 
   const sessionId = safeString(url.searchParams.get('session'), 160);
   if (!sessionId) { json(res, 400, { error: 'Choose a session.' }); return; }
   const terminal = await source.terminal(sessionId);
-  json(res, 200, {
+  // The cursor is bounded and shape-checked here before ./terminal sees it, for
+  // the same reason every other query value is: it arrives from a paired
+  // browser and is untrusted until the main process has agreed on its form. A
+  // cursor that does not survive that reads as no cursor, which costs a screen
+  // rather than an error.
+  json(res, 200, readTerminalScreen({
+    sessionId,
     title: safeString(terminal.title, 200),
     running: terminal.running,
-    text: readableTerminal(terminal.text).slice(-MAX_TERMINAL_BYTES),
-  });
+    raw: terminal.text,
+    cursor: safeString(url.searchParams.get('cursor'), 64),
+  }));
 }
 
 async function serveAction(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {

@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { createServer as createNetServer } from 'node:net';
 import Database from 'better-sqlite3';
 import { SIDEBAR_GROUPS, TABS, TAB_ICONS } from '../shared/routes';
+import { MOBILE_ABSENT, MOBILE_VIEWS } from '../shared/mobile-nav';
 import * as limits from './limits';
 import { TRUST_COPY, TRUST_LEVELS, trustCopy, trustGlyph } from '../shared/types';
 import * as worktrees from './worktrees';
@@ -1500,10 +1501,53 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       'the paired phone receives the current privacy-filtered fleet');
     check(!body.includes(privateMarker) && !body.includes('42424'),
       'the HTTP allow-list drops extra paths, commands, transcripts and pids even if its source grows', body);
+    // Whether the operator will actually be told is part of every reading now,
+    // and the two values that make the alert path work are deliberately not: the
+    // topic is the ntfy subscription credential — anyone holding it receives
+    // every alert — and the server is network-identifying metadata the page has
+    // no use for.
+    const alertConfig = mobile.mobileConfig();
+    const alertBody = await (await fetch(apiUrl, { headers: { authorization: `Bearer ${token}` } })).text();
+    const alertPath = (JSON.parse(alertBody) as {
+      alerts?: { enabled: boolean; ready: boolean; blocked: string | null; lastOutcome: string };
+    }).alerts;
+    check(alertPath !== undefined && alertPath.enabled === false && alertPath.ready === false
+      && typeof alertPath.blocked === 'string' && alertPath.blocked.length > 0
+      && alertPath.lastOutcome === 'none'
+      && !JSON.stringify(alertPath).includes(alertConfig.pushTopic)
+      && !JSON.stringify(alertPath).includes('http'),
+    'the paired phone is told the real state of its alert path — switched off, never attempted, and why — without the ntfy topic or server URL that would make it work',
+    alertPath);
 
     const write = await fetch(apiUrl, { method: 'POST' });
     check(write.status === 405 && write.headers.get('allow') === 'GET',
       'the monitor has no write verb or remote-control route', write.status);
+    // A phone showing a calm fleet while every alert has been failing for two
+    // days is the silent failure this state exists to end, so a rejection has to
+    // arrive as words. The stub answers 403 and echoes the topic back inside its
+    // body, which is exactly where a diagnostic leaks the subscription
+    // credential on its way to two different screens.
+    const realFetch = globalThis.fetch;
+    const alertTopic = mobile.mobileConfig().pushTopic;
+    globalThis.fetch = (async () => new Response(
+      JSON.stringify({ error: `topic ${alertTopic} is not allowed`, link: 'https://ntfy.example/docs' }),
+      { status: 403, headers: { 'content-type': 'application/json' } },
+    )) as typeof fetch;
+    let rejectedAlert: Awaited<ReturnType<typeof mobile.sendMobilePush>>;
+    try {
+      rejectedAlert = await mobile.sendMobilePush({ title: 'Smoke alert path', body: 'Probing the failure report.' }, true);
+    } finally { globalThis.fetch = realFetch; }
+    const failedBody = await (await fetch(apiUrl, { headers: { authorization: `Bearer ${token}` } })).text();
+    const failedPath = (JSON.parse(failedBody) as {
+      alerts?: { lastOutcome: string; lastReason: string | null; lastHttpStatus: number | null; retryable: boolean };
+    }).alerts;
+    const failedReason = failedPath?.lastReason ?? '';
+    check(rejectedAlert.ok === false && failedPath !== undefined
+      && failedPath.lastOutcome === 'failed' && failedPath.lastHttpStatus === 403
+      && failedPath.retryable === false && failedReason.includes('403')
+      && !failedReason.includes(alertTopic) && !failedReason.includes('ntfy.example'),
+    'a rejected alert reaches the phone as a reason and a status rather than as silence, with the topic and the server the ntfy body echoed back stripped out of it',
+    failedPath);
 
     const controlUrl = new URL('api/control', monitor.localUrl).toString();
     const lockedControl = await fetch(controlUrl, { headers: { authorization: `Bearer ${token}` } });
@@ -1547,6 +1591,48 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(sectionAnchors.length >= 3 && misplacedSections.length === 0,
       'the served page composes every registered screen section exactly once — none dropped by the registry, none rendered twice',
       `${sectionAnchors.length} sections, wrong count for: ${misplacedSections.join(', ') || 'none'}`);
+    // The generic anchor sweep above passes vacuously for a screen that was
+    // never registered, so the alert screen is named here — together with the
+    // sentence that keeps the page honest about iOS. A web page cannot deliver a
+    // background notification without being installed to the Home Screen and
+    // wired to Web Push, which Wanigan has not done, and an alert panel that
+    // implied otherwise would be worse than no panel at all.
+    check(sectionAnchors.includes('alerts') && composedShell.split('id="alerts"').length === 2
+      && composedShell.includes('id="alert-path"')
+      && composedShell.includes('iOS does not deliver a web page'),
+    'the alert screen is composed exactly once and says plainly that a closed page cannot be notified on iOS, rather than implying a background alert that will never arrive',
+    `${composedShell.split('id="alerts"').length - 1} alert screens`);
+    // Every phone destination is a real panel on the served page, exactly one
+    // of them, whether or not it is built yet: the eight unbuilt ones render a
+    // sentence naming what will be there. A view in MOBILE_VIEWS with no panel
+    // is a live tab that navigates to a blank screen, which is the same lie as
+    // an empty fleet on a sleeping Mac — it looks like an answer and it is the
+    // absence of one.
+    const missingViews = MOBILE_VIEWS.filter((view) => composedShell.split(`id="view-${view.id}"`).length !== 2);
+    check(MOBILE_VIEWS.length === 10 && missingViews.length === 0
+      && composedShell.includes('Goals is not built for the phone yet.')
+      && composedShell.includes("it will show a goal's contract, its task graph, and the decision waiting on you."),
+    'the served page carries one panel per phone destination, and the destinations with no screen yet say so and name what will be there',
+    missingViews.map((view) => view.id).join(', ') || 'none');
+    // A reload has to land on the screen you were on, and it must not do that
+    // through the address. The fragment is where the pairing token arrives and
+    // tokenFromFragment() deletes it on the first tick, so routing through the
+    // hash would mean this page writing to that same field on every tap. The
+    // route lives in localStorage and history.state instead: every history
+    // write on the page is either that one strip or the unchanged href, and
+    // bootRoute() seeds its state after the strip rather than before it, so the
+    // first Back out of a pushed route cannot restore the pairing link.
+    const composedJs = composedShell.slice(composedShell.indexOf('<script nonce='), composedShell.indexOf('</script>'));
+    const historyWrites = composedJs.match(/history\.(?:push|replace)State\([^;]*?\);/g) ?? [];
+    check(historyWrites.length === 3
+      && historyWrites.every((call) => call.endsWith('location.href);') || call.endsWith('location.pathname + location.search);'))
+      && !/location\.hash\s*=/.test(composedJs)
+      && composedJs.includes("const VIEW_KEY = 'wanigan.mobile.view';")
+      && composedJs.includes('localStorage.setItem(VIEW_KEY, id);')
+      && composedJs.includes('localStorage.getItem(VIEW_KEY);')
+      && composedJs.indexOf('bootRoute();') > composedJs.indexOf("history.replaceState(null, '', location.pathname + location.search);"),
+    'a reload restores the phone route from localStorage and history.state, and no navigation writes the route — or the pairing token it would sit beside — into the URL',
+    historyWrites.join(' | '));
     const controls = await fetch(controlUrl, { headers: { authorization: `Bearer ${token}` } });
     const launch = await fetch(new URL('api/action', monitor.localUrl), {
       method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -1589,6 +1675,83 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const newAccepted = await fetch(apiUrl, { headers: { authorization: `Bearer ${newToken}` } });
     check(oldToken.status === 401 && newAccepted.ok,
       'rotating the pairing link revokes old phones immediately');
+
+    /* ── the terminal poll reads a cursor, not the whole screen ───────
+     * The console asks every 1.5 seconds and used to be answered with the
+     * entire readable scrollback each time. What makes a cursor safe here is
+     * not that it is smaller. sessions.ts keeps a 512KB *ring* and the rendered
+     * screen is not append-only either, so a cursor that was only a position
+     * would go on looking valid after a wrap or a redraw and hand the page an
+     * append that silently skipped the middle. These pin the three answers the
+     * route owes: only what is new, an explicit 'you fell behind, here is a
+     * fresh screen', and a ceiling no single response crosses. */
+    say('── phone fleet · the terminal poll reads a cursor, not the whole screen');
+    let terminalScrollback = '';
+    mobile.configureMobileControlSource({
+      projects: async () => [],
+      providers: async () => [],
+      launch: async () => ({ id: 's_cursor', title: 'Cursor' }),
+      prompt: async () => { /* not exercised here */ },
+      interrupt: async () => true,
+      terminal: async () => ({ title: 'Cursor', running: true, text: terminalScrollback }),
+    });
+    type TerminalRead = { mode?: string; text?: string; tail?: string; cursor?: string; screenReason?: string | null; truncated?: boolean };
+    const readTerminal = async (cursor?: string): Promise<TerminalRead> => {
+      const at = new URL('api/terminal?session=s_cursor', monitor.localUrl);
+      if (cursor) at.searchParams.set('cursor', cursor);
+      const response = await fetch(at, { headers: { authorization: `Bearer ${newToken}` } });
+      return JSON.parse(await response.text()) as TerminalRead;
+    };
+
+    terminalScrollback = Array.from({ length: 400 }, (_, index) => `settled line ${index}`).join('\n');
+    const wholeScreen = await readTerminal();
+    terminalScrollback += '\nfresh line A\nfresh line B';
+    const delta = await readTerminal(wholeScreen.cursor);
+    // Exactly what the page does: strip the live tail off the screen it was
+    // given, append the delta, put the new tail back. If that does not rebuild
+    // the scrollback character for character, the console is showing a lie.
+    const rebuilt = (wholeScreen.text ?? '').slice(0, (wholeScreen.text ?? '').length - (wholeScreen.tail ?? '').length)
+      + (delta.text ?? '') + (delta.tail ?? '');
+    check(wholeScreen.mode === 'screen' && delta.mode === 'append'
+      && rebuilt === terminalScrollback
+      && (delta.text ?? '').length + (delta.tail ?? '').length < 4_000,
+    'a second terminal read returns only what is new, and the page rebuilds the exact screen from it — two new lines cost a few hundred bytes, not the whole scrollback again',
+    `${delta.mode} ${(delta.text ?? '').length + (delta.tail ?? '').length}B rebuilt=${rebuilt === terminalScrollback}`);
+
+    // The ring wrapped: sessions.ts dropped the front of the buffer, so the
+    // lines this cursor counted are not the lines Wanigan still holds.
+    terminalScrollback = terminalScrollback.split('\n').slice(200).join('\n');
+    const wrapped = await readTerminal(delta.cursor);
+    check(wrapped.mode === 'screen' && wrapped.screenReason === 'behind' && wrapped.text === terminalScrollback,
+      'a client that fell behind the scrollback ring is told so and handed a fresh screen, never an append stitched across the gap',
+      `${wrapped.mode}/${wrapped.screenReason} whole=${wrapped.text === terminalScrollback}`);
+
+    // Same failure by the other route: the line count still fits, but a redraw
+    // above the live tail means those are no longer the same lines. A cursor
+    // that was only a position could not tell these two states apart.
+    terminalScrollback = terminalScrollback.split('\n').map((line, index) => (index === 3 ? 'REDRAWN' : line)).join('\n');
+    const redrawn = await readTerminal(wrapped.cursor);
+    check(redrawn.mode === 'screen' && redrawn.screenReason === 'behind',
+      'a line rewritten above the live tail invalidates the cursor as well, so a redrawing agent TUI is repainted rather than appended to incorrectly',
+      `${redrawn.mode}/${redrawn.screenReason}`);
+
+    // MAX_TERMINAL_BYTES. A session that printed more than one response can
+    // carry gets a bounded screen that says it is bounded — not a short append
+    // presented as if it were complete.
+    const TERMINAL_CEILING = 240 * 1024;
+    terminalScrollback += `\n${Array.from({ length: 20_000 }, (_, index) => `flood ${index} ${'y'.repeat(40)}`).join('\n')}`;
+    const flooded = await readTerminal(redrawn.cursor);
+    const cold = await readTerminal();
+    check(flooded.mode === 'screen' && flooded.screenReason === 'too-much-output' && flooded.truncated === true
+      && Buffer.byteLength(flooded.text ?? '') <= TERMINAL_CEILING
+      && Buffer.byteLength(cold.text ?? '') <= TERMINAL_CEILING,
+    'no single terminal response crosses the byte ceiling, and one that had to drop output reports the drop instead of appending over it',
+    `${flooded.mode}/${flooded.screenReason}/truncated=${flooded.truncated} ${Buffer.byteLength(flooded.text ?? '')} and ${Buffer.byteLength(cold.text ?? '')} of ${TERMINAL_CEILING}`);
+
+    const junkCursor = await readTerminal('not-a-cursor');
+    check(junkCursor.mode === 'screen' && junkCursor.screenReason === 'first-read',
+      'a malformed cursor from the browser reads as no cursor at all: a fresh screen, not an error and not a guess at what it meant',
+      `${junkCursor.mode}/${junkCursor.screenReason}`);
   } finally {
     setSetting('mobile_dashboard_enabled', '0');
     setSetting('mobile_remote_control_enabled', '0');
@@ -3488,6 +3651,28 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(Object.keys(TAB_ICONS).length === TABS.length
     && TABS.every((item) => typeof TAB_ICONS[item.id] === 'string' && TAB_ICONS[item.id].length > 0),
     'every route has an icon, so no sidebar row is a word with a hole beside it');
+  // The phone is a narrowing of this same table, not a second taxonomy that
+  // happens to look similar. Every desktop destination is either stood in for
+  // by a phone screen or listed as deliberately absent with the sentence the
+  // Device screen prints — so a view added to TABS cannot be silently forgotten
+  // on the small screen, which is how a phone stops being a view of the same
+  // product and starts being a different one.
+  const narrowedTabs = new Set(MOBILE_VIEWS.flatMap((view) => view.narrows));
+  const absentTabs = new Set(MOBILE_ABSENT.map((entry) => entry.tab));
+  const forgottenOnPhone = TABS.map((item) => item.id).filter((id) => !narrowedTabs.has(id) && !absentTabs.has(id));
+  const bothWays = TABS.map((item) => item.id).filter((id) => narrowedTabs.has(id) && absentTabs.has(id));
+  check(forgottenOnPhone.length === 0 && bothWays.length === 0
+    && MOBILE_ABSENT.every((entry) => entry.reason.trim().length > 20 && entry.reason.trim().endsWith('.')),
+  'every desktop destination is either narrowed by a phone screen or listed as deliberately absent with a reason, so a new view cannot be forgotten on the phone',
+  `forgotten: ${forgottenOnPhone.join(', ') || 'none'} / both: ${bothWays.join(', ') || 'none'}`);
+  // Five slots, four destinations and More. A fifth bar entry would push a
+  // destination out of the thumb bar and out of the sheet behind it at once,
+  // leaving it reachable only on an iPad.
+  check(MOBILE_VIEWS.filter((view) => view.bar).length === 4
+    && MOBILE_VIEWS.every((view) => (view.id === 'device' ? view.narrows.length === 0 : view.narrows.length > 0))
+    && new Set(MOBILE_VIEWS.map((view) => view.id)).size === MOBILE_VIEWS.length,
+  'exactly four phone destinations claim a thumb-bar slot, every id is distinct, and only Device — which is about this phone — narrows no desktop screen',
+  MOBILE_VIEWS.filter((view) => view.bar).map((view) => view.id).join(', '));
   check(appSrc.includes('<span className="nav-tab-label">{label}</span>')
     && appSrc.includes('<Icon name={TAB_ICONS[id]} />')
     && appSrc.includes('<span className="nav-tab-chord" aria-hidden="true">{shortcut.label}</span>'),
