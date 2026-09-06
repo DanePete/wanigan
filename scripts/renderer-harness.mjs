@@ -102,7 +102,7 @@ const STUB = `
   const FIXED = {
     'usage.snapshot': usageSnapshot,
     'projects.list': projects, 'sessions.list': sessions, 'providers.list': providers,
-    'attention.list': attention, 'sessions.past': [], 'batch.activeRuns': 2,
+    'attention.list': attention, 'sessions.past': [], 'batch.runsInFlight': { readAt: now, runs: 2, requestsReturned: 1400, requestsOutstanding: 600 },
     'keys.has': true,
   };
   const settings = {

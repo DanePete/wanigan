@@ -3,6 +3,7 @@ import type { TranscriptHit } from '../shared/types';
 import { COMPOSER_DRAFT_MAX, COMPOSER_DRAFT_TOTAL_CHARS, parseDraftMap, pruneDrafts, putDraft, type ComposerDraftMap } from '../shared/composer-drafts';
 import { deriveSendState, observeQueueTargets, queueWatcherWanted, type QueueTargetState } from '../shared/composer-queue';
 import { QR_MAX_BYTES, qrMatrix } from '../shared/qr';
+import { PERMISSION_MODES, permissionModeCopy } from '../shared/types';
 import { shouldBumpUnread, applyUnreadCounts } from '../shared/unread';
 import type { Session } from '../shared/types';
 
@@ -210,5 +211,39 @@ export async function runPaletteSmoke(check: Check, say: Say): Promise<void> {
     && unreadBumped[1] === unreadList[1],
   'a count that did move produces a new array with the new number, and leaves the untouched session as the identical object it already was',
   `a=${unreadBumped[0].unread}, b reused: ${unreadBumped[1] === unreadList[1]}`);
+
+  say('── permission modes · a word before the choice, and an honest unknown');
+
+  check(permissionModeCopy('bypassPermissions').label === 'Ask for nothing'
+    && permissionModeCopy('bypassPermissions').known
+    && permissionModeCopy('acceptEdits').label === 'Accept edits'
+    && permissionModeCopy('acceptEdits').known,
+  'the two modes the reader most has to tell apart are named in words rather than spelled as the identifiers the CLI happens to use',
+  `${permissionModeCopy('bypassPermissions').label} / ${permissionModeCopy('acceptEdits').label}`);
+
+  const unknownMode = permissionModeCopy('askTwiceOnTuesdays');
+  check(unknownMode.label === 'askTwiceOnTuesdays' && unknownMode.known === false
+    && /does not recognise the permission mode/.test(unknownMode.detail)
+    && PERMISSION_MODES.every((m) => {
+      const k = permissionModeCopy(m);
+      return unknownMode.detail !== k.detail && unknownMode.label !== k.label;
+    }),
+  'a mode a pack declared and this build has never heard of prints as itself and says so, and is never handed one of the six descriptions the reader already trusts',
+  unknownMode.label);
+
+  check(permissionModeCopy('').label === 'unknown' && permissionModeCopy('').known === false,
+    'an empty permission mode is reported as unknown by the helper rather than silently answered, which is why the dialog writes the blank row its own sentence instead of printing this one',
+    permissionModeCopy('').label);
+
+  check(PERMISSION_MODES.every((m) => permissionModeCopy(m).known),
+    'every mode Wanigan itself offers as a fallback for a profile that declares none has copy, so no built-in choice reaches the operator as a bare identifier',
+    PERMISSION_MODES.filter((m) => !permissionModeCopy(m).known).join(', ') || 'none missing');
+
+  check(['manual', 'auto', 'dontAsk'].every((m) => /has not verified/.test(permissionModeCopy(m).detail))
+    && /does not rely on this mode alone/.test(permissionModeCopy('plan').detail)
+    && !/has not verified/.test(permissionModeCopy('acceptEdits').detail),
+  'the three modes no source in this repository describes say Wanigan has not verified them instead of being given a plausible description, plan records that Wanigan does not trust it alone to stop a write, and the modes headless.ts does source are not hedged',
+  permissionModeCopy('dontAsk').detail);
+
 
 }

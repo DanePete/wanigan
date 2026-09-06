@@ -15,7 +15,7 @@ import type {
   MobileMonitorConfig, MobileMonitorStatus, TailnetStatus,
   ReviewRecipe, ReviewRun,
   ArtifactRoiSummary, CandidateExplanation, ForgedSkill, FreshnessReport,
-  KnowledgeBriefing, KnowledgeCandidate,
+  BriefingPreview, KnowledgeCandidate,
   KnowledgeEvidence, KnowledgeItem, KnowledgeProjection, KnowledgeRelation, KnowledgeVersion,
   SkillInstallResult,
   LearningExperiment, LearningOverview, LearningPipelineStats, LearningSettings, LearningSignal,
@@ -25,7 +25,7 @@ import type {
   ImprovementScoutGoal, ImprovementScoutOverview, ImprovementScoutRun,
   ImprovementScoutSettings, ImprovementScoutSource, ImprovementScoutSuggestion, ImprovementScoutSuggestionStatus,
   AccountResolution, AgentAccount, ControlEvent, UsageSnapshot, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode, DocketPlanNode, DocketProof,
-  DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, WorkDocket, LaunchModelCatalogue,} from '../shared/types';
+  DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, WorkDocket, LaunchModelCatalogue,} from '../shared/types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -73,6 +73,9 @@ const api = {
   projects: {
     list: () => call<Project[]>('projects:list'),
     refresh: () => call<Project[]>('projects:refresh'),
+    // Answered only by an automation run (scripts/shots.mjs), and never in a
+    // packaged build. In a normal build the folder picker below is the only way
+    // to register a root; this type is a convenience, never the check.
     add: (dir: string) => call<Project>('projects:add', dir),
     pick: () => call<Project | null>('projects:pick'),
     remove: (id: string) => call<Project[]>('projects:remove', id),
@@ -127,6 +130,7 @@ const api = {
     estimate: (config: RunConfig, observed?: number) => call<any>('batch:estimate', config, observed),
     dryRun: (config: RunConfig, rowIndex?: number) => call<any>('batch:dryRun', config, rowIndex),
     runs: () => call<any[]>('batch:runs'),
+    runsInFlight: () => call<{ readAt: number; runs: number; requestsReturned: number; requestsOutstanding: number }>('batch:runsInFlight'),
     run: (id: string) => call<any>('batch:run', id),
     results: (id: string, status: string, q: string, offset: number) =>
       call<any>('batch:results', id, status, q, offset),
@@ -334,8 +338,9 @@ const api = {
     send: (sessionId: string, invoke: string) => call<boolean>('skills:send', sessionId, invoke),
   },
   demo: {
-    state: () => call<{ on: boolean; map: { real: string; fake: string }[] }>('demo:state'),
-    set: (on: boolean) => call<{ on: boolean; map: { real: string; fake: string }[] }>('demo:set', on),
+    state: () => call<{ on: boolean; blurTerminals: boolean; map: { real: string; fake: string }[] }>('demo:state'),
+    set: (on: boolean) => call<{ on: boolean; blurTerminals: boolean; map: { real: string; fake: string }[] }>('demo:set', on),
+    setBlur: (on: boolean) => call<{ on: boolean; blurTerminals: boolean; map: { real: string; fake: string }[] }>('demo:setBlur', on),
   },
   // ── phase 28 · git ───────────────────────────────────────────────────
   git: {
@@ -449,7 +454,7 @@ const api = {
     triageEvent: (id: string, input?: { title?: string; acceptance?: string[]; risk?: DocketRisk }) => call<DocketDetail>('control:triageEvent', id, input ?? {}),
     dismissEvent: (id: string) => call<boolean>('control:dismissEvent', id),
     mcpTasks: (docketId?: string) => call<McpTaskRecord[]>('control:mcpTasks', docketId),
-    cancelMcpTask: (id: string) => call<boolean>('control:cancelMcpTask', id),
+    cancelMcpTask: (id: string) => call<McpTaskCancelReceipt>('control:cancelMcpTask', id),
     resumeReceipts: (docketId: string) => call<GoalResumeReceipt[]>('control:resumeReceipts', docketId),
     traces: (docketId: string, limit?: number) => call<GoalTraceEvent[]>('control:traces', docketId, limit),
   },
@@ -594,8 +599,14 @@ const api = {
     // stay, and the reason is recorded as an operational signal. The reason is
     // required: main rejects an empty one.
     retireItem: (id: string, reason: string) => call<KnowledgeItem>('learning:retireItem', id, reason),
+    // Main answers this channel with BriefingPreview: the capsule plus the
+    // launch state around it — whether learning was on, the profile's declared
+    // harness, how a launch would deliver the text, and what proof that
+    // delivery needs. Typing it as the narrower KnowledgeBriefing erased
+    // exactly the field that tells "the engine was off" from "retrieval ran and
+    // matched nothing", and both previews then said the second.
     briefing: (input: { query: string; providerId: string; projectId?: string | null; path?: string | null; maxTokens?: number }) =>
-      call<KnowledgeBriefing>('learning:briefing', input),
+      call<BriefingPreview>('learning:briefing', input),
     projections: (filter?: { itemId?: string; candidateId?: string; status?: string; limit?: number }) =>
       call<KnowledgeProjection[]>('learning:projections', filter),
     undoProjection: (id: string) => call<KnowledgeProjection>('learning:undoProjection', id),

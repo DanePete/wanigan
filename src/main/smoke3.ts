@@ -58,6 +58,8 @@ import { __test as codexUsageTest } from './codex-usage';
 import { getSetting, setSetting } from './settings';
 import { dataDir, db, resultsDir } from './db';
 import { addProject } from './store';
+import { permissionModeCopy } from '../shared/types';
+import { automationArgv, automationRun, AUTOMATION_ARGV } from './automation';
 import { selectedProviderStatus, selectedSessionTelemetry } from '../shared/provider-status';
 import { MAX_TERMINAL_INPUT_CHUNK_BYTES, splitTerminalInput } from '../shared/terminal-input';
 import { EMPTY_USAGE, type DocketPlanNode, type HookInput, type ProviderInfo, type RunConfig, type Session, type SessionUsage } from '../shared/types';
@@ -4320,6 +4322,48 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const tasks = control.mcpTasks(docket.id);
     check(tasks.length === 4 && tasks.some((task) => task.status === 'completed'),
       'docket nodes expose durable MCP-compatible task lifecycle state');
+    // cancelMcpTask returned a bare boolean, so Control announced the same
+    // sentence whether it had killed a live agent or found nothing at all.
+    // These four pin one branch each, because the whole point of the receipt is
+    // that the branches are not the same event.
+    const cancelGoal = control.createDocket({ projectId: controlProject.id, title: 'Cancel receipt',
+      objective: 'Prove cancel reports what it changed.', acceptance: ['Every branch names itself.'] });
+    const cancelNode = cancelGoal.nodes.find((node) => node.kind === 'implement')!;
+    control.claimPath(cancelNode.id, 'tmp/cancel-receipt-smoke.ts');
+    const cancelRecord = control.mcpTasks(cancelGoal.id).find((task) => task.nodeId === cancelNode.id)!;
+    const cancelled = control.cancelMcpTask(cancelRecord.id);
+    check(cancelled.outcome === 'task_canceled' && cancelled.nodeStatus === 'pending'
+      && cancelled.sessionStopped === false && cancelled.claimsReleased === 1
+      && control.docket(cancelGoal.id).claims.every((claim) => claim.releasedAt !== null),
+      'cancelling a task that was never dispatched reports the one claim it really released and refuses to say a session was stopped, because no session was ever launched for it',
+      cancelled);
+
+    check(control.cancelMcpTask(cancelRecord.id).outcome === 'already_closed'
+      && control.cancelMcpTask(cancelRecord.id).recordStatus === 'cancelled'
+      && control.cancelMcpTask(cancelRecord.id).claimsReleased === 0,
+      'cancelling the same record a second time says it was already cancelled and releases nothing again, instead of repeating the success the first call earned');
+
+    const missingCancel = control.cancelMcpTask('task_no_such_record');
+    check(missingCancel.outcome === 'not_found' && missingCancel.recordStatus === null
+      && missingCancel.nodeStatus === null && missingCancel.sessionStopped === false
+      && missingCancel.claimsReleased === 0,
+      'an id that names no task record comes back as not_found with nothing read and nothing written, rather than as the indistinguishable false success a boolean gave it',
+      missingCancel);
+
+    const endedGoal = control.createDocket({ projectId: controlProject.id, title: 'Cancel after the end',
+      objective: 'A record still open over work that already finished.', acceptance: ['Only the record moves.'] });
+    const endedNode = endedGoal.nodes.find((node) => node.kind === 'plan')!;
+    db().prepare("UPDATE work_nodes SET status='completed' WHERE id=?").run(endedNode.id);
+    const endedRecord = control.mcpTasks(endedGoal.id).find((task) => task.nodeId === endedNode.id)!;
+    const endedCancel = control.cancelMcpTask(endedRecord.id);
+    check(endedCancel.outcome === 'record_only' && endedCancel.nodeStatus === 'completed'
+      && endedCancel.sessionStopped === false && endedCancel.claimsReleased === 0
+      && control.mcpTasks(endedGoal.id).find((task) => task.id === endedRecord.id)?.status === 'cancelled'
+      && control.docket(endedGoal.id).nodes.find((node) => node.id === endedNode.id)?.status === 'completed',
+      'cancelling a record whose task had already finished marks the record alone and reports that: the goal task is still completed afterwards and no claim was touched',
+      endedCancel);
+    check(tasks.length === 4 && tasks.some((task) => task.status === 'completed'),
+      'docket nodes expose durable MCP-compatible task lifecycle state');
     const receiptSession = `s_receipt_${Date.now().toString(36)}`;
     const receiptConversation = '01a04e58-e0eb-7a41-82b7-ddcacf7a9038';
     db().prepare(`INSERT INTO session_log (id,conversation_id,provider_id,project_id,project_path,project_name,started_at)
@@ -4447,6 +4491,98 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // best: a channel nobody registered looks exactly like a feature nobody used.
   say('── wiring');
 
+  say('── the batch badge counts runs, not requests');
+  const flightRunId = `badge-in-flight-${Date.now()}`;
+  try {
+    db().prepare(`
+      INSERT INTO runs (id, name, preset, project_id, model, status, config_json, kind,
+                        total_requests, created_at, submitted_at)
+      VALUES (?, 'badge fixture', NULL, NULL, 'test', 'in_progress', '{}', 'batch', 3, ?, ?)
+    `).run(flightRunId, Date.now(), Date.now());
+    const seedReq = db().prepare(`
+      INSERT INTO requests (run_id, custom_id, row_index, row_json, rendered, status)
+      VALUES (?, ?, ?, '{}', 'x', ?)
+    `);
+    seedReq.run(flightRunId, 'a', 0, 'succeeded');
+    seedReq.run(flightRunId, 'b', 1, 'errored');
+    seedReq.run(flightRunId, 'c', 2, 'pending');
+
+    const before = batch.runsInFlight();
+    check(before.runs >= 1
+      && before.requestsReturned >= 2 && before.requestsOutstanding >= 1
+      && before.readAt > 0,
+      'the badge query answers how many runs are in flight and how many of their requests have come back, in one row, so the shell never reads two hundred whole run rows to print one integer',
+      before);
+
+    const withRun = batch.runsInFlight();
+    db().prepare("UPDATE runs SET status='ended', ended_at=? WHERE id=?").run(Date.now(), flightRunId);
+    const ended = batch.runsInFlight();
+    check(ended.runs === withRun.runs - 1
+      && ended.requestsReturned === withRun.requestsReturned - 2
+      && ended.requestsOutstanding === withRun.requestsOutstanding - 1,
+      'a run that has ended stops being counted, and takes its three requests out of the bar with it — the badge is a statement about what is still in flight, not a lifetime total',
+      { withRun, ended });
+
+    // The negative. A bare integer cannot say "nobody has asked yet", so the
+    // wire carries an object whose absence is the renderer's only zero.
+    const shape = batch.runsInFlight();
+    check(typeof shape === 'object' && shape !== null
+      && typeof shape.runs === 'number' && typeof shape.readAt === 'number'
+      && !Array.isArray(shape),
+      'the badge read is an object and never a bare number, so "no read has returned yet" stays tellable from "nothing is in flight" — a zero on the wire is an observation, and the renderer supplies the missing case as null',
+      shape);
+
+    db().prepare("UPDATE runs SET status='canceling' WHERE id=?").run(flightRunId);
+    check(batch.runsInFlight().runs === withRun.runs,
+      'a run cancelled locally but not yet stopped remotely is still in flight, because it may still be spending — the badge counts the same three statuses deleteRun refuses to delete',
+      batch.runsInFlight().runs);
+  } finally {
+    db().prepare('DELETE FROM requests WHERE run_id = ?').run(flightRunId);
+    db().prepare('DELETE FROM runs WHERE id = ?').run(flightRunId);
+  }
+
+  /* ── the style gate scores the sheets index.css imports ────────────── */
+  // A private modifier in an @imported sheet loses to index.css at equal
+  // specificity, because @import must precede every other rule in a sheet.
+  // Check 5 of the style gate counts those dead declarations; the gate cannot
+  // check its own premise, and a baseline edit re-opens the debt without
+  // touching a single sheet.
+  const shadowGateSrc = sourceOf('scripts/check-renderer-style.cjs');
+  const shadowIndexCss = sourceOf('src/renderer/src/index.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  const shadowMainTsx = sourceOf('src/renderer/src/main.tsx');
+  const shadowBaselineStart = shadowGateSrc.indexOf('const SHADOWED_MODIFIER_BASELINE = {');
+  const shadowBaselineBlock = shadowGateSrc.slice(shadowBaselineStart, shadowGateSrc.indexOf('};', shadowBaselineStart));
+  const shadowRows = [...shadowBaselineBlock.matchAll(/'([a-z0-9-]+\.css)': (\d+),/g)]
+    .map((m) => ({ sheet: m[1], allowed: Number(m[2]) }));
+  const shadowImported = [...shadowIndexCss.matchAll(/@import\s+'\.\/styles\/([a-z0-9-]+\.css)'/g)].map((m) => m[1]);
+  const shadowLastImportEnd = shadowIndexCss.indexOf(';', shadowIndexCss.lastIndexOf('@import')) + 1;
+
+  check(shadowImported.length === 14 && shadowLastImportEnd > 1
+    && !shadowIndexCss.slice(0, shadowLastImportEnd).includes('{'),
+  'index.css states every one of its fourteen @import lines before it opens a single rule of its own, which is the fact that makes a declaration in an imported sheet lose to index.css at equal specificity and makes the style gate fifth check sound rather than a guess about bundler order',
+  `imported sheets: ${shadowImported.length}, last @import ends at char ${shadowLastImportEnd}, braces before it: ${shadowIndexCss.slice(0, shadowLastImportEnd).split('{').length - 1}`);
+
+  const shadowStrays = shadowRows.filter((r) => !shadowImported.includes(r.sheet)).map((r) => r.sheet);
+  check(shadowRows.length === shadowImported.length && shadowStrays.length === 0,
+  'every sheet the shadowed-modifier baseline grants a budget to is a sheet index.css actually imports, so a renamed or un-imported sheet cannot keep a stale allowance that the gate would then never spend',
+  `baseline rows: ${shadowRows.length}, imported sheets: ${shadowImported.length}, rows naming a sheet index.css does not import: ${shadowStrays.join(', ') || 'none'}`);
+
+  const shadowCeiling = shadowRows.reduce((a, r) => a + r.allowed, 0);
+  check(shadowRows.length > 0 && shadowCeiling <= 16,
+  'the shadowed-modifier baselines total no more than the sixteen dead declarations measured the day the check landed, so the only way to change them is downward and a sheet cannot buy itself room by editing the gate instead of the CSS',
+  `baseline total: ${shadowCeiling} across ${shadowRows.length} sheets, ceiling: 16`);
+
+  check(!shadowRows.some((r) => r.sheet === 'compact.css')
+    && shadowMainTsx.indexOf("'./styles/compact.css'") > shadowMainTsx.indexOf("'./index.css'"),
+  'compact.css is absent from the shadowed-modifier baseline because main.tsx loads it after index.css, which means it wins the cascade rather than losing it, and scoring it would report a defect that does not exist',
+  `compact.css in baseline: ${shadowRows.some((r) => r.sheet === 'compact.css')}, main.tsx index.css at ${shadowMainTsx.indexOf("'./index.css'")}, compact.css at ${shadowMainTsx.indexOf("'./styles/compact.css'")}`);
+
+  check(shadowGateSrc.includes('--print-shadowed')
+    && shadowGateSrc.includes('What it cannot see, so a pass here is not proof')
+    && shadowGateSrc.includes('no @import of ./styles/*.css found in index.css'),
+  'the style gate names the blind spots of its fifth check in its own source, offers --print-shadowed for the line behind every count, and fails loudly rather than reporting zero if it can no longer find the import list its soundness depends on',
+  `gate declares --print-shadowed, the blind-spot list and the empty-import-list guard: ${shadowGateSrc.includes('--print-shadowed') && shadowGateSrc.includes('What it cannot see, so a pass here is not proof') && shadowGateSrc.includes('no @import of ./styles/*.css found in index.css')}`);
+
   // A catalog row is an offer, and accepting one runs code on this machine, so
   // the consent screen has to be able to name the origin. Three shapes are real
   // in the marketplace manifest and in `claude plugin list --json --available`:
@@ -4558,6 +4694,15 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     { disjoint: disjoint.source, carried: carried.note });
 
   const dialogCatalogueSrc = sourceOf('src/renderer/src/components/NewSessionDialog.tsx');
+
+  const permDialogSrc = sourceOf('src/renderer/src/components/NewSessionDialog.tsx');
+  check(permDialogSrc.includes('permissionModeCopy(')
+    && !permDialogSrc.includes('PERMISSION_MODE_COPY[')
+    && permDialogSrc.includes('copy.known ? copy.label : choice.label')
+    && permDialogSrc.includes('the CLI’s own default applies')
+    && !/permissionMode === 'claude'|providerId === 'claude' \?/.test(permDialogSrc),
+  'the dialog asks the helper rather than indexing the copy table with a value that came from a manifest, keeps a profile’s own naming for a mode Wanigan cannot describe, describes the blank row as a default rather than as an unrecognised mode, and routes none of this by a profile id',
+  permDialogSrc.includes('PERMISSION_MODE_COPY['));
   check(dialogCatalogueSrc.includes('window.wanigan.providers.modelCatalogue(')
     && !dialogCatalogueSrc.includes("value: 'glm-5.3'")
     && !dialogCatalogueSrc.includes("value: 'deepseek-v4-pro'")
@@ -4703,6 +4848,20 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const reviewSrc = sourceOf('src/main/review.ts');
   const controlSrc = sourceOf('src/main/control.ts');
   const controlViewSrc = sourceOf('src/renderer/src/views/Control.tsx');
+  // The cancel notice has to be written from the receipt, after the call. act
+  // evaluates its third argument before the work runs, and the node status the
+  // renderer would read is a snapshot from the last load — so any sentence
+  // handed to act here is a guess about a running agent that may have exited in
+  // between. The negative is the one that matters: it forbids the old shape.
+  check(/function cancelNotice\(receipt: McpTaskCancelReceipt\): string/.test(controlViewSrc)
+    && controlViewSrc.includes("receipt.outcome === 'not_found'")
+    && controlViewSrc.includes("receipt.outcome === 'already_closed'")
+    && controlViewSrc.includes("receipt.outcome === 'record_only'")
+    && !/cancelMcpTask\(task\.id\); await load\(detail\?\.id\); \}\)/.test(controlViewSrc)
+    && !/\}, 'Task canceled/.test(controlViewSrc)
+    && controlViewSrc.includes('setNotice(cancelNotice(receipt));'),
+    'Control builds its cancel notice from what the main process reported after the call, names all four outcomes, and hands act no pre-written sentence about work that had not happened yet',
+    controlViewSrc.slice(controlViewSrc.indexOf('const cancelTask ='), controlViewSrc.indexOf('const cancelTask =') + 220));
   // retryNode writes the node back to 'pending'; mapNodes then still reports
   // every dependent as 'blocked', because a prerequisite short of 'completed'
   // is a wait either way. The old copy promised the dependents were unblocked,
@@ -4718,6 +4877,13 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const sessionsSrc = sourceOf('src/renderer/src/views/Sessions.tsx');
   const settingsSrc = sourceOf('src/renderer/src/views/Settings.tsx');
   const appSrc = sourceOf('src/renderer/src/App.tsx');
+  check(/handle\(\s*'batch:runsInFlight'/.test(mainSrc)
+    && /runsInFlight:\s*\(\)/.test(preloadSrc)
+    && appSrc.includes('window.wanigan.batch.runsInFlight()')
+    && !appSrc.includes('window.wanigan.batch.runs()')
+    && appSrc.includes('useState<number | null>(null)'),
+    'the six-second shell poll reads a query scoped to the runs still in flight rather than every run ever recorded, and holds the count as number-or-null so an unanswered poll cannot be drawn as a zero',
+    null);
   const usageViewSrc = sourceOf('src/renderer/src/views/Usage.tsx');
   // The route table left App.tsx for shared/routes.ts so the rail, palette,
   // cheat sheet and key handler read one record; assertions about routes read
@@ -4821,6 +4987,48 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const sessionsCssSrc = sourceOf('src/renderer/src/styles/sessions.css');
   const compactCssSrc = sourceOf('src/renderer/src/styles/compact.css');
   const learningSrc = sourceOf('src/renderer/src/views/Learning.tsx');
+
+  // A disabled engine reaches both briefing previews as a full-shaped briefing
+  // whose counters are all 0, and every rung of these ladders below the first
+  // describes a retrieval that happened. Order is the assertion: asking "did it
+  // run" after "what did it find" is how "retrieval matched nothing" got
+  // printed about a corpus nobody read.
+  const payloadLadderAt = learningSrc.indexOf('const nothingBecause = !result || result.entries.length > 0 ? null');
+  const payloadPausedAt = learningSrc.indexOf("title: 'Nothing would be injected — learning is switched off'");
+  const payloadStoreAt = learningSrc.indexOf("title: 'Nothing would be injected — this scope stores no active knowledge item'");
+  const payloadMatchedAt = learningSrc.indexOf("title: 'Nothing would be injected — retrieval ran and matched nothing'");
+  check(payloadLadderAt > 0 && payloadPausedAt > payloadLadderAt
+    && payloadPausedAt < payloadStoreAt && payloadStoreAt < payloadMatchedAt
+    && learningSrc.includes('// Five different facts, five different fixes.'),
+  'the injected-payload panel asks whether retrieval ran at all before it asks what retrieval found, so a switched-off engine is named as the reason nothing would be injected rather than borrowing the sentence written for an empty store or for a query that ranked nothing',
+  `paused rung ${payloadPausedAt}, empty-store rung ${payloadStoreAt}, matched-none rung ${payloadMatchedAt}`);
+
+  const inspectorPausedAt = learningSrc.indexOf('title="Learning is paused — retrieval did not run"');
+  const inspectorMeterAt = learningSrc.indexOf('<div className="inspector-meter" aria-hidden="true">');
+  const inspectorMatchedAt = learningSrc.indexOf('title="Retrieval ran and matched nothing"');
+  check(inspectorPausedAt > 0 && inspectorMeterAt > inspectorPausedAt && inspectorMatchedAt > inspectorPausedAt
+    && learningSrc.includes('{result && (learningRan === false ? ('),
+  'the briefing inspector replaces its entire measured body with the paused state, so a preview taken with learning off draws no token meter, no "~0 est. tokens of the budget" and no empty-result verdict — each of those is a measurement that was never taken, and a meter pinned at zero reads as a retrieval that ran',
+  `paused ${inspectorPausedAt}, meter ${inspectorMeterAt}, matched-none ${inspectorMatchedAt}`);
+
+  check(!/learningRan\s*=\s*!?settings\.enabled/.test(learningSrc)
+    && !/settings\.enabled[^\n]*Learning is paused — retrieval did not run/.test(learningSrc)
+    && learningSrc.includes('const readLearningEnabled = (briefing: Partial<BriefingPreview>): boolean | null =>')
+    && learningSrc.includes("typeof briefing.learningEnabled === 'boolean' ? briefing.learningEnabled : null")
+    && learningSrc.split('const learningRan = result ? readLearningEnabled(result) : null;').length - 1 === 2,
+  'neither preview derives "retrieval did not run" from the settings switch: the reply main sent for that particular preview is the only authority on what happened, a build that did not report the field reads null rather than false, and the switch and the reply are allowed to disagree after a toggle',
+  'a settings-derived paused state is back in Learning.tsx');
+
+  check(learningSrc.includes('Learning is paused, so retrieval will not run: a preview reports the switched-off engine,')
+    && learningSrc.includes("launch.launchDelivery === 'none' && launch.harnessId != null")
+    && preloadSrc.includes("call<BriefingPreview>('learning:briefing', input)")
+    && !preloadSrc.includes("call<KnowledgeBriefing>('learning:briefing', input)"),
+  'the inspector says retrieval will not run before the button is pressed and names a harness with no instruction channel after it, and the preload no longer narrows the briefing channel to KnowledgeBriefing — the launch state main puts on the wire survives the sandbox boundary as a type rather than only as bytes');
+
+  check(learningSrc.split("onNavigate('inbox', 'open')").length - 1 === 3
+    && learningSrc.split("title: 'Open the Inbox filtered to open proposals'").length - 1 === 2
+    && !learningSrc.includes('Open the Inbox filtered to proposals needing a decision'),
+  'both tooltips that open the Inbox on its open filter describe the filter that actually runs — open is a superset that also lists approved, snoozed and failed proposals — so neither promises a "needs a decision" filter the Inbox does not implement');
   const scoutViewSrc = sourceOf('src/renderer/src/views/ImprovementScout.tsx');
   // The Runs history is a database read, and an empty `runs` array is what a
   // fresh mount, a slow read and a broken IPC read all look like. Every
@@ -4889,6 +5097,49 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // The check above names seven of the twenty-three files read here. This one
   // names every path that failed to resolve, including the ones read earlier in
   // the suite, so a moved file cannot silently retire the assertions about it.
+  const fleetViewSrc = sourceOf('src/renderer/src/views/Fleet.tsx');
+  const observedBandSrc = sourceOf('src/renderer/src/components/ObservedBand.tsx');
+  const observedCssSrc = sourceOf('src/renderer/src/styles/observed.css');
+  check(observedBandSrc.includes('{state.notice}')
+    && observedBandSrc.includes('window.wanigan.observed.state()')
+    && observedBandSrc.includes('window.wanigan.observed.list()')
+    && !observedBandSrc.includes('window.wanigan.sessions.')
+    && !/interrupt|messagingSocket|\.sock|costUsd|inTokens/.test(observedBandSrc)
+    && !/disabled=\{/.test(observedBandSrc),
+    'the band listing sessions Wanigan did not start prints main’s observe-only sentence verbatim and offers no channel to one of them — no session call, no stop or interrupt, no socket path, no cost or token figure, and no control rendered dead rather than simply left out',
+    observedBandSrc.length);
+
+  check(observedBandSrc.includes('Reading what="sessions started outside Wanigan"')
+    && observedBandSrc.includes('run: () => setEnabled(true)')
+    && observedBandSrc.includes('No Claude session registry on this machine')
+    && observedBandSrc.includes('Nothing outside Wanigan is registered as running')
+    && observedBandSrc.includes('posture="could-not-read"'),
+    'still reading, switched off, no registry on this machine, a registry with nothing foreign in it, and a read that failed are five different renderings on this band rather than one blank space that a reader would take for "nothing is running outside Wanigan"',
+    ['reading', 'off', 'no registry', 'none running', 'could-not-read'].length);
+
+  check(observedBandSrc.includes("'start time not recorded'")
+    && observedBandSrc.includes("r.verified ? markOf('running') : UNCONFIRMED")
+    && observedBandSrc.includes("word: 'unconfirmed'")
+    && !/ago\(r\.startedAt \?\? /.test(observedBandSrc),
+    'a row observed.ts listed but could not date says which fact is missing and carries the unconfirmed mark, instead of a null start time falling through ago() and reading as a session that just started',
+    observedBandSrc.includes("'start time not recorded'"));
+
+  const observedBandMounts = fleetViewSrc.split('<ObservedBand />').length - 1;
+  check(observedBandMounts === 2
+    && fleetViewSrc.includes("import ObservedBand from '../components/ObservedBand';")
+    && fleetViewSrc.includes('title="No agents Wanigan started are running"')
+    && !fleetViewSrc.includes('observed.list()')
+    && !fleetViewSrc.includes('ObservedSession'),
+    'Fleet mounts the observed band in both branches a reader could take for "nothing is running" and reads no observed row itself, so a session Wanigan did not start never reaches its totals, counts, chips or Stat tiles — and the empty state now says whose absence it is reporting',
+    observedBandMounts);
+
+  check(observedCssSrc.includes('.obs-row {')
+    && !/font-size:\s*[0-9]/.test(observedCssSrc)
+    && !/#[0-9a-fA-F]{3}/.test(observedCssSrc)
+    && observedCssSrc.includes('@media (max-width: 980px)'),
+    'the observed band’s sheet spells no colour and no font size of its own and reaches the medium shelf at the house 980px rather than inventing a thirteenth breakpoint',
+    observedCssSrc.length);
+
   check(missingSources.length === 0,
     'every source path this suite reads resolved to a non-empty file, so no negated assertion passes by reading nothing',
     missingSources.join(', '));
@@ -5195,7 +5446,6 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // screen together under the same words. The count stays narrow because
   // pressing the tile filters to `permission`, so the label has to say which
   // set it counts and the sub-line has to name the remainder.
-  const fleetViewSrc = sourceOf('src/renderer/src/views/Fleet.tsx');
   check(fleetViewSrc.length > 500
     && !/<Stat label="Needs you"/.test(fleetViewSrc)
     && fleetViewSrc.includes('<Stat label="Asking permission"')
@@ -5717,15 +5967,39 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // took a bare path from the renderer and inserted it, and addProject refuses
   // only a subdirectory of a repo — so one call naming a home directory
   // registered a root, and every later assertManagedRoot succeeded beneath it.
-  check(mainSrc.includes("handle('projects:add', async (dir: unknown) => {")
-    && mainSrc.includes("title: 'Add this directory as a project?'")
-    && mainSrc.includes("if (answer.response !== 1) throw new Error('Cancelled. No project was added.');")
-    && mainSrc.includes('return addProject(resolved);'),
-  'registering a project root is confirmed in the main process, naming the exact directory, before it can widen the allowlist every other guard reads');
+  // The answer is not a confirmation dialog: on macOS that is a window-modal
+  // sheet, and the headless screenshot run has nobody to dismiss it, so the
+  // run hangs instead of failing. It is a launch marker the page cannot reach.
+  const automationSrc = sourceOf('src/main/automation.ts');
+  check(automationArgv([]) === false
+    && automationArgv(['.', '--user-data-dir=/tmp/x']) === false
+    && automationArgv(['--wanigan-automation']) === true
+    && AUTOMATION_ARGV === '--wanigan-automation'
+    && automationRun() === false,
+  'automation mode is an explicit launch marker rather than a mode the app can drift into: an argv without it parses false, an argv with it parses true, and this very smoke process — launched by scripts/smoke.sh without the marker — reports false, so the raw project channel answers it with a refusal',
+    JSON.stringify({ live: automationRun(), argv: process.argv.slice(1) }));
+  check(automationSrc.includes('!app.isPackaged && automationArgv(argv)')
+    && !automationSrc.includes('process.env'),
+  'an installed Wanigan refuses the automation marker however it was launched, because the gate is conjoined with !app.isPackaged and reads no environment variable that a parent process could set for it');
+  check(mainSrc.includes("handle('projects:add', (dir: unknown) => {")
+    && mainSrc.includes('if (!automationRun()) {')
+    && mainSrc.includes("throw new Error('Wanigan registers a project from its own folder picker, not from a path the interface names. Use Add project.');")
+    && mainSrc.includes('return addProject(path.resolve(dir));')
+    && !mainSrc.includes("title: 'Add this directory as a project?'")
+    && !mainSrc.includes("handle('projects:add', (dir: string) => addProject(dir));"),
+  'the validated allow-list every other guard reads cannot be widened by the renderer: projects:add refuses before it even looks at the path unless this process was launched for automation, which leaves the main-process folder picker as the operator’s only route to registering a root');
+  check(sourceOf('scripts/shots.mjs').includes("'--wanigan-automation'")
+    && sourceOf('CONTRIBUTING.md').includes('`--wanigan-automation`')
+    && !sourceOf('scripts/smoke.sh').includes('--wanigan-automation'),
+  'the one caller that still needs a raw path is the screenshot run, it launches with the marker, CONTRIBUTING.md says so where it tells a contributor to run it — and the smoke launcher deliberately does not, because every suite registers its projects as a module call rather than over IPC',
+    sourceOf('scripts/shots.mjs').includes("'--wanigan-automation'"));
   // Four handlers that took the renderer's word while every sibling in the same
-  // block validated first.
-  check(mainSrc.includes("worktrees.listWorktrees(assertManagedRoot(String(repoRoot), 'That repository'))")
-    && mainSrc.includes("worktrees.worktreeStatus(assertManagedRoot(String(p), 'That worktree'))")
+  // block validated first. assertManagedRoot is typed (root: unknown), so the
+  // String() wrappers on the worktree pair were noise that turned a symbol into
+  // a TypeError naming nothing; browse:reveal keeps its coercion because
+  // assertOpenablePath is still typed (target: string).
+  check(mainSrc.includes("worktrees.listWorktrees(assertManagedRoot(repoRoot, 'That repository'))")
+    && mainSrc.includes("worktrees.worktreeStatus(assertManagedRoot(p, 'That worktree'))")
     && mainSrc.includes("browse.revealInFinder(assertOpenablePath(String(p)))")
     && mainSrc.includes("plugins.details(pluginId(name))")
     && !/handle\('worktrees:list', \(repoRoot: string\) => worktrees\.listWorktrees\(repoRoot\)\)/.test(mainSrc)
@@ -6274,6 +6548,44 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(passthrough.path === sample.path, 'nothing is masked when demo mode is off');
   check(demo.maskOut('/plain/string') === '/plain/string', 'strings pass through untouched when off');
   demo.setDemo(wasOn);
+
+  /* -- the blur is a stored preference, not a browser flag ------------ */
+  const wasBlurred = demo.demoBlur();
+  demo.setDemoBlur(true);
+  check(demo.demoBlur() === true && demo.demoState().blurTerminals === true,
+    'blurring terminals is remembered in the settings table and handed back beside the switch in one demo:state answer, so the reload demo:set performs can restore both instead of coming back with masked names over an unblurred terminal',
+    JSON.stringify({ blur: demo.demoBlur(), state: demo.demoState().blurTerminals }));
+
+  let refusedBlur = '';
+  try { demo.setDemoBlur('yes' as unknown as boolean); }
+  catch (e) { refusedBlur = e instanceof Error ? e.message : String(e); }
+  check(refusedBlur === 'Blur terminals is either on or off.' && demo.demoBlur() === true,
+    'a non-boolean arriving from the renderer is refused by name and leaves the stored preference exactly where it was, because a value that is neither on nor off would read back as off on precisely the launch someone was about to share their screen',
+    `${refusedBlur} · still ${demo.demoBlur()}`);
+
+  demo.setDemoBlur(false);
+  check(demo.demoState().blurTerminals === false && demo.demoState().on === demo.demoOn(),
+    'turning the blur off leaves demo mode itself alone: both halves of demo:state come from the same settings table but remain two separate answers, so the preference survives demo mode being switched off and on again',
+    JSON.stringify(demo.demoState()));
+  demo.setDemoBlur(wasBlurred);
+
+  check(appSrc.includes("toggleAttribute('data-demo-blur'")
+    && appSrc.includes('blur(true);')
+    && appSrc.includes('blur(s.on && s.blurTerminals)'),
+    'the always-mounted shell re-applies the terminal blur from the stored answer and starts blurred before that answer arrives, so the window between mount and the first demo:state reply cannot be the one where a shared screen shows raw agent output',
+    String(appSrc.includes('blur(true);')));
+
+  check(appSrc.includes("localStorage.removeItem('wanigan.demo.blurTerminal')")
+    && !settingsSrc.includes("localStorage.getItem('wanigan.demo.blurTerminal')")
+    && !settingsSrc.includes("localStorage.setItem('wanigan.demo.blurTerminal'"),
+    'the legacy browser flag is carried over once by App and read nowhere else, so an operator who had already ticked Blur terminals keeps it while Settings can no longer write a second copy of a preference the settings table now owns',
+    String(settingsSrc.includes('wanigan.demo.blurTerminal')));
+
+  check(!settingsSrc.includes('const [blur, setBlur] = useState')
+    && settingsSrc.includes('checked={state.blurTerminals}')
+    && settingsSrc.includes('window.wanigan.demo.setBlur(next)'),
+    'the demo panel holds no second copy of the blur: the checkbox is drawn from the state the main process returned and a failed write leaves it where it was rather than showing a preference that was never stored',
+    String(settingsSrc.includes('const [blur, setBlur] = useState')));
 
   /* -- userData migration: the guard matters more than the move -------- */
   say('-- userData migration');

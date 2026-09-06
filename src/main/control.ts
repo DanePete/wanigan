@@ -13,7 +13,7 @@ import type {
   ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode,
   DocketAutopilot, DocketNodeKind, DocketNodeStatus, DocketPlanNode, DocketProof, DocketRisk, DocketStatus,
   GoalCapsule, GoalResumeReceipt, GoalTraceEvent,
-  McpTaskRecord, ModelOutcome, WorkDocket,
+  McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, WorkDocket,
 } from '../shared/types';
 // Aliased at the import so the graph rules below still read in this module's
 // own vocabulary: these are the shared declarations, and the renderer's plan
@@ -195,8 +195,16 @@ function setTaskStatus(nodeId: string, status: McpTaskRecord['status']): void {
   db().prepare('UPDATE mcp_task_records SET status=?, updated_at=? WHERE node_id=?').run(status, now(), nodeId);
 }
 
-function releaseClaims(nodeId: string): void {
-  db().prepare('UPDATE work_claims SET released_at=? WHERE node_id=? AND released_at IS NULL').run(now(), nodeId);
+/**
+ * Releases every claim this task still holds, and reports how many moved.
+ *
+ * The count is what a surface needs to say something true about a release:
+ * a task can hold none, and a task whose claims were already released holds
+ * none either. Callers that only need the release still ignore the number.
+ */
+function releaseClaims(nodeId: string): number {
+  return db().prepare('UPDATE work_claims SET released_at=? WHERE node_id=? AND released_at IS NULL')
+    .run(now(), nodeId).changes;
 }
 
 function setDocketPhase(docketId: string): void {
@@ -782,22 +790,49 @@ export function mcpTasks(docketId?: string): McpTaskRecord[] {
   }));
 }
 
-export function cancelMcpTask(taskId: string): boolean {
-  const task = db().prepare('SELECT node_id,docket_id,status FROM mcp_task_records WHERE id=?').get(taskId) as { node_id: string; docket_id: string; status: string } | undefined;
-  if (!task || ['completed', 'failed', 'cancelled'].includes(task.status)) return false;
+/**
+ * Cancel one MCP task record, and report what that actually changed.
+ *
+ * There are four ways out of this function and a boolean told them apart from
+ * nothing: an id that names no record, a record that had already closed, a
+ * record marked cancelled over work that had already ended, and work really
+ * stopped mid-run with its claims released. Control announced one sentence for
+ * all four, so three of them were a guess dressed as a report. Each branch now
+ * names itself, and the counts beside it are the rows this call moved.
+ *
+ * `sessionStopped` is read before the kill and never inferred from the stored
+ * status. killSession is a silent no-op for a session this process no longer
+ * holds — after a restart, or once the agent has exited — so a row still
+ * reading 'running' is not evidence that anything was stopped.
+ */
+export function cancelMcpTask(taskId: string): McpTaskCancelReceipt {
+  const task = db().prepare('SELECT node_id,docket_id,status FROM mcp_task_records WHERE id=?').get(taskId) as { node_id: string; docket_id: string; status: McpTaskRecord['status'] } | undefined;
+  if (!task) return { outcome: 'not_found', recordStatus: null, nodeStatus: null, sessionStopped: false, claimsReleased: 0 };
+  if (['completed', 'failed', 'cancelled'].includes(task.status)) {
+    return { outcome: 'already_closed', recordStatus: task.status, nodeStatus: null, sessionStopped: false, claimsReleased: 0 };
+  }
   db().prepare("UPDATE mcp_task_records SET status='cancelled',updated_at=? WHERE id=?").run(now(), taskId);
   const node = nodeRow(task.node_id);
-  if (['pending', 'running'].includes(node.status)) {
-    db().prepare("UPDATE work_nodes SET status='canceled',ended_at=? WHERE id=?").run(now(), node.id);
-    // Cancelling the record while the agent keeps working is the worst of both:
-    // its claims are released for someone else to take, and it goes on editing
-    // the same worktree and spending tokens against a task nobody is watching.
-    if (node.session_id) {
-      try { killSession(node.session_id); } catch { /* already exited */ }
-    }
-    releaseClaims(node.id); setDocketPhase(task.docket_id);
+  const nodeStatus = node.status as McpTaskCancelReceipt['nodeStatus'];
+  if (!['pending', 'running'].includes(node.status)) {
+    return { outcome: 'record_only', recordStatus: task.status, nodeStatus, sessionStopped: false, claimsReleased: 0 };
   }
-  return true;
+  db().prepare("UPDATE work_nodes SET status='canceled',ended_at=? WHERE id=?").run(now(), node.id);
+  // Cancelling the record while the agent keeps working is the worst of both:
+  // its claims are released for someone else to take, and it goes on editing
+  // the same worktree and spending tokens against a task nobody is watching.
+  //
+  // Observed before the kill, because after it there is nothing left to see:
+  // a session already gone and a session this process never held look the same
+  // to killSession, and both are worth telling the operator apart from a stop.
+  const sessionStopped = node.session_id !== null
+    && listSessions().some((session) => session.id === node.session_id && session.status !== 'exited');
+  if (node.session_id) {
+    try { killSession(node.session_id); } catch { /* already exited */ }
+  }
+  const claimsReleased = releaseClaims(node.id);
+  setDocketPhase(task.docket_id);
+  return { outcome: 'task_canceled', recordStatus: task.status, nodeStatus, sessionStopped, claimsReleased };
 }
 
 /**

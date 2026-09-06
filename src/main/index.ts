@@ -30,6 +30,7 @@ import type {
 } from '../shared/types';
 import { assertManagedRoot, assertOpenablePath } from './roots';
 import { installApplicationMenu } from './menu';
+import { automationRun } from './automation';
 import { adapterTrustPrompt, manifestTrustPrompt } from './pack-consent';
 
 // ── phases 1-24 ────────────────────────────────────────────────────────
@@ -58,7 +59,7 @@ import { providerModelCatalogue } from './launch-choices';
 import { deepseekModels, verifyDeepSeekKey } from './deepseek';
 import * as gitOps from './git';
 import * as gh from './gh';
-import { demoOn, setDemo, demoMap, maskOut, unmaskIn, noteAuthors } from './demo';
+import { demoOn, setDemo, demoState, setDemoBlur, maskOut, unmaskIn, noteAuthors } from './demo';
 import * as schedule from './schedule';
 import * as observed from './observed';
 import { egressReport } from './egress';
@@ -1285,11 +1286,17 @@ function registerIpc() {
   handle('startup:status', () => startupSnapshot());
   handle('startup:retry', () => startAttendedServices());
 
-  handle('demo:state', () => ({ on: demoOn(), map: demoMap() }));
+  handle('demo:state', () => demoState());
   handle('demo:set', (on: boolean) => {
     setDemo(on);
     forgetDemoMasking();
-    return { on: demoOn(), map: demoMap() };
+    return demoState();
+  });
+  // setDemoBlur does its own validation: the renderer is untrusted here, and a
+  // stored value that is neither on nor off reads back as off.
+  handle('demo:setBlur', (on: boolean) => {
+    setDemoBlur(on);
+    return demoState();
   });
 
   handle('providers:list', () => detectProviders());
@@ -1518,25 +1525,37 @@ function registerIpc() {
    * again. projects:pick, which sources its path from a main-process dialog,
    * needs no second confirmation and does not get one.
    */
-  handle('projects:add', async (dir: unknown) => {
-    if (typeof dir !== 'string' || !dir.trim()) throw new Error('A project path is required.');
-    const resolved = path.resolve(dir);
-    const w = win;
-    if (!w || w.isDestroyed()) {
-      throw new Error('Adding a project needs the Wanigan window open to confirm it.');
+   /*
+   * A registered project is the seed of the allowlist every other guard leans
+   * on: roots.ts builds managedRoots() from exactly this table, and its header
+   * states the premise — "Both come from this process's own records, never from
+   * the caller." This channel broke that. It took a bare path from the renderer
+   * and inserted it, and addProject's only refusal is assertWholeRepo, which
+   * rejects a *subdirectory* of a repo and passes any other directory. One call
+   * naming a home directory registered a root, and from then on assertManagedRoot
+   * succeeded for everything under it: code:read on ~/.ssh, browse:open handing
+   * a file to LaunchServices, and — if the directory happened to be a repo —
+   * git:discard and git:checkout writing to it.
+   *
+   * The renderer no longer decides. It may ask; this process decides, and the
+   * decision needs a person: projects:pick opens the main-process folder
+   * picker, which names the exact directory before a row is written, and is
+   * the only route in a normal run. Because its path comes from that dialog it
+   * needs no second confirmation and does not get one.
+   *
+   * The raw-path form survives for one caller. scripts/shots.mjs drives the
+   * built app headlessly to capture every view, and it cannot click a native
+   * picker — a window-modal sheet with nobody to dismiss it hangs the run
+   * rather than failing it. So this channel answers only an automation run:
+   * see src/main/automation.ts, which also refuses the marker outright in a
+   * packaged build. A page cannot put a flag on argv.
+   */
+  handle('projects:add', (dir: unknown) => {
+    if (!automationRun()) {
+      throw new Error('Wanigan registers a project from its own folder picker, not from a path the interface names. Use Add project.');
     }
-    const answer = await dialog.showMessageBox(w, {
-      type: 'warning',
-      buttons: ['Cancel', 'Add this project'],
-      defaultId: 0,
-      cancelId: 0,
-      title: 'Add this directory as a project?',
-      message: resolved,
-      detail: 'A project is a directory Wanigan is allowed to read, open, and run git in. '
-        + 'Everything below it becomes reachable to the agents you start here.',
-    });
-    if (answer.response !== 1) throw new Error('Cancelled. No project was added.');
-    return addProject(resolved);
+    if (typeof dir !== 'string' || !dir.trim()) throw new Error('A project path is required.');
+    return addProject(path.resolve(dir));
   });
   handle('projects:remove', (id: string) => { removeProject(id); return listProjects(); });
   handle('projects:pick', async () => {
@@ -1638,6 +1657,7 @@ function registerIpc() {
   handle('batch:estimate', (config: RunConfig, observedOut?: number) => batch.estimateRun(config, observedOut));
   handle('batch:dryRun', (config: RunConfig, rowIndex?: number) => batch.dryRunOne(config, rowIndex));
   handle('batch:runs', () => batch.listRuns());
+  handle('batch:runsInFlight', () => batch.runsInFlight());
   handle('batch:run', (id: string) => batch.runDetail(id));
   handle('batch:results', (id: string, status: string, q: string, offset: number) =>
     batch.runResults(id, status, q, offset));
@@ -1776,10 +1796,20 @@ function registerIpc() {
   // and ran git in it, which is the one rule this file states most often —
   // renderer input is untrusted until main has validated it. Reading is a
   // smaller grant than removing a tree, and it is still a grant.
+  //
+  // No String() on the way in: assertManagedRoot is typed (root: unknown) and
+  // answers a non-string with "That repository is not a folder Wanigan can act
+  // on", whereas String(Symbol()) throws a TypeError that names nothing and
+  // String(undefined) manufactures the path "undefined" for it to refuse.
+  //
+  // One honest caveat: listWorktrees returns paths straight from `git worktree
+  // list --porcelain`, which can name a worktree outside every managed root, so
+  // a future UI that lists those and then asks about one gets a refusal from
+  // worktrees:status rather than a status.
   handle('worktrees:list', (repoRoot: unknown) =>
-    worktrees.listWorktrees(assertManagedRoot(String(repoRoot), 'That repository')));
+    worktrees.listWorktrees(assertManagedRoot(repoRoot, 'That repository')));
   handle('worktrees:status', (p: unknown) =>
-    worktrees.worktreeStatus(assertManagedRoot(String(p), 'That worktree')));
+    worktrees.worktreeStatus(assertManagedRoot(p, 'That worktree')));
   // removeWorktree already refuses a directory git does not call a worktree,
   // but that leaves every worktree on the machine in range of a channel name.
   // Confining the base first means Wanigan only deletes trees inside the

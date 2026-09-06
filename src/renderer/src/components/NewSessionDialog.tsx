@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountResolution, AgentAccount, LaunchModelCatalogue, LaunchOptions, Project, ProviderId, ProviderInfo, TrustLevel } from '@shared/types';
-import { TRUST_LEVELS, trustCopy, trustGlyph } from '@shared/types';
+import { TRUST_LEVELS, permissionModeCopy, trustCopy, trustGlyph } from '@shared/types';
 import { intersectChoices, launchFieldChoices, type LaunchChoice } from '@shared/launch-fields';
 import { providerTint } from '@shared/provider-status';
-import { Note } from './bits';
+import { Hint, Note } from './bits';
 import { useDialog } from './useDialog';
 
 /** Same filled progression the session header uses: ◇ → ◈ → ◆ reads in greyscale. */
@@ -620,17 +620,72 @@ export default function NewSessionDialog({
                          placeholder={permissionField.required ? 'Required by provider' : 'Provider default'}
                          onChange={setPermissionMode} />
             ) : (
-              <select className="field" style={{ margin: '6px 0 14px' }} value={permissionMode}
+              <select className="field" style={{ margin: '6px 0 5px' }} value={permissionMode}
                       onChange={(e) => setPermissionMode(e.target.value)}>
                 <option value="">default</option>
-                {permissionField.choices.filter((choice) => choice.value !== '')
-                  .map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+                {permissionField.choices.filter((choice) => choice.value !== '').map((choice) => {
+                  /*
+                   * The words belong to the mode, not to whichever profile
+                   * declared it. Every built-in profile builds these choices as
+                   * `[...].map((value) => ({ value, label: value }))`, so what
+                   * arrives here is the raw identifier — and an identifier is
+                   * not a word for the one control that decides how much an
+                   * agent may do without asking.
+                   *
+                   * Relabelled here rather than in the manifest on purpose:
+                   * fingerprint() hashes the whole profile object, so editing
+                   * those labels would change every built-in profile's
+                   * profileFingerprint and make a fan-out queued before the
+                   * update fail with "… changed after this fan-out was
+                   * queued". Nothing about the launch changes; only the word.
+                   *
+                   * A mode this build has never seen keeps whatever the profile
+                   * called it. Prettifying `foo_bar` into "Foo bar" would be
+                   * inventing a meaning for a permission.
+                   */
+                  const copy = permissionModeCopy(choice.value);
+                  return (
+                    <option key={choice.value} value={choice.value}>
+                      {copy.known ? copy.label : choice.label}
+                    </option>
+                  );
+                })}
               </select>
             )}
+            {/*
+              * What the mode permits, said before it is chosen rather than
+              * discovered afterwards — the same shape the Trust block above
+              * uses. The blank option is not a mode: permissionModeCopy('')
+              * correctly reports one it does not recognise, and printing that
+              * over 'default' would accuse the CLI's own default of being
+              * something Wanigan cannot describe.
+              */}
+            <Hint>
+              {permissionMode !== ''
+                ? permissionModeCopy(permissionMode).detail
+                : permissionField.required
+                  // A profile may declare this field required with no default,
+                  // and for that one the blank row is not a default at all —
+                  // the launch compiler refuses it. Saying "the CLI's own
+                  // default applies" there would be the false half of the same
+                  // sentence.
+                  ? 'This profile requires a permission mode, and nothing is chosen yet.'
+                  : 'Wanigan passes no permission flag, so the CLI’s own default applies.'}
+            </Hint>
             {(permissionMode === 'bypassPermissions' || permissionMode === 'dontAsk') && (
-              <p style={{ color: 'var(--warn)', fontSize: 'var(--t-micro)', marginTop: -8, marginBottom: 12, lineHeight: 1.45 }}>
-                This session will not ask before running commands or editing files. Only use it in a
-                repo you can throw away or fully revert.
+              <p style={{ color: 'var(--warn)', fontSize: 'var(--t-micro)', marginTop: 5, marginBottom: 12, lineHeight: 1.45 }}>
+                <span aria-hidden="true">⚠ </span>
+                {/* One sentence for two modes said the same strong thing about
+                    both. It is only established for one of them: headless.ts
+                    reaches for bypassPermissions where nothing is denied, and
+                    nothing in this repository establishes what dontAsk still
+                    holds back. So the mode Wanigan can vouch for keeps the
+                    strong sentence, and the one it cannot says exactly that. */}
+                {permissionMode === 'bypassPermissions'
+                  ? 'This session will not ask before running commands or editing files. Only use it in a '
+                    + 'repo you can throw away or fully revert.'
+                  : 'Wanigan has not verified what this mode still asks about, so treat it as unrestricted: '
+                    + 'only use it in a repo you can throw away or fully revert.'}
               </p>
             )}
           </>

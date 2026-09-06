@@ -34,6 +34,32 @@ export function setDemo(on: boolean): boolean {
   return on;
 }
 
+/**
+ * Blur live terminals as well.
+ *
+ * A terminal has already drawn bytes this process never parsed, so the map
+ * above cannot reach it; blur is the only honest option there, and it is a
+ * separate choice because the terminal is usually the thing worth
+ * photographing.
+ *
+ * It lives in the settings table rather than in the renderer's localStorage
+ * because demo:set reloads the window, and only a value the renderer can read
+ * back at start-up survives that reload. A flag written by a checkbox that
+ * exists only while Settings is open came back off every time, which is the
+ * half-masked screenshot this module exists to make impossible.
+ */
+export function demoBlur(): boolean {
+  return getSetting('demo_blur_terminals', '0') === '1';
+}
+export function setDemoBlur(on: unknown): boolean {
+  // The renderer is untrusted at this boundary, and a stored value that is
+  // neither '1' nor '0' would read back as off — silently, and only on the
+  // launch someone was about to share their screen.
+  if (typeof on !== 'boolean') throw new Error('Blur terminals is either on or off.');
+  setSetting('demo_blur_terminals', on ? '1' : '0');
+  return on;
+}
+
 type Pair = { real: string; fake: string };
 let cache: { at: number; pairs: Pair[] } | null = null;
 
@@ -158,4 +184,14 @@ export function unmaskIn<T>(v: T): T {
 export function demoMap(): { real: string; fake: string }[] {
   if (!demoOn()) return [];
   return pairs().filter((p) => p.real.startsWith('/')).map((p) => ({ real: p.real, fake: p.fake }));
+}
+
+/**
+ * Everything a window needs to look like a demo, in one answer.
+ *
+ * One read, so the switch and the blur cannot disagree: names are fake and the
+ * terminal is blurred, or neither is.
+ */
+export function demoState(): { on: boolean; blurTerminals: boolean; map: { real: string; fake: string }[] } {
+  return { on: demoOn(), blurTerminals: demoBlur(), map: demoMap() };
 }

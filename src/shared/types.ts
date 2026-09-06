@@ -1222,6 +1222,39 @@ export type McpTaskRecord = {
   updatedAt: number;
 };
 
+/**
+ * What `cancelMcpTask` actually did, so a surface can state it rather than
+ * infer it.
+ *
+ * Cancel returned a bare boolean, and Control announced one sentence for every
+ * path through the function: an id that names no record, a record that had
+ * already closed, a record marked cancelled over a task that had already
+ * ended, and a task really stopped mid-run. The four are separate branches in
+ * control.ts, so they are separate outcomes here.
+ *
+ * `nodeStatus` is the task's stored status, not the status Control shows: the
+ * graph presents a stored 'pending' as 'ready' or 'blocked' depending on what
+ * it waits for, and neither of those words is ever written down.
+ */
+export type McpTaskCancelReceipt = {
+  /**
+   * 'not_found'      no record has that id; nothing was read or written.
+   * 'already_closed' the record was completed, failed or cancelled already.
+   * 'record_only'    the record is now cancelled; the task had already ended,
+   *                  so no session was stopped and no claim was released.
+   * 'task_canceled'  the record and the task are both cancelled.
+   */
+  outcome: 'not_found' | 'already_closed' | 'record_only' | 'task_canceled';
+  /** The record's status when the call began, before any write. */
+  recordStatus: McpTaskRecord['status'] | null;
+  /** The task's stored status when the call began; null when none was read. */
+  nodeStatus: 'pending' | 'running' | 'completed' | 'failed' | 'canceled' | null;
+  /** True only when a session the main process still held was killed here. */
+  sessionStopped: boolean;
+  /** Claim rows this call moved to released — a count, not an intention. */
+  claimsReleased: number;
+};
+
 /** A restart/recovery decision for a Goal task, based on durable facts only. */
 export type GoalResumeReceipt = {
   nodeId: string;
@@ -1663,6 +1696,80 @@ export function trustCopy(level: string): { label: string; detail: string } {
 /** The glyph for a trust level, or a neutral mark for one this build does not know. */
 export function trustGlyph(level: string): string {
   return ({ readonly: '◇', project: '◈', trusted: '◆' } as Record<string, string>)[level] ?? '·';
+}
+
+/**
+ * The words for a permission mode, and an honest label for one this build has
+ * never seen.
+ *
+ * A permission mode is the same kind of value as a trust level: a nullable
+ * string persisted on the session row and declarable by any provider pack, not
+ * a member of a union the compiler checks. Indexing a copy table with it
+ * directly is the bug `trustCopy` above exists to fix — `PERMISSION_MODE_COPY[
+ * mode]` is `undefined` for a mode a pack declared or a later build added, and
+ * the next `.label` takes the New session dialog into its error boundary.
+ *
+ * So the table stays module-private and this returns `known` instead. A caller
+ * that cannot reach the table cannot quietly relabel a mode Wanigan has never
+ * verified as one of the six the reader already trusts — which matters most
+ * here, because this is the value that decides how much an agent may do without
+ * asking. Prettifying an unrecognised `foo_bar` into "Foo bar" would invent a
+ * meaning for a permission; the honest render names it as declared and says
+ * Wanigan does not know what it allows.
+ *
+ * The table is split by what this repository can actually vouch for. `claude
+ * --help` lists the six choices and describes none of them, so the three
+ * sentences that state behaviour are sourced from Wanigan's own recorded
+ * reasoning in headless.ts (`gateFor`), and the three with no source here say
+ * plainly that Wanigan has not verified them rather than offering a plausible
+ * description Wanigan cannot support.
+ */
+const PERMISSION_MODE_COPY: Record<string, { label: string; detail: string }> = {
+  acceptEdits: {
+    label: 'Accept edits',
+    // headless.ts gateFor(): the mode chosen for 'project' trust, because it
+    // auto-approves edits under the working directory and prompts for anything
+    // outside it.
+    detail: 'Edits under the working directory go ahead; anything outside it asks. This is the mode Wanigan itself uses to hold an unattended run to Project trust.',
+  },
+  bypassPermissions: {
+    label: 'Ask for nothing',
+    // headless.ts gateFor(): the mode chosen for 'trusted', where nothing is
+    // denied and there is nothing to hold the CLI to.
+    detail: 'Nothing is held for approval. This is the mode Wanigan uses only for a project set to Trusted.',
+  },
+  plan: {
+    label: 'Plan first',
+    // headless.ts gateFor() pairs 'plan' with --disallowedTools for read-only
+    // runs, and records why: --allowedTools is a pre-approval list, not an
+    // exclusive one. Saying "the agent cannot write in plan mode" would be a
+    // claim this repository's own comment contradicts.
+    detail: 'The agent proposes a plan before acting. Wanigan does not rely on this mode alone to prevent writes — its own read-only runs pair it with an explicit tool denial list.',
+  },
+  manual: {
+    label: 'Ask every time',
+    detail: 'Wanigan passes this through unchanged and has not verified what the CLI approves in it.',
+  },
+  auto: {
+    label: 'Automatic',
+    detail: 'Wanigan passes this through unchanged and has not verified what the CLI approves in it.',
+  },
+  dontAsk: {
+    label: 'Stop asking',
+    detail: 'Wanigan passes this through unchanged and has not verified what this still asks about. Treat it as unrestricted until you have checked.',
+  },
+};
+
+/** The copy for a permission mode, or an honest unknown. See PERMISSION_MODE_COPY. */
+export function permissionModeCopy(mode: string): { label: string; detail: string; known: boolean } {
+  const known = PERMISSION_MODE_COPY[mode];
+  if (known) return { ...known, known: true };
+  return {
+    label: mode || 'unknown',
+    detail: `Wanigan does not recognise the permission mode “${mode || 'unknown'}”, so it cannot say `
+      + 'what it allows. The agent CLI decides what it means.',
+    known: false,
+  };
 }
 
 /**

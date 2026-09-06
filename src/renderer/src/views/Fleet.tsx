@@ -6,6 +6,7 @@ import { ATTENTION_ORDER, EMPTY_USAGE, trustCopy, trustGlyph } from '@shared/typ
 import { providerTint } from '@shared/provider-status';
 import { EmptyState, Note, PageHead, Segmented, Stat, ago, num, usd } from '../components/bits';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
+import ObservedBand from '../components/ObservedBand';
 import TeamPanel from '../components/TeamPanel';
 
 /**
@@ -453,11 +454,18 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
             watching rather than starting is the thing people get wrong — and
             the telemetry caveat moved to the table footer where the numbers
             it qualifies actually appear. */}
-        <EmptyState posture="nothing-yet" title="No agents are running"
+        <EmptyState posture="nothing-yet" title="No agents Wanigan started are running"
                     cue={<>Fleet watches sessions that already exist; it does not start them. A new session appears here within three seconds.</>}
                     action={onNewSession
                       ? <button className="btn btn-primary" onClick={onNewSession}>New session <kbd className="fleet-kbd">⌘T</kbd></button>
                       : undefined} />
+        {/* This is the branch where "nothing is running" is most likely to be
+            wrong — none of Wanigan's own, and three Claude processes started
+            from a terminal — so the title above now says whose absence it is
+            reporting, and the band answers for the rest. Separately, and never
+            by filling the count above: Wanigan did not start these and cannot
+            say much about them. */}
+        <ObservedBand />
       </div>
     );
   }
@@ -593,6 +601,11 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
 
       <FleetTable rows={shown} att={attention} usageOf={usageOf} spark={spark}
                   defaultTrust={defaultTrust} onOpen={onOpenSession} />
+
+      {/* Last, and outside every count above it: the stats, chips and cards on
+          this page are Wanigan's own sessions, and a foreign process must never
+          be added to them. */}
+      <ObservedBand />
     </div>
   );
 }

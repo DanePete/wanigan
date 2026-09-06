@@ -4986,17 +4986,23 @@ function Backup() {
    ──────────────────────────────────────────────────────────────────────── */
 
 function DemoPanel() {
-  const [state, setState] = useState<{ on: boolean; map: { real: string; fake: string }[] }>({ on: false, map: [] });
-  const [blur, setBlur] = useState(() => {
-    try { return localStorage.getItem('wanigan.demo.blurTerminal') === '1'; } catch { return false; }
-  });
+  const [state, setState] = useState<{ on: boolean; blurTerminals: boolean; map: { real: string; fake: string }[] }>(
+    { on: false, blurTerminals: false, map: [] });
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { window.wanigan.demo.state().then(setState).catch(() => {}); }, []);
+  // App applies this at start-up from the same stored answer; this keeps the
+  // page honest between ticking the box and the next launch.
   useEffect(() => {
-    document.documentElement.toggleAttribute('data-demo-blur', blur && state.on);
-    try { localStorage.setItem('wanigan.demo.blurTerminal', blur ? '1' : '0'); } catch { /* blocked */ }
-  }, [blur, state.on]);
+    document.documentElement.toggleAttribute('data-demo-blur', state.on && state.blurTerminals);
+  }, [state]);
+
+  async function toggleBlur(next: boolean) {
+    // No reload and no optimistic flip: on a failed write the checkbox stays
+    // where it was, because state was never updated.
+    try { setState(await window.wanigan.demo.setBlur(next)); }
+    catch { /* the checkbox stays where it was: state was not updated */ }
+  }
 
   async function toggle() {
     setBusy(true);
@@ -5024,7 +5030,8 @@ function DemoPanel() {
         <>
           <div style={{ marginTop: 10 }}>
             <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', fontSize: 'var(--t-small)' }}>
-              <input type="checkbox" checked={blur} onChange={(e) => setBlur(e.target.checked)} style={{ marginTop: 3 }} />
+              <input type="checkbox" checked={state.blurTerminals}
+                     onChange={(e) => void toggleBlur(e.target.checked)} style={{ marginTop: 3 }} />
               <span>
                 <strong>Blur terminals too.</strong> A live terminal draws raw bytes from the agent, so nothing in the
                 app can rewrite what it already printed. Masking cannot reach it — blurring can.

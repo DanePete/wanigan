@@ -120,6 +120,75 @@ export function listRuns() {
   `).all();
 }
 
+/**
+ * The statuses in which a run's remote work may still be spending: submitted
+ * and not yet finished, or cancelled locally and not yet stopped remotely.
+ * deleteRun() refuses these and runsInFlight() counts them, off one list so
+ * the two cannot drift apart. (Batches.tsx repeats the same three strings for
+ * its "Active" tile; it is counting this same set.)
+ */
+const IN_FLIGHT = ['in_progress', 'submitting', 'canceling'] as const;
+
+/**
+ * What the sidebar's Batches badge prints, and what its bar advances on.
+ *
+ * `runs` counts runs — not requests, not results, not messages. The badge is a
+ * bare integer beside a word, which is read as "things waiting for me", so the
+ * field, the function and the tooltip all have to be the same noun. It counts
+ * every run the Batches screen lists, batch and headless and eval alike,
+ * because listRuns() and the "Active" tile the badge points at are not scoped
+ * by kind either: a badge reading 1 beside a tile reading 2 would be a worse
+ * lie than a badge whose noun is one word too broad. Narrowing the badge and
+ * narrowing that screen have to happen together, and this is not that change.
+ */
+export type RunsInFlight = {
+  /**
+   * Epoch ms of the read that produced these counts. It is on the wire so a
+   * caller that keeps only the integers can still tell an observed zero from a
+   * read that has not happened yet. It is not a freshness clock: a caller that
+   * holds its previous value while the counts are unchanged is holding an
+   * older readAt with it, deliberately.
+   */
+  readAt: number;
+  /** Runs whose remote work may still be spending. The badge's integer. */
+  runs: number;
+  /** Requests in those runs that have come back, succeeded or failed. */
+  requestsReturned: number;
+  /** Requests in those runs the API has not answered yet. */
+  requestsOutstanding: number;
+};
+
+/**
+ * The badge's own read: one row of three integers, for a poll that fires every
+ * six seconds from whichever view is open.
+ *
+ * It exists because the shell used to answer this out of listRuns() — 200 whole
+ * `runs` rows, `config_json` and all, plus a thousand correlated counts and a
+ * per-run expiry subquery — to render one integer and one progress bar. The
+ * counts here are the same counts, over the same statuses, so nothing on screen
+ * moves; only the read shrinks. `runs` still has no index on `status` (db.ts
+ * indexes created_at, project_id and (kind, created_at)), so this remains a
+ * scan of `runs` — the saving is the row payload and the discarded subqueries,
+ * not a seek, and on a fresh install with no runs it costs nothing either way.
+ */
+export function runsInFlight(): RunsInFlight {
+  const statuses: string[] = [...IN_FLIGHT];
+  const row = db().prepare(`
+    SELECT COUNT(*) runs,
+      COALESCE(SUM((SELECT COUNT(*) FROM requests q WHERE q.run_id = r.id
+                      AND q.status IN ('succeeded','errored','expired','canceled','refused'))), 0) returned,
+      COALESCE(SUM((SELECT COUNT(*) FROM requests q WHERE q.run_id = r.id
+                      AND q.status = 'pending')), 0) outstanding
+    FROM runs r WHERE r.status IN (${statuses.map(() => '?').join(',')})
+  `).get(...statuses) as { runs: number; returned: number; outstanding: number };
+  return {
+    readAt: Date.now(),
+    runs: row.runs,
+    requestsReturned: row.returned,
+    requestsOutstanding: row.outstanding,
+  };
+}
+
 export function runDetail(id: string) {
   const d = db();
   const run = d.prepare('SELECT * FROM runs WHERE id = ?').get(id) as
@@ -167,7 +236,7 @@ export function runResults(id: string, status = 'all', q = '', offset = 0, pageS
  * batches wind down, so a run in that state is exactly the case the error
  * sentence below describes — cancelled locally, not yet stopped remotely.
  */
-const UNDELETABLE = new Set(['in_progress', 'submitting', 'canceling']);
+const UNDELETABLE = new Set<string>(IN_FLIGHT);
 
 export function deleteRun(id: string) {
   const run = db().prepare('SELECT status FROM runs WHERE id = ?').get(id) as { status: string } | undefined;

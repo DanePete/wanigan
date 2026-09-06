@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
-  ControlEvent, DocketAutopilot, DocketDetail, DocketNode, DocketNodeKind, DocketNodeStatus, DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
+  ControlEvent, DocketAutopilot, DocketDetail, DocketNode, DocketNodeKind, DocketNodeStatus, DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
 } from '@shared/types';
 import { Chip, ConfirmNote, EmptyState, Explainer, Hint, Mark, Note, PageHead, Reading, SectionHead, ago, markOf, usd } from '../components/bits';
 import type { MarkSpec } from '../components/bits';
@@ -86,6 +86,42 @@ function decisionNotice(kind: DocketNodeKind, decision: 'approve' | 'request_cha
 }
 
 /**
+ * What cancelling an MCP task record actually did, said in words.
+ *
+ * The button used to announce nothing at all, and silence reads as success:
+ * the same nothing covered an id that named no record, a record that had
+ * already closed, a record marked cancelled over work that had ended before
+ * the click landed, and a live agent killed mid-edit. The renderer cannot tell
+ * those apart on its own — `act` evaluates its message before the work runs,
+ * and the status it would read is a snapshot from the last load, so a running
+ * agent that exits in between turns any pre-written sentence into a guess.
+ * cancelMcpTask reports what it changed; this only spells the report out.
+ */
+function cancelNotice(receipt: McpTaskCancelReceipt): string {
+  if (receipt.outcome === 'not_found') {
+    return 'No task record has that ID, so nothing was changed. Reload the goal to see the tasks it has now.';
+  }
+  if (receipt.outcome === 'already_closed') {
+    return `That task record was already ${receipt.recordStatus}, so nothing was changed.`;
+  }
+  if (receipt.outcome === 'record_only') {
+    return `MCP task record marked cancelled. The task itself had already ended (${receipt.nodeStatus}), so no session was stopped and no file claim was released.`;
+  }
+  // Three ways to have stopped no agent, and only one of them is "there was
+  // never one". A stored 'running' with no live session is worth saying out
+  // loud: it is the shape an operator otherwise reads as a failed cancel.
+  const head = receipt.sessionStopped
+    ? 'Task canceled and its agent session stopped.'
+    : receipt.nodeStatus === 'pending'
+      ? 'Task canceled before it was ever started, so there was no agent session to stop.'
+      : 'Task canceled. Wanigan held no live session for it, so nothing was stopped: its agent had already exited, or it was launched before the last restart.';
+  const claims = receipt.claimsReleased === 0
+    ? 'It had no open file claim to release.'
+    : `${receipt.claimsReleased} file claim${receipt.claimsReleased === 1 ? '' : 's'} released.`;
+  return `${head} ${claims} The goal is marked blocked until you reopen the task.`;
+}
+
+/**
  * Dockets are intentionally not a second terminal surface. They make the
  * contract, evidence and human decision visible before the operator opens the
  * agent that does the work.
@@ -166,6 +202,16 @@ export default function Control({ projects, providers, onOpenSession }: {
    * prompt pointing at work the operator has already navigated away from.
    */
   const [armAsk, setArmAsk] = useState<string | null>(null);
+  /**
+   * Which MCP task record has its cancel confirmation open, if any.
+   *
+   * It holds the record rather than a boolean for the same reason armAsk holds
+   * an id: choosing another goal reloads the list underneath it, and a live
+   * "stop the agent" prompt pointing at work the operator has navigated away
+   * from is a click that lands somewhere they are not looking. The prompt is
+   * rendered only while that record is still one of the rows on screen.
+   */
+  const [confirmCancel, setConfirmCancel] = useState<McpTaskRecord | null>(null);
   // Per-goal spend-cap drafts, keyed like `notes` and `claims` so a half-typed
   // number does not follow the operator to the next goal they open.
   const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({});
@@ -280,6 +326,29 @@ export default function Control({ projects, providers, onOpenSession }: {
   }, 'Task reopened and set back to pending. Start it again when you are ready; tasks that wait on it stay blocked until it completes.');
 
   /**
+   * Whether cancelling this record would stop a live agent — as far as the
+   * last load could see.
+   *
+   * A snapshot is honest here and nowhere else in this flow: it chooses
+   * whether to ask before acting, which is a statement of intent, not a report
+   * of what happened. mapNodes presents a stored 'pending' as 'ready' or
+   * 'blocked' (control.ts), so 'running' is the only presented status that
+   * implies a session exists at all. What was actually stopped comes back in
+   * the receipt, after the fact.
+   */
+  const cancelStopsAgent = (task: McpTaskRecord) =>
+    detail?.nodes.find((node) => node.id === task.nodeId)?.status === 'running';
+  const cancelTask = (task: McpTaskRecord) => act(`cancel-task-${task.id}`, async () => {
+    const receipt = await window.wanigan.control.cancelMcpTask(task.id);
+    await load(detail?.id);
+    // Set inside the closure, after the call, and deliberately not through
+    // act's third argument: act clears the notice on the way in and only
+    // overwrites it from a message it was handed before the work ran, which is
+    // exactly the sentence this cannot be.
+    setNotice(cancelNotice(receipt));
+  });
+
+  /**
    * Arm unattended dispatch, with the provider and model chosen just above.
    *
    * control.setAutopilot had no caller anywhere in the renderer, so the sweep
@@ -328,6 +397,10 @@ export default function Control({ projects, providers, onOpenSession }: {
     !acceptance.trim() && 'at least one acceptance check',
   ].filter((entry): entry is string => typeof entry === 'string');
   const shownDockets = statusFilter === 'all' ? dockets : dockets.filter((docket) => docket.status === statusFilter);
+  // Named once because the cancel confirmation has to answer the same question
+  // the rows do: a prompt is only allowed to stand while the record it names is
+  // still on screen.
+  const shownTasks = tasks.slice(0, 5);
   const missingText = missing.length < 2 ? missing.join('')
     : `${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]}`;
   /**
@@ -469,7 +542,21 @@ export default function Control({ projects, providers, onOpenSession }: {
     left to consume the six visible slots. */}
 {events.filter((event) => event.status !== 'dismissed').slice(0, 6).map((event) => <div className="control-event" key={event.id}><span className={`control-status ${event.status}`}>{event.status}</span><strong>{event.kind}</strong><p>{event.summary}</p>{event.status === 'new' && <><button className="btn" onClick={() => void triage(event)}>Create goal</button><button className="btn" disabled={busy !== null} onClick={() => void act(`dismiss-${event.id}`, async () => { await window.wanigan.control.dismissEvent(event.id); await load(detail?.id); })}>Dismiss</button></>}</div>)}</article>
       <article className="card"><span className="label">Model evidence</span><h2>Outcome router</h2><p className="faint">This ranks only completed goal evidence; it does not invent a winner from token volume or a single run.</p>{outcomes.length === 0 ? <p className="faint">No completed provider outcomes yet.</p> : <table className="control-table"><thead><tr><th>Model</th><th>Task</th><th>Accept</th><th>Tests</th><th>Cost</th></tr></thead><tbody>{outcomes.map((outcome) => <tr key={`${outcome.providerId}-${outcome.model}-${outcome.taskKind}`}><td>{outcome.providerId}<small>{outcome.model}</small></td><td>{outcome.taskKind}<small>{outcome.samples} sample{outcome.samples === 1 ? '' : 's'}</small></td><td>{outcome.acceptedRate === null ? '—' : `${Math.round(outcome.acceptedRate * 100)}%`}</td><td>{outcome.testPassRate === null ? '—' : `${Math.round(outcome.testPassRate * 100)}%`}</td><td>{usd(outcome.totalCostUsd)}</td></tr>)}</tbody></table>}
-        <span className="label">MCP task compatibility</span><p className="faint">Goal tasks have durable working/input-required/completed/cancelled state ready for the evolving MCP Tasks adapter.</p>{tasks.slice(0, 5).map((task) => <p key={task.id}><span className={`control-status ${task.status}`}>{task.status}</span> {task.title} {['working', 'input_required'].includes(task.status) && <button className="btn" onClick={() => void act(`cancel-task-${task.id}`, async () => { await window.wanigan.control.cancelMcpTask(task.id); await load(detail?.id); })}>cancel</button>}</p>)}</article></section>
+        <span className="label">MCP task compatibility</span><p className="faint">Goal tasks have durable working/input-required/completed/cancelled state ready for the evolving MCP Tasks adapter.</p>{shownTasks.map((task) => <p key={task.id}><span className={`control-status ${task.status}`}>{task.status}</span> {task.title} {['working', 'input_required'].includes(task.status) && <button className="btn btn-sm" disabled={busy !== null} title={cancelStopsAgent(task)
+          ? 'Cancel this task, stop the agent session running it, and release any file claims it holds. The goal is marked blocked until you reopen the task.'
+          : 'Cancel this task. If it has not ended, any file claims it holds are released and the goal is marked blocked until you reopen it; if it has, only the MCP task record is marked cancelled.'}
+          onClick={() => { if (cancelStopsAgent(task)) { setConfirmCancel(task); return; } void cancelTask(task); }}>Cancel task</button>}</p>)}
+        {/* Once, after the list — never inside a row. The row is a <p> and
+            ConfirmNote is a <div>, which the browser silently reparents out of
+            it, moving the prompt away from the button that opened it. This is
+            the T2 arm only: a live agent is stopped mid-edit. The other arms
+            disclose through the button title and report through the receipt,
+            because bits.tsx records that T2 must stay rare. */}
+        {confirmCancel && shownTasks.some((task) => task.id === confirmCancel.id) && <ConfirmNote tone="error" busy={busy !== null}
+          what={<>Cancel <strong>{confirmCancel.title}</strong>? The agent session running it is stopped, any file claims it holds are released, and the goal is marked blocked until you reopen the task.</>}
+          verb="Cancel task and stop the agent" onCancel={() => setConfirmCancel(null)}
+          onRun={() => { const task = confirmCancel; setConfirmCancel(null); return cancelTask(task); }} />}
+      </article></section>
   </div>;
 }
 

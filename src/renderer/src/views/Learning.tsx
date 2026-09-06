@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
+  BriefingPreview,
   CandidateExplanation,
   ConsolidationRun,
   FreshnessReport,
@@ -159,6 +160,17 @@ const readQueryProvided = (briefing: KnowledgeBriefing): boolean | null => {
   const value = (briefing as unknown as Record<string, unknown>)['queryProvided'];
   return typeof value === 'boolean' ? value : null;
 };
+
+/** False when the engine was switched off: retrieval never ran, so every
+ * counter beside it is 0 because nothing was asked, not because nothing
+ * matched. Main answers a preview with `BriefingPreview`, which carries this
+ * and the launch facts below it; the preload types the channel as the narrower
+ * `KnowledgeBriefing`, so they cross IPC and are missing from the type —
+ * widening to the real shape reads them without a cast. Null is "this build did
+ * not report it", which is not a reported false and may not be drawn as a
+ * paused engine. */
+const readLearningEnabled = (briefing: Partial<BriefingPreview>): boolean | null =>
+  typeof briefing.learningEnabled === 'boolean' ? briefing.learningEnabled : null;
 
 const fmtBytes = (n: number) => n >= 1_048_576 ? `${(n / 1_048_576).toFixed(1)} MB`
   : n >= 1_024 ? `${Math.round(n / 1_024)} KB` : `${n} B`;
@@ -628,8 +640,12 @@ function PipelineSpine({ overview, pipeline, pipelineBusy, read, windowDays, onN
   const stations: { key: string; label: string; value: string; sub: string; warn?: string; note?: string; go: () => void; title: string }[] = [
     { key: 'observed', label: 'Observed', value: flow(pipeline?.signals), sub: `signals · last ${windowDays}d`,
       go: () => onNavigate('overview'), title: 'Open the Overview — the day chart breaks these down' },
+    // Same destination as the "awaiting a decision" stat in HowItWorks, and the
+    // same reason for the wording: the Inbox's 'open' filter is a superset of
+    // this count — it also lists approved, snoozed and failed proposals — so
+    // the title names the filter the button actually applies.
     { key: 'proposed', label: 'Proposed', value: now(overview.pending), sub: 'await your decision · now',
-      go: () => onNavigate('inbox', 'open'), title: 'Open the Inbox filtered to proposals needing a decision' },
+      go: () => onNavigate('inbox', 'open'), title: 'Open the Inbox filtered to open proposals' },
     { key: 'approved', label: 'Approved', value: now(overview.activeKnowledge), sub: 'active items · now',
       warn: read.observed && overview.quarantined > 0 ? `⚠ ${overview.quarantined} quarantined` : undefined,
       go: () => onNavigate('knowledge'), title: 'Open Knowledge' },
@@ -1711,23 +1727,30 @@ function PayloadPanel({ providers, scopeParam, settings, items, read, onNavigate
 
   const queryUsed = result ? readQueryProvided(result) ?? askedWithQuery : null;
   const storeEmpty = read.observed && items.every((item) => item.status !== 'active');
-  // Four different facts, four different fixes. They are ordered by how early
-  // they cut the pipeline: an empty store, then an ineligible retrieval, then
-  // items that ranked and were held, then a retrieval that simply matched none.
+  // Main's answer about this preview, never `settings.enabled`: the setting is
+  // what is true now, and only the reply says what happened when it ran.
+  const learningRan = result ? readLearningEnabled(result) : null;
+  // Five different facts, five different fixes. They are ordered by how early
+  // they cut the pipeline: an engine that was switched off and so never asked
+  // anything, then an empty store, then an ineligible retrieval, then items
+  // that ranked and were held, then a retrieval that simply matched none.
   const nothingBecause = !result || result.entries.length > 0 ? null
-    : storeEmpty
-      ? { title: 'Nothing would be injected — this scope stores no active knowledge item',
-          body: 'Retrieval had nothing to rank. Approve a proposal in the Inbox to create the first item.' }
-      : queryUsed === false
-        ? { title: 'Nothing would be injected — retrieval ran without a task query',
-            body: askedWithQuery
-              ? 'Nothing in your text survived as a search term and no path could be inferred from it, so only standing artifacts (mission-kind items) were eligible — and none is active in this scope.'
-              : 'A launch with no initial prompt has nothing to be relevant to, so only standing artifacts (mission-kind items) are eligible. Project- and path-scoped knowledge is not swept in.' }
-        : result.omitted > 0
-          ? { title: 'Nothing would be injected — everything that ranked was held back',
-              body: 'Items matched this query and none of them shipped. The reasons are listed below, and each has its own fix.' }
-          : { title: 'Nothing would be injected — retrieval ran and matched nothing',
-              body: 'No active knowledge ranked for this query in this scope. That is a recorded outcome, not an error — a broader query or a wider scope may match.' };
+    : learningRan === false
+      ? { title: 'Nothing would be injected — learning is switched off',
+          body: 'Retrieval did not run, so every counter here is 0 because nothing was asked, not because nothing matched. This says nothing about what the store holds. Switch learning on in Context to compose a real briefing.' }
+      : storeEmpty
+        ? { title: 'Nothing would be injected — this scope stores no active knowledge item',
+            body: 'Retrieval had nothing to rank. Approve a proposal in the Inbox to create the first item.' }
+        : queryUsed === false
+          ? { title: 'Nothing would be injected — retrieval ran without a task query',
+              body: askedWithQuery
+                ? 'Nothing in your text survived as a search term and no path could be inferred from it, so only standing artifacts (mission-kind items) were eligible — and none is active in this scope.'
+                : 'A launch with no initial prompt has nothing to be relevant to, so only standing artifacts (mission-kind items) are eligible. Project- and path-scoped knowledge is not swept in.' }
+          : result.omitted > 0
+            ? { title: 'Nothing would be injected — everything that ranked was held back',
+                body: 'Items matched this query and none of them shipped. The reasons are listed below, and each has its own fix.' }
+            : { title: 'Nothing would be injected — retrieval ran and matched nothing',
+                body: 'No active knowledge ranked for this query in this scope. That is a recorded outcome, not an error — a broader query or a wider scope may match.' };
 
   return (
     <section className="card learning-card">
@@ -2389,6 +2412,13 @@ function BriefingInspector({ providers, scopeParam, settings, onNavigate }: {
   // Retrieval's own answer wins; the local record only fills in for a build
   // that did not report one.
   const queryUsed = result ? readQueryProvided(result) ?? askedWithQuery : null;
+  // Widening, not a cast: main answers with `BriefingPreview` and the preload
+  // types the channel narrower, so the launch state is on the wire and off the
+  // type. `undefined` therefore means "not reported", never "none".
+  const launch: Partial<BriefingPreview> = result ?? {};
+  // The reply is the authority on whether retrieval ran. `settings.enabled`
+  // describes now, and the two are allowed to disagree after a toggle.
+  const learningRan = result ? readLearningEnabled(result) : null;
   return (
     <section className="card learning-card">
       <div className="learning-card-head">
@@ -2403,6 +2433,12 @@ function BriefingInspector({ providers, scopeParam, settings, onNavigate }: {
         <button className="learning-link" onClick={() => onNavigate('knowledge')}>Knowledge</button>{' '}
         shows the same retrieval as the literal text a session receives.
       </p>
+      {!settings.enabled && (
+        <p className="faint">
+          Learning is paused, so retrieval will not run: a preview reports the switched-off engine,
+          not an empty store. Nothing here is deleted while it is off.
+        </p>
+      )}
       <div className="inspector-form">
         <input className="field" value={query} onChange={(e) => setQuery(e.target.value)}
                onKeyDown={(e) => { if (e.key === 'Enter') void run(); }}
@@ -2420,7 +2456,13 @@ function BriefingInspector({ providers, scopeParam, settings, onNavigate }: {
       </p>
       {providers.length === 0 && <p className="faint">No launch profiles were detected, so there is no provider to preview with.</p>}
       {err && <p className="learning-status bad">✕ {err}</p>}
-      {result && (
+      {result && (learningRan === false ? (
+        /* Every number below is measured. None of them was measured this time,
+           so none of them is drawn: a meter at 0, "~0 est. tokens" and an empty
+           result all read as a retrieval that ran and found nothing. */
+        <Empty title="Learning is paused — retrieval did not run"
+               body="The engine is switched off, so nothing was ranked and nothing would be injected. That is not an empty store and not an empty result: no counters were measured, because nothing was asked. Switch learning on with the master switch below to see what a launch would receive." />
+      ) : (
         <>
           {/* Length-only magnitude; the printed numbers carry the meaning. */}
           <div className="inspector-meter" aria-hidden="true">
@@ -2455,6 +2497,15 @@ function BriefingInspector({ providers, scopeParam, settings, onNavigate }: {
               </div>
             )}
         </>
+      ))}
+      {/* True whether or not retrieval ran, and the reason a full capsule above
+          can still reach nothing: the harness has no channel Wanigan writes to. */}
+      {result && launch.launchDelivery === 'none' && launch.harnessId != null && (
+        <p className="faint">
+          This profile declares the harness <span className="mono">{launch.harnessId}</span>, which has no
+          instruction channel Wanigan injects into. A session started on it receives no briefing at all,
+          whatever retrieval ranks.
+        </p>
       )}
     </section>
   );
