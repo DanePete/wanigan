@@ -11,7 +11,7 @@ import { DEFAULT_AUTOMATION_POLICY, automationDecision } from './classifier';
 import { recordMetric } from './experiments';
 import { getCandidate, getKnowledgeItem } from './repository';
 import { listSignals } from './signals';
-import { DECIDED_CANDIDATE_STATUSES } from './types';
+import { DECIDED_CANDIDATE_STATUSES, NEVER_CONSOLIDATED_KINDS } from './types';
 import type {
   CandidateExplanation, CandidateStatus, ConsolidationRun, KnowledgeBriefing,
   KnowledgeKind, KnowledgeStatus, LearningPipelineStats, SessionBriefingRecord,
@@ -213,6 +213,12 @@ type ConsolidationRow = {
   candidates: number; auto_applied: number; duration_ms: number;
 };
 
+/**
+ * The most recent passes, newest first, capped at 500. This is a page: the
+ * retention sweep above keeps 2,000 rows, so the length of what comes back
+ * says how many were asked for, never how many are stored.
+ * LearningPipelineStats.consolidationRunsTotal is the total.
+ */
 export function listConsolidationRuns(limit = 50): ConsolidationRun[] {
   return (db().prepare('SELECT * FROM consolidation_runs ORDER BY at DESC LIMIT ?')
     .all(Math.max(1, Math.min(500, limit))) as ConsolidationRow[])
@@ -479,11 +485,17 @@ export function pipelineStats(input: { projectId?: string | null; windowDays?: n
     windowDays,
     signals: one(`SELECT COUNT(*) n FROM learning_signals WHERE created_at >= ?${signalWhere}`, [since, ...signalArgs]),
     signalsAllTime: one(`SELECT COUNT(*) n FROM learning_signals WHERE 1=1${signalWhere}`, signalArgs),
+    // Both halves of consolidation's own permanentlyIneligible() test, or this
+    // counts rows the engine can never consume. The detail flag alone left
+    // every explicit-teach and correction row in the figure — kinds ingest
+    // retires on arrival — so teaching Wanigan five things raised "eligible
+    // for consolidation" by five while the pass filtered all five out.
     eligibleSignals: one(
       `SELECT COUNT(*) n FROM learning_signals
        WHERE created_at >= ?${signalWhere}
+         AND kind NOT IN (${NEVER_CONSOLIDATED_KINDS.map(() => '?').join(',')})
          AND COALESCE(json_extract(detail_json,'$.learningCandidateEligible'), 1) != 0`,
-      [since, ...signalArgs],
+      [since, ...signalArgs, ...NEVER_CONSOLIDATED_KINDS],
     ),
     candidatesCreated: one(`SELECT COUNT(*) n FROM knowledge_candidates WHERE created_at >= ?${artifactWhere}`, [since, ...artifactArgs]),
     // Counted directly, because the Inbox figure this feeds used to be
@@ -535,6 +547,10 @@ export function pipelineStats(input: { projectId?: string | null; windowDays?: n
       };
     }),
     consolidationRuns: listConsolidationRuns(20),
+    // The page above is 20 rows against 2,000 kept, so its length is a page
+    // size. Count the table so a caller can say how many passes are stored
+    // without inferring it from how many it was handed.
+    consolidationRunsTotal: one('SELECT COUNT(*) n FROM consolidation_runs'),
   };
 }
 

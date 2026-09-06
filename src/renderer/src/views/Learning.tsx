@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import type {
   BriefingPreview,
   CandidateExplanation,
+  ConsolidationOutcome,
   ConsolidationRun,
   FreshnessReport,
   KnowledgeBriefing,
@@ -799,8 +800,8 @@ function Overview({ overview, settings, pipeline, read, pipelineErr, pipelineBus
                      onWiden={windowDays < 90 ? () => onWindow(90) : null} />
 
       <section className="learning-grid two">
-        <Heartbeat runs={pipeline.consolidationRuns} settings={settings} scopeParam={scopeParam}
-                   busy={busy} act={act} />
+        <Heartbeat runs={pipeline.consolidationRuns} storedTotal={pipeline.consolidationRunsTotal}
+                   settings={settings} scopeParam={scopeParam} busy={busy} act={act} />
         <RetrievalCard settings={settings} pipeline={pipeline} windowDays={windowDays}
                        candidates={candidates} onNavigate={onNavigate} />
       </section>
@@ -1063,8 +1064,14 @@ const triggerWords = (trigger: ConsolidationRun['trigger']): string =>
     : trigger === 'manual' ? 'started by “Consolidate now”'
     : `trigger recorded as “${trigger}”`;
 
-function Heartbeat({ runs, settings, scopeParam, busy, act }: {
+function Heartbeat({ runs, storedTotal, settings, scopeParam, busy, act }: {
   runs: ConsolidationRun[];
+  /**
+   * Every pass still stored, counted by main. `runs` is a bounded page of the
+   * most recent 20, so its length is a page size: with a pass every 5 minutes
+   * it reads "20 recorded" forever, whatever the table holds.
+   */
+  storedTotal: number;
   settings: LearningSettings;
   scopeParam: string | null | undefined;
   busy: string | null;
@@ -1078,7 +1085,17 @@ function Heartbeat({ runs, settings, scopeParam, busy, act }: {
             onClick={() => void act('consolidate', () => window.wanigan.learning.consolidate(scopeParam),
               // The notice reports what this pass actually did — zeros included.
               (result) => {
-                const r = result as { processed: number; candidates: number; autoApplied: number };
+                // A refusal and a finished pass are different shapes. Reading
+                // counts off the union without narrowing printed "Consolidation
+                // finished" over four undefined values whenever the pass never
+                // started, which is reachable: this button is disabled while the
+                // engine is off, but consolidation has a switch of its own.
+                const r = result as ConsolidationOutcome;
+                if (!r.ran) {
+                  return r.reason === 'consolidation-disabled'
+                    ? 'Nothing ran: consolidation is switched off. Turn it on above and press this again.'
+                    : 'Nothing ran: the learning engine is switched off.';
+                }
                 return r.candidates > 0
                   ? `Consolidation finished: ${r.candidates} candidate${pl(r.candidates)} from ${r.processed} consumed signal${pl(r.processed)}, ${r.autoApplied} auto-applied.`
                   : 'Consolidation finished: no new candidates — nothing repeated across enough independent sessions yet.';
@@ -1090,7 +1107,7 @@ function Heartbeat({ runs, settings, scopeParam, busy, act }: {
     <article className="card learning-card">
       <div className="learning-card-head">
         <div><span className="label">Automation heartbeat</span><h2>Consolidation passes</h2></div>
-        {latest && <span className="learning-status muted">{runs.length} recorded</span>}
+        {latest && <span className="learning-status muted">{storedTotal.toLocaleString()} recorded</span>}
       </div>
       {latest ? (
         <>
@@ -1101,7 +1118,7 @@ function Heartbeat({ runs, settings, scopeParam, busy, act }: {
             auto-applied <strong>{latest.autoApplied.toLocaleString()}</strong>.
           </p>
           <div className="heartbeat-strip" role="img"
-               aria-label={`${runs.length} recorded consolidation pass${runs.length === 1 ? '' : 'es'}; the most recent produced ${latest.candidates} candidate${pl(latest.candidates)}.`}>
+               aria-label={`the ${runs.length} most recent of ${storedTotal.toLocaleString()} recorded consolidation pass${storedTotal === 1 ? '' : 'es'}; the newest produced ${latest.candidates} candidate${pl(latest.candidates)}.`}>
             {strip.map((r) => (
               <span key={r.id} className={r.candidates > 0 ? 'hit' : ''}
                     style={{ height: `${4 + Math.round((r.candidates / maxC) * 18)}px` }}

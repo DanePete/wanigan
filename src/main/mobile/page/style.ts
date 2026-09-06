@@ -34,6 +34,14 @@ export function mobileStyle(): string {
     .notice strong { color:var(--ink); display:block; margin-bottom:4px; }
     .hidden { display:none; }
     .why { margin-top:7px; }
+    /* The pairing screen. These three rules were inline attributes on the
+       markup until the served CSP was measured against them: style-src-attr
+       falls back to style-src, a nonce does not authorise an attribute, and
+       Chrome dropped all three — so the first screen anyone sees laid its form
+       out as a block, with no gap and a full-width input. */
+    .pair-note { margin-top:6px; }
+    #pair-form { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+    #pair-token { flex:1; min-width:220px; }
     .controls { margin-top:20px; }
     .control-card { border:1px solid var(--line); border-radius:13px; background:linear-gradient(145deg,var(--panel),var(--panel-raised)); padding:14px; margin-top:10px; }
     .control-card h3 { margin:0 0 4px; font-size:15px; }

@@ -20,7 +20,19 @@ import { splitTerminalInput } from '@shared/terminal-input';
  * blank". So the terminal is opened once, into a container this module owns,
  * and mounting only ever moves that container into whatever host is current.
  */
-const pool = new Map<string, { term: Terminal; fit: FitAddon; container: HTMLDivElement; primed: boolean }>();
+type Pane = {
+  term: Terminal;
+  fit: FitAddon;
+  container: HTMLDivElement;
+  /** Set when this session's one scrollback prime has been asked for. */
+  primed: boolean;
+  /** True from that request until the buffer is written, or refused. */
+  priming: boolean;
+  /** Text this window composed, held back so the prime cannot bury it. */
+  pendingLocal: string[];
+};
+
+const pool = new Map<string, Pane>();
 
 /** Touch-first surfaces need a reading size, not a desktop-density compromise. */
 function terminalFontSize(): number {
@@ -102,12 +114,50 @@ if (typeof window !== 'undefined') {
 
 export function disposePane(sessionId: string) {
   const p = pool.get(sessionId);
+  // Removing the entry is also what stops a prime that is still in flight: it
+  // looks this session up again on the way back and writes nothing once the
+  // pool no longer holds the pane it was primed for.
   if (p) { p.term.dispose(); p.container.remove(); pool.delete(sessionId); }
 }
 
-/** Feed output into a session's terminal even while its pane is not mounted. */
+/**
+ * Feed broadcast PTY output into a session's terminal even while its pane is
+ * not mounted.
+ *
+ * Nothing is written while that pane is priming. Main appends each chunk to its
+ * ring buffer before it broadcasts the chunk, and flushes that buffer before it
+ * answers `scrollback()`, so a chunk broadcast during the round trip is already
+ * inside the history about to be written. Writing it here as well put it on
+ * screen twice — and because TUI output carries cursor addressing, the second
+ * copy repaints against a screen that no longer matches. Dropping it loses
+ * nothing so long as main's answer reaches this window ahead of the chunks it
+ * broadcasts after answering: the ordering that scrollback()'s own comment in
+ * src/main/sessions.ts already depends on.
+ */
 export function feed(sessionId: string, data: string) {
-  pool.get(sessionId)?.term.write(data);
+  const entry = pool.get(sessionId);
+  if (!entry || entry.priming) return;
+  entry.term.write(data);
+}
+
+/**
+ * Write text this window composed rather than bytes main broadcast.
+ *
+ * No buffer holds it, so a prime cannot replay it and a drop is permanent. One
+ * that arrives mid-prime waits for the scrollback and is written after it,
+ * where it belongs in the reading order.
+ */
+function feedLocal(sessionId: string, text: string) {
+  const entry = pool.get(sessionId);
+  if (!entry) return;
+  if (entry.priming) entry.pendingLocal.push(text);
+  else entry.term.write(text);
+}
+
+/** Open the gate, then release what waited on it — in that order. */
+function finishPrime(pane: Pane) {
+  pane.priming = false;
+  for (const text of pane.pendingLocal.splice(0)) pane.term.write(text);
 }
 
 /**
@@ -130,12 +180,14 @@ export function feed(sessionId: string, data: string) {
  * The subscription belongs where the pool does, and its lifetime is the
  * window's. App.tsx starts it once. Queueing bytes and replaying them after a
  * pane primes would be the wrong fix: main's scrollback flushes everything it
- * has already broadcast, so a replay duplicates.
+ * has already broadcast, so a replay duplicates. feed() drops them for the same
+ * reason. The exit line below is this window's own text and is in no buffer, so
+ * it is held through a prime rather than dropped by it.
  */
 export function startTerminalOutputPump(): () => void {
   const offData = window.wanigan.on.data(({ sessionId, data }) => feed(sessionId, data));
   const offExit = window.wanigan.on.exit(({ sessionId, exitCode }) => {
-    feed(sessionId, `\r\n\x1b[38;5;244m── session exited (code ${exitCode}) ──\x1b[0m\r\n`);
+    feedLocal(sessionId, `\r\n\x1b[38;5;244m── session exited (code ${exitCode}) ──\x1b[0m\r\n`);
   });
   return () => { offData(); offExit(); };
 }
@@ -199,7 +251,7 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
       const container = document.createElement('div');
       container.style.width = '100%';
       container.style.height = '100%';
-      entry = { term, fit, container, primed: false };
+      entry = { term, fit, container, primed: false, priming: false, pendingLocal: [] };
       pool.set(sessionId, entry);
       // Opened exactly once, for the life of the session.
       term.open(container);
@@ -212,9 +264,24 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
     // an empty screen mid-conversation.
     if (!entry.primed) {
       entry.primed = true;
+      // Shut the gate feed() reads for the round trip; see feed() for what
+      // the buffer below already carries.
+      entry.priming = true;
+      const pane = entry;
       window.wanigan.sessions.scrollback(sessionId)
-        .then((buf) => { if (buf) entry!.term.write(buf); })
-        .catch(() => {});
+        .then((buf) => {
+          // A pane disposed mid-prime has a disposed terminal, and a session
+          // re-mounted after that is a new entry with a prime of its own.
+          if (pool.get(sessionId) !== pane) return;
+          if (buf) pane.term.write(buf);
+          finishPrime(pane);
+        })
+        .catch(() => {
+          // A refused scrollback still has to open the gate. Left shut, feed()
+          // would drop every later chunk for the life of the session — a pane
+          // deaf to a running agent, which is worse than a missing history.
+          if (pool.get(sessionId) === pane) finishPrime(pane);
+        });
     }
 
     const doFit = () => {

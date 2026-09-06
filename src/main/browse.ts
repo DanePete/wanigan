@@ -116,6 +116,7 @@ export async function pickFiles(
     : await dialog.showOpenDialog({ properties: props, filters: FILTERS });
   if (res.canceled || !res.filePaths.length) return [];
   rememberDir(path.dirname(res.filePaths[0]));
+  rememberPicked(res.filePaths);
   return res.filePaths;
 }
 
@@ -128,6 +129,7 @@ export async function pickDirectory(win: BrowserWindow | null, title = 'Choose a
     : await dialog.showOpenDialog({ properties: ['openDirectory'] });
   if (res.canceled || !res.filePaths[0]) return null;
   rememberDir(res.filePaths[0]);
+  rememberPicked([res.filePaths[0]]);
   return res.filePaths[0];
 }
 
@@ -240,6 +242,61 @@ export function recentDirs(): string[] {
 export function rememberDir(dir: string) {
   const next = [dir, ...recentDirs().filter((d) => d !== dir)].slice(0, RECENT_MAX);
   setSetting(RECENT_KEY, JSON.stringify(next));
+}
+
+
+/* ── paths a person chose in a native dialog ─────────────────────────────
+   attach:add copies the file it is handed into attachmentsDir(sessionId), and
+   sessions.ts passes that directory to the CLI as --add-dir, so whatever lands
+   there is inside what the agent may read. A path the renderer supplies
+   therefore has to have come from somewhere a person clicked. pickFiles and
+   pickDirectory are the only two calls that write to this record. Three more
+   dialog.showOpenDialog calls exist in index.ts — projects:pick,
+   backup:inspect and backup:restore — and none of them feeds it: all three
+   choose a directory, and attachments.inspect() refuses a directory as a
+   folder whichever way it was chosen.
+
+   The membership test is the exact resolved string — the same rule
+   instructions.ts uses for context:read — and it is deliberately not a prefix
+   test: a chosen directory does not make the files beneath it attachable.
+   Resolved and not realpathed, so the string a dialog returned is the string
+   that matches; the consequence is that a picked symlink matches and the copy
+   follows it, staging the bytes of its target rather than the link.
+
+   Persisted rather than kept in memory for the run: the strings are the record
+   of a click that already happened, and a relaunch would otherwise refuse a
+   file the person had chosen minutes earlier while telling them to choose it in
+   a dialog they had just used. Bounded at PICKED_MAX with the oldest dropped
+   first, so a path chosen long enough ago stops matching and has to be chosen
+   again. browse.browse() is NOT a source here: it readdirs any directory it is
+   given, so feeding it would grant exactly what this refuses.
+
+   What this does not do: it does not judge the file. A person who picks
+   ~/.ssh/id_rsa in the dialog has chosen to hand it over, and Wanigan attaches
+   it. It refuses only a path no dialog in this app returned.
+   ───────────────────────────────────────────────────────────────────── */
+
+const PICKED_KEY = 'browse_picked_paths';
+/** Exported so a refusal can state the real ceiling instead of a copy of it. */
+export const PICKED_MAX = 200;
+
+/** Newest first. Non-strings are dropped rather than trusted. */
+export function pickedPaths(): string[] {
+  try {
+    const v = JSON.parse(getSetting(PICKED_KEY, '[]')) as unknown;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch { return []; }
+}
+
+function rememberPicked(paths: string[]) {
+  const chosen = paths.map((p) => path.resolve(p));
+  const next = [...chosen, ...pickedPaths().filter((p) => !chosen.includes(p))].slice(0, PICKED_MAX);
+  setSetting(PICKED_KEY, JSON.stringify(next));
+}
+
+/** Whether a native dialog in this app returned this exact path. */
+export function isPickedPath(p: string): boolean {
+  return pickedPaths().includes(path.resolve(p));
 }
 
 

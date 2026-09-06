@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GhPr, GhStatusReport, Project } from '@shared/types';
-import { ConfirmNote, EmptyState, Note, PageHead, ago } from '../components/bits';
+import { ConfirmNote, EmptyState, Note, PageHead, Reading, ago } from '../components/bits';
 import ReviewGate from '../components/ReviewGate';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 
@@ -131,7 +131,13 @@ function findFile(status: Status, path: string): { file: GFile; staged: boolean 
   return work ? { file: work, staged: false } : null;
 }
 
-export default function Git({ projects }: { projects: Project[] }) {
+export default function Git({ projects, projectsRead }: {
+  projects: Project[];
+  /** Whether a project-list read has returned in the shell. The list seeds
+      empty and a failed read leaves it empty, so its length alone cannot tell
+      "you have no projects" from "nobody has looked yet". */
+  projectsRead: boolean;
+}) {
   // Six things here are view memory rather than component state: the
   // repository, the right-hand pane, the commit filter, the selected row, the
   // all-branches toggle and the commit message. Every one of them is a place
@@ -206,55 +212,142 @@ export default function Git({ projects }: { projects: Project[] }) {
     if (hadProject) { setSel(null); setDetail(null); setMsg(''); }
   }, [project, projectId, setProjectId, setSel, setMsg]);
 
+  // `st` is not a cache of the last repository Wanigan managed to read: it is
+  // the root every button on this page hands to the main process. So a read
+  // belongs to the repository that was selected when it started, and this
+  // counter is how a late answer finds out it no longer speaks for the screen.
+  // It counts repositories, not reads: it is bumped when the selected root
+  // changes, and once more on unmount so a read still in flight cannot write
+  // into state that is going away. Nothing else bumps it. In particular the
+  // poll effect's cleanup must not, because that cleanup also runs whenever
+  // `load` changes identity — the "all branches" chip does that — and every
+  // guard below is a `return`, so a bump there would silently drop the report
+  // of an action still running, the error from a failed discard or push
+  // included.
+  const requestEpoch = useRef(0);
+  useEffect(() => () => { requestEpoch.current += 1; }, []);
+
+  // Clear the previous repository synchronously, at the effect boundary, in
+  // the same commit that puts the new one in the picker. This is the whole
+  // fix for a picker naming B while Discard, Commit, Delete branch and Drop
+  // stash act on A: without it `st` only ever changed when a read succeeded,
+  // so a project whose status read throws left A's status — and A's root —
+  // standing under B's name, permanently, because every 8-second poll took
+  // the same catch.
+  //
+  // Clearing opens no window where a click has no root: every control that
+  // passes `st.root` to main is rendered inside an `st`-truthy branch, so this
+  // removes the buttons rather than arming them against the wrong tree. The
+  // pending confirmation goes too — its `run` closure captured A's root, and
+  // it would otherwise still be on screen, one press from acting on A.
+  useEffect(() => {
+    requestEpoch.current += 1;
+    setSt(null); setCommits([]); setBrs([]); setStash([]);
+    setDetail(null); setErr(null); setOk(null); setConfirm(null);
+    setPr(null); setCreating(false);
+  }, [root]);
+
   // Hands the status back as well as storing it. A caller that has just run a
   // git action has to read the result in the same tick to reconcile the diff
   // pane against it: `st` in that caller's closure is still the status from
   // before the action, and a setState does not arrive in time to help.
   const load = useCallback(async (): Promise<Status | null> => {
     if (!root) return null;
+    const epoch = requestEpoch.current;
     try {
       const s: Status = await window.wanigan.git.status(root);
+      if (epoch !== requestEpoch.current) return null;
       setSt(s);
-      if (!s.isRepo) { setCommits([]); setBrs([]); setStash([]); return s; }
+      if (!s.isRepo) { setCommits([]); setBrs([]); setStash([]); setErr(null); return s; }
       const [l, b, sh] = await Promise.all([
         window.wanigan.git.log(s.root, { limit: 150, all: showAll }),
         window.wanigan.git.branches(s.root),
         window.wanigan.git.stashes(s.root),
       ]);
+      if (epoch !== requestEpoch.current) return null;
       setCommits(l as Commit[]); setBrs(b as Branch[]); setStash(sh as Stash[]);
       setErr(null);
       return s;
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); return null; }
+    } catch (e) {
+      // A failure raised for a repository nobody is looking at any more must
+      // not land over the one that is — the stale `setErr` was as wrong as a
+      // stale status. And a status this read could not confirm is not a status
+      // to act on: drop it, so the page shows what it knows instead of arming
+      // twenty-one call sites with a root the last read could not verify. The
+      // cost is real and is not hidden — a transient failure on the selected
+      // repository blanks the workbench until the next read returns. The
+      // commit draft survives it; it is view memory, not component state.
+      if (epoch !== requestEpoch.current) return null;
+      setSt(null); setCommits([]); setBrs([]); setStash([]);
+      setErr(e instanceof Error ? e.message : String(e));
+      return null;
+    }
   }, [root, showAll]);
 
-  useEffect(() => { void load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [load]);
+  // Four git reads a beat — status, log, branches, stashes — behind a window
+  // nobody is looking at. Both of the shell's own polls already stop on
+  // document.hidden and catch up on visibilitychange (App.tsx); this one did
+  // not. Measured in the built renderer with the window hidden: 8 reads over
+  // 17 seconds before, 0 after, and one read within 700ms of it coming back.
+  useEffect(() => {
+    void load();
+    const t = window.setInterval(() => { if (document.hidden) return; void load(); }, 8000);
+    const onVisible = () => { if (document.hidden) return; void load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [load]);
 
   // PR state is asked for on open, on branch change and on the explicit ↻ —
   // never from the 8-second poll above, which stays local-only. The main
   // process adds a 60s cache so re-renders cannot become gh spawns.
+  // Epoch-guarded for the same reason the status read is: the chip is a link to
+  // one repository's pull request, and a late answer for A landing under B's
+  // name is a button that opens the wrong PR.
   const loadPr = useCallback(async (force = false) => {
     if (!root) { setPr(null); return; }
-    try { setPr(await window.wanigan.gh.prStatus(root, force)); } catch { setPr(null); }
+    const epoch = requestEpoch.current;
+    try {
+      const report = await window.wanigan.gh.prStatus(root, force);
+      if (epoch === requestEpoch.current) setPr(report);
+    } catch { if (epoch === requestEpoch.current) setPr(null); }
   }, [root]);
   const branch = st?.branch ?? null;
   useEffect(() => { void loadPr(); }, [loadPr, branch]);
 
+  // The action itself is safe — it was given the root that was on screen when
+  // it was pressed. What is not safe is its *report*: switch project while a
+  // discard is in flight and its outcome, success or failure, arrives over a
+  // different repository's pane. An error especially, because the panel below
+  // reads `err` with no status as "The last read of this repository failed" —
+  // that is the panel's own title, below — and would say it about a repository
+  // whose own read is simply still running. So an outcome that outlived its
+  // repository is dropped rather than misattributed.
+  // That does lose the confirmation in that case; a sentence about the wrong
+  // tree is the worse of the two.
   async function act(label: string, fn: () => Promise<unknown>, note?: string) {
+    const epoch = requestEpoch.current;
     setBusy(label); setErr(null); setOk(null);
     try {
       const r = await fn();
+      if (epoch !== requestEpoch.current) return;
       setOk(note ?? (typeof r === 'string' && r ? r : `${label} done.`));
       await syncSelection(await load());
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    } catch (e) { if (epoch === requestEpoch.current) setErr(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(null); }
   }
 
   async function openCommit(c: Commit) {
+    if (!st) return;
     setSel({ kind: 'commit', hash: c.hash });
+    const epoch = requestEpoch.current;
     try {
-      const d = await window.wanigan.git.commitDiff(st!.root, c.hash);
+      const d = await window.wanigan.git.commitDiff(st.root, c.hash);
+      if (epoch !== requestEpoch.current) return;
       setDetail({ title: `${c.short} · ${c.subject}`, patch: d.patch });
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    } catch (e) { if (epoch === requestEpoch.current) setErr(e instanceof Error ? e.message : String(e)); }
   }
 
   // The repository root is a parameter because the reconcile below runs the
@@ -266,10 +359,13 @@ export default function Git({ projects }: { projects: Project[] }) {
     if (!repoRoot) return;
     setSel({ kind: 'file', path: f.path, staged });
     if (f.untracked) { setDetail({ title: f.path, patch: 'Untracked — this file is not in git yet, so there is nothing to diff against.' }); return; }
+    const epoch = requestEpoch.current;
     try {
       const d = await window.wanigan.git.fileDiff(repoRoot, f.path, staged);
+      // A patch is a read of one repository; it must not land over another.
+      if (epoch !== requestEpoch.current) return;
       setDetail({ title: f.path, patch: d || 'No textual diff (binary, or a mode change only).' });
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    } catch (e) { if (epoch === requestEpoch.current) setErr(e instanceof Error ? e.message : String(e)); }
   }
 
   // A git action changes the tree under whatever the diff pane is showing, so
@@ -317,15 +413,19 @@ export default function Git({ projects }: { projects: Project[] }) {
 
   async function createPr() {
     if (!st?.isRepo) return;
+    const epoch = requestEpoch.current;
     setBusy('Create PR'); setErr(null); setOk(null);
     try {
       const r = await window.wanigan.gh.createPr(st.root, {
         title: form.title, body: form.body, draft: form.draft, base: form.base.trim() || undefined,
       });
+      // The pull request was opened either way; reporting it over a different
+      // repository's pane is what is refused here.
+      if (epoch !== requestEpoch.current) return;
       setOk(r.url ? `Pull request created: ${r.url}` : `Pull request created. ${r.detail}`);
       setCreating(false);
       await loadPr(true);
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    } catch (e) { if (epoch === requestEpoch.current) setErr(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(null); }
   }
 
@@ -350,20 +450,40 @@ export default function Git({ projects }: { projects: Project[] }) {
       lead="One project's repository: history, working tree, branches, stashes and the review gate. Wanigan only reads it until you press a button here." />
   );
 
+  // An empty list is two different facts and this pane used to print only one
+  // of them. The shell seeds its project list empty, fills it when the read
+  // returns, and reports a failed read in the toast at the bottom of the
+  // window (App.tsx's `.toast`) — so before that read, and after one that
+  // failed, an operator with a dozen repositories was told they had none and
+  // offered "Add your first project". Nothing was corrupted by pressing it:
+  // addProject de-duplicates on the project's path (src/main/store.ts), so
+  // re-adding a folder already registered returns the existing row. The lie
+  // was on the screen, not in the database.
   if (!options.length) {
     return (
       <div className="pane gt-view">
         {head}
         {err && <div className="gt-notice"><Note tone="error">{err}</Note></div>}
-        <EmptyState
-          posture="nothing-yet"
-          title="No project to read git from"
-          cue="Add a folder and this opens on that repository."
-          action={(
-            <button className="btn btn-primary" disabled={adding} onClick={() => void addProject()}>
-              {adding ? 'Choosing…' : 'Add your first project'}
-            </button>
-          )} />
+        {projectsRead ? (
+          <EmptyState
+            posture="nothing-yet"
+            title="No project to read git from"
+            cue="Add a folder and this opens on that repository."
+            action={(
+              <button className="btn btn-primary" disabled={adding} onClick={() => void addProject()}>
+                {adding ? 'Choosing…' : 'Add your first project'}
+              </button>
+            )} />
+        ) : (
+          <EmptyState
+            posture="could-not-read"
+            title="Your project list has not been read yet"
+            cue={<>
+              This is not a count of your projects. Wanigan reads the list when the window opens and again
+              when it regains focus; if that read failed, the message at the bottom of the window carries the
+              error and the button that runs it again.
+            </>} />
+        )}
       </div>
     );
   }
@@ -496,7 +616,10 @@ export default function Git({ projects }: { projects: Project[] }) {
         <div className="gt-col">
           <div className="gt-sec-h">
             <span className="t">History</span>
-            <span className="c">{commits.length}</span>
+            {/* A count is a read. Until one returns, this said 0. */}
+            <span className="c" title={st ? undefined : 'No status read has returned for this repository yet, so there is no number here.'}>
+              {st ? commits.length : '—'}
+            </span>
             <div className="sp">
               <input className="field gt-filter" value={commitFilter} placeholder="Filter message or author"
                      aria-label="Filter the loaded commits" onChange={(e) => setCommitFilter(e.target.value)} />
@@ -560,7 +683,14 @@ export default function Git({ projects }: { projects: Project[] }) {
                   : `${shownCommits.length} of the ${commits.length} loaded commits match. The filter runs over what is loaded, not the whole history.`}
               </p>
             )}
-            {!commits.length && <p className="faint" style={{ padding: 14 }}>No commits yet.</p>}
+            {/* "No commits yet." is a claim about a repository, and it used to
+                be printed before anything had read one — and left up beside the
+                error Note when the read failed. Three states, said apart. */}
+            {!commits.length && (st
+              ? <p className="faint gt-filter-note">No commits yet.</p>
+              : err
+                ? <p className="faint gt-filter-note">The last read of this repository failed, so nothing here is a count of its history.</p>
+                : <Reading what="this repository" />)}
           </div>
         </div>
 
@@ -570,7 +700,9 @@ export default function Git({ projects }: { projects: Project[] }) {
             {(['changes', 'branches', 'stash'] as const).map((p) => (
               <button key={p} className={`gt-chip${pane === p ? ' on' : ''}`} onClick={() => setPane(p)}>
                 {p}{p === 'changes' && st ? ` ${st.staged.length + st.unstaged.length + st.untracked.length}` : ''}
-                {p === 'stash' ? ` ${stash.length}` : ''}
+                {/* Guarded like the changes count beside it: an unread stash
+                    list is not an empty one. */}
+                {p === 'stash' && st ? ` ${stash.length}` : ''}
               </button>
             ))}
           </div>
@@ -735,6 +867,28 @@ export default function Git({ projects }: { projects: Project[] }) {
                   Stash everything{msg.trim() ? ' with that message' : ''}
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* All three panes above are gated on `st` — which is what keeps a
+              destructive button from ever carrying a root the picker is not
+              naming — so without it this column was a row of tabs over nothing.
+              It says which of the two silences this is instead. Rendered inside
+              the workbench rather than as a fourth top-level `.pane` return:
+              this is a state of the workbench, not a different screen, and the
+              count of page heads and pane roots is pinned at three. */}
+          {!st && (
+            <div className="gt-notice">
+              {err
+                ? <EmptyState
+                    posture="could-not-read"
+                    title="The last read of this repository failed"
+                    cue={<>
+                      The error is above. Nothing on this page acts on {project?.name ?? 'it'} until a read
+                      returns; Wanigan tries again every 8 seconds while this window is visible.
+                    </>}
+                    action={<button className="btn" disabled={!!busy} onClick={() => void load()}>Try again</button>} />
+                : <Reading what="the working tree, branches and stashes" />}
             </div>
           )}
 

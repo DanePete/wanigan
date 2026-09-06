@@ -278,5 +278,19 @@ export const CONSOLE_SECTION: MobileSection = {
         catch (error) { controlResult.textContent = error instanceof Error ? error.message : 'Could not interrupt the session.'; }
         finally { setActionBusy(false); }
       });
-      setInterval(() => { if (!document.hidden && connectionState === 'connected') void loadTerminal(); }, 1500);`,
+      // sections.ts's rule says a screen must not hold an interval of its
+      // own, and this screen holds one anyway. The cadence is the reason:
+      // this is live terminal output, and the cursor protocol above makes each
+      // tick a few hundred bytes rather than a re-read of the screen, so
+      // ui.watch()'s three-second poll is the wrong cadence for it. The guard
+      // is what the exception costs — it has to answer the harm the rule names
+      // instead. document.hidden only asks whether the tab is in front, so
+      // standing on Spend, Git or Device with the page open still asked the
+      // Mac for a terminal every 1.5 seconds, forty times a minute, for output
+      // nobody was looking at.
+      setInterval(() => {
+        if (document.hidden || connectionState !== 'connected') return;
+        if (!ui.showing('agent')) return;
+        void loadTerminal();
+      }, 1500);`,
 };

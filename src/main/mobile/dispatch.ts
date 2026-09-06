@@ -127,10 +127,16 @@ export function securityHeaders(nonce?: string): Record<string, string> {
     expires: '0',
     'content-security-policy':
       `default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; ` +
-      // worker-src is separate on purpose: a nonce cannot be attached to a
-      // worker's script URL, so without this the page would refuse the very
-      // registration it just asked for.
-      `script-src ${script}; style-src ${style}; connect-src 'self'; img-src 'self' data:; worker-src 'self'`,
+      `script-src ${script}; style-src ${style}; connect-src 'self'; img-src 'self' data:; ` +
+      // Both directives on this line are separate on purpose. worker-src:
+      // a nonce cannot be attached to a worker's script URL, so without this
+      // the page would refuse the very registration it just asked for.
+      // manifest-src: it falls back to default-src 'none', and Chrome then
+      // refuses the <link rel="manifest"> the shell writes — "Loading a
+      // manifest … violates … default-src 'none'" — without ever requesting
+      // it, so the installed app would carry none of the name, display mode or
+      // theme colour dashboardManifest() returns.
+      `worker-src 'self'; manifest-src 'self'`,
     'x-frame-options': 'DENY',
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
@@ -267,9 +273,10 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse): Pr
     return;
   }
 
-  // Deliberately POST-only. /api/terminal is polled every 1.5 seconds and
-  // /api/control on every render, so charging reads to the write budget would
-  // 429 a console that is working correctly within seconds.
+  // Deliberately POST-only. /api/terminal is polled every 1.5 seconds while
+  // the Agent screen is the screen on show, and /api/control on every render,
+  // so charging reads to the write budget would 429 a console that is working
+  // correctly within seconds.
   if (req.method === 'POST') {
     const credentialled = !route.unauthenticated;
     const allowed = credentialled

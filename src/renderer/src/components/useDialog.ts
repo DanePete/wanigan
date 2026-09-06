@@ -65,13 +65,19 @@ function visible(el: HTMLElement | null): el is HTMLElement {
 
 /**
  * Where focus goes when the dialog closes: the control that opened it, or —
- * when that control unmounted with the view — the rail's single roving tab
- * stop, so a keyboard user is never dropped on the document body.
+ * when that control unmounted with the view — the sidebar's single roving tab
+ * stop, and failing that the header's sidebar toggle, so a keyboard user is
+ * never dropped on the document body.
+ *
+ * Two fallbacks, not one, because App renders the nav list only while the
+ * sidebar is open: with it collapsed there is no [data-nav-tab] in the
+ * document at all, while .hdr-toggle is rendered outside that condition.
  */
 function restoreFocus(opener: HTMLElement | null): void {
   const target = visible(opener)
     ? opener
-    : document.querySelector<HTMLElement>('.nav-tabs [data-nav-tab][tabindex="0"]');
+    : document.querySelector<HTMLElement>('[data-nav-tab][tabindex="0"]')
+      ?? document.querySelector<HTMLElement>('.hdr-toggle');
   target?.focus();
 }
 

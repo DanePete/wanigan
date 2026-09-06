@@ -1,3 +1,4 @@
+import { dialog, type BrowserWindow } from 'electron';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { db } from './db';
@@ -20,6 +21,13 @@ export function recipe(projectId: string): ReviewRecipe {
   catch { return { projectId, commands: [], updatedAt: row?.updated_at ?? null }; }
 }
 
+/**
+ * Stores the command text with no question asked. IPC must not reach this
+ * directly — review:saveRecipe goes through saveRecipeWithConsent below. Its
+ * callers are that wrapper, once the question has been answered, and the smoke
+ * suite, which writes a recipe as a module call and has no window to answer a
+ * dialog.
+ */
 export function saveRecipe(projectId: string, commands: string[]): ReviewRecipe {
   if (!projectById(projectId)) throw new Error('Project not found.');
   const safe = asCommands(commands);
@@ -28,6 +36,65 @@ export function saveRecipe(projectId: string, commands: string[]): ReviewRecipe 
     ON CONFLICT(project_id) DO UPDATE SET commands_json=excluded.commands_json, updated_at=excluded.updated_at`)
     .run(projectId, JSON.stringify(safe), Date.now());
   return recipe(projectId);
+}
+
+/**
+ * The same save, with the human in the loop. This is the entry point IPC uses.
+ *
+ * The question is on the save rather than on the run. runCommand hands each
+ * stored string to `$SHELL -lc`, and a recipe is written once and executed many
+ * times from more than one surface: review:run for the project, and
+ * control.runProof for a goal's verify task, which runs the same stored text in
+ * that task's worktree when it has one. Consent belongs where the capability is
+ * created.
+ * Re-asking at each run would ask again about text already approved, which is
+ * how a person learns to click a dialog away. runAt is also a plain module call
+ * — both of its callers are human-initiated IPC today — so gating the store is
+ * what keeps the text approved whatever else later calls the runner.
+ *
+ * Only commands the stored recipe does not already contain are put in the
+ * dialog. Dropping a command, or reordering the same set, asks for nothing the
+ * recipe could not already run.
+ */
+export async function saveRecipeWithConsent(
+  win: BrowserWindow | null,
+  projectId: string,
+  commands: string[]
+): Promise<ReviewRecipe> {
+  const project = projectById(projectId);
+  if (!project) throw new Error('Project not found.');
+  const safe = asCommands(commands);
+  if (safe.some((c) => c.length > 2_000)) throw new Error('A review command is too long (maximum 2,000 characters).');
+
+  const stored = recipe(projectId).commands;
+  const added = safe.filter((c) => !stored.includes(c));
+  if (!added.length) return saveRecipe(projectId, safe);
+
+  if (!win || win.isDestroyed()) {
+    throw new Error('Saving a new review command needs the Wanigan window open to confirm it.');
+  }
+  const one = added.length === 1;
+  const answer = await dialog.showMessageBox(win, {
+    type: 'warning',
+    buttons: ['Cancel', one ? 'Save this command' : `Save these ${added.length} commands`],
+    defaultId: 0,
+    cancelId: 0,
+    title: one ? 'Save a new review command?' : 'Save new review commands?',
+    message: one
+      ? `Add a review command to ${project.name}?`
+      : `Add ${added.length} review commands to ${project.name}?`,
+    detail:
+      `Wanigan runs a review gate through your login shell in ${project.path}. ` +
+      `${one ? 'This is the line' : 'These are the lines'} being added:\n\n` +
+      added.map((c) => `    ${c}`).join('\n') +
+      '\n\nThis is stored, not run once: the Review panel runs it for the project, and a goal\'s ' +
+      'verification task runs it again in that task\'s worktree when it has one. Neither asks again. ' +
+      'Save only what you would type here yourself.',
+  });
+  if (answer.response !== 1) {
+    throw new Error('Cancelled. The review commands were not saved, so nothing new can be run by a gate.');
+  }
+  return saveRecipe(projectId, safe);
 }
 
 function map(row: { id: string; project_id: string; started_at: number; ended_at: number | null; status: string; results_json: string }): ReviewRun {
@@ -143,8 +210,12 @@ async function runCommand(command: string, cwd: string): Promise<ReviewRun['resu
 
 /**
  * The control plane may point a gate at a worktree created by Wanigan. Keeping
- * this internal argument out of the IPC surface means a renderer can never
- * turn a saved review recipe into arbitrary-shell execution elsewhere.
+ * this internal argument out of the IPC surface means no renderer names the
+ * directory: review:run passes none, and control.runProof passes the worktree
+ * Wanigan recorded for the task it was given, or the project path. It does not
+ * confine the command text, which is whatever the recipe holds and reaches
+ * `$SHELL -lc` verbatim; that is what saveRecipeWithConsent puts a person in
+ * front of.
  */
 export async function runAt(projectId: string, cwd?: string): Promise<ReviewRun> {
   const project = projectById(projectId);

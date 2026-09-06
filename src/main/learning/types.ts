@@ -63,6 +63,26 @@ export type RelationKind = 'supports' | 'contradicts' | 'supersedes' | 'duplicat
 export const DECIDED_CANDIDATE_STATUSES: readonly CandidateStatus[] =
   ['approved', 'rejected', 'promoted', 'applied', 'superseded'];
 
+/**
+ * Signal kinds consolidation can never consume. Both are written where a
+ * person teaches Wanigan directly: teach() records 'correction' when the
+ * outcome was corrected and 'explicit-teach' otherwise, and installSkill()
+ * records 'explicit-teach'. Each of those writers creates the candidate itself
+ * and marks the signal processed as it lands, so a pass arriving later has
+ * nothing left to derive from one, and every pass filters them out again.
+ *
+ * This is one of the two clauses in permanentlyIneligible(). The other one, a
+ * detail carrying learningCandidateEligible:false, is what excludes a row
+ * whose text was discarded before storage — a shell outcome, say — whatever
+ * kind it was recorded under.
+ *
+ * This list lives here rather than in learning-service.ts because ledger.ts
+ * needs it too and the dependency runs the other way: learning-service imports
+ * the ledger, so the ledger cannot import learning-service back.
+ */
+export const NEVER_CONSOLIDATED_KINDS: readonly LearningSignalKind[] =
+  ['explicit-teach', 'correction'];
+
 export type JsonObject = Record<string, unknown>;
 
 export interface LearningSignal {
@@ -507,6 +527,24 @@ export interface ConsolidationRun {
   durationMs: number;
 }
 
+/** What one consolidation pass consumed and produced. */
+export interface ConsolidationCounts {
+  processed: number;
+  candidates: number;
+  autoApplied: number;
+  woken: number;
+}
+
+/**
+ * The result of asking for a consolidation pass. A refusal is a separate shape
+ * from a finished pass, so no caller can read four zeros off a pass that never
+ * started and report it as a run that found nothing: the counts do not exist
+ * unless `ran` is true.
+ */
+export type ConsolidationOutcome =
+  | ({ ran: true } & ConsolidationCounts)
+  | { ran: false; reason: 'learning-disabled' | 'consolidation-disabled' };
+
 /**
  * Everything the learning engine can honestly say about one session: the
  * briefing it received (recorded at injection), the signals it emitted, and
@@ -571,6 +609,16 @@ export interface LearningPipelineStats {
   signals: number;
   /** Same project scoping, no time window — lets "outside this window" be a fact. */
   signalsAllTime: number;
+  /**
+   * Signals recorded in the window that consolidation is able to consume: the
+   * window count minus the kinds retired at ingest (NEVER_CONSOLIDATED_KINDS)
+   * and minus the rows whose detail carries learningCandidateEligible:false.
+   * Those are the same two clauses consolidate() filters on, so teaching
+   * Wanigan something no longer raises this figure.
+   *
+   * It is not a backlog: the query has no processed_at predicate, so a signal
+   * already consumed by a pass is still counted here.
+   */
   eligibleSignals: number;
   candidatesCreated: number;
   /**
@@ -598,7 +646,20 @@ export interface LearningPipelineStats {
   briefingsServed: number;
   /** Continuous local-midnight day series, oldest first, zero-filled. */
   signalsByDay: { day: string; total: number; failures: number; teachings: number }[];
+  /**
+   * The most recent passes only — a bounded page, not the whole table. Its
+   * length is a page size and must never be presented as a total; retention
+   * keeps 2,000 rows and a 5-minute timer writes about 288 a day.
+   */
   consolidationRuns: ConsolidationRun[];
+  /**
+   * Every consolidation pass still stored, counted: a COUNT(*) over
+   * consolidation_runs with no window predicate and no project predicate. A
+   * project scope was never available — the table has no project_id column —
+   * and what it counts is what retention has kept, the sweep in
+   * recordConsolidationRun holding the table at the 2,000 most recent passes.
+   */
+  consolidationRunsTotal: number;
 }
 
 export interface FreshnessIssue {

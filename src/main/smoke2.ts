@@ -425,6 +425,25 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   check(okShot.ok && okShot.kind === 'image', 'a real PNG is accepted');
   check(okShot.width === 1 && okShot.height === 1, 'dimensions read from the header, not the extension');
 
+  /* attach:add stages a copy into attachmentsDir(sessionId), and sessions.ts launches
+     the CLI with that directory as an additional readable root, so the path has to be
+     one a native dialog returned. Nothing in this suite opens a dialog, so the refusal
+     is the observable half here. */
+  const unpicked = path.join(tmp, 'never-picked.md');
+  fs.writeFileSync(unpicked, '# a file nobody chose\n');
+  const gateSession = `${SID}-attachment-gate`;
+  let attachRefusal = '';
+  try { attachments.attachToSession(gateSession, unpicked); }
+  catch (e) { attachRefusal = e instanceof Error ? e.message : String(e); }
+  check(attachRefusal.includes('no file picker in this app returned that path')
+    && !browse.isPickedPath(unpicked)
+    && !fs.existsSync(attachments.attachmentsDir(gateSession)),
+    'a path the renderer names but no native file dialog ever returned is refused by attachToSession before anything is read or staged, because the copy would land in the one directory the agent is launched with as an extra readable root',
+    attachRefusal);
+  check(attachments.inspect(unpicked).ok === true && attachments.inspect(unpicked).kind === 'text',
+    'the same file passes inspect() on its own merits, so the refusal above is the picker gate refusing a path nobody chose rather than an unreadable file being mistaken for one',
+    attachments.inspect(unpicked).kind);
+
   const attachmentSession = `${SID}-attachment`;
   const staged = attachments.attachBufferToSession(attachmentSession, fs.readFileSync(png), 'shot.png');
   check(fs.statSync(staged.storedPath).isFile(), 'a pasted image is durably staged before it is recorded');

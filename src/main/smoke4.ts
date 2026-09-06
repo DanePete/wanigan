@@ -55,6 +55,7 @@ import {
   validateProviderPackManifest,
   type ProviderPackManifest,
 } from './provider-packs';
+import type { ConsolidationCounts, ConsolidationOutcome } from './learning/types';
 import { probeProviderAdapter } from './provider-adapter';
 import { headlessArgs, headlessEnv, headlessRows, headlessRuns, parseCliOutput, resolveBin, runOneRepo } from './headless';
 import { stripAmbientAnthropicCredentials } from './sessions';
@@ -84,6 +85,20 @@ function thrown(fn: () => unknown): string | null {
  * constrained to a temporary root. The provider-adapter test executes only a
  * tiny, exact-digest fixture inside that root.
  */
+/**
+ * The counts of a consolidation pass, or null if it refused to run.
+ *
+ * consolidate() answers a union: a pass that ran, with its counts, or a refusal
+ * naming which switch was off. Every call in this suite runs with learning and
+ * consolidation on, so a refusal here is a broken fixture rather than a state
+ * worth asserting about — and reading it as null makes the assertion that asked
+ * fail with the refusal in its detail, rather than crashing the run or letting
+ * an absent count read as a zero the pass never reported.
+ */
+function ranCounts(outcome: ConsolidationOutcome): ConsolidationCounts | null {
+  return outcome.ran ? outcome : null;
+}
+
 export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-learning-'));
   const projectRoot = path.join(tmp, 'project');
@@ -679,13 +694,13 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
       const sameTask = mkHardSig(`${healthySummary} again`, `s-healthy-a-${tag}`, `t-healthy-a-${tag}`, hardBase + 4);
       const sameTaskPass = compound.consolidate(project.id);
       const stillSnoozed = compound.candidates({ projectId: project.id, limit: 500 }).find((c) => c.id === healthyCandidate.id);
-      check(sameTaskPass.woken === 0 && stillSnoozed?.status === 'snoozed' && getSignal(sameTask.id)?.processedAt === null,
+      check(ranCounts(sameTaskPass)?.woken === 0 && stillSnoozed?.status === 'snoozed' && getSignal(sameTask.id)?.processedAt === null,
         'the same task observed again does not wake a snoozed candidate, and the signal waits for a real second task',
         JSON.stringify(sameTaskPass));
       const newTask = mkHardSig(healthySummary, `s-healthy-c-${tag}`, `t-healthy-c-${tag}`, hardBase + 5);
       const wakePass = compound.consolidate(project.id);
       const woken = compound.candidates({ projectId: project.id, limit: 500 }).find((c) => c.id === healthyCandidate.id);
-      check(wakePass.woken >= 1 && woken?.status === 'pending' && woken.wake?.code === 'observed-again'
+      check((ranCounts(wakePass)?.woken ?? 0) >= 1 && woken?.status === 'pending' && woken.wake?.code === 'observed-again'
         && woken.wake.newTasks === 1 && woken.wake.newSignals === 2
         && woken.signalIds.includes(newTask.id) && woken.signalIds.includes(sameTask.id)
         && woken.taskCount === (snoozedRow?.taskCount ?? 0) + 1
@@ -946,7 +961,7 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
       check(!!autoCandidate && autoCandidate.confidence < DEFAULT_AUTOMATION_POLICY.minConfidence,
         'a rule-derived confidence stays under the auto-apply floor however often the observation repeats',
         autoCandidate?.confidence);
-      check(autoPass.autoApplied === 0 && autoPass.candidates >= 1,
+      check(ranCounts(autoPass)?.autoApplied === 0 && (ranCounts(autoPass)?.candidates ?? 0) >= 1,
         'so a hybrid pass over agent-derived evidence files candidates and auto-applies none', JSON.stringify(autoPass));
       check(!!autoCandidate && autoCandidate.status === 'pending',
         'the candidate waits in the review inbox for a person', autoCandidate?.status);
@@ -1387,6 +1402,33 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     check(configSourceManifest.ok,
       'a process source that reads configuration rather than a credential is still accepted',
       configSourceManifest.ok ? null : configSourceManifest.errors);
+
+    const borrowedCredentialManifest = validateProviderPackManifest({
+      ...manifest,
+      id: 'orbit.borrowed-credential',
+      profiles: [{
+        ...manifest.profiles[0],
+        id: 'orbit-borrowed-credential',
+        environment: { ANTHROPIC_AUTH_TOKEN: { source: 'credential', id: 'glm' } },
+      }],
+    });
+    check(!borrowedCredentialManifest.ok
+      && borrowedCredentialManifest.errors.some((error) => /not a profile in this pack/.test(error)),
+      'a manifest that names a credential id it does not own is refused at validation with that id quoted, because the provider key store has no pack namespace and "glm" declared in any manifest at all reads the operator’s Z.ai token and hands it to that pack’s own command',
+      borrowedCredentialManifest.ok ? null : borrowedCredentialManifest.errors);
+
+    const ownCredentialManifest = validateProviderPackManifest({
+      ...manifest,
+      id: 'orbit.own-credential',
+      profiles: [{
+        ...manifest.profiles[0],
+        id: 'orbit-own-credential',
+        environment: { ORBIT_TOKEN: { source: 'credential', id: 'orbit-own-credential' } },
+      }],
+    });
+    check(ownCredentialManifest.ok,
+      'a pack that names one of its own profile ids as the credential to spend is still accepted, which is the shape both shipped packs use and the only shape the ownership rule is meant to leave standing',
+      ownCredentialManifest.ok ? null : ownCredentialManifest.errors);
     check(
       effectiveProviderBackendId({ source: 'local', packId: 'orbit.pack', backend: { id: 'anthropic' } })
         === 'orbit.pack:anthropic',
@@ -1446,6 +1488,55 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     const adapterRefused = thrown(() => registry.setEnabled('orbit.pack', true));
     check(adapterRefused !== null && /Trust.*executable adapter/i.test(adapterRefused),
       'manifest approval cannot silently approve executable adapter code', adapterRefused);
+
+    const foldRoot = path.join(tmp, 'provider-packs-credential-fold');
+    const foldDir = path.join(foldRoot, 'fold.pack');
+    fs.mkdirSync(foldDir, { recursive: true });
+    fs.writeFileSync(path.join(foldDir, 'provider-pack.json'), `${JSON.stringify({
+      ...manifest,
+      id: 'fold.pack',
+      adapter: undefined,
+      profiles: [{
+        ...manifest.profiles[0],
+        id: 'g.l.m',
+        environment: { ANTHROPIC_AUTH_TOKEN: { source: 'credential' } },
+      }],
+    }, null, 2)}\n`);
+    const spentCredentialIds: string[] = [];
+    const foldRegistry = new ProviderPackRegistry({
+      rootDir: foldRoot,
+      builtins: BUILTIN_PROVIDER_PACKS,
+      homeDir: fakeHome,
+      credentialResolver: (id: string) => { spentCredentialIds.push(id); return `token-for-${id}`; },
+    });
+    const foldPack = foldRegistry.listPacks().find((pack) => pack.id === 'fold.pack');
+    check(foldPack?.status === 'invalid'
+      && foldPack.errors.some((error) => /reads the credential stored for provider pack "wanigan\.glm"/.test(error))
+      && foldRegistry.runtimeById('g.l.m') === undefined
+      && spentCredentialIds.length === 0,
+      'ownership by profile id is only a boundary because two ids cannot name one stored credential: keys.ts deletes `.` and `_` out of the id (a `-` survives), so a pack whose only profile is "g.l.m" owns the id it declares and would still read the file written for "glm" — that pack is invalid, contributes no profile, compiles to no runtime, and never asks the key store for anything',
+      { status: foldPack?.status, errors: foldPack?.errors, spentCredentialIds });
+
+    const builtInRevoke = thrown(() => foldRegistry.revokeAdapterTrust('wanigan.claude'));
+    const claudeAfterRevoke = foldRegistry.listPacks().find((pack) => pack.id === 'wanigan.claude');
+    check(builtInRevoke !== null
+      && /no trusted adapter digest to revoke/.test(builtInRevoke)
+      && claudeAfterRevoke?.enabled === true
+      && claudeAfterRevoke.status === 'enabled',
+      'revoking adapter trust resolves the pack before it writes anything, so an id that never held adapter trust is refused by name instead of having enabled:false written under it — the call that used to disable the built-in Claude pack now leaves it enabled',
+      { builtInRevoke, status: claudeAfterRevoke?.status, enabled: claudeAfterRevoke?.enabled });
+
+    const junkRevoke = thrown(() => foldRegistry.revokeAdapterTrust('x'.repeat(300_000)));
+    const foldStateFile = path.join(foldRoot, '.provider-packs-state.json');
+    const foldStateSize = fs.existsSync(foldStateFile) ? fs.statSync(foldStateFile).size : 0;
+    const afterJunkRevoke = new ProviderPackRegistry({
+      rootDir: foldRoot, builtins: BUILTIN_PROVIDER_PACKS, homeDir: fakeHome,
+    });
+    check(junkRevoke !== null
+      && foldStateSize <= 256 * 1024
+      && afterJunkRevoke.snapshot().diagnostics.every((line) => !/state was invalid/.test(line)),
+      'a 300 KB pack id cannot become a key in .provider-packs-state.json: that write pushed the file past MAX_MANIFEST_BYTES, after which readState ignores the whole file and every manifest and adapter trust decision the operator had recorded is gone',
+      { junkRevoke: junkRevoke?.slice(0, 48) ?? null, foldStateSize, diagnostics: afterJunkRevoke.snapshot().diagnostics });
     if (inspected) registry.trustAdapter('orbit.pack', inspected.sha256);
     registry.setEnabled('orbit.pack', true);
     const runtime = registry.runtimeById('orbit-vortex-v9');

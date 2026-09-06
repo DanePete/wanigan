@@ -127,6 +127,29 @@ export type RestoreReport = {
  * These are records of things that happened, which is the question a restore
  * actually has to answer — "does the database I am about to replace contain
  * work this backup does not?"
+ *
+ * The list has to name every surface that records work, not only the ones a
+ * terminal session or a batch run writes, and it is extended as surfaces are
+ * found rather than assumed complete: a column nobody names is invisible to
+ * this check however recent its rows are. Given a database whose only rows
+ * newer than the backup were goal, proof, trace, control-event, checkpoint,
+ * telemetry, knowledge-candidate, scout and schedule rows — every one of them
+ * uncovered while the list held just the first eight pairs —
+ * `wouldDiscardNewer` stayed false, the Check panel said restoring would drop
+ * no recorded work, and the confirmation dialog omitted its "Everything in
+ * between will be dropped" clause. The operator was told, in the dialog that
+ * authorises the overwrite, that there was nothing newer to lose — while
+ * exactly that was about to be rolled back.
+ *
+ * Growing the list stays safe against a differently-versioned database in
+ * either direction: `hasColumn` skips a pair this database lacks, and
+ * `PRAGMA table_info` returns no rows at all for a table that is absent, so an
+ * older or newer backup contributes fewer clocks instead of failing to open.
+ *
+ * Forward-only is the bar for joining, and it rules out columns that otherwise
+ * look like obvious members. `work_nodes.started_at` and `ended_at` are set
+ * back to NULL when a task is reopened, so a MAX over them can move backwards
+ * — and a clock that moves backwards makes a restore look safer than it is.
  */
 const EVIDENCE_CLOCKS: readonly (readonly [string, string])[] = [
   ['session_log', 'started_at'],
@@ -137,6 +160,28 @@ const EVIDENCE_CLOCKS: readonly (readonly [string, string])[] = [
   ['runs', 'created_at'],
   ['learning_signals', 'created_at'],
   ['knowledge_versions', 'created_at'],
+  // Goals and the evidence hung off them. `work_dockets.updated_at` is
+  // rewritten in place rather than appended, but control.ts is the only writer
+  // of the table, and every statement there that writes a docket row — the
+  // create, and each UPDATE — sets `updated_at` to `Date.now()`; a MAX over
+  // the column therefore advances as Goal work happens, which is the only
+  // property this list needs from it.
+  ['work_dockets', 'updated_at'],
+  ['work_proofs', 'created_at'],
+  ['work_trace_events', 'created_at'],
+  ['control_events', 'created_at'],
+  // Per-turn git checkpoints, and the API telemetry a live agent emits. Both
+  // accumulate for hours without a session ending, so neither is covered by
+  // `session_log.ended_at`.
+  ['session_checkpoints', 'at'],
+  ['session_api_events', 'at'],
+  // A candidate in the review inbox is work as much as an approved one: it was
+  // raised from evidence, and re-deciding it means reading that evidence again.
+  ['knowledge_candidates', 'updated_at'],
+  // Unattended work — the easiest to forget was ever done, and so the easiest
+  // to roll back without noticing.
+  ['improvement_scout_runs', 'started_at'],
+  ['schedule_runs', 'at'],
 ];
 
 function hasColumn(d: Database.Database, table: string, column: string): boolean {

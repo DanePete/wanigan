@@ -39,6 +39,11 @@ export function mobileScript(
       const monitorNote = byId('monitor-note');
       const agentLocked = byId('agent-locked');
       const staleNote = byId('stale-note');
+      // Why the console is not on screen, when the reason is neither of the two
+      // the Agent screen can name on its own. Both of those are claims about
+      // the Mac — its opt-in is off, or this device has not reached it yet —
+      // and a /api/control that timed out or answered 500 establishes neither.
+      let agentConsoleFault = '';
       // Three different situations used to render identically here: the Mac is
       // awake with nothing running, the Mac has stopped answering, and this
       // device has never reached the Mac at all. All three arrived as an empty
@@ -72,13 +77,25 @@ export function mobileScript(
 
       // The Agent screen is a destination in its own right now, so it is
       // reachable before there is a console to put on it. An empty screen would
-      // read as a broken one, and the two reasons it can be empty have
-      // different fixes: the opt-in is off at the Mac, or this device has not
-      // reached the Mac yet. Say which.
+      // read as a broken one, and the three reasons it can be empty have
+      // different fixes: the opt-in is off at the Mac, this device has not
+      // reached the Mac yet, or the console's own read failed. Say which.
+      //
+      // The two spans are written by id rather than rebuilt, because
+      // setRemoteMode() reaches the same two ids through text() on every poll
+      // and text() is byId(id).textContent — it resolves the id again on every
+      // call. Replacing the children here would take the nodes those ids name
+      // out of the document, so the next poll's byId() would return null and
+      // text() would throw setting textContent on it.
       function syncAgentNotice() {
         const locked = control.classList.contains('hidden');
         agentLocked.classList.toggle('hidden', !locked);
         if (!locked) return;
+        if (agentConsoleFault) {
+          text('agent-locked-claim', 'Could not open the agent console.');
+          text('agent-locked-note', agentConsoleFault);
+          return;
+        }
         text('agent-locked-claim', remoteControlEnabled
           ? 'The agent console has not opened yet.'
           : 'Remote control is off.');
@@ -143,13 +160,40 @@ export function mobileScript(
             requestedSessionId = '';
           }
           syncActionButtons();
+          agentConsoleFault = '';
           control.classList.remove('hidden');
           setRemoteMode(true);
-          await loadTerminal();
-        } catch (error) {
+          // The picker above is rebuilt from every poll, whatever screen is on;
+          // the terminal behind it is only worth reading when the Agent screen
+          // is the screen on show. Counted on the wire, this call was two
+          // /api/terminal requests per six seconds from Spend — the console's
+          // own interval is guarded, and this is the other caller. Tapping a
+          // session card still reads immediately, because openSession() has
+          // already switched to the Agent screen before it calls this.
+          if (ui.showing('agent')) await loadTerminal();
+        } catch (failure) {
           control.classList.add('hidden');
-          setRemoteMode(false);
-          if (error instanceof Error && !/disabled/.test(error.message)) controlResult.textContent = error.message;
+          const message = failure instanceof Error ? failure.message : '';
+          // dispatch.ts answers control-scope routes with 'Remote control is
+          // disabled in Wanigan Settings.' when the opt-in is off, and keeps
+          // that wording as part of the contract. That answer is the only one
+          // that establishes anything about the switch on the Mac. A timeout, a
+          // 500 or a radio that dropped mid-request establishes nothing about
+          // it — and this catch used to answer all of them by turning the whole
+          // page back into the fleet monitor and printing 'Remote control is
+          // off', which is a statement about the Mac made from a failed read.
+          if (/disabled/.test(message)) {
+            agentConsoleFault = '';
+            setRemoteMode(false);
+          } else {
+            // remoteControlEnabled stays as /api/status reported it, so the
+            // next poll tries the console again. The message goes on the notice
+            // that is on screen: control-result lives inside the #controls
+            // section this catch has just hidden, so what was written there
+            // could not be read by anyone.
+            agentConsoleFault = message || 'Wanigan did not say why.';
+            syncAgentNotice();
+          }
         }
       }
 
@@ -208,8 +252,12 @@ export function mobileScript(
         if (remoteControlEnabled) void renderControls(sessions);
         // setRemoteMode ran at the top of this render, so hiding the console
         // here happens after the notice was last synced; re-sync or a console
-        // that has just been switched off leaves the screen blank.
-        else { control.classList.add('hidden'); syncAgentNotice(); }
+        // that has just been switched off leaves the screen blank. The fault
+        // is dropped on the way past, because a read that failed while the
+        // opt-in was on says nothing about a Mac that now reports it off — and
+        // this is the only place it can be dropped on that path, since the
+        // line above is what would otherwise call renderControls.
+        else { agentConsoleFault = ''; control.classList.add('hidden'); syncAgentNotice(); }
       }
 
       function state(kind, label) {

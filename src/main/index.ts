@@ -1491,7 +1491,8 @@ function registerIpc() {
     providerPackRegistry.trustAdapter(packId, sha256);
     refreshProviderPacks(); return publicProviderPacks();
   });
-  handle('providerPacks:revokeAdapterTrust', (packId: string) => {
+  handle('providerPacks:revokeAdapterTrust', (packId: unknown) => {
+    if (typeof packId !== 'string' || !packId.trim()) throw new Error('That provider pack is not installed.');
     providerPackRegistry.revokeAdapterTrust(packId);
     refreshProviderPacks(); return publicProviderPacks();
   });
@@ -2134,7 +2135,15 @@ function registerIpc() {
 
   // ── reproducible review gates ──────────────────────────────────────
   handle('review:recipe', (projectId: string) => review.recipe(projectId));
-  handle('review:saveRecipe', (projectId: string, commands: string[]) => review.saveRecipe(projectId, commands));
+  // A saved recipe is command text runCommand hands to `$SHELL -lc`, written once
+  // and executed many times from two surfaces: this channel, and control.runProof
+  // for a goal's verify task, which runs the same stored text in that task's
+  // worktree when it has one. So the question goes on the save, where the
+  // capability is created, rather than on each run, where it would re-ask about
+  // text already approved. Asked here, where a compromised renderer cannot decline
+  // to render it. Only commands the stored recipe does not already hold are shown.
+  handle('review:saveRecipe', (projectId: string, commands: string[]) =>
+    review.saveRecipeWithConsent(win, projectId, commands));
   handle('review:history', (projectId: string, limit?: number) => review.history(projectId, limit));
   handle('review:run', async (projectId: string) => {
     const result = await review.run(projectId);
@@ -2288,6 +2297,11 @@ function registerIpc() {
 
   // ══ phase 21 · attachments ══════════════════════════════════════════
   handle('attach:inspect', (p: string) => attachments.inspect(p));
+  // attachToSession refuses any path no native file dialog in this app returned.
+  // The check lives there, not here, so it holds for every caller rather than only
+  // this channel — the staged copy lands in a directory sessions.ts passes to the
+  // CLI as --add-dir, so an unchecked path here is a file the renderer chose and
+  // the agent may read.
   handle('attach:add', (sessionId: string, p: string) => attachments.attachToSession(sessionId, p));
   handle('attach:paste', (sessionId: string, data: ArrayBuffer, name: string) =>
     attachments.attachBufferToSession(sessionId, Buffer.from(data), name));

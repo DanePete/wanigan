@@ -939,8 +939,13 @@ function migrateAccounts(d: Database.Database) {
   // leaves Wanigan reading the default account's directory for a transcript
   // that was written into another one, and honestly reporting nothing.
   addColumn(d, 'session_log', 'account_id', 'TEXT');
-  // The same fact for a fan-out row, so a context window the CLI reported in a
-  // headless run is matched only to interactive sessions under the same login.
+  // The same fact for a fan-out row. headless.ts writes it when the row
+  // finishes; nothing reads it back — ROW_COLUMNS does not list it and no
+  // other query names it — so this is a recorded fact with no reader yet.
+  // It is not what matches a reported context window: transcripts.ts banks the
+  // per-model windows the CLI named into the `settings` table, keyed by model,
+  // backend and account, and looks them up again against the account frozen
+  // onto `session_log`.
   addColumn(d, 'headless_rows', 'account_id', 'TEXT');
   // Whether the CLI named a cost at all, which `cost_usd` alone cannot say: a
   // run that reported nothing and a run that genuinely reported $0.00 both
@@ -1113,6 +1118,27 @@ function migrateControl(d: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_work_trace_events_docket ON work_trace_events(docket_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_work_trace_events_session ON work_trace_events(session_id, created_at DESC);
+
+    -- The sessions a task ran under, kept past the life of the pointer on the
+    -- task row. work_nodes.session_id is a live pointer that retryNode nulls,
+    -- and a goal's spend against its cap is summed over the sessions it can
+    -- see, so without this table reopening a task handed the money it had
+    -- already spent back to the cap, and a goal whose tasks had all been
+    -- reopened reported that it had launched nothing. A row is written when a
+    -- dispatch claims the task, and again by retryNode before it nulls the
+    -- pointer — which covers a task dispatched before this table existed, but
+    -- not one already reopened by then. Append-only: nothing issues a DELETE
+    -- against it, and a row leaves only with the task or project it belongs to.
+    -- It holds the task, its goal, the session id and when the row was
+    -- written, and nothing else.
+    CREATE TABLE IF NOT EXISTS work_node_sessions (
+      node_id    TEXT NOT NULL REFERENCES work_nodes(id) ON DELETE CASCADE,
+      docket_id  TEXT NOT NULL REFERENCES work_dockets(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL,
+      at         INTEGER NOT NULL,
+      PRIMARY KEY (node_id, session_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_work_node_sessions_docket ON work_node_sessions(docket_id);
   `);
 
   // P31 · a docket is a graph, not a fixed four-step chain.

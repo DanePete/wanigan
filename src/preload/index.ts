@@ -14,7 +14,7 @@ import type {
   EgressReport, ObservedSession, ObservedState,
   MobileMonitorConfig, MobileMonitorStatus, TailnetStatus,
   ReviewRecipe, ReviewRun,
-  ArtifactRoiSummary, CandidateExplanation, ForgedSkill, FreshnessReport,
+  ArtifactRoiSummary, CandidateExplanation, ConsolidationOutcome, ForgedSkill, FreshnessReport,
   BriefingPreview, KnowledgeCandidate,
   KnowledgeEvidence, KnowledgeItem, KnowledgeProjection, KnowledgeRelation, KnowledgeVersion,
   SkillInstallResult,
@@ -568,8 +568,10 @@ const api = {
     setSettings: (patch: Partial<LearningSettings>) =>
       call<LearningSettings>('learning:setSettings', patch),
     teach: (input: TeachWaniganInput) => call<KnowledgeCandidate>('learning:teach', input),
+    // A refused pass is a different shape from a finished one, so the renderer
+    // cannot read counts off a pass that never started.
     consolidate: (projectId?: string | null) =>
-      call<{ processed: number; candidates: number; autoApplied: number }>('learning:consolidate', projectId),
+      call<ConsolidationOutcome>('learning:consolidate', projectId),
     signals: (filter?: {
       projectId?: string | null; providerId?: string | null; sessionId?: string | null;
       kinds?: string[]; processed?: boolean; limit?: number;
