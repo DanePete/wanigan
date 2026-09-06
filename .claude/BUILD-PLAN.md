@@ -91,8 +91,36 @@ print(json.dumps(out))
 "
 ```
 
-Then pass that JSON as the Workflow tool's `args`. Seven agents is a comfortable width;
-the tool caps concurrency below that anyway.
+Then pass that JSON as the Workflow tool's `args`.
+
+**Go wide.** The wave numbering in `waves.json` is a conservative packing capped at seven.
+The only real constraint is file-disjointness, so more phases can usually run at once than
+one wave holds — and a second workflow can be launched *beside* a running one, as long as
+its phases touch none of the files the first is holding. Compute that set rather than
+guessing:
+
+```bash
+python3 -c "
+import json
+waves = json.load(open('$SP/waves.json'))
+INFLIGHT = 3          # index of the wave currently running
+DONE = 3              # waves already landed
+inflight = {f for p in waves[INFLIGHT] for f in p['_own']}
+done = {p['title'] for w in waves[:DONE] for p in w}
+bytitle = {p['title']: p for w in waves for p in w}
+pick, used = [], set(inflight)
+for p in [q for w in waves[INFLIGHT+1:] for q in w]:
+    fs = set(p['_own'])
+    if not fs or (fs & used): continue
+    if any(d in bytitle and d not in done and d not in {q['title'] for q in pick}
+           for d in (p.get('dependsOn') or [])): continue
+    pick.append(p); used |= fs
+print(len(pick), 'can run right now')
+"
+```
+
+Agents queue past the concurrency cap (min(16, cpus−2) per workflow) and all still
+complete, so a wide batch costs wall-clock, not correctness.
 
 **If the workflow dies mid-wave** — it has, twice, on session limits — the partial edits
 are still on disk and have been good quality every time. Do not discard them reflexively.

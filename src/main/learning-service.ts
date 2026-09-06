@@ -18,6 +18,7 @@ import {
   DEFAULT_AUTOMATION_POLICY,
   KNOWLEDGE_KINDS,
   MACHINE_KNOWLEDGE_TTL_MS,
+  SIGNAL_DETAIL_MAX_BYTES,
   applyProjection,
   automationDecision,
   buildBriefing,
@@ -59,6 +60,7 @@ import {
   recordSignal,
   reviewCandidate,
   searchKnowledge,
+  signalDetailBytes,
   startExperiment,
   summarizeArtifactRoi,
   undoProjection,
@@ -275,8 +277,22 @@ export function teach(input: TeachWaniganInput): KnowledgeCandidate {
   if (Buffer.byteLength(title, 'utf8') > 500) {
     throw new Error('Teaching titles are limited to 500 bytes; move the detail into the knowledge text.');
   }
-  if (Buffer.byteLength(text, 'utf8') > 128 * 1024) {
-    throw new Error('Taught knowledge is limited to 128 KiB; store a citation instead of raw content.');
+  // The ceiling this box states has to be the ceiling that applies. A teaching
+  // between the 128 KiB once promised here and the 32 KB the signal row has
+  // always enforced was accepted by this check and then refused inside
+  // recordSignal, in a message naming 'Signal detail' — an object the user has
+  // never seen — and a smaller number than the one they had just been given.
+  // The detail is weighed serialised, exactly as it will be stored: JSON
+  // escaping expands the text after any check on its raw bytes, so a pasted
+  // procedure full of newlines and quotes is larger stored than typed.
+  const detail = { explicit: true, outcome: input.outcome ?? 'preference', text };
+  const detailBytes = signalDetailBytes(detail);
+  if (detailBytes > SIGNAL_DETAIL_MAX_BYTES) {
+    throw new Error(
+      `Taught knowledge is limited to ${SIGNAL_DETAIL_MAX_BYTES / 1024} KB as stored, and this is about `
+      + `${Math.ceil(detailBytes / 1024)} KB. Stored size counts escaped newlines and quotes, so it can `
+      + 'exceed the text you typed; store a citation instead of raw content.',
+    );
   }
   if (input.scope !== 'personal' && !input.projectId) throw new Error('Project and path teaching needs a selected project.');
   if (input.scope === 'path' && !input.pathScope?.trim()) throw new Error('Path-scoped teaching needs a path selector.');
@@ -306,7 +322,7 @@ export function teach(input: TeachWaniganInput): KnowledgeCandidate {
     projectPath: input.projectPath ?? (input.projectId ? projectById(input.projectId)?.path ?? null : null),
     pathScope: input.pathScope ?? null,
     summary: title,
-    detail: { explicit: true, outcome: input.outcome ?? 'preference', text },
+    detail,
     // Unknown backends are never relabelled as provider-neutral semantic data.
     // Direct teaching and legacy sessions both fail this gate closed.
     semanticEligible: cfg.contentMode === 'local-same-provider' && providerId !== null && backendId !== null,

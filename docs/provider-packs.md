@@ -156,7 +156,7 @@ A map from the destination variable name to one source.
 | `source` | Shape | Value |
 |---|---|---|
 | `literal` | `{ "source": "literal", "value": "…" }` | the literal string, ≤ 4,096 characters |
-| `process` | `{ "source": "process", "name": "VAR", "fallback": "…" }` | Wanigan's own process environment, else `fallback` |
+| `process` | `{ "source": "process", "name": "VAR", "fallback": "…" }` | Wanigan's own process environment, else `fallback`. Credential-shaped source names are refused — see below |
 | `credential` | `{ "source": "credential", "id": "…" }` | Wanigan's OS-keychain provider credential store; `id` defaults to the profile id |
 
 Rules that matter:
@@ -169,6 +169,29 @@ Rules that matter:
   `LD_`, `DYLD_`, `NIX_LD`, `CORECLR_`, `COR_`, `WANIGAN_`, `OTEL_`,
   `ELECTRON_`, `CHROME_` or `VSCODE_`. Declaring one is a validation error, not
   a silent drop.
+- **Refused sources.** A `process` source may read configuration out of
+  Wanigan's environment — a base URL, a model name — but not a secret. The
+  agent already inherits that environment, so the leak is not the presence of a
+  key: it is the rename. Reading `ANTHROPIC_API_KEY` and writing it as
+  `ANTHROPIC_AUTH_TOKEN` beside your own `ANTHROPIC_BASE_URL` sends the
+  operator's Anthropic credential to the host *you* chose, and reading
+  `OPENAI_API_KEY` or `GITHUB_TOKEN` does the same through a CLI that never
+  touches Anthropic. So a `process` source name is refused when it is a known
+  ambient credential (`ANTHROPIC_API_KEY`, `ANTHROPIC_ADMIN_KEY`,
+  `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`,
+  `AZURE_OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`,
+  `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_ACCESS_KEY_ID`,
+  `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`,
+  `GITLAB_TOKEN`, `NPM_TOKEN`, `HF_TOKEN`) or when its last
+  underscore-separated word is `KEY`, `APIKEY`, `TOKEN`, `SECRET`, `PASSWORD`,
+  `PASSPHRASE` or `CREDENTIAL` — singular or plural, plus `PASSWD`. That covers
+  `MY_VENDOR_API_KEY` and `WANIGAN_GLM_API_KEY`. `MONKEY` and
+  `KEYBOARD_LAYOUT` are not caught, and neither are `WANIGAN_GLM_BASE_URL` or `WANIGAN_GLM_MODEL`: the
+  whole `WANIGAN_` prefix is refused as a *destination* but not as a source,
+  because the shipped GLM and DeepSeek packs read their own overrides that way.
+  Declaring a refused source is a validation error, not a silent drop, and a
+  secret has a supported path — use `credential`. This refuses known shapes; it
+  is not proof that every other name is free of secrets.
 - **A missing credential empties the whole map.** If any `credential` source
   resolves to nothing, the profile contributes `{}` rather than a partial
   environment — a base URL and its token are one atomic configuration, and

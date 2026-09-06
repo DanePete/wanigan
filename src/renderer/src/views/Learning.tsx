@@ -20,6 +20,7 @@ import type {
 import { EFFORT_LEVELS } from '@shared/types';
 import { Explainer, ago } from '../components/bits';
 import { useDialog } from '../components/useDialog';
+import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import '../styles/learning.css';
 
 type LearningTab = 'overview' | 'inbox' | 'knowledge' | 'context' | 'experiments';
@@ -296,7 +297,12 @@ export default function Learning({ projectId, projects, providers, onPickProject
    * pre-rename id and still resolves, so an older caller is not stranded. */
   initialTarget?: { tab: 'overview' | 'inbox' | 'knowledge' | 'optimize' | 'context'; nonce: number } | null;
 }) {
-  const [tab, setTab] = useState<LearningTab>('overview');
+  // Remembered per view, not per mount. App unmounts this whole view on every
+  // tab swap, so a reader who was working the Inbox came back to Overview and
+  // had to find their place again. Every writer below still works unchanged:
+  // the deep link from Context is consumed by a module-level nonce, so a
+  // remount cannot replay a stale jump over the tab that was remembered.
+  const [tab, setTab] = useViewMemory<LearningTab>('tab', 'overview');
   const [scopeSel, setScopeSel] = useState<ScopeSel>(() => {
     try {
       const stored = localStorage.getItem(SCOPE_KEY);
@@ -468,10 +474,22 @@ export default function Learning({ projectId, projects, providers, onPickProject
 
   // Experiments has never had a row in this build; the tab appears only once one
   // exists, and a tab that disappears under the reader hands them back Overview.
-  const tabs = experiments.length > 0 ? [...TABS, EXPERIMENTS_TAB] : TABS;
+  // Both halves wait for an observed read now that the tab survives a remount:
+  // the pre-read empty list is not evidence that the rows are gone, and acting
+  // on it would drop the open tab out of the tablist and bounce a returning
+  // reader to Overview while their first load was still in flight. The tab the
+  // reader is on is always listed, so a failed read leaves them where they are
+  // rather than selecting a tab that is not there.
+  const tabs = experiments.length > 0 || tab === 'experiments' ? [...TABS, EXPERIMENTS_TAB] : TABS;
   useEffect(() => {
-    if (tab === 'experiments' && experiments.length === 0) setTab('overview');
-  }, [tab, experiments.length]);
+    if (read.observed && tab === 'experiments' && experiments.length === 0) setTab('overview');
+  }, [read.observed, tab, experiments.length, setTab]);
+
+  // One remembered offset per tab, because `.learning-scroll` is a single
+  // element that five panels take turns filling. Keyed by the tab alone, the
+  // Inbox's offset would be restored onto Knowledge — a different document of a
+  // different length — and drop the reader somewhere they had never been.
+  const panelRef = useRememberedScrollRef(`panel:${tab}`);
 
   return (
     <div className="learning-view">
@@ -553,7 +571,7 @@ export default function Learning({ projectId, projects, providers, onPickProject
 
       {/* tabIndex makes the panel focusable, which is what lets a keyboard
           scroll it at all; without it the arrow keys had nothing to act on. */}
-      <div className="learning-scroll" tabIndex={0} role="tabpanel" id={`learning-panel-${tab}`} aria-labelledby={`learning-tab-${tab}`}>
+      <div className="learning-scroll" ref={panelRef} tabIndex={0} role="tabpanel" id={`learning-panel-${tab}`} aria-labelledby={`learning-tab-${tab}`}>
         {tab === 'overview' && (
           <Overview overview={overview} settings={settings} pipeline={pipeline} read={read}
                     pipelineErr={pipelineErr} pipelineBusy={pipelineBusy}

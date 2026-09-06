@@ -551,7 +551,15 @@ export function backfillCodexThreadIds(): number {
 
   // Codex's read-only SQLite projection is cheap and current. Only fall back
   // to adjacent-date rollout metadata for roots the projection did not match.
-  applyMatches(stateThreads() ?? []);
+  // The guard belongs on the call, not inside the read: `applyMatches` already
+  // no-ops on an empty `roots`, but JavaScript evaluates the argument first, so
+  // a pass with nothing repairable still opened one state_5.sqlite per Codex
+  // home and ran `PRAGMA table_info(threads)` on each. `discoverCodexThreadId`
+  // repeats this whole pass every 100ms for up to 8s, which is why the wasted
+  // work was worth removing — and why the read itself must stay uncached there,
+  // since on that path `roots` is non-empty and the row it waits for is written
+  // after launch.
+  if (roots.length) applyMatches(stateThreads() ?? []);
   if (roots.length) {
     applyMatches(rolloutThreads(roots.map((row) => row.started_at)));
   }

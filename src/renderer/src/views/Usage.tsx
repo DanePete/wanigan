@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AccountLimits, ConsumptionPoint, LimitWindow, ModelConsumption, UsageSnapshot } from '@shared/types';
 import { harnessLabel } from '@shared/types';
 import { EmptyState, Note } from '../components/bits';
+import { useViewMemory } from '../components/viewMemory';
 import '../styles/usage.css';
 
 /**
@@ -307,7 +308,13 @@ export default function Usage() {
   const [snap, setSnap] = useState<UsageSnapshot | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [days, setDays] = useState<number>(DEFAULT_WINDOW);
+  // The chosen window is view memory rather than local state. App mounts one
+  // view at a time, so a trip to Sessions and back re-mounted this page at
+  // DEFAULT_WINDOW and quietly re-read a different span than the one the
+  // operator had picked — and the heading below, which reports what main
+  // answered, agreed with the new span, so nothing on screen said the
+  // selection had been dropped.
+  const [days, setDays] = useViewMemory<number>('days', DEFAULT_WINDOW);
   const [now, setNow] = useState(Date.now());
 
   const load = useCallback((force: boolean) => {

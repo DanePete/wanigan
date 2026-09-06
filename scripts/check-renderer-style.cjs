@@ -65,7 +65,7 @@ const INLINE_STYLE_BASELINE = {
   'views/Insights.tsx': 62,
   'views/Learning.tsx': 9,
   'views/Plugins.tsx': 38,
-  'views/Schedules.tsx': 25,
+  'views/Schedules.tsx': 23,
   'views/Sessions.tsx': 126,
   'views/Settings.tsx': 269,
   'views/Skills.tsx': 39,

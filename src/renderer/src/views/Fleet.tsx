@@ -5,6 +5,7 @@ import type {
 import { ATTENTION_ORDER, EMPTY_USAGE, trustCopy, trustGlyph } from '@shared/types';
 import { providerTint } from '@shared/provider-status';
 import { EmptyState, Note, PageHead, Segmented, Stat, ago, num, usd } from '../components/bits';
+import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import TeamPanel from '../components/TeamPanel';
 
 /**
@@ -137,8 +138,16 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
   const [usage, setUsage] = useState<Record<string, SessionUsage>>({});
   const [spark, setSpark] = useState<Record<string, number[]>>({});
   const [defaultTrust, setDefaultTrust] = useState<TrustLevel>('project');
-  const [sort, setSort] = useState<SortKey>('attention');
-  const [only, setOnly] = useState<AttentionKind | 'all'>('all');
+  // Sort and filter are view memory rather than component state, because this
+  // view's whole purpose is to send the operator somewhere else. Narrow to
+  // "Asking", open the one agent that is blocked, come back — App unmounted
+  // Fleet to show the terminal, so the segmented control had snapped back to
+  // attention and the chips to All. Nothing announced that, so it read as the
+  // fleet having changed while they were away rather than the screen having
+  // forgotten what they asked it for. The memory is per window and in memory
+  // only: a relaunch still opens on the defaults.
+  const [sort, setSort] = useViewMemory<SortKey>('sort', 'attention');
+  const [only, setOnly] = useViewMemory<AttentionKind | 'all'>('only', 'all');
   const [ready, setReady] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState(0);
@@ -151,6 +160,15 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
   // the second after it is drawn, and the poll alone would only refresh the
   // ones whose numbers happened to change.
   const [, setTick] = useState(0);
+
+  // And the scroll offset with them: remembering the filter but not the
+  // position still loses the card the operator was reading, which on a fleet of
+  // eight is most of the screen. The scroller is the pane — .fleet-grid grows,
+  // it does not scroll — so the offset is remembered on the element that
+  // actually owns a scrollTop. A callback ref rather than a ref object because
+  // this pane only mounts once the first read returns, which is after the
+  // effect a plain ref would have run.
+  const paneRef = useRememberedScrollRef('pane');
 
   const alive = useRef(true);
   const busy = useRef(false);
@@ -445,7 +463,7 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
   }
 
   return (
-    <div className="pane">
+    <div className="pane" ref={paneRef}>
       {head}
       <TeamPanel />
 

@@ -656,8 +656,39 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'the batch builder reads a pinned set back through evals.goldenSource and makes it the run’s source');
   check(/'command', 'golden'\] as const/.test(batchesViewSrc),
     'and it is offered as an arm of the dataset picker, beside CSV, JSONL, Files and Command');
+  // Batches is three screens behind one tab. Which one was open, whether the
+  // run list had been drawn past its 60-row cut, and where that list was
+  // scrolled were all component state: opening a run from row 140 and pressing
+  // back returned to the top of a 60-row table, which reads as runs having
+  // gone missing rather than as a view that forgot where it was.
+  check(/useViewMemory<Page>\('page', \{ page: 'list' \}\)/.test(batchesViewSrc)
+    && /useViewMemory\('expanded', false\)/.test(batchesViewSrc)
+    && !/const \[expanded, setExpanded\] = useState/.test(batchesViewSrc)
+    && /const paneRef = useRememberedScrollRef\('runs'\);/.test(batchesViewSrc)
+    && /<div className="pane" ref=\{paneRef\}>/.test(batchesViewSrc)
+    && /if \(seed\) setView\(\{ page: 'new' \}\)/.test(batchesViewSrc),
+    'Batches reopens on the screen it was left on, with the run list still drawn in full and scrolled where it was — while a session handing over its changed files still overrides that and opens the builder');
   check(/sets\.length === 0[\s\S]{0,200}Nothing pinned yet/.test(batchesViewSrc),
     'with nothing pinned it says so, rather than rendering a select with no options in it');
+  // Switching tabs unmounts the whole of Batches, and the builder is minutes
+  // of typing: a name, two prompts, a schema and a dataset. Leaving it to look
+  // at the session whose changed files it was going to review threw the lot
+  // away, with nothing on the way back to say a builder had ever been open.
+  // Source contract, because the smoke process has no renderer to swap tabs in.
+  check(batchesViewSrc.includes("useViewMemory<RunConfig | null>('newRunCfg', null)")
+    && /import \{ useRememberedScrollRef, useViewMemory \} from '\.\.\/components\/viewMemory';/.test(batchesViewSrc)
+    && !/const \[cfg, setCfg\] = useState/.test(batchesViewSrc)
+    && /if \(!cfg \|\| !presets\.length\)/.test(batchesViewSrc),
+    'a half-built batch run survives a tab swap, and the form still waits for the preset and model tables — a restored draft arrives before that read lands, and rendering on it would show an empty recipe grid and a “cap 0” max-tokens hint as though they were capabilities somebody had read');
+  // The other half of remembering a draft is being able to drop it. A back
+  // button that only hid the builder would make “← Batches” mean “hide this
+  // until I come back”, and a draft kept after submission would open the next
+  // New run on the config of a batch that has already been sent.
+  check(/const forget = \(\) => \{[^}]*setCfg\(null\)[^}]*\};/.test(batchesViewSrc)
+    && /const leave = \(\) => \{\s*forget\(\);\s*onCancel\(\);\s*\};/.test(batchesViewSrc)
+    && /forget\(\);\s*onDone\(r\.runId\);/.test(batchesViewSrc)
+    && !/onClick=\{onCancel\}/.test(batchesViewSrc),
+    'Cancel means cancel: both back buttons and a successful submit drop the remembered draft, so the next New run opens blank rather than on an abandoned or already-submitted one');
 
   const goldenPinRun = await batch.createAndSubmitRun(baseCfg({
     name: 'smoke golden source',
@@ -869,6 +900,19 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       's_smoke_codex_identity_startup_reserved', startupReservedCwd, deferredPromptAt, 5_000, startupReservedAt,
     ) === startupReservedId,
     'a Codex thread reserved at terminal startup is captured after its first prompt marks it as a user thread');
+    // The Codex state-index read is guarded at the CALL, not inside stateThreads():
+    // applyMatches() no-ops on an empty `roots`, but the argument is evaluated first,
+    // so an unguarded call opened one state_5.sqlite per Codex home and PRAGMA-probed
+    // it on every pass with nothing to repair -- and discoverCodexThreadId() repeats
+    // that pass every 100ms for up to 8s. Only a source pin can see this:
+    // backfillCodexThreadIds() returns an UPDATE change count, which is identical
+    // whether or not the index was read, so a behavioural check here would assert
+    // something it does not test.
+    const stateIndexCalls = sourceOf('src/main/codex-sessions.ts')
+      .split('\n').filter((line) => /applyMatches\(\s*stateThreads\(/.test(line));
+    check(stateIndexCalls.length === 1
+      && stateIndexCalls.every((line) => /if\s*\(roots\.length\)/.test(line)),
+    'the Codex backfill reads the state index only when a root still needs matching');
   } finally {
     db().prepare("DELETE FROM session_log WHERE id LIKE 's_smoke_codex_identity_%'").run();
     if (priorCodexHome === undefined) delete process.env.CODEX_HOME;
@@ -2675,6 +2719,43 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(mainSrc.length > 1000 && preloadSrc.length > 500 && schedulesSrc.length > 500
     && sessionsSrc.length > 500 && settingsSrc.length > 500 && appSrc.length > 500 && sessionManagerSrc.length > 500,
     'the sources these checks read are present, so a miss is a miss and not a bad path');
+
+  // ── build shape · a minified window, a readable main ────────────────
+  // Each half of this is load-bearing in a way a size number does not convey.
+  // A minified main would strip the function names out of the error.stack that
+  // failSmokeBootstrap appends to WANIGAN_SMOKE_LOG, which scripts/smoke.sh's
+  // own comment calls the only useful diagnostic on an early failure — the
+  // frames would read `a` and `Kj`, and no sourcemap ships to undo that. In the
+  // renderer the opposite is true, and keepNames is what makes it safe: built
+  // without it the string "TerminalPane" does not survive into the bundle at
+  // all, so React's componentStack — everything ErrorBoundary can show about a
+  // view crash that reproduces once a week — would name nothing.
+  const viteCfgSrc = sourceOf('electron.vite.config.ts').replace(/\/\/[^\n]*/g, '');
+  const rendererAt = viteCfgSrc.indexOf('renderer: {');
+  const aboveRenderer = rendererAt > 0 ? viteCfgSrc.slice(0, rendererAt) : viteCfgSrc;
+  check(rendererAt > 0
+    && viteCfgSrc.indexOf("minify: 'esbuild'") > rendererAt
+    && viteCfgSrc.indexOf('keepNames: true') > rendererAt
+    && !/\bminify\s*:/.test(aboveRenderer)
+    && !/\bkeepNames\s*:/.test(aboveRenderer),
+    'the build minifies the renderer with keepNames and asks for neither in main nor preload');
+
+  // smoke.sh builds before it launches this process, so out/ is this tree.
+  const rendererJs = filesUnder(path.join(appRoot(), 'out', 'renderer', 'assets')).filter((f) => f.endsWith('.js'));
+  const windowBundle = rendererJs.length === 1 ? fs.readFileSync(rendererJs[0], 'utf8') : '';
+  const windowDensity = windowBundle ? windowBundle.length / windowBundle.split('\n').length : 0;
+  // Measured on this tree: unminified is ~53 chars per line, minified ~17,000.
+  check(rendererJs.length === 1 && windowDensity > 1000 && windowBundle.includes('"TerminalPane"'),
+    'the built window is one minified chunk that still carries its component names, so no view was made lazy and a crash stack stays readable',
+    `${rendererJs.length} chunk(s), ${Math.round(windowDensity)} chars/line`);
+
+  let mainBundle = '';
+  try { mainBundle = fs.readFileSync(path.join(appRoot(), 'out', 'main', 'index.js'), 'utf8'); }
+  catch { /* an absent bundle is asserted below, not thrown out of the suite */ }
+  const mainDensity = mainBundle ? mainBundle.length / mainBundle.split('\n').length : 0;
+  check(mainBundle.includes('function failSmokeBootstrap(') && mainDensity > 0 && mainDensity < 200,
+    'the built main process is unminified and still names failSmokeBootstrap, so a bootstrap stack in the smoke log names real functions',
+    `${Math.round(mainDensity)} chars/line`);
   // The check above names seven of the twenty-three files read here. This one
   // names every path that failed to resolve, including the ones read earlier in
   // the suite, so a moved file cannot silently retire the assertions about it.
@@ -2888,7 +2969,11 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     .split(',').map((n) => Number(n.trim())).filter((n) => n > 0);
   check(usageWindowList !== null && usageWindowDefault !== null
     && usageWindowsOffered.includes(Number(usageWindowDefault?.[1]))
-    && usageViewSrc.includes('useState<number>(DEFAULT_WINDOW)')
+    // The window is view memory now, so it survives a tab swap; what this pins
+    // is unchanged either way — whatever the page opens on has to be a value
+    // the picker can display, or the select renders blank above a heading that
+    // names a span nothing on screen agrees with.
+    && usageViewSrc.includes("useViewMemory<number>('days', DEFAULT_WINDOW)")
     && usageViewSrc.includes('{WINDOWS.map((value) => <option key={value} value={value}>Last {value} days</option>)}'),
   'the consumption window Usage opens on is one its picker can display, so the select and the heading name the same window',
   `offers ${usageWindowsOffered.join(', ')}; opens on ${usageWindowDefault?.[1] ?? 'nothing'}`);
@@ -3175,6 +3260,20 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && mobileSrc.includes('id="monitor-note"')
     && mobileSrc.includes('if (!remoteControlEnabled) {'),
   'tablet sessions keep the terminal full width behind an accessible picker while document surfaces reflow instead of clipping or silently offering unavailable remote controls');
+  // The private chip families in compact.css's coarse block had a 40px finger
+  // target; .chip and .seg button, the shared primitives the house style tells
+  // every new view to compose, did not — so adopting the primitive shrank the
+  // target to 26px and 22px and following the rule made the surface worse.
+  // This reads the rule rather than the rendering because no surface Wanigan
+  // ships matches (pointer: coarse) yet: the iPad page is HTML mobile.ts
+  // builds itself, not this bundle, so there is nothing to measure.
+  const coarseRule = compactCssSrc.slice(compactCssSrc.indexOf('@media (pointer: coarse)'))
+    .split('\n').find((line) => line.includes('min-height: 40px')) ?? '';
+  check(compactCssSrc.includes('@media (pointer: coarse)')
+    && /(^|[\s,])\.chip,/.test(coarseRule)
+    && /(^|[\s,])\.seg button,/.test(coarseRule)
+    && !compactCssSrc.includes('.fleet-seg'),
+  'the shared chip and segmented primitives carry the same coarse-pointer target as the private chip families beside them, and compact.css no longer sizes the .fleet-seg pair no .tsx renders');
   check(/setSessionExitObserver/.test(mainSrc) && /exitObserver\?\./.test(sessionManagerSrc),
     'PTY exits reach the notification classifier even for providers with no hook bus');
   check(/tui\.notifications=/.test(sessionManagerSrc) && /scanCodexNotifications/.test(sessionManagerSrc)
@@ -3213,6 +3312,23 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !/handle\('worktrees:list', \(repoRoot: string\) => worktrees\.listWorktrees\(repoRoot\)\)/.test(mainSrc)
     && !/handle\('browse:reveal', \(p: string\) => browse\.revealInFinder\(p\)\)/.test(mainSrc),
   'reading a worktree, revealing a path in the Finder and asking about a plugin all validate the renderer’s argument, like every other handler beside them');
+  // The plugin file reader was a hand-rolled backdrop inside the pane: it
+  // announced role="dialog" aria-modal="true" over markup that answered no
+  // key, trapped no focus and portalled nowhere, so it painted under the
+  // header and Escape did nothing. It is a component now, mounted only while
+  // there is a file to read — useDialog raises the shell's modal flag on
+  // mount, so calling the hook from Plugins() itself would switch off the
+  // digit chords, ⌘K and ? for as long as the view is open while the reader
+  // still answered nothing.
+  const pluginsViewSrc = sourceOf('src/renderer/src/views/Plugins.tsx');
+  check(pluginsViewSrc.includes("import { useDialog } from '../components/useDialog';")
+    && /\{reading && \(\s*<ReaderDialog /.test(pluginsViewSrc)
+    && pluginsViewSrc.includes("useDialog<HTMLDivElement>({ onClose, initialFocus: 'least-destructive' })")
+    && pluginsViewSrc.includes('<div {...backdropProps} className="overlay-backdrop pg-reader">')
+    && pluginsViewSrc.includes('<div {...dialogProps} className="pg-reader-in" aria-label={title}>')
+    && pluginsViewSrc.includes('<div className="pg-reader-b" tabIndex={0}>{text}</div>')
+    && !/aria-modal="true"/.test(pluginsViewSrc),
+  'the plugin file reader is a useDialog dialog mounted only while a file is open — Escape, a focus trap that includes the scrollable body, and a portal out of .body — instead of a hand-rolled backdrop that claimed aria-modal and answered no key');
   check(mainSrc.includes("handle('settings:setSpendCap', (v: unknown) => {")
     && mainSrc.includes("if (!Number.isFinite(cap) || cap < 0) throw new Error('A spend cap must be a number of dollars, zero or more.');")
     && mainSrc.includes('cap > 100_000'),
@@ -3292,6 +3408,48 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && controlViewSrc.includes("onToggle={() => setStatusFilter('all')}"),
     'Control remembers which status the goal list is filtered to across a tab swap, instead of silently widening to every goal when the operator comes back from a session');
 
+  // Fleet is the view most likely to be left behind, because its cards exist to
+  // be clicked into and every click unmounts it. Sort, status filter and scroll
+  // offset were component state, so narrowing to "Asking", opening the one agent
+  // that is blocked and coming back showed every session sorted by attention
+  // again with the grid at the top. Nothing said so, which reads as the fleet
+  // having changed while the operator was away. Source contract because the
+  // smoke process has no renderer to swap tabs in. `fleetViewSrc` is already
+  // read above for the "Asking permission" tile.
+  check(fleetViewSrc.includes("useViewMemory<SortKey>('sort', 'attention')")
+    && fleetViewSrc.includes("useViewMemory<AttentionKind | 'all'>('only', 'all')")
+    && fleetViewSrc.includes("useRememberedScrollRef('pane')")
+    && /import \{ useRememberedScrollRef, useViewMemory \} from '\.\.\/components\/viewMemory';/.test(fleetViewSrc)
+    && !/const \[sort, setSort\] = useState/.test(fleetViewSrc)
+    && !/const \[only, setOnly\] = useState/.test(fleetViewSrc)
+    // The offset is remembered on the element that owns one. .fleet-grid is a
+    // CSS grid with no overflow, so a scroll ref there would attach a listener
+    // that never fires and restore nothing while looking implemented.
+    && fleetViewSrc.includes('<div className="pane" ref={paneRef}>'),
+    'Fleet remembers its sort, its status filter and how far down the grid the operator had scrolled, so opening a blocked agent and coming back does not silently re-sort the fleet and scroll it to the top');
+
+  // Learning unmounts on every tab swap like every other view, so an operator
+  // reading the Inbox came back to Overview, at the top, with no notice that
+  // anything had moved. The tab is view memory now. The experiments guard had
+  // to learn to wait with it: on mount `experiments` is still the initial empty
+  // array, and firing on that would bounce a returning reader off a remembered
+  // 'experiments' tab every time, before a read had counted anything. Source
+  // contract because the smoke process has no renderer to swap tabs in.
+  check(learningSrc.includes("useViewMemory<LearningTab>('tab', 'overview')")
+    && /import \{ useRememberedScrollRef, useViewMemory \} from '\.\.\/components\/viewMemory';/.test(learningSrc)
+    && !/const \[tab, setTab\] = useState/.test(learningSrc)
+    && learningSrc.includes("if (read.observed && tab === 'experiments' && experiments.length === 0) setTab('overview')")
+    && learningSrc.includes("const tabs = experiments.length > 0 || tab === 'experiments' ? [...TABS, EXPERIMENTS_TAB] : TABS;"),
+    'Learning reopens on the tab the operator was reading instead of snapping back to Overview, and the experiments guard only hands them back once a read has actually observed that there are no experiments');
+
+  // One `.learning-scroll` element is filled by five panels in turn, so a single
+  // remembered offset would restore the Inbox's position onto Knowledge — a
+  // different document of a different length — and drop the reader somewhere
+  // they had never been. The key carries the open tab.
+  check(learningSrc.includes('const panelRef = useRememberedScrollRef(`panel:${tab}`);')
+    && /<div className="learning-scroll" ref=\{panelRef\}/.test(learningSrc),
+    "the Learning panel remembers one scroll offset per tab, keyed 'panel:<tab>' and attached to the single scroller, so returning to Knowledge cannot land the reader at the offset they left the Inbox at");
+
   // Settings used to split a single tab across multiple `tabpanel` nodes, and
   // switching categories unmounted whatever form was in the other one. This is
   // a source contract because the Electron smoke process has no renderer: it
@@ -3347,6 +3505,25 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const kindDecl = /type Kind = ([^;]+);/.exec(schedulesSrc)?.[1] ?? '';
   check(kindDecl.includes("'batch'") && !kindDecl.includes("'session'"),
     "the Schedules form offers headless and batch and no longer offers 'session'", kindDecl.trim());
+
+  // The four buttons in a schedule's action row are one control size. Pause and
+  // History used to spell .btn-sm's padding and font-size inline while dropping
+  // its min-height, so they stood at .btn's 32px beside Edit and Delete at 26px:
+  // the inline copy reproduced the two declarations you can see and lost the one
+  // that mattered. Naming the size class is what keeps the row level, and this
+  // asserts the whole row rather than the two buttons that were wrong, because
+  // the next hand-rolled height would arrive on a different button.
+  const scOpen = schedulesSrc.indexOf('<div className="sc-actions">');
+  const scActions = schedulesSrc.slice(scOpen, schedulesSrc.indexOf('</div>', scOpen));
+  const scButtons = scActions.match(/className="btn[^"]*"/g) ?? [];
+  check(scOpen > 0 && scActions.length > 100 && scButtons.length === 4
+    && scButtons.every((c) => c.includes('btn-sm'))
+    && !scActions.includes('style={{')
+    // A coarse pointer still gets a 44px target: that rule's selector is two
+    // classes deep, so it outranks .btn-sm and the shrink is desktop-only.
+    && /\.sc-actions \.btn[^{}]*\{[^}]*min-height:\s*44px/.test(compactCssSrc),
+    'every button in a schedule action row takes its height from .btn-sm rather than an inline copy of part of it, and a coarse pointer still gets a 44px target',
+    scButtons.join(' | '));
 
   /* -- demo mode: partial masking is the failure ---------------------- */
   say('-- demo mode');

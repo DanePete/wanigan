@@ -9,7 +9,6 @@
   .chart-grid { grid-template-columns: minmax(0, 1fr); }
   .stat-grid-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .fleet-controls { align-items: flex-start; width: 100%; }
-  .fleet-seg { max-width: 100%; overflow-x: auto; }
   .fleet-grid { grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); }
   .gt { grid-template-columns: minmax(0, 1fr); }
   .gt-col + .gt-col { border-left: 0; border-top: 1px solid var(--line); }
@@ -27,7 +26,7 @@
   .row2, .row3 { grid-template-columns: minmax(0, 1fr); }
   .preset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .fleet-grid { grid-template-columns: minmax(0, 1fr); }
-  .fleet-controls, .fleet-seg { align-items: flex-start; flex-wrap: wrap; }
+  .fleet-controls { align-items: flex-start; flex-wrap: wrap; }
   .fleet-updated { align-self: flex-start; }
   .fleet-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .sc-wrap, .pg-wrap { padding: var(--s-3) var(--s-3) calc(var(--s-5) + env(safe-area-inset-bottom)); }
@@ -62,11 +61,20 @@
 
 /* A mouse can happily hit a compact toolbar; a finger needs deliberate space.
    This only expands controls on coarse-pointer devices, preserving desktop
-   density while meeting the iPad's 44pt comfort target. */
+   density while meeting the iPad's 44pt comfort target.
+
+   .chip and .seg button join the 40px list below because the private chip
+   families beside them were already there and the shared primitives were not:
+   a view that did what the house style asks and adopted <Chip> or <Segmented>
+   traded a 40px finger target for 26px and 22px, so following the rule made
+   the surface worse. This changes nothing visible today — no surface Wanigan
+   ships matches (pointer: coarse), because the iPad page is HTML that main
+   builds itself rather than this bundle. It only stops the primitive being the
+   worse choice on the first surface that does. */
 @media (pointer: coarse) {
   .btn, .field { min-height: 44px; }
   .pill { min-height: 32px; align-items: center; }
-  .tabs button, .fleet-chip, .fleet-segbtn, .sc-preset, .gt-chip, .skills-chip, .skills-chip-clear, .pg-expand { min-height: 40px; }
+  .tabs button, .chip, .seg button, .fleet-chip, .sc-preset, .gt-chip, .skills-chip, .skills-chip-clear, .pg-expand { min-height: 40px; }
   .fleet-card, .pg-item, .sc-actions .btn { min-height: 44px; }
   .table-scroll, .scroll-x, .fleet-scroll, .ctx-scroll, .skills-roots-wrap { -webkit-overflow-scrolling: touch; }
 }

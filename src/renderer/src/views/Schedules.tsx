@@ -713,7 +713,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
                   </Note>
                 )}
                 <div className="sc-actions">
-                  <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }} onClick={() => void toggle(s)}>
+                  <button className="btn btn-sm" onClick={() => void toggle(s)}>
                     {s.enabled ? 'Pause' : 'Resume'}
                   </button>
                   {s.kind !== 'session' && (
@@ -723,7 +723,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
                       {editing === s.id ? 'Cancel edit' : 'Edit'}
                     </button>
                   )}
-                  <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }} onClick={() => void history(s)}>
+                  <button className="btn btn-sm" onClick={() => void history(s)}>
                     {hist[s.id] ? 'Hide history' : 'History'}
                   </button>
                   <button className="btn btn-danger btn-sm" aria-expanded={confirmDelete === s.id}

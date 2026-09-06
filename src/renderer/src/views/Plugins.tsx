@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Explainer, Note, Stat, ago, num } from '../components/bits';
+import { useDialog } from '../components/useDialog';
 
 /* Shapes mirror src/main/plugins.ts; the renderer cannot import from main. */
 type Component = { kind: 'skill' | 'command' | 'agent'; name: string; path: string };
@@ -540,18 +541,47 @@ export default function Plugins() {
       </div>
 
       {reading && (
-        <div className="pg-reader" role="dialog" aria-modal="true" aria-label={reading.title}
-             onMouseDown={(e) => { if (e.target === e.currentTarget) setReading(null); }}>
-          <div className="pg-reader-in">
-            <div className="pg-reader-h">
-              <strong style={{ fontSize: 'var(--t-lead)' }}>{reading.title}</strong>
-              {reading.truncated && <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>truncated at 200 KB</span>}
-              <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setReading(null)}>Close</button>
-            </div>
-            <div className="pg-reader-b">{reading.text}</div>
-          </div>
-        </div>
+        <ReaderDialog title={reading.title} text={reading.text} truncated={reading.truncated}
+                      onClose={() => setReading(null)} />
       )}
     </div>
+  );
+}
+
+/**
+ * The file this view opens when you click a skill, a command or a Readme.
+ *
+ * It is a component of its own because useDialog cannot be called from
+ * Plugins(): the hook raises the shell's modal flag on mount, so an
+ * unconditional call would switch off the digit chords, ⌘K and ? for as long as
+ * this view is on screen — while the reader itself answered no key at all, not
+ * even Escape. Mounted only when there is something to read, the flag matches
+ * what is actually over the page, and the markup keeps the promise its
+ * aria-modal was already making: Escape closes it, Tab stays inside it, focus
+ * starts on Close and goes back to the button that opened it.
+ */
+function ReaderDialog({ title, text, truncated, onClose }: {
+  title: string; text: string; truncated: boolean; onClose: () => void;
+}) {
+  // 'least-destructive' lands on Close. The hook also portals this out of
+  // .body, whose view-transition name is a stacking context that used to paint
+  // the reader under the header.
+  const { portal, backdropProps, dialogProps } = useDialog<HTMLDivElement>({ onClose, initialFocus: 'least-destructive' });
+
+  return portal(
+    <div {...backdropProps} className="overlay-backdrop pg-reader">
+      <div {...dialogProps} className="pg-reader-in" aria-label={title}>
+        <div className="pg-reader-h">
+          <strong style={{ fontSize: 'var(--t-lead)' }}>{title}</strong>
+          {truncated && <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>truncated at 200 KB</span>}
+          <button className="btn" style={{ marginLeft: 'auto' }} onClick={onClose}>Close</button>
+        </div>
+        {/* A SKILL.md is longer than the box. Without a tab stop of its own the
+            scroller is unreachable from the keyboard, and the Tab trap — which
+            wraps around the focusable elements it can find — would have nothing
+            to wrap around but the Close button. */}
+        <div className="pg-reader-b" tabIndex={0}>{text}</div>
+      </div>
+    </div>,
   );
 }

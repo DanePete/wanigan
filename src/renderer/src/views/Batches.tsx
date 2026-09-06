@@ -4,6 +4,7 @@ import type {
 import { estimateTokens } from '@shared/tokens';
 import { Pill, Bar, ConfirmNote, Reading, Stat, Note, Section, num, usd, ago, until } from '../components/bits';
 import { useDialog } from '../components/useDialog';
+import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import '../styles/batches.css';
 
 type Preset = { id: string; label: string; blurb: string; config: Omit<RunConfig, 'name'> };
@@ -19,6 +20,14 @@ type Run = {
   est_cost_usd: number; cost_usd: number; created_at: number; ended_at: number | null;
   expires_at: number | null; parent_run_id: string | null; project_name: string | null;
 };
+
+/**
+ * Which of the three screens Batches is showing. It is remembered across a tab
+ * swap, so a detail page can come back naming a run that has since been
+ * deleted — RunDetail's own "Could not read this run" state says so, which is
+ * the honest landing for it.
+ */
+type Page = { page: 'list' } | { page: 'new' } | { page: 'detail'; id: string };
 
 /** Which tab of the run detail is open. Refusals appears only when there are any. */
 type DetailTab = 'results' | 'refusals' | 'evals' | 'batches' | 'events' | 'config';
@@ -126,10 +135,19 @@ export default function Batches({ projects, hasKey, onNeedKey, seed, onSeedConsu
   seed?: { projectId: string; root: string; paths: string[] } | null;
   onSeedConsumed?: () => void;
 }) {
-  const [view, setView] = useState<{ page: 'list' } | { page: 'new' } | { page: 'detail'; id: string }>({ page: 'list' });
+  /**
+   * Batches is three screens behind one tab, and every tab swap unmounts the
+   * lot. Leaving a half-built run to check the session it was going to review
+   * came back to the run list, with no sign that the builder had ever been
+   * open — the page it was on is remembered now, and the builder below
+   * remembers what was typed into it.
+   */
+  const [view, setView] = useViewMemory<Page>('page', { page: 'list' });
 
-  // A session handing over its changed files opens the builder directly.
-  useEffect(() => { if (seed) setView({ page: 'new' }); }, [seed]);
+  // A session handing over its changed files opens the builder directly, and
+  // outranks whatever page was remembered: a handed-over file list is an
+  // explicit request for the builder, not a return to where you left off.
+  useEffect(() => { if (seed) setView({ page: 'new' }); }, [seed, setView]);
   const page =
     view.page === 'new'
       ? <NewRun projects={projects} hasKey={hasKey} onNeedKey={onNeedKey}
@@ -154,7 +172,16 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
    * build your first batch over the top of runs the database still holds.
    */
   const [err, setErr] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useViewMemory('expanded', false);
+
+  /**
+   * .pane is this view's scroll container, and the run list is the one table
+   * here you read by scrolling: opening a run from row 140 and pressing back
+   * returned to the top of the list, with the row you were reading somewhere
+   * below the fold. Drawing all 200 and then losing the position was the worse
+   * half of the same problem, which is why `expanded` is remembered with it.
+   */
+  const paneRef = useRememberedScrollRef('runs');
 
   /**
    * Runs whose results stop being downloadable soon. Main has computed this
@@ -219,7 +246,7 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
   }
 
   return (
-    <div className="pane">
+    <div className="pane" ref={paneRef}>
       {head}
 
       {err && (
@@ -361,7 +388,17 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   /** The recipes and the model list, without which there is no form to show. */
   const [bootErr, setBootErr] = useState<string | null>(null);
   const [bootAttempt, setBootAttempt] = useState(0);
-  const [cfg, setCfg] = useState<RunConfig | null>(null);
+  /**
+   * The half-built run, remembered across a tab swap. A builder is minutes of
+   * typing — a name, two prompts, a schema, a dataset — and switching to
+   * Sessions to look at the thing being reviewed unmounted every keystroke of
+   * it. Everything below priced off that config is deliberately NOT
+   * remembered: the preview, the estimate and the dry run each read the world
+   * at one moment, and a cost that came back with the form would be a
+   * measurement of a dataset nobody had looked at since. They start empty, so
+   * the blockers ask for them again before this run can be submitted.
+   */
+  const [cfg, setCfg] = useViewMemory<RunConfig | null>('newRunCfg', null);
   const [preview, setPreview] = useState<any>(null);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
@@ -377,11 +414,16 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
    * derived because loading a set rewrites cfg.source to jsonl: derived, the
    * picker would jump to JSONL the instant a set was chosen and the operator
    * would lose the one fact worth keeping — that this dataset is pinned.
+   *
+   * It travels with cfg into view memory for that same reason. Restoring the
+   * source alone would bring the pinned bytes back as an anonymous JSONL blob,
+   * which is exactly the drift a golden set exists to prevent, one tab swap
+   * later.
    */
-  const [fromGolden, setFromGolden] = useState(false);
+  const [fromGolden, setFromGolden] = useViewMemory('fromGolden', false);
   const [golden, setGolden] = useState<GoldenSet[] | null>(null);
   const [goldenErr, setGoldenErr] = useState<string | null>(null);
-  const [goldenId, setGoldenId] = useState('');
+  const [goldenId, setGoldenId] = useViewMemory('goldenId', '');
   const [goldenBusy, setGoldenBusy] = useState(false);
 
   // Read the sets when the builder opens, not when the arm is clicked: the
@@ -389,11 +431,18 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   // select you must open to discover is empty teaches the operator nothing.
   useEffect(() => {
     window.wanigan.evals.golden()
-      .then((g) => { setGolden(g); setGoldenErr(null); })
+      .then((g) => {
+        setGolden(g); setGoldenErr(null);
+        // A remembered selection can name a set that was deleted while the
+        // operator was on another tab. Dropping it restores the "choose a
+        // pinned set" blocker rather than leaving a blank picker above rows
+        // the screen can no longer put a name to.
+        setGoldenId((id) => (id && !g.some((set) => set.id === id) ? '' : id));
+      })
       // Left null on purpose. An empty list means "none pinned"; a failed read
       // means "we do not know", and the two must not render as the same screen.
       .catch((e) => setGoldenErr(msg(e)));
-  }, []);
+  }, [setGoldenId]);
 
   const projectId = cfg?.projectId ?? projects[0]?.id;
 
@@ -451,6 +500,18 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   }
   const patch = (p: Partial<RunConfig>) => setCfg((c) => (c ? { ...c, ...p } : c));
   const invalidate = () => { setEst(null); setDry(null); };
+
+  /**
+   * The draft is spent — abandoned by the back button, or submitted and now a
+   * run of its own. Either way it has to be dropped, because it outlives a tab
+   * swap: without this, "← Batches" would quietly mean "hide this until I come
+   * back", and the next New run would open on the config of a batch that has
+   * already been sent. The golden arm goes with it, since a remembered arm
+   * over a freshly initialised config would show the pinned-set picker above a
+   * preset's dataset.
+   */
+  const forget = () => { setCfg(null); setFromGolden(false); setGoldenId(''); };
+  const leave = () => { forget(); onCancel(); };
 
   async function applyPreset(id: string) {
     const d = await window.wanigan.batch.presets(projectId);
@@ -555,11 +616,19 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
         // quantities in one column, which skewed estimate accuracy.
         input: est.totalInputTokens, output: est.worstCaseOutputTokens, cost: est.costHighUsd,
       });
+      forget();
       onDone(r.runId);
     } catch (e) { setSubmitErr(e instanceof Error ? e.message : String(e)); setSubmitting(false); }
   }
 
-  if (!cfg) {
+  // The recipe grid and every capability line below are written against the
+  // two tables read on mount: `presets` for the recipes, `models` for the
+  // context window, the effort row and the max-tokens cap. A cfg used to
+  // arrive only in the commit that set them, so the form could not render
+  // ahead of them; a remembered draft arrives first. Rendering on it would
+  // show an empty recipe grid, a blank model select and a "cap 0" hint —
+  // claims about a table nobody had read yet — for as long as the read takes.
+  if (!cfg || !presets.length) {
     // Loading and failed-to-load are different states: the second one has to
     // say so, or the builder sits on "Loading…" for the rest of the session.
     if (bootErr) {
@@ -567,7 +636,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
         <div className="pane">
           <div className="pane-head">
             <div>
-              <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={onCancel}>← Batches</button>
+              <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={leave}>← Batches</button>
               <h1 style={{ marginTop: 2 }}>New run</h1>
             </div>
           </div>
@@ -601,7 +670,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
       <div className="builder-main">
         <div className="pane-head">
           <div>
-            <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={onCancel}>← Batches</button>
+            <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={leave}>← Batches</button>
             <h1 style={{ marginTop: 2 }}>New run</h1>
             <p className="dim">Dataset in, one prompt across every row, results back at half price.</p>
           </div>

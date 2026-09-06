@@ -504,6 +504,23 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
     });
   }, [query, sort, status, suggestions]);
 
+  /**
+   * The queue's one announced line.
+   *
+   * The results list used to be the live region, so a first load, a broadened
+   * filter, a reorder and every status change read up to 150 proposals aloud in
+   * filing order — title, summary, four reason codes and five button labels
+   * each. A reader who moved a single proposal to "reviewed" was told about the
+   * other hundred. What actually changed is a count, and a count belongs beside
+   * the controls that change it, in one sentence.
+   */
+  const filterStatus = useMemo(() => {
+    if (loading) return 'Reading local Scout records…';
+    if (suggestions.length === 0) return 'Nothing proposed yet.';
+    if (filteredSuggestions.length === 0) return 'No proposal matches these filters.';
+    return `Showing ${filteredSuggestions.length} of ${suggestions.length}.`;
+  }, [filteredSuggestions.length, loading, suggestions.length]);
+
   return (
     <div className="scout-view">
       <header className="scout-head">

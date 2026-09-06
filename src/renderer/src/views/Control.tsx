@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
-  ControlEvent, DocketDetail, DocketNode, DocketNodeStatus, DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
+  ControlEvent, DocketDetail, DocketNode, DocketNodeKind, DocketNodeStatus, DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
 } from '@shared/types';
 import { Chip, EmptyState, Explainer, Mark, Note, PageHead, Reading, ago, markOf, usd } from '../components/bits';
 import { useViewMemory } from '../components/viewMemory';
