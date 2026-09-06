@@ -1,8 +1,13 @@
 /* schedules — tokens come from index.css; no colour is declared here. */
 
-.sc-wrap { padding: 16px 18px 40px; overflow-y: auto; width: 100%; }
-.sc-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
-.sc-head h1 { font-size: 19px; font-weight: 600; letter-spacing: -.01em; }
+/* .sc-wrap was a private copy of .pane — its own padding, its own scroll, its
+   own head — which is why Schedules had a different gutter, a different title
+   size and no sticky head. It is .pane now; only the baseline alignment of the
+   count beside the title is Schedules' own. */
+.sc-head { align-items: baseline; }
+/* The page title is the page title everywhere: index.css sets it. Schedules
+   printed its own at 19px, Plugins at 19px and Runs at 20px, which is why three
+   adjacent screens looked like three products. */
 .sc-head .n { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--text-dim);
               font-variant-numeric: tabular-nums; }
 
@@ -33,6 +38,13 @@
 .sc-meta .due { color: var(--accent); }
 .sc-meta .bad { color: var(--bad); }
 .sc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.sc-edit { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--line-soft); border-radius: var(--r-md); background: var(--bg-sunk); }
+.sc-f-name { flex: 2; min-width: 200px; }
+.sc-f-cron { flex: 1; min-width: 150px; }
+.sc-f-proj { min-width: 150px; }
+.sc-check { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; margin-top: 6px; }
+.sc-check input { margin-top: 2px; }
+.sc-check span { font-size: var(--t-small); line-height: 1.5; }
 .sc-hist { border-top: 1px dashed var(--line); padding-top: 7px; display: flex; flex-direction: column; gap: 2px; }
 .sc-hist div { font-size: 11.5px; color: var(--text-faint); font-variant-numeric: tabular-nums;
                display: flex; gap: 10px; }

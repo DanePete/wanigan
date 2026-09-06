@@ -126,6 +126,32 @@ export interface KnowledgeCandidate {
   updatedAt: number;
   reviewedAt: number | null;
   reviewerNote: string | null;
+  /**
+   * The deterministic facet key of the signal cluster consolidation derived
+   * this candidate from; null for taught, forged or legacy rows. It is what
+   * lets a later observation of the same pattern find a snoozed candidate
+   * without matching on a title a person may have edited.
+   */
+  clusterKey: string | null;
+  /** First time a person snoozed this candidate; never cleared. Once snoozed, a candidate never auto-applies. */
+  snoozedAt: number | null;
+  /** Why a snoozed candidate came back to pending. A reason code, never the operator's note. */
+  wake: CandidateWake | null;
+}
+
+/**
+ * The one wake transition, as a code with the counts behind it. It lives in
+ * its own column so the operator's reviewer_note is never overwritten by
+ * automation, and so the Inbox can say "woke: observed again" instead of
+ * guessing from a status flip.
+ */
+export interface CandidateWake {
+  code: 'observed-again';
+  /** Signals appended by the wake. */
+  newSignals: number;
+  /** Independent tasks the appended signals added; a wake requires at least one. */
+  newTasks: number;
+  at: number;
 }
 
 export interface CandidateConflict {
@@ -148,6 +174,8 @@ export interface CreateCandidateInput {
   confidence: number;
   signalIds: string[];
   estimatedTokenDelta?: number;
+  /** Consolidation's cluster facet key; omitted for taught and forged candidates. */
+  clusterKey?: string | null;
 }
 
 export interface KnowledgeEvidence {
@@ -358,6 +386,13 @@ export interface BriefingEntry {
   text: string;
   citations: string[];
   estimatedTokens: number;
+  /**
+   * File citations re-hashed at retrieval, and citations carried with nothing
+   * checkable (learning-signal rows). An entry with checked=0 passed its
+   * freshness check by having nothing to check, and must be described that way.
+   */
+  checked: number;
+  skipped: number;
 }
 
 export interface KnowledgeBriefing {
@@ -408,12 +443,28 @@ export interface SessionBriefingRecord {
     kind: KnowledgeKind;
     title: string;
     estimatedTokens: number;
+    /** Null on rows recorded before per-entry citation counts were persisted: "not recorded", never 0. */
+    checked: number | null;
+    skipped: number | null;
   }[];
   /** estimateTokens() output — a directional estimate, never a measurement. */
   estimatedTokens: number;
   maxTokens: number;
   omittedStale: number;
   omittedBudget: number;
+  /**
+   * Null on rows recorded before these two counters were persisted. A null
+   * renders as "not recorded"; only a stored 0 may render as zero, or a session
+   * held for the check quota reads as "nothing matched".
+   */
+  omittedUnsynthesized: number | null;
+  omittedUnverified: number | null;
+  /**
+   * For a hook delivery, the SessionStart event this capsule answered, paired
+   * by time from session_events; null when unpaired or for argv deliveries,
+   * which reach the agent at launch and have no SessionStart row of their own.
+   */
+  sessionStartAt: number | null;
 }
 
 /** One consolidation pass, persisted so automation stops being silent. */
@@ -440,6 +491,37 @@ export interface SessionLearningLedger {
   contributions: { itemId: string; title: string; kind: KnowledgeKind; status: KnowledgeStatus; evidenceCount: number }[];
   /** Candidates whose signal lineage includes this session's signals. */
   candidates: { candidateId: string; title: string; status: CandidateStatus; targetKind: KnowledgeKind }[];
+  /**
+   * Hook-observed `Skill` tool calls from session_events. This is the count of
+   * tool calls, not of "skills invoked": a `/name` typed into the terminal is
+   * unobservable, and a harness that posts no hooks reports zero here.
+   */
+  skillToolCalls: SkillToolCalls;
+  /** Whether and how often the archived transcript quoted a `wanigan:<id>` tag. */
+  transcriptCitations: TranscriptCitationSummary;
+}
+
+export interface SkillToolCalls {
+  observed: number;
+  /** Distinct recorded skill identifiers, bounded; names only, never arguments. */
+  identifiers: string[];
+  /** Calls whose identifier was not recorded (older hook rows carry a null summary). */
+  unrecorded: number;
+}
+
+/**
+ * Counts from a transcript scan, never a claim about behaviour: an agent acts
+ * on a briefed fact without quoting its id, so zero citations proves nothing
+ * and is stated as a count, not as disuse.
+ */
+export interface TranscriptCitationSummary {
+  /** 'unsupported': no transcript archive for this harness. 'not-scanned': no parsed archive or no scan recorded yet. */
+  status: 'scanned' | 'not-scanned' | 'unsupported';
+  reason: string | null;
+  total: number;
+  /** The archive or the scan was bounded; counts are a lower bound. */
+  truncated: boolean;
+  items: { itemId: string; title: string; n: number }[];
 }
 
 /**

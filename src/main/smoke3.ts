@@ -5,6 +5,9 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createServer as createNetServer } from 'node:net';
 import Database from 'better-sqlite3';
+import { SIDEBAR_GROUPS, TABS, TAB_ICONS } from '../shared/routes';
+import * as limits from './limits';
+import { TRUST_COPY, TRUST_LEVELS, trustCopy, trustGlyph } from '../shared/types';
 import * as worktrees from './worktrees';
 import * as code from './code';
 import { loadSource } from './batch/sources';
@@ -25,6 +28,10 @@ import * as observed from './observed';
 import * as otel from './otel';
 import * as policy from './policy';
 import * as control from './control';
+import * as queue from './queue';
+import * as accounts from './accounts';
+import * as claudeLimits from './claude-limits';
+import * as usageAgg from './usage';
 import { listGoalTrace, recordGoalTrace } from './goal-trace';
 import * as review from './review';
 import * as revert from './revert';
@@ -38,8 +45,8 @@ import { mobileFleetSnapshot } from './fleet-snapshot';
 import * as mobile from './mobile';
 import {
   __test as sessionsTest,
-  createSession, forgetPastSession, killSession, listSessions, pastSessions,
-  reconcileAbandonedSessions, scanCodexNotifications, sessionBaseline, setSessionTuning,
+  createSession, forgetPastSession, goalCapsuleText, killSession, listSessions, pastSessions,
+  reconcileAbandonedSessions, resumeAccountFor, scanCodexNotifications, sessionBaseline, setSessionTuning,
 } from './sessions';
 import {
   backfillCodexThreadIds, captureNewCodexThreadId, matchCodexThreads, validateExactCodexThread,
@@ -50,7 +57,7 @@ import { dataDir, db, resultsDir } from './db';
 import { addProject } from './store';
 import { selectedProviderStatus, selectedSessionTelemetry } from '../shared/provider-status';
 import { MAX_TERMINAL_INPUT_CHUNK_BYTES, splitTerminalInput } from '../shared/terminal-input';
-import { EMPTY_USAGE, type HookInput, type ProviderInfo, type RunConfig, type Session, type SessionUsage } from '../shared/types';
+import { EMPTY_USAGE, type DocketPlanNode, type HookInput, type ProviderInfo, type RunConfig, type Session, type SessionUsage } from '../shared/types';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 type Say = (s: string) => void;
@@ -1626,6 +1633,25 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const on = schedule.setScheduleEnabled(sch.id, true);
   check(on?.nextAt !== null && (on?.nextAt ?? 0) > Date.now(), 're-enabling re-arms from now, not from the backlog');
 
+  // Editing in place: the row keeps its history, the kind is fixed, an
+  // unpinned headless schedule must declare its fan-out, and the change is
+  // written to the same history the operator audits.
+  const edited = schedule.updateSchedule(sch.id, { cron: '0 4 * * *', name: 'smoke nightly audit (04:00)', payload: { prompt: 'audit', allProjects: true } });
+  check(edited?.cron === '0 4 * * *' && edited?.name === 'smoke nightly audit (04:00)', 'an edit changes cron and name in place', edited);
+  check((edited?.nextAt ?? 0) > Date.now() && edited?.nextAt !== on?.nextAt, 'an edited cron re-arms from now', { before: on?.nextAt, after: edited?.nextAt });
+  check(schedule.scheduleHistory(sch.id).some((h) => h.status === 'edited' && /cron 0 3 \* \* \* → 0 4 \* \* \*/.test(h.detail ?? '')),
+    'the edit is recorded in the schedule history with the old and new cron', schedule.scheduleHistory(sch.id));
+  let kindRefused = false;
+  try { schedule.updateSchedule(sch.id, { kind: 'batch' }); } catch { kindRefused = true; }
+  check(kindRefused, 'an edit cannot change the kind');
+  let fanOutRefused = false;
+  try { schedule.updateSchedule(sch.id, { payload: { prompt: 'audit' } }); } catch { fanOutRefused = true; }
+  check(fanOutRefused, 'an unpinned headless schedule that drops allProjects is refused');
+  let cronRefused = false;
+  try { schedule.updateSchedule(sch.id, { cron: '0 0 31 2 *' }); } catch { cronRefused = true; }
+  check(cronRefused, 'an edit to a cron that never fires is refused');
+  check(schedule.updateSchedule('sch_does_not_exist', { name: 'x' }) === null, 'editing a missing schedule returns null, not a throw');
+
   // An attended window and the background service can both retain the same
   // due row from their initial SELECT. Claim that deliberately stale snapshot
   // twice, then run a normal later tick: only the first may enqueue or record
@@ -1695,6 +1721,16 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   fs.mkdirSync(obsReg, { recursive: true });
   const obsPrevDir = process.env.CLAUDE_CONFIG_DIR;
   process.env.CLAUDE_CONFIG_DIR = obsHome;
+  // Accounts are part of "where Claude config lives" now, so the sandbox has to
+  // cover them too. The observer reads every account directory on purpose — a
+  // session started under the work account is still a running agent — which
+  // means leaving the adopted account pointed at the real ~/.claude would make
+  // these assertions depend on what is genuinely running on this machine, the
+  // exact coupling the sandbox exists to remove. Written directly because the
+  // fixture path is deliberately outside the roots create() will accept.
+  const obsPrevDirs = (db().prepare('SELECT id, config_dir FROM agent_accounts WHERE harness=?')
+    .all('claude-code') as { id: string; config_dir: string }[]);
+  db().prepare("UPDATE agent_accounts SET config_dir=? WHERE harness='claude-code'").run(obsHome);
   const obsWasOn = observed.observedEnabled();
   try {
     // This process is the only pid whose start time we can state, so it stands
@@ -1775,6 +1811,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     observed.setObservedEnabled(obsWasOn);
     if (obsPrevDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
     else process.env.CLAUDE_CONFIG_DIR = obsPrevDir;
+    for (const row of obsPrevDirs) {
+      db().prepare('UPDATE agent_accounts SET config_dir=? WHERE id=?').run(row.config_dir, row.id);
+    }
     fs.rmSync(obsHome, { recursive: true, force: true });
   }
 
@@ -1856,6 +1895,25 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       control.claimPath(second.nodes.find((node) => node.kind === 'implement')!.id, 'src');
     } catch { overlapRefused = true; }
     check(overlapRefused, 'an overlapping live file claim is refused before parallel work starts');
+    // The goal capsule: what a node's agent is told at launch beyond the prompt,
+    // every line a stored fact and the whole thing labelled a snapshot.
+    const capsule = control.goalCapsuleFor(implementNode.id);
+    check(capsule.nodeId === implementNode.id && capsule.docketId === docket.id && capsule.claimPath === 'src/control.ts'
+      && capsule.dependsOn.some((dep) => dep.nodeId === planNode.id && dep.status === 'ready')
+      && !capsule.siblingClaims.some((claim) => claim.nodeId === implementNode.id),
+    'a goal capsule carries the node id, its declared claim and its prerequisites, and never lists its own claim as a sibling', capsule);
+    const siblingDocket = control.createDocket({ projectId: controlProject.id, title: 'Sibling', objective: 'Hold another path.',
+      acceptance: ['n/a'] });
+    const siblingNode = siblingDocket.nodes.find((node) => node.kind === 'implement')!;
+    control.claimPath(siblingNode.id, 'docs');
+    const withSibling = control.goalCapsuleFor(implementNode.id);
+    check(withSibling.siblingClaims.some((claim) => claim.nodeId === siblingNode.id && claim.path === 'docs'),
+      'live claims held by other nodes in the same project appear as sibling claims');
+    const capsuleText = goalCapsuleText({ ...withSibling, canClaimLive: false });
+    check(capsuleText.includes('snapshot taken at launch, not a live view') && capsuleText.includes(`node id ${implementNode.id}`)
+      && capsuleText.includes('src/control.ts') && capsuleText.includes('docs — ') && /cannot claim or release/.test(capsuleText)
+      && /wanigan_goal_claim/.test(goalCapsuleText({ ...withSibling, canClaimLive: true })),
+    'the capsule text says it is a snapshot, names the node id and claims, and states per launch whether live claiming exists', capsuleText);
     const checkpoint = control.checkpointNode(planNode.id, 'Plan handoff saved.');
     check(checkpoint.repoCommit !== null && checkpoint.conversationId === null,
       'a checkpoint stores a concrete repository point without fabricating a conversation id');
@@ -1872,6 +1930,411 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     control.completeNode(reviewNode.id, { detail: 'Checked proof bundle.', decision: 'approve' });
     check(control.docket(docket.id).status === 'accepted',
       'a docket is accepted only after verification evidence and a human review decision');
+    // ── P32 · agent accounts ─────────────────────────────────────────────
+    // An account is a labelled config directory, never a credential Wanigan
+    // holds. These assertions cover the boundary rules; the browser sign-in
+    // that puts a login in the directory is the operator's, not Wanigan's.
+    const seeded = accounts.list('claude-code');
+    const ambientConfig = process.env.CLAUDE_CONFIG_DIR?.trim();
+    check(seeded.length === 1 && seeded[0].adopted && seeded[0].isDefault
+      && seeded[0].configDir === (ambientConfig ? path.resolve(ambientConfig) : path.join(os.homedir(), '.claude')),
+      'the operator’s existing configuration directory is adopted as the default account, not replaced', seeded[0]);
+    check(!accounts.supportsAccounts('generic-cli') && accounts.configEnvVar('claude-code') === 'CLAUDE_CONFIG_DIR',
+      'accounts exist only for a harness whose configuration directory Wanigan knows how to point');
+
+    const workDir = path.join(dataDir(), 'claude-work-smoke');
+    const refusedDir = (dir: string) => {
+      try { accounts.create({ harness: 'claude-code', label: 'Bad', configDir: dir }); return false; } catch { return true; }
+    };
+    check(refusedDir('/etc/wanigan-smoke') && refusedDir('relative/path') && refusedDir(os.homedir()),
+      'an account directory outside the owned roots, relative, or home itself is refused in the main process');
+
+    const work = accounts.create({ harness: 'claude-code', label: 'Work', configDir: workDir });
+    check(work.label === 'Work' && !work.isDefault && work.present && work.signedIn === 'unknown',
+      'a new account directory is created and present, with no evidence of a login', work);
+    fs.writeFileSync(`${workDir}.json`, '{"seen":true}');
+    check(accounts.byId(work.id)?.signedIn === 'yes',
+      'the sibling state file counts as evidence of a login — it sits beside the directory, not inside it');
+    fs.rmSync(`${workDir}.json`);
+    check((fs.statSync(workDir).mode & 0o777) === 0o700,
+      'the directory a credential file lands in is created owner-only');
+    let duplicateRefused = false;
+    try { accounts.create({ harness: 'claude-code', label: 'Same dir', configDir: workDir }); } catch { duplicateRefused = true; }
+    check(duplicateRefused, 'two accounts cannot share one directory, because they would share one login');
+
+    check(accounts.launchEnv(work).CLAUDE_CONFIG_DIR === workDir && Object.keys(accounts.launchEnv(null)).length === 0,
+      'an account contributes exactly the config-directory variable the harness reads');
+    // Setting the variable to the platform default is not a no-op: Claude Code
+    // then reads its state from inside the directory rather than beside it, and
+    // reports a signed-in operator as logged out.
+    const defaultDirAccount = { ...work, configDir: path.join(os.homedir(), '.claude') };
+    check(Object.keys(accounts.launchEnv(defaultDirAccount)).length === 0,
+      'the account that is the platform default sets no variable, because setting it to the default breaks the login it names');
+
+    // Seeding: authored configuration is a convenience, a login is not, and a
+    // transcript of everything said is not either.
+    const sourceDir = path.join(dataDir(), 'claude-seed-source');
+    fs.mkdirSync(path.join(sourceDir, 'skills', 'demo'), { recursive: true });
+    fs.mkdirSync(path.join(sourceDir, 'projects'), { recursive: true });
+    fs.writeFileSync(path.join(sourceDir, 'settings.json'), '{"theme":"dark"}');
+    fs.writeFileSync(path.join(sourceDir, 'skills', 'demo', 'SKILL.md'), '# demo\n');
+    fs.writeFileSync(path.join(sourceDir, '.credentials.json'), '{"secret":"do-not-copy"}');
+    fs.writeFileSync(path.join(sourceDir, 'projects', 'history.jsonl'), '{"said":"do-not-copy"}\n');
+    const source = accounts.create({ harness: 'claude-code', label: 'Seed source', configDir: sourceDir });
+    const seededDir = path.join(dataDir(), 'claude-seed-target');
+    accounts.create({ harness: 'claude-code', label: 'Seeded', configDir: seededDir, seedFromAccountId: source.id });
+    check(fs.existsSync(path.join(seededDir, 'settings.json'))
+      && fs.existsSync(path.join(seededDir, 'skills', 'demo', 'SKILL.md')),
+      'a new account can be seeded with authored configuration, so it does not start empty');
+    check(!fs.existsSync(path.join(seededDir, '.credentials.json')) && !fs.existsSync(path.join(seededDir, 'projects')),
+      'seeding never copies a stored login or the conversation history — separating those is the whole point');
+    check(!fs.lstatSync(path.join(seededDir, 'skills')).isSymbolicLink(),
+      'seeded configuration is copied, not linked, so deleting one account cannot reach into the other');
+    accounts.remove(source.id);
+    accounts.remove(accounts.list('claude-code').find((row) => row.label === 'Seeded')!.id);
+
+    const personal = seeded[0];
+    const byDefault = accounts.resolve({ harness: 'claude-code', projectId: controlProject.id });
+    check(byDefault.account?.id === personal.id && byDefault.source === 'default',
+      'a launch with no choice resolves to the default account and says that is where the answer came from');
+    accounts.setProjectAccount(controlProject.id, 'claude-code', work.id);
+    const byProject = accounts.resolve({ harness: 'claude-code', projectId: controlProject.id });
+    check(byProject.account?.id === work.id && byProject.source === 'project',
+      'a project’s saved account beats the default, and the source is reported rather than guessed');
+    const byExplicit = accounts.resolve({ harness: 'claude-code', projectId: controlProject.id, explicitAccountId: personal.id });
+    check(byExplicit.account?.id === personal.id && byExplicit.source === 'explicit',
+      'a per-launch choice beats the project’s saved account');
+
+    check(accounts.resolve({ harness: 'generic-cli', projectId: controlProject.id }).account === null
+      && !accounts.supportsAccounts('generic-cli'),
+    'a harness with no known configuration directory offers no accounts instead of pretending');
+
+    // Codex accounts are CODEX_HOME directories: the same labelled-directory
+    // shape, a different login file, and an honest list of what a new one lacks.
+    const codexSeeded = accounts.list('codex');
+    check(accounts.supportsAccounts('codex') && accounts.configEnvVar('codex') === 'CODEX_HOME'
+      && codexSeeded.length >= 1 && codexSeeded.some((row) => row.adopted && row.isDefault),
+    'Codex is an account-capable harness whose ambient or default home is adopted as the default account', codexSeeded);
+    const codexWorkDir = path.join(dataDir(), 'codex-work-smoke');
+    const codexWork = accounts.create({ harness: 'codex', label: 'Codex work', configDir: codexWorkDir });
+    check(codexWork.present && codexWork.signedIn === 'unknown' && accounts.launchEnv(codexWork).CODEX_HOME === codexWorkDir,
+      'a new Codex account directory contributes CODEX_HOME and, with no auth.json, reports no login evidence', codexWork);
+    fs.writeFileSync(path.join(codexWorkDir, 'auth.json'), '{"tokens":"present"}');
+    check(accounts.byId(codexWork.id)?.signedIn === 'yes',
+      'Codex login evidence is auth.json inside the home — evidence of use, not proof of a valid login');
+    check(accounts.startsWithout('codex').some((line) => /config\.toml/.test(line))
+      && accounts.startsWithout('codex').some((line) => /login/.test(line)),
+    'a fresh Codex directory is described as starting without config, MCP servers, skills or a login');
+    check(accounts.appliesTo({ harness: 'codex', backendId: 'openai' }, false) === undefined
+      && accounts.appliesTo({ harness: 'claude-code', backendId: 'anthropic' }, false) === true
+      && accounts.appliesTo({ harness: 'claude-code', backendId: 'anthropic' }, true) === false
+      && accounts.appliesTo({ harness: 'claude-code', backendId: 'zai' }, false) === false,
+    'whether an account applies is decided per harness: Codex homes apply whatever the backend, Claude accounts only for un-redirected Anthropic profiles');
+    check(accounts.byConfigDir('codex', codexWorkDir)?.id === codexWork.id && accounts.byConfigDir('codex', path.join(dataDir(), 'nowhere')) === null,
+      'a Codex home resolves back to its account only when Wanigan knows that directory as one');
+    accounts.remove(codexWork.id);
+    // GLM runs the reviewed Claude harness but bills another vendor, and its
+    // environment is empty until a key is stored — so the runtime environment
+    // alone cannot answer this. The declared backend can.
+    check(providers.usesAnthropicAccount({ harness: 'claude-code', backendId: 'anthropic' })
+      && !providers.usesAnthropicAccount({ harness: 'claude-code', backendId: 'zai' })
+      && !providers.usesAnthropicAccount({ harness: 'claude-code', backendId: 'deepseek' })
+      && !providers.usesAnthropicAccount({ harness: 'codex', backendId: 'openai' }),
+      'whether a profile signs in with a Claude account is keyed on its declared backend, not on a key it happens to have stored');
+    const redirected = accounts.resolve({ harness: 'claude-code', projectId: controlProject.id, appliesToAnthropic: false });
+    check(redirected.account === null && (redirected.reason ?? '').includes('another vendor'),
+      'a profile that redirects the Anthropic API gets no Claude account, because it would name a login it never uses');
+
+    const priorKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-smoke';
+    const overridden = accounts.resolve({ harness: 'claude-code', projectId: controlProject.id });
+    if (priorKey === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = priorKey;
+    check(overridden.override === 'ANTHROPIC_API_KEY' && overridden.account !== null,
+      'an ambient API key outranks the stored login, and the resolution says so rather than showing a choice the session ignores');
+
+    let defaultRemovalRefused = false;
+    try { accounts.remove(personal.id); } catch { defaultRemovalRefused = true; }
+    check(defaultRemovalRefused, 'the default account cannot be removed while another account would be left without one');
+
+    // A resumed conversation continues under the account that recorded it.
+    // Decided from the row in main; the renderer's picker cannot override it.
+    const resumeStamp = Date.now();
+    const ownedRow = `s_resume_owned_${resumeStamp}`;
+    const unknownRow = `s_resume_unknown_${resumeStamp}`;
+    const resumeInsert = db().prepare(`INSERT INTO session_log (id, provider_id, harness_id, project_id, project_path, project_name, started_at, account_id)
+      VALUES (?,?,?,?,?,?,?,?)`);
+    resumeInsert.run(ownedRow, 'claude', 'claude-code', controlProject.id, controlRepo, 'control', resumeStamp, work.id);
+    resumeInsert.run(unknownRow, 'claude', 'claude-code', controlProject.id, controlRepo, 'control', resumeStamp, null);
+    try {
+      const pinned = resumeAccountFor(ownedRow, 'claude-code', null);
+      check(pinned.accountId === work.id && pinned.note === null,
+        'resuming pins the account the conversation was recorded under, as if chosen explicitly');
+      const same = resumeAccountFor(ownedRow, 'claude-code', work.id);
+      check(same.accountId === work.id, 'asking for the owning account is not a conflict');
+      let otherAccountRefused = '';
+      try { resumeAccountFor(ownedRow, 'claude-code', personal.id); }
+      catch (e) { otherAccountRefused = e instanceof Error ? e.message : String(e); }
+      check(otherAccountRefused.includes('“Work”') && /may not find/.test(otherAccountRefused),
+        'asking to resume under a different account is refused by label and says the CLI may not find the conversation, not that it will', otherAccountRefused);
+      const unknown = resumeAccountFor(unknownRow, 'claude-code', null);
+      check(unknown.accountId === null && /unknown/.test(unknown.note ?? ''),
+        'a row recorded before accounts existed proceeds and says the launch account is unknown', unknown);
+      check(resumeAccountFor(ownedRow, 'generic-cli', 'anything').accountId === 'anything'
+        && resumeAccountFor(ownedRow, 'generic-cli', 'anything').note === null,
+      'a harness without accounts passes the request through untouched');
+      accounts.remove(work.id);
+      let removedRefused = '';
+      try { resumeAccountFor(ownedRow, 'claude-code', null); }
+      catch (e) { removedRefused = e instanceof Error ? e.message : String(e); }
+      check(removedRefused.includes(work.id) && /no longer has/.test(removedRefused) && /will not guess/.test(removedRefused),
+        'a conversation whose account was removed is refused with the account named, not resumed under a guess', removedRefused);
+    } finally {
+      db().prepare('DELETE FROM session_log WHERE id IN (?,?)').run(ownedRow, unknownRow);
+    }
+    const forgotten = accounts.byId(work.id) ? accounts.remove(work.id) : { removed: true, configDir: workDir };
+    check(forgotten.removed && fs.existsSync(workDir),
+      'forgetting an account leaves its directory on disk; Wanigan cannot put back a login it deletes');
+    check(accounts.list('claude-code').length === 1 && !accounts.projectAccount(controlProject.id, 'claude-code'),
+      'removing an account also clears the project mappings that pointed at it');
+
+    // ── P33 · limits parsing ─────────────────────────────────────────────
+    // The reply is human text, so the parser is the risk. It must read the real
+    // shape exactly and refuse anything it does not recognise, because a format
+    // change reported as "0% used" is worse than no screen at all.
+    const realUsageReply = [
+      'You are currently using your subscription to power your Claude Code usage',
+      '',
+      'Current session: 5% used · resets Sep 4 at 1:29pm (America/Chicago)',
+      'Current week (all models): 79% used · resets Sep 6 at 8:59pm (America/Chicago)',
+      'Current week (Fable): 100% used · resets Sep 6 at 8:59pm (America/Chicago)',
+      '',
+      "What's contributing to your limits usage?",
+      'Approximate, based on local sessions on this machine — does not include other devices or claude.ai.',
+      '',
+      'Last 24h · 2,857 requests · 7 sessions',
+      '  95% of your usage was at >150k context',
+      '  Top skills: /claude-api 1%',
+      '',
+      'Last 7d · 17032 requests · 32 sessions',
+      '  83% of your usage was at >150k context',
+    ].join('\n');
+    const parsedUsage = claudeLimits.__test.parseUsage(realUsageReply);
+    check(parsedUsage.windows.length === 3
+      && parsedUsage.windows[0].kind === 'session' && parsedUsage.windows[0].usedPercent === 5
+      && parsedUsage.windows[1].scope === null && parsedUsage.windows[1].usedPercent === 79
+      && parsedUsage.windows[2].scope === 'Fable' && parsedUsage.windows[2].usedPercent === 100,
+      'the three real limit windows parse, and "all models" is read as no model scope rather than a model called that',
+      parsedUsage.windows);
+    check(parsedUsage.windows.every((w) => w.resetsAtText?.startsWith('Sep ') === true),
+      'the provider’s own reset wording is kept verbatim, so a countdown is a bonus and never a dependency');
+
+    // A second account with nothing spent on it prints the same three windows
+    // with no reset clause at all. Requiring the clause read that account as a
+    // format change — "Wanigan could not read a limit window out of the agent’s
+    // reply" — on a reply that was perfectly well formed and said 0%.
+    const freshAccountReply = [
+      'You are currently using your subscription to power your Claude Code usage',
+      '',
+      'Current session: 0% used',
+      'Current week (all models): 0% used',
+      'Current week (Fable): 0% used',
+      '',
+      "What's contributing to your limits usage?",
+      '',
+      'Last 24h · 18 requests · 1 session',
+      '  59% of your usage was at >150k context',
+    ].join('\n');
+    const fresh = claudeLimits.__test.parseUsage(freshAccountReply);
+    check(fresh.windows.length === 3
+      && fresh.windows.every((w) => w.usedPercent === 0)
+      && fresh.windows.every((w) => w.resetsAtText === null && w.resetsAt === null)
+      && fresh.windows[2].scope === 'Fable'
+      && fresh.factors.length === 1 && fresh.factors[0].requests === 18,
+      'a window with nothing used yet names no reset, and parses as 0% rather than as an unreadable reply',
+      fresh.windows);
+    check(parsedUsage.factors.length === 2
+      && parsedUsage.factors[0].requests === 2857 && parsedUsage.factors[0].sessions === 7
+      && parsedUsage.factors[0].lines.length === 2
+      && parsedUsage.factors[1].requests === 17032,
+      'the contributing blocks parse with their counts, including a thousands separator', parsedUsage.factors);
+    check(parsedUsage.plan === 'subscription',
+      'the plan wording is picked up from the provider’s own first line', parsedUsage.plan);
+
+    check(claudeLimits.__test.parseUsage('command not found: claude').windows.length === 0
+      && claudeLimits.__test.parseUsage('').windows.length === 0,
+      'unrecognised output yields no windows, so the caller reports it as unreadable rather than as zero used');
+
+    // A reset is always near, so the only inference worth making is the year
+    // the provider omitted.
+    const marNow = new Date(2026, 2, 1, 12, 0, 0).getTime();
+    const soon = claudeLimits.__test.parseResetAt('Mar 3 at 8:59pm (America/Chicago)', marNow);
+    check(soon !== null && soon > marNow && soon - marNow < 3 * 86_400_000,
+      'a reset a couple of days out parses to that moment in the current year');
+    const nextYear = claudeLimits.__test.parseResetAt('Jan 2 at 1:00am (America/Chicago)', new Date(2026, 11, 28).getTime());
+    check(nextYear !== null && nextYear > new Date(2026, 11, 28).getTime(),
+      'a reset date the provider printed without a year rolls into next year when this year would be far past');
+    const onTheHour = claudeLimits.__test.parseResetAt('Sep 6 at 9pm (America/Chicago)', new Date(2026, 8, 4).getTime());
+    check(onTheHour !== null && new Date(onTheHour).getHours() === 21 && new Date(onTheHour).getMinutes() === 0,
+      'a reset printed on the hour as "9pm", with no minutes, still parses — a runtime probe caught this returning null');
+    check(claudeLimits.__test.parseResetAt('whenever it feels like it') === null,
+      'an unparseable reset time is null, and the verbatim text carries the answer instead');
+
+    // Consumption is Wanigan's own record and must key to the account that ran.
+    // `.every` over an empty array is true, so this used to pass on a database
+    // with no recorded consumption — which is every fresh install, including
+    // this suite's. The rows are seeded first so the shape is actually read.
+    const usageSeedAt = Date.now();
+    // consumption() joins session_log for the account, so the session row has
+    // to exist or the event is invisible to the very query under test.
+    db().prepare(`
+      INSERT OR IGNORE INTO session_log (id, provider_id, project_id, project_name, project_path, started_at)
+      VALUES ('smoke-usage', 'test', 'p', 'p', '/tmp/p', ?)
+    `).run(usageSeedAt);
+    const seedApiEvent = db().prepare(`
+      INSERT INTO session_api_events (session_id, at, kind, model, in_tokens, out_tokens, cost_usd)
+      VALUES ('smoke-usage', ?, 'request', ?, 10, 20, ?)
+    `);
+    seedApiEvent.run(usageSeedAt, 'smoke-priced-model', 0.5);
+    seedApiEvent.run(usageSeedAt, 'smoke-silent-model', 0);
+    const usageRows = usageAgg.consumption(7);
+    check(usageRows.length > 0 && usageRows.every((row) => typeof row.accountLabel === 'string'
+      && ['reported', 'partial', 'unreported'].includes(row.costStatus)),
+      'recorded consumption is grouped per account and model, and says whether its cost figure is complete',
+      `${usageRows.length} rows`);
+    check(usageRows.find((row) => row.model === 'smoke-silent-model')?.costStatus === 'unreported'
+      && usageRows.find((row) => row.model === 'smoke-priced-model')?.costStatus === 'reported',
+      'a model whose requests carried no cost is labelled unreported rather than totalled as free');
+    db().prepare("DELETE FROM session_api_events WHERE session_id='smoke-usage'").run();
+    db().prepare("DELETE FROM session_log WHERE id='smoke-usage'").run();
+
+    // ── P31 · a docket is a graph ────────────────────────────────────────
+    // Two implement branches off one plan, each with its own verification, and
+    // a single review that both reach. This is the shape a planner proposes;
+    // everything below asserts it is safe to write and safe to finish.
+    const fanPlan: DocketPlanNode[] = [
+      { kind: 'plan', title: 'Scope both branches', instructions: 'Split the work.', dependsOn: [] },
+      { kind: 'implement', title: 'Branch A', instructions: 'Own src/a.', dependsOn: [0], claimPath: 'src/a' },
+      { kind: 'implement', title: 'Branch B', instructions: 'Own src/b.', dependsOn: [0], claimPath: 'src/b' },
+      // Shares Branch A's path, but runs after it — a handover, not a conflict.
+      { kind: 'verify', title: 'Verify A', instructions: 'Gate branch A.', dependsOn: [1], claimPath: 'src/a' },
+      { kind: 'verify', title: 'Verify B', instructions: 'Gate branch B.', dependsOn: [2] },
+      { kind: 'review', title: 'Decide', instructions: 'Read both branches.', dependsOn: [3, 4] },
+    ];
+    const fan = control.createDocket({ projectId: controlProject.id, title: 'Fan-out smoke',
+      objective: 'Prove a docket can hold a real task graph.', acceptance: ['Both branches are verified.'], plan: fanPlan });
+    const byTitle = (detail: typeof fan, title: string) => detail.nodes.find((node) => node.title === title)!;
+    check(fan.nodes.length === 6 && byTitle(fan, 'Scope both branches').status === 'ready'
+      && byTitle(fan, 'Branch A').status === 'blocked' && byTitle(fan, 'Branch B').status === 'blocked',
+      'a proposed task graph is written as a real dependency graph, not a fixed four-step chain');
+    check(byTitle(fan, 'Branch A').claimPath === 'src/a' && byTitle(fan, 'Scope both branches').claimPath === null,
+      'a planned path claim is stored per task and absent when none was declared');
+
+    const rejectedPlan = (plan: unknown, label: string) => {
+      try {
+        control.createDocket({ projectId: controlProject.id, title: label, objective: label, acceptance: ['n/a'], plan: plan as DocketPlanNode[] });
+        return false;
+      } catch { return true; }
+    };
+    check(rejectedPlan([
+      { kind: 'implement', title: 'A', instructions: 'x', dependsOn: [1] },
+      { kind: 'implement', title: 'B', instructions: 'x', dependsOn: [0] },
+      { kind: 'review', title: 'R', instructions: 'x', dependsOn: [0, 1] },
+    ], 'Cycle'), 'a cyclic task graph is refused instead of being written as permanently blocked work');
+    check(rejectedPlan([
+      { kind: 'implement', title: 'A', instructions: 'x', dependsOn: [] },
+    ], 'No review'), 'a task graph without a review task is refused; the human decision is the final gate');
+    check(rejectedPlan([
+      { kind: 'implement', title: 'Reviewed', instructions: 'x', dependsOn: [] },
+      { kind: 'implement', title: 'Unreviewed', instructions: 'x', dependsOn: [] },
+      { kind: 'review', title: 'R', instructions: 'x', dependsOn: [0] },
+    ], 'Unreachable'), 'a task the review cannot reach is refused rather than accepted unreviewed');
+    check(rejectedPlan([
+      { kind: 'implement', title: 'A', instructions: 'x', dependsOn: [], claimPath: 'src' },
+      { kind: 'implement', title: 'B', instructions: 'x', dependsOn: [], claimPath: 'src/nested' },
+      { kind: 'review', title: 'R', instructions: 'x', dependsOn: [0, 1] },
+    ], 'Concurrent claims'), 'two tasks that can run at once cannot claim overlapping paths');
+
+    control.completeNode(byTitle(fan, 'Scope both branches').id, { detail: 'Split.' });
+    const afterPlan = control.docket(fan.id);
+    check(byTitle(afterPlan, 'Branch A').status === 'ready' && byTitle(afterPlan, 'Branch B').status === 'ready',
+      'completing one prerequisite releases every dependent branch at once, which is what fan-out is for');
+    control.completeNode(byTitle(afterPlan, 'Branch A').id, { detail: 'A done.' });
+    control.completeNode(byTitle(afterPlan, 'Branch B').id, { detail: 'B done.' });
+    const verifyA = byTitle(control.docket(fan.id), 'Verify A');
+    const verifyB = byTitle(control.docket(fan.id), 'Verify B');
+    let unprovenVerifyRefused = false;
+    try { control.completeNode(verifyB.id, { detail: 'Trust me.' }); } catch { unprovenVerifyRefused = true; }
+    check(unprovenVerifyRefused, 'a verification task still cannot be completed without command evidence');
+    await control.runProof(verifyA.id); control.completeNode(verifyA.id, { detail: 'A gate passed.' });
+    await control.runProof(verifyB.id); control.completeNode(verifyB.id, { detail: 'B gate passed.' });
+    const decide = byTitle(control.docket(fan.id), 'Decide');
+    check(decide.status === 'ready', 'the review task becomes ready only once every branch has completed');
+    // A later red run on one branch must outvote both earlier greens.
+    review.saveRecipe(controlProject.id, ['false']);
+    await control.runProof(verifyB.id);
+    review.saveRecipe(controlProject.id, ['true']);
+    let partialApprovalRefused = false;
+    try { control.completeNode(decide.id, { decision: 'approve', detail: 'Looks fine.' }); } catch { partialApprovalRefused = true; }
+    check(partialApprovalRefused,
+      'one green branch cannot approve a docket whose other branch last failed its gate');
+    await control.runProof(verifyB.id);
+    control.completeNode(decide.id, { decision: 'approve', detail: 'Both branches verified.' });
+    check(control.docket(fan.id).status === 'accepted',
+      'a fanned-out docket is accepted once every verification task holds a passing proof');
+
+    // ── P31 · autopilot dispatch ─────────────────────────────────────────
+    // The sweep writes queue rows; it never launches anything itself. These
+    // assertions run it directly, because the timer that normally calls it is
+    // off under smoke — it would start real provider sessions mid-suite.
+    const autoPlan: DocketPlanNode[] = [
+      { kind: 'implement', title: 'Auto A', instructions: 'Own auto/a.', dependsOn: [], claimPath: 'auto/a' },
+      { kind: 'implement', title: 'Auto B', instructions: 'Own auto/b.', dependsOn: [], claimPath: 'auto/b' },
+      { kind: 'verify', title: 'Auto verify', instructions: 'Gate both.', dependsOn: [0, 1] },
+      { kind: 'review', title: 'Auto review', instructions: 'Decide.', dependsOn: [2] },
+    ];
+    const unbudgeted = control.createDocket({ projectId: controlProject.id, title: 'Unbudgeted',
+      objective: 'Autopilot without a cap.', acceptance: ['Refused.'], plan: autoPlan });
+    let uncappedRefused = false;
+    try { control.setAutopilot(unbudgeted.id, { enabled: true, providerId: 'claude' }); } catch { uncappedRefused = true; }
+    check(uncappedRefused && !control.docket(unbudgeted.id).autopilot.enabled,
+      'unattended dispatch without a spend cap is refused rather than started');
+
+    const auto = control.createDocket({ projectId: controlProject.id, title: 'Autopilot smoke',
+      objective: 'Dispatch ready work without an operator.', acceptance: ['Both branches land.'],
+      budgetUsd: 5, plan: autoPlan });
+    const armed = control.setAutopilot(auto.id, { enabled: true, providerId: 'claude', model: 'smoke-model' });
+    check(armed.autopilot.enabled && armed.autopilot.providerId === 'claude' && armed.autopilot.model === 'smoke-model'
+      && armed.autopilot.budgetUsd === 5 && armed.autopilot.spendStatus === 'none',
+      'arming autopilot freezes the provider, model and cap it will dispatch against');
+
+    const swept = control.sweepAutopilot();
+    const queuedLabels = queue.listQueue(200).filter((item) => item.kind === 'node').map((item) => item.label);
+    check(swept === 2 && queuedLabels.filter((label) => label.startsWith('Autopilot smoke · ')).length === 2,
+      'the sweep queues every ready branch at once, and only the ready ones', { swept, queuedLabels });
+    check(!queuedLabels.some((label) => label.includes('Auto review')),
+      'the review task is never dispatched to an agent; approving its own docket is the gate autopilot must not cross');
+    check(control.sweepAutopilot() === 0,
+      'a second sweep re-queues nothing, so a task cannot be started twice by two ticks');
+
+    // Turning autopilot off cannot un-queue a row a runner may already hold, so
+    // the runner itself is the thing that has to refuse.
+    control.setAutopilot(auto.id, { enabled: false });
+    const autoA = control.docket(auto.id).nodes.find((node) => node.title === 'Auto A')!;
+    await control.startQueuedNode(autoA.id);
+    check(control.docket(auto.id).nodes.find((node) => node.id === autoA.id)?.status === 'ready',
+      'a queued task whose autopilot was switched off returns without starting a paid session');
+    check(control.sweepAutopilot() === 0,
+      'a disarmed docket is skipped by later sweeps, so switching autopilot off actually stops it');
+    for (const item of queue.listQueue(200).filter((row) => row.kind === 'node')) queue.cancelQueued(item.id);
+
+    const capped = control.createDocket({ projectId: controlProject.id, title: 'Spent out',
+      objective: 'A cap already reached.', acceptance: ['Halts.'], budgetUsd: 0, plan: autoPlan });
+    control.setAutopilot(capped.id, { enabled: true, providerId: 'claude' });
+    check(control.sweepAutopilot() === 0 && !control.docket(capped.id).autopilot.enabled,
+      'a docket at its cap stops dispatching instead of continuing on unreported cost');
+    check(control.docket(capped.id).proofs.some((proof) => proof.summary.startsWith('Autopilot stopped:')),
+      'the halt is written into the docket’s own evidence, not just a flipped flag');
+
     const event = control.addEvent({ projectId: controlProject.id, source: 'ci', kind: 'failure', summary: 'Smoke CI failed.' });
     const triaged = control.triageEvent(event.id, {});
     check(control.listEvents('triaged').some((item) => item.docketId === triaged.id),
@@ -1928,6 +2391,53 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       const listedTools = await rpc(ownToken, 'tools/list');
       check(listedTools.body.result?.tools?.some((tool: { name?: string }) => tool.name === 'wanigan_get_goal'),
         'Wanigan MCP advertises durable Goal tools to supported sessions');
+      // Transcript recall: off by default, listed only after the project opts
+      // in, scoped to the caller's frozen harness/backend/account, redacted.
+      const hasRecall = (body: { result?: any }) => Boolean(body.result?.tools?.some((tool: { name?: string }) => tool.name === 'wanigan_recall_transcripts'));
+      check(!transcripts.recallEnabled(controlProject.id) && !hasRecall(listedTools.body),
+        'transcript recall is off by default and an un-opted-in project never sees the tool listed');
+      const blindCall = await rpc(ownToken, 'tools/call', { name: 'wanigan_recall_transcripts', arguments: { query: 'anything' } });
+      check(blindCall.body.result?.isError === true, 'calling recall without the opt-in is refused, not answered');
+      transcripts.setRecallEnabled(controlProject.id, true);
+      const recallSession = `s_recall_${Date.now().toString(36)}`;
+      const foreignSession = `${recallSession}_other_account`;
+      const recallInsert = db().prepare(`INSERT INTO session_log (id,provider_id,harness_id,backend_id,account_id,project_id,project_path,project_name,started_at,title)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`);
+      recallInsert.run(recallSession, 'claude', 'claude-code', 'anthropic', null, controlProject.id, controlRepo, 'control', Date.now(), 'Recall me');
+      recallInsert.run(foreignSession, 'claude', 'claude-code', 'anthropic', 'acct_someone_else', controlProject.id, controlRepo, 'control', Date.now(), 'Not yours');
+      const archiveInsert = db().prepare('INSERT INTO transcripts (session_id, source_path, stored_path, bytes, turns, parsed, archived_at) VALUES (?,?,?,?,?,?,?)');
+      archiveInsert.run(recallSession, '/dev/null', '/dev/null', 1, 1, 1, Date.now());
+      archiveInsert.run(foreignSession, '/dev/null', '/dev/null', 1, 1, 1, Date.now());
+      const ftsInsert = db().prepare('INSERT INTO transcript_fts (session_id, role, at, text) VALUES (?,?,?,?)');
+      ftsInsert.run(recallSession, 'assistant', Date.now(), 'The heron migration key is sk-ant-0123456789abcdef and the plan is in docs/heron.md');
+      ftsInsert.run(foreignSession, 'assistant', Date.now(), 'heron notes that belong to another account');
+      try {
+        check(hasRecall((await rpc(ownToken, 'tools/list')).body), 'after the operator opts the project in, the recall tool is listed');
+        const codexRecall = await rpc(ownToken, 'tools/call', { name: 'wanigan_recall_transcripts', arguments: { query: 'heron' } });
+        check(codexRecall.body.result?.structuredContent?.recall?.kind === 'unsupported'
+          && /no archive/.test(codexRecall.body.result?.structuredContent?.recall?.note ?? ''),
+        'a Codex-harness caller is told there is no archive for its harness instead of being shown an empty list', codexRecall.body.result);
+        const scoped = transcripts.recallTranscripts(
+          { projectId: controlProject.id, harnessId: 'claude-code', providerId: 'claude', backendId: 'anthropic', accountId: null }, 'heron', 10);
+        check(scoped.kind === 'ok' && scoped.archivedSessions === 1 && scoped.hits.length === 1 && scoped.hits[0].sessionId === recallSession
+          && scoped.hits[0].title === 'Recall me',
+        'recall answers only from the caller’s project, frozen backend and frozen account — another account’s archive is out of scope', scoped);
+        check(scoped.kind === 'ok' && !scoped.hits[0].snippet.includes('sk-ant-0123456789abcdef') && /heron/.test(scoped.hits[0].snippet),
+          'recalled snippets pass through credential redaction', scoped.kind === 'ok' ? scoped.hits[0].snippet : scoped);
+        const otherBackend = transcripts.recallTranscripts(
+          { projectId: controlProject.id, harnessId: 'claude-code', providerId: 'glm', backendId: 'zai', accountId: null }, 'heron', 10);
+        check(otherBackend.kind === 'ok' && otherBackend.archivedSessions === 0 && otherBackend.hits.length === 0,
+          'a different model backend in the same project sees none of these transcripts');
+        transcripts.setRecallEnabled(controlProject.id, false);
+        check(!hasRecall((await rpc(ownToken, 'tools/list')).body)
+          && transcripts.recallTranscripts({ projectId: controlProject.id, harnessId: 'claude-code', providerId: 'claude', backendId: 'anthropic', accountId: null }, 'heron').kind === 'disabled',
+        'switching recall off delists the tool and the reader itself answers disabled');
+      } finally {
+        transcripts.setRecallEnabled(controlProject.id, false);
+        db().prepare('DELETE FROM transcript_fts WHERE session_id IN (?,?)').run(recallSession, foreignSession);
+        db().prepare('DELETE FROM transcripts WHERE session_id IN (?,?)').run(recallSession, foreignSession);
+        db().prepare('DELETE FROM session_log WHERE id IN (?,?)').run(recallSession, foreignSession);
+      }
       const readGoal = await rpc(ownToken, 'tools/call', { name: 'wanigan_get_goal', arguments: { goalId: docket.id } });
       check(readGoal.body.result?.structuredContent?.goal?.id === docket.id,
         'Wanigan MCP returns a Goal contract as structured content');
@@ -1969,6 +2479,11 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const sessionsSrc = sourceOf('src/renderer/src/views/Sessions.tsx');
   const settingsSrc = sourceOf('src/renderer/src/views/Settings.tsx');
   const appSrc = sourceOf('src/renderer/src/App.tsx');
+  const usageViewSrc = sourceOf('src/renderer/src/views/Usage.tsx');
+  // The route table left App.tsx for shared/routes.ts so the rail, palette,
+  // cheat sheet and key handler read one record; assertions about routes read
+  // it from there.
+  const routesSrc = sourceOf('src/shared/routes.ts');
   const themeSrc = sourceOf('src/renderer/src/theme.ts');
   const themeBootSrc = sourceOf('src/renderer/src/theme-boot.ts');
   const terminalPaneSrc = sourceOf('src/renderer/src/components/TerminalPane.tsx');
@@ -2020,9 +2535,18 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && /startup\.status\(\)/.test(appSrc) && /Wanigan is open in recovery mode/.test(appSrc),
   'a partially migrated local database opens a recovery window with status and retry instead of rejecting startup before any UI exists');
   check(/handle\(\s*'settings:setTheme'/.test(mainSrc)
-    && /handle\(\s*'settings:set'\s*,\s*\(key: string, value: string\)\s*=>\s*setUserPreference/.test(mainSrc)
+    // The generic bridge still goes through the validating setter; the handler
+    // grew a body only so a stored sidebar answer can rebuild the View menu's
+    // tick, and that body must not become a second way to write settings.
+    && /handle\(\s*'settings:set'\s*,\s*\(key: string, value: string\)\s*=>\s*\{/.test(mainSrc)
+    && mainSrc.includes('const next = setUserPreference(key, value);')
     && /setTheme:\s*\(theme: ThemeSetting\).*settings:setTheme/.test(preloadSrc)
-    && appSrc.includes('useThemePreference') && appSrc.includes('<ThemeControl')
+    // The Theme select left the title row: Settings › App keeps the native
+    // control, and the palette carries three "Appearance: …" actions that call
+    // the same setter, so the setting is reachable without a title-bar widget.
+    && appSrc.includes('useThemePreference') && !appSrc.includes('<ThemeControl')
+    && appSrc.includes('title: `Appearance: ${word}`') && appSrc.includes('setTheme(value)')
+    && settingsSrc.includes('ThemeControl')
     && themeSrc.includes("window.wanigan.prefs.setTheme(next)")
     && themeSrc.includes("window.matchMedia('(prefers-color-scheme: dark)')")
     && themeBootSrc.includes("root.dataset.theme = resolved")
@@ -2062,7 +2586,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // proposes product improvements from public sources rather than recording
   // knowledge from your own sessions. The safety properties below are unchanged
   // and are the reason this assertion exists — only its host moved.
-  check(appSrc.includes("id: 'scout'")
+  check(routesSrc.includes("id: 'scout'")
     && appSrc.includes('<ImprovementScout projects={projects} onOpenGoal={openGoal} />')
     && !learningSrc.includes('ImprovementScout')
     && scoutViewSrc.includes("allowNetwork: true")
@@ -2088,16 +2612,234 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // field so typing never stops mid-search.
     && appSrc.includes("if (e.key === 'ArrowDown')")
     && appSrc.includes('aria-activedescendant={active >= 0')
-    // The rail is a roving tabindex, so it is one tab stop rather than eleven.
+    // The list is a roving tabindex, so it is one tab stop rather than fifteen.
     && appSrc.includes('tabIndex={roving === id ? 0 : -1}')
     && appSrc.includes("aria-current={railHasActiveTab ? undefined : 'page'}")
-    // Off-rail views (Skills, Context) are reachable and are labelled with a
-    // real shortcut where one exists rather than a blank column.
+    // Off-list views are reachable and are labelled with a real shortcut where
+    // one exists rather than a blank column. Nothing is off the list any more,
+    // but the palette must stay truthful if a route is added and ungrouped.
     && appSrc.includes('meta: TAB_SHORTCUTS[item.id].label'),
   'the keyboard palette traps focus, moves an announced highlight on arrow keys and restores its opener, while navigation remains reachable and truthful on Views-only routes');
+
+  // Two accounts is the whole point of the accounts feature, and an exhausted
+  // window on one of them is exactly when it pays off. The page holds both live
+  // readings; it must compare like with like — same window kind, same model
+  // scope — and say nothing unless one really is at 100% and another really has
+  // room.
+  check(usageViewSrc.includes('const relief = useMemo(')
+    && usageViewSrc.includes("const key = (w: LimitWindow) => `${w.kind}:${w.scope ?? 'all'}`")
+    && usageViewSrc.includes('if (window.usedPercent < 100) continue;')
+    && usageViewSrc.includes('.filter((w) => key(w) === key(window) && w.usedPercent < 100)')
+    && usageViewSrc.includes('if (alternatives.length === 0) continue;')
+    && usageViewSrc.includes('{relief.length > 0 && ('),
+  'an exhausted limit window names the other account that still has room on the same window, and says nothing when there is none');
+
+  // The advice above names a control, so the control has to exist. It did not:
+  // accounts:setForProject was registered in main and bound in the preload and
+  // no renderer ever called it, which left "pin this repo to that login" as a
+  // capability the app had and never offered.
+  check(/handle\(\s*'accounts:setForProject'/.test(mainSrc)
+    && /setForProject:\s*\(/.test(preloadSrc)
+    && settingsSrc.includes('window.wanigan.accounts.setForProject(project.id, PROJECT_ACCOUNT_HARNESS, accountId)')
+    && settingsSrc.includes('window.wanigan.accounts.forProject(p.id, PROJECT_ACCOUNT_HARNESS)')
+    // Below two accounts the control offers a choice that does not exist.
+    && settingsSrc.includes('{accountRows.length > 1 && (')
+    && settingsSrc.includes("{pinErr === null ? 'Follow the default' : 'Not read'}")
+    // A swallowed pin read used to render as "Follow the default", which is a
+    // real and different answer — and one the operator can act on by writing a
+    // genuine un-pin over a pin that was there all along.
+    && settingsSrc.includes('const [pinErr, setPinErr]')
+    && settingsSrc.includes('disabled={pinErr !== null}')
+    // Clearing is not the same as choosing the current default: the default can
+    // change, and a project that never chose should follow it when it does.
+    && settingsSrc.includes('e.target.value || null'),
+  'a project can be pinned to a Claude account from Settings › Projects, cleared back to the default, and the picker is hidden when there is only one account');
+
+  // A live agent does not stop printing because you stepped over to Git, and
+  // the only subscription that wrote its bytes into the terminal used to live
+  // inside the Sessions view — which App.tsx unmounts on every tab change.
+  // Everything printed while you were away was dropped, and unrecoverably: the
+  // pane primes from main's ring buffer exactly once, so coming back showed a
+  // terminal silently missing output. Main was never the problem; nobody was
+  // listening.
+  check(terminalPaneSrc.includes('export function startTerminalOutputPump()')
+    && terminalPaneSrc.includes("window.wanigan.on.data(({ sessionId, data }) => feed(sessionId, data))")
+    && terminalPaneSrc.includes('window.wanigan.on.exit(')
+    && appSrc.includes('useEffect(() => startTerminalOutputPump(), [])')
+    // The view keeps the unread accounting, which only means anything while the
+    // session list is on screen, and writes no bytes itself.
+    && !sessionsSrc.includes('feed(sessionId, data)')
+    && !sessionsSrc.includes('import TerminalPane, { feed,'),
+  'terminal output is pumped for the window’s lifetime rather than the Sessions view’s, so bytes printed while you are on another tab still land');
+
+  // ── what is left, for every agent ───────────────────────────────────
+  // The Usage screen said "read live from each account" and read only the
+  // Claude ones. AccountLimits already carried a harness field and
+  // codex-status.ts already read Codex's windows per account; nothing joined
+  // them, so a Codex login simply did not appear on the page whose whole
+  // subject is what is left.
+  const limitsSrc = sourceOf('src/main/limits.ts');
+  const usageSrc = sourceOf('src/main/usage.ts');
+  check(usageSrc.includes("import { allAccountLimits } from './limits'")
+    && !usageSrc.includes("from './claude-limits'")
+    && limitsSrc.includes("accounts.list('codex')")
+    && limitsSrc.includes('readCodexStatus(force, account.id)')
+    && limitsSrc.includes('accounts.listAll()'),
+  'the usage snapshot reads every account across harnesses, not only the Claude ones');
+  // Codex names a window by its duration; Claude names it with a word. Where
+  // the span is the same, the page must not call it two different things.
+  check(limits.__test.windowKind(10_080) === 'week'
+    && limits.__test.windowKind(1_440) === 'day'
+    && limits.__test.windowKind(300) === '5h window'
+    && limits.__test.windowKind(90) === '90m window'
+    && limits.__test.windowKind(null) === 'limit window',
+  'a Codex window is named by the span it actually covers, and a weekly one gets the same word Claude uses',
+  limits.__test.windowKind(300));
+  const codexAccount = {
+    id: 'a1', harness: 'codex', label: 'Personal', configDir: '/tmp/x',
+    adopted: true, isDefault: true, present: true, signedIn: 'yes' as const, createdAt: 0, updatedAt: 0,
+  };
+  const codexOk = limits.__test.fromCodexStatus(
+    codexAccount,
+    { fetchedAt: 1, plan: 'pro', spendControlReached: true,
+      primary: { usedPercent: 42, remainingPercent: 58, resetsAt: 99, windowMinutes: 300 },
+      secondary: { usedPercent: 7, remainingPercent: 93, resetsAt: 1000, windowMinutes: 10_080 } });
+  check(codexOk.state === 'ok' && codexOk.harness === 'codex'
+    && codexOk.windows.length === 2
+    && codexOk.windows[0].kind === '5h window' && codexOk.windows[1].kind === 'week'
+    // Codex gives an epoch and no words, so there is nothing verbatim to keep;
+    // the renderer prints the countdown it can compute and nothing else.
+    && codexOk.windows.every((w) => w.resetsAtText === null)
+    && codexOk.windows[0].resetsAt === 99
+    // A spend control is a separate fact from a full window and is the one that
+    // explains a refused run while every percentage still looks fine.
+    && /spend control has been reached/.test(codexOk.detail ?? ''),
+  'a Codex reading becomes an account card with its real windows, no invented reset wording, and its spend control stated');
+  const codexEmpty = limits.__test.fromCodexStatus(codexAccount,
+    { fetchedAt: 1, plan: null, spendControlReached: null, primary: null, secondary: null });
+  check(codexEmpty.state === 'unreadable' && codexEmpty.windows.length === 0
+    && /not a reading of zero/.test(codexEmpty.detail ?? ''),
+  'Codex answering with no windows is reported as unreadable, never as zero used');
+
+  // A trust level that reaches the renderer from a database row rather than
+  // from TRUST_LEVELS used to index TRUST_COPY directly in five places. One
+  // unrecognised value made that undefined and the next .label took the whole
+  // view into its error boundary — a blank screen in answer to "what is this
+  // repository allowed to do". trustCopy() answers instead, and says plainly
+  // that it does not know the level rather than relabelling it as one of the
+  // three the reader already trusts.
+  const sessionsViewSrc = sourceOf('src/renderer/src/views/Sessions.tsx');
+  const fleetViewSrc = sourceOf('src/renderer/src/views/Fleet.tsx');
+  const dialogSrc = sourceOf('src/renderer/src/components/NewSessionDialog.tsx');
+  const unknownTrust = trustCopy('elevated-by-a-later-build');
+  check(trustCopy('project').label === 'Project'
+    && unknownTrust.label === 'elevated-by-a-later-build'
+    && /does not recognise the trust level/.test(unknownTrust.detail)
+    // It may name the three real levels as the remedy; what it must never do is
+    // hand back one of their descriptions as if it described this one.
+    && TRUST_LEVELS.every((known) => unknownTrust.detail !== TRUST_COPY[known].detail)
+    && TRUST_LEVELS.every((known) => unknownTrust.label !== TRUST_COPY[known].label)
+    && trustCopy('').label === 'unknown'
+    && trustGlyph('trusted') === '◆' && trustGlyph('nonsense') === '·',
+  'an unrecognised trust level renders as itself with an honest explanation, never as one of the three levels and never as a crash',
+  unknownTrust.label);
+  check(!sessionsViewSrc.includes('TRUST_COPY[') && !fleetViewSrc.includes('TRUST_COPY[')
+    && !dialogSrc.includes('TRUST_COPY[')
+    && !sessionsViewSrc.includes('const TRUST_GLYPH') && !fleetViewSrc.includes('const TRUST_GLYPH')
+    && !dialogSrc.includes('const TRUST_GLYPH')
+    // Settings may still index it where the key comes from TRUST_LEVELS itself.
+    && settingsSrc.includes('trustCopy(lv).detail') && settingsSrc.includes('trustCopy(r.trust).label'),
+  'no view indexes the trust table directly with a value that came from data, and the glyph is declared once rather than in three files');
+
+  // ── the shell: one header row, one vertical destination list ────────
+  const menuSrc = sourceOf('src/main/menu.ts');
+  // These checks are about what the menu *does*, and menu.ts explains itself at
+  // length — including by quoting the roles it deliberately omits. Reading the
+  // prose as code made "no reload role" fail on the sentence saying so.
+  const menuCode = menuSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const bindingsSrc = sourceOf('src/renderer/src/bindings.ts');
+  const shellCssSrc = sourceOf('src/renderer/src/styles/shell.css');
+  const ungrouped = TABS.map((item) => item.id)
+    .filter((id) => !SIDEBAR_GROUPS.some((section) => (section.tabs as readonly string[]).includes(id)));
+  check(ungrouped.length === 0,
+    'every route in TABS is in a sidebar group, so no destination is reachable only through ⌘K',
+    ungrouped.join(', '));
+  check(SIDEBAR_GROUPS.flatMap((section) => section.tabs).length === TABS.length
+    && new Set(SIDEBAR_GROUPS.flatMap((section) => section.tabs)).size === TABS.length,
+    'and no route is listed in two groups, so arrow-key order and reading order are the same list');
+  check(Object.keys(TAB_ICONS).length === TABS.length
+    && TABS.every((item) => typeof TAB_ICONS[item.id] === 'string' && TAB_ICONS[item.id].length > 0),
+    'every route has an icon, so no sidebar row is a word with a hole beside it');
+  check(appSrc.includes('<span className="nav-tab-label">{label}</span>')
+    && appSrc.includes('<Icon name={TAB_ICONS[id]} />')
+    && appSrc.includes('<span className="nav-tab-chord" aria-hidden="true">{shortcut.label}</span>'),
+    'a sidebar row prints its word and its chord beside the glyph — the icon is a second way to find a route, never the only one');
+  check(appSrc.includes('<div className="workspace">')
+    && appSrc.includes('{sidebarOpen && (')
+    && appSrc.includes('aria-controls="wanigan-sidebar"')
+    && appSrc.includes("aria-orientation=\"vertical\"")
+    && appSrc.includes("if (event.key === 'ArrowDown')")
+    && !appSrc.includes('nav-titlebar') && !appSrc.includes('className="nav-tabs"')
+    && !cssSrc.includes('.nav-titlebar') && !cssSrc.includes('--rail-h')
+    && cssSrc.includes('--sidebar-w')
+    && bindingsSrc.includes("id: 'sidebar'") && appSrc.includes("bindingMatches(e, 'sidebar')")
+    && appSrc.includes("window.wanigan.prefs.set('nav_sidebar'")
+    && settingsSrc.length > 0,
+  'the two-row header became one row plus a hideable vertical list: all fifteen routes, arrow keys on the axis they are drawn on, and a durable open/closed preference');
+  check(shellCssSrc.includes('.nav-tab-wrap { display: block; }')
+    && cssSrc.includes('.nav-progress {')
+    && !cssSrc.includes('position: absolute; left: 11px; right: 11px; bottom: 5px;'),
+    'the batch progress bar is a sibling under its row rather than an overlay across the label it would cover');
+  // The menu bar is built from the route table and claims no key the window
+  // needs. A registered accelerator is taken by the OS before the keydown
+  // reaches the renderer, which is where "the PTY owns its keystrokes" lives.
+  check(menuCode.includes("import { SIDEBAR_GROUPS, TAB_SHORTCUTS, labelForTab")
+    && menuCode.includes('registerAccelerator: false')
+    && (menuCode.match(/(?<![A-Za-z])accelerator:/g) ?? []).length === (menuCode.match(/registerAccelerator: false/g) ?? []).length
+    && !menuCode.includes("role: 'reload'") && !menuCode.includes("role: 'forceReload'")
+    && menuCode.includes("w.webContents.send('menu:route', route)")
+    && mainSrc.includes('installApplicationMenu(() => win)')
+    && preloadSrc.includes("ipcRenderer.on('menu:route'")
+    && appSrc.includes('window.wanigan.on.menuRoute(')
+    && appSrc.includes("case 'tab': go(route.tab); break;"),
+  'the macOS menu bar is built from the same route table, prints chords without taking them from the window, and cannot reload a renderer that owns live PTYs');
+  check(appSrc.includes('window.wanigan.on.notificationOpened(')
+    && appSrc.includes("if (route.kind === 'session') { focusSession(route.sessionId); go('sessions'); }"),
+    'a clicked notification lands on the session it named, instead of raising the window onto whichever tab was open');
+  // ⌘1–9 select a view, in the capture phase, on window. The session tabs
+  // printed "⌘1 / ⌘2 / ⌘3" and the status bar said "⌘1–9 switch", and the
+  // bubble-phase listener that would have honoured them was never reached —
+  // confirmed by driving the built renderer, not by reading it. Switching
+  // sessions has its own chord now, and nothing prints the old one.
+  check(!sessionsSrc.includes('⌘{i + 1}')
+    && !sessionsSrc.includes('⌘1–9 switch')
+    && !sessionsSrc.includes('if (n >= 1 && n <= 9 && sessions[n - 1])')
+    && bindingsSrc.includes("id: 'session-prev'") && bindingsSrc.includes("id: 'session-next'")
+    && bindingsSrc.includes("aria: 'Alt+Meta+ArrowLeft'")
+    && sessionsSrc.includes("bindingMatches(e, 'session-prev')")
+    && sessionsSrc.includes("bindingMatches(e, 'session-next')")
+    // Matched on the arrow key rather than a character, so the chord holds on
+    // any keyboard layout.
+    && !bindingsSrc.includes("aria: 'Alt+Meta+['"),
+  'switching sessions uses a chord the shell has not already taken, and the tabs no longer print one that moves nothing');
+  check(bindingsSrc.includes("keys: '⌘⌫'") && !bindingsSrc.includes("id: 'close-tab',   keys: '⌘W'")
+    && sessionsSrc.includes("if (e.key === 'Backspace' && activeRef.current)")
+    && !sessionsSrc.includes("if (e.key === 'w' && activeRef.current)"),
+    'closing an exited session tab uses a chord macOS has not already claimed for Close Window, so the cheat sheet prints a chord that runs');
   check(sessionsSrc.includes("import '../styles/sessions.css'")
     && sessionsSrc.includes('SESSION_PICKER_COMPACT_QUERY')
     && sessionsSrc.includes('sessions--picker-open')
+    // The two rail breakpoints are measured on the view, not the window, and
+    // the stylesheet keys off the class that measurement sets. A window-width
+    // media query and a view-width measurement disagree at every width where
+    // the destination list is open, which would leave a rail aria-hidden and
+    // still on screen as a first column.
+    && sessionsSrc.includes('new ResizeObserver(measure)')
+    && sessionsSrc.includes('SESSION_PICKER_COMPACT_WIDTH')
+    && sessionsSrc.includes('ref={sessionsBoxRef}')
+    && !sessionsCssSrc.includes('@media (max-width: 860px)')
+    && !cssSrc.includes('.sessions { grid-template-columns: 248px 1fr;')
+    && cssSrc.includes('grid-template-columns: clamp(184px, 22%, 248px)')
     && sessionsCssSrc.includes('sessions--picker-open .session-rail')
     && sessionsCssSrc.includes('.session-picker-scrim')
     && sessionsCssSrc.includes('@media (pointer: coarse)')
@@ -2123,6 +2865,40 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   'exact Codex recovery has its own UUID/project IPC, validates state plus CWD, checks the live writer before spawn, and delays Recent history until bootstrap succeeds');
   check(/sandbox:\s*true/.test(mainSrc) && /will-navigate/.test(mainSrc) && /trustedSender/.test(mainSrc),
     'the desktop shell is sandboxed, refuses renderer navigation and validates IPC senders');
+
+  // ── the allowlist is not renderer-supplied ──────────────────────────
+  // roots.ts builds managedRoots() from the projects table and says so: "Both
+  // come from this process's own records, never from the caller." projects:add
+  // took a bare path from the renderer and inserted it, and addProject refuses
+  // only a subdirectory of a repo — so one call naming a home directory
+  // registered a root, and every later assertManagedRoot succeeded beneath it.
+  check(mainSrc.includes("handle('projects:add', async (dir: unknown) => {")
+    && mainSrc.includes("title: 'Add this directory as a project?'")
+    && mainSrc.includes("if (answer.response !== 1) throw new Error('Cancelled. No project was added.');")
+    && mainSrc.includes('return addProject(resolved);'),
+  'registering a project root is confirmed in the main process, naming the exact directory, before it can widen the allowlist every other guard reads');
+  // Four handlers that took the renderer's word while every sibling in the same
+  // block validated first.
+  check(mainSrc.includes("worktrees.listWorktrees(assertManagedRoot(String(repoRoot), 'That repository'))")
+    && mainSrc.includes("worktrees.worktreeStatus(assertManagedRoot(String(p), 'That worktree'))")
+    && mainSrc.includes("browse.revealInFinder(assertOpenablePath(String(p)))")
+    && mainSrc.includes("plugins.details(pluginId(name))")
+    && !/handle\('worktrees:list', \(repoRoot: string\) => worktrees\.listWorktrees\(repoRoot\)\)/.test(mainSrc)
+    && !/handle\('browse:reveal', \(p: string\) => browse\.revealInFinder\(p\)\)/.test(mainSrc),
+  'reading a worktree, revealing a path in the Finder and asking about a plugin all validate the renderer’s argument, like every other handler beside them');
+  check(mainSrc.includes("handle('settings:setSpendCap', (v: unknown) => {")
+    && mainSrc.includes("if (!Number.isFinite(cap) || cap < 0) throw new Error('A spend cap must be a number of dollars, zero or more.');")
+    && mainSrc.includes('cap > 100_000'),
+  'the spend cap — the one control between a mistyped batch and a runaway bill — refuses a value that is not a number of dollars instead of writing it and reading back the default');
+
+  // A pack that redirects the Anthropic API must not carry the operator's own
+  // Anthropic credential to the host it chose. The name-based strip exempted
+  // any name the profile declared, and a manifest can declare a process-source
+  // read of the ambient key under any destination — including its own name.
+  check(sessionManagerSrc.includes('const ambient = new Set(')
+    && sessionManagerSrc.includes('if (ambient.has(value.trim())) delete out[key];')
+    && sessionManagerSrc.includes('ANTHROPIC_AMBIENT_KEYS'),
+  'the ambient Anthropic credential is stripped from a redirected session by value, so a pack cannot re-export it under a name the strip exempts');
   check(/capabilitiesFor/.test(providerSrc) && /--help/.test(providerSrc),
     'provider capabilities are probed from the installed CLI rather than inferred only from a static table');
   check(/isDaemonInvocation/.test(mainSrc) && /LaunchAgents/.test(daemonSrc),
@@ -2155,7 +2931,11 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && settingsSrc.includes('aria-controls={`settings-${tab.id}`}')
     && settingsSrc.includes('aria-labelledby={`settings-tab-${tab.id}`}')
     && settingsSrc.includes('hidden={!active}') && settingsSrc.includes('moveSettingsTab')
-    && settingsSrc.includes('.set.pane { width: 100%; max-width: none;')
+    // The rule moved with the sheet: Settings' stylesheet used to be a template
+    // string inside the view, and is styles/settings.css now.
+    && sourceOf('src/renderer/src/styles/settings.css').includes('.set.pane { width: 100%; max-width: none;')
+    && settingsSrc.includes("import '../styles/settings.css'")
+    && !settingsSrc.includes('<style>')
     && !settingsSrc.includes('<div className="pane set" style={{ maxWidth'),
   'Settings keeps every operator surface in seven labelled persistent full-width tab panels, with keyboard navigation and no draft-destroying unmount');
 

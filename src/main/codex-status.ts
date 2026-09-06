@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { detectProviders, shellPath } from './providers';
+import * as accounts from './accounts';
 
 /**
  * The Codex app-server is the one supported local surface that can report the
@@ -43,8 +44,9 @@ export type CodexModels = { fetchedAt: number; models: CodexModel[]; note: strin
 const CACHE_MS = 45_000;
 const MODELS_CACHE_MS = 10 * 60_000;
 const REQUEST_TIMEOUT_MS = 12_000;
-let cached: CodexStatus | null = null;
-let pending: Promise<CodexStatus> | null = null;
+/** Keyed by account id (or '' for "whatever the environment chooses"): two logins are two answers. */
+const cached = new Map<string, CodexStatus>();
+const pending = new Map<string, Promise<CodexStatus>>();
 let modelsCached: CodexModels | null = null;
 let modelsPending: Promise<CodexModels> | null = null;
 
@@ -89,6 +91,39 @@ function stop(child: ChildProcessWithoutNullStreams): void {
 }
 
 /**
+ * How much of the child's stderr is worth keeping, and why any is kept.
+ *
+ * stderr used to be read and thrown away, on the reasoning that a CLI warning
+ * never alters an otherwise valid response.  That reasoning holds for a child
+ * that answers; it cost us the one case where the child does not.  A codex
+ * build with no `app-server` subcommand, or one that cannot parse its own
+ * config.toml, prints the reason on stderr and exits immediately — and with no
+ * exit handler the read sat for the full twelve seconds and then blamed the
+ * timeout, paying that again on every refresh while the actual reason was
+ * discarded.  Bounded because this is a diagnostic, not a log.
+ */
+const STDERR_CAP = 4_000;
+const REASON_CAP = 200;
+
+function takeStderr(text: string, chunk: Buffer): string {
+  return text.length >= STDERR_CAP ? text : text + chunk.toString('utf8');
+}
+
+/**
+ * `close`, never `exit`: `exit` can fire before the last stdout chunk is
+ * delivered, which would turn a successful final reply into a spurious "exited
+ * before answering".  `close` fires once the streams are drained, which is why
+ * claude-limits.ts and provider-adapter.ts both settle on it too.
+ */
+function exitReason(label: string, code: number | null, stderr: string): string {
+  const said = stderr.split('\n').map((line) => line.trim()).find((line) => line.length > 0);
+  const how = code === null ? 'stopped' : code === 0 ? 'exited' : `exited with code ${code}`;
+  return said
+    ? `${label} ${how} before answering: ${said.slice(0, REASON_CAP)}`
+    : `${label} ${how} before answering.`;
+}
+
+/**
  * What a read-only status probe needs, and nothing else.
  *
  * Handing the child the whole of process.env passes on every unrelated
@@ -100,7 +135,7 @@ function stop(child: ChildProcessWithoutNullStreams): void {
  * instead of answering. Proxy and CA settings stay because the read is an
  * HTTPS call and a managed network cannot make it without them.
  */
-function probeEnv(PATH: string): NodeJS.ProcessEnv {
+function probeEnv(PATH: string, accountEnv: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { PATH };
   for (const name of [
     'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'CODEX_HOME',
@@ -111,6 +146,10 @@ function probeEnv(PATH: string): NodeJS.ProcessEnv {
     const value = process.env[name];
     if (value !== undefined) env[name] = value;
   }
+  // The account's CODEX_HOME last, the same way a launch applies it: the
+  // status read has to describe the login the picked account actually uses,
+  // and the ambient variable is only right for the account that adopted it.
+  Object.assign(env, accountEnv);
   return env;
 }
 
@@ -133,16 +172,17 @@ async function codexAppServer(purpose: string): Promise<string> {
   return provider.path;
 }
 
-async function request(): Promise<CodexStatus> {
+async function request(accountEnv: Record<string, string>): Promise<CodexStatus> {
   const bin = await codexAppServer('Codex usage status');
   const PATH = await shellPath();
 
   return new Promise<CodexStatus>((resolve, reject) => {
     const child = spawn(bin, ['app-server', '--stdio'], {
-      env: probeEnv(PATH), stdio: ['pipe', 'pipe', 'pipe'],
+      env: probeEnv(PATH, accountEnv), stdio: ['pipe', 'pipe', 'pipe'],
     });
     let settled = false;
     let buffer = '';
+    let stderr = '';
     const fail = (reason: string) => {
       if (settled) return;
       settled = true; clearTimeout(timer); stop(child); reject(new Error(reason));
@@ -157,7 +197,10 @@ async function request(): Promise<CodexStatus> {
     const timer = setTimeout(() => fail('Codex status did not respond within 12 seconds.'), REQUEST_TIMEOUT_MS);
 
     child.on('error', (e) => fail(`Could not start Codex status: ${e.message}`));
-    child.stderr.on('data', () => { /* CLI warnings never alter an otherwise valid response. */ });
+    // Kept only to explain an early exit; a warning from a child that goes on
+    // to answer settles nothing, because `done` has already run by then.
+    child.stderr.on('data', (chunk: Buffer) => { stderr = takeStderr(stderr, chunk); });
+    child.on('close', (code) => fail(exitReason('Codex status', code, stderr)));
     child.stdout.on('data', (chunk: Buffer) => {
       buffer += chunk.toString('utf8');
       for (;;) {
@@ -190,13 +233,14 @@ async function requestModels(): Promise<CodexModels> {
   const PATH = await shellPath();
   return new Promise<CodexModels>((resolve, reject) => {
     const child = spawn(bin, ['app-server', '--stdio'], { env: probeEnv(PATH), stdio: ['pipe', 'pipe', 'pipe'] });
-    let settled = false; let buffer = '';
+    let settled = false; let buffer = ''; let stderr = '';
     const fail = (reason: string) => { if (settled) return; settled = true; clearTimeout(timer); stop(child); reject(new Error(reason)); };
     const done = (value: CodexModels) => { if (settled) return; settled = true; clearTimeout(timer); stop(child); resolve(value); };
     const send = (id: number, method: string, params: unknown) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
     const timer = setTimeout(() => fail('Codex model catalog did not respond within 12 seconds.'), REQUEST_TIMEOUT_MS);
     child.on('error', (e) => fail(`Could not start Codex model catalog: ${e.message}`));
-    child.stderr.on('data', () => {});
+    child.stderr.on('data', (chunk: Buffer) => { stderr = takeStderr(stderr, chunk); });
+    child.on('close', (code) => fail(exitReason('Codex model catalog', code, stderr)));
     child.stdout.on('data', (chunk: Buffer) => {
       buffer += chunk.toString('utf8');
       for (;;) {
@@ -231,13 +275,32 @@ async function requestModels(): Promise<CodexModels> {
   });
 }
 
-export async function readCodexStatus(force = false): Promise<CodexStatus> {
-  if (!force && cached && Date.now() - cached.fetchedAt < CACHE_MS) return cached;
-  if (!force && pending) return pending;
-  const work = request().then((value) => { cached = value; return value; });
-  pending = work;
+/**
+ * Which account's limits. An explicit id names one of Wanigan's Codex accounts;
+ * omitted means the default account, which for an adopted ~/.codex sets no
+ * variable and reads exactly what a by-hand `codex` would. An id Wanigan does
+ * not know is refused rather than silently read as the default.
+ */
+function accountEnvFor(accountId: string | null | undefined): { key: string; env: Record<string, string> } {
+  if (accountId) {
+    const account = accounts.byId(accountId);
+    if (!account || account.harness !== 'codex') throw new Error('That Codex account no longer exists in Wanigan.');
+    return { key: account.id, env: accounts.launchEnv(account) };
+  }
+  const account = accounts.resolve({ harness: 'codex' }).account;
+  return { key: account?.id ?? '', env: accounts.launchEnv(account) };
+}
+
+export async function readCodexStatus(force = false, accountId?: string | null): Promise<CodexStatus> {
+  const { key, env } = accountEnvFor(accountId);
+  const hit = cached.get(key);
+  if (!force && hit && Date.now() - hit.fetchedAt < CACHE_MS) return hit;
+  const inFlight = pending.get(key);
+  if (!force && inFlight) return inFlight;
+  const work = request(env).then((value) => { cached.set(key, value); return value; });
+  pending.set(key, work);
   try { return await work; }
-  finally { if (pending === work) pending = null; }
+  finally { if (pending.get(key) === work) pending.delete(key); }
 }
 
 export async function readCodexModels(force = false): Promise<CodexModels> {
@@ -248,3 +311,12 @@ export async function readCodexModels(force = false): Promise<CodexModels> {
   try { return await work; }
   finally { if (modelsPending === work) modelsPending = null; }
 }
+
+/**
+ * The parse seam, exported the way claude-limits.ts exports its own.  Both
+ * readers feed one Usage screen, and CLAUDE.md's rule — a format change
+ * reported as "0% used" is worse than no screen at all — was enforced for
+ * Claude and unenforced here.  `windowFrom` returning null for a renamed field,
+ * rather than a zero-percent window, is the fact worth asserting.
+ */
+export const __test = { windowFrom, snapshot, exitReason };

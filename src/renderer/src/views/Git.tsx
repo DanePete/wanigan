@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { GhPr, GhStatusReport, Project } from '@shared/types';
-import { Note, ago } from '../components/bits';
+import { ConfirmNote, Note, ago } from '../components/bits';
 import ReviewGate from '../components/ReviewGate';
 
 type GFile = { path: string; index: string; work: string; staged: boolean; untracked: boolean; conflicted: boolean };
@@ -124,6 +124,9 @@ export default function Git({ projects }: { projects: Project[] }) {
   const [brs, setBrs] = useState<Branch[]>([]);
   const [stash, setStash] = useState<Stash[]>([]);
   const [sel, setSel] = useState<{ kind: 'commit'; hash: string } | { kind: 'file'; path: string; staged: boolean } | null>(null);
+  // A filter over the commits already in memory: no new gh or git process
+  // runs for a keystroke, and the footer says how many rows it searched.
+  const [commitFilter, setCommitFilter] = useState('');
   const [detail, setDetail] = useState<{ title: string; patch: string } | null>(null);
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -131,7 +134,12 @@ export default function Git({ projects }: { projects: Project[] }) {
   const [ok, setOk] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(true);
   const [pane, setPane] = useState<'changes' | 'branches' | 'stash'>('changes');
-  const [confirm, setConfirm] = useState<{ what: string; run: () => Promise<void> } | null>(null);
+  // Five acts share this one confirm — push, discard all, merge, delete branch,
+  // drop stash — so it carries the verb as well as the sentence. It used to
+  // render a single button reading “Do it”, which is the T2 tier's own failure
+  // case (bits.tsx): the second read exists to say what is about to happen, and
+  // a generic button is exactly what a habit-clicker skips.
+  const [confirm, setConfirm] = useState<{ what: string; verb: string; run: () => Promise<void> } | null>(null);
   const [adding, setAdding] = useState(false);
   const [pr, setPr] = useState<GhStatusReport | null>(null);
   const [creating, setCreating] = useState(false);
@@ -277,6 +285,7 @@ export default function Git({ projects }: { projects: Project[] }) {
                       what: st.upstream
                         ? `Push ${st.ahead} commit${st.ahead > 1 ? 's' : ''} to ${st.upstream}. This leaves your machine.`
                         : `Push ${st.branch} and set origin as its upstream. This leaves your machine.`,
+                      verb: st.upstream ? `Push to ${st.upstream}` : 'Push and set upstream',
                       run: () => act('Push', () => window.wanigan.git.push(st.root,
                         st.upstream ? {} : { setUpstream: true, branch: st.branch ?? undefined })),
                     })}>
@@ -304,6 +313,9 @@ export default function Git({ projects }: { projects: Project[] }) {
   }
 
   const rowIndex = new Map(commits.map((c, i) => [c.hash, i]));
+  const commitNeedle = commitFilter.trim().toLowerCase();
+  const shownCommits = commitNeedle === '' ? commits
+    : commits.filter((c) => c.subject.toLowerCase().includes(commitNeedle) || c.author.toLowerCase().includes(commitNeedle));
 
   return (
     <div className="pane" style={{ padding: 0, display: 'flex', flexDirection: 'column' }}>
@@ -311,15 +323,10 @@ export default function Git({ projects }: { projects: Project[] }) {
       {err && <div style={{ padding: '8px 12px' }}><Note tone="error">{err}</Note></div>}
       {ok && <div style={{ padding: '8px 12px' }}><Note tone="ok">{ok}</Note></div>}
       {confirm && (
-        <div style={{ padding: '8px 12px' }}>
-          <Note tone="warn">
-            {confirm.what}
-            <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-              <button className="btn btn-primary" disabled={!!busy}
-                      onClick={() => { const r = confirm.run; setConfirm(null); void r(); }}>Do it</button>
-              <button className="btn" onClick={() => setConfirm(null)}>Cancel</button>
-            </div>
-          </Note>
+        <div className="gt-confirm">
+          <ConfirmNote tone="warn" what={confirm.what} verb={confirm.verb} busy={!!busy}
+                       onCancel={() => setConfirm(null)}
+                       onRun={() => { const run = confirm.run; setConfirm(null); return run(); }} />
         </div>
       )}
       {creating && st?.isRepo && (
@@ -360,15 +367,32 @@ export default function Git({ projects }: { projects: Project[] }) {
             <span className="t">History</span>
             <span className="c">{commits.length}</span>
             <div className="sp">
+              <input className="field gt-filter" value={commitFilter} placeholder="Filter message or author"
+                     aria-label="Filter the loaded commits" onChange={(e) => setCommitFilter(e.target.value)} />
               <button className={`gt-chip${showAll ? ' on' : ''}`} onClick={() => setShowAll((v) => !v)}>
                 {showAll ? 'all branches' : 'this branch'}
               </button>
             </div>
           </div>
-          <div className="gt-scroll">
-            {commits.map((c, i) => (
-              <div key={c.hash} className={`gt-row${sel && sel.kind === 'commit' && sel.hash === c.hash ? ' on' : ''}`}
-                   onClick={() => void openCommit(c)}>
+          {/* Arrow keys move through the loaded log and Enter opens the
+              highlighted commit; opening is an IPC round trip, so movement
+              alone never fetches a diff. */}
+          <div className="gt-scroll" onKeyDown={(e) => {
+            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+            e.preventDefault();
+            const rows = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button.gt-row'));
+            if (!rows.length) return;
+            const at = rows.indexOf(document.activeElement as HTMLButtonElement);
+            const next = e.key === 'Home' ? 0
+              : e.key === 'End' ? rows.length - 1
+                : e.key === 'ArrowDown' ? Math.min(rows.length - 1, at + 1)
+                  : Math.max(0, at <= 0 ? 0 : at - 1);
+            rows[next]?.focus();
+          }}>
+            {shownCommits.map((c, i) => (
+              <button key={c.hash} type="button" className={`gt-row${sel && sel.kind === 'commit' && sel.hash === c.hash ? ' on' : ''}`}
+                      aria-pressed={!!(sel && sel.kind === 'commit' && sel.hash === c.hash)}
+                      onClick={() => void openCommit(c)}>
                 <svg className="gt-graph" viewBox={`0 0 92 ${ROW}`} aria-hidden="true">
                   {/* Lines to each parent. Drawn per row so the graph scrolls
                       without needing one enormous SVG behind the list. */}
@@ -396,8 +420,15 @@ export default function Git({ projects }: { projects: Project[] }) {
                   {c.subject}
                 </span>
                 <span className="gt-who">{c.author.split(' ')[0]} · {ago(c.at)}</span>
-              </div>
+              </button>
             ))}
+            {commitFilter.trim() !== '' && (
+              <p className="faint gt-filter-note">
+                {shownCommits.length === 0
+                  ? `Nothing in the ${commits.length} loaded commits matches “${commitFilter.trim()}”.`
+                  : `${shownCommits.length} of the ${commits.length} loaded commits match. The filter runs over what is loaded, not the whole history.`}
+              </p>
+            )}
             {!commits.length && <p className="faint" style={{ padding: 14 }}>No commits yet.</p>}
           </div>
         </div>
@@ -437,12 +468,17 @@ export default function Git({ projects }: { projects: Project[] }) {
                   </div>
                 </div>
                 {st.staged.map((f) => (
-                  <button key={f.path} className={`gt-file${sel?.kind === 'file' && sel.path === f.path && sel.staged ? ' on' : ''}`}
+                  <div key={f.path} className="gt-file-row">
+                  <button type="button" className={`gt-file${sel?.kind === 'file' && sel.path === f.path && sel.staged ? ' on' : ''}`}
                           onClick={() => void openFile(f, true)}>
                     <span className="st" style={{ color: STAT_TONE[f.index] ?? 'var(--text-dim)' }}>{f.index}</span>
                     <span className="p">{f.path}</span>
-                    <span className="go" onClick={(e) => { e.stopPropagation(); void act('Unstage', () => window.wanigan.git.unstage(st.root, [f.path])); }}>−</span>
                   </button>
+                  {/* A sibling control, not a span inside the button: nested
+                      interactive content is unreachable by keyboard and VoiceOver. */}
+                  <button type="button" className="gt-go" aria-label={`Unstage ${f.path}`}
+                          onClick={() => void act('Unstage', () => window.wanigan.git.unstage(st.root, [f.path]))}>−</button>
+                  </div>
                 ))}
                 {!st.staged.length && <p className="faint" style={{ padding: '4px 12px', fontSize: 'var(--t-small)' }}>Nothing staged.</p>}
               </div>
@@ -459,21 +495,24 @@ export default function Git({ projects }: { projects: Project[] }) {
                               what: `Discard changes to ${st.unstaged.length} file${st.unstaged.length === 1 ? '' : 's'}` +
                                     (st.untracked.length ? ` and delete ${st.untracked.length} untracked file${st.untracked.length === 1 ? '' : 's'}` : '') +
                                     '. Untracked files cannot be recovered.',
+                              verb: 'Discard changes',
                               run: () => act('Discard', () => window.wanigan.git.discard(st.root,
                                 st.unstaged.map((f) => f.path), st.untracked.map((f) => f.path))),
                             })}>discard all</button>
                   </div>
                 </div>
                 {[...st.unstaged, ...st.untracked].map((f) => (
-                  <button key={f.path + String(f.untracked)}
-                          className={`gt-file${sel?.kind === 'file' && sel.path === f.path && !sel.staged ? ' on' : ''}`}
+                  <div key={f.path + String(f.untracked)} className="gt-file-row">
+                  <button type="button" className={`gt-file${sel?.kind === 'file' && sel.path === f.path && !sel.staged ? ' on' : ''}`}
                           onClick={() => void openFile(f, false)}>
                     <span className="st" style={{ color: STAT_TONE[f.untracked ? '?' : f.work] ?? 'var(--text-dim)' }}>
                       {f.untracked ? '?' : f.work}
                     </span>
                     <span className="p">{f.path}</span>
-                    <span className="go" onClick={(e) => { e.stopPropagation(); void act('Stage', () => window.wanigan.git.stage(st.root, [f.path])); }}>+</span>
                   </button>
+                  <button type="button" className="gt-go" aria-label={`Stage ${f.path}`}
+                          onClick={() => void act('Stage', () => window.wanigan.git.stage(st.root, [f.path]))}>+</button>
+                  </div>
                 ))}
                 {st.clean && <p className="faint" style={{ padding: '4px 12px', fontSize: 'var(--t-small)' }}>Working tree clean.</p>}
               </div>
@@ -526,9 +565,11 @@ export default function Git({ projects }: { projects: Project[] }) {
                       <>
                         <button className="gt-chip" disabled={!!busy}
                                 onClick={() => setConfirm({ what: `Merge ${b.name} into ${st.branch}.`,
+                                  verb: `Merge into ${st.branch}`,
                                   run: () => act('Merge', () => window.wanigan.git.merge(st.root, b.name)) })}>merge</button>
                         <button className="gt-chip" disabled={!!busy}
                                 onClick={() => setConfirm({ what: `Delete branch ${b.name}. Unmerged work on it would be lost.`,
+                                  verb: `Delete ${b.name}`,
                                   run: () => act('Delete', () => window.wanigan.git.deleteBranch(st.root, b.name, true)) })}>delete</button>
                       </>
                     )}
@@ -551,6 +592,7 @@ export default function Git({ projects }: { projects: Project[] }) {
                     <button className="gt-chip" onClick={() => void act('Apply', () => window.wanigan.git.stashApply(st.root, s.index, false))}>apply</button>
                     <button className="gt-chip" onClick={() => void act('Pop', () => window.wanigan.git.stashApply(st.root, s.index, true))}>pop</button>
                     <button className="gt-chip" onClick={() => setConfirm({ what: `Drop ${s.label}. It cannot be recovered.`,
+                      verb: 'Drop this stash',
                       run: () => act('Drop', () => window.wanigan.git.stashDrop(st.root, s.index)) })}>drop</button>
                   </span>
                 </div>

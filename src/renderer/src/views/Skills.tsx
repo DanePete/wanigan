@@ -703,34 +703,6 @@ export default function Skills({ projectId, providers, activeSessionId }: {
  * be hidden by one that accepted it.
  */
 
-/** The writer's own styles. The rest of this view is in index.css, which this
- *  panel deliberately does not reach into: it is one section, and it ships and
- *  changes with the component that uses it. */
-const WRITER_SHEET = `
-.skills-writer { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
-.skills-writer-form { display: grid; gap: 10px; min-width: 0; }
-.skills-writer-form > label { display: grid; gap: 4px; min-width: 0; }
-.skills-writer-form .field { width: 100%; }
-.skills-writer-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: start; }
-.skills-writer-row > label { display: grid; gap: 4px; min-width: 0; }
-.skills-writer-targets { display: grid; gap: 5px; min-width: 0; padding: 8px 10px;
-                         border: 1px solid var(--line); border-radius: var(--r-sm); }
-.skills-writer-targets label { display: flex; align-items: center; gap: 6px; font-size: var(--t-small); }
-.skills-writer-preview { display: grid; gap: 10px; align-content: start; padding: 12px 13px; min-width: 0; }
-.skills-writer-md { max-height: 340px; overflow: auto; overscroll-behavior: contain;
-                    padding: 10px 11px; border: 1px solid var(--line); border-radius: var(--r-sm);
-                    background: var(--bg); font-size: var(--t-micro); line-height: 1.5;
-                    white-space: pre-wrap; word-break: break-word; }
-.skills-writer-doctor { display: grid; gap: 5px; font-size: var(--t-small); line-height: 1.5; }
-.skills-writer-doctor li { list-style: none; }
-.skills-writer-form > .btn, .skills-writer-preview > .btn { justify-self: start; }
-@media (max-width: 980px) {
-  .skills-writer { grid-template-columns: minmax(0, 1fr); }
-}
-@media (max-width: 620px) {
-  .skills-writer-row { grid-template-columns: minmax(0, 1fr); }
-}
-`;
 
 type Draft =
   | { s: 'none' }
@@ -852,7 +824,6 @@ function SkillWriter({ project, providers, onInstalled }: {
         </button>
       }>
       <div id="skills-writer" hidden={!open}>
-        <style>{WRITER_SHEET}</style>
         {providers.length === 0 ? (
           <Note tone="warn">
             <strong>⚠ No agent runtime was detected</strong>, so there is no provider skills directory to
@@ -1136,16 +1107,19 @@ function SkillCard({ hit, selected, canSend, flash, onRead, onSend, onCopy }: {
       )}
 
       <div className="skill-actions">
-        <button
-          className="btn btn-primary skills-btn-sm"
-          disabled={!canSend}
-          title={canSend
-            ? `Type ${s.invoke} into the selected live session`
-            : 'There is no live session to type into — open one in Sessions first'}
-          onClick={onSend}
-        >
-          {canSend ? 'Send to session' : 'Send needs a live session'}
-        </button>
+        {/* One head Note already says sending is off and why. Repeating it as a
+            disabled button on every card in the catalogue turned one fact into
+            thirty controls that cannot be pressed; the action simply is not
+            offered until there is a terminal to type into. */}
+        {canSend && (
+          <button
+            className="btn btn-primary skills-btn-sm"
+            title={`Type ${s.invoke} into the selected live session`}
+            onClick={onSend}
+          >
+            Send to session
+          </button>
+        )}
         <button className="btn skills-btn-sm" onClick={onCopy} title={`Copy ${s.invoke} to the clipboard`}>
           Copy <span className="mono">{s.invoke}</span>
         </button>

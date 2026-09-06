@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import type { Attention, AttentionKind, ClaudeContextUsage, MotionSetting, Project, ProviderInfo, Session, TranscriptHit } from '@shared/types';
+import type { Attention, AttentionKind, ClaudeContextUsage, MotionSetting, Project, ProviderInfo, Session, ThemeSetting, TranscriptHit } from '@shared/types';
 import { filterPalette, groupPalette, transcriptHitRow, TRANSCRIPT_QUERY_MIN, TRANSCRIPT_RESULT_CAP, type PaletteEntry } from '@shared/palette';
+import { DIGIT_ROUTES, SIDEBAR_GROUPS, TABS, TAB_ICONS, TAB_SHORTCUTS, labelForTab, type Tab } from '@shared/routes';
+import { bindingMatches, inTerminal, modalOpen } from './bindings';
 import Sessions from './views/Sessions';
 import Fleet from './views/Fleet';
 import Control from './views/Control';
@@ -13,13 +15,17 @@ import Schedules from './views/Schedules';
 import Git from './views/Git';
 import HeadlessRuns from './views/HeadlessRuns';
 import ImprovementScout from './views/ImprovementScout';
+import UsageView from './views/Usage';
 import SettingsView, { SETTINGS_INDEX, type SettingsJump } from './views/Settings';
 import Skills from './views/Skills';
 import Context from './views/Context';
-import { num } from './components/bits';
+import { Icon, ago, num } from './components/bits';
+import { startTerminalOutputPump } from './components/TerminalPane';
 import ErrorBoundary from './components/ErrorBoundary';
 import ShortcutSheet from './components/ShortcutSheet';
-import ThemeControl from './components/ThemeControl';
+import { useDialog, OVERLAY_ROOT_ID } from './components/useDialog';
+import { AnnounceProvider, AnnounceRegion, type AnnounceAction } from './components/announce';
+import { ViewMemoryProvider, ViewMemoryScope } from './components/viewMemory';
 import { useThemePreference } from './theme';
 import { claudeContextLabel, selectedProviderStatus, selectedSessionTelemetry } from '@shared/provider-status';
 
@@ -48,65 +54,36 @@ type StartupStatus = {
  *    slides a pane containing a running PTY fights xterm's own repaint, and the
  *    thing that ends up looking broken is the terminal. When either side of a
  *    view swap holds a live session, the swap is instant on purpose.
+ *
+ * The route table (TABS, TAB_SHORTCUTS) lives in shared/routes.ts as pure
+ * data, and the key table in ./bindings.ts, so the rail, the palette, the
+ * cheat sheet and the handlers below read one record. ⌘1–9 still read
+ * positionally out of TABS; every other chord is matched against the same
+ * aria-keyshortcuts string the control publishes.
  */
 
-/**
- * Every destination, in ⌘1–9 order. `hint` is a sentence about what the
- * surface does, not a restatement of its label: the palette is the only route
- * to the views the rail cannot fit, and "Explore view" told a newcomer nothing
- * about which of them held the thing they were looking for.
- */
-const TABS = [
-  { id: 'sessions',  label: 'Sessions',  group: 'Work',    hint: 'Start and drive live agent terminals',                    keywords: 'agent terminal conversation interactive' },
-  { id: 'fleet',     label: 'Fleet',     group: 'Work',    hint: 'Every session at once, and which ones need you',          keywords: 'monitor activity status' },
-  { id: 'control',   label: 'Control',   group: 'Work',    hint: 'Goals and dockets — durable records of planned work',     keywords: 'goals goal dockets tasks work graph' },
-  { id: 'batches',   label: 'Batches',   group: 'Work',    hint: 'Fan one prompt across many inputs on the Batches API',    keywords: 'batch api bulk fan-out' },
-  { id: 'insights',  label: 'Insights',  group: 'Explore', hint: 'Recorded spend and token usage',                          keywords: 'spend costs usage analytics' },
-  { id: 'learning',  label: 'Learning',  group: 'Explore', hint: 'Knowledge items, the review inbox, and what agents get',  keywords: 'knowledge memory briefing inbox proposals' },
-  { id: 'plugins',   label: 'Plugins',   group: 'Explore', hint: 'Installed plugins and marketplaces',                      keywords: 'extensions integrations' },
-  { id: 'schedules', label: 'Schedules', group: 'Explore', hint: 'Recurring headless and batch runs',                       keywords: 'automation cron recurring' },
-  { id: 'git',       label: 'Git',       group: 'Manage',  hint: 'Worktrees, branches and diffs across your repositories',  keywords: 'worktrees commits review' },
-  { id: 'runs',      label: 'Runs',      group: 'Manage',  hint: 'Headless runs — no terminal, output recorded',            keywords: 'headless fan-out automation' },
-  { id: 'settings',  label: 'Settings',  group: 'Manage',  hint: 'Keys, provider packs, projects, privacy and backup',      keywords: 'preferences providers packs connections appearance' },
-  { id: 'skills',    label: 'Skills',    group: 'Explore', hint: 'Browse every SKILL.md on this machine, or write one',     keywords: 'agent skills instructions workflows author write' },
-  { id: 'context',   label: 'Context',   group: 'Explore', hint: 'Instructions, memory and configuration, per project',     keywords: 'instructions memory configuration' },
-  // Scout reads allow-listed public sources and proposes product changes. It
-  // shares no table, IPC namespace or scope control with Learning, and it was
-  // only ever findable as a tab inside it.
-  { id: 'scout',     label: 'Scout',     group: 'Explore', hint: 'Improvement proposals built from public sources you allow', keywords: 'improvement scout proposals ideas suggestions release notes research sources evidence' },
-] as const;
-
-type Tab = (typeof TABS)[number]['id'];
-
-/**
- * The direct routes, written out once so the rail, the palette and the key
- * handler cannot drift apart. ⌘1–9 follow the first nine TABS entries and ⌘0
- * takes Runs; the three surfaces past the digit row get named chords rather
- * than a blank shortcut column that implies they cannot be reached at all.
- */
-const TAB_SHORTCUTS: Record<Tab, { label: string; aria: string }> = {
-  sessions:  { label: '⌘1', aria: 'Meta+1 Control+1' },
-  fleet:     { label: '⌘2', aria: 'Meta+2 Control+2' },
-  control:   { label: '⌘3', aria: 'Meta+3 Control+3' },
-  batches:   { label: '⌘4', aria: 'Meta+4 Control+4' },
-  insights:  { label: '⌘5', aria: 'Meta+5 Control+5' },
-  learning:  { label: '⌘6', aria: 'Meta+6 Control+6' },
-  plugins:   { label: '⌘7', aria: 'Meta+7 Control+7' },
-  schedules: { label: '⌘8', aria: 'Meta+8 Control+8' },
-  git:       { label: '⌘9', aria: 'Meta+9 Control+9' },
-  runs:      { label: '⌘0', aria: 'Meta+0 Control+0' },
-  settings:  { label: '⌘,', aria: 'Meta+, Control+,' },
-  skills:    { label: '⌘⇧S', aria: 'Meta+Shift+S Control+Shift+S' },
-  context:   { label: '⌘⇧C', aria: 'Meta+Shift+C Control+Shift+C' },
-  // I for Improvement Scout — S and C are taken. On macOS, the platform this
-  // ships to, ⌘⇧I is free: the inspector is ⌥⌘I there.
-  scout:     { label: '⌘⇧I', aria: 'Meta+Shift+I Control+Shift+I' },
-};
-
-/** ⌘⇧ chords for the surfaces the digit row cannot reach. */
-const SHIFT_CHORD_TABS: Record<string, Tab> = { s: 'skills', c: 'context', i: 'scout' };
-
-const labelForTab = (id: Tab): string => TABS.find((item) => item.id === id)?.label ?? id;
+// The wide rail follows the digit map: the first nine tabs are ⌘1–9 in
+// order, Runs (⌘0) comes next, then the two surfaces that take named chords
+// (⌘⇧U, ⌘⇧I), and Settings (⌘,) stays last. The rail used to place Usage
+// beside Insights because that is where it belongs thematically — but a
+// 13-tab strip cannot be both a keypad and a thematic list, and once Usage
+// and Scout sat between digits, counting tabs gave the wrong chord for every
+// tab after Insights. The palette's group labels carry the thematic
+// adjacency instead. Skills and Context reach the screen through ⌘⇧S / ⌘⇧C
+// and the ⌘K palette without changing the long-standing ⌘1–9 map or turning
+// the rail into a ticker — and the palette button says which of them is on
+// screen, so an off-rail view is never a surface with no visible route back.
+//
+// Every destination is on the sidebar. The horizontal rail carried thirteen of
+// fifteen and left Skills and Context reachable only through ⌘K — a split that
+// was never a judgement about those two views, only about how many text tabs
+// fit across 960px. A vertical list has no such ceiling, so the compromise is
+// retired and the palette goes back to being a search box rather than the sole
+// route to two screens.
+//
+// This flattened order is what Up/Down walks, so it must match what the eye
+// reads down the column: SIDEBAR_GROUPS is the single record of both.
+const NAV_RAIL_TABS: readonly Tab[] = SIDEBAR_GROUPS.flatMap((section) => section.tabs);
 
 /** A Goal is a durable Control record. Honour its deep link before the first
  * render so opening a copied Goal URL cannot strand someone on Sessions with
@@ -120,34 +97,55 @@ function initialTabFromLocation(): Tab {
   }
 }
 
-// The wide rail prioritises the surfaces used continuously while an agent is
-// running. Skills and Context reach the screen through ⌘⇧S / ⌘⇧C and the ⌘K
-// palette without changing the long-standing ⌘1–9 map or turning the rail into
-// a ticker — and the palette button says which of them is on screen, so an
-// off-rail view is never a surface with no visible route back to it.
-//
-// Scout is on the rail rather than behind ⌘K despite arriving last, because it
-// is the one surface here that produces work on its own schedule. An inbox
-// nobody can see is an inbox nobody reads, and it no longer has a parent view
-// to be found inside. Its ⌘⇧I chord is a second route, not its only one.
-const NAV_RAIL_TABS: readonly Tab[] = [
-  'sessions', 'fleet', 'control', 'batches', 'insights', 'learning', 'scout',
-  'plugins', 'schedules', 'git', 'runs', 'settings',
-];
-
 /** The kinds that mean a human is the blocker, worst first. */
 const NEEDS_YOU: AttentionKind[] = ['permission', 'error', 'finished'];
+
+/**
+ * One glyph per attention kind — the same shapes AttentionQueue's SPEC draws,
+ * so a session reads the same in the strip, the rail popover and the palette.
+ * The word beside it always comes from main (`Attention.label`), never from
+ * here. AttentionQueue does not export SPEC yet; once it does, import it and
+ * delete this table so the vocabulary has one home.
+ */
+const ATTENTION_GLYPH: Record<AttentionKind, string> = {
+  permission: '?', error: '✕', finished: '✓', idle: '◦', working: '▸',
+};
 
 /** Glyph and word first, colour last — a nav dot that is only red is invisible
  *  to the people who most need to see it. */
 const NEED_MARK: Record<string, { glyph: string; tone: string; phrase: (n: number) => string }> = {
-  permission: { glyph: '?', tone: 'alert',   phrase: (n) => `${n} waiting on a permission prompt` },
-  error:      { glyph: '✕', tone: 'serious', phrase: (n) => `${n} stopped on an error` },
-  finished:   { glyph: '✓', tone: 'ok',      phrase: (n) => `${n} finished, waiting for review` },
+  permission: { glyph: ATTENTION_GLYPH.permission, tone: 'alert',   phrase: (n) => `${n} waiting on a permission prompt` },
+  error:      { glyph: ATTENTION_GLYPH.error,      tone: 'serious', phrase: (n) => `${n} stopped on an error` },
+  finished:   { glyph: ATTENTION_GLYPH.finished,   tone: 'ok',      phrase: (n) => `${n} finished, waiting for review` },
 };
 
 /** The only parts of a session list the shell reacts to. */
 const shape = (l: Session[]) => l.map((s) => `${s.id}:${s.status}:${s.projectId}`).join('|');
+/** Likewise for the ranked attention list: identity, kind and when it began. */
+const attentionShape = (l: Attention[]) => l.map((a) => `${a.sessionId}:${a.kind}:${a.since}`).join('|');
+
+/**
+ * The palette's Recent group: the last five keys run from it, per machine.
+ * Keys only — no counts, no ranking — so localStorage is honest here, and a
+ * key that no longer resolves (an exited session, a removed project) is just
+ * not shown. Actions are excluded: they already sit at the top of the list.
+ */
+const RECENT_KEY = 'wanigan.palette.recent';
+const RECENT_MAX = 5;
+const RECENT_PREFIXES = ['view:', 'session:', 'project:', 'setting:'];
+function readRecent(): string[] {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]');
+    return Array.isArray(raw) ? raw.filter((k): k is string => typeof k === 'string').slice(0, RECENT_MAX) : [];
+  } catch { return []; }
+}
+function rememberRecent(key: string): void {
+  if (!RECENT_PREFIXES.some((prefix) => key.startsWith(prefix))) return;
+  try {
+    const next = [key, ...readRecent().filter((k) => k !== key)].slice(0, RECENT_MAX);
+    localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+  } catch { /* storage can be blocked */ }
+}
 
 type ViewTransitionDoc = Document & {
   startViewTransition?: (cb: () => void) => { finished: Promise<void> };
@@ -186,6 +184,12 @@ export default function App() {
   const [batchWork, setBatchWork] = useState<{ done: number; total: number } | null>(null);
   const [needs, setNeeds] = useState<{ total: number; worst: AttentionKind | null; detail: string }>(
     { total: 0, worst: null, detail: '' });
+  // The ranked attention list for live sessions, in main's order — worst kind
+  // first, then longest wait. The counts above are derived from it; the rail
+  // popover and the palette's session marks read it directly.
+  const [attention, setAttention] = useState<Attention[]>([]);
+  // The "n need you" popover: the mark button it is anchored to, or null.
+  const [needAnchor, setNeedAnchor] = useState<HTMLElement | null>(null);
   const [error, setError] = useState<ShellError | null>(null);
   const [retryingError, setRetryingError] = useState(false);
   const [startup, setStartup] = useState<StartupStatus | null>(null);
@@ -210,6 +214,9 @@ export default function App() {
   // Which rail button holds the toolbar's single tab stop. Arrow keys move it
   // without switching view, so it can differ from the view on screen.
   const [navFocus, setNavFocus] = useState<Tab | null>(null);
+  // Starts open. The stored answer arrives a frame later; rendering closed
+  // until then would flash the shell narrow for everyone who never hid it.
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   // A request is deliberately one-shot. The Sessions view consumes it after
   // it mounts, so a later visit to Sessions never reopens an old dialog.
   const [newSessionRequest, setNewSessionRequest] = useState<number | null>(null);
@@ -220,6 +227,9 @@ export default function App() {
   // The project the user last chose or last worked in, remembered per machine.
   const [picked, setPicked] = useState<string | null>(() => localStorage.getItem('wanigan.project'));
   const theme = useThemePreference();
+  // Destructured so the palette corpus can depend on the three fields rather
+  // than on an object whose identity changes every render.
+  const { preference: themePreference, resolved: themeResolved, setTheme } = theme;
 
   const tabRef = useRef<Tab>(tab); tabRef.current = tab;
   const sessionsRef = useRef<Session[]>(sessions); sessionsRef.current = sessions;
@@ -304,6 +314,22 @@ export default function App() {
 
   useEffect(() => { void loadMotion(); }, [loadMotion, tab]);
 
+  // ── sidebar ────────────────────────────────────────────────────────
+  useEffect(() => {
+    void (async () => {
+      try { setSidebarOpen((await window.wanigan.prefs.all()).navSidebar !== 'closed'); }
+      catch { /* db not ready; the default stands */ }
+    })();
+  }, []);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarOpen((open) => {
+      const next = !open;
+      void window.wanigan.prefs.set('nav_sidebar', next ? 'open' : 'closed').catch(() => {});
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     const again = () => void loadMotion();
     window.addEventListener('focus', again);
@@ -347,9 +373,11 @@ export default function App() {
     });
 
     const live = new Set(ss.map((s) => s.id));
+    const liveAttention = att.filter((a) => live.has(a.sessionId));
+    setAttention((prev) => (attentionShape(prev) === attentionShape(liveAttention) ? prev : liveAttention));
     const byKind = new Map<AttentionKind, number>();
-    for (const a of att) {
-      if (!live.has(a.sessionId) || !NEEDS_YOU.includes(a.kind)) continue;
+    for (const a of liveAttention) {
+      if (!NEEDS_YOU.includes(a.kind)) continue;
       byKind.set(a.kind, (byKind.get(a.kind) ?? 0) + 1);
     }
     const total = [...byKind.values()].reduce((x, y) => x + y, 0);
@@ -428,6 +456,26 @@ export default function App() {
     const known = (id?: string | null) => (id && projects.some((p) => p.id === id) ? id : undefined);
     return known(picked) ?? known(activeSession?.projectId) ?? projects[0]?.id;
   }, [picked, activeSession, projects]);
+  const projectName = useMemo(
+    () => projects.find((p) => p.id === projectId)?.name ?? null, [projects, projectId]);
+
+  // Electron takes the window title from document.title. hiddenInset hides the
+  // bar itself, but Mission Control and the Window menu read it, and "Wanigan"
+  // for every state named nothing.
+  useEffect(() => {
+    const label = labelForTab(tab);
+    document.title = projectName ? `${label} — ${projectName}` : label;
+  }, [tab, projectName]);
+
+  // announce({ tone: 'error' }) lands in the shell toast, which keeps its
+  // contract: message, runnable retry, Open <view>, Dismiss, Esc.
+  const announceError = useCallback((text: string, action?: AnnounceAction) => {
+    setError({ message: text, retry: action });
+  }, []);
+
+  // The popover lists the blocked sessions; when none remain its anchor is
+  // gone too, so it closes rather than hanging off a mark that unmounted.
+  useEffect(() => { if (needs.total === 0) setNeedAnchor(null); }, [needs.total]);
 
   // ── view switching ─────────────────────────────────────────────────
   const go = useCallback((next: Tab) => {
@@ -508,19 +556,19 @@ export default function App() {
     if (project) choose(project);
   }, [choose]);
 
-  // ⌘1–9. Capture phase, because Sessions binds ⌘1–9 to its own tabs and only
-  // one of us can win; inside a terminal neither of us takes the key.
+  // ⌘1–9. Capture phase, so the shell wins over any view handler underneath
+  // (Sessions once bound the same digits to its tabs and only one of us could
+  // win); inside a terminal neither of us takes the key.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
       if (e.key.length !== 1) return;
-      const el = document.activeElement as HTMLElement | null;
-      if (el?.closest('.terminal-host')) return;          // the PTY owns its keystrokes
-      if (document.querySelector('.modal-backdrop, .command-backdrop')) return;  // a dialog owns the keyboard
+      if (modalOpen()) return;  // a dialog owns the keyboard
       // New work should be available from every surface, not only after a
       // detour back to Sessions. The terminal still owns this shortcut while
-      // it has focus, just as it owns the number keys below.
-      if (e.key.toLowerCase() === 't') {
+      // it has focus, just as it owns the number keys below: bindingMatches
+      // refuses every chord but ⌘. inside a terminal host.
+      if (bindingMatches(e, 'new-session')) {
         e.preventDefault();
         e.stopPropagation();
         requestNewSession();
@@ -528,7 +576,7 @@ export default function App() {
       }
       // Runs is the tenth surface. It deserves a direct route rather than
       // being the only tab that disappears once the header overflows.
-      if (e.key === '0') {
+      if (bindingMatches(e, 'view:runs')) {
         e.preventDefault();
         e.stopPropagation();
         go('runs');
@@ -536,14 +584,17 @@ export default function App() {
       }
       // The key every Mac user already tries for preferences. Settings sits
       // past the digit row, so without this it had no direct route at all.
-      if (e.key === ',') {
+      if (bindingMatches(e, 'view:settings')) {
         e.preventDefault();
         e.stopPropagation();
         go('settings');
         return;
       }
+      // Positional: ⌘n is the nth entry of TABS, which is why routes.ts keeps
+      // the surfaces past the digit row at the end of that list.
+      if (inTerminal()) return;                            // the PTY owns its keystrokes
       const n = Number(e.key);
-      if (!Number.isInteger(n) || n < 1 || n > TABS.length) return;
+      if (!Number.isInteger(n) || n < 1 || n > DIGIT_ROUTES) return;
       e.preventDefault();
       e.stopPropagation();
       go(TABS[n - 1].id);
@@ -556,9 +607,9 @@ export default function App() {
   // keyboard route to every surface, not a second hidden navigation system.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'k') return;
-      const el = document.activeElement as HTMLElement | null;
-      if (el?.closest('.terminal-host') || document.querySelector('.modal-backdrop')) return;
+      if (!bindingMatches(e, 'palette')) return;
+      // ⌘K closes the palette it opened; any other open dialog keeps the key.
+      if (!palette && modalOpen()) return;
       e.preventDefault();
       if (palette) closePalette();
       else openPalette();
@@ -571,13 +622,10 @@ export default function App() {
   // where a field would swallow the bare key. Never inside the terminal.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const el = document.activeElement as HTMLElement | null;
-      if (el?.closest('.terminal-host')) return;
-      const inField = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
-      const bareQuestion = e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey && !inField;
-      const cmdSlash = e.key === '/' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
-      if (!bareQuestion && !cmdSlash) return;
-      if (!shortcuts && document.querySelector('.modal-backdrop, .command-backdrop')) return;
+      // One binding, two alternatives: the table refuses the bare `?` inside a
+      // field and every chord inside a terminal.
+      if (!bindingMatches(e, 'sheet')) return;
+      if (!shortcuts && modalOpen()) return;
       e.preventDefault();
       setShortcuts((open) => !open);
     };
@@ -603,15 +651,14 @@ export default function App() {
 
   // ── nav chrome ─────────────────────────────────────────────────────
   const tabsRef = useRef<HTMLDivElement>(null);
-  const inkRef = useRef<HTMLSpanElement>(null);
-  const placed = useRef(false);
   const runBadge = useRef<HTMLSpanElement>(null);
-  const needBadge = useRef<HTMLSpanElement>(null);
+  const needBadge = useRef<HTMLButtonElement>(null);
   const lastNeeds = useRef(0);
 
-  // The visible strip behaves like a compact toolbar. Tab enters it once, and
-  // Left/Right (or Home/End) walks every visible route without asking a
-  // keyboard user to tab through eleven tiny controls.
+  // The list behaves like a vertical toolbar. Tab enters it once, and Up/Down
+  // (or Home/End) walks every route without asking a keyboard user to tab
+  // through fifteen small controls. Left/Right are deliberately unbound: the
+  // axis the arrows move on should match the axis the list is drawn on.
   //
   // Arrowing moves FOCUS and nothing else. Selection-follows-focus in a
   // toolbar mounts and unmounts a whole view per keypress, and with a live
@@ -622,8 +669,8 @@ export default function App() {
     const currentIndex = NAV_RAIL_TABS.indexOf(current);
     if (currentIndex < 0) return;
     let nextIndex: number | null = null;
-    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % NAV_RAIL_TABS.length;
-    if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + NAV_RAIL_TABS.length) % NAV_RAIL_TABS.length;
+    if (event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % NAV_RAIL_TABS.length;
+    if (event.key === 'ArrowUp') nextIndex = (currentIndex - 1 + NAV_RAIL_TABS.length) % NAV_RAIL_TABS.length;
     if (event.key === 'Home') nextIndex = 0;
     if (event.key === 'End') nextIndex = NAV_RAIL_TABS.length - 1;
     if (nextIndex === null) return;
@@ -639,31 +686,15 @@ export default function App() {
   // the tab stop back, so Tab always re-enters the rail at the view on screen.
   useEffect(() => { setNavFocus(null); }, [tab]);
 
-  // The underline is placed from measured geometry, so it can slide on the
-  // compositor instead of the browser re-laying out a border every frame.
+  // A sliding underline was the rail's way of saying which of thirteen
+  // same-looking tabs was live. A sidebar row can simply be filled, so the
+  // measured-geometry ink is gone and only the part that was doing real work
+  // survives: keeping the current destination inside the scroll box when it was
+  // reached by a chord or the palette rather than by clicking it.
   useEffect(() => {
-    const wrap = tabsRef.current, ink = inkRef.current;
-    if (!wrap || !ink) return;
-    const place = () => {
-      const on = wrap.querySelector<HTMLElement>('.nav-tab.on');
-      if (!on || !on.offsetWidth) { wrap.classList.remove('has-ink'); return; }
-      // The tabs intentionally scroll rather than compressing into unreadable
-      // labels. Keep the destination in view when it was reached by keyboard
-      // or a quick action, because an invisible scrollbar is not navigation.
-      on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      if (!placed.current) { ink.style.transition = 'none'; }
-      ink.style.transform = `translateX(${on.offsetLeft}px) scaleX(${on.offsetWidth})`;
-      wrap.classList.add('has-ink');
-      if (!placed.current) {
-        placed.current = true;
-        requestAnimationFrame(() => { ink.style.transition = ''; });
-      }
-    };
-    place();
-    const ro = new ResizeObserver(place);
-    ro.observe(wrap);
-    return () => ro.disconnect();
-  }, [tab, running, activeRuns, needs.total, hasKey, projects.length]);
+    const on = tabsRef.current?.querySelector<HTMLElement>('.nav-tab.on');
+    on?.scrollIntoView({ block: 'nearest' });
+  }, [tab]);
 
   // The Sessions badge breathes at the rate output actually arrives — measured
   // bytes per second, never a spinner that implies work nobody is doing.
@@ -731,25 +762,81 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || !e.shiftKey || e.altKey) return;
-      const el = document.activeElement as HTMLElement | null;
-      if (el?.closest('.terminal-host')) return;                              // the PTY owns its keystrokes
-      if (document.querySelector('.modal-backdrop, .command-backdrop')) return;  // a dialog owns the keyboard
-      const key = e.key.toLowerCase();
-      if (key === 'd') {
+      if (modalOpen()) return;  // a dialog owns the keyboard
+      // bindingMatches refuses every one of these inside a terminal host: the
+      // PTY owns its keystrokes.
+      if (bindingMatches(e, 'demo')) {
         e.preventDefault();
         e.stopPropagation();
         setDemoPrompt({ next: !demoOn });
         return;
       }
-      const chord = SHIFT_CHORD_TABS[key];
+      // The named chords for the surfaces past the digit row, matched against
+      // the same aria-keyshortcuts strings the rail publishes for them.
+      const chord = TABS.find((item) => bindingMatches(e, `view:${item.id}`));
       if (!chord) return;
       e.preventDefault();
       e.stopPropagation();
-      go(chord);
+      go(chord.id);
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [demoOn, go]);
+
+  // ── terminal output ────────────────────────────────────────────────
+  // For the window's lifetime, not the Sessions view's. Views mount and unmount
+  // as tabs change; a live agent does not stop printing because you stepped
+  // over to Git. See startTerminalOutputPump for what the old placement cost.
+  useEffect(() => startTerminalOutputPump(), []);
+
+  // ── the macOS menu bar, and the notification banner ────────────────
+  // Both are main-process surfaces that name a destination and leave the
+  // navigating to this window. The menu was built from shared/routes.ts, so
+  // "Go › Fleet" and ⌘2 and the sidebar row are one route reached three ways.
+  useEffect(() => {
+    const off = window.wanigan.on.menuRoute((route) => {
+      switch (route.kind) {
+        case 'tab': go(route.tab); break;
+        case 'new-session': requestNewSession(); break;
+        // A menu item that opens a dialog must not hand focus back to a menu
+        // that has already closed, which is what the palette's opener
+        // restoration would otherwise try to do.
+        case 'palette': paletteOpenerRef.current = null; setPaletteQuery(''); setPalette(true); break;
+        case 'shortcuts': setShortcuts(true); break;
+        case 'sidebar': toggleSidebar(); break;
+      }
+    });
+    return () => { off(); };
+  }, [go, requestNewSession, toggleSidebar]);
+
+  // A clicked notification. Main raises the window and says which session or
+  // run the banner was about; until now nothing in the renderer listened, so
+  // the operator was told an agent needed them and then landed on whatever tab
+  // happened to be open, with the name of the agent only in the banner they
+  // had just dismissed.
+  useEffect(() => {
+    const off = window.wanigan.on.notificationOpened((route) => {
+      if (route.kind === 'session') { focusSession(route.sessionId); go('sessions'); }
+      else go('runs');
+    });
+    return () => { off(); };
+  }, [focusSession, go]);
+
+  // ⌥⌘S: the destination list off and on. Its own handler because the two
+  // above both refuse Option — the digit row takes ⌘ alone and the named
+  // routes take ⌘⇧, and widening either guard would let a chord meant for one
+  // of them fall through to the other.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (modalOpen()) return;
+      if (!bindingMatches(e, 'sidebar')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      toggleSidebar();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [toggleSidebar]);
 
   // Escape dismisses the shell error, matching every other overlay here. It
   // stays out of the way of a terminal and of anything more modal than itself.
@@ -757,9 +844,7 @@ export default function App() {
     if (!error) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      const el = document.activeElement as HTMLElement | null;
-      if (el?.closest('.terminal-host')) return;
-      if (document.querySelector('.modal-backdrop, .command-backdrop')) return;
+      if (inTerminal() || modalOpen()) return;
       setError(null);
     };
     window.addEventListener('keydown', onKey);
@@ -810,6 +895,27 @@ export default function App() {
       haystack: 'keyboard shortcuts keys cheat sheet bindings help',
       run: () => setShortcuts(true),
     }];
+    // Appearance left the title bar. Three rows keep it two keystrokes away;
+    // the native select itself lives in Settings › App.
+    const appearances: Array<{ value: ThemeSetting; word: string }> = [
+      { value: 'system', word: 'System' }, { value: 'light', word: 'Light' }, { value: 'dark', word: 'Dark' },
+    ];
+    for (const { value, word } of appearances) {
+      const apply = () => setTheme(value);
+      items.push({
+        key: `action:appearance:${value}`,
+        title: `Appearance: ${word}`,
+        hint: value === 'system' ? `Follow the Mac's appearance (${themeResolved} right now)` : `Use the ${word.toLowerCase()} theme everywhere`,
+        meta: 'Setting',
+        group: 'Actions',
+        staysPut: true,
+        mark: themePreference === value ? { glyph: '●', word: 'current' } : undefined,
+        haystack: `appearance theme ${value} light dark system colour color`,
+        run: () => {
+          void apply().catch((e) => reportError(e, { label: `Set appearance to ${word}`, run: apply }, 'settings'));
+        },
+      });
+    }
     for (const item of TABS) {
       items.push({
         key: `view:${item.id}`,
@@ -821,12 +927,17 @@ export default function App() {
         run: () => go(item.id),
       });
     }
+    const attentionBySession = new Map(attention.map((a) => [a.sessionId, a] as const));
     for (const s of sessions) {
       if (s.status === 'exited') continue;
+      // The session's state as glyph and word — the vocabulary the attention
+      // strip already renders — rather than a status printed as plain text.
+      const a = attentionBySession.get(s.id);
       items.push({
         key: `session:${s.id}`,
         title: s.title || s.projectName,
         hint: `${s.status} · ${s.projectName}${s.model ? ` · ${s.model}` : ''}`,
+        mark: a ? { glyph: ATTENTION_GLYPH[a.kind], word: a.label } : undefined,
         meta: 'Session',
         group: 'Live sessions',
         haystack: `${s.title} ${s.projectName} ${s.providerId} ${s.model ?? ''} session agent`,
@@ -834,12 +945,16 @@ export default function App() {
       });
     }
     for (const p of projects) {
+      const active = p.id === projectId;
       items.push({
         key: `project:${p.id}`,
         title: p.name,
         // Says exactly what pressing it does. Choosing a project moves no view,
         // so a row promising to "open" one would be describing something else.
-        hint: `Make active for Learning, Context and Skills${p.branch ? ` · ${p.branch}` : ''}`,
+        // The header carries no project indicator by design; this row is
+        // where the shell confirms which project it is pointed at.
+        hint: `${active ? 'Already active' : 'Make active'} for Learning, Context and Skills${p.branch ? ` · ${p.branch}` : ''}`,
+        mark: active ? { glyph: '●', word: 'active' } : undefined,
         meta: 'Project',
         group: 'Projects',
         staysPut: true,
@@ -871,10 +986,17 @@ export default function App() {
       });
     });
     return items;
-  }, [choose, go, jumpToSettings, openSession, paletteHits, paletteQuery, projects, requestNewSession, sessions]);
+  }, [attention, choose, go, jumpToSettings, openSession, paletteHits, paletteQuery, projectId, projects,
+    reportError, requestNewSession, sessions, setTheme, themePreference, themeResolved]);
 
   return (
+    <>
+    {/* The providers wrap the shell's content at the shell's own indentation:
+        announce() and per-view memory are reachable from every view, and the
+        polite region they feed is rendered inside the shell below the toast. */}
     <div className="shell">
+    <AnnounceProvider onError={announceError}>
+    <ViewMemoryProvider>
       {startup?.phase === 'recovery' && (
         <section className="startup-recovery" role="alert" aria-live="assertive">
           <div>
@@ -906,11 +1028,25 @@ export default function App() {
           </button>
         </section>
       )}
+      {/* One row, not two. The title bar and the tab strip were 52px + 48px of
+          permanent chrome above every view; the destinations moved to the side,
+          so the second row is gone and the terminal is 48px taller. The row
+          keeps its left inset for the traffic lights. */}
       <header className="app-header">
-        <div className="nav-titlebar">
+          <button className="hdr-toggle" type="button" onClick={toggleSidebar}
+                  aria-expanded={sidebarOpen} aria-controls="wanigan-sidebar"
+                  aria-keyshortcuts="Alt+Meta+S"
+                  title={`${sidebarOpen ? 'Hide' : 'Show'} the destination list (⌥⌘S)`}
+                  aria-label={`${sidebarOpen ? 'Hide' : 'Show'} the destination list (Option Command S)`}>
+            <Icon name="panel" />
+          </button>
           <div className="brand-lockup">
             <span className="brand">Wanigan</span>
-            <span className="brand-context">Agent control center</span>
+            {/* The view on screen, not a tagline. A sidebar row is filled to
+                show where you are, but the row can be hidden and the window can
+                be behind another; the header should still answer "what am I
+                looking at" without a second glance. */}
+            <span className="brand-context" aria-hidden="true">{labelForTab(tab)}</span>
           </div>
 
           <div className="nav-actions">
@@ -932,103 +1068,118 @@ export default function App() {
                 lists. The palette wins, because it is the one that can search
                 projects and live sessions as well as views.
 
-                When the view on screen is off the rail, the button stops
-                saying "Views" and names it with a ✓. index.css styles :hover,
-                aria-expanded and .on identically, so the current view has to
-                be legible from the text rather than the highlight. */}
+                The "view on screen is not in the list" branch is now a
+                fallback rather than a daily state: SIDEBAR_GROUPS carries all
+                fifteen routes, so it fires only if a route is added to TABS
+                and left out of a group. Keeping it means that mistake shows up
+                as a named view in the header instead of a shell with nothing
+                marked current anywhere. */}
             <div className="nav-views">
               <button className={`nav-views-button${railHasActiveTab ? '' : ' on'}`} type="button"
                       aria-haspopup="dialog" aria-expanded={palette}
                       aria-current={railHasActiveTab ? undefined : 'page'}
                       aria-keyshortcuts="Meta+K Control+K"
                       title={railHasActiveTab
-                        ? 'Search every view, project and live session (⌘K)'
+                        ? 'Search views, projects, live sessions, settings and transcripts (⌘K)'
                         : `${labelForTab(tab)} is the view on screen — search every view, project and live session (⌘K)`}
                       aria-label={railHasActiveTab
-                        ? 'Search every view, project and live session (Command K)'
+                        ? 'Search views, projects, live sessions, settings and transcripts (Command K)'
                         : `${labelForTab(tab)} is the view on screen. Search every view, project and live session (Command K)`}
                       onClick={() => (palette ? closePalette() : openPalette())}>
                 {railHasActiveTab
-                  ? <span>Views</span>
+                  ? <span>Search</span>
                   : <span><span aria-hidden="true">✓ </span>{labelForTab(tab)}</span>}
                 <span className="nav-views-shortcut" aria-hidden="true">⌘K</span>
               </button>
             </div>
 
-            <button className="nav-quick-run" type="button" onClick={() => go('runs')}
-                    title="Open headless Runs (⌘0)">
-              <span className="nav-quick-run-plus" aria-hidden="true">+</span>
-              <span className="nav-quick-run-headless">Headless</span>
-              <span>runs</span>
-              <span className="nav-shortcut" aria-hidden="true">⌘0</span>
-            </button>
-
+            {/* Two controls and one status, not four. The "+ Headless runs ⌘0"
+                button navigated to the Runs tab 48px below it and created
+                nothing; Runs, ⌘0 and the palette remain its routes. The Theme
+                select left the title row for Settings › App, where the same
+                native control already lives, and the palette gained three
+                "Appearance: …" actions so the change stays two keystrokes
+                away — the setting is not hidden, it is no longer the widest
+                thing in the toolbar. */}
             {activeSession && <ProviderUsageBadge session={activeSession} providers={providers} />}
-            <ThemeControl preference={theme.preference} resolved={theme.resolved} onChange={theme.setTheme} />
           </div>
-        </div>
-
-        <nav className="nav" aria-label="Primary navigation">
-          <div className="nav-tabs" ref={tabsRef} role="toolbar" aria-label="Wanigan views">
-            <NavTab id="sessions" tab={tab} go={go} label="Sessions" roving={navRoving} onKeyDown={onNavTabKeyDown}>
-              {running > 0 && (
-                <span className="nav-badge mo-breathe" ref={runBadge}
-                      title={`${running} session${running === 1 ? '' : 's'} running`}>{running}</span>
-              )}
-            </NavTab>
-            <NavTab id="fleet" tab={tab} go={go} label="Fleet" roving={navRoving} onKeyDown={onNavTabKeyDown}>
-              {mark && (
-                <span className={`nav-mark tone-${mark.tone}`} ref={needBadge}
-                      title={`${needs.detail} — open Fleet (⌘2)`}>
-                  <span aria-hidden="true">{mark.glyph}</span>{needs.total} need you
-                </span>
-              )}
-            </NavTab>
-            <NavTab id="control" tab={tab} go={go} label="Control" roving={navRoving} onKeyDown={onNavTabKeyDown} />
-            <NavTab id="batches" tab={tab} go={go} label="Batches" roving={navRoving} onKeyDown={onNavTabKeyDown}>
-              {/* The API key gates batch submission and nothing else. On the
-                  Settings tab it was a permanent warning that read as "Wanigan
-                  is not set up", from every screen, while Sessions, Fleet,
-                  Control, Runs, Learning, Git and Schedules all work without
-                  one. It belongs on the surface it is actually true about. */}
-              {!hasKey && (
-                <span className="nav-mark tone-warn"
-                      title="Batch submission needs an API key — add one in Settings. Interactive sessions, Fleet, Control, Runs, Learning, Git and Schedules do not need it."
-                      aria-label="Batch submission needs an API key. Add one in Settings. Interactive sessions, Fleet, Control, Runs, Learning, Git and Schedules do not need it.">
-                  <span aria-hidden="true">!</span>needs key
-                </span>
-              )}
-              {activeRuns > 0 && (
-                <span className="nav-badge"
-                      title={`${activeRuns} batch run${activeRuns === 1 ? '' : 's'} in flight`}>{activeRuns}</span>
-              )}
-              {batchWork && (
-                <span className="nav-progress" role="progressbar" aria-valuemin={0} aria-valuemax={batchWork.total}
-                      aria-valuenow={batchWork.done}
-                      title={`${num(batchWork.done)} of ${num(batchWork.total)} requests returned`}>
-                  <span className="mo-fill"
-                        style={{ '--mo-p': batchWork.done / batchWork.total } as React.CSSProperties} />
-                </span>
-              )}
-            </NavTab>
-            <NavTab id="insights" tab={tab} go={go} label="Insights" roving={navRoving} onKeyDown={onNavTabKeyDown} />
-            <NavTab id="learning" tab={tab} go={go} label="Learning" roving={navRoving} onKeyDown={onNavTabKeyDown} />
-            <NavTab id="scout"    tab={tab} go={go} label="Scout" roving={navRoving} onKeyDown={onNavTabKeyDown} />
-            <NavTab id="plugins"  tab={tab} go={go} label="Plugins" roving={navRoving} onKeyDown={onNavTabKeyDown} />
-            <NavTab id="schedules" tab={tab} go={go} label="Schedules" roving={navRoving} onKeyDown={onNavTabKeyDown} />
-            <NavTab id="git"      tab={tab} go={go} label="Git" roving={navRoving} onKeyDown={onNavTabKeyDown} />
-            <NavTab id="runs"     tab={tab} go={go} label="Runs" roving={navRoving} onKeyDown={onNavTabKeyDown} />
-            <NavTab id="settings" tab={tab} go={go} label="Settings" roving={navRoving} onKeyDown={onNavTabKeyDown} />
-            <span className="nav-ink" ref={inkRef} aria-hidden="true" />
-          </div>
-        </nav>
       </header>
+
+      {/* Destinations left the horizontal axis. Thirteen text tabs needed a
+          second 48px header row and still overflowed at 960px with Runs and
+          Settings off-screen behind a 5px scrollbar — the rail's own rationale
+          (index.css) failed at the width it was written for. A vertical list
+          holds all fifteen with room for an icon, the marks and the chord, and
+          the window gets those 48px back for the terminal. ⌘1–9, ⌘0, ⌘, and
+          every ⌘⇧ chord are unchanged; the palette is still the complete
+          index. */}
+      <div className="workspace">
+        {sidebarOpen && (
+          <nav className="sidebar" id="wanigan-sidebar" aria-label="Primary navigation">
+            <div className="sidebar-scroll" ref={tabsRef} role="toolbar" aria-label="Wanigan views" aria-orientation="vertical">
+              {SIDEBAR_GROUPS.map((section) => (
+                <div className="sidebar-group" key={section.group}>
+                  <div className="sidebar-group-label">{section.group}</div>
+                  {section.tabs.map((id) => (
+                    <NavTab key={id} id={id} tab={tab} go={go} label={labelForTab(id)}
+                            roving={navRoving} onKeyDown={onNavTabKeyDown}
+                            badge={id === 'sessions' && running > 0 ? (
+                              <span className="nav-badge mo-breathe" ref={runBadge}
+                                    title={`${running} session${running === 1 ? '' : 's'} running`}>{running}</span>
+                            ) : id === 'batches' && activeRuns > 0 ? (
+                              <span className="nav-badge"
+                                    title={`${activeRuns} batch run${activeRuns === 1 ? '' : 's'} in flight`}>{activeRuns}</span>
+                            ) : null}
+                            progress={id === 'batches' && batchWork ? (
+                              <span className="nav-progress" role="progressbar" aria-valuemin={0} aria-valuemax={batchWork.total}
+                                    aria-valuenow={batchWork.done}
+                                    title={`${num(batchWork.done)} of ${num(batchWork.total)} requests returned`}>
+                                <span className="mo-fill"
+                                      style={{ '--mo-p': batchWork.done / batchWork.total } as React.CSSProperties} />
+                              </span>
+                            ) : null}
+                            marks={id === 'fleet' && mark ? (
+                              // A door, not a badge. The per-kind sentence used to live in a
+                              // hover title while the click landed on Fleet; now the mark opens
+                              // the list of who is waiting, worst first, each row a jump to
+                              // that session.
+                              <button className={`nav-mark tone-${mark.tone}`} type="button" ref={needBadge}
+                                      aria-haspopup="dialog" aria-expanded={needAnchor !== null}
+                                      aria-label={`${needs.total} need you: ${needs.detail}. Show who is waiting.`}
+                                      onClick={(e) => setNeedAnchor((cur) => (cur ? null : e.currentTarget))}>
+                                <span aria-hidden="true">{mark.glyph}</span>
+                                {needs.total} need you
+                              </button>
+                            ) : id === 'batches' && !hasKey ? (
+                              // The API key gates batch submission and nothing else. On the
+                              // Settings tab it was a permanent warning that read as "Wanigan
+                              // is not set up", from every screen, while Sessions, Fleet,
+                              // Control, Runs, Learning, Git and Schedules all work without
+                              // one. It belongs on the surface it is actually true about.
+                              // Quiet rather than amber for the same reason: a fresh install
+                              // is not agent attention, and --warning stays reserved for that.
+                              <button className="nav-mark tone-quiet" type="button"
+                                      aria-label="Batch submission needs an API key. Open Settings › Agents › Claude Platform API key. Interactive sessions, Fleet, Control, Runs, Learning, Git and Schedules do not need it."
+                                      onClick={() => jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' })}>
+                                <span aria-hidden="true">!</span>key
+                              </button>
+                            ) : null} />
+                  ))}
+                </div>
+              ))}
+            </div>
+          </nav>
+        )}
 
       {/* The boundary sits here and not around the shell: a view that cannot
           render must not take the header, the rail or ⌘K with it. `view={tab}`
           means leaving a broken surface clears the fallback by itself. */}
       <div className="body">
         <ErrorBoundary view={tab} label={labelForTab(tab)}>
+          {/* Inside the boundary on purpose: the fallback unmounts this scope
+              without mounting another, which is how a broken view's memory is
+              marked for clearing before the next mount. */}
+          <ViewMemoryScope view={tab}>
           {tab === 'sessions' && (
             <Sessions providers={providers} projects={projects}
                       onAddProject={addProject} onError={reportSessionError}
@@ -1036,13 +1187,14 @@ export default function App() {
                       newSessionRequest={newSessionRequest} onNewSessionRequestConsumed={consumeNewSessionRequest}
                       onSendToBatch={(seed) => { setBatchSeed(seed); go('batches'); }} />
           )}
-          {tab === 'fleet' && <Fleet projects={projects} onOpenSession={openSession} />}
+          {tab === 'fleet' && <Fleet projects={projects} onOpenSession={openSession} onNewSession={requestNewSession} />}
           {tab === 'control' && <Control projects={projects} providers={providers} onOpenSession={openSession} />}
           {tab === 'batches' && (
             <Batches projects={projects} hasKey={hasKey} onNeedKey={() => go('settings')}
                      seed={batchSeed} onSeedConsumed={() => setBatchSeed(null)} />
           )}
           {tab === 'insights' && <InsightsView />}
+          {tab === 'usage' && <UsageView />}
           {tab === 'learning' && (
             <Learning projectId={projectId} projects={projects} providers={providers}
                       onPickProject={choose} initialTarget={learningTarget} />
@@ -1066,11 +1218,15 @@ export default function App() {
                           onKeyChange={loadShell} onRemoveProject={removeProject} onAddProject={addProject}
                           themePreference={theme.preference} resolvedTheme={theme.resolved} onThemeChange={theme.setTheme} />
           )}
+          </ViewMemoryScope>
         </ErrorBoundary>
       </div>
+      </div>
 
+      {/* role=alert is itself an assertive live region; declaring aria-live as
+          well made some VoiceOver builds read the message twice. */}
       {error && (
-        <div className="toast" role="alert" aria-live="assertive">
+        <div className="toast" role="alert">
           <div>{error.message}</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
             {error.retry && (
@@ -1101,15 +1257,73 @@ export default function App() {
         />
       )}
       {demoPrompt && (
-        <div className="modal-backdrop" role="presentation"
-             onMouseDown={() => { if (!demoBusy) setDemoPrompt(null); }}>
-          <DemoConfirm next={demoPrompt.next} busy={demoBusy}
-                       onCancel={() => setDemoPrompt(null)}
-                       onConfirm={() => applyDemo(demoPrompt.next)} />
-        </div>
+        <DemoConfirm next={demoPrompt.next} busy={demoBusy}
+                     onCancel={() => setDemoPrompt(null)}
+                     onConfirm={() => applyDemo(demoPrompt.next)} />
       )}
       {shortcuts && <ShortcutSheet onClose={() => setShortcuts(false)} />}
+      {needAnchor && (
+        <NeedYouPopover anchor={needAnchor} attention={attention} sessions={sessions}
+                        onOpen={(id) => { setNeedAnchor(null); openSession(id); }}
+                        onClose={() => setNeedAnchor(null)} />
+      )}
+      <AnnounceRegion />
+    </ViewMemoryProvider>
+    </AnnounceProvider>
     </div>
+    {/* Dialogs portal here, beside the shell rather than inside it. .body
+        carries a view-transition-name, which makes it a stacking context, so
+        a dialog rendered from inside a view painted under the header; a root
+        outside .body puts every dialog above the chrome while leaving that
+        motion rule exactly as its comment asks. Empty until something opens. */}
+    <div id={OVERLAY_ROOT_ID} className="overlay-root" />
+    </>
+  );
+}
+
+/**
+ * The blocked list behind "n need you": who is waiting, worst first, each row
+ * a door to that session. Main ranks — worst kind, then longest wait — and this
+ * list renders that order untouched, exactly as the attention strip does. For
+ * the shell it is a dialog (⌘1–9 must not fire behind it) and, like every
+ * overlay here, it does not animate: a live terminal may be on screen under it.
+ */
+function NeedYouPopover({ anchor, attention, sessions, onOpen, onClose }: {
+  anchor: HTMLElement; attention: Attention[]; sessions: Session[];
+  onOpen: (sessionId: string) => void; onClose: () => void;
+}) {
+  const { portal, backdropProps, dialogProps } = useDialog<HTMLElement>({ onClose, initialFocus: 'first' });
+  const rows = attention.filter((a) => NEEDS_YOU.includes(a.kind));
+  // Anchored under the mark that opened it, from measured geometry; clamped
+  // so the panel never runs off the right edge on a narrow window.
+  const rect = anchor.getBoundingClientRect();
+  const place = {
+    '--pop-left': `${Math.max(8, Math.min(rect.left, window.innerWidth - 372))}px`,
+    '--pop-top': `${Math.round(rect.bottom + 6)}px`,
+  } as React.CSSProperties;
+  return portal(
+    <div {...backdropProps} className="overlay-backdrop clear">
+      <section {...dialogProps} className="need-popover" aria-label="Sessions that need you" style={place}>
+        <h2>{rows.length === 0 ? 'Nothing is waiting on you now' : `${rows.length} need you — worst first`}</h2>
+        <div className="need-rows">
+          {rows.map((a) => {
+            const tone = NEED_MARK[a.kind]?.tone ?? 'ok';
+            const session = sessions.find((s) => s.id === a.sessionId);
+            const project = session?.projectName ?? `session ${a.sessionId.slice(0, 6)}`;
+            return (
+              <button key={a.sessionId} className="need-row" type="button" onClick={() => onOpen(a.sessionId)}
+                      aria-label={`${a.label}: ${project}, since ${ago(a.since)}.${a.detail ? ` ${a.detail}.` : ''} Open this session.`}>
+                <span className={`nav-mark tone-${tone}`}>
+                  <span aria-hidden="true">{ATTENTION_GLYPH[a.kind]}</span>{a.label}
+                </span>
+                <span className="need-row-project">{project}{a.detail ? ` · ${a.detail}` : ''}</span>
+                <span className="need-row-wait">{ago(a.since)}</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+    </div>,
   );
 }
 
@@ -1123,20 +1337,16 @@ export default function App() {
 function DemoConfirm({ next, busy, onCancel, onConfirm }: {
   next: boolean; busy: boolean; onCancel: () => void; onConfirm: () => void;
 }) {
-  const confirmRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => { confirmRef.current?.focus(); }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || busy) return;
-      e.preventDefault();
-      onCancel();
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [busy, onCancel]);
-  return (
-    <section className="modal" role="dialog" aria-modal="true" aria-labelledby="wanigan-demo-title"
-             onMouseDown={(e) => e.stopPropagation()}>
+  // Least-destructive first: Enter on an unread dialog must not rewrite every
+  // name on screen and reload the window, so Cancel takes the initial focus and
+  // Confirm is one Tab away. While the reload is in flight nothing closes it.
+  const { portal, backdropProps, dialogProps } = useDialog<HTMLElement>({
+    onClose: () => { if (!busy) onCancel(); },
+    initialFocus: 'least-destructive',
+  });
+  return portal(
+    <div {...backdropProps}>
+    <section {...dialogProps} className="modal" aria-labelledby="wanigan-demo-title">
       <h2 id="wanigan-demo-title" style={{ fontSize: 'var(--t-title)', fontWeight: 600 }}>
         {next ? 'Turn on demo mode?' : 'Turn off demo mode?'}
       </h2>
@@ -1152,11 +1362,12 @@ function DemoConfirm({ next, busy, onCancel, onConfirm }: {
       </p>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
         <button className="btn" type="button" onClick={onCancel} disabled={busy}>Cancel</button>
-        <button ref={confirmRef} className="btn btn-primary" type="button" onClick={onConfirm} disabled={busy}>
+        <button className="btn btn-primary" type="button" onClick={onConfirm} disabled={busy}>
           {busy ? 'Applying…' : next ? 'Turn on and reload' : 'Turn off and reload'}
         </button>
       </div>
     </section>
+    </div>,
   );
 }
 
@@ -1307,7 +1518,10 @@ function relativeReset(at: number): string {
  * renders and drives it. The data half of the shape lives in shared/palette
  * so the smoke suite can hold the filter and grouping to account.
  */
-type PaletteItem = PaletteEntry & { run: () => void };
+/** A glyph-and-word mark before the title: a live session's attention state,
+ *  "active" on the project the shell is pointed at, "current" on the theme. */
+type PaletteMark = { glyph: string; word: string };
+type PaletteItem = PaletteEntry & { run: () => void; mark?: PaletteMark };
 
 function CommandPalette({ query, onQuery, items, onClose, onRun }: {
   query: string; onQuery: (value: string) => void; items: PaletteItem[];
@@ -1317,8 +1531,29 @@ function CommandPalette({ query, onQuery, items, onClose, onRun }: {
   const dialog = useRef<HTMLElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const shown = useMemo(() => filterPalette(items, query), [items, query]);
+  // Recent is read once per open: the palette closes on every run, so the
+  // list cannot go stale while it is on screen. Shown only while the query is
+  // empty — a search already ranks by what was typed — after Actions and
+  // before the static Views list, so a frequent route is one arrow press away.
+  // A Recent row is the original row under another header: same run, same
+  // staysPut, so a remembered project row still stays put.
+  const [recent] = useState<string[]>(readRecent);
+  const withRecent = useMemo(() => {
+    if (normalizedQuery || recent.length === 0) return items;
+    const byKey = new Map(items.map((item) => [item.key, item] as const));
+    const rows: PaletteItem[] = [];
+    for (const key of recent) {
+      const item = byKey.get(key);
+      if (item) rows.push({ ...item, group: 'Recent', primary: false });
+    }
+    if (rows.length === 0) return items;
+    const actions = items.filter((item) => item.group === 'Actions');
+    const rest = items.filter((item) => item.group !== 'Actions');
+    return [...actions, ...rows, ...rest];
+  }, [items, normalizedQuery, recent]);
+  const shown = useMemo(() => filterPalette(withRecent, query), [withRecent, query]);
   const groups = useMemo(() => groupPalette(shown), [shown]);
+  const run = (item: PaletteItem) => { rememberRecent(item.key); onRun(item); };
   // Reaching the third result used to take three Tabs. One highlighted row,
   // moved with the arrow keys and taken with Enter, is what every palette on
   // this machine does; anything else is a list you have to walk.
@@ -1334,9 +1569,11 @@ function CommandPalette({ query, onQuery, items, onClose, onRun }: {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
       if (e.key !== 'Tab') return;
+      // Option rows carry tabIndex -1 and are skipped: Tab stays in the field,
+      // and the highlight — not focus — is what moves through the results.
       const focusable = Array.from(dialog.current?.querySelectorAll<HTMLElement>(
         'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
-      ) ?? []).filter((item) => item.getClientRects().length > 0);
+      ) ?? []).filter((item) => item.getClientRects().length > 0 && item.tabIndex >= 0);
       if (focusable.length === 0) { e.preventDefault(); return; }
       const activeEl = document.activeElement;
       const index = activeEl instanceof HTMLElement ? focusable.indexOf(activeEl) : -1;
@@ -1368,7 +1605,7 @@ function CommandPalette({ query, onQuery, items, onClose, onRun }: {
     // the caret is still in the field.
     if (e.key === 'Enter' && document.activeElement === input.current && active >= 0) {
       e.preventDefault();
-      onRun(shown[active]);
+      run(shown[active]);
     }
   };
 
@@ -1391,26 +1628,31 @@ function CommandPalette({ query, onQuery, items, onClose, onRun }: {
               <div key={group.label} role="group" aria-label={`${group.label}, ${group.items.length} results`}>
                 {/* Counts rows on screen. Transcripts are capped by the FTS ask,
                     so a full page says "shown" rather than claiming a total. */}
-                <div role="presentation" className="faint"
-                     style={{ padding: '7px 10px 3px', fontSize: 'var(--t-micro)', letterSpacing: '.07em', textTransform: 'uppercase' }}>
+                <div role="presentation" className="command-group-label">
                   {group.label} · {group.items.length}{group.label === 'Transcripts' && group.items.length >= TRANSCRIPT_RESULT_CAP ? ' shown' : ''}
                 </div>
                 {group.items.map((item) => {
                   flat += 1;
                   const index = flat;
                   return (
-                    // index.css owns the hover and focus states for these rows and has no rule
-                    // for a keyboard highlight yet, so the highlight mirrors the same two
-                    // tokens inline rather than inventing a second appearance for it.
-                    <button key={item.key} id={`wanigan-command-${index}`} type="button" role="option"
+                    // Out of the Tab order on purpose: this is an APG combobox, so Tab
+                    // stays in the field and the highlight travels by arrow key. The
+                    // highlight paints from .command-item[aria-selected="true"] in
+                    // index.css — the rule this row used to mirror inline for want of one.
+                    <button key={item.key} id={`wanigan-command-${index}`} type="button" role="option" tabIndex={-1}
                             className={`command-item${item.primary ? ' command-item-primary' : ''}`}
                             aria-selected={index === active} data-command-active={index === active}
-                            style={index === active && !item.primary
-                              ? { alignItems: 'center', background: 'var(--accent-soft)', color: 'var(--text)' }
-                              : { alignItems: 'center' }}
                             onMouseEnter={() => setSelected(index)}
-                            onClick={() => onRun(item)}>
-                      <span className="command-item-copy"><strong>{item.title}</strong><small>{item.hint}</small></span>
+                            onClick={() => run(item)}>
+                      <span className="command-item-copy">
+                        <strong>
+                          {item.mark && (
+                            <span className="mark"><span className="glyph" aria-hidden="true">{item.mark.glyph}</span>{item.mark.word}</span>
+                          )}
+                          {item.title}
+                        </strong>
+                        <small>{item.hint}</small>
+                      </span>
                       <span className="faint mono">{item.meta}</span>
                     </button>
                   );
@@ -1420,29 +1662,46 @@ function CommandPalette({ query, onQuery, items, onClose, onRun }: {
           })()}
         </div>
         <p className="faint" style={{ margin: '8px 0 0', fontSize: 'var(--t-small)' }}>
-          ↑↓ moves · Enter opens · Esc closes · ⌘K opens
+          ↑↓ moves · Enter opens · Esc closes · ⌘K closes
         </p>
       </section>
     </div>
   );
 }
 
-function NavTab({ id, tab, go, label, children, onKeyDown, roving }: {
-  id: Tab; tab: Tab; go: (t: Tab) => void; label: string; children?: React.ReactNode;
+function NavTab({ id, tab, go, label, badge, progress, marks, onKeyDown, roving }: {
+  id: Tab; tab: Tab; go: (t: Tab) => void; label: string;
+  /** An inert count. Rendered inside the row, between the word and the chord. */
+  badge?: React.ReactNode;
+  /** An inert bar. Rendered under the row so it cannot squeeze the label. */
+  progress?: React.ReactNode;
+  /** Marks that are doors. Rendered as siblings of the row, never inside it:
+   *  a button inside a button is invalid HTML and reads as one control. This
+   *  is the wrapper split the Sessions tab strip already uses. */
+  marks?: React.ReactNode;
   onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>, current: Tab) => void;
-  /** The rail's single tab stop. It follows arrow-key focus, not the view. */
+  /** The list's single tab stop. It follows arrow-key focus, not the view. */
   roving: Tab;
 }) {
   const on = tab === id;
   const shortcut = TAB_SHORTCUTS[id];
   return (
-    <button className={`nav-tab${on ? ' on' : ''}`} type="button" data-nav-tab={id}
-            tabIndex={roving === id ? 0 : -1} onClick={() => go(id)} onKeyDown={(event) => onKeyDown(event, id)}
-            aria-current={on ? 'page' : undefined}
-            aria-keyshortcuts={shortcut.aria}
-            title={`${label} (${shortcut.label})`}>
-      {label}
-      {children}
-    </button>
+    <div className="nav-tab-wrap">
+      <button className={`nav-tab${on ? ' on' : ''}`} type="button" data-nav-tab={id}
+              tabIndex={roving === id ? 0 : -1} onClick={() => go(id)} onKeyDown={(event) => onKeyDown(event, id)}
+              aria-current={on ? 'page' : undefined}
+              aria-keyshortcuts={shortcut.aria}
+              title={`${label} (${shortcut.label})`}>
+        {/* The glyph is a second way to find a row, never the only one: the
+            word is always printed beside it. At 176px the label is what still
+            fits; the icon is what makes the column scannable at a glance. */}
+        <Icon name={TAB_ICONS[id]} />
+        <span className="nav-tab-label">{label}</span>
+        {badge}
+        <span className="nav-tab-chord" aria-hidden="true">{shortcut.label}</span>
+      </button>
+      {progress}
+      {marks}
+    </div>
   );
 }

@@ -567,6 +567,7 @@ function migratePhases(d: Database.Database) {
   );
   migrateLearning(d);
   migrateControl(d);
+  migrateAccounts(d);
   migrateImprovementScout(d);
   migrateCheckpoints(d);
   migrateConversationFlags(d);
@@ -874,6 +875,79 @@ function migrateLearning(d: Database.Database) {
   // against that run; one that names nothing is an estimate wearing a stronger
   // label. Nullable because most metrics are honestly observational.
   addColumn(d, 'artifact_metrics', 'experiment_id', 'TEXT');
+  // The briefing builder has reported four held-back reasons since it learned
+  // to distinguish them, but only two were persisted, so a session held for
+  // the freshness-check quota read back as "nothing matched". Nullable: a row
+  // recorded before these columns existed says "not recorded", never 0.
+  addColumn(d, 'session_briefings', 'omitted_unsynthesized', 'INTEGER');
+  addColumn(d, 'session_briefings', 'omitted_unverified', 'INTEGER');
+  // Waking a snoozed candidate needs three facts the row never carried: the
+  // deterministic cluster key a later observation can match without touching
+  // a title a person may have edited, when it was first snoozed (a snoozed
+  // candidate never auto-applies afterwards), and the wake reason as its own
+  // column so automation never writes over the operator's reviewer_note.
+  addColumn(d, 'knowledge_candidates', 'cluster_key', 'TEXT');
+  addColumn(d, 'knowledge_candidates', 'snoozed_at', 'INTEGER');
+  addColumn(d, 'knowledge_candidates', 'wake_json', 'TEXT');
+  d.exec(`
+    CREATE INDEX IF NOT EXISTS idx_knowledge_candidates_cluster
+      ON knowledge_candidates(cluster_key, status);
+  `);
+}
+
+/**
+ * P32 · One operator, several agent accounts.
+ *
+ * Claude Code keys its stored login — including the macOS Keychain entry — to
+ * `CLAUDE_CONFIG_DIR`, so a session launched with a different directory reads a
+ * different credential. That is the whole mechanism: an account here is a
+ * labelled config directory for a harness, not a credential Wanigan holds.
+ * Wanigan never sees the token and cannot perform the browser login.
+ *
+ * Rows are harness-scoped rather than Claude-specific because the same shape
+ * already fits Codex (`CODEX_HOME`). Only the Claude Code mapping is wired
+ * today; a harness with no mapping simply has no accounts.
+ */
+function migrateAccounts(d: Database.Database) {
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS agent_accounts (
+      id          TEXT PRIMARY KEY,
+      harness     TEXT NOT NULL,
+      label       TEXT NOT NULL,
+      config_dir  TEXT NOT NULL,
+      -- 0 for a directory that existed before Wanigan knew about it, such as
+      -- the operator's own ~/.claude. Wanigan may point sessions at it but
+      -- must not offer to delete it.
+      adopted     INTEGER NOT NULL DEFAULT 0,
+      is_default  INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL,
+      UNIQUE(harness, config_dir)
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_accounts_harness ON agent_accounts(harness, created_at);
+
+    -- A project's saved account, per harness. A row per pair rather than a
+    -- column per harness, so adding Codex accounts later needs no migration.
+    CREATE TABLE IF NOT EXISTS project_accounts (
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      harness    TEXT NOT NULL,
+      account_id TEXT NOT NULL REFERENCES agent_accounts(id) ON DELETE CASCADE,
+      PRIMARY KEY (project_id, harness)
+    );
+  `);
+  // Which account a session actually launched under. Without this, a restart
+  // leaves Wanigan reading the default account's directory for a transcript
+  // that was written into another one, and honestly reporting nothing.
+  addColumn(d, 'session_log', 'account_id', 'TEXT');
+  // The same fact for a fan-out row, so a context window the CLI reported in a
+  // headless run is matched only to interactive sessions under the same login.
+  addColumn(d, 'headless_rows', 'account_id', 'TEXT');
+  // Whether the CLI named a cost at all, which `cost_usd` alone cannot say: a
+  // run that reported nothing and a run that genuinely reported $0.00 both
+  // land as 0, and the Runs total claimed to be "CLI-reported; never
+  // estimated" over the sum of both. Nullable on purpose — a row written
+  // before this column existed reads as unknown, never as reported.
+  addColumn(d, 'headless_rows', 'cost_reported', 'INTEGER');
 }
 
 /**
@@ -1040,6 +1114,28 @@ function migrateControl(d: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_work_trace_events_docket ON work_trace_events(docket_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_work_trace_events_session ON work_trace_events(session_id, created_at DESC);
   `);
+
+  // P31 · a docket is a graph, not a fixed four-step chain.
+  //
+  // `depends_json` always described an arbitrary DAG; nothing ever wrote one.
+  // Declaring the path a node intends to own is what makes fan-out safe to
+  // plan: two nodes that can run at the same time and want the same directory
+  // are a conflict the planner can be told about, instead of a merge the
+  // operator discovers later. Nullable, because a node that declares nothing
+  // simply takes no claim when it starts.
+  addColumn(d, 'work_nodes', 'claim_path', 'TEXT');
+
+  // Autopilot dispatch. The provider/model are frozen per docket at the moment
+  // consent is given, so a later default change cannot silently redirect work
+  // already running unattended.
+  addColumn(d, 'work_dockets', 'autopilot', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(d, 'work_dockets', 'autopilot_provider', 'TEXT');
+  addColumn(d, 'work_dockets', 'autopilot_model', 'TEXT');
+  // Marks a node the sweep has already handed to the queue. Without a durable
+  // marker the sweep re-enqueues the same node every tick until the runner
+  // wins the race, and the losers burn queue attempts on an error.
+  addColumn(d, 'work_nodes', 'dispatch_state', 'TEXT');
+  d.exec('CREATE INDEX IF NOT EXISTS idx_work_nodes_dispatch ON work_nodes(dispatch_state) WHERE dispatch_state IS NOT NULL');
 }
 
 /**
@@ -1185,7 +1281,6 @@ function migrateImprovementScout(d: Database.Database) {
     refresh.run(label, description, url, publisher, kind, at, id);
   }
 }
-
 export function logEvent(runId: string, level: 'info' | 'warn' | 'error', message: string) {
   db().prepare('INSERT INTO events (run_id, at, level, message) VALUES (?,?,?,?)')
     .run(runId, Date.now(), level, message);

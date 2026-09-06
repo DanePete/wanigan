@@ -101,10 +101,21 @@ function internalDelivery(
   context: ArtifactCompilerContext,
   adapterId: string,
 ): ArtifactCompilation | null {
-  if (candidate.targetKind === 'memory' || candidate.targetKind === 'mission' || candidate.targetKind === 'project-map') {
+  if (candidate.targetKind === 'memory' || candidate.targetKind === 'mission') {
     return result(
       candidate, context, adapterId, 'briefing',
       'Wanigan retrieves this canonical knowledge just in time. Provider-generated memory stays read-only.',
+    );
+  }
+  // A project map is topology, not a sentence an agent can act on: the
+  // briefing builder refuses the kind (INJECTABLE_KINDS), so reporting
+  // 'briefing' here promised a delivery that never happens. No provider file
+  // is honest either, so the answer is unsupported with the reason, and the
+  // item stays retrievable in Wanigan's own views.
+  if (candidate.targetKind === 'project-map') {
+    return result(
+      candidate, context, adapterId, 'unsupported',
+      'A project map is never briefed and has no provider file; it stays retrievable in Wanigan only.',
     );
   }
   if (candidate.targetKind === 'gate') {

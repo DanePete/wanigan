@@ -10,11 +10,22 @@ as observed fact.
 
 - Use Node `22.23.2` from `.nvmrc`. Node 16 cannot build this project; use
   `nvm use` before `npm` commands.
-- Run `npm test` before handing off a code change. It is four steps in order:
-  `typecheck`, `test:package-hooks`, `test:local-install`, then the offline
-  main-process `smoke` suite. CI runs the same four, splitting the two macOS
-  packaging suites onto a macOS runner. Run `git diff --check` for documentation
-  and UI changes too.
+- Run `npm test` before handing off a code change. It is five steps in order:
+  `typecheck`, `test:renderer-style`, `test:package-hooks`, `test:local-install`,
+  then the offline main-process `smoke` suite. CI runs the same five, splitting
+  the two macOS packaging suites onto a macOS runner. Run `git diff --check` for
+  documentation and UI changes too.
+- Renderer UI is built from the shared frame and primitives, and the style gate
+  (`scripts/check-renderer-style.cjs`) enforces it. A new view roots on `.pane`
+  with `PageHead`, and composes `SectionHead`, `Chip`, `Segmented`, `Mark`,
+  `Pill`, `Stat`, `Note`, `EmptyState`, `Reading`, `Explainer` and `Hint` from
+  `src/renderer/src/components/bits.tsx` rather than adding a new `*-card`,
+  `*-head` or `*-chip` class family. No `<style>` in TSX: rules go in
+  `src/renderer/src/styles/<surface>.css`, which declares no colour and spells no
+  font size, padding or duration as a literal — those come from the tokens in
+  `index.css` and `motion.css`. The gate's baselines are debts that only ratchet
+  down. A UI change ships with before and after screenshots of the affected view
+  in both themes.
 - Keep Electron's trust boundary intact: privileged work belongs in
   `src/main/`, the renderer reaches it only through typed preload APIs, and all
   renderer input is untrusted until validated in the main process.

@@ -110,6 +110,36 @@ export function feed(sessionId: string, data: string) {
   pool.get(sessionId)?.term.write(data);
 }
 
+/**
+ * Keep every pooled terminal fed for as long as the window is open.
+ *
+ * feed() has always been able to write into a terminal whose pane is not
+ * mounted — that is what the pool is for — but the only subscription that
+ * called it lived inside the Sessions view. App.tsx renders views as
+ * `{tab === 'sessions' && <Sessions/>}`, so stepping over to Fleet or Git
+ * unsubscribed it, and everything the agent printed while you were away was
+ * dropped on the floor. It was not recoverable either: the pane primes from
+ * main's ring buffer exactly once, and `primed` is already true on the way
+ * back, so returning to the tab showed a terminal silently missing output —
+ * and, because the missing chunks carry cursor-addressing escapes, sometimes
+ * painting the next output against a screen that no longer matched.
+ *
+ * Main was never the problem: it keeps appending to its 512 KiB ring and keeps
+ * broadcasting. Nobody was listening.
+ *
+ * The subscription belongs where the pool does, and its lifetime is the
+ * window's. App.tsx starts it once. Queueing bytes and replaying them after a
+ * pane primes would be the wrong fix: main's scrollback flushes everything it
+ * has already broadcast, so a replay duplicates.
+ */
+export function startTerminalOutputPump(): () => void {
+  const offData = window.wanigan.on.data(({ sessionId, data }) => feed(sessionId, data));
+  const offExit = window.wanigan.on.exit(({ sessionId, exitCode }) => {
+    feed(sessionId, `\r\n\x1b[38;5;244m── session exited (code ${exitCode}) ──\x1b[0m\r\n`);
+  });
+  return () => { offData(); offExit(); };
+}
+
 export default function TerminalPane({ sessionId, visible }: { sessionId: string; visible: boolean }) {
   const hostRef = useRef<HTMLDivElement>(null);
 

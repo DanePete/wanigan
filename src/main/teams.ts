@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import * as accounts from './accounts';
 
 /**
  * Agent teams, read from disk.
@@ -18,8 +19,25 @@ import os from 'node:os';
  * so an empty result is the normal case rather than a failure.
  */
 
-const TEAMS = path.join(os.homedir(), '.claude', 'teams');
-const TASKS = path.join(os.homedir(), '.claude', 'tasks');
+/**
+ * Teams and task lists live under whichever config directory the session that
+ * formed them was launched with, so these resolve per account rather than being
+ * fixed at ~/.claude. A team formed by a work-account session is invisible from
+ * the personal directory, and a reader pinned to one root would report a team
+ * that exists as absent.
+ */
+function teamRoots(): string[] {
+  return accounts.readRoots('claude-code');
+}
+const teamsDirs = () => teamRoots().map((root) => path.join(root, 'teams'));
+const tasksDirs = () => teamRoots().map((root) => path.join(root, 'tasks'));
+
+/** The first root that actually holds this team; the first root otherwise. */
+function dirFor(dirs: string[], ...rest: string[]): string {
+  const candidates = dirs.map((dir) => path.join(dir, ...rest));
+  return candidates.find((candidate) => { try { return fs.existsSync(candidate); } catch { return false; } })
+    ?? candidates[0];
+}
 
 export type TeamMember = { name: string; agentId: string | null; agentType: string | null; isLead: boolean };
 export type TeamTask = {
@@ -92,7 +110,7 @@ const ts = (v: unknown): number | null => {
 type TaskRead = { tasks: TeamTask[]; partial: boolean; mtimeMs: number | null };
 
 function readTasks(team: string): TaskRead {
-  const dir = path.join(TASKS, team);
+  const dir = dirFor(tasksDirs(), team);
   let files: string[];
   try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch (error) {
     // No task directory means a team coordinating by message alone; anything
@@ -136,7 +154,7 @@ function readTasks(team: string): TaskRead {
 type InboxRead = { messages: TeamMessage[]; partial: boolean; mtimeMs: number | null };
 
 function readInboxes(team: string): InboxRead {
-  const dir = path.join(TEAMS, team, 'inboxes');
+  const dir = dirFor(teamsDirs(), team, 'inboxes');
   let files: string[];
   try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch (error) {
     const absent = (error as NodeJS.ErrnoException | null)?.code === 'ENOENT';
@@ -166,12 +184,17 @@ function readInboxes(team: string): InboxRead {
 }
 
 export function readTeams(): { teams: Team[]; enabled: boolean; note: string | null } {
-  let names: string[];
-  try { names = fs.readdirSync(TEAMS).filter((n) => !n.startsWith('.')); } catch { names = []; }
+  // Across every account: a team belongs to the session that formed it, and
+  // that session may have run under either login.
+  let names: string[] = [];
+  for (const dir of teamsDirs()) {
+    try { names.push(...fs.readdirSync(dir).filter((n) => !n.startsWith('.'))); } catch { /* no teams here */ }
+  }
+  names = [...new Set(names)];
 
   const teams: Team[] = [];
   for (const name of names) {
-    const configPath = path.join(TEAMS, name, 'config.json');
+    const configPath = dirFor(teamsDirs(), name, 'config.json');
     const config = readJson(configPath);
     const cfg = (config.value && typeof config.value === 'object'
       ? config.value : null) as Record<string, unknown> | null;

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type {
-  CacheTtl, EvalPair, EvalRowDiff, GoldenSet, Project, RunConfig, SourceConfig, UploadedFile,
-} from '@shared/types';
+  CacheTtl, EvalPair, EvalRowDiff, GoldenSet, Project, RunConfig, SourceConfig, UploadedFile, ExpiringResults } from '@shared/types';
 import { estimateTokens } from '@shared/tokens';
-import { Pill, Bar, Stat, Note, Section, num, usd, ago, until } from '../components/bits';
+import { Pill, Bar, ConfirmNote, Reading, Stat, Note, Section, num, usd, ago, until } from '../components/bits';
+import { useDialog } from '../components/useDialog';
+import '../styles/batches.css';
 
 type Preset = { id: string; label: string; blurb: string; config: Omit<RunConfig, 'name'> };
 type Model = {
@@ -112,50 +113,6 @@ function parseCounts(text: string | null | undefined): Record<string, number> {
   } catch { return {}; }
 }
 
-/**
- * The batch-depth phases have no feature stylesheet of their own and index.css
- * belongs to the shell, so the rules ride with the surface. Namespaced `bx-`
- * so a sibling sheet cannot collide, and every colour is a token — none is
- * declared here.
- */
-const BATCH_CSS = `
-.bx-lane { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-
-/* index.css styles :focus on .field only, and most of this surface is buttons,
-   checkboxes and selects. A keyboard user has to be able to see where they are. */
-.bx-lane :focus-visible,
-.bx-f:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
-.bx-lane .field:focus-visible, .field.bx-f:focus-visible { outline-offset: -1px; }
-
-/* Wide content scrolls inside its own box; the page body never moves sideways. */
-.bx-scroll { overflow-x: auto; }
-.bx-scroll > table { min-width: 540px; }
-
-.bx-num { font-variant-numeric: tabular-nums; }
-
-.bx-ab { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
-@media (max-width: 940px) { .bx-ab { grid-template-columns: minmax(0, 1fr); } }
-
-.bx-out {
-  margin: 0; padding: 8px 10px; max-height: 210px; overflow: auto;
-  white-space: pre-wrap; overflow-wrap: anywhere;
-  font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
-  font-size: 11.5px; line-height: 1.5; color: var(--text-dim);
-}
-
-.bx-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; flex: none; }
-
-/* Empty, loading, zero-results and error all land here, and each says a
-   different thing — the shared box only makes them look like siblings. */
-.bx-state { padding: 24px 18px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 9px; }
-.bx-state h4 { font-size: 13px; font-weight: 600; }
-.bx-state p { font-size: 12.5px; color: var(--text-dim); line-height: 1.55; max-width: 60ch; }
-`;
-
-function BatchStyles() {
-  return <style>{BATCH_CSS}</style>;
-}
-
 export default function Batches({ projects, hasKey, onNeedKey, seed, onSeedConsumed }: {
   projects: Project[]; hasKey: boolean; onNeedKey: () => void;
   seed?: { projectId: string; root: string; paths: string[] } | null;
@@ -175,8 +132,7 @@ export default function Batches({ projects, hasKey, onNeedKey, seed, onSeedConsu
                      onOpen={(id) => setView({ page: 'detail', id })} />
         : <RunList onNew={() => setView({ page: 'new' })} onOpen={(id) => setView({ page: 'detail', id })} />;
 
-  // A <style> element is display:none, so it costs the flex layout nothing.
-  return <><BatchStyles />{page}</>;
+  return page;
 }
 
 /* ── list ─────────────────────────────────────────────────────────────── */
@@ -192,9 +148,21 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
   const [err, setErr] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
 
+  /**
+   * Runs whose results stop being downloadable soon. Main has computed this
+   * since the feature shipped and nothing ever asked: the deadline is 29 days
+   * from batch creation, the run reads as "ended" the whole time, and the only
+   * notice was a warn buried in that run's event log — followed, on day 29, by
+   * a post-mortem. A failed read here is deliberately silent, because a
+   * missing warning must not replace a list of runs that loaded fine.
+   */
+  const [expiring, setExpiring] = useState<ExpiringResults[]>([]);
+
   const load = useCallback(async () => {
     try { setRuns((await window.wanigan.batch.runs()) as Run[]); setErr(null); }
     catch (e) { setErr(msg(e)); }
+    try { setExpiring((await window.wanigan.notify.resultsExpiring()) as ExpiringResults[]); }
+    catch { /* the warning is additive; its absence is not worth a banner */ }
     setLoading(false);
   }, []);
 
@@ -254,6 +222,29 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
         </Note>
       )}
 
+      {/* The slow deadline, finally on screen. These runs read as "ended" in
+          the table below with no hint that anything is counting down, and the
+          only prior notice was a warn in each run's own event log — then, on
+          day 29, a post-mortem. Exporting writes the .jsonl locally, after
+          which the run drops off this list because it has nothing left to
+          lose. */}
+      {expiring.length > 0 && (
+        <Note tone="warn">
+          <strong>{expiring.length === 1 ? 'One run’s results expire soon.' : `${num(expiring.length)} runs’ results expire soon.`}</strong>{' '}
+          Results stay downloadable for 29 days after the batch was created. Export what you want to
+          keep — once the deadline passes the API has nothing left to return.
+          <ul className="bx-expiring">
+            {expiring.slice(0, 5).map((row) => (
+              <li key={row.runId}>
+                <button className="bx-f bx-expiring-run" onClick={() => onOpen(row.runId)}>{row.runName}</button>
+                {' — downloadable until '}{new Date(row.downloadableUntil).toLocaleDateString()}{' ('}{until(row.downloadableUntil).text}{')'}
+              </li>
+            ))}
+          </ul>
+          {expiring.length > 5 && <span className="faint">…and {num(expiring.length - 5)} more.</span>}
+        </Note>
+      )}
+
       <div className="stat-grid">
         <Stat label="Runs" value={num(runs.length)} />
         <Stat label="Active" value={num(active.length)} tone={active.length ? 'var(--accent)' : undefined}
@@ -276,7 +267,7 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={7} className="dim center">Loading…</td></tr>}
+            {loading && <tr><td colSpan={7} className="dim center">Reading your batch runs…</td></tr>}
             {!loading && !runs.length && (
               <tr><td colSpan={7} className="center" style={{ padding: '46px 12px' }}>
                 <p className="dim">No runs yet.</p>
@@ -515,7 +506,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
         </div>
       );
     }
-    return <div className="pane"><p className="dim">Loading…</p></div>;
+    return <div className="pane"><Reading what="this run" /></div>;
   }
 
   const dryFailed = dry?.result && !dry.result.ok;
@@ -994,7 +985,7 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
         </div>
       );
     }
-    return <div className="pane"><p className="dim">Loading…</p></div>;
+    return <div className="pane"><Reading what="this run" /></div>;
   }
 
   const { run, counts } = d;
@@ -1022,13 +1013,17 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
   // Merging the last rescue can retire the refusals tab underneath the user.
   const activeTab: DetailTab = tabs.includes(tab) ? tab : 'results';
 
+  // A failed cancel or retry lands beside the buttons that caused it; a native
+  // alert() steals focus from the window and leaves no trace once dismissed.
+  const [actErr, setActErr] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   async function act(fn: () => Promise<any>, label: string) {
-    setBusy(label);
+    setBusy(label); setActErr(null);
     try {
       const r = await fn();
       if (r?.runId) { onOpen(r.runId); return; }
       await loadDetail(); await loadRows();
-    } catch (e) { alert(e instanceof Error ? e.message : String(e)); }
+    } catch (e) { setActErr(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(null); }
   }
 
@@ -1070,9 +1065,24 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
             {busy === 'export-jsonl' ? 'Exporting…' : 'Export JSONL'}</button>
           <button className="btn" disabled={busy === 'export-csv'} onClick={() => void exportResults('csv')}>
             {busy === 'export-csv' ? 'Exporting…' : 'Export CSV'}</button>
+          {/* A run could be cancelled, retried and exported but never removed,
+              so the list only ever grew. Hidden while `live` — which counts
+              'canceling' — because deleting the local row does not reach the
+              API, and a run that is still winding down is still spending. */}
+          {!live && <button className="btn" disabled={busy === 'delete'}
+                            onClick={() => setConfirmDelete(true)}>Delete run…</button>}
         </div>
       </div>
 
+      {confirmDelete && (
+        <ConfirmNote
+          what={`Delete “${run.name}” and its ${num(run.total_requests)} stored ${run.total_requests === 1 ? 'request' : 'requests'}. The results are removed from this machine and cannot be downloaded again.`}
+          verb="Delete this run" busy={busy === 'delete'}
+          onCancel={() => setConfirmDelete(false)}
+          onRun={async () => { setConfirmDelete(false); await act(() => window.wanigan.batch.remove(id), 'delete'); onBack(); }} />
+      )}
+
+      {actErr && <Note tone="error">{actErr}</Note>}
       {exportNote && <Note tone={exportNote.tone}>{exportNote.text}</Note>}
       {detailErr && (
         <Note tone="warn">
@@ -1237,7 +1247,7 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
  * and returns to the row that opened it, Tab stays inside, and Escape closes.
  * Without those, a keyboard user could open this drawer and have no way back
  * out of it. App.tsx and Sessions.tsx already suppress their shortcuts on
- * `.modal-backdrop` and on `[role="dialog"][aria-modal="true"]`, so the
+ * `[role="dialog"][aria-modal="true"]`, which useDialog sets, so the
  * semantics below also stop ⌘-keys firing behind the scrim.
  *
  * The backdrop closes on mousedown rather than click: this pane is full of long
@@ -1246,43 +1256,17 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
  * evidence away.
  */
 function RequestDrawer({ row, onClose }: { row: any; onClose: () => void }) {
-  const dialogRef = useRef<HTMLDivElement | null>(null);
   const titleId = useId();
   const source = parseStored(row.row_json);
+  // Forty lines of focus capture, Tab trapping and Escape handling used to live
+  // here, and a near-identical copy in four other files. useDialog is that code,
+  // written once: it also portals out of .body, which this drawer needed and
+  // never had.
+  const { portal, backdropProps, dialogProps } = useDialog<HTMLDivElement>({ onClose, initialFocus: 'first' });
 
-  useEffect(() => {
-    const priorFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const frame = requestAnimationFrame(() => {
-      dialogRef.current?.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-      priorFocus?.focus?.();
-    };
-  }, []);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { onClose(); return; }
-      if (e.key !== 'Tab') return;
-      const dialog = dialogRef.current;
-      if (!dialog) return;
-      const focusable = [...dialog.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'
-      )].filter((node) => !node.hasAttribute('hidden'));
-      if (!focusable.length) return;
-      const first = focusable[0], last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  return (
-    <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="drawer" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId}
-           onMouseDown={(e) => e.stopPropagation()}>
+  return portal(
+    <div {...backdropProps}>
+      <div {...dialogProps} className="drawer" aria-labelledby={titleId}>
         <div style={{ display: 'flex', gap: 11, alignItems: 'center' }}>
           <h3 id={titleId} className="mono" style={{ fontSize: 'var(--t-body)', fontWeight: 600 }}>{row.custom_id}</h3>
           <Pill status={row.status} />
@@ -1313,7 +1297,7 @@ function RequestDrawer({ row, onClose }: { row: any; onClose: () => void }) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
   );
 }
 

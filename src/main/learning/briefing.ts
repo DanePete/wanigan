@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { INJECTABLE_KINDS, STANDING_KINDS } from '../../shared/types';
 import { checkItemFreshness } from './staleness';
 import { listEvidence, searchKnowledge } from './repository';
 import type {
@@ -13,11 +14,38 @@ import { estimateTokens } from './util';
  * its own provider file and a 'gate' compiles to a Wanigan policy/review gate.
  * None of them are sentences for a system prompt. Every kind stays retrievable
  * in the app; a caller may narrow this set but never widen it.
+ *
+ * The lists live in shared/types so the Knowledge view labels each row from
+ * the same definition the injector reads; they are re-exported here for the
+ * main-process callers that always imported them from the learning module.
  */
-const INJECTABLE_KINDS: readonly KnowledgeKind[] = ['mission', 'instruction', 'rule', 'memory'];
+export { INJECTABLE_KINDS, STANDING_KINDS };
 
-/** With no query and no path there is nothing to be relevant to; only a standing artifact qualifies. */
-const STANDING_KINDS: readonly KnowledgeKind[] = ['mission'];
+/**
+ * The header is a short frame, not a blessing. The old literal called every
+ * line "verified context", which claimed too much: [memory] can be
+ * auto-promoted from repeated observation (classifier.ts), so only
+ * [mission]/[instruction]/[rule] are approved instructions; and `wanigan:<id>`
+ * is a provenance tag with no agent-facing resolver, which an agent otherwise
+ * reads as a tool or a file to open. Each clause is emitted only when a line
+ * of that kind is present, and the whole frame is costed against the budget
+ * at its longest before any entry is admitted, so the estimate can only run
+ * high. Kept terse on purpose: at the 64-token floor it must leave room for
+ * one entry.
+ */
+const FRAME_LEAD = 'Wanigan context.';
+const FRAME_PROVENANCE = 'wanigan:<id> is a provenance tag, not a tool or file.';
+const APPROVED_KINDS: readonly KnowledgeKind[] = ['mission', 'instruction', 'rule'];
+
+export function briefingFrame(kinds: readonly KnowledgeKind[]): string {
+  const present = new Set(kinds);
+  const clauses: string[] = [FRAME_LEAD];
+  const approved = APPROVED_KINDS.filter((kind) => present.has(kind));
+  if (approved.length) clauses.push(`${approved.map((kind) => `[${kind}]`).join(' ')}: approved instructions.`);
+  if (present.has('memory')) clauses.push('[memory]: recorded observations, citations re-hashed at launch.');
+  clauses.push(FRAME_PROVENANCE);
+  return `${clauses.join(' ')}\n`;
+}
 
 const TASK_STOP_WORDS = new Set([
   'about', 'after', 'again', 'also', 'and', 'before', 'build', 'can', 'change',
@@ -108,7 +136,8 @@ function priority(result: KnowledgeSearchResult): number {
   return relevance * 0.55 + result.item.confidence * 100 * 0.35 + (SCOPE_BOOST[result.item.scope] ?? 0);
 }
 
-function emptyBriefing(queryProvided: boolean): KnowledgeBriefing {
+/** Exported so a caller that did not run retrieval (learning switched off) can still return the full shape. */
+export function emptyBriefing(queryProvided: boolean): KnowledgeBriefing {
   return {
     text: '', entries: [], estimatedTokens: 0, omitted: 0, omittedStale: 0,
     omittedBudget: 0, omittedUnsynthesized: 0, omittedUnverified: 0, queryProvided,
@@ -149,7 +178,12 @@ export async function buildBriefing(input: BriefingInput): Promise<KnowledgeBrie
   }
 
   const entries: BriefingEntry[] = [];
-  let used = estimateTokens('Wanigan verified context:\n');
+  // Costed at its longest for this launch: the rendered frame names only the
+  // kinds that shipped, a subset of the kinds ranked here, so the final
+  // estimate is at most what was reserved. Ranked kinds rather than every
+  // injectable kind, or a memory-only store would pay for clauses about
+  // instructions it does not hold.
+  let used = estimateTokens(briefingFrame(candidates.map((candidate) => candidate.item.kind)));
   // "Held because a citation went stale", "cut by the token ceiling", "never
   // synthesized into a claim" and "ran out of freshness checks" are four
   // different failures with four different fixes; one shared counter made all
@@ -199,12 +233,17 @@ export async function buildBriefing(input: BriefingInput): Promise<KnowledgeBrie
       text: candidate.item.canonicalText,
       citations,
       estimatedTokens: tokens,
+      // A clean pass over zero checkable citations is not a verification; the
+      // ledger must be able to say "N re-hashed, M carried with nothing
+      // checkable" per entry, so both counts travel with it.
+      checked: freshness.checked,
+      skipped: freshness.skipped,
     });
     used += tokens;
   }
 
   const text = entries.length
-    ? `Wanigan verified context:\n${entries.map((entry) => {
+    ? `${briefingFrame(entries.map((entry) => entry.kind))}${entries.map((entry) => {
         const citations = entry.citations.length ? `; ${entry.citations.join('; ')}` : '';
         return `- [${entry.kind}] ${entry.title}: ${entry.text.trim()} (wanigan:${entry.itemId}${citations})`;
       }).join('\n')}`

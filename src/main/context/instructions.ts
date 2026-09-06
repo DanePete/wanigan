@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import type { InstructionReconciliation, LoadedInstruction } from '../../shared/types';
 
 /**
  * The CLAUDE.md chain, resolved the way Claude Code resolves it — before a
@@ -16,11 +17,19 @@ import os from 'node:os';
  * what the agent is about to be handed.
  *
  * It is a prediction and it says so. The InstructionsLoaded hook is the only
- * ground truth about what a particular launch loaded; Wanigan reconciles the
- * two once a session has run. Where the documented behaviour is genuinely
- * ambiguous — which project file wins when both ./CLAUDE.md and
+ * ground truth about what a particular launch loaded. hooks.ts asks for that
+ * event from a CLI whose reported version is past the release that added it
+ * (see VERSION_GATED_EVENTS there) and stores each file it names;
+ * reconcileInstructions() below lays those rows beside this prediction. For a
+ * session launched with an older CLI, or one the hooks never reached, the
+ * prediction stands alone and says so. Where the documented behaviour is
+ * genuinely ambiguous — which project file wins when both ./CLAUDE.md and
  * ./.claude/CLAUDE.md exist, where rules interleave with memory — the
  * ambiguity is reported rather than guessed at.
+ *
+ * This chain is Claude Code's loader and nobody else's. Codex reads AGENTS.md
+ * natively and has no CLAUDE.md chain; `harness` on the result says which
+ * loader was predicted so a view never presents this as every agent's context.
  */
 
 /* ── the documented facts, as constants ──────────────────────────────── */
@@ -112,6 +121,8 @@ export type InstructionFile = {
 };
 
 export type InstructionChain = {
+  /** The loader this prediction models. Codex has no CLAUDE.md chain; see item 28 for its AGENTS.md files. */
+  harness: 'claude-code';
   files: InstructionFile[];
   /**
    * Size of what loads at launch — the answer to "how much is every session in
@@ -976,10 +987,70 @@ export function agentsMdStatus(projectPath: string): { present: boolean; importe
     present,
     imported: false,
     symlinked: false,
+    // Scoped to the harness it is true of. Codex reads AGENTS.md natively —
+    // Wanigan's own Codex compiler writes into it — so "ignored on every
+    // session" was false for every Codex session in this project.
     note:
-      'Claude Code will NOT read AGENTS.md. No CLAUDE.md in this project imports it and no CLAUDE.md is a symlink to it, ' +
-      'so not one line of it reaches the agent. Two fixes: add a line reading @AGENTS.md to CLAUDE.md, or replace CLAUDE.md ' +
+      'Claude Code will not read AGENTS.md: no CLAUDE.md in this project imports it and no CLAUDE.md is a symlink to it, ' +
+      'so none of it reaches a Claude Code session. Codex reads AGENTS.md on its own, so this concerns Claude Code sessions only. ' +
+      'Two fixes for Claude Code: add a line reading @AGENTS.md to CLAUDE.md, or replace CLAUDE.md ' +
       'with a symlink to it (ln -s AGENTS.md CLAUDE.md).',
+  };
+}
+
+/* ── reconciliation ──────────────────────────────────────────────────── */
+
+/**
+ * The prediction laid beside what one session's InstructionsLoaded hooks
+ * reported. Paths are matched after realpath so the CLI's spelling and the
+ * scan's agree; a file the scan listed that no hook named is predicted only,
+ * a file a hook named that the scan did not list is observed only. Neither is
+ * a fault on its own — the scan reads disk now, the hooks reported a launch
+ * then, and a path-scoped rule loads only once something touches a matching
+ * path — which is why the rows carry both columns instead of a verdict.
+ * Returns null when there is nothing observed: an empty reconciliation would
+ * read as "nothing loaded", and no rows means no report.
+ */
+export function reconcileInstructions(chain: InstructionChain, loaded: LoadedInstruction[]): InstructionReconciliation | null {
+  if (!loaded.length) return null;
+  type Row = InstructionReconciliation['rows'][number];
+  const rows = new Map<string, Row>();
+
+  for (const f of chain.files) {
+    // The losing half of a pair and a second import reference are listed in
+    // the chain for the reader's sake; the loader never names them, so they
+    // would only ever show as predicted-and-missing.
+    if (!f.exists || f.duplicate) continue;
+    const key = real(f.path);
+    if (rows.has(key)) continue;
+    rows.set(key, {
+      path: f.path, predicted: f.conditional ? 'on-demand' : 'launch',
+      observed: null, loadReason: null, memoryType: null,
+    });
+  }
+
+  let at = 0;
+  for (const l of loaded) {
+    at = Math.max(at, l.at);
+    const key = real(l.path);
+    const row = rows.get(key);
+    const observed: Row['observed'] = l.loadReason === 'session_start' ? 'launch' : 'lazy';
+    if (row) {
+      // Oldest first from the store, so the first sighting is the one kept: a
+      // compact reload later does not turn a launch load into a lazy one.
+      if (row.observed === null) Object.assign(row, { observed, loadReason: l.loadReason, memoryType: l.memoryType });
+      continue;
+    }
+    rows.set(key, { path: l.path, predicted: null, observed, loadReason: l.loadReason, memoryType: l.memoryType });
+  }
+
+  const list = [...rows.values()];
+  return {
+    sessionId: loaded[0].sessionId,
+    at,
+    rows: list,
+    predictedOnly: list.filter((r) => r.predicted !== null && r.observed === null).length,
+    observedOnly: list.filter((r) => r.predicted === null).length,
   };
 }
 
@@ -1088,7 +1159,7 @@ export function resolveInstructions(projectPath: string): InstructionChain {
   const hasDotClaudeMd = fs.existsSync(dotClaudeMd);
   const both = hasProjectMd && hasDotClaudeMd;
   const bothWarning = both
-    ? ['Both ./CLAUDE.md and ./.claude/CLAUDE.md exist. Only one of them fills the project slot and the docs do not say which — delete one, or check the InstructionsLoaded hook after a launch to see which actually loaded.']
+    ? ['Both ./CLAUDE.md and ./.claude/CLAUDE.md exist. Only one of them fills the project slot and the docs do not say which — delete one, or launch a session with Claude Code 2.1.69 or newer and read which file its InstructionsLoaded hook named.']
     : [];
   // Exactly one of the pair loads, so exactly one may be counted; summing both
   // would report a launch budget no session ever pays. Which one wins is not
@@ -1193,10 +1264,11 @@ export function resolveInstructions(projectPath: string): InstructionChain {
 
   notes.push(`Every session in this project starts with ${atLaunch.length} instruction file(s), ${fmtBytes(totalBytes)} and ${totalLines.toLocaleString()} lines, before anyone types a word.`);
   notes.push('Where rules interleave with memory files is not documented precisely; the order here puts user rules after user memory and project rules at the project memory position.');
-  notes.push('This is a static prediction from disk. The InstructionsLoaded hook reports what a launch actually loaded — that is the ground truth to reconcile against.');
+  notes.push('This is a static prediction from disk, of what Claude Code loads. A session launched with Claude Code 2.1.69 or newer reports each file it actually loaded through its InstructionsLoaded hook, and Wanigan records those; that record is the ground truth to reconcile against.');
 
   const gitRoot = gitRootOf(abs);
   const value: InstructionChain = {
+    harness: 'claude-code',
     files: ctx.files,
     totalBytes,
     totalLines,

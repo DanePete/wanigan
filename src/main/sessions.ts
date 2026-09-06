@@ -1,6 +1,6 @@
 import type { IPty } from 'node-pty';
 import { BrowserWindow } from 'electron';
-import type { LaunchOptions, Session, ProviderId } from '../shared/types';
+import type { GoalCapsule, GoalCapsuleDelivery, LaunchOptions, Session, ProviderId } from '../shared/types';
 import { EFFORT_LEVELS } from '../shared/types';
 import {
   providerById, shellPath, detectProviders, refreshProviderPacks, runsClaudeCli,
@@ -15,6 +15,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { Baseline, BudgetState, TrustLevel } from '../shared/types';
 import { otelEnv } from './otel';
+import * as accounts from './accounts';
 import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './hooks';
 import { finalizeSessionCheckpoints, forgetSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
 import { archiveSession } from './transcripts';
@@ -156,7 +157,7 @@ const ANTHROPIC_API_HOST = 'api.anthropic.com';
 const ANTHROPIC_AMBIENT_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_ADMIN_KEY'];
 
 /** True when the resolved provider environment aims the Anthropic API somewhere else. */
-function redirectsAnthropicApi(providerEnv: Record<string, string>): boolean {
+export function redirectsAnthropicApi(providerEnv: Record<string, string>): boolean {
   const base = providerEnv.ANTHROPIC_BASE_URL?.trim();
   if (!base) return false;
   try {
@@ -173,12 +174,24 @@ function redirectsAnthropicApi(providerEnv: Record<string, string>): boolean {
 }
 
 /**
+ * The same question asked about a profile rather than an already-built
+ * environment, so the account surfaces can ask it without reproducing how a
+ * provider's environment is assembled.
+ */
+export function redirectsAnthropicApiFor(def: { env?: () => Record<string, string> }): boolean {
+  try { return redirectsAnthropicApi(def.env?.() ?? {}); } catch { return false; }
+}
+
+/**
  * Telemetry and hooks are how Wanigan knows anything about a running agent, and
  * both are set here rather than asked of the user, because Wanigan spawns the
  * CLI and therefore owns its environment. Content logging stays off: prompt and
  * response text are redacted by default and Wanigan does not opt in.
  */
-function agentEnv(PATH: string, sessionId: string, providerEnv: Record<string, string> = {}): Record<string, string> {
+function agentEnv(
+  PATH: string, sessionId: string, providerEnv: Record<string, string> = {},
+  accountEnv: Record<string, string> = {},
+): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
@@ -205,6 +218,13 @@ function agentEnv(PATH: string, sessionId: string, providerEnv: Record<string, s
   // from the shell — an ANTHROPIC_BASE_URL in your profile must not silently
   // point a GLM session back at Anthropic, or the other way round.
   Object.assign(out, providerEnv);
+  // After the pack, deliberately. A manifest is untrusted data, and the config
+  // directory is where a harness keeps its credential — a pack that could set
+  // it could point this session's login at a directory it chose, or read the
+  // operator's by naming theirs. Wanigan's account decision wins, and it also
+  // beats an inherited CLAUDE_CONFIG_DIR from the operator's shell, so the
+  // account shown at launch is the one the session actually uses.
+  Object.assign(out, accountEnv);
   if (redirectsAnthropicApi(providerEnv)) {
     // A provider pack chooses this host, and a pack is untrusted data. Consent
     // is otherwise the only control on where it points, and a consent dialog
@@ -217,6 +237,28 @@ function agentEnv(PATH: string, sessionId: string, providerEnv: Record<string, s
     // value was declared and consented to, not borrowed from the shell.
     for (const key of ANTHROPIC_AMBIENT_KEYS) {
       if (!(key in providerEnv)) delete out[key];
+    }
+    // The name test above is not enough on its own, and the gap is not a
+    // rename: a manifest can declare `{ source: 'process', name:
+    // 'ANTHROPIC_API_KEY' }` under *any* destination — including
+    // ANTHROPIC_API_KEY itself — and the resolved value lands in providerEnv.
+    // The exemption then reads "the profile declared this name, so keep it" and
+    // hands the operator's own Anthropic credential to the redirected host,
+    // which is exactly what the strip exists to prevent.
+    //
+    // So the value decides, not the name. GLM and DeepSeek are untouched:
+    // their ANTHROPIC_AUTH_TOKEN carries their own credential, which is not the
+    // ambient Anthropic key. A pack that hard-codes the operator's key as a
+    // literal is dropped too, and should be.
+    const ambient = new Set(
+      ANTHROPIC_AMBIENT_KEYS
+        .map((key) => process.env[key]?.trim())
+        .filter((value): value is string => value !== undefined && value.length > 0),
+    );
+    if (ambient.size > 0) {
+      for (const [key, value] of Object.entries(out)) {
+        if (ambient.has(value.trim())) delete out[key];
+      }
     }
   }
   return out;
@@ -613,6 +655,89 @@ async function resumeWorktree(
   return { existing: saved, needsFreshIsolation: false };
 }
 
+function harnessName(harness: string): string {
+  return harness === 'claude-code' ? 'Claude Code' : harness === 'codex' ? 'Codex' : 'the harness';
+}
+
+/**
+ * The account a resumed conversation must continue under, decided in the main
+ * process from the saved row — never from the renderer's picker.
+ *
+ * A conversation lives in one account's directory: Claude Code keys its
+ * transcripts and resume index to CLAUDE_CONFIG_DIR, Codex its rollouts and
+ * state index to CODEX_HOME. Resuming under another account would hand the CLI
+ * an id it cannot find and blame the conversation. So the owning account is
+ * pinned as if chosen explicitly; a row recorded before accounts existed
+ * proceeds under the normal resolution and says the launch account is unknown;
+ * an owner Wanigan no longer has is a refusal with the directory's name, not a
+ * silent fallback and not an exception from deeper down. Whether the CLI would
+ * in fact find the conversation is not known until it runs, and the messages
+ * say "may not", not "will not".
+ */
+export function resumeAccountFor(
+  sessionId: string, harness: string, requestedAccountId: string | null,
+): { accountId: string | null; note: string | null } {
+  if (!accounts.supportsAccounts(harness)) return { accountId: requestedAccountId, note: null };
+  const row = db().prepare('SELECT account_id FROM session_log WHERE id = ?')
+    .get(sessionId) as { account_id: string | null } | undefined;
+  if (!row) throw new Error('This saved conversation no longer exists. Refresh Recent and choose another one.');
+  if (!row.account_id) {
+    return {
+      accountId: requestedAccountId,
+      note: `Account at launch unknown: this conversation was recorded before Wanigan tracked accounts. `
+        + `${harnessName(harness)} may not find it under the account shown.`,
+    };
+  }
+  const owner = accounts.byId(row.account_id);
+  if (!owner) {
+    throw new Error(
+      `This conversation was recorded under an account Wanigan no longer has (${row.account_id}). `
+      + `Add that directory back under Settings › Accounts, or start a new conversation — ${harnessName(harness)} `
+      + 'may not find the saved conversation under another account’s directory, and Wanigan will not guess one.'
+    );
+  }
+  if (requestedAccountId && requestedAccountId !== owner.id) {
+    const asked = accounts.byId(requestedAccountId);
+    throw new Error(
+      `This conversation belongs to the “${owner.label}” account, not “${asked?.label ?? requestedAccountId}”. `
+      + `Resume it under “${owner.label}” — ${harnessName(harness)} may not find it under another account’s directory.`
+    );
+  }
+  return { accountId: owner.id, note: null };
+}
+
+/** Bounds on the capsule text, so a wide fan-out cannot turn it into a page. */
+const CAPSULE_MAX_SIBLINGS = 20;
+
+/**
+ * The goal capsule as the agent reads it. Plain lines, every one a stored
+ * fact, headed by the qualification that it is a snapshot: a sibling claim
+ * released a minute after launch is not reflected here, and only a harness
+ * with Wanigan's MCP tools can change a claim from inside the session.
+ */
+export function goalCapsuleText(capsule: GoalCapsule): string {
+  const lines = [
+    'Wanigan goal — a snapshot taken at launch, not a live view:',
+    `- Docket: ${capsule.docketTitle} (${capsule.docketId})`,
+    `- This task: ${capsule.nodeTitle} [${capsule.nodeKind}] — node id ${capsule.nodeId}`,
+    capsule.claimPath === null
+      ? '- Path claimed for this task: none declared'
+      : `- Path claimed for this task: ${capsule.claimPath || '(the whole project)'}`,
+    capsule.dependsOn.length
+      ? `- Waits on: ${capsule.dependsOn.map((dep) => `${dep.title} (${dep.status})`).join('; ')}`
+      : '- Waits on: nothing',
+    capsule.siblingClaims.length
+      ? `- Held by other tasks at launch: ${capsule.siblingClaims.slice(0, CAPSULE_MAX_SIBLINGS)
+        .map((claim) => `${claim.path || '(the whole project)'} — ${claim.title}`).join('; ')}`
+        + (capsule.siblingClaims.length > CAPSULE_MAX_SIBLINGS ? ` (and ${capsule.siblingClaims.length - CAPSULE_MAX_SIBLINGS} more)` : '')
+      : '- Held by other tasks at launch: none',
+    capsule.canClaimLive
+      ? '- To record progress or take a path, call the wanigan_goal_checkpoint / wanigan_goal_claim MCP tools with this node id.'
+      : '- This harness cannot claim or release a path from inside the session. Stay within the claimed path and name anything else you needed in your final answer.',
+  ];
+  return lines.join('\n');
+}
+
 /**
  * Explicit recovery is intentionally a separate entry point from arbitrary
  * session creation. The renderer can supply exactly a UUID and a selected
@@ -629,12 +754,22 @@ export async function recoverExactCodexThread(input: ExactCodexRecoveryInput): P
   // This is read-only against Codex state: state_5, rollout and session_meta
   // must all say the same UUID/CWD before this path reserves anything.
   const verified = validateExactCodexThread(threadId, project.path);
+  // The thread was found in one Codex home; the resumed writer must run under
+  // that same directory or `codex resume` will not find it. A home that is not
+  // one of Wanigan's Codex accounts is refused rather than guessed at.
+  const owner = accounts.byConfigDir('codex', verified.codexHome);
+  if (!owner) {
+    throw new Error(
+      `That Codex conversation lives in ${verified.codexHome}, which is not one of Wanigan’s Codex accounts. `
+      + 'Add that directory as an account under Settings › Accounts, then recover it.'
+    );
+  }
   const claimKey = codexConversationKey(verified.id);
   assertExactCodexRecoveryUnclaimed(verified.id);
   resumingConversations.add(claimKey);
   try {
     const session = await createSession(
-      { providerId: 'codex', projectId: project.id },
+      { providerId: 'codex', projectId: project.id, accountId: owner.id },
       { exactCodexRecovery: { conversationId: verified.id, cwd: verified.cwd, claimKey } },
     );
     const recovery = sessions.get(session.id)?.exactRecovery;
@@ -767,6 +902,11 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   const resumeTree = savedResume
     ? await resumeWorktree(savedResume.sessionId, opts.providerId, project)
     : { existing: null, needsFreshIsolation: false };
+  // Decided here, while a refusal still costs nothing: no worktree, hook file or
+  // attachment directory exists yet to roll back.
+  const pinnedAccount = savedResume
+    ? resumeAccountFor(savedResume.sessionId, def.harness, opts.accountId ?? null)
+    : null;
   let conversationId = exactRecovery?.conversationId ?? savedResume?.conversationId ?? null;
   let codexResumeNeedsPicker = false;
   if (exactRecovery) {
@@ -899,7 +1039,9 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   // Both built-in harnesses expose invocation-scoped additional instructions.
   // This works with Hooks disabled, avoids a fake first user turn, and leaves
   // AGENTS.md / CLAUDE.md / provider-owned generated memory untouched.
-  if (harnessProven && (def.harness === 'codex' || def.harness === 'claude-code') && learningSettings().enabled) {
+  const instructionChannel = harnessProven && (def.harness === 'codex' || def.harness === 'claude-code');
+  let learnedText = '';
+  if (instructionChannel && learningSettings().enabled) {
     try {
       const learned = await buildBriefing({
         query: opts.initialPrompt?.trim() ?? '',
@@ -909,13 +1051,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
         maxTokens: learningSettings().briefingMaxTokens,
         projectRoot: project.path, allowedEvidenceRoots: [project.path],
       });
-      if (learned.text) {
-        if (def.harness === 'codex') {
-          learnedArgs.push('--config', `developer_instructions=${JSON.stringify(learned.text)}`);
-        } else {
-          learnedArgs.push('--append-system-prompt', learned.text);
-        }
-      }
+      learnedText = learned.text;
       // Record what was actually delivered — entries, estimated tokens, and
       // what retrieval held back — so "this session received briefing X" is a
       // stored fact, not a guess. An empty result is recorded too: "retrieval
@@ -928,6 +1064,40 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
         });
       } catch { /* the record is evidence, never a launch dependency */ }
     } catch { /* learned context is never a launch dependency */ }
+  }
+  // The docket goal capsule rides the same channel. It is not learning: it is
+  // Control's own record of which node this is, what it holds and what its
+  // siblings hold, so it is delivered whether or not learning is enabled and
+  // recorded as a work-trace row by Control, never as a session briefing. Its
+  // "can claim live" line is set from what this launch actually wired (an MCP
+  // config for Wanigan's own server), not from the harness name.
+  let capsuleText = '';
+  let capsuleDelivery: GoalCapsuleDelivery | null = null;
+  if (opts.goalCapsule) {
+    if (instructionChannel) {
+      capsuleText = goalCapsuleText({ ...opts.goalCapsule, canClaimLive: mcpFile !== null });
+      capsuleDelivery = { channel: def.harness === 'codex' ? 'developer-instructions' : 'system-prompt', reason: null };
+    } else {
+      capsuleDelivery = {
+        channel: 'none',
+        reason: harnessProven
+          ? `The ${def.harness} harness has no instruction channel Wanigan has verified; the first prompt still carries the objective.`
+          : 'The provider’s harness claim is unproven, so no instruction flag is passed.',
+      };
+    }
+  }
+  // One string per launch. Codex takes `developer_instructions` as a single
+  // `--config` key, and whether a second `--config` for the same key appends or
+  // replaces has not been confirmed against the binary (none was on the machine
+  // that wrote this) — folding both texts into one entry is right under either
+  // answer. Claude's --append-system-prompt is folded the same way for symmetry.
+  const instructions = [capsuleText, learnedText].filter(Boolean).join('\n\n');
+  if (instructions) {
+    if (def.harness === 'codex') {
+      learnedArgs.push('--config', `developer_instructions=${JSON.stringify(instructions)}`);
+    } else {
+      learnedArgs.push('--append-system-prompt', instructions);
+    }
   }
   // Codex does not post Claude-style hooks, but it can emit two structured TUI
   // lifecycle notifications. Force OSC 9 only for this Wanigan-owned terminal;
@@ -1071,6 +1241,32 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     }
   }
 
+  // Called once and reused: this is the value the account decision is made
+  // against as well as the value the child receives, and a second call could
+  // legitimately return something different.
+  const providerEnvValues = def.env?.() ?? {};
+  // Which account this session authenticates as. GLM and DeepSeek run the same
+  // `claude-code` harness but point ANTHROPIC_BASE_URL at another vendor and
+  // authenticate with that vendor's own credential, so naming a Claude account
+  // for them would name a login the session never uses. Asking whether the
+  // profile still talks to Anthropic is the provider-neutral form of that test;
+  // accounts.appliesTo() answers it per harness, and a Codex profile's
+  // CODEX_HOME applies whatever its model backend. A resumed conversation's
+  // owning account was pinned above and outranks the renderer's choice.
+  const account = accounts.resolve({
+    harness: def.harness,
+    projectId: project.id,
+    explicitAccountId: pinnedAccount?.accountId ?? opts.accountId ?? null,
+    appliesToAnthropic: accounts.appliesTo(def, redirectsAnthropicApi(providerEnvValues)),
+  }).account;
+  // Frozen onto the live session. The project's default can change while this
+  // runs, and a badge that re-resolved on every read would relabel a running
+  // session as an account it never authenticated with.
+  meta.accountId = account?.id ?? null;
+  meta.accountLabel = account?.label ?? null;
+  meta.accountNote = account && pinnedAccount?.note ? pinnedAccount.note : null;
+  meta.goalCapsule = capsuleDelivery;
+
   let proc: IPty;
   try {
     proc = pty.spawn(resolvedBin, args, {
@@ -1078,7 +1274,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
       cols: 120,
       rows: 32,
       cwd,
-      env: agentEnv(PATH, id, def.env?.() ?? {}),
+      env: agentEnv(PATH, id, providerEnvValues, accounts.launchEnv(account)),
     });
   } catch (e) {
     if (resumeKey) resumingConversations.delete(resumeKey);
@@ -1126,8 +1322,8 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
                                  resumed_from, worktree, trust, bin, capabilities_json,
                                  provider_pack_id,provider_pack_version,provider_profile_json,
                                  backend_id,harness_id,baseline_head,baseline_dirty_json,
-                                 initial_prompt,title)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                 initial_prompt,title,account_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(id, conversationId, opts.providerId, project.id, project.path, project.name,
              meta.model ?? null, meta.effort ?? null, meta.permissionMode ?? null,
              meta.createdAt, savedResume?.sessionId ?? null, worktree, trust, resolvedBin,
@@ -1139,7 +1335,11 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
              // already done from being attributed to the agent, so it is stored
              // whole rather than capped.
              baseline.head, JSON.stringify(baseline.dirty),
-             initialPrompt, derivedTitle);
+             // Recorded because the transcript, observed-session and team
+             // readers have to look in the directory this session actually
+             // used. Resolving it again later from the default would send them
+             // to the wrong account's files and honestly report nothing.
+             initialPrompt, derivedTitle, account?.id ?? null);
       // A reused isolated checkout now belongs to this live continuation for
       // reconciliation purposes. Its historical session_log rows retain the
       // original path, so moving this liveness pointer loses no provenance.
@@ -1458,13 +1658,33 @@ export function reconcileAbandonedSessions(now = Date.now()): number {
 }
 
 /**
+ * Is there a Codex execution whose identity the repair pass could still fix?
+ *
+ * The repair used to run on every Recent read, and Recent is read on mount and
+ * after every start, close, rename and forget. Each run opened Codex's own
+ * state_5.sqlite read-only per Codex home and rebuilt the lineage graph, even
+ * when every row already carried its UUID and the pass could not change a
+ * single one. This asks the cheap question first, over one column: a row the
+ * repair would treat as unidentified is one whose stored id is not already the
+ * normalized form, so an absent, malformed or unnormalized id still runs the
+ * full pass and nothing repairable is skipped.
+ */
+function codexIdentityRepairPending(): boolean {
+  const rows = db().prepare(`
+    SELECT conversation_id FROM session_log
+     WHERE origin = 'wanigan' AND (harness_id = 'codex' OR provider_id = 'codex')
+  `).all() as Array<{ conversation_id: string | null }>;
+  return rows.some((row) => normalizeCodexThreadId(row.conversation_id) !== row.conversation_id);
+}
+
+/**
  * One entry per durable, exact-resume conversation. Historical rows that never
  * received a conversation ID are kept for telemetry and archives, but are not
  * offered as Recent: opening Codex's broad picker cannot safely identify which
  * conversation the row meant and was the source of duplicate/wrong resumes.
  */
 export function pastSessions(limit = 40): PastSession[] {
-  try { backfillCodexThreadIds(); }
+  try { if (codexIdentityRepairPending()) backfillCodexThreadIds(); }
   catch (e) { console.warn('[wanigan] Codex session identity backfill skipped:', e); }
   // Exited tabs can remain open for inspection, but they have no writer. Hiding
   // them from Recent made a completed conversation disappear until the person
@@ -1474,9 +1694,23 @@ export function pastSessions(limit = 40): PastSession[] {
       .filter((value) => value.meta.status !== 'exited')
       .map((value) => value.meta.id)
   );
-  const rows = db().prepare(
-    "SELECT * FROM session_log WHERE origin = 'wanigan' ORDER BY started_at DESC"
-  ).all() as SessionLogRow[];
+  // The fifteen columns Recent reads, not `SELECT *`: a row also carries the
+  // initial prompt and three JSON blobs (capabilities, baseline dirty set,
+  // provider profile) that nothing below touches, and this reads every
+  // execution ever recorded.
+  //
+  // The row set stays unbounded on purpose. The cap further down is per
+  // section and pins deliberately survive it, and `continuationCount` is the
+  // number the Forget tooltip promises to delete — a SQL LIMIT or a date
+  // window would drop the pinned conversation the pin exists for and turn a
+  // stated count into an estimate.
+  const rows = db().prepare(`
+    SELECT id, conversation_id, provider_id, harness_id, project_id, project_path, project_name,
+           worktree, model, effort, permission_mode, started_at, ended_at, exit_code, title
+      FROM session_log
+     WHERE origin = 'wanigan'
+     ORDER BY started_at DESC
+  `).all() as SessionLogRow[];
   const newest = new Map<string, SessionLogRow>();
   const counts = new Map<string, number>();
   const openLineages = new Set<string>();

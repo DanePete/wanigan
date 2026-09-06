@@ -2,8 +2,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { db, dataDir, ensurePrivateDir, ensurePrivateFile } from './db';
+import * as accounts from './accounts';
 import { runsClaudeCli } from './providers';
-import type { ClaudeContextUsage, ProviderId, TranscriptHit, TranscriptTurn } from '../shared/types';
+import { getSetting, setSetting } from './settings';
+import { redactCredentials } from './redact';
+import type { ClaudeContextUsage, ProviderId, TranscriptHit, TranscriptRecall, TranscriptTurn } from '../shared/types';
 
 /* ── where Claude Code keeps its transcripts ─────────────────────────── */
 
@@ -33,14 +36,50 @@ export const HIT_OPEN = '«';
 export const HIT_CLOSE = '»';
 
 /**
+ * Every directory a transcript for this project could be in.
+ *
  * Claude Code slugs the working directory by replacing every non-alphanumeric
- * character with '-', so /Users/x/repo becomes -Users-x-repo. CLAUDE_CONFIG_DIR
- * is honoured because a user who has moved their config has no ~/.claude at all,
- * and the archive would otherwise silently find nothing and blame the session.
+ * character with '-', so /Users/x/repo becomes -Users-x-repo. There is one such
+ * directory per account: Claude Code keys its whole state, credential included,
+ * to CLAUDE_CONFIG_DIR, so a session run under a second account writes its
+ * transcript somewhere the default root cannot see. Looking in one root would
+ * make that session honestly report "no transcript" forever.
+ *
+ * The ambient value is the fallback for an install with no accounts recorded
+ * yet — someone who moved their config by hand has no ~/.claude at all, and the
+ * archive would otherwise find nothing and blame the session.
  */
-function claudeProjectDir(projectPath: string): string {
-  const root = process.env.CLAUDE_CONFIG_DIR?.trim() || path.join(os.homedir(), '.claude');
-  return path.join(root, 'projects', path.resolve(projectPath).replace(/[^a-zA-Z0-9]/g, '-'));
+function claudeProjectDirs(projectPath: string): string[] {
+  const slug = path.resolve(projectPath).replace(/[^a-zA-Z0-9]/g, '-');
+  return accounts.readRoots('claude-code').map((root) => path.join(root, 'projects', slug));
+}
+
+/**
+ * A conversation id is unique to the session that produced it, so finding the
+ * file named after one is exact no matter which account's directory holds it.
+ */
+function exactIn(dirs: string[], conversationId: string): string | null {
+  for (const dir of dirs) {
+    const candidate = path.join(dir, `${conversationId}.jsonl`);
+    if (isFile(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * The newest transcript in the window, across accounts.
+ *
+ * Unlike the exact lookup this stays a guess — with two accounts active in one
+ * repo the newest file may belong to the other one. Callers already mark this
+ * result inexact and say so; that label is now carrying slightly more weight.
+ */
+function newestIn(dirs: string[], from = 0, to = Infinity): { path: string; mtimeMs: number } | null {
+  let best: { path: string; mtimeMs: number } | null = null;
+  for (const dir of dirs) {
+    const found = newestJsonl(dir, from, to);
+    if (found && (!best || found.mtimeMs > best.mtimeMs)) best = found;
+  }
+  return best;
 }
 
 /** Wanigan's own copy of every archived transcript. */
@@ -75,12 +114,12 @@ function newestJsonl(dir: string, from = 0, to = Infinity): { path: string; mtim
  * normal, not an error.
  */
 export function transcriptPathFor(projectPath: string, conversationId: string | null): string | null {
-  const dir = claudeProjectDir(projectPath);
+  const dirs = claudeProjectDirs(projectPath);
   if (conversationId) {
-    const exact = path.join(dir, `${conversationId}.jsonl`);
-    if (isFile(exact)) return exact;
+    const exact = exactIn(dirs, conversationId);
+    if (exact) return exact;
   }
-  return newestJsonl(dir)?.path ?? null;
+  return newestIn(dirs)?.path ?? null;
 }
 
 /* ── defensive parsing ───────────────────────────────────────────────── */
@@ -294,15 +333,15 @@ function locate(sessionId: string, projectPath: string, conversationId: string |
     return { note: `${row.provider_id} sessions do not write a transcript file — nothing to archive.` };
   }
 
-  const dir = claudeProjectDir(projectPath);
+  const dirs = claudeProjectDirs(projectPath);
   if (conversationId) {
-    const exact = path.join(dir, `${conversationId}.jsonl`);
-    if (isFile(exact)) return { path: exact, exact: true, note: '' };
+    const exact = exactIn(dirs, conversationId);
+    if (exact) return { path: exact, exact: true, note: '' };
   }
 
   const from = row ? row.started_at - LIFETIME_GRACE_MS : 0;
   const to = (row?.ended_at ?? Date.now()) + LIFETIME_GRACE_MS;
-  const guess = newestJsonl(dir, from, to);
+  const guess = newestIn(dirs, from, to);
   if (!guess) {
     return {
       note: conversationId
@@ -602,12 +641,155 @@ export function forgetTranscript(sessionId: string): void {
 const CONTEXT_TAIL_BYTES = 256 * 1024;
 
 /**
- * The window Wanigan will claim for a Claude-family model — an assumption,
- * and every rendering of it says so. The 1M-token beta cannot be detected
- * from a transcript, so it is never guessed; an unrecognised model gets a
- * token count and no percentage at all.
+ * The windows Wanigan will claim for a Claude-family model — assumptions,
+ * and every rendering of them says so. An unrecognised model gets a token
+ * count and no percentage at all.
+ *
+ * The 1M-token context *can* be told from a transcript, which an earlier
+ * version of this comment denied: Claude Code spells such a session's model
+ * with a `[1m]` suffix in the usage records themselves (`"model":
+ * "claude-opus-5[1m]"` — 1,905 records on the machine that wrote this, CLI
+ * 2.1.261, 2026-09-05). The suffix is the one observable that separates the
+ * two windows, so it decides; the launch model is only a fallback for a record
+ * that names no model. Neither is a measurement.
  */
 const CLAUDE_CONTEXT_WINDOW = 200_000;
+const CLAUDE_CONTEXT_WINDOW_1M = 1_000_000;
+const ONE_MILLION_SUFFIX = '[1m]';
+/** Aliases the CLI accepts at launch; they name a Claude model without the `claude-` prefix. */
+const CLAUDE_ALIASES = new Set(['opus', 'sonnet', 'haiku', 'fable']);
+
+function hasMillionSuffix(model: string): boolean {
+  return model.endsWith(ONE_MILLION_SUFFIX);
+}
+
+function baseModelId(model: string): string {
+  return hasMillionSuffix(model) ? model.slice(0, -ONE_MILLION_SUFFIX.length) : model;
+}
+
+function isClaudeId(model: string): boolean {
+  return baseModelId(model).startsWith('claude-');
+}
+
+type AssumedWindow = {
+  window: number | null;
+  source: 'assumed-200k' | 'assumed-1m' | null;
+  note: string | null;
+};
+
+/**
+ * Which window to assume, from the newest usage record's model and, failing
+ * that, the model the session was launched with.
+ *
+ * A full launch id whose base differs from the newest record's base means the
+ * model changed mid-session (`/model`); which window applies is then not
+ * something Wanigan can know from two ids, so no percentage is claimed. Aliases
+ * cannot be compared to a full id and do not trigger that rule.
+ */
+export function assumedClaudeWindow(usageModel: string | null, launchModel: string | null): AssumedWindow {
+  const usage = usageModel?.trim() || null;
+  const launch = launchModel?.trim() || null;
+  if (usage) {
+    if (!isClaudeId(usage)) {
+      return { window: null, source: null, note: `No window is assumed for ${usage}; only the measured tokens are shown.` };
+    }
+    if (hasMillionSuffix(usage)) {
+      return { window: CLAUDE_CONTEXT_WINDOW_1M, source: 'assumed-1m', note: 'Assumed 1M window from the [1m] suffix on the model in the transcript.' };
+    }
+    if (launch && isClaudeId(launch) && baseModelId(launch) !== baseModelId(usage)) {
+      return {
+        window: null, source: null,
+        note: `The model changed mid-session (launched as ${launch}, newest turn ${usage}); no window is assumed.`,
+      };
+    }
+    return { window: CLAUDE_CONTEXT_WINDOW, source: 'assumed-200k', note: 'Assumed 200k window; the model in the transcript carries no [1m] suffix.' };
+  }
+  if (launch) {
+    if (hasMillionSuffix(launch)) {
+      return { window: CLAUDE_CONTEXT_WINDOW_1M, source: 'assumed-1m', note: 'Assumed 1M window from the [1m] suffix on the launch model; the transcript names no model.' };
+    }
+    if (isClaudeId(launch) || CLAUDE_ALIASES.has(launch)) {
+      return { window: CLAUDE_CONTEXT_WINDOW, source: 'assumed-200k', note: 'Assumed 200k window from the launch model; the transcript names no model.' };
+    }
+  }
+  return { window: null, source: null, note: null };
+}
+
+/* ── windows the Claude CLI itself reported ──────────────────────────── */
+
+/**
+ * A headless `--output-format json` result carries `modelUsage[model]
+ * .contextWindow` (present in the 2.1.261 result schema). The binary computes
+ * that figure from the model and its settings — it is what the CLI believes the
+ * window to be, reported, not measured — and it is the best available answer
+ * for an interactive session using the same model under the same backend and
+ * account. Any of the three differing means a different answer might apply,
+ * so a match requires all three.
+ *
+ * Kept as a small bounded record in the settings table rather than a new
+ * schema: it is a cache of reported facts, and the newest report per key wins.
+ */
+const REPORTED_WINDOWS_KEY = 'context.cliReportedWindows';
+const REPORTED_WINDOWS_MAX = 64;
+
+type ReportedWindow = { model: string; contextWindow: number; backendId: string | null; accountId: string | null; at: number };
+
+function readReportedWindows(): ReportedWindow[] {
+  try {
+    const raw = JSON.parse(getSetting(REPORTED_WINDOWS_KEY, '[]')) as unknown;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((row): row is ReportedWindow => isRecord(row)
+      && typeof row.model === 'string' && typeof row.contextWindow === 'number' && row.contextWindow > 0
+      && typeof row.at === 'number');
+  } catch {
+    return [];
+  }
+}
+
+export function rememberReportedContextWindows(
+  entries: { model: string; contextWindow: number }[],
+  scope: { backendId: string | null; accountId: string | null; at: number },
+): number {
+  const clean = entries.filter((entry) => typeof entry.model === 'string' && entry.model.trim()
+    && Number.isFinite(entry.contextWindow) && entry.contextWindow > 0);
+  if (!clean.length) return 0;
+  const sameKey = (a: ReportedWindow, b: ReportedWindow) => a.model === b.model
+    && (a.backendId ?? null) === (b.backendId ?? null) && (a.accountId ?? null) === (b.accountId ?? null);
+  let rows = readReportedWindows();
+  for (const entry of clean) {
+    const next: ReportedWindow = {
+      model: entry.model.trim(), contextWindow: Math.round(entry.contextWindow),
+      backendId: scope.backendId ?? null, accountId: scope.accountId ?? null, at: scope.at,
+    };
+    rows = [next, ...rows.filter((row) => !sameKey(row, next))];
+  }
+  setSetting(REPORTED_WINDOWS_KEY, JSON.stringify(rows.slice(0, REPORTED_WINDOWS_MAX)));
+  return clean.length;
+}
+
+/** Exact spelling only: `claude-opus-5` and `claude-opus-5[1m]` are different windows. */
+export function reportedContextWindow(
+  model: string, backendId: string | null, accountId: string | null,
+): { contextWindow: number; at: number } | null {
+  const wanted = model.trim();
+  const hit = readReportedWindows().find((row) => row.model === wanted
+    && (row.backendId ?? null) === (backendId ?? null) && (row.accountId ?? null) === (accountId ?? null));
+  return hit ? { contextWindow: hit.contextWindow, at: hit.at } : null;
+}
+
+/**
+ * The launch facts recorded for a conversation: the model asked for and the
+ * backend and account the session was frozen to. Absent for a conversation
+ * Wanigan did not start (fixtures, observed sessions).
+ */
+function launchRowFor(conversationId: string | null): { model: string | null; backendId: string | null; accountId: string | null } | null {
+  if (!conversationId) return null;
+  const row = db().prepare(`
+    SELECT model, backend_id, account_id FROM session_log
+    WHERE conversation_id = ? ORDER BY started_at DESC LIMIT 1
+  `).get(conversationId) as { model: string | null; backend_id: string | null; account_id: string | null } | undefined;
+  return row ? { model: row.model, backendId: row.backend_id, accountId: row.account_id } : null;
+}
 
 /**
  * The newest context measurement in a chunk of transcript text — the last
@@ -651,13 +833,9 @@ export function contextUsageFromTail(text: string): { tokens: number; model: str
  * could be a different conversation entirely.
  */
 export function claudeContextUsage(cwd: string, conversationId: string | null, sinceMs: number): ClaudeContextUsage {
-  const dir = claudeProjectDir(cwd);
-  let file: string | null = null;
-  if (conversationId) {
-    const exact = path.join(dir, `${conversationId}.jsonl`);
-    if (isFile(exact)) file = exact;
-  }
-  if (!file) file = newestJsonl(dir, Math.max(0, sinceMs - LIFETIME_GRACE_MS))?.path ?? null;
+  const dirs = claudeProjectDirs(cwd);
+  let file: string | null = conversationId ? exactIn(dirs, conversationId) : null;
+  if (!file) file = newestIn(dirs, Math.max(0, sinceMs - LIFETIME_GRACE_MS))?.path ?? null;
   if (!file) return { kind: 'no-transcript' };
 
   let text: string;
@@ -679,7 +857,13 @@ export function claudeContextUsage(cwd: string, conversationId: string | null, s
   if (!hit) {
     return { kind: 'no-usage', detail: 'The transcript has no usage records yet — the agent has not completed a turn.' };
   }
-  const window = hit.model && hit.model.startsWith('claude-') ? CLAUDE_CONTEXT_WINDOW : null;
+  // A CLI-reported window for this exact model under this session's frozen
+  // backend and account beats the assumption; otherwise the assumption stands,
+  // labelled as one.
+  const launch = launchRowFor(conversationId);
+  const reported = hit.model ? reportedContextWindow(hit.model, launch?.backendId ?? null, launch?.accountId ?? null) : null;
+  const assumed = reported ? null : assumedClaudeWindow(hit.model, launch?.model ?? null);
+  const window = reported ? reported.contextWindow : assumed?.window ?? null;
   return {
     kind: 'ok',
     tokens: hit.tokens,
@@ -687,5 +871,129 @@ export function claudeContextUsage(cwd: string, conversationId: string | null, s
     percent: window ? Math.min(100, Math.round((hit.tokens / window) * 100)) : null,
     model: hit.model,
     at: hit.at,
+    windowSource: reported ? 'cli-reported' : assumed?.source ?? null,
+    windowNote: reported
+      ? `Window reported by the Claude CLI for this model, backend and account (headless run on ${new Date(reported.at).toISOString().slice(0, 10)}); reported, not measured.`
+      : assumed?.note ?? null,
+  };
+}
+
+/* ── recall for a running session: the opt-in MCP tool ───────────────── */
+
+/**
+ * Off by default, per project, and only ever switched on by the operator. A
+ * session that can read past conversations is a session that can quote them,
+ * so the tool is listed to an agent only after that choice was made — there is
+ * no silent injection path and no global switch.
+ */
+const RECALL_KEY_PREFIX = 'transcripts.recall.';
+const RECALL_MAX_HITS = 20;
+const RECALL_MAX_QUERY = 500;
+const RECALL_SNIPPET_MAX = 600;
+/** Sessions searched per call; the newest archived ones, well under SQLite's parameter cap. */
+const RECALL_MAX_SESSIONS = 400;
+
+export function recallEnabled(projectId: string): boolean {
+  if (typeof projectId !== 'string' || !projectId.trim()) return false;
+  return getSetting(RECALL_KEY_PREFIX + projectId.trim(), '0') === '1';
+}
+
+export function setRecallEnabled(projectId: unknown, enabled: unknown): boolean {
+  if (typeof projectId !== 'string' || !projectId.trim()) throw new Error('Choose a project first.');
+  const on = enabled === true;
+  setSetting(RECALL_KEY_PREFIX + projectId.trim(), on ? '1' : '0');
+  return on;
+}
+
+export type RecallScope = {
+  projectId: string;
+  harnessId: string | null;
+  providerId: string | null;
+  backendId: string | null;
+  accountId: string | null;
+};
+
+/**
+ * Search the archived transcripts a running session is allowed to see: the
+ * same project, the same frozen backend and the same frozen account. `IS`
+ * rather than `=` so a null account matches only other null-account rows.
+ *
+ * Only the claude-code harness has an archive at all — archiveSession() copies
+ * Claude Code's transcript file and refuses everything else — so a Codex or
+ * generic session gets that fact, not an empty list that looks like "nothing
+ * relevant". Snippets pass through the same credential redaction the launch
+ * prompt does, because indexed text is whatever the conversation contained.
+ */
+export function recallTranscripts(scope: RecallScope, rawQuery: unknown, rawLimit?: unknown): TranscriptRecall {
+  if (!recallEnabled(scope.projectId)) {
+    return { kind: 'disabled', note: 'Transcript recall is off for this project. It is an operator choice made in Wanigan, never a default.' };
+  }
+  const harness = scope.harnessId
+    ?? (scope.providerId && runsClaudeCli(scope.providerId) ? 'claude-code' : null);
+  if (harness !== 'claude-code') {
+    return {
+      kind: 'unsupported', harnessId: harness,
+      note: `Wanigan archives transcripts only for the claude-code harness; there is no archive for ${harness ?? 'this harness'} to recall from.`,
+    };
+  }
+  const query = typeof rawQuery === 'string' ? rawQuery.trim() : '';
+  if (!query) throw new Error('query is required.');
+  if (query.length > RECALL_MAX_QUERY) throw new Error(`query is at most ${RECALL_MAX_QUERY} characters.`);
+  const limit = typeof rawLimit === 'number' && Number.isFinite(rawLimit)
+    ? Math.min(Math.max(Math.trunc(rawLimit), 1), RECALL_MAX_HITS)
+    : 10;
+
+  const d = db();
+  const sessions = d.prepare(`
+    SELECT s.id, s.title FROM session_log s
+    JOIN transcripts t ON t.session_id = s.id
+    WHERE s.project_id = ?
+      AND (s.harness_id = 'claude-code' OR (s.harness_id IS NULL AND s.provider_id IN ('claude', 'glm')))
+      AND s.backend_id IS ? AND s.account_id IS ?
+    ORDER BY s.started_at DESC LIMIT ?
+  `).all(scope.projectId, scope.backendId ?? null, scope.accountId ?? null, RECALL_MAX_SESSIONS) as { id: string; title: string | null }[];
+  const scopeOut = { projectId: scope.projectId, harnessId: harness, backendId: scope.backendId ?? null, accountId: scope.accountId ?? null };
+  if (!sessions.length) {
+    return { kind: 'ok', scope: scopeOut, archivedSessions: 0, hits: [], note: 'No archived transcript is in scope for this project, backend and account.' };
+  }
+  const titles = new Map(sessions.map((row) => [row.id, row.title]));
+  const marks = sessions.map(() => '?').join(',');
+  const ids = sessions.map((row) => row.id);
+  type Row = { session_id: string; role: string; at: number | null; snip: string | null; text?: string; started_at: number | null };
+  const columns = `
+    transcript_fts.session_id AS session_id, transcript_fts.role AS role, transcript_fts.at AS at, s.started_at
+    FROM transcript_fts LEFT JOIN session_log s ON s.id = transcript_fts.session_id
+    WHERE transcript_fts.session_id IN (${marks}) AND transcript_fts.role IN ('user','assistant')`;
+  let rows: Row[];
+  let fallbackNeedle = '';
+  try {
+    rows = d.prepare(`
+      SELECT snippet(transcript_fts, 3, '${HIT_OPEN}', '${HIT_CLOSE}', '…', 14) AS snip, ${columns}
+        AND transcript_fts MATCH ? ORDER BY rank LIMIT ?
+    `).all(...ids, ftsQuery(query), limit) as Row[];
+  } catch {
+    // The same fallback searchTranscripts() uses when MATCH rejects the input.
+    fallbackNeedle = query;
+    const like = `%${query.replace(/[\\%_]/g, (c) => '\\' + c)}%`;
+    rows = d.prepare(`
+      SELECT NULL AS snip, transcript_fts.text AS text, ${columns}
+        AND transcript_fts.text LIKE ? ESCAPE '\\' ORDER BY transcript_fts.at DESC LIMIT ?
+    `).all(...ids, like, limit) as Row[];
+  }
+  const hits = rows.map((row) => {
+    const raw = (row.snip ?? windowAround(row.text ?? '', fallbackNeedle)).replace(/\s+/g, ' ').trim();
+    const redacted = redactCredentials(raw);
+    return {
+      sessionId: row.session_id,
+      title: titles.get(row.session_id) ?? null,
+      startedAt: Number(row.started_at ?? row.at ?? 0),
+      role: row.role === 'assistant' ? 'assistant' as const : 'user' as const,
+      at: Number(row.at ?? 0),
+      snippet: redacted.length > RECALL_SNIPPET_MAX ? `${redacted.slice(0, RECALL_SNIPPET_MAX - 1)}…` : redacted,
+    };
+  });
+  return {
+    kind: 'ok', scope: scopeOut, archivedSessions: sessions.length, hits,
+    note: hits.length ? null : `No archived turn in scope matched “${query}”.`,
   };
 }

@@ -381,6 +381,26 @@ function fingerprint(value: unknown): string {
  */
 const RECONCILABLE_BACKENDS = new Set(['anthropic']);
 
+/**
+ * Backends whose sessions sign in with a Claude account.
+ *
+ * Keyed by backend for the same reason the set above is. GLM and DeepSeek run
+ * the reviewed Claude Code harness against another vendor's endpoint, and a
+ * pack may add a fifth; keying on the declared backend lets that pack inherit
+ * the honest answer without an edit here.
+ *
+ * The resolved environment is not enough on its own to decide this. GLM's env
+ * is empty until a key is stored, so a GLM profile with no key looks exactly
+ * like plain Claude Code and would be offered an account it never uses — which
+ * a runtime probe caught doing precisely that.
+ */
+const ACCOUNT_BACKENDS = new Set(['anthropic']);
+
+/** Whether this profile authenticates with a Claude account at all. */
+export function usesAnthropicAccount(def: Pick<ProviderDef, 'harness' | 'backendId'>): boolean {
+  return def.harness === 'claude-code' && ACCOUNT_BACKENDS.has(def.backendId?.trim() ?? '');
+}
+
 export type ProviderCostBasis = 'reconcilable' | 'unverified';
 
 export function backendCostBasis(backendId: string | null | undefined): ProviderCostBasis {

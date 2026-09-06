@@ -316,6 +316,9 @@ function within(scope: Scope, args: string[]): string[] {
 
 /* -- status ---------------------------------------------------------- */
 
+/** git's own prefix on the porcelain branch header of a branch with no commits. */
+const UNBORN = 'No commits yet on ';
+
 export async function status(dir: string): Promise<GitStatus> {
   const scope = await scopeOf(dir);
   if (!scope) {
@@ -339,7 +342,20 @@ export async function status(dir: string): Promise<GitStatus> {
   for (let i = 0; i < parts.length; i++) {
     const line = parts[i];
     if (line.startsWith('##')) {
-      const head = line.slice(2).trim();
+      // A branch with no commits yet is announced as prose: git prints the
+      // literal `No commits yet on ` in front of the name (porcelain forces the
+      // untranslated string, so this is the spelling in every locale). Only the
+      // detached spelling was special-cased, so a freshly `git init`-ed project
+      // put the whole sentence where a branch name goes — the view's branch chip
+      // read "No commits yet on main", and Push turned it into
+      // `git push -u origin "No commits yet on main"`.
+      //
+      // The prefix is stripped rather than matched-and-skipped: the rest of the
+      // header is unchanged by it, so an unborn branch that already has an
+      // upstream configured still parses. `## No commits yet on fresh...origin/main [gone]`
+      // is a real header, and it carries both the `...` and the `[…]` fields.
+      const raw = line.slice(2).trim();
+      const head = raw.startsWith(UNBORN) ? raw.slice(UNBORN.length) : raw;
       if (head.startsWith('HEAD (no branch)')) { detached = true; continue; }
       const [names, track] = head.split(/\s+\[/);
       const [local, up] = names.split('...');

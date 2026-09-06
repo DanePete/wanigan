@@ -15,7 +15,7 @@ import * as config from './context/config';
 import { db, migrateSchema } from './db';
 import { addProject, removeProject } from './store';
 import { allSettings, getSetting, setSetting, setTheme, theme } from './settings';
-import type { HookInput, TrustLevel } from '../shared/types';
+import type { HookInput, Session, TrustLevel } from '../shared/types';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 type Say = (s: string) => void;
@@ -199,6 +199,27 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
 
   const hookFile = hooks.writeHookSettings(SID, tmp);
   check(hookFile !== null, 'a hook-enabled session receives an opaque capability config');
+
+  // The CLI rejects a whole settings file over one unknown event name, so a
+  // name it learned later is asked for only from a version that knows it.
+  const gated = (v: string | null) => hooks.hookEventsFor(v).includes('InstructionsLoaded');
+  check(!gated(null) && !gated('2.1.68 (Claude Code)') && gated('2.1.69 (Claude Code)') && gated('2.1.261 (Claude Code)'),
+    'InstructionsLoaded is requested only from a CLI at or past the version that added it');
+  if (hookFile) {
+    const baseHooks = (JSON.parse(fs.readFileSync(hookFile, 'utf8')) as { hooks: Record<string, unknown> }).hooks;
+    check(!('InstructionsLoaded' in baseHooks) && 'PreToolUse' in baseHooks,
+      'a settings file written without a CLI version carries the base events only');
+  }
+  const gatedId = `${SID}-gated`;
+  const gatedFile = hooks.writeHookSettings(gatedId, tmp, undefined, { cliVersion: '2.1.261 (Claude Code)' });
+  if (gatedFile) {
+    const gatedHooks = (JSON.parse(fs.readFileSync(gatedFile, 'utf8')) as { hooks: Record<string, unknown> }).hooks;
+    check('InstructionsLoaded' in gatedHooks, 'a settings file for a 2.1.261 CLI asks for InstructionsLoaded');
+    check((hooks.registeredHookEvents(gatedId) ?? []).includes('InstructionsLoaded'),
+      'a live session can be asked which events its settings file requested');
+  }
+  hooks.cleanupHookSettings(gatedId);
+  check(hooks.registeredHookEvents(gatedId) === null, 'a cleaned-up session no longer reports requested events');
   if (hookFile) {
     const settings = JSON.parse(fs.readFileSync(hookFile, 'utf8')) as {
       hooks: { PreToolUse?: Array<{ hooks?: Array<{ url?: string; headers?: { Authorization?: string } }> }> };
@@ -248,6 +269,25 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
       check(hooks.liveState(SID).tool === 'Bash', 'live state reports the tool in flight');
       check(hooks.sessionEvents(forgedSessionId, 10).length === 0,
         'a forged query/body session id cannot redirect an authenticated hook event');
+
+      // An InstructionsLoaded body names its file at the top level; the row
+      // keeps the path, and the slot and reason decode back out of the summary.
+      const loadedFile = path.join(tmp, 'CLAUDE.md');
+      const loaded = await fetch(callbackUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization },
+        body: JSON.stringify({
+          hook_event_name: 'InstructionsLoaded', file_path: loadedFile,
+          memory_type: 'Project', load_reason: 'session_start',
+        }),
+      });
+      check(loaded.ok, 'an InstructionsLoaded hook post is accepted');
+      const li = hooks.instructionsLoaded(SID);
+      check(li.length === 1 && li[0].path === loadedFile && li[0].memoryType === 'Project' && li[0].loadReason === 'session_start',
+        'an InstructionsLoaded row stores the path and decodes its slot and load reason', JSON.stringify(li));
+      const liRow = hooks.sessionEvents(SID, 10).find((e) => e.event === 'InstructionsLoaded');
+      check(!!liRow && liRow.paths[0] === loadedFile && /Project · session_start — /.test(liRow.summary ?? ''),
+        'the timeline row for it carries the path and a readable summary', liRow?.summary);
 
       hooks.cleanupHookSettings(SID);
       const revoked = await fetch(callbackUrl, {
@@ -438,17 +478,95 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   // CI runner has none, and asserting the ambient machine has skills is how a
   // green suite went red on the first push to a fresh checkout. Seed a
   // project-scoped skill and assert discovery finds exactly that.
-  const skillDir = path.join(tmp, 'skill-project', '.claude', 'skills', 'wanigan-smoke');
-  fs.mkdirSync(skillDir, { recursive: true });
-  fs.writeFileSync(path.join(skillDir, 'SKILL.md'),
-    '---\nname: wanigan-smoke\ndescription: A seeded skill, so discovery is tested without ambient user skills.\n---\n\nDo the smoke thing.\n');
-  const skillProject = await addProject(path.join(tmp, 'skill-project'));
-  const cat = skills.discoverSkills(skillProject.id);
-  const seeded = cat.skills.find((s) => s.name === 'wanigan-smoke');
+  const skillProjectDir = path.join(tmp, 'skill-project');
+  const seedSkill = (dir: string, frontmatter: string) => {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\n${frontmatter}\n---\n\nDo the smoke thing.\n\n## Verification\n\n- It ran.\n`);
+  };
+  seedSkill(path.join(skillProjectDir, '.claude', 'skills', 'wanigan-project-only'),
+    'name: wanigan-project-only\ndescription: A seeded skill, so discovery is tested without ambient user skills.');
+  // The collision: the same directory name at personal and project level. The
+  // docs say the personal one runs, and that its frontmatter name is only a
+  // label — so the fake home is the seam, never the developer's ~/.claude.
+  const skillHome = path.join(tmp, 'skill-home');
+  seedSkill(path.join(skillHome, '.claude', 'skills', 'wanigan-smoke'),
+    'name: smoke-display-label\ndescription: The personal copy, which wins over the project copy.\nuser-invocable: no');
+  seedSkill(path.join(skillProjectDir, '.claude', 'skills', 'wanigan-smoke'),
+    'name: wanigan-smoke\ndescription: The project copy, which loses to the personal copy.');
+  // A plugin skill with the same bare name is namespaced and cannot collide.
+  seedSkill(path.join(skillHome, '.claude', 'plugins', 'marketplaces', 'smoke-market', 'plugins', 'smoke-plugin', 'skills', 'wanigan-smoke'),
+    'name: wanigan-smoke\ndescription: The plugin copy, reachable under its own prefix.');
+  // A project skill switched off by settings, and a Codex-family file.
+  seedSkill(path.join(skillProjectDir, '.claude', 'skills', 'wanigan-off'),
+    'name: wanigan-off\ndescription: Present on disk and hidden by skillOverrides.');
+  fs.mkdirSync(path.join(skillProjectDir, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(skillProjectDir, '.claude', 'settings.json'),
+    JSON.stringify({ skillOverrides: { 'wanigan-off': 'off' } }));
+  seedSkill(path.join(skillProjectDir, '.agents', 'skills', 'wanigan-agents'),
+    'name: wanigan-agents\ndescription: A Codex-family skill Wanigan lists without consulting Codex.');
+
+  const skillProject = await addProject(skillProjectDir);
+  skills.refreshSkills();
+  const cat = skills.discoverSkills(skillProject.id, { homeDir: skillHome });
+  const seeded = cat.skills.find((s) => s.name === 'wanigan-project-only');
   check(seeded?.source === 'project' && seeded.projectId === skillProject.id,
     'a checked-in project skill is discovered by name, source and owner', JSON.stringify(seeded));
   check(cat.roots.some((r) => r.source === 'builtin' && (r.note ?? '').includes('used')),
     'built-ins are labelled incomplete rather than presented as the full set');
+
+  const collided = cat.skills.filter((s) => s.invoke === '/wanigan-smoke');
+  check(collided.length === 1 && collided[0].source === 'user',
+    'a personal skill shadows a project skill of the same directory name, as the docs say', JSON.stringify(collided.map((s) => s.source)));
+  check(collided[0]?.name === 'wanigan-smoke' && collided[0]?.label === 'smoke-display-label',
+    'a personal skill is keyed by its directory name and its frontmatter name is only the label');
+  check(cat.shadowed.some((s) => s.invoke === '/wanigan-smoke' && s.source === 'project' && s.shadowedBy.source === 'user'),
+    'the shadowed project copy is reported with the file that shadows it');
+  check(cat.skills.some((s) => s.invoke === '/smoke-plugin:wanigan-smoke' && s.source === 'plugin'),
+    'a plugin skill with the same bare name keeps its namespaced command instead of being deduped away');
+  check(collided[0]?.invocable.user === false && collided[0]?.invocable.decidedBy === collided[0]?.path,
+    'a YAML 1.1 `user-invocable: no` is read as not user-invocable, decided by the SKILL.md');
+  const off = cat.skills.find((s) => s.invoke === '/wanigan-off');
+  check(off?.invocable.user === false && off.invocable.model === false && off.invocable.override === 'off'
+    && off.invocable.decidedBy === path.join(skillProject.path, '.claude', 'settings.json'),
+    'a skillOverrides `off` hides the skill and names the settings file that decided it', JSON.stringify(off?.invocable));
+  const agentsRow = cat.agentSkills.find((s) => s.name === 'wanigan-agents');
+  check(agentsRow?.source === 'agents-project' && agentsRow.harness === 'codex' && agentsRow.invoke === ''
+    && agentsRow.invocable.user === 'unknown' && !cat.skills.some((s) => s.name === 'wanigan-agents'),
+    'a .agents/skills file is catalogued for the Codex harness with no invocation and no Claude command', JSON.stringify(agentsRow));
+  check(cat.agentRoots.some((r) => r.source === 'agents-project' && r.exists && /Codex/.test(r.note ?? '')),
+    'the .agents root says whose loader reads it and that the loader was not consulted');
+
+  // Sending is routed by the frozen harness, and only for a catalogued,
+  // user-invocable command.
+  const fakeSession = (harnessId: string | null, status: Session['status'] = 'running'): Session => ({
+    id: 'smoke-send', providerId: 'x', projectId: skillProject.id, projectPath: skillProjectDir, projectName: 'p',
+    title: 't', status, pid: null, exitCode: null, createdAt: 0, endedAt: null, unread: 0, harnessId,
+  });
+  // The decision reads the catalogue through the real home, where the seeded
+  // collision does not exist; the project-only skill is what it can find.
+  const codexSend = skills.skillSendDecision(fakeSession('codex'), '/wanigan-project-only');
+  check(!codexSend.ok && codexSend.code === 'unsupported-harness' && /not verified/.test(codexSend.reason),
+    'sending into a Codex session is refused with a typed, honest unsupported reason', JSON.stringify(codexSend));
+  const genericSend = skills.skillSendDecision(fakeSession('generic-cli'), '/wanigan-project-only');
+  check(!genericSend.ok && genericSend.code === 'unsupported-harness', 'an unknown harness is refused rather than guessed');
+  const claudeSend = skills.skillSendDecision(fakeSession('claude-code'), '/wanigan-project-only');
+  check(claudeSend.ok && claudeSend.invoke === '/wanigan-project-only', 'a Claude Code session may be sent a catalogued skill', JSON.stringify(claudeSend));
+  const offSend = skills.skillSendDecision(fakeSession('claude-code'), '/wanigan-off');
+  check(!offSend.ok && offSend.code === 'not-user-invocable', 'a skill switched off by skillOverrides is not typed', JSON.stringify(offSend));
+  const unknownSend = skills.skillSendDecision(fakeSession('claude-code'), '/no-such-skill');
+  check(!unknownSend.ok && unknownSend.code === 'unknown-skill', 'a command outside the catalogue is never typed');
+  const exitedSend = skills.skillSendDecision(fakeSession('claude-code', 'exited'), '/wanigan-project-only');
+  check(!exitedSend.ok && exitedSend.code === 'session-exited', 'an exited session is refused before any typing');
+  check(!skills.skillSendDecision(null, '/wanigan-project-only').ok, 'no session, no send');
+
+  const claudeRoots = skills.skillRootsFor('claude-code', { homeDir: skillHome, projectRoot: skillProjectDir, configDir: path.join(skillHome, 'acct') });
+  check(claudeRoots.write.personal === path.join(skillHome, 'acct', 'skills')
+    && claudeRoots.write.project === path.join(skillProjectDir, '.claude', 'skills'),
+    'Claude roots follow CLAUDE_CONFIG_DIR for the personal tree and the repo for the project tree');
+  check(skills.skillRootsFor('codex', { homeDir: skillHome }).write.personal === path.join(skillHome, '.agents', 'skills')
+    && skills.skillRootsFor('generic-cli', { homeDir: skillHome, projectRoot: skillProjectDir }).read.length === 0,
+    'Codex roots are the .agents family and an unknown harness gets no roots at all');
+  skills.refreshSkills();
   removeProject(skillProject.id);
 
   /* ── file explorer ─────────────────────────────────────────────────── */
@@ -488,6 +606,36 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
 
   const cfg = config.readProjectConfig(repo);
   check(Array.isArray(cfg.layers) && cfg.layers.length >= 3, 'the settings layers are enumerated', cfg.layers.length);
+
+  // skillOverrides through the same layer order: local beats project, and the
+  // beaten layer stays visible because the merge rule is undocumented.
+  fs.writeFileSync(path.join(repo, '.claude', 'settings.json'), JSON.stringify({ skillOverrides: { deploy: 'off', legacy: 'name-only' } }));
+  fs.writeFileSync(path.join(repo, '.claude', 'settings.local.json'), JSON.stringify({ skillOverrides: { deploy: 'on' } }));
+  const ov = config.skillOverrides(repo);
+  const deploy = ov.find((o) => o.skill === 'deploy');
+  check(deploy?.value === 'on' && deploy.from === 'local' && deploy.shadowed.length === 1 && deploy.shadowed[0].from === 'project' && deploy.shadowed[0].value === 'off',
+    'a skillOverrides entry resolves to the highest layer and lists the layer it beat', JSON.stringify(deploy));
+  check(ov.find((o) => o.skill === 'legacy')?.value === 'name-only' && ov.every((o) => o.skill !== 'absent'),
+    'only skills a layer names are returned; an absent skill is the documented default and not a row');
+
+  // The prediction beside what a launch reported: a hook row for a file the
+  // scan listed marks it observed, a lazily loaded rule is lazy, and an
+  // imported file no hook named stays predicted-only.
+  const rec = instructions.reconcileInstructions(chain, [
+    { sessionId: 'smoke-rec', at: 10, path: path.join(repo, 'CLAUDE.md'), memoryType: 'Project', loadReason: 'session_start' },
+    { sessionId: 'smoke-rec', at: 20, path: path.join(repo, '.claude', 'rules', 'api.md'), memoryType: 'Project', loadReason: 'path_glob_match' },
+  ]);
+  const recRow = (p: string) => rec?.rows.find((r) => r.path === p);
+  check(rec?.sessionId === 'smoke-rec' && rec.at === 20
+    && recRow(path.join(repo, 'CLAUDE.md'))?.predicted === 'launch' && recRow(path.join(repo, 'CLAUDE.md'))?.observed === 'launch',
+    'a predicted launch file named by a session_start hook is observed at launch', JSON.stringify(rec?.rows));
+  check(recRow(path.join(repo, '.claude', 'rules', 'api.md'))?.predicted === 'on-demand'
+    && recRow(path.join(repo, '.claude', 'rules', 'api.md'))?.observed === 'lazy',
+    'a path-scoped rule loaded by glob match is on-demand in the prediction and lazy in the observation');
+  check(recRow(path.join(repo, 'AGENTS.md'))?.predicted === 'launch' && recRow(path.join(repo, 'AGENTS.md'))?.observed === null && (rec?.predictedOnly ?? 0) >= 1,
+    'a predicted file no hook named is predicted-only, not marked missing');
+  check(instructions.reconcileInstructions(chain, []) === null, 'no InstructionsLoaded rows means no reconciliation, not an empty one');
+  check(chain.harness === 'claude-code', 'the instruction chain names the loader it predicts');
 
   const budget = config.contextBudget(repo, [{ path: path.join(repo, 'CLAUDE.md'), label: 'CLAUDE.md' }]);
   check(budget.estTokens > 0, 'the startup context is priced in tokens', budget.estTokens);

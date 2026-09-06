@@ -99,6 +99,18 @@ export function setUserPreference(key: unknown, value: unknown): WaniganSettings
   const preferenceKey = key;
   let preferenceValue = value;
 
+  // Explainer visibility: 'explainer.<id>' = hidden | shown. Stored here rather
+  // than in localStorage so a dismissed guide stays dismissed after a quit and
+  // on a restored database; the id is bounded so the renderer cannot mint
+  // arbitrary keys.
+  if (/^explainer\.[a-z0-9-]{1,64}$/.test(preferenceKey)) {
+    if (preferenceValue !== 'hidden' && preferenceValue !== 'shown') {
+      throw new Error('An explainer is either hidden or shown.');
+    }
+    setSetting(preferenceKey, preferenceValue);
+    return allSettings();
+  }
+
   switch (preferenceKey) {
     case 'telemetry':
     case 'hooks':
@@ -114,6 +126,14 @@ export function setUserPreference(key: unknown, value: unknown): WaniganSettings
     case 'motion':
       if (preferenceValue !== 'auto' && preferenceValue !== 'full' && preferenceValue !== 'off') {
         throw new Error('Motion must be auto, full, or off.');
+      }
+      break;
+    // Whether the destination list is on screen. Durable rather than
+    // per-window, because someone who hides it to give a terminal the full
+    // width means it for tomorrow too, and ⌥⌘S brings it straight back.
+    case 'nav_sidebar':
+      if (preferenceValue !== 'open' && preferenceValue !== 'closed') {
+        throw new Error('The sidebar is either open or closed.');
       }
       break;
     case 'event_retention_days': {
@@ -141,6 +161,7 @@ export function slotsSetting(): QueueSlots {
       headless: Math.max(1, Number(parsed.headless) || DEFAULT_SLOTS.headless),
       batch: Math.max(1, Number(parsed.batch) || DEFAULT_SLOTS.batch),
       scout: Math.max(1, Number(parsed.scout) || DEFAULT_SLOTS.scout),
+      node: Math.max(1, Number(parsed.node) || DEFAULT_SLOTS.node),
     };
   } catch { return DEFAULT_SLOTS; }
 }
@@ -171,11 +192,27 @@ export function learningSettings(): LearningSettings {
   };
 }
 
+/** Every stored explainer flag, as flat 'explainer.<id>' keys the renderer reads back. */
+function explainerFlags(): Record<`explainer.${string}`, 'hidden' | 'shown'> {
+  ensure();
+  const out: Record<string, 'hidden' | 'shown'> = {};
+  const rows = db().prepare("SELECT k, v FROM settings WHERE k LIKE 'explainer.%'").all() as { k: string; v: string }[];
+  for (const row of rows) if (row.v === 'hidden' || row.v === 'shown') out[row.k] = row.v;
+  return out as Record<`explainer.${string}`, 'hidden' | 'shown'>;
+}
+
+/** 'open' unless the operator hid it; the shortcut and the toggle both write it. */
+export function navSidebar(): 'open' | 'closed' {
+  return getSetting('nav_sidebar', 'open') === 'closed' ? 'closed' : 'open';
+}
+
 export function allSettings(): WaniganSettings {
   const f = flags();
   return {
+    ...explainerFlags(),
     spendCapUsd: spendCap(),
     motion: motion(),
+    navSidebar: navSidebar(),
     theme: theme(),
     telemetry: f.telemetry,
     hooks: f.hooks,

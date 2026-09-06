@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { BudgetState, Project, Reconciliation } from '@shared/types';
 import { Note, Stat, num, usd } from '../components/bits';
+import '../styles/insights.css';
 
 /**
  * Where the money went, across all three surfaces — and by which meter.
@@ -449,8 +450,6 @@ export default function InsightsView({ onOpenRun, projects: given }: {
     effort.some((e) => e.costUsd > 0 || e.requests > 0) ||
     buds.some((b) => b.spentUsd > 0) || (codexUsage?.totalTokens ?? 0) > 0;
 
-  const styles = <style precedence="default" href="wanigan-insights">{CSS}</style>;
-
   const head = (
     <div className="pane-head">
       <div>
@@ -468,7 +467,6 @@ export default function InsightsView({ onOpenRun, projects: given }: {
   if (!ready) {
     return (
       <div className="pane insights">
-        {styles}
         {head}
         <div className="card chart-empty">
           <p>Reading the ledger…</p>
@@ -485,7 +483,6 @@ export default function InsightsView({ onOpenRun, projects: given }: {
   if (fatal) {
     return (
       <div className="pane insights">
-        {styles}
         {head}
         <Note tone="error">
           <strong>Could not read any spend data.</strong> {errs.spend}
@@ -505,7 +502,6 @@ export default function InsightsView({ onOpenRun, projects: given }: {
   if (!everSpent && buds.length === 0) {
     return (
       <div className="pane insights">
-        {styles}
         {head}
         <div className="card" style={{ padding: 22 }}>
           <h2 style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>Nothing has been billed yet</h2>
@@ -535,7 +531,6 @@ export default function InsightsView({ onOpenRun, projects: given }: {
 
   return (
     <div className="pane insights">
-      {styles}
       {head}
 
       <div aria-live="polite">
@@ -625,14 +620,16 @@ export default function InsightsView({ onOpenRun, projects: given }: {
       ) : (
         <>
           <div className="chart-grid">
+            {/* The sentence carries the whole claim. The two-bar picture that
+                used to sit here drew batch at exactly 50% every time, because
+                the comparison is defined as spent × 2 — a shape that can never
+                vary is decoration, not evidence. */}
             <HeroCard
               title="Total batch spend"
               hero={usd(t.cost ?? 0)}
               sub={<>Batch rates are exactly half of list, so the same work run synchronously
                     would have cost <strong>{usd((t.cost ?? 0) * 2)}</strong>.</>}
-            >
-              <SavingsBar spent={t.cost ?? 0} />
-            </HeroCard>
+            />
 
             <BatchCacheCard totals={t} />
           </div>
@@ -806,12 +803,15 @@ function SurfaceOverTime({ rows, days, onWiden }: {
   return (
     <div className="chart-card" ref={ref}>
       <h3>Spend by surface, day by day</h3>
-      <p className="sub">
-        The last {days} days, stacked: interactive sessions, bulk batch runs and headless fan-outs.
-        Sessions are always slot 1, batches slot 2, headless slot 3 — the order is fixed on every
-        chart on this page, because the order is what keeps the palette readable under colour
-        vision deficiency.
-      </p>
+      <p className="sub">The last {days} days, stacked: interactive sessions, bulk batch runs and headless fan-outs.</p>
+      <details className="ins-how">
+        <summary>How this is derived</summary>
+        <p>
+          Sessions are always slot 1, batches slot 2, headless slot 3 — the order is fixed on every
+          chart on this page, because the order is what keeps the palette readable under colour
+          vision deficiency.
+        </p>
+      </details>
 
       {grand <= 0 ? (
         <ZeroResults days={days} onWiden={onWiden} />
@@ -978,10 +978,16 @@ function SpendByProject({ rows, days }: { rows: ProjectSpendRow[]; days: number 
   return (
     <div className="chart-card">
       <h3>Spend by repository</h3>
+      {/* The two-meter split changes how the number is read, so it stays at
+          level one; only the reason for the column layout moves. */}
       <p className="sub">
         Last {days} days, dearest first. Sessions and headless runs are the CLI's own figure; batch
-        runs are Wanigan's arithmetic. They are separate columns because they are separate meters.
+        runs are Wanigan's arithmetic.
       </p>
+      <details className="ins-how">
+        <summary>How this is derived</summary>
+        <p>They are separate columns because they are separate meters, and averaging them would invent a rate neither one reported.</p>
+      </details>
       <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 7 }}>
         {rows.map((r) => {
           const p = max > 0 ? (r.total / max) * 100 : 0;
@@ -2165,30 +2171,6 @@ function BatchCacheCard({ totals }: { totals: Record<string, number> }) {
   );
 }
 
-/** Two-bar comparison: what you paid vs what synchronous would have cost. */
-function SavingsBar({ spent }: { spent: number }) {
-  const sync = spent * 2;
-  return (
-    <div className="ins-cmp" role="img"
-         aria-label={`Batch cost ${usd(spent)} versus synchronous ${usd(sync)}`}>
-      <div className="ins-cmp-row">
-        <span className="ins-cmp-label">synchronous</span>
-        <div className="ins-cmp-track">
-          <div className="ins-cmp-fill" style={{ width: '100%', background: SERIES[1], opacity: 0.45 }} />
-        </div>
-        <span className="mono ins-num ins-cmp-val">{usd(sync)}</span>
-      </div>
-      <div className="ins-cmp-row">
-        <span className="ins-cmp-label">batch</span>
-        <div className="ins-cmp-track">
-          <div className="ins-cmp-fill" style={{ width: '50%', background: SERIES[0] }} />
-        </div>
-        <span className="mono ins-num ins-cmp-val">{usd(spent)}</span>
-      </div>
-    </div>
-  );
-}
-
 function Gauge({ value }: { value: number }) {
   const p = Math.max(0, Math.min(1, value));
   return (
@@ -2412,7 +2394,7 @@ function SpendOverTime({ runs, onOpenRun }: {
       <h3>Cost per run</h3>
       <p className="sub">
         {trend
-          ? 'Oldest to newest. Hover for the run; click to open it.'
+          ? `Oldest to newest. Hover for the run${onOpenRun ? '; click to open it' : ''}.`
           : 'One run has a settled cost so far. A cost-over-time line needs at least two, so none is drawn — the run itself is below.'}
       </p>
       {trend && (
@@ -2491,189 +2473,9 @@ function SpendOverTime({ runs, onOpenRun }: {
 
 /* ── styles ───────────────────────────────────────────────────────────────
    This view has no feature stylesheet of its own and index.css belongs to the
-   shell, so the rules live here, scoped to .insights and hoisted once by React.
+   shell, so the rules live here, scoped to .insights .ins-how > summary { cursor: pointer; color: var(--text-faint); font-size: var(--t-micro); margin-top: 4px; }
+.insights .ins-how > summary:hover { color: var(--text); }
+.insights .ins-how > p { margin-top: 4px; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.5; }
+.insights and hoisted once by React.
    Not one colour is declared — every value is a token from index.css.
    ───────────────────────────────────────────────────────────────────────── */
-
-const CSS = `
-.insights :focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 5px;
-}
-.insights .field:focus-visible { outline-offset: -1px; }
-
-.insights .ins-num { font-variant-numeric: tabular-nums; }
-
-/* Columns need air between them; .viz-table ships with none on the right. */
-.insights .viz-table th + th,
-.insights .viz-table td + td { padding-left: 16px; }
-.insights .ins-dim { color: var(--text-dim); }
-.insights .ins-over { color: var(--critical); font-weight: 600; }
-.insights .ins-nowrap { white-space: nowrap; }
-.insights .viz-table th.ins-th-r { text-align: right; }
-
-.insights .ins-inline {
-  color: var(--accent);
-  text-decoration: underline;
-  font-size: inherit;
-  padding: 0;
-  border-radius: 4px;
-}
-.insights .ins-inline:hover { filter: brightness(1.15); }
-.insights .ins-more { display: inline-block; margin-top: 10px; font-size: 11.5px; }
-
-.insights .ins-btn { white-space: nowrap; }
-
-.insights .ins-filters {
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  padding: 9px 12px;
-  background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px;
-}
-.insights .ins-filter-note { font-size: 11.5px; line-height: 1.45; flex: 1 1 260px; min-width: 0; }
-
-.insights .ins-seg {
-  display: flex; gap: 2px; padding: 2px;
-  border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
-}
-.insights .ins-seg button {
-  padding: 4px 11px; border-radius: 6px;
-  font-size: 12px; font-weight: 500; color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-}
-.insights .ins-seg button:hover { background: var(--bg-sunk); color: var(--text); }
-.insights .ins-seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
-
-.insights .ins-meterline {
-  display: flex; flex-direction: column; gap: 4px;
-  margin-top: 12px; padding-top: 9px;
-  border-top: 1px solid var(--line-soft);
-  font-size: 11px; color: var(--text-faint); line-height: 1.5;
-}
-.insights .ins-src { display: flex; gap: 6px; align-items: baseline; }
-
-.insights .ins-cardhead { display: flex; gap: 14px; align-items: flex-start; }
-.insights .ins-cardhead > div:first-child { min-width: 0; }
-.insights .ins-cardhead > :last-child { margin-left: auto; flex: none; }
-
-.insights .ins-divider {
-  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
-  margin-top: 6px; padding-top: 12px; border-top: 1px solid var(--line);
-}
-.insights .ins-divider .faint { font-size: 11.5px; line-height: 1.45; flex: 1 1 320px; min-width: 0; }
-
-.insights .ins-hero-row { margin-top: 10px; }
-
-.insights .ins-note {
-  margin-top: 9px; font-size: 11.5px; line-height: 1.55; color: var(--text-dim);
-}
-
-.insights .ins-start { margin: 10px 0 4px; padding-left: 18px; line-height: 1.6; font-size: 12.5px; }
-.insights .ins-start li { margin-bottom: 5px; }
-.insights .ins-start strong { color: var(--text); }
-
-.insights .ins-breach { margin: 8px 0 0; padding-left: 4px; list-style: none; line-height: 1.55; }
-.insights .ins-breach li { margin-top: 4px; }
-
-.insights .ins-zero-sub {
-  margin-top: 6px; font-size: 11.5px; line-height: 1.55; color: var(--text-faint);
-  max-width: 560px; margin-left: auto; margin-right: auto;
-}
-
-.insights .ins-scroll { overflow-x: auto; overflow-y: auto; max-height: 340px; margin-top: 4px; }
-.insights .ins-scroll table { min-width: 460px; }
-
-.insights .ins-bars { display: flex; flex-direction: column; gap: 9px; margin-top: 12px; }
-.insights .ins-barhead {
-  display: flex; gap: 10px; align-items: baseline;
-  font-size: 11.5px; margin-bottom: 4px;
-}
-.insights .ins-barhead > :last-child { margin-left: auto; white-space: nowrap; }
-.insights .ins-barhead .trunc { max-width: 320px; }
-.insights .ins-track {
-  height: 7px; border-radius: 4px; background: var(--bg-sunk); overflow: hidden;
-}
-.insights .ins-fill { height: 100%; border-radius: 4px; }
-.insights .ins-pair { display: flex; flex-direction: column; gap: 2px; }
-.insights .ins-gauge { margin-top: 12px; }
-
-/* One stacked bar, part-to-whole. Flex keeps the 2px surface gap at 2px at any
-   pane width — the unitless viewBox these replaced scaled the gap with the
-   container and rendered the bar as a 90px slab. */
-.insights .ins-stack { display: flex; gap: 2px; height: 10px; margin-top: 12px; }
-.insights .ins-stack > span { border-radius: 2px; min-width: 2px; }
-.insights .ins-stack > span:first-child { border-radius: 5px 2px 2px 5px; }
-.insights .ins-stack > span:last-child { border-radius: 2px 5px 5px 2px; }
-
-.insights .ins-cmp { display: flex; flex-direction: column; gap: 7px; margin-top: 12px; }
-.insights .ins-cmp-row { display: flex; align-items: center; gap: 9px; font-size: 11.5px; }
-.insights .ins-cmp-label { flex: none; width: 82px; color: var(--text-dim); }
-.insights .ins-cmp-track {
-  flex: 1; min-width: 0; height: 8px; border-radius: 4px;
-  background: var(--bg-sunk); overflow: hidden;
-}
-.insights .ins-cmp-fill { height: 100%; border-radius: 4px; }
-.insights .ins-cmp-val { flex: none; color: var(--text-dim); }
-
-.insights .ins-tag {
-  margin-left: 7px; padding: 1px 6px; border-radius: 999px;
-  background: var(--accent-soft); color: var(--accent);
-  font-size: 10px; font-weight: 600; letter-spacing: .02em;
-  font-family: ui-sans-serif, system-ui, sans-serif;
-}
-
-.insights .ins-swatch { display: inline-block; margin-right: 7px; vertical-align: middle; }
-
-.insights .ins-budgets {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px;
-}
-.insights .ins-budget { padding: 11px 13px; }
-.insights .ins-budget-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
-.insights .ins-budget-name { font-size: 12.5px; font-weight: 600; min-width: 0; }
-.insights .ins-budget-edit { margin-left: auto; font-size: 11.5px; flex: none; }
-
-.insights .ins-meter { position: relative; height: 16px; }
-.insights .ins-meter-track {
-  position: absolute; inset: 4px 0 5px; display: flex; gap: 2px;
-  border-radius: 4px; background: var(--bg); overflow: hidden;
-}
-.insights .ins-meter-flat { position: static; height: 7px; }
-.insights .ins-meter-seg { height: 100%; }
-.insights .ins-meter-warn {
-  position: absolute; top: 0; bottom: 3px; width: 2px; margin-left: -1px;
-  background: var(--warning); border-radius: 1px;
-}
-.insights .ins-meter-proj {
-  position: absolute; bottom: -3px; margin-left: -5px;
-  font-size: 9px; line-height: 1; color: var(--text);
-}
-
-.insights .ins-budget-legend {
-  display: flex; gap: 10px; align-items: baseline;
-  margin-top: 7px; font-size: 11.5px; font-variant-numeric: tabular-nums;
-}
-.insights .ins-budget-legend > :last-child { margin-left: auto; }
-.insights .ins-budget-foot {
-  display: flex; flex-direction: column; gap: 2px;
-  margin-top: 5px; font-size: 11px; color: var(--text-dim); line-height: 1.45;
-}
-.insights .ins-budget-nocap p { margin-top: 8px; font-size: 11px; line-height: 1.5; }
-
-.insights .ins-editor { padding: 12px 13px; margin-top: 12px; }
-.insights .ins-editor-row {
-  display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
-}
-.insights .ins-recon-row { margin-top: 12px; }
-.insights .ins-field {
-  display: flex; flex-direction: column; gap: 4px;
-  flex: 1 1 200px; min-width: 0; max-width: 340px;
-}
-.insights .ins-field-sm { flex: 0 1 150px; }
-.insights .ins-editor-actions { display: flex; gap: 8px; flex: none; }
-.insights .ins-editor-hint { margin-top: 9px; font-size: 11.5px; line-height: 1.5; }
-
-@media (max-width: 900px) {
-  .insights .ins-budgets { grid-template-columns: minmax(0, 1fr); }
-  .insights .chart-grid { grid-template-columns: minmax(0, 1fr); }
-}
-`;

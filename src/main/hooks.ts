@@ -8,7 +8,9 @@ import { db } from './db';
 import { recordGoalTrace } from './goal-trace';
 import { getSetting } from './settings';
 import { answerFor, contextForSession, trustBriefing } from './policy';
-import type { HookEventName, HookInput, PolicyDecision, SessionEvent } from '../shared/types';
+import type {
+  HookEventName, HookInput, LoadedInstruction, PolicyDecision, SessionEvent,
+} from '../shared/types';
 
 /**
  * The hook bus. Metrics say how much a session spent; hooks say what it did,
@@ -67,6 +69,8 @@ const registered = new Map<string, {
   projectPath: string;
   capability: string;
   learningContext?: LearningBriefingContext;
+  /** The event names this session's settings file asked for. */
+  events: HookEventName[];
 }>();
 /** Capability → session id. This is intentionally process-local and revocable. */
 const capabilitySessions = new Map<string, string>();
@@ -151,6 +155,60 @@ const SETTINGS_EVENTS: HookEventName[] = [
   'Stop', 'StopFailure', 'PreCompact', 'PostCompact',
 ];
 
+/**
+ * Events the CLI learned after the base set above. Each is asked for only from
+ * a CLI whose reported version is at or past the release that introduced it —
+ * the rejection rule above means an older binary must never see the name, and
+ * "hooks silently off" is exactly the failure that rule exists to prevent.
+ * `since` is the changelog entry; `probed` is the binary on which Wanigan
+ * actually found the string, which is the fact the gate rests on. A launch
+ * with no version reading gets the base set only.
+ */
+export const VERSION_GATED_EVENTS: readonly { event: HookEventName; since: string; probed: string }[] = [
+  {
+    // Changelog 2.1.69: "Added `InstructionsLoaded` hook event that fires when
+    // CLAUDE.md or `.claude/rules/*.md` files are loaded into context". The
+    // 2.1.261 binary installed here carries the name plus `file_path`,
+    // `memory_type` and `load_reason` (checked 2026-09-05). Versions between
+    // the two were not probed; the changelog is what admits them.
+    event: 'InstructionsLoaded', since: '2.1.69', probed: '2.1.261',
+  },
+];
+
+export type HookSettingsOptions = {
+  /**
+   * The CLI's `--version` line as probed at launch, e.g. "2.1.261 (Claude
+   * Code)". Null or absent means the probe failed or the caller does not know,
+   * and unknown earns the base event set only.
+   */
+  cliVersion?: string | null;
+};
+
+/** The leading dotted triple of a `--version` line; null when there is none. */
+export function parseCliVersion(line: string | null | undefined): [number, number, number] | null {
+  const m = typeof line === 'string' ? /(\d+)\.(\d+)\.(\d+)/.exec(line) : null;
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+function versionAtLeast(have: [number, number, number], want: [number, number, number]): boolean {
+  for (let i = 0; i < 3; i++) {
+    if (have[i] !== want[i]) return have[i] > want[i];
+  }
+  return true;
+}
+
+/** Exactly the event names a settings file written for this CLI version asks for. */
+export function hookEventsFor(cliVersion: string | null | undefined): HookEventName[] {
+  const out = [...SETTINGS_EVENTS];
+  const have = parseCliVersion(cliVersion);
+  if (!have) return out;
+  for (const gated of VERSION_GATED_EVENTS) {
+    const want = parseCliVersion(gated.since);
+    if (want && versionAtLeast(have, want)) out.push(gated.event);
+  }
+  return out;
+}
+
 /** Only these carry a tool name for a matcher to match against. */
 const TOOL_MATCHED = new Set<HookEventName>([
   'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied',
@@ -177,6 +235,7 @@ export function writeHookSettings(
   waniganSessionId: string,
   projectPath: string,
   learningContext?: LearningBriefingContext,
+  options: HookSettingsOptions = {},
 ): string | null {
   if (!hooksEnabled()) return null;
   const live = info;
@@ -187,8 +246,9 @@ export function writeHookSettings(
   const url = `http://127.0.0.1:${live.port}/hook`;
   const handler = { type: 'http', url, headers: { Authorization: `Bearer ${capability}` } };
 
+  const events = hookEventsFor(options.cliVersion);
   const hooks: Record<string, unknown[]> = {};
-  for (const ev of SETTINGS_EVENTS) {
+  for (const ev of events) {
     hooks[ev] = [TOOL_MATCHED.has(ev) ? { matcher: '*', hooks: [handler] } : { hooks: [handler] }];
   }
 
@@ -203,9 +263,20 @@ export function writeHookSettings(
 
   const previous = registered.get(waniganSessionId);
   if (previous) capabilitySessions.delete(previous.capability);
-  registered.set(waniganSessionId, { file, projectPath, capability, learningContext });
+  registered.set(waniganSessionId, { file, projectPath, capability, learningContext, events });
   capabilitySessions.set(capability, waniganSessionId);
   return file;
+}
+
+/**
+ * Which events a LIVE session's settings file asked for, or null once its
+ * registration is gone. Process-local on purpose: the answer for a finished
+ * session is not recorded anywhere, and "not wired for InstructionsLoaded" and
+ * "wired, and nothing loaded" must not be told apart by guessing.
+ */
+export function registeredHookEvents(waniganSessionId: string): HookEventName[] | null {
+  const reg = registered.get(waniganSessionId);
+  return reg ? [...reg.events] : null;
 }
 
 export function cleanupHookSettings(waniganSessionId: string): void {
@@ -527,7 +598,10 @@ function store(sessionId: string, event: string, input: HookInput, at: number): 
   }
 
   const summary = summarise(event, input);
-  const paths = pathsOf(input.tool_input);
+  // An InstructionsLoaded body names its file at the top level, not under a
+  // tool_input, and the path is the whole record: it is what the Context view
+  // reconciles its prediction against.
+  const paths = event === 'InstructionsLoaded' ? instructionPaths(input) : pathsOf(input.tool_input);
   const ok = okOf(event, input);
 
   try {
@@ -607,6 +681,7 @@ export function onHookEvent(cb: (e: SessionEvent) => void): () => void {
  */
 function summarise(event: string, input: HookInput): string | null {
   if (event === 'Notification') return clip(str(input.message), MAX_SUMMARY);
+  if (event === 'InstructionsLoaded') return loadedSummary(input);
   // UserPromptSubmit carries the prompt and nothing else worth keeping. That the
   // turn happened, and when, is the whole record.
   if (event === 'UserPromptSubmit') return null;
@@ -635,6 +710,35 @@ function summarise(event: string, input: HookInput): string | null {
   const p = firstPath(ti);
   if (p) return tail(p);
   return clip(str(ti.command) ?? str(ti.description) ?? str(input.message), MAX_SUMMARY);
+}
+
+/**
+ * `<memory_type> · <load_reason> — <path tail>`, encoded here and decoded by
+ * parseLoadedSummary, so which slot a file filled and why it loaded survive in
+ * the row without a schema change. paths_json stays the authoritative path;
+ * the summary is what the Timeline prints and what the decoder reads back.
+ */
+const LOADED_SEP = ' — ';
+const LOADED_UNKNOWN = '?';
+
+function loadedSummary(input: HookInput): string {
+  const why = `${clip(str(input.memory_type), 24) ?? LOADED_UNKNOWN} · ${clip(str(input.load_reason), 24) ?? LOADED_UNKNOWN}`;
+  const file = tail(str(input.file_path), MAX_SUMMARY - why.length - LOADED_SEP.length) ?? '(no path)';
+  return `${why}${LOADED_SEP}${file}`;
+}
+
+function parseLoadedSummary(summary: string | null): { memoryType: string | null; loadReason: string | null } {
+  const m = summary ? /^([^·]*) · ([^—]*)(?: — |$)/.exec(summary) : null;
+  const value = (v: string | undefined): string | null => {
+    const t = (v ?? '').trim();
+    return !t || t === LOADED_UNKNOWN ? null : t;
+  };
+  return m ? { memoryType: value(m[1]), loadReason: value(m[2]) } : { memoryType: null, loadReason: null };
+}
+
+function instructionPaths(input: HookInput): string[] {
+  const p = str(input.file_path);
+  return p ? [p.slice(0, MAX_PATH)] : [];
 }
 
 const PATH_KEYS = ['file_path', 'path', 'notebook_path'] as const;
@@ -695,9 +799,9 @@ function clip(v: string | null, max: number): string | null {
 }
 
 /** Paths are identified by their end, so a long one keeps its tail. */
-function tail(v: string | null): string | null {
+function tail(v: string | null, max: number = MAX_SUMMARY): string | null {
   if (!v) return null;
-  return v.length > MAX_SUMMARY ? `…${v.slice(-(MAX_SUMMARY - 1))}` : v;
+  return v.length > max ? `…${v.slice(-(max - 1))}` : v;
 }
 
 /* ── reading ─────────────────────────────────────────────────────────── */
@@ -773,6 +877,42 @@ function resetRevisions(): void {
 
 export function eventsRevision(sessionId: string): number {
   return revisions.get(sessionId) ?? revisionFloor;
+}
+
+/**
+ * The instruction files one session's CLI reported loading, oldest first so
+ * the order is the order they entered context. Only sessions launched with a
+ * CLI past the VERSION_GATED_EVENTS threshold ever have rows here; for the
+ * rest this is empty, which is not the same as "nothing loaded".
+ */
+export function instructionsLoaded(sessionId: string, limit = 500): LoadedInstruction[] {
+  const n = Math.min(Math.max(Math.trunc(limit) || 1, 1), 5000);
+  const rows = db().prepare(`
+    SELECT at, summary, paths_json FROM session_events
+    WHERE session_id = ? AND event = 'InstructionsLoaded' ORDER BY at ASC, id ASC LIMIT ?
+  `).all(sessionId, n) as { at: number; summary: string | null; paths_json: string | null }[];
+  const out: LoadedInstruction[] = [];
+  for (const r of rows) {
+    const p = parsePaths(r.paths_json)[0];
+    if (!p) continue;
+    out.push({ sessionId, at: r.at, path: p, ...parseLoadedSummary(r.summary) });
+  }
+  return out;
+}
+
+/**
+ * Sessions of one project that recorded at least one InstructionsLoaded row,
+ * newest first. The join is on session_log, which the session owner writes
+ * under the same id the hook settings were registered with.
+ */
+export function instructionsLoadedSessions(projectId: string, limit = 5): { sessionId: string; at: number }[] {
+  const n = Math.min(Math.max(Math.trunc(limit) || 1, 1), 50);
+  return db().prepare(`
+    SELECT e.session_id AS sessionId, MAX(e.at) AS at
+    FROM session_events e JOIN session_log s ON s.id = e.session_id
+    WHERE s.project_id = ? AND e.event = 'InstructionsLoaded'
+    GROUP BY e.session_id ORDER BY at DESC LIMIT ?
+  `).all(projectId, n) as { sessionId: string; at: number }[];
 }
 
 /** Newest first, matching every other event log in the app. */

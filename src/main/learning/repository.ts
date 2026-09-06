@@ -5,7 +5,7 @@ import { automationDecision } from './classifier';
 import { markSignalsProcessed, recordSignal } from './signals';
 import { ARTIFACT_SCOPES, KNOWLEDGE_KINDS } from './types';
 import type {
-  AddEvidenceInput, ArtifactScope, CandidateConflict, CandidateStatus, CreateCandidateInput,
+  AddEvidenceInput, ArtifactScope, CandidateConflict, CandidateStatus, CandidateWake, CreateCandidateInput,
   JsonObject, KnowledgeCandidate, KnowledgeEvidence, KnowledgeItem, KnowledgeKind,
   KnowledgeRelation, KnowledgeSearchInput, KnowledgeSearchResult, KnowledgeStatus,
   KnowledgeVersion, RelationKind,
@@ -31,6 +31,7 @@ type CandidateRow = {
   rationale: string; confidence: number; status: string; evidence_count: number; task_count: number;
   estimated_token_delta: number; conflicts_json: string; signal_ids_json: string; created_at: number;
   updated_at: number; reviewed_at: number | null; reviewer_note: string | null;
+  cluster_key: string | null; snoozed_at: number | null; wake_json: string | null;
 };
 type EvidenceRow = {
   id: string; item_id: string | null; version_id: string | null; candidate_id: string | null;
@@ -118,7 +119,20 @@ const candidateFromRow = (row: CandidateRow): KnowledgeCandidate => ({
   updatedAt: row.updated_at,
   reviewedAt: row.reviewed_at,
   reviewerNote: row.reviewer_note,
+  clusterKey: row.cluster_key ?? null,
+  snoozedAt: row.snoozed_at ?? null,
+  wake: safeWake(row.wake_json),
 });
+
+function safeWake(value: string | null | undefined): CandidateWake | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<CandidateWake> | null;
+    if (!parsed || parsed.code !== 'observed-again') return null;
+    if (typeof parsed.newSignals !== 'number' || typeof parsed.newTasks !== 'number' || typeof parsed.at !== 'number') return null;
+    return { code: 'observed-again', newSignals: parsed.newSignals, newTasks: parsed.newTasks, at: parsed.at };
+  } catch { return null; }
+}
 
 const evidenceFromRow = (row: EvidenceRow): KnowledgeEvidence => ({
   id: row.id,
@@ -225,15 +239,78 @@ export function createCandidate(input: CreateCandidateInput): KnowledgeCandidate
     INSERT INTO knowledge_candidates
       (id,item_id,target_kind,scope,provider_id,project_id,path_scope,title,proposed_text,rationale,
        confidence,status,evidence_count,task_count,estimated_token_delta,conflicts_json,signal_ids_json,
-       created_at,updated_at,reviewed_at,reviewer_note)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,NULL,NULL)
+       created_at,updated_at,reviewed_at,reviewer_note,cluster_key)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,NULL,NULL,?)
   `).run(
     id, input.itemId ?? null, input.targetKind, input.scope, input.providerId ?? null,
     input.projectId ?? null, input.pathScope ?? null, title, proposedText, rationale,
     clamp(input.confidence), counts.evidence_count, counts.task_count,
     Math.trunc(input.estimatedTokenDelta ?? estimateTokens(proposedText)),
     stableJson(conflicts), stableJson(signalIds), now, now,
+    optionalText(input.clusterKey ?? null, 4 * 1024),
   );
+  return getCandidate(id)!;
+}
+
+/**
+ * The snoozed candidate a fresh observation belongs to, if any. The cluster
+ * key is the deterministic match; the title fallback exists only for rows
+ * snoozed before cluster keys were stored, and it compares against the
+ * template's own title, so a person's edit to the candidate title simply means
+ * no match rather than a wrong one. Nothing here reads knowledge_items: that
+ * search (findCandidateConflicts) answers a different question.
+ */
+export function findSnoozedCandidate(input: {
+  clusterKey: string | null;
+  title: string | null;
+  projectId: string | null;
+  targetKind: KnowledgeKind;
+}): KnowledgeCandidate | null {
+  if (input.clusterKey) {
+    const byKey = db().prepare(`
+      SELECT * FROM knowledge_candidates WHERE status='snoozed' AND cluster_key=? AND project_id IS ?
+      ORDER BY updated_at DESC LIMIT 1
+    `).get(input.clusterKey, input.projectId) as CandidateRow | undefined;
+    if (byKey) return candidateFromRow(byKey);
+  }
+  if (!input.title) return null;
+  const byTitle = db().prepare(`
+    SELECT * FROM knowledge_candidates
+    WHERE status='snoozed' AND cluster_key IS NULL AND target_kind=? AND project_id IS ? AND LOWER(title)=LOWER(?)
+    ORDER BY updated_at DESC LIMIT 1
+  `).get(input.targetKind, input.projectId, input.title) as CandidateRow | undefined;
+  return byTitle ? candidateFromRow(byTitle) : null;
+}
+
+/**
+ * The one transition automation may make on a snoozed row: append the new
+ * signals, recompute the counts and conflicts from the union, and return it to
+ * pending with a reason code. The operator's reviewer_note is left exactly as
+ * written; the reason lives in its own column. Refuses unless at least one
+ * independent task was added — "the same session saw it again" is not a
+ * reason to interrupt a person's decision to wait.
+ */
+export function wakeSnoozedCandidate(id: string, signalIds: string[], at = Date.now()): KnowledgeCandidate | null {
+  const candidate = getCandidate(id);
+  if (!candidate) throw new Error('Learning candidate not found.');
+  if (candidate.status !== 'snoozed') throw new Error(`A ${candidate.status} candidate cannot be woken; only a snoozed one can.`);
+  const fresh = uniqueStrings(signalIds).filter((signalId) => !candidate.signalIds.includes(signalId));
+  if (!fresh.length) return null;
+  const union = [...candidate.signalIds, ...fresh];
+  const counts = db().prepare(`
+    SELECT COUNT(*) AS evidence_count,
+      COUNT(DISTINCT COALESCE(task_hash,session_id)) AS task_count
+    FROM learning_signals WHERE id IN (${union.map(() => '?').join(',')})
+  `).get(...union) as { evidence_count: number; task_count: number };
+  if (counts.evidence_count !== union.length) throw new Error('One or more learning signals no longer exist.');
+  const newTasks = counts.task_count - candidate.taskCount;
+  if (newTasks < 1) return null;
+  const wake: CandidateWake = { code: 'observed-again', newSignals: fresh.length, newTasks, at };
+  const conflicts = findCandidateConflicts(candidate);
+  db().prepare(`
+    UPDATE knowledge_candidates SET status='pending',signal_ids_json=?,evidence_count=?,task_count=?,
+      conflicts_json=?,wake_json=?,reviewed_at=NULL,updated_at=? WHERE id=? AND status='snoozed'
+  `).run(stableJson(union), counts.evidence_count, counts.task_count, stableJson(conflicts), stableJson(wake), at, id);
   return getCandidate(id)!;
 }
 
@@ -306,8 +383,13 @@ export function reviewCandidate(id: string, action: ReviewAction, note?: string 
       : action === 'snooze' ? 'snoozed' : 'pending';
   const reviewerNote = optionalText(note, 8 * 1024);
   const now = Date.now();
-  db().prepare('UPDATE knowledge_candidates SET status=?,reviewed_at=?,reviewer_note=?,updated_at=? WHERE id=?')
-    .run(status, action === 'reopen' ? null : now, reviewerNote, now, id);
+  // snoozed_at records the first snooze and is never cleared: the automation
+  // gate reads it as "a person deferred this", which survives reopen and wake.
+  db().prepare(`
+    UPDATE knowledge_candidates SET status=?,reviewed_at=?,reviewer_note=?,updated_at=?,
+      snoozed_at=CASE WHEN ?='snoozed' THEN COALESCE(snoozed_at,?) ELSE snoozed_at END
+    WHERE id=?
+  `).run(status, action === 'reopen' ? null : now, reviewerNote, now, status, now, id);
   return getCandidate(id)!;
 }
 

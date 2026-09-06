@@ -8,7 +8,7 @@ import { listSessions } from './sessions';
 import { providerById } from './providers';
 import { redactCredentials } from './redact';
 import type {
-  CandidateStatus, ForgedSkill, KnowledgeKind, LearningSettings, Session,
+  BriefingPreview, CandidateStatus, ForgedSkill, KnowledgeKind, LearningSettings, Session,
   SessionEvent, TeachWaniganInput, ReviewRun,
 } from '../shared/types';
 import {
@@ -26,7 +26,9 @@ import {
   listRelations,
   pipelineStats,
   recordConsolidationRun,
+  recordMetric,
   recordSessionBriefing,
+  recordTranscriptCitations,
   sessionLearningLedger,
   compileCandidateProjection,
   completeExperiment,
@@ -34,7 +36,9 @@ import {
   createExperiment,
   diagnoseKnowledge,
   doctorSkill,
+  emptyBriefing,
   endExperiment,
+  findSnoozedCandidate,
   forgeSkill,
   getCandidate,
   getKnowledgeItem,
@@ -57,6 +61,7 @@ import {
   summarizeArtifactRoi,
   undoProjection,
   updateCandidate,
+  wakeSnoozedCandidate,
   type ArtifactScope,
   type CreateExperimentInput,
   type KnowledgeCandidate,
@@ -359,6 +364,12 @@ interface SignalCluster {
   taskCount: number;
   /** A project-relative file every signal in the cluster touched, if any. */
   sharedFile: string | null;
+  /**
+   * The grouping key, stored on the candidate this cluster produces. A later
+   * pass matches new observations of the same pattern back to a snoozed
+   * candidate by this key, not by a title a person may have rewritten.
+   */
+  key: string;
 }
 
 const PATH_PREFIX_DEPTH = 3;
@@ -476,12 +487,13 @@ function clusterSignals(signals: LearningSignal[]): SignalCluster[] {
       groups.set(key, { signals: [signal], facets, paths: [paths] });
     }
   }
-  return [...groups.values()].map((group) => ({
+  return [...groups.entries()].map(([key, group]) => ({
     signals: group.signals,
     facets: group.facets,
     observations: group.signals.length,
     taskCount: independentTasks(group.signals),
     sharedFile: sharedFileOf(group.paths),
+    key,
   }));
 }
 
@@ -739,14 +751,18 @@ function automationScopeViolation(candidate: KnowledgeCandidate, signals: Learni
   return null;
 }
 
-/** Deterministic consolidation: repeated observations become reviewable candidates. */
+/**
+ * Deterministic consolidation: repeated observations become reviewable
+ * candidates, and new observations of a pattern a person snoozed wake that
+ * candidate back into the inbox with a reason code.
+ */
 export function consolidate(
   projectId?: string | null,
   trigger: 'timer' | 'manual' = 'manual',
-): { processed: number; candidates: number; autoApplied: number } {
+): { processed: number; candidates: number; autoApplied: number; woken: number } {
   const cfg = learningSettings();
   // A disabled engine records no heartbeat: the run did not happen.
-  if (!cfg.enabled || !cfg.consolidationEnabled) return { processed: 0, candidates: 0, autoApplied: 0 };
+  if (!cfg.enabled || !cfg.consolidationEnabled) return { processed: 0, candidates: 0, autoApplied: 0, woken: 0 };
   const startedAt = Date.now();
   // A signal that found no second independent observation in 45 days will not
   // find one later; age it out so the backlog fetch below is never saturated
@@ -783,11 +799,43 @@ export function consolidate(
   let processed = 0;
   let candidates = 0;
   let autoApplied = 0;
+  let woken = 0;
   let failedGroups = 0;
   let boundaries = 0;
   for (const cluster of clusterSignals(signals)) {
-    if (cluster.observations < 2 || cluster.taskCount < 2) continue;
     const signalIds = cluster.signals.map((signal) => signal.id);
+    // A snoozed candidate is a person's "not now, ask again when there is more".
+    // Its pattern re-forming here is exactly that moment, and it must be checked
+    // before the size gate below: the new observations are usually a single
+    // signal, which on its own could never reach the threshold — that is why
+    // the old pass silently dropped them and a snoozed candidate never woke.
+    // Waking appends the evidence and recomputes the counts; the candidate
+    // returns to pending with a reason code, never to auto-apply
+    // (automationDecision refuses anything ever snoozed).
+    try {
+      const wakeTemplate = KNOWLEDGE_TEMPLATES.find((entry) => entry.matches(cluster));
+      const snoozed = findSnoozedCandidate({
+        clusterKey: cluster.key,
+        title: wakeTemplate ? truncateUtf8Bytes(wakeTemplate.claim(cluster).title, 480) : null,
+        projectId: cluster.signals[0].projectId,
+        targetKind: classifySignal(cluster.signals[0]).targetKind,
+      });
+      if (snoozed) {
+        const wokenCandidate = wakeSnoozedCandidate(snoozed.id, signalIds, startedAt);
+        if (wokenCandidate) {
+          processed += markSignalsProcessed(signalIds);
+          woken++;
+          continue;
+        }
+        // Same tasks seen again: not a reason to interrupt the person. The
+        // signals stay unprocessed so a later independent observation can
+        // cluster with them and wake the candidate with a real count.
+        continue;
+      }
+    } catch (error) {
+      console.warn(`[wanigan] snoozed-candidate wake check failed (${describeFacets(cluster)}):`, error);
+    }
+    if (cluster.observations < 2 || cluster.taskCount < 2) continue;
     // One poisoned cluster must not abort the pass: later clusters would never
     // consolidate and the heartbeat below would never record.
     let marked = false;
@@ -817,6 +865,7 @@ export function consolidate(
           + `confidence follows the independent-task count alone. ${classification.reasons.join(' ')}`,
         confidence: ruleDerivedConfidence(cluster.taskCount),
         signalIds,
+        clusterKey: cluster.key,
       });
       candidates++;
       processed += markSignalsProcessed(signalIds);
@@ -853,6 +902,9 @@ export function consolidate(
   if (boundaries > 0) {
     console.log(`[wanigan] ${boundaries} consolidation cluster(s) repeated a session or gate boundary and nothing else; their signals were marked processed`);
   }
+  if (woken > 0) {
+    console.log(`[wanigan] ${woken} snoozed candidate(s) woke into review: their pattern was observed again in a new independent task`);
+  }
   if (failedGroups > 0) {
     console.warn(`[wanigan] ${failedGroups} consolidation cluster(s) failed this pass; their signals were marked processed`);
   }
@@ -866,8 +918,8 @@ export function consolidate(
   } catch (error) {
     console.warn('[wanigan] consolidation heartbeat not recorded:', error);
   }
-  if (candidates > 0 || autoApplied > 0) emitLearningChanged();
-  return { processed, candidates, autoApplied };
+  if (candidates > 0 || autoApplied > 0 || woken > 0) emitLearningChanged();
+  return { processed, candidates, autoApplied, woken };
 }
 
 function privacyMetadata(candidate: KnowledgeCandidate, providerIds?: string[]): Record<string, unknown> {
@@ -1051,13 +1103,35 @@ export function item(id: string) {
   };
 }
 
+/**
+ * The read-only preview: the same retrieval a launch runs, plus the state a
+ * launch dialog needs to describe what would happen. A disabled engine used
+ * to return an empty stub indistinguishable from "retrieval ran and matched
+ * nothing"; it is now its own state with the full counter shape.
+ */
 export async function briefing(input: {
   query: string; providerId: string; projectId?: string | null; path?: string | null; maxTokens?: number;
-}) {
+}): Promise<BriefingPreview> {
   const cfg = learningSettings();
-  if (!cfg.enabled) return { text: '', entries: [], estimatedTokens: 0, omitted: 0, omittedStale: 0, omittedBudget: 0 };
+  const runtime = providerById(input.providerId);
+  const harnessId = runtime?.harness ?? null;
+  // Mirrors the launch site in sessions.ts: Claude Code takes the capsule on
+  // --append-system-prompt, Codex on a developer_instructions config, and no
+  // other harness receives one. A launch also requires the harness proof: a
+  // built-in profile is reviewed, a local pack must pass its adapter probe.
+  const launchDelivery: BriefingPreview['launchDelivery'] = harnessId === 'claude-code'
+    ? 'append-system-prompt' : harnessId === 'codex' ? 'developer-instructions' : 'none';
+  const harnessProof: BriefingPreview['harnessProof'] = runtime ? (runtime.source === 'builtin' ? 'builtin' : 'probe-required') : null;
+  if (!cfg.enabled) {
+    // Retrieval did not run. The counters are 0 because nothing was asked,
+    // and queryProvided reflects only what the caller supplied.
+    return {
+      ...emptyBriefing(!!input.query.trim() || !!input.path),
+      learningEnabled: false, harnessId, launchDelivery, harnessProof,
+    };
+  }
   const project = input.projectId ? projectById(input.projectId) : null;
-  return buildBriefing({
+  const value = await buildBriefing({
     ...input,
     backendId: providerBackend(input.providerId),
     maxTokens: input.maxTokens ?? cfg.briefingMaxTokens,
@@ -1066,6 +1140,7 @@ export async function briefing(input: {
     // The inspector preview is a read; only launch paths may quarantine.
     quarantineStale: false,
   });
+  return { ...value, learningEnabled: true, harnessId, launchDelivery, harnessProof };
 }
 
 export async function briefingForSession(sessionId: string): Promise<string | null> {
@@ -1185,8 +1260,62 @@ export async function freshnessReport(itemId: string) {
   });
 }
 
+/** Formats the skill compilers write; their target path ends in <skill-name>/SKILL.md. */
+const SKILL_PROJECTION_FORMATS = ['claude-skill', 'agent-skill'];
+
+/**
+ * The knowledge item behind a skill the agent's `Skill` tool ran, found
+ * through the applied projection that wrote its SKILL.md — the directory name
+ * is the skill's identity for both harnesses. A plugin-namespaced identifier
+ * (`plugin:name`) matches on the name; the projection of the session's own
+ * provider wins when several providers carry the same skill. Null when Wanigan
+ * never installed a skill by that name: a built-in or hand-written skill is
+ * not knowledge Wanigan can account for.
+ */
+function skillProjectionFor(identifier: string, providerId: string): { itemId: string; versionId: string | null; projectionId: string } | null {
+  const name = identifier.split(':').pop()?.trim().toLowerCase();
+  if (!name) return null;
+  const rows = db().prepare(`
+    SELECT id, item_id, version_id, provider_id, target_path FROM knowledge_projections
+    WHERE status='applied' AND item_id IS NOT NULL AND target_format IN (${SKILL_PROJECTION_FORMATS.map(() => '?').join(',')})
+    ORDER BY applied_at DESC LIMIT 500
+  `).all(...SKILL_PROJECTION_FORMATS) as { id: string; item_id: string; version_id: string | null; provider_id: string; target_path: string }[];
+  const matching = rows.filter((row) => path.basename(path.dirname(row.target_path)).toLowerCase() === name);
+  const chosen = matching.find((row) => row.provider_id === providerId) ?? matching[0];
+  return chosen ? { itemId: chosen.item_id, versionId: chosen.version_id, projectionId: chosen.id } : null;
+}
+
+/**
+ * A hook-observed `Skill` tool call is the one observation of skill use
+ * Wanigan has, and artifact_metrics is the table the optimizer's "no observed
+ * use" rule reads — so without this row every installed skill looked unused
+ * forever. Recorded only when the call resolves to a skill Wanigan installed;
+ * the identifier is a name, never the arguments. Pre-filling `/name` in the
+ * terminal (skills:send) is not an invocation and never reaches here.
+ */
+function recordSkillInvocation(event: SessionEvent, session: Session): void {
+  if (event.event !== 'PostToolUse' || event.toolName !== 'Skill' || !event.summary) return;
+  const identifier = redactCredentials(event.summary).trim().slice(0, 200);
+  const resolved = skillProjectionFor(identifier, session.providerId);
+  if (!resolved) return;
+  try {
+    recordMetric({
+      itemId: resolved.itemId, versionId: resolved.versionId, projectionId: resolved.projectionId,
+      sessionId: session.id, providerId: session.providerId,
+      metric: 'invocation', value: 1,
+      // Observed in a real session, attributed to nothing controlled.
+      evidenceLevel: 'correlation',
+      attrs: { source: 'hook', tool: 'Skill', skill: identifier, harness: session.harnessId ?? null, ok: event.ok },
+      at: event.at,
+    });
+  } catch (error) {
+    console.warn('[wanigan] skill invocation metric not recorded:', error);
+  }
+}
+
 export function observeSessionEvent(event: SessionEvent, session?: Session | null): LearningSignal | null {
   if (!learningSettings().enabled || !session) return null;
+  recordSkillInvocation(event, session);
   const map: Record<string, string> = {
     PostToolUse: 'tool-success', PostToolUseFailure: 'tool-failure', PermissionDenied: 'permission-denied',
     Stop: 'session-success', StopFailure: 'session-failure', SessionEnd: 'session-success',
@@ -1332,6 +1461,6 @@ export function stopConsolidator(): void {
 
 export {
   createExperiment, diagnoseKnowledge, doctorSkill, forgeSkill, listProjections,
-  listSignals, reviewCandidate, searchKnowledge, updateCandidate,
+  listSignals, recordTranscriptCitations, reviewCandidate, searchKnowledge, updateCandidate,
 };
 export type { CreateExperimentInput, ReviewAction };

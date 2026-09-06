@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Project } from '@shared/types';
-import { Note, Stat, ago, num, usd } from '../components/bits';
+import { ConfirmNote, Explainer, Note, Stat, ago, num, usd } from '../components/bits';
 
 /* What a schedule can be created as.
    'session' is deliberately absent. An unattended PTY that nobody is watching
@@ -136,6 +136,27 @@ export default function Schedules({ projects }: { projects: Project[] }) {
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState<string | null>(null);
 
+  // Editing in place, one row at a time. The form follows the create form's
+  // rules — in particular `allProjects` is never carried across an edit that
+  // removes the project pin; the operator ticks it again or the save is refused.
+  const [editing, setEditing] = useState<string | null>(null);
+  /**
+   * Which schedule is one click from being deleted.
+   *
+   * Delete used to fire on the first click. It removes the row and its run
+   * history and nothing in this view can put either back, while Git and Runs
+   * both confirm before their destructive actions — so this was the one place
+   * in the app where a misclick was permanent, and inconsistent as well as
+   * unsafe.
+   */
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [edit, setEdit] = useState<{ name: string; cron: string; projectId: string; prompt: string; allProjects: boolean; rerunId: string }>(
+    { name: '', cron: '', projectId: '', prompt: '', allProjects: false, rerunId: '' });
+  const [editErr, setEditErr] = useState<string | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
+  const editingKind = list.find((s) => s.id === editing)?.kind;
+
   const load = useCallback(async () => {
     try { setList(await window.wanigan.schedule.list()); setErr(null); }
     catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
@@ -188,7 +209,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
   // database reads the headless path has no use for, and the run list carries
   // every run's config with it.
   useEffect(() => {
-    if (kind !== 'batch') return;
+    if (kind !== 'batch' && editingKind !== 'batch') return;
     let live = true;
     void (async () => {
       try {
@@ -200,7 +221,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
       } catch (e) { if (live) setRunsErr(e instanceof Error ? e.message : String(e)); }
     })();
     return () => { live = false; };
-  }, [kind]);
+  }, [kind, editingKind]);
 
   const chosen = runs.find((r) => r.id === rerunId) ?? null;
   // Only claimed when the run's settled cost is already over the cap: the cap is
@@ -259,8 +280,62 @@ export default function Schedules({ projects }: { projects: Project[] }) {
     catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }
   async function remove(s: Schedule) {
-    try { await window.wanigan.schedule.remove(s.id); await load(); }
+    setDeleting(s.id);
+    try { await window.wanigan.schedule.remove(s.id); setConfirmDelete(null); await load(); }
     catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setDeleting(null); }
+  }
+  function beginEdit(s: Schedule) {
+    const target = batchTarget(s.payload);
+    const payload = (s.payload && typeof s.payload === 'object' ? s.payload : {}) as { prompt?: unknown };
+    setEdit({
+      name: s.name, cron: s.cron, projectId: s.projectId ?? '',
+      prompt: typeof payload.prompt === 'string' ? payload.prompt : '',
+      allProjects: declaresAllProjects(s.payload), rerunId: target?.runId ?? '',
+    });
+    setEditErr(null);
+    setEditing(s.id);
+  }
+  /** The save button names what will change, so a wrong edit is caught before it is written. */
+  function editChanges(s: Schedule): string[] {
+    const out: string[] = [];
+    if (edit.name.trim() && edit.name.trim() !== s.name) out.push(`name → “${edit.name.trim()}”`);
+    if (edit.cron.trim() !== s.cron) out.push(`cron ${s.cron} → ${edit.cron.trim()}`);
+    const newProject = edit.projectId || null;
+    if (newProject !== (s.projectId ?? null)) {
+      out.push(`project ${projects.find((p) => p.id === s.projectId)?.name ?? 'every repository'} → ${projects.find((p) => p.id === newProject)?.name ?? 'every repository'}`);
+    }
+    if (s.kind === 'headless') {
+      const payload = (s.payload && typeof s.payload === 'object' ? s.payload : {}) as { prompt?: unknown };
+      if (edit.prompt.trim() !== (typeof payload.prompt === 'string' ? payload.prompt : '')) out.push('prompt');
+      const willDeclare = !newProject && edit.allProjects;
+      if (willDeclare !== declaresAllProjects(s.payload)) out.push(willDeclare ? 'declares every repository' : 'no longer declares every repository');
+    } else if (s.kind === 'batch' && edit.rerunId !== (batchTarget(s.payload)?.runId ?? '')) {
+      out.push(`re-runs ${runs.find((r) => r.id === edit.rerunId)?.name ?? edit.rerunId}`);
+    }
+    return out;
+  }
+  async function saveEdit(s: Schedule) {
+    setEditBusy(true); setEditErr(null);
+    try {
+      const patch: { name?: string; cron?: string; payload?: unknown; projectId?: string | null } = {};
+      if (edit.name.trim() && edit.name.trim() !== s.name) patch.name = edit.name.trim();
+      if (edit.cron.trim() !== s.cron) patch.cron = edit.cron.trim();
+      const newProject = edit.projectId || null;
+      if (newProject !== (s.projectId ?? null)) patch.projectId = newProject;
+      if (s.kind === 'headless') {
+        // Written every time so a removed pin cannot leave a stale declaration behind.
+        patch.payload = { prompt: edit.prompt.trim(), allProjects: !newProject && edit.allProjects };
+      } else if (s.kind === 'batch') {
+        const target = runs.find((r) => r.id === edit.rerunId);
+        if (!target) throw new Error('Pick the run this schedule re-submits. A batch is a dataset, a model and a template — a prompt box cannot carry one.');
+        patch.payload = { runId: target.id, runName: target.name };
+      }
+      await window.wanigan.schedule.update(s.id, patch);
+      setEditing(null);
+      await load();
+    } catch (e) { setEditErr(e instanceof Error ? e.message : String(e)); }
+    finally { setEditBusy(false); }
   }
   async function history(s: Schedule) {
     if (hist[s.id]) { setHist((h) => { const n = { ...h }; delete n[s.id]; return n; }); return; }
@@ -301,13 +376,16 @@ export default function Schedules({ projects }: { projects: Project[] }) {
         : { value: '—', tone: undefined, sub: list.length ? 'no fire has reported an outcome yet' : 'nothing scheduled' };
 
   return (
-    <div className="sc-wrap">
-      <div className="sc-head">
+    <div className="pane sc-wrap">
+      <div className="pane-head sc-head">
         <h1>Schedules</h1>
         <span className="n">{live.length} running · {list.length - live.length} paused</span>
       </div>
 
-      <p className="dim" style={{ maxWidth: '74ch', marginTop: 6, lineHeight: 1.55 }}>
+      {/* What a schedule is survives a quit as a guide, not as eight lines
+          above the form. The daemon state below it is a live fact and stays. */}
+      <Explainer id="schedules-guide" title="What a schedule is">
+      <p className="dim">
         A schedule is a row in your database, not a timer inside a session: it survives a quit and never expires.
         While Wanigan is open, its own ticker fires whatever is due. With the background scheduler installed it
         keeps firing with Wanigan closed — macOS starts the same app at login with no window, sharing this
@@ -316,6 +394,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
         long as its session and deletes itself after seven days; that is the right call for a terminal and the
         wrong one for a machine you leave running.
       </p>
+      </Explainer>
 
       {daemon && (
         <div className="sunk" style={{ marginTop: 10, padding: '9px 11px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', maxWidth: '74ch' }}>
@@ -609,7 +688,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
                 {s.kind === 'batch' && !target && (
                   <Note tone="warn">
                     This one names no run to re-submit, so every fire fails. It was created when the form could only
-                    store a prompt, and a batch needs a dataset, a model and a template. Delete it and create it again.
+                    store a prompt, and a batch needs a dataset, a model and a template. Edit it and pick the run.
                   </Note>
                 )}
                 {/* The behaviour change made visible. This schedule used to fan
@@ -630,20 +709,108 @@ export default function Schedules({ projects }: { projects: Project[] }) {
                         : ` Every fire is now refused before it starts — it would run an unattended agent in all`
                           + ` ${projects.length} of your registered repositories, and a payload that leaves the`
                           + ` repository out cannot be told apart from one that meant a single repo.`}
-                    {' '}A saved schedule cannot be edited: delete this one and create it again, either pinned to a
-                    repository or with “run in every registered repository” ticked.
+                    {' '}Edit this schedule and either pin a repository or tick “run in every registered repository”.
                   </Note>
                 )}
                 <div className="sc-actions">
                   <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }} onClick={() => void toggle(s)}>
                     {s.enabled ? 'Pause' : 'Resume'}
                   </button>
+                  {s.kind !== 'session' && (
+                    <button className="btn btn-sm"
+                            aria-expanded={editing === s.id}
+                            onClick={() => (editing === s.id ? setEditing(null) : beginEdit(s))}>
+                      {editing === s.id ? 'Cancel edit' : 'Edit'}
+                    </button>
+                  )}
                   <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }} onClick={() => void history(s)}>
                     {hist[s.id] ? 'Hide history' : 'History'}
                   </button>
-                  <button className="btn btn-danger" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
-                          onClick={() => void remove(s)}>Delete</button>
+                  <button className="btn btn-danger btn-sm" aria-expanded={confirmDelete === s.id}
+                          onClick={() => setConfirmDelete(confirmDelete === s.id ? null : s.id)}>
+                    {confirmDelete === s.id ? 'Cancel' : 'Delete…'}
+                  </button>
                 </div>
+                {/* Directly under the row it belongs to: a confirmation somewhere
+                    else on the page is a confirmation of nothing in particular. */}
+                {confirmDelete === s.id && (
+                  <ConfirmNote tone="error" verb={deleting === s.id ? 'Deleting…' : 'Delete schedule'}
+                               busy={deleting === s.id}
+                               onCancel={() => setConfirmDelete(null)}
+                               onRun={() => remove(s)}
+                               what={<>
+                                 Delete <strong>{s.name}</strong> ({s.cron})? Its run history goes with it and
+                                 nothing here can bring either back. Anything it already started keeps running.
+                               </>} />
+                )}
+                {editing === s.id && (() => {
+                  const changes = editChanges(s);
+                  const editUnpinned = !edit.projectId;
+                  return (
+                    <form className="sc-edit" onSubmit={(e) => { e.preventDefault(); void saveEdit(s); }}>
+                      <div className="sc-row">
+                        <div className="sc-f sc-f-name">
+                          <span className="label">Name</span>
+                          <input className="field" value={edit.name} onChange={(e) => setEdit((v) => ({ ...v, name: e.target.value }))} />
+                        </div>
+                        <div className="sc-f sc-f-cron">
+                          <span className="label">Cron</span>
+                          <input className="field mono" value={edit.cron} onChange={(e) => setEdit((v) => ({ ...v, cron: e.target.value }))} />
+                        </div>
+                        <div className="sc-f sc-f-proj">
+                          <span className="label">Project</span>
+                          <select className="field" value={edit.projectId}
+                                  onChange={(e) => {
+                                    const next = e.target.value;
+                                    // Removing the pin removes the declaration with it; it has to be ticked again.
+                                    setEdit((v) => ({ ...v, projectId: next, allProjects: next === '' && v.projectId !== '' ? false : v.allProjects }));
+                                  }}>
+                            <option value="">Every registered repository</option>
+                            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="sc-presets">
+                        {PRESETS.map((p) => (
+                          <button key={p.cron} className="sc-preset" type="button" onClick={() => setEdit((v) => ({ ...v, cron: p.cron }))}>{p.label}</button>
+                        ))}
+                      </div>
+                      {s.kind === 'headless' && (
+                        <div className="sc-f">
+                          <span className="label">Prompt</span>
+                          <input className="field" value={edit.prompt} onChange={(e) => setEdit((v) => ({ ...v, prompt: e.target.value }))} />
+                          {editUnpinned && (
+                            <label className="sc-check">
+                              <input type="checkbox" checked={edit.allProjects}
+                                     onChange={(e) => setEdit((v) => ({ ...v, allProjects: e.target.checked }))} />
+                              <span className="dim">
+                                <strong>Run in every registered repository.</strong> No repository is pinned, so the save is
+                                refused without this: a fan-out is declared, never inferred from an empty field.
+                              </span>
+                            </label>
+                          )}
+                        </div>
+                      )}
+                      {s.kind === 'batch' && (
+                        <div className="sc-f">
+                          <span className="label">Run to re-submit</span>
+                          <select className="field" value={edit.rerunId} onChange={(e) => setEdit((v) => ({ ...v, rerunId: e.target.value }))}>
+                            <option value="">Pick a run…</option>
+                            {runs.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                          </select>
+                          {runsErr && <Note tone="error">{runsErr}</Note>}
+                        </div>
+                      )}
+                      {editErr && <Note tone="error">{editErr}</Note>}
+                      <div className="sc-actions">
+                        <button type="submit" className="btn btn-primary" disabled={editBusy || changes.length === 0}>
+                          {editBusy ? 'Saving…' : changes.length === 0 ? 'No changes yet' : `Save — changes: ${changes.join('; ')}`}
+                        </button>
+                        <button type="button" className="btn" onClick={() => setEditing(null)}>Cancel</button>
+                      </div>
+                    </form>
+                  );
+                })()}
                 {histErr[s.id] && (
                   <Note tone="error">
                     Could not read this schedule's fire history. {histErr[s.id]} Press History again to retry —

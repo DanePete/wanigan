@@ -110,7 +110,13 @@ export async function checkItemFreshness(itemId: string, options: FreshnessOptio
   }
 
   if (!issues.length) {
-    db().prepare('UPDATE knowledge_items SET last_validated_at=? WHERE id=?').run(checkedAt, itemId);
+    // "Validated" means a citation was re-hashed and matched. An item whose
+    // only evidence is learning-signal rows passes with checked=0, and stamping
+    // it would let the Knowledge view print "checked 2m ago" for a row nothing
+    // has ever checked. It stays at its last real validation, or never.
+    if (checked > 0) {
+      db().prepare('UPDATE knowledge_items SET last_validated_at=? WHERE id=?').run(checkedAt, itemId);
+    }
   } else if (
     options.quarantine === true && item.status === 'active'
     && issues.some((issue) => issue.kind === 'changed' || issue.kind === 'missing')

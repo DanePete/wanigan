@@ -1,12 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  ExpiringResults,
   LaunchOptions, PastSession, Project, ProviderInfo, Session, RunConfig, SourceConfig,
   SessionUsage, ApiEvent, SessionEvent, Attention, TranscriptHit, TranscriptTurn,
   WorktreeInfo, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, HeadlessStartRequest,
   QueueItem, QueueSlots, QueueState,
   BackupCheck, BackupRestoreSummary, BackupSummary,
   CheckpointDiff, CheckpointRevertPlan, CheckpointRevertResult, SessionCheckpoint,
-  InteractiveSessionLoad, NotificationRoute, PluginScope,
+  InteractiveSessionLoad, MenuRoute, NotificationRoute, PluginScope,
   McpServerConfig, McpServerStatus, BudgetState, Reconciliation, TrustLevel, LedgerEntry,
   WaniganSettings, ThemeSetting, UploadedFile, EvalPair, GoldenSet,
   EgressReport, ObservedSession, ObservedState,
@@ -22,7 +23,7 @@ import type {
   TeachWaniganInput,
   ImprovementScoutGoal, ImprovementScoutOverview, ImprovementScoutRun,
   ImprovementScoutSettings, ImprovementScoutSource, ImprovementScoutSuggestion, ImprovementScoutSuggestionStatus,
-  ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode, DocketProof,
+  AccountResolution, AgentAccount, ControlEvent, UsageSnapshot, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode, DocketPlanNode, DocketProof,
   DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, WorkDocket,
 } from '../shared/types';
 
@@ -189,6 +190,8 @@ const api = {
 
   // ── phase 1 · telemetry ──────────────────────────────────────────────
   usage: {
+    /** The whole Usage screen: live limit windows plus recorded consumption. */
+    snapshot: (input?: { days?: number; force?: boolean }) => call<UsageSnapshot>('usage:snapshot', input),
     session: (id: string) => call<SessionUsage>('usage:session', id),
     many: (ids: string[]) => call<Record<string, SessionUsage>>('usage:many', ids),
     events: (id: string, limit?: number) => call<ApiEvent[]>('usage:events', id, limit),
@@ -274,7 +277,7 @@ const api = {
   // ── phase 14 · notifications ─────────────────────────────────────────
   notify: {
     expiring: () => call<unknown[]>('notify:expiring'),
-    resultsExpiring: () => call<unknown[]>('notify:resultsExpiring'),
+    resultsExpiring: () => call<ExpiringResults[]>('notify:resultsExpiring'),
     enabled: () => call<boolean>('notify:enabled'),
     setEnabled: (on: boolean) => call<boolean>('notify:setEnabled', on),
     // Which session is on screen right now, so main can keep quiet about the
@@ -346,6 +349,8 @@ const api = {
     create: (input: { name: string; cron: string; kind: 'headless' | 'session' | 'batch'; payload: unknown; projectId?: string | null }) =>
       call<any>('schedule:create', input),
     setEnabled: (id: string, on: boolean) => call<any>('schedule:setEnabled', id, on),
+    update: (id: string, patch: { name?: string; cron?: string; payload?: unknown; projectId?: string | null }) =>
+      call<any>('schedule:update', id, patch),
     remove: (id: string) => call<boolean>('schedule:delete', id),
     history: (id: string, limit?: number) => call<{ at: number; status: string; detail: string | null }[]>('schedule:history', id, limit),
     preview: (cron: string) => call<{ fires: number[]; describe: string }>('schedule:preview', cron),
@@ -384,16 +389,32 @@ const api = {
     run: (projectId: string) => call<ReviewRun>('review:run', projectId),
   },
   // ── P30 · durable agent control plane ───────────────────────────────
+  accounts: {
+    list: (harness: string) => call<AgentAccount[]>('accounts:list', harness),
+    create: (input: { harness: string; label: string; configDir: string; seedFromAccountId?: string | null }) =>
+      call<AgentAccount>('accounts:create', input),
+    rename: (id: string, label: string) => call<AgentAccount>('accounts:rename', id, label),
+    setDefault: (id: string) => call<AgentAccount>('accounts:setDefault', id),
+    remove: (id: string) => call<{ removed: boolean; configDir: string }>('accounts:remove', id),
+    forProject: (projectId: string, harness: string) => call<AgentAccount | null>('accounts:forProject', projectId, harness),
+    setForProject: (projectId: string, harness: string, accountId: string | null) =>
+      call<AgentAccount | null>('accounts:setForProject', projectId, harness, accountId),
+    resolveForLaunch: (providerId: string, projectId?: string | null, explicitAccountId?: string | null) =>
+      call<AccountResolution>('accounts:resolveForLaunch', providerId, projectId, explicitAccountId),
+    listForProvider: (providerId: string) => call<AgentAccount[]>('accounts:listForProvider', providerId),
+  },
   control: {
     list: (projectId?: string | null, limit?: number) => call<WorkDocket[]>('control:list', projectId, limit),
     get: (id: string) => call<DocketDetail>('control:get', id),
-    create: (input: { projectId: string; title: string; objective: string; acceptance: string[]; risk?: DocketRisk; budgetUsd?: number | null }) =>
+    create: (input: { projectId: string; title: string; objective: string; acceptance: string[]; risk?: DocketRisk; budgetUsd?: number | null; plan?: DocketPlanNode[] }) =>
       call<DocketDetail>('control:create', input),
     claim: (nodeId: string, relPath: string) => call<DocketClaim>('control:claim', nodeId, relPath),
     releaseClaim: (id: string) => call<boolean>('control:releaseClaim', id),
     start: (nodeId: string, input: { providerId: string; model?: string; effort?: string; permissionMode?: string }) =>
       call<DocketNode>('control:start', nodeId, input),
     retry: (nodeId: string) => call<DocketNode>('control:retry', nodeId),
+    setAutopilot: (docketId: string, input: { enabled: boolean; providerId?: string; model?: string | null }) =>
+      call<DocketDetail>('control:setAutopilot', docketId, input),
     checkpoint: (nodeId: string, note: string) => call<DocketCheckpoint>('control:checkpoint', nodeId, note),
     runProof: (nodeId: string) => call<DocketProof>('control:runProof', nodeId),
     complete: (nodeId: string, input?: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }) =>
@@ -659,6 +680,15 @@ const api = {
       const h = (_e: unknown, route: NotificationRoute) => cb(route);
       ipcRenderer.on('notify:open', h);
       return () => ipcRenderer.removeListener('notify:open', h);
+    },
+    // A menu item was chosen. Main builds the menu bar from the route table but
+    // owns none of the routing: the renderer holds the router, the dialogs and
+    // the knowledge of what is on screen, so the menu says what was asked for
+    // and this window decides what that means.
+    menuRoute: (cb: (route: MenuRoute) => void) => {
+      const h = (_e: unknown, route: MenuRoute) => cb(route);
+      ipcRenderer.on('menu:route', h);
+      return () => ipcRenderer.removeListener('menu:route', h);
     },
   },
 };

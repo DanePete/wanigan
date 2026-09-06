@@ -98,7 +98,7 @@
   padding: 9px 2px; border-top: 1px solid var(--line-soft);
 }
 .ctx-slot:first-child { border-top: none; }
-.ctx-slot h4 { font-size: 12.5px; font-weight: 600; }
+.ctx-slot h4 { font-size: var(--t-small); font-weight: 600; }
 .ctx-slot p { font-size: 12px; line-height: 1.5; color: var(--text-dim); }
 .ctx-slot .how { font-size: 11.5px; line-height: 1.5; color: var(--text-faint); margin-top: 3px; }
 

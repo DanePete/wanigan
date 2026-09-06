@@ -276,6 +276,66 @@ export function setScheduleEnabled(id: string, on: boolean): Schedule | null {
   return listSchedules().find((s) => s.id === id) ?? null;
 }
 
+/**
+ * Edit a saved schedule in place. The renderer used to say "delete this one and
+ * create it again", which threw away the run history along with the row.
+ *
+ * Every field is re-validated the way createSchedule validates it: the patch
+ * arrives from the renderer and is untrusted. The kind is fixed for the life
+ * of a row (a headless prompt and a batch re-submission are different jobs
+ * with different payloads), and a headless schedule that loses its project
+ * pin must declare the fan-out again — `allProjects` is the operator's explicit
+ * statement, never a default that survives an edit. The write is one UPDATE so
+ * a tick between two statements can never see half an edit, and the change is
+ * recorded in the same history the operator reads to audit fires.
+ */
+export function updateSchedule(id: string, patch: Record<string, unknown>): Schedule | null {
+  const row = db().prepare('SELECT * FROM schedules WHERE id=?').get(id) as Row | undefined;
+  if (!row) return null;
+  if (row.id === IMPROVEMENT_SCOUT_SCHEDULE_ID || row.kind === 'scout') {
+    throw new Error('AI Improvement Scout scheduling is controlled from the Scout dashboard so its source and network permissions stay paired.');
+  }
+  if ('kind' in patch && patch.kind !== undefined && patch.kind !== row.kind) {
+    throw new Error('A schedule keeps its kind. Create a new schedule to run something else.');
+  }
+  const name = typeof patch.name === 'string' ? patch.name.trim() : row.name;
+  if (!name) throw new Error('Give the schedule a name you will recognise in a week.');
+  const cron = typeof patch.cron === 'string' ? patch.cron.trim() : row.cron;
+  const next = nextFire(cron);
+  if (next === null) {
+    throw new Error(`"${cron}" never matches a real date — check the day-of-month and month fields.`);
+  }
+  const projectId = 'projectId' in patch
+    ? (patch.projectId === null || typeof patch.projectId === 'string' ? patch.projectId : row.project_id)
+    : row.project_id;
+  let payload: unknown;
+  if ('payload' in patch) payload = patch.payload ?? {};
+  else { try { payload = JSON.parse(row.payload_json); } catch { payload = {}; } }
+  if (row.kind === 'headless' && projectId === null) {
+    const declares = !!payload && typeof payload === 'object' && (payload as { allProjects?: unknown }).allProjects === true;
+    if (!declares) {
+      throw new Error('A headless schedule with no project pinned runs across every project. Declare that (allProjects: true) or pin a project.');
+    }
+  }
+
+  const changes: string[] = [];
+  if (name !== row.name) changes.push(`name "${row.name}" → "${name}"`);
+  if (cron !== row.cron) changes.push(`cron ${row.cron} → ${cron}`);
+  if (projectId !== row.project_id) changes.push(`project ${row.project_id ?? 'none'} → ${projectId ?? 'none'}`);
+  const payloadJson = JSON.stringify(payload ?? {});
+  if (payloadJson !== row.payload_json) changes.push('payload changed');
+  if (changes.length === 0) return toSchedule(row);
+
+  // Re-arm from now when the cron changed and the schedule is on; a paused
+  // schedule stays paused (next_at null) exactly as setScheduleEnabled leaves it.
+  const nextAt = row.enabled === 1 ? (cron !== row.cron ? next : row.next_at ?? next) : null;
+  db().prepare('UPDATE schedules SET name=?, cron=?, payload_json=?, project_id=?, next_at=? WHERE id=?')
+    .run(name, cron, payloadJson, projectId, nextAt, id);
+  db().prepare('INSERT INTO schedule_runs (schedule_id, at, status, detail) VALUES (?,?,?,?)')
+    .run(id, Date.now(), 'edited', `Edited — ${changes.join('; ')}.`);
+  return listSchedules().find((s) => s.id === id) ?? null;
+}
+
 export function deleteSchedule(id: string): boolean {
   const row = db().prepare('SELECT id,kind FROM schedules WHERE id=?').get(id) as { id: string; kind: string } | undefined;
   if (row && (row.id === IMPROVEMENT_SCOUT_SCHEDULE_ID || row.kind === 'scout')) {

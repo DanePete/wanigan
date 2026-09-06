@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { claudeContextUsage, contextUsageFromTail } from './transcripts';
+import { db } from './db';
+import { assumedClaudeWindow, claudeContextUsage, contextUsageFromTail, rememberReportedContextWindows, reportedContextWindow } from './transcripts';
 import { claudeContextLabel } from '../shared/provider-status';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
@@ -60,8 +61,55 @@ export async function runContextMeterSmoke(check: Check, say: Say): Promise<void
       'the newest usage record wins and all four token fields are summed', JSON.stringify(r));
     check(r.kind === 'ok' && r.window === 200_000 && r.percent === 62 && r.model === 'claude-sonnet-4-5',
       'a claude-family model reads against the assumed 200k window as 62%', JSON.stringify(r));
+    check(r.kind === 'ok' && r.windowSource === 'assumed-200k' && /assumed/i.test(r.windowNote ?? ''),
+      'the 200k window is labelled an assumption, with a sentence saying why', JSON.stringify(r));
     check(r.kind === 'ok' && r.at === Date.parse('2026-09-01T10:00:00Z'),
       'the measurement carries the record\u2019s own timestamp');
+
+    // ── the [1m] suffix decides the window ───────────────────────────
+    write('conv-a.jsonl', [usageLine({ in: 300_000, read: 200_000 }, 'claude-opus-5[1m]')]);
+    r = claudeContextUsage(cwd, 'conv-a', since);
+    check(r.kind === 'ok' && r.window === 1_000_000 && r.percent === 50 && r.windowSource === 'assumed-1m',
+      'a model spelled with the [1m] suffix in the transcript reads against an assumed 1M window', JSON.stringify(r));
+    check(assumedClaudeWindow('claude-opus-5', 'claude-sonnet-4-5').window === null
+      && /changed mid-session/.test(assumedClaudeWindow('claude-opus-5', 'claude-sonnet-4-5').note ?? ''),
+    'a full launch id with a different base than the newest turn means a mid-session model switch: no window is assumed');
+    check(assumedClaudeWindow('claude-opus-5', 'opus').window === 200_000
+      && assumedClaudeWindow(null, 'opus[1m]').window === 1_000_000
+      && assumedClaudeWindow(null, 'sonnet').window === 200_000
+      && assumedClaudeWindow(null, null).window === null,
+    'an alias never triggers the switch rule, and the launch model is only the fallback for a record naming no model');
+
+    // ── a CLI-reported window for the same model, backend and account ─
+    const convReported = `conv-reported-${Date.now().toString(36)}`;
+    const rowId = `s_ctx_${Date.now().toString(36)}`;
+    db().prepare(`INSERT INTO session_log (id, conversation_id, provider_id, harness_id, backend_id, account_id, model, project_path, project_name, started_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`).run(rowId, convReported, 'claude', 'claude-code', 'anthropic', 'acct_ctx_smoke', 'opus', cwd, 'ctx', Date.now());
+    try {
+      rememberReportedContextWindows([{ model: 'claude-opus-5', contextWindow: 200_000 }], { backendId: 'anthropic', accountId: 'acct_ctx_smoke', at: Date.now() });
+      rememberReportedContextWindows([{ model: 'claude-opus-5', contextWindow: 1_000_000 }], { backendId: 'anthropic', accountId: 'acct_ctx_other', at: Date.now() });
+      check(reportedContextWindow('claude-opus-5', 'anthropic', 'acct_ctx_smoke')?.contextWindow === 200_000
+        && reportedContextWindow('claude-opus-5', 'anthropic', 'acct_ctx_other')?.contextWindow === 1_000_000
+        && reportedContextWindow('claude-opus-5', 'zai', 'acct_ctx_smoke') === null
+        && reportedContextWindow('claude-opus-5[1m]', 'anthropic', 'acct_ctx_smoke') === null,
+      'a reported window is keyed to the exact model spelling, backend and account, and answers for nothing else');
+      write(`${convReported}.jsonl`, [usageLine({ in: 100_000 }, 'claude-opus-5')]);
+      r = claudeContextUsage(cwd, convReported, since);
+      check(r.kind === 'ok' && r.window === 200_000 && r.windowSource === 'cli-reported' && /reported by the Claude CLI/.test(r.windowNote ?? '')
+        && /not measured/.test(r.windowNote ?? ''),
+      'a session under the same model, backend and account uses the CLI-reported window and says it is reported, not measured', JSON.stringify(r));
+      write(`${convReported}.jsonl`, [usageLine({ in: 100_000 }, 'claude-opus-5[1m]')]);
+      r = claudeContextUsage(cwd, convReported, since);
+      check(r.kind === 'ok' && r.windowSource === 'assumed-1m',
+        'a different model spelling falls back to the labelled assumption rather than reusing another spelling’s report');
+    } finally {
+      // The transcript this block wrote is the newest file in the project
+      // directory, and the lifetime fallback below picks exactly that. A
+      // fixture that outlives its own test is a false positive waiting to
+      // happen, so it goes with the session row it belonged to.
+      try { fs.rmSync(path.join(projectDir, `${convReported}.jsonl`), { force: true }); } catch { /* already gone */ }
+      db().prepare('DELETE FROM session_log WHERE id = ?').run(rowId);
+    }
 
     // ── noise that must not become a measurement ─────────────────────
     write('conv-a.jsonl', [

@@ -11,6 +11,7 @@ import { createSession, listSessions } from '../sessions';
 import { findRepos } from '../browse';
 import { trustFor } from '../policy';
 import * as control from '../control';
+import { recallEnabled, recallTranscripts } from '../transcripts';
 import type { ProviderId, RunConfig, SourceConfig, SystemBlock } from '../../shared/types';
 
 /**
@@ -377,6 +378,55 @@ const TOOLS: ToolDef[] = [
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   },
 ];
+
+/**
+ * Listed only to a session whose project opted in, so an agent in a project
+ * that did not is never told past conversations are reachable. The tool is an
+ * explicit call the hooks record as `mcp__wanigan__wanigan_recall_transcripts`
+ * — nothing is injected — and it answers only from the caller's own project
+ * under the backend and account the session was frozen to at launch.
+ */
+const RECALL_TOOL: ToolDef = {
+  name: 'wanigan_recall_transcripts',
+  title: 'Recall this project’s archived transcripts',
+  description:
+    'Search the archived transcripts of earlier sessions in this same project that ran under this session’s own ' +
+    'backend and account. Returns short redacted snippets with the session they came from; it never returns whole ' +
+    'conversations, other projects, other accounts, or anything from a different model backend. Only the Claude Code ' +
+    'harness has an archive — a Codex session is told so rather than shown an empty list. An operator enabled this ' +
+    'for the project; it is off by default.',
+  inputSchema: {
+    type: 'object', additionalProperties: false, required: ['query'],
+    properties: {
+      query: { type: 'string', description: 'Words or a phrase to look for. Matched as a literal phrase with a prefix on the last word.' },
+      limit: { type: 'integer', minimum: 1, maximum: 20, description: 'Snippets to return. Default 10.' },
+    },
+  },
+  annotations: { readOnlyHint: true, openWorldHint: false },
+};
+
+/** The tool list this caller sees: the fixed set, plus recall when its project opted in. */
+function toolsFor(caller: McpCaller): ToolDef[] {
+  return recallEnabled(caller.projectId) ? [...TOOLS, RECALL_TOOL] : TOOLS;
+}
+
+/**
+ * The scope a recall is confined to, read from the caller's own session row
+ * — the harness, backend and account frozen at launch, never anything the
+ * client sent. A row that has gone is a session that has ended, and the
+ * transport already refused it before we got here.
+ */
+function callerScope(caller: McpCaller): { projectId: string; harnessId: string | null; providerId: string | null; backendId: string | null; accountId: string | null } {
+  const row = db().prepare('SELECT provider_id, harness_id, backend_id, account_id FROM session_log WHERE id = ?')
+    .get(caller.sessionId) as { provider_id: string; harness_id: string | null; backend_id: string | null; account_id: string | null } | undefined;
+  return {
+    projectId: caller.projectId,
+    harnessId: row?.harness_id ?? null,
+    providerId: row?.provider_id ?? null,
+    backendId: row?.backend_id ?? null,
+    accountId: row?.account_id ?? null,
+  };
+}
 
 const INSTRUCTIONS =
   'Wanigan runs Message Batches over datasets at half the synchronous price. When you are facing more rows than you ' +
@@ -792,6 +842,18 @@ async function callTool(name: string, args: Record<string, unknown>, caller: Mcp
       return ok({ claim });
     }
 
+    case 'wanigan_recall_transcripts': {
+      // Checked again at call time: a project switched off between tools/list
+      // and this call is refused, and a client that never listed cannot call.
+      if (!recallEnabled(caller.projectId)) {
+        return toolError('Transcript recall is not enabled for this project. An operator turns it on in Wanigan; it is off by default.');
+      }
+      const recall = recallTranscripts(callerScope(caller), args.query, optNum(args.limit, 'limit'));
+      if (recall.kind === 'disabled') return toolError(recall.note);
+      if (recall.kind === 'unsupported') return ok({ recall, note: recall.note });
+      return ok({ recall, note: recall.note ?? `${recall.hits.length} snippet(s) from ${recall.archivedSessions} archived session(s) in this project, backend and account.` });
+    }
+
     default:
       return toolError(`No such tool: ${name}. Call tools/list to see what this server offers.`);
   }
@@ -825,7 +887,7 @@ async function dispatch(msg: JsonRpcMessage, caller: McpCaller): Promise<JsonRpc
       return result(id, {});
 
     case 'tools/list':
-      return result(id, { tools: TOOLS });
+      return result(id, { tools: toolsFor(caller) });
 
     case 'resources/list':
       return result(id, { resources: [{ uri: 'ui://wanigan/goal-inspector', name: 'Wanigan Goal inspector', mimeType: 'text/html', description: 'A sandboxed, network-free companion view for durable Goal results.' }] });

@@ -5,13 +5,14 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  detectProviders, effectiveProviderBackendId, providerPackRegistry, refreshProviderPacks, runsClaudeCli,
+  detectProviders, effectiveProviderBackendId, providerById, providerPackRegistry, refreshProviderPacks,
+  runsClaudeCli, usesAnthropicAccount,
 } from './providers';
 import {
   initSessions, listSessions, createSession, writeSession, resizeSession,
   killSession, closeSession, scrollback, markRead, shutdownAll, sessionBaseline, interruptSession,
   pastSessions, forgetPastSession, recoverExactCodexThread, setSessionExitObserver,
-  setSessionTuning, setConversationFlag, renameSession,
+  setSessionTuning, setConversationFlag, renameSession, redirectsAnthropicApiFor,
 } from './sessions';
 import { listProjects, addProject, removeProject, refreshBranches, projectById } from './store';
 import * as batch from './batch';
@@ -20,7 +21,7 @@ import { getSetting, setSetting, setTheme, setUserPreference, spendCap } from '.
 import { hasKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailable, getWorkspaceId,
          hasProviderKey, setProviderKey, clearProviderKey, providerKeyFingerprint } from './keys';
 import type {
-  BackupCheck, BackupRestoreSummary, BackupSummary,
+  BackupCheck, BackupRestoreSummary, BackupSummary, DocketPlanNode,
   HeadlessRowDetail, HeadlessRowSummary, HeadlessStartRequest, HookInput,
   InteractiveSessionLoad, LaunchOptions, McpServerConfig, PluginScope,
   ProviderInfo, ProviderManifestInspection, QueueSlots, RunConfig, Session,
@@ -28,6 +29,7 @@ import type {
 } from '../shared/types';
 import { EFFORT_LEVELS } from '../shared/types';
 import { assertManagedRoot, assertOpenablePath } from './roots';
+import { installApplicationMenu } from './menu';
 
 // ── phases 1-24 ────────────────────────────────────────────────────────
 import * as otel from './otel';
@@ -79,6 +81,8 @@ import * as learning from './learning-service';
 // wraps consolidation and briefing, and has no retirement path of its own.
 import { retireKnowledgeItem } from './learning';
 import * as control from './control';
+import * as accounts from './accounts';
+import * as usage from './usage';
 import * as scout from './improvement-scout';
 
 // The smoke suite deliberately has no window. A rejected startup promise in
@@ -219,6 +223,9 @@ const SCHEDULED_BUDGET_USD = 2;
 const SCHEDULED_TIMEOUT_MS = 15 * 60_000;
 
 let win: BrowserWindow | null = null;
+/** Slower than the dispatcher: a docket becomes eligible when work finishes. */
+const AUTOPILOT_SWEEP_MS = 10_000;
+let autopilotTimer: NodeJS.Timeout | null = null;
 let uiInitialized = false;
 
 /**
@@ -685,6 +692,12 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  // Built after the window exists so every item has something to send to. It
+  // is set once for the application rather than per window: macOS shows one
+  // menu bar, and rebuilding it on each window would be a second source of the
+  // route table.
+  installApplicationMenu(() => win);
+
   const devRenderer = developmentRendererUrl();
   if (devRenderer) {
     win.loadURL(devRenderer);
@@ -1038,10 +1051,38 @@ async function startServices() {
     const w = win;
     if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
   });
+  queue.registerRunner('node', async (payload) => {
+    const nodeId = (payload as { nodeId?: unknown } | null)?.nodeId;
+    if (typeof nodeId !== 'string' || !nodeId) {
+      throw new Error('This autopilot queue item names no Goal task. Remove it and re-enable autopilot on the docket.');
+    }
+    await control.startQueuedNode(nodeId);
+  });
   queue.startDispatcher(() => {
     const w = win;
     if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
   });
+  // The sweep only writes queue rows; the dispatcher above still decides when
+  // one may start. It runs on its own slower interval because a docket becomes
+  // eligible through work finishing, not through the queue moving.
+  //
+  // Guarded against smoke as defence in depth. The suite returns before
+  // service startup today, so this line is unreachable there — but a sweep
+  // firing inside the suite's own process would start real paid sessions
+  // against its fixtures, and that is not a hazard to leave resting on the
+  // order of two early returns. The suite calls sweepAutopilot() directly.
+  if (!smokeMode) autopilotTimer = setInterval(() => {
+    try {
+      if (control.sweepAutopilot() > 0) {
+        const w = win;
+        if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
+      }
+    } catch (e) {
+      // Same reasoning as the dispatcher's own guarded tick: a throw here has
+      // no handler and would take Electron down with every live PTY.
+      console.warn('[wanigan] autopilot sweep failed; skipping this pass:', e);
+    }
+  }, AUTOPILOT_SWEEP_MS);
 
   if (f.mcpServerEnabled) {
     try {
@@ -1182,6 +1223,7 @@ function stopServices() {
   hooks.setLearningBriefingHook(null);
   try { schedule.stopScheduler(); } catch { /* already down */ }
   try { queue.stopDispatcher(); } catch { /* already down */ }
+  if (autopilotTimer) { clearInterval(autopilotTimer); autopilotTimer = null; }
   try { hooks.stopHookServer(); } catch { /* already down */ }
   try { otel.stopCollector(); } catch { /* already down */ }
   try { mcpServer.stopMcpServer(); } catch { /* already down */ }
@@ -1391,7 +1433,45 @@ function registerIpc() {
 
   handle('projects:list', () => listProjects());
   handle('projects:refresh', () => refreshBranches());
-  handle('projects:add', (dir: string) => addProject(dir));
+  /*
+   * A registered project is the seed of the allowlist every other guard leans
+   * on: roots.ts builds managedRoots() from exactly this table, and its header
+   * states the premise — "Both come from this process's own records, never from
+   * the caller." This channel broke that. It took a bare path from the renderer
+   * and inserted it, and addProject's only refusal is assertWholeRepo, which
+   * rejects a *subdirectory* of a repo and passes any other directory. One call
+   * naming a home directory registered a root, and from then on assertManagedRoot
+   * succeeded for everything under it: code:read on ~/.ssh, browse:open handing
+   * a file to LaunchServices, and — if the directory happened to be a repo —
+   * git:discard and git:checkout writing to it.
+   *
+   * The path now has to be confirmed in the main process, naming the exact
+   * directory, the way plugins:marketAdd already confirms a marketplace. That
+   * keeps the drag-and-drop and scripted routes working while making the one
+   * thing that matters — "the operator saw this path and agreed to it" — true
+   * again. projects:pick, which sources its path from a main-process dialog,
+   * needs no second confirmation and does not get one.
+   */
+  handle('projects:add', async (dir: unknown) => {
+    if (typeof dir !== 'string' || !dir.trim()) throw new Error('A project path is required.');
+    const resolved = path.resolve(dir);
+    const w = win;
+    if (!w || w.isDestroyed()) {
+      throw new Error('Adding a project needs the Wanigan window open to confirm it.');
+    }
+    const answer = await dialog.showMessageBox(w, {
+      type: 'warning',
+      buttons: ['Cancel', 'Add this project'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Add this directory as a project?',
+      message: resolved,
+      detail: 'A project is a directory Wanigan is allowed to read, open, and run git in. '
+        + 'Everything below it becomes reachable to the agents you start here.',
+    });
+    if (answer.response !== 1) throw new Error('Cancelled. No project was added.');
+    return addProject(resolved);
+  });
   handle('projects:remove', (id: string) => { removeProject(id); return listProjects(); });
   handle('projects:pick', async () => {
     if (!win) return null;
@@ -1572,7 +1652,19 @@ function registerIpc() {
   handle('codex:status', (force?: boolean) => codexStatus.readCodexStatus(force === true));
   handle('codex:models', (force?: boolean) => codexStatus.readCodexModels(force === true));
   handle('codex:usageSummary', () => codexUsageSummary());
-  handle('settings:setSpendCap', (v: number) => { setSetting('spend_cap_usd', String(v)); return spendCap(); });
+  // The cap is the one control that stands between a mistyped row count and a
+  // runaway batch, and it was written to the settings table exactly as the
+  // renderer sent it: NaN, Infinity, a negative, or a string. spendCap() reads
+  // it back through Number() and falls back to 1.00 on a non-finite value, so a
+  // bad write did not crash — it silently reinstated a cap the operator thought
+  // they had changed.
+  handle('settings:setSpendCap', (v: unknown) => {
+    const cap = typeof v === 'number' ? v : Number(v);
+    if (!Number.isFinite(cap) || cap < 0) throw new Error('A spend cap must be a number of dollars, zero or more.');
+    if (cap > 100_000) throw new Error('A spend cap above $100,000 is refused as a typo.');
+    setSetting('spend_cap_usd', String(Math.round(cap * 100) / 100));
+    return spendCap();
+  });
   handle('key:clear', () => { clearKey(); return true; });
 
 
@@ -1606,8 +1698,15 @@ function registerIpc() {
   });
 
   // ══ phase 9 · worktrees ═════════════════════════════════════════════
-  handle('worktrees:list', (repoRoot: string) => worktrees.listWorktrees(repoRoot));
-  handle('worktrees:status', (p: string) => worktrees.worktreeStatus(p));
+  // Read paths are confined too. Every other handler in this block passes its
+  // root through assertManagedRoot; these two took whatever the renderer named
+  // and ran git in it, which is the one rule this file states most often —
+  // renderer input is untrusted until main has validated it. Reading is a
+  // smaller grant than removing a tree, and it is still a grant.
+  handle('worktrees:list', (repoRoot: unknown) =>
+    worktrees.listWorktrees(assertManagedRoot(String(repoRoot), 'That repository')));
+  handle('worktrees:status', (p: unknown) =>
+    worktrees.worktreeStatus(assertManagedRoot(String(p), 'That worktree')));
   // removeWorktree already refuses a directory git does not call a worktree,
   // but that leaves every worktree on the machine in range of a channel name.
   // Confining the base first means Wanigan only deletes trees inside the
@@ -1750,7 +1849,20 @@ function registerIpc() {
   handle('skills:refresh', () => { skills.refreshSkills(); return true; });
   handle('skills:body', (p: string) => skills.skillBody(p));
   // A catalogue you can fire into a running agent, rather than one you read.
-  handle('skills:send', (sessionId: string, invoke: string) => { writeSession(sessionId, invoke + ' '); return true; });
+  // Typed only into the harness whose `/name ` form Wanigan has verified, and
+  // only for a skill the catalogue says the user may invoke; the decision
+  // carries the reason so the renderer can say why a button is off.
+  handle('skills:send', (sessionId: string, invoke: string) => {
+    const live = listSessions().find((s) => s.id === sessionId) ?? null;
+    const decision = skills.skillSendDecision(live, invoke);
+    // Thrown rather than returned for now: the preload still types this
+    // channel as a boolean, and an object would read as success to the current
+    // renderer. Once Skills.tsx reads SkillSendDecision this becomes
+    // `return decision`.
+    if (!decision.ok) throw new Error(decision.reason);
+    writeSession(sessionId, decision.invoke + ' ');
+    return true;
+  });
 
   // ══ phase 28 · git ══════════════════════════════════════════════════
   // Every root here goes through gitRoot(); see its comment for why the reads
@@ -1789,6 +1901,8 @@ function registerIpc() {
   handle('schedule:create', (input: { name: string; cron: string; kind: schedule.ScheduleKind; payload: unknown; projectId?: string | null }) =>
     schedule.createSchedule(input));
   handle('schedule:setEnabled', (id: string, on: boolean) => schedule.setScheduleEnabled(id, on));
+  handle('schedule:update', (id: string, patch: Record<string, unknown>) =>
+    schedule.updateSchedule(String(id), patch && typeof patch === 'object' ? patch : {}));
   handle('schedule:delete', (id: string) => schedule.deleteSchedule(id));
   handle('schedule:history', (id: string, limit?: number) => schedule.scheduleHistory(id, limit));
   handle('schedule:preview', (cron: string) => {
@@ -1838,11 +1952,41 @@ function registerIpc() {
   });
 
   // ══ P30 · durable agent control plane ═══════════════════════════════
+  handle('usage:snapshot', (input?: { days?: number; force?: boolean }) => usage.snapshot(input));
+  handle('accounts:list', (harness: string) => accounts.list(harness));
+  handle('accounts:create', (input: { harness: string; label: string; configDir: string; seedFromAccountId?: string | null }) =>
+    accounts.create(input));
+  handle('accounts:rename', (id: string, label: string) => accounts.rename(id, label));
+  handle('accounts:setDefault', (id: string) => accounts.setDefault(id));
+  handle('accounts:remove', (id: string) => accounts.remove(id));
+  handle('accounts:forProject', (projectId: string, harness: string) => accounts.projectAccount(projectId, harness));
+  handle('accounts:setForProject', (projectId: string, harness: string, accountId: string | null) =>
+    accounts.setProjectAccount(projectId, harness, accountId));
+  // Takes a provider id, not a harness: whether a Claude account even applies
+  // depends on the profile's resolved environment, and that is a main-process
+  // fact. A renderer that answered it would be guessing on the trust boundary's
+  // wrong side, and guessing wrong shows an account picker for a profile that
+  // authenticates against another vendor entirely.
+  handle('accounts:resolveForLaunch', (providerId: string, projectId?: string | null, explicitAccountId?: string | null) => {
+    const def = providerById(providerId);
+    if (!def) return { account: null, source: 'none', override: null, reason: 'That provider is not installed.' };
+    return accounts.resolve({
+      harness: def.harness,
+      projectId: projectId ?? null,
+      explicitAccountId: explicitAccountId ?? null,
+      appliesToAnthropic: usesAnthropicAccount(def) && !redirectsAnthropicApiFor(def),
+    });
+  });
+  handle('accounts:listForProvider', (providerId: string) => {
+    const def = providerById(providerId);
+    if (!def || !usesAnthropicAccount(def) || redirectsAnthropicApiFor(def)) return [];
+    return accounts.list(def.harness);
+  });
   handle('control:list', (projectId?: string | null, limit?: number) => control.listDockets(projectId, limit));
   handle('control:get', (id: string) => control.docket(id));
   handle('control:create', (input: {
     projectId: string; title: string; objective: string; acceptance?: string[];
-    risk?: 'low' | 'elevated' | 'high'; budgetUsd?: number | null;
+    risk?: 'low' | 'elevated' | 'high'; budgetUsd?: number | null; plan?: DocketPlanNode[];
   }) => control.createDocket(input));
   handle('control:claim', (nodeId: string, relPath: string) => control.claimPath(nodeId, relPath));
   handle('control:releaseClaim', (id: string) => control.releaseClaim(id));
@@ -1853,6 +1997,8 @@ function registerIpc() {
   handle('control:runProof', (nodeId: string) => control.runProof(nodeId));
   handle('control:complete', (nodeId: string, input?: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }) =>
     control.completeNode(nodeId, input ?? {}));
+  handle('control:setAutopilot', (docketId: string, input: { enabled: boolean; providerId?: string; model?: string | null }) =>
+    control.setAutopilot(docketId, input));
   handle('control:outcomes', (projectId?: string | null) => control.outcomes(projectId));
   handle('control:events', (status?: 'new' | 'triaged' | 'dismissed' | 'all', limit?: number) => control.listEvents(status ?? 'all', limit));
   handle('control:addEvent', (input: { projectId?: string | null; source: string; kind: string; summary: string }) => control.addEvent(input));
@@ -1880,7 +2026,11 @@ function registerIpc() {
   handle('plugins:refresh', () => { plugins.refreshPlugins(); return plugins.readPlugins(); });
   handle('plugins:file', (p: string) => plugins.pluginFile(p));
   handle('plugins:catalog', () => plugins.catalog());
-  handle('plugins:details', (name: string) => plugins.details(name));
+  // Through pluginId like every sibling. A plugin name becomes an argv entry
+  // for the CLI that installs and executes code, and pluginId exists to refuse
+  // a leading dash — a value that is really a second flag in a position Wanigan
+  // chose. This was the one channel in the block that took the renderer's word.
+  handle('plugins:details', (name: unknown) => plugins.details(pluginId(name)));
   // Every argument below becomes an argv entry for a CLI that installs and runs
   // code. See pluginScope/pluginId/marketplaceSource for why a type is not a check.
   handle('plugins:install', (id: unknown, scope?: unknown) =>
@@ -1921,7 +2071,10 @@ function registerIpc() {
   handle('browse:pickDir', (title?: string) => browse.pickDirectory(win, title));
   handle('browse:list', (dir: string, showHidden?: boolean) => browse.browse(dir, { showHidden }));
   handle('browse:places', () => browse.places());
-  handle('browse:reveal', (p: string) => browse.revealInFinder(p));
+  // The same wrapper browse:open uses, for the same reason: this hands a path
+  // to the Finder, and assertOpenablePath was written for exactly this call.
+  // It was the one browse channel without it.
+  handle('browse:reveal', (p: unknown) => browse.revealInFinder(assertOpenablePath(String(p))));
   // sessions:reveal above says a generic renderer-controlled shell.openPath
   // bridge must not exist, and this was one: browse.openExternally resolves the
   // path, checks that it exists, and hands it to LaunchServices, which decides
@@ -2068,8 +2221,20 @@ function registerIpc() {
     learning.diagnoseKnowledge({ projectId }));
   handle('learning:forgeSkill', (input: Parameters<typeof learning.forgeSkill>[0]) =>
     learning.forgeSkill(input));
-  handle('learning:doctorSkill', (skillMd: string, root?: string) =>
-    learning.doctorSkill(skillMd, { root }));
+  // The overlap check compares against the skills a session in this project
+  // would actually see, so the doctor gets the catalogue, not an empty list.
+  // The renderer currently sends the project path as `root`, which is a
+  // repository and not a skill directory, and helper references were being
+  // resolved against the wrong base; a registered project path therefore
+  // selects the catalogue and is not used as the root. Anything else is the
+  // skill's own directory, as the option was designed.
+  handle('learning:doctorSkill', (skillMd: string, root?: string, projectId?: string | null) => {
+    const byPath = root ? listProjects().find((p) => p.path === root) ?? null : null;
+    const project = projectId ? projectById(projectId) ?? null : byPath;
+    const knownSkills = skills.discoverSkills(project?.id).skills
+      .map((s) => ({ name: s.name, description: s.description }));
+    return learning.doctorSkill(skillMd, { root: byPath ? null : root, knownSkills });
+  });
   handle('learning:installSkill', (
     skill: Parameters<typeof learning.installSkill>[0], providerIds: string[], projectId?: string | null,
   ) => learning.installSkill(skill, providerIds, projectId));
@@ -2211,7 +2376,13 @@ function registerIpc() {
 
   // ══ settings ════════════════════════════════════════════════════════
   handle('settings:all', () => allSettings());
-  handle('settings:set', (key: string, value: string) => setUserPreference(key, value));
+  handle('settings:set', (key: string, value: string) => {
+    const next = setUserPreference(key, value);
+    // The View menu carries a tick for the sidebar. Rebuild it here so the tick
+    // is the stored answer rather than whatever it was when the app launched.
+    if (key === 'nav_sidebar') installApplicationMenu(() => win);
+    return next;
+  });
   handle('settings:setTheme', (value: ThemeSetting) => { setTheme(value); return allSettings(); });
 
   // Hot-path traffic: fire-and-forget, no round trip.

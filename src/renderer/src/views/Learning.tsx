@@ -18,7 +18,8 @@ import type {
   ProviderInfo,
 } from '@shared/types';
 import { EFFORT_LEVELS } from '@shared/types';
-import { ago } from '../components/bits';
+import { Explainer, ago } from '../components/bits';
+import { useDialog } from '../components/useDialog';
 import '../styles/learning.css';
 
 type LearningTab = 'overview' | 'inbox' | 'knowledge' | 'context' | 'experiments';
@@ -838,11 +839,13 @@ function HowItWorks({ pipeline, windowDays, onNavigate }: {
       ],
     },
   ];
+  // A guide, not a status card: open until the operator hides it, remembered
+  // after that, and never auto-collapsed by data arriving — the inversion the
+  // old drawer had, which hid the explanation from the reader who needed it.
+  // The sub-stage counts stay inside it because each is the row count of the
+  // tab beside it, and the tabs themselves carry those counts too.
   return (
-    <section className="card learning-card">
-      <div className="learning-card-head">
-        <div><span className="label">How this works</span><h2>The four tabs are the four stages</h2></div>
-      </div>
+    <Explainer id="learning-stages" title="The four tabs are the four stages">
       <ol className="how-steps">
         {steps.map((step, i) => (
           <li key={step.tab}>
@@ -865,7 +868,7 @@ function HowItWorks({ pipeline, windowDays, onNavigate }: {
         Every figure is a count over stored rows for this window and this scope. A zero under
         “projections written” is not a fault: a briefing is delivered at launch and needs no file write.
       </p>
-    </section>
+    </Explainer>
   );
 }
 
@@ -1203,21 +1206,18 @@ function AutoPromotion({ pipeline, windowDays, onNavigate }: {
  * the opposite of a reference. The nouns on the decision path are also defined
  * inline where they are first used; this is the fallback, not the teaching. */
 function GlossaryModal({ onClose }: { onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-  return (
-    <div className="learning-modal-backdrop" onMouseDown={onClose}>
-      <section className="learning-modal card" role="dialog" aria-modal="true" aria-label="Glossary"
-               onMouseDown={(e) => e.stopPropagation()}>
+  // Escape was handled here; Tab was not, so the reader could walk out of a
+  // reference dialog into the Learning tab ARIA had just declared inert.
+  const { portal, backdropProps, dialogProps } = useDialog<HTMLElement>({ onClose, initialFocus: 'least-destructive' });
+  return portal(
+    <div {...backdropProps}>
+      <section {...dialogProps} className="learning-modal card" aria-label="Glossary">
         <div className="learning-card-head">
           <div>
             <span className="label">Reference · your tab is unchanged</span>
             <h2>Glossary</h2>
           </div>
-          <button className="btn" autoFocus onClick={onClose}>Close</button>
+          <button className="btn" onClick={onClose}>Close</button>
         </div>
         <dl className="glossary-list">
           {GLOSSARY.map((entry) => (
@@ -1287,16 +1287,19 @@ function TeachButton({ project, providers, busy, onRun }: {
     if (!ok) return; // a failed teach keeps the modal and the typed knowledge
     setOpen(false); setTitle(''); setText('');
   };
-  return (
-    <>
-      <button className="btn btn-primary" onClick={() => setOpen(true)}>Teach Wanigan</button>
-      {open && (
-        <div className="learning-modal-backdrop" onMouseDown={() => setOpen(false)}>
-          <section className="learning-modal card" role="dialog" aria-modal="true" aria-label="Teach Wanigan"
-                   onMouseDown={(e) => e.stopPropagation()}>
+  // The dialog body is its own component so useDialog is called unconditionally.
+  // A hook cannot live behind `{open && …}`, and the trigger button has to stay
+  // mounted while the dialog is open — it is the control focus returns to.
+  const Dialog = () => {
+    const { portal, backdropProps, dialogProps } = useDialog<HTMLElement>({
+      onClose: () => setOpen(false), initialFocus: 'least-destructive',
+    });
+    return portal(
+      <div {...backdropProps}>
+        <section {...dialogProps} className="learning-modal card" aria-label="Teach Wanigan">
             <div className="learning-card-head"><div><span className="label">Explicit signal</span><h2>Teach Wanigan</h2></div><button className="btn" onClick={() => setOpen(false)}>Close</button></div>
             <p>This creates a cited Inbox proposal. It does not edit a skill, memory, or project file yet.</p>
-            <label><span className="label">Title</span><input className="field" autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What should be remembered?" /></label>
+          <label><span className="label">Title</span><input className="field" data-initial-focus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What should be remembered?" /></label>
             <label><span className="label">Knowledge</span><textarea className="field" rows={7} value={text} onChange={(e) => setText(e.target.value)} placeholder="State the reusable fact, preference, rule, or procedure…" /></label>
             <div className="learning-form-grid">
               <label><span className="label">Scope</span><select className="field" value={scope} onChange={(e) => setScope(e.target.value as typeof scope)}><option value="personal">My knowledge</option>{project && <option value="project">This project</option>}{project && <option value="path">Project path</option>}</select></label>
@@ -1304,10 +1307,15 @@ function TeachButton({ project, providers, busy, onRun }: {
               <label><span className="label">Source profile</span><select className="field" value={providerId} onChange={(e) => setProviderId(e.target.value)}><option value="">Provider-neutral</option>{providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select></label>
             </div>
             {scope === 'path' && <label><span className="label">Path pattern</span><input className="field mono" value={pathScope} onChange={(e) => setPathScope(e.target.value)} placeholder="src/payments/**" /></label>}
-            <div className="learning-actions"><button className="btn btn-primary" disabled={busy !== null || !title.trim() || !text.trim()} onClick={() => void submit()}>{busy === 'teach' ? 'Adding…' : 'Add to Inbox'}</button></div>
-          </section>
-        </div>
-      )}
+          <div className="learning-actions"><button className="btn btn-primary" disabled={busy !== null || !title.trim() || !text.trim()} onClick={() => void submit()}>{busy === 'teach' ? 'Adding…' : 'Add to Inbox'}</button></div>
+        </section>
+      </div>,
+    );
+  };
+  return (
+    <>
+      <button className="btn btn-primary" onClick={() => setOpen(true)}>Teach Wanigan</button>
+      {open && <Dialog />}
     </>
   );
 }
@@ -1476,6 +1484,18 @@ function CandidateCard({ candidate, providers, busy, act }: {
         .then(setWhy).catch((e) => setWhyErr(message(e)));
     }
   };
+  // The gate's checks ARE the decision, and the doctrine puts a reason code
+  // beside every automated one. A proposal still waiting on a person therefore
+  // arrives with them loaded and open; the toggle now hides them rather than
+  // being the only route to them.
+  useEffect(() => {
+    if (!undecided || why || whyErr) return;
+    let live = true;
+    window.wanigan.learning.candidateExplain(candidate.id)
+      .then((v) => { if (live) { setWhy(v); setWhyOpen(true); } })
+      .catch((e) => { if (live) setWhyErr(message(e)); });
+    return () => { live = false; };
+  }, [candidate.id, undecided, why, whyErr]);
   const toggleEv = () => {
     const next = !evOpen;
     setEvOpen(next);
@@ -1509,7 +1529,7 @@ function CandidateCard({ candidate, providers, busy, act }: {
       <p className="candidate-rationale">{candidate.rationale}</p>
       {undecided && (
         <button className="drawer-toggle" aria-expanded={whyOpen} onClick={toggleWhy}>
-          {whyOpen ? '▾' : '▸'} Why this needs review
+          {whyOpen ? '▾ Hide why this needs review' : '▸ Why this needs review'}
         </button>
       )}
       {undecided && whyOpen && (
@@ -2165,11 +2185,13 @@ function RetireDialog({ items, busy, onCancel, onConfirm }: {
   onConfirm: (reason: string) => void;
 }) {
   const [reason, setReason] = useState('');
-  return (
-    <div className="learning-modal-backdrop" onMouseDown={onCancel}>
-      <section className="learning-modal card" role="dialog" aria-modal="true"
-               aria-label={`Retire ${items.length} knowledge item${pl(items.length)}`}
-               onMouseDown={(e) => e.stopPropagation()}>
+  // 'least-destructive' matters here more than anywhere: this dialog retires
+  // knowledge in bulk, and Enter on an unread dialog must not be the answer.
+  const { portal, backdropProps, dialogProps } = useDialog<HTMLElement>({ onClose: onCancel, initialFocus: 'least-destructive' });
+  return portal(
+    <div {...backdropProps}>
+      <section {...dialogProps} className="learning-modal card"
+               aria-label={`Retire ${items.length} knowledge item${pl(items.length)}`}>
         <div className="learning-card-head">
           <div>
             <span className="label">Status change · nothing is deleted</span>

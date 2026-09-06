@@ -1,8 +1,8 @@
 /* plugins — the Plugins view. Tokens come from index.css; no colour is declared here. */
 
-.pg-wrap { padding: 16px 18px 40px; overflow-y: auto; width: 100%; }
-.pg-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 4px; }
-.pg-head h1 { font-size: 19px; font-weight: 600; letter-spacing: -.01em; }
+/* .pg-wrap was a private copy of .pane, for the same reasons recorded in
+   schedule.css. Both are the shared frame now. */
+.pg-head { align-items: baseline; }
 .pg-count { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px;
             color: var(--text-dim); font-variant-numeric: tabular-nums; }
 
@@ -41,7 +41,9 @@
 .pg-sec { margin-top: 26px; }
 .pg-sec-h { display: flex; align-items: baseline; gap: 11px; border-bottom: 1px solid var(--line);
             padding-bottom: 7px; margin-bottom: 11px; }
-.pg-sec-h h2 { font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--text-dim); }
+/* A small-caps section label that happens to be a heading, so it takes the
+   label size from the scale rather than a literal. */
+.pg-sec-h h2 { font-size: var(--t-micro); font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--text-dim); }
 .pg-sec-h .n { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--text-faint); }
 
 .pg-cat { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1px;
@@ -60,3 +62,11 @@
 .pg-reader-h { display: flex; align-items: baseline; gap: 10px; padding: 12px 15px; border-bottom: 1px solid var(--line); }
 .pg-reader-b { overflow: auto; padding: 14px 16px; font-family: ui-monospace, Menlo, monospace;
                font-size: 12px; line-height: 1.55; white-space: pre-wrap; color: var(--text-dim); }
+
+/* The per-card "why is this state unknown" disclosure. The mark beside it
+   already carries the state as a glyph and a word; this is the sentence. */
+.pg-why > summary { cursor: pointer; color: var(--text-faint); font-size: var(--t-micro); }
+.pg-why > summary:hover { color: var(--text); }
+.pg-why > p { margin: 4px 0 0; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.5; }
+
+.pg-title { display: grid; gap: 2px; }

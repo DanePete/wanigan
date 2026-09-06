@@ -12,8 +12,11 @@ import { createWorktree, removeWorktree } from './worktrees';
 import { buildBriefing, recordSessionBriefing } from './learning';
 import { claimFireForRun, recordFireOutcome, type ScheduleFire } from './schedule';
 import { announceRunEnded } from './notify';
+import * as accounts from './accounts';
+import { redirectsAnthropicApi } from './sessions';
+import { rememberReportedContextWindows } from './transcripts';
 import type {
-  HeadlessConfig, HeadlessRow, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, TrustLevel,
+  AgentAccount, HeadlessConfig, HeadlessRow, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, TrustLevel,
 } from '../shared/types';
 
 const exec = promisify(execFile);
@@ -169,8 +172,12 @@ const STRIPPED_PREFIXES = ['VSCODE_', 'ELECTRON_IPC', 'npm_'];
 
 /** Build the non-interactive child environment. Provider values are applied
  * last for the same reason as attended sessions: a profile's backend routing
- * must beat stale ambient values inherited by the desktop process. */
-export function headlessEnv(PATH: string, providerEnv: Record<string, string> = {}): NodeJS.ProcessEnv {
+ * must beat stale ambient values inherited by the desktop process — and the
+ * account's config directory after even those, because a pack is untrusted
+ * data and must not be able to point a run's login at a directory it chose. */
+export function headlessEnv(
+  PATH: string, providerEnv: Record<string, string> = {}, accountEnv: Record<string, string> = {},
+): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
@@ -185,6 +192,7 @@ export function headlessEnv(PATH: string, providerEnv: Record<string, string> = 
   }
   out.PATH = PATH;
   Object.assign(out, providerEnv);
+  Object.assign(out, accountEnv);
   // The PTY path forces colour on. Here stdout is JSON that has to be parsed,
   // and an SGR escape in the middle of it is a parse failure, so colour is off.
   out.NO_COLOR = '1';
@@ -317,11 +325,17 @@ type Reported = {
   cacheWrite: number;
   isError: boolean;
   message: string | null;
+  /**
+   * `modelUsage[model].contextWindow` from Claude's result schema (present in
+   * 2.1.261): the window the CLI computed for each model it used. Reported by
+   * the binary, not measured by Wanigan; empty when the shape carried none.
+   */
+  modelUsage: { model: string; contextWindow: number }[];
 };
 
 const NOTHING_REPORTED: Reported = {
   costUsd: null, inTokens: 0, outTokens: 0, cacheRead: 0, cacheWrite: 0,
-  isError: false, message: null,
+  isError: false, message: null, modelUsage: [],
 };
 
 /**
@@ -330,7 +344,7 @@ const NOTHING_REPORTED: Reported = {
  * Nothing here invents a number: an unrecognised shape leaves costUsd null, and
  * the caller records $0.00 and says why rather than estimating.
  */
-function parseCliOutput(stdout: string): Reported {
+export function parseCliOutput(stdout: string): Reported {
   const whole = stdout.trim();
   if (!whole) return NOTHING_REPORTED;
 
@@ -352,6 +366,14 @@ function parseCliOutput(stdout: string): Reported {
     const cost = num(c.total_cost_usd) ?? num(c.cost_usd) ?? num(usage.total_cost_usd);
     const hasUsage = Object.keys(usage).length > 0;
     if (cost === null && !hasUsage && c.type !== 'result') continue;
+    const modelUsage: Reported['modelUsage'] = [];
+    if (isRecord(c.modelUsage)) {
+      for (const [model, perModel] of Object.entries(c.modelUsage)) {
+        const window = isRecord(perModel) ? num(perModel.contextWindow) : null;
+        // 0 is the schema's placeholder for "not computed", not a window.
+        if (model.trim() && window !== null && window > 0) modelUsage.push({ model: model.trim(), contextWindow: window });
+      }
+    }
     return {
       costUsd: cost,
       inTokens: num(usage.input_tokens) ?? 0,
@@ -360,6 +382,7 @@ function parseCliOutput(stdout: string): Reported {
       cacheWrite: num(usage.cache_creation_input_tokens) ?? 0,
       isError: c.is_error === true,
       message: typeof c.result === 'string' ? c.result : null,
+      modelUsage,
     };
   }
   return NOTHING_REPORTED;
@@ -1024,6 +1047,7 @@ async function runRow(runId: string, projectId: string): Promise<void> {
 
   let args: string[];
   let env: NodeJS.ProcessEnv;
+  let account: AgentAccount | null = null;
   try {
     // This is the last filesystem/trust refresh before spawn, after binary
     // discovery, worktree setup, git snapshots and briefing retrieval have all
@@ -1036,7 +1060,17 @@ async function runRow(runId: string, projectId: string): Promise<void> {
     }
     fs.accessSync(bin, fs.constants.X_OK);
     def = finalDef;
-    env = headlessEnv(launchPath, def.env?.() ?? {});
+    // The same account decision an attended launch makes, from the same inputs:
+    // the project's saved account, else the default. Before this, a fan-out in
+    // a project pinned to one account inherited whatever the desktop's shell
+    // had exported and billed the other one without saying so. The adopted
+    // default sets no variable, so that common case launches exactly as before.
+    const providerEnvValues = def.env?.() ?? {};
+    account = accounts.resolve({
+      harness: def.harness, projectId,
+      appliesToAnthropic: accounts.appliesTo(def, redirectsAnthropicApi(providerEnvValues)),
+    }).account;
+    env = headlessEnv(launchPath, providerEnvValues, accounts.launchEnv(account));
     args = headlessArgs(def, cfg, gate, hookSettings, learningCapsule);
   } catch (error) {
     releaseHooks();
@@ -1134,6 +1168,16 @@ async function runRow(runId: string, projectId: string): Promise<void> {
 
   const endedAt = Date.now();
   const reported = parseCliOutput(stdout);
+  // The CLI's own statement of each model's context window, kept for the
+  // interactive meter to use under the same model, backend and account. Only
+  // Claude's result schema carries it; nothing is inferred for other harnesses.
+  if (def.harness === 'claude-code' && reported.modelUsage.length) {
+    try {
+      rememberReportedContextWindows(reported.modelUsage, {
+        backendId: def.backendId ?? null, accountId: account?.id ?? null, at: endedAt,
+      });
+    } catch { /* a cache of reported facts is never a run dependency */ }
+  }
   const after = await changedSet(cwd, baseHead);
   for (const p of before) after.delete(p);
   const filesChanged = after.size;
@@ -1180,12 +1224,16 @@ async function runRow(runId: string, projectId: string): Promise<void> {
 
   d.prepare(`
     UPDATE headless_rows
-       SET status=?, cost_usd=?, duration_ms=?, exit_code=?, output=?, error=?,
-           files_changed=?, worktree=?, ended_at=?
+       SET status=?, cost_usd=?, cost_reported=?, duration_ms=?, exit_code=?, output=?, error=?,
+           files_changed=?, worktree=?, ended_at=?, account_id=?
      WHERE run_id=? AND project_id=?
   `).run(
     status,
     reported.costUsd ?? 0,
+    // Recorded beside the zero it is indistinguishable from. Without this the
+    // roll-up cannot tell a free run from an unreported one, and the screen
+    // said "never estimated" over the sum of both.
+    reported.costUsd === null ? 0 : 1,
     endedAt - startedAt,
     outcome.code,
     stdout.length > OUTPUT_LIMIT
@@ -1195,6 +1243,10 @@ async function runRow(runId: string, projectId: string): Promise<void> {
     filesChanged,
     worktree,
     endedAt,
+    // Which login this row ran under — the row is the only record once the
+    // process is gone, and a reported context window is only reusable for
+    // sessions under the same account.
+    account?.id ?? null,
     runId,
     projectId
   );
@@ -1374,7 +1426,7 @@ const ROW_READ_LIMIT = 500;
 /** The columns the list and detail reads share, spelled out so a later column
  *  cannot join every read by accident the way `SELECT *` let output do. */
 const ROW_COLUMNS =
-  'run_id, project_id, project_name, project_path, status, cost_usd, duration_ms, ' +
+  'run_id, project_id, project_name, project_path, status, cost_usd, cost_reported, duration_ms, ' +
   'exit_code, files_changed, worktree, started_at, ended_at';
 
 type RowRecord = Record<string, string | number | null>;
@@ -1395,6 +1447,9 @@ function toRowBase(r: RowRecord): Omit<HeadlessRow, 'output' | 'error'> {
     projectPath: String(r.project_path),
     status: String(r.status) as HeadlessRow['status'],
     costUsd: Number(r.cost_usd) || 0,
+    // null for a row written before the column existed: unknown, not reported.
+    costReported: r.cost_reported === null || r.cost_reported === undefined
+      ? null : Number(r.cost_reported) === 1,
     durationMs: r.duration_ms === null ? null : Number(r.duration_ms),
     exitCode: r.exit_code === null ? null : Number(r.exit_code),
     filesChanged: Number(r.files_changed) || 0,
@@ -1474,7 +1529,14 @@ export function headlessRuns(limit = 50): HeadlessRun[] {
            (SELECT COUNT(*) FROM headless_rows h WHERE h.run_id=r.id AND h.status IN ('errored','timeout')) failed,
            (SELECT COUNT(*) FROM headless_rows h WHERE h.run_id=r.id AND h.status='blocked') blocked,
            (SELECT COUNT(*) FROM headless_rows h WHERE h.run_id=r.id AND h.status IN ('pending','running')) open,
-           (SELECT COALESCE(SUM(files_changed),0) FROM headless_rows h WHERE h.run_id=r.id) files_changed
+           (SELECT COALESCE(SUM(files_changed),0) FROM headless_rows h WHERE h.run_id=r.id) files_changed,
+           -- Rows that ran, and the subset of those whose agent actually named
+           -- a cost. Their difference is what separates a genuinely free run
+           -- from one nobody priced; cost_usd alone stores both as 0.
+           (SELECT COUNT(*) FROM headless_rows h
+             WHERE h.run_id=r.id AND h.status IN ('succeeded','timeout')) priceable,
+           (SELECT COUNT(*) FROM headless_rows h
+             WHERE h.run_id=r.id AND h.status IN ('succeeded','timeout') AND h.cost_reported=1) priced
       FROM runs r WHERE r.kind='headless'
      ORDER BY r.created_at DESC LIMIT ?
   `).all(limit) as Record<string, string | number | null>[];
@@ -1487,6 +1549,11 @@ export function headlessRuns(limit = 50): HeadlessRun[] {
     error: r.error === null ? null : String(r.error), succeeded: Number(r.succeeded) || 0,
     failed: Number(r.failed) || 0, blocked: Number(r.blocked) || 0,
     open: Number(r.open) || 0, filesChanged: Number(r.files_changed) || 0,
+    // Same three words usage.ts uses for the same situation, so one vocabulary
+    // covers both screens. A run with nothing priceable yet reads 'reported'
+    // rather than inventing a gap out of an empty set.
+    costStatus: Number(r.priceable) === 0 || Number(r.priced) === Number(r.priceable)
+      ? 'reported' : Number(r.priced) === 0 ? 'unreported' : 'partial',
   }));
 }
 

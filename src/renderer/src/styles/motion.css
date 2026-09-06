@@ -145,7 +145,10 @@
 ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
 
 ::view-transition-group(mo-view) { animation-duration: var(--mo-view); }
-::view-transition-old(mo-view) { animation: mo-fade-out 110ms linear both; }
+/* The outgoing snapshot fades on the shorter state token so it is gone before
+   the incoming view finishes arriving — and is 0ms, like everything else, when
+   motion is off. A literal here was the one duration the setting never reached. */
+::view-transition-old(mo-view) { animation: mo-fade-out var(--mo-state) linear both; }
 ::view-transition-new(mo-view) { animation: mo-view-in var(--mo-view) var(--mo-ease) both; }
 
 /* ── state transitions ───────────────────────────────────────────────

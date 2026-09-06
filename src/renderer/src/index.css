@@ -4,6 +4,8 @@
    change landing in one 350-line file — the tokens below stay the single
    source of colour, and no feature sheet declares one. */
 @import './styles/motion.css';
+@import './styles/ui.css';      /* shared primitives: bits.tsx classes */
+@import './styles/shell.css';   /* application shell: header, rail, overlay root */
 @import './styles/attention.css';
 @import './styles/fleet.css';
 @import './styles/timeline.css';
@@ -51,6 +53,18 @@
  * state but never carries it alone. The explicit palette is intentional: a
  * naive filter or colour inversion breaks data-series separation and terminal
  * ANSI colours far more visibly than it helps.
+ *
+ * Two surface tokens carry the contract further than the cards do:
+ *   --bg-selected  the one fill for "this row is chosen" (palette row, list
+ *                  selection) so selection can leave the accent. In dark it sits
+ *                  1.29:1 above --bg-sunk and 1.44:1 above the card — the accent's
+ *                  own 4.5:1 floor is the ceiling, so it cannot go lighter. The
+ *                  light palette has almost no luminance headroom (the warning
+ *                  hue's floor is 0.025 below --bg-sunk), so its step is a hue
+ *                  step at that luminance and list selection keeps pairing the
+ *                  fill with the inset plate-red edge.
+ *   --bg-chrome    the header and rail. One step off --bg-soft so chrome and
+ *                  cards stop reading as one plane of outlined rectangles.
  */
 :root {
   color-scheme: dark;
@@ -58,6 +72,8 @@
   --bg-soft: #1b1714;
   --bg-raised: #201b17;
   --bg-sunk: #27211d;
+  --bg-selected: #3c332c;
+  --bg-chrome: #100d0a;
   --line: #473b33;
   --line-soft: #332b26;
   --text: #f6eedf;
@@ -72,6 +88,9 @@
   --font-stencil: 'DIN Condensed', 'Avenir Next Condensed', 'Arial Narrow', ui-sans-serif, sans-serif;
   --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
 
+  /* Type scale. --t-tiny is for a glyph or a unit beside a number, never for a
+     sentence: 10px metadata is the contrast floor this palette refuses. */
+  --t-tiny: 10px;
   --t-micro: 11px;
   --t-small: 12px;
   --t-body: 13.5px;
@@ -81,8 +100,36 @@
 
   --s-1: 4px;  --s-2: 8px;  --s-3: 12px;
   --s-4: 16px; --s-5: 24px; --s-6: 32px;
-  --r-sm: 5px; --r-md: 9px; --r-pill: 999px;
+  --r-xs: 2px; --r-sm: 5px; --r-md: 9px; --r-lg: 12px; --r-pill: 999px;
 
+  /* Geometry. Named so a control, a card and a bar are the same height on every
+     view instead of a literal that drifted per sheet. --page-gutter is the
+     document edge every .pane shares; the two card paddings are the card and
+     the stat tile; --topbar-h is the one header row and --sidebar-w the
+     destination column beside it. */
+  --page-gutter: var(--s-5);
+  /* The measure. --page-max is a column of prose, forms and stat rows; a view
+     whose content is genuinely a wide grid uses --page-wide instead. */
+  --page-max: 1120px;
+  --page-wide: 1500px;
+  --card-pad: 14px 16px;
+  --card-pad-tight: 10px 13px;
+  --control-h: 32px;
+  --control-h-sm: 26px;
+  --topbar-h: 52px;
+  /* Wide enough for the longest label (Schedules) plus its icon and chord
+     without truncation, narrow enough that a 1280px window still gives a
+     terminal 1080. */
+  --sidebar-w: 208px;
+
+  /* Layers. The overlay root (dialogs portaled out of .body) sits above the
+     shell toast so a modal's scrim covers the whole window; the palette and the
+     header popovers keep their own higher literals below. */
+  --z-overlay: 80;
+
+  /* Status hues have two names each: --good/--warning/--serious/--critical are
+     the canonical family; --ok/--warn/--bad are the short aliases bits.tsx and
+     the older sheets read. Both resolve to the same value. */
   --ok: #7be3a2;         --ok-soft: #123524;
   --warn: #ffd16d;       --warn-soft: #382b12;
   --bad: #ff9188;        --bad-soft: #421d1d;
@@ -134,6 +181,8 @@
   --bg-soft: #fffdfa;
   --bg-raised: #faf6ef;
   --bg-sunk: #eee6dc;
+  --bg-selected: #f0e2d3;
+  --bg-chrome: #f4efe7;
   --line: #d4c9bc;
   --line-soft: #e5ddd3;
   --text: #25201b;
@@ -202,6 +251,27 @@ body {
   overflow: hidden;
 }
 
+/* Headings had no rule in this sheet. Every <h2> and <h3> in fifteen views was
+   therefore Chrome's default — 1.5em and 1.17em at weight 700 — which put a
+   card's section title at 20px/700 directly under a page title of 20px/600.
+   The most prominent text on the page was whichever heading happened to be
+   nested deepest. This is the scale, declared once:
+
+     h1  the page. One per view, in .pane-head.
+     h2  a section or a card that owns a region of the page.
+     h3  a group inside one of those.
+     h4  a label with heading semantics; the same size as body, set apart by
+         weight rather than by size, because five sizes is one more than anyone
+         can tell apart at a glance.
+
+   A view that needs a bigger title uses .pane-head.display, which is recorded
+   below as the one exception. */
+h1, h2, h3, h4, h5, h6 { font-weight: 650; line-height: 1.25; letter-spacing: -.01em; text-wrap: balance; }
+h1 { font-size: var(--t-display); letter-spacing: -.02em; }
+h2 { font-size: var(--t-title); letter-spacing: -.015em; }
+h3 { font-size: var(--t-lead); }
+h4, h5, h6 { font-size: var(--t-body); font-weight: 600; letter-spacing: 0; }
+
 .mono { font-family: var(--mono); }
 .dim { color: var(--text-dim); }
 .faint { color: var(--text-faint); }
@@ -210,11 +280,15 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
+  min-height: var(--control-h);
   padding: 6px var(--s-3); border-radius: var(--r-sm);
   border: 1px solid var(--line); background: var(--bg-soft);
   font-size: var(--t-body); font-weight: 500;
-  transition: background .12s, border-color .12s, opacity .12s;
+  /* Through the motion tokens, not a literal: data-motion='off' means off for
+     a button's hover fade as much as for a view swap. */
+  transition: background var(--mo-state) var(--mo-ease), border-color var(--mo-state) var(--mo-ease), opacity var(--mo-state) var(--mo-ease);
 }
+.btn-sm { min-height: var(--control-h-sm); padding: 3px 9px; font-size: var(--t-small); }
 .btn:hover:not(:disabled) { background: var(--bg-sunk); border-color: var(--text-faint); }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
@@ -226,15 +300,32 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .btn-danger:hover:not(:disabled) { background: var(--bad-soft); border-color: var(--bad); }
 
 .field {
-  width: 100%; padding: 7px var(--s-2); border-radius: var(--r-sm);
+  width: 100%; min-height: var(--control-h); padding: 7px var(--s-2); border-radius: var(--r-sm);
   border: 1px solid var(--line); background: var(--bg); color: var(--text);
   font-size: var(--t-body);
 }
 .field:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
+/* Two label styles, not fifteen. The stencil face is the app's voice and was
+   chosen to be used twice — on the nameplate and on small-caps labels — but it
+   had spread to 235 sites: field labels, table heads, palette groups and stat
+   captions are controls, not sections, and they belong in the system face.
+     .label          the working label: system sans, sentence case, dim.
+     .label-stencil  the voice: one eyebrow per surface or card head, plus the
+                     ATTENTION lead word. Apply it deliberately, never by default.
+     .sub            a sans sub-label for table heads, in-card groups and chip
+                     rows, where an uppercase run still helps a scanning eye. */
 .label {
+  font-size: var(--t-small); font-weight: 500; line-height: 1.35;
+  color: var(--text-dim);
+}
+.label-stencil {
   font-family: var(--font-stencil);
   font-size: var(--t-small); font-weight: 700; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.sub {
+  font-size: var(--t-micro); font-weight: 600; letter-spacing: .06em;
   text-transform: uppercase; color: var(--text-faint);
 }
 
@@ -242,6 +333,22 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   display: inline-flex; align-items: center; gap: 4px;
   padding: 1px 7px; border-radius: var(--r-pill);
   font-size: var(--t-micro); font-weight: 600; white-space: nowrap;
+}
+/* Tone as a class, so a pill never needs an inline colour pair. `quiet` is the
+   honest tone for "nothing to report": no fill, a hairline, faint text. */
+.pill.tone-ok      { background: var(--good-soft);     color: var(--good); }
+.pill.tone-warn    { background: var(--warning-soft);  color: var(--warning); }
+.pill.tone-bad     { background: var(--critical-soft); color: var(--critical); }
+.pill.tone-serious { background: var(--serious-soft);  color: var(--serious); }
+.pill.tone-dead    { background: var(--dead-soft);     color: var(--dead); }
+.pill.tone-accent  { background: var(--accent-soft);   color: var(--accent); }
+.pill.tone-quiet   { background: transparent; border: 1px solid var(--line); color: var(--text-faint); padding-block: 0; }
+
+/* A status character sits in a fixed 1em box at the weight of its word, so a
+   column of ✓ ✕ ◦ ▸ lines up and no glyph outweighs the word beside it. */
+.glyph {
+  display: inline-block; width: 1em; text-align: center;
+  font-weight: inherit; font-variant-numeric: tabular-nums;
 }
 
 /* Native select keeps this useful with touch, keyboard, and VoiceOver. The
@@ -276,10 +383,14 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 }
 
 /* ── application shell ─────────────────────────────────────────────────
-   The header is deliberately two rows. The old single line had to choose
-   between the Mac traffic lights, eleven destinations, live status, and an
-   action — at tablet widths it chose tiny, unreadable tabs. A calm title/action
-   row plus a dedicated route rail gives each of those jobs enough room. */
+   The header is one row and the destinations are down the left side. The two-
+   row header was the right answer to the wrong question: a horizontal strip
+   had to choose between the traffic lights, thirteen destinations, live status
+   and an action, so it was given a second row of its own — and still overflowed
+   at 960px, hiding Runs and Settings behind a 5px scrollbar. A vertical column
+   has no such competition. It holds all fifteen routes with the icon, the marks
+   and the chord beside each, it can be hidden outright when a terminal wants
+   the width, and the window gets the 48px back. */
 .shell { display: flex; flex-direction: column; height: 100%; min-width: 0; }
 
 .startup-recovery {
@@ -292,67 +403,111 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .startup-recovery span, .startup-recovery small { color: var(--text-dim); }
 .startup-recovery small { font-size: var(--t-small); }
 .startup-recovery .btn { flex: none; min-height: 34px; }
+/* Demo mode borrows the recovery strip's shape (App.tsx says why) but it is not
+   a failure, so it must not paint in the strip's error red. Not --warning
+   either: pet.css records that the warning hue belongs to real agent attention
+   in this rail. Neutral is the honest tone for "names are masked". */
+.demo-banner { border-bottom-color: var(--dead); background: var(--dead-soft); }
+.demo-banner strong { color: var(--text); }
 @media (max-width: 700px) {
   .startup-recovery { align-items: flex-start; padding-left: 14px; }
 }
 
+/* Chrome takes its own fill. With header, sidebar and cards all on --bg-soft
+   the window read as one plane of outlined rectangles; one step off the card
+   fill is enough to make the chrome recede and the content stand on it. */
 .app-header {
   flex: none; position: relative; z-index: 20;
-  border-bottom: 1px solid var(--line); background: var(--bg-soft);
-}
-.nav-titlebar {
-  display: flex; align-items: center; gap: var(--s-4);
-  min-height: 52px; padding: 0 var(--s-4) 0 84px; /* clears the traffic lights */
-  border-bottom: 1px solid var(--line-soft);
+  display: flex; align-items: center; gap: var(--s-3);
+  min-height: var(--topbar-h); padding: 0 var(--s-4) 0 84px; /* clears the traffic lights */
+  border-bottom: 1px solid var(--line); background: var(--bg-chrome);
   -webkit-app-region: drag;
 }
+.app-header button, .app-header select, .app-header label { -webkit-app-region: no-drag; }
+/* The one control that changes the shape of the window rather than what is in
+   it, so it sits apart from the actions on the right, next to the thing it
+   shows and hides. */
+.hdr-toggle {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: var(--r-sm); color: var(--text-dim);
+}
+.hdr-toggle:hover { background: var(--bg-sunk); color: var(--text); }
+.hdr-toggle[aria-expanded='true'] { color: var(--text); }
 .brand-lockup { display: flex; align-items: baseline; gap: var(--s-3); min-width: 0; }
 .brand {
   flex: none; font-family: var(--font-stencil); font-weight: 700; font-size: var(--t-title);
   letter-spacing: .055em; text-transform: uppercase; color: var(--text); white-space: nowrap;
 }
+/* Separated by a rule rather than only by colour: the brand and the view name
+   are two different kinds of thing sharing a baseline. */
 .brand-context {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--text-faint); font-size: var(--t-small);
+  padding-left: var(--s-3); border-left: 1px solid var(--line);
+  color: var(--text-dim); font-size: var(--t-small); font-weight: 600;
 }
 .nav-actions {
   display: flex; align-items: center; justify-content: flex-end; gap: var(--s-2);
   min-width: 0; margin-left: auto; -webkit-app-region: no-drag;
 }
 .nav-actions button, .nav-actions select, .nav-actions label { -webkit-app-region: no-drag; }
-.nav {
-  display: flex; align-items: stretch; min-height: 48px; padding: 0 var(--s-3);
-  background: var(--bg-soft); -webkit-app-region: drag;
+
+/* The sidebar and the view are one row under the header. .body keeps its own
+   rules below; this is only the axis they share. */
+.workspace { flex: 1; min-height: 0; display: flex; min-width: 0; }
+
+.sidebar {
+  flex: none; width: var(--sidebar-w); min-height: 0; display: flex; flex-direction: column;
+  border-right: 1px solid var(--line); background: var(--bg-chrome);
 }
-.nav > * { -webkit-app-region: no-drag; }
-.nav-tabs {
-  display: flex; flex: 1 1 auto; align-items: stretch; min-width: 0; gap: 2px;
-  overflow-x: auto; overflow-y: hidden; overscroll-behavior-inline: contain;
-  scroll-padding-inline: var(--s-2); scroll-snap-type: inline proximity;
-  scrollbar-gutter: stable both-edges; scrollbar-width: thin; -webkit-overflow-scrolling: touch;
+.sidebar-scroll {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding: var(--s-3) var(--s-2) var(--s-4); scrollbar-width: thin;
 }
-.nav-tabs::-webkit-scrollbar { display: block; height: 5px; }
-.nav-tabs::-webkit-scrollbar-thumb { background: var(--line); border-radius: var(--r-pill); }
-.nav-tabs:focus-visible { outline: none; }
+.sidebar-scroll:focus-visible { outline: none; }
+.sidebar-group + .sidebar-group { margin-top: var(--s-3); }
+/* Three headings for fifteen rows. They are the reason the column can be read
+   as three short lists rather than one long one, and they name the job each
+   group serves — not the order the routes happen to have been built in. */
+.sidebar-group-label {
+  padding: 6px 10px 4px; font-size: var(--t-micro); font-weight: 600;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--text-faint);
+}
 .nav-tab {
-  display: inline-flex; flex: 0 0 auto; align-items: center; align-self: stretch; gap: 6px;
-  min-height: 44px; padding: 0 14px; font-size: var(--t-body); font-weight: 600;
-  color: var(--text-dim); border-bottom: 2px solid transparent; white-space: nowrap;
-  scroll-snap-align: start; touch-action: manipulation;
+  display: flex; width: 100%; align-items: center; gap: 9px;
+  min-height: 32px; padding: 0 9px; border-radius: var(--r-sm);
+  font-size: var(--t-body); font-weight: 550; color: var(--text-dim);
+  text-align: left; white-space: nowrap; touch-action: manipulation;
+}
+.nav-tab .icon { flex: none; color: var(--text-faint); }
+.nav-tab-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The chord is printed on every row, not only on hover: the whole point of
+   publishing ⌘1–9 is that someone stops needing the row. It recedes to the
+   faintest text in the palette so it never competes with the word. */
+.nav-tab-chord {
+  flex: none; color: var(--text-faint); font-size: var(--t-micro); font-weight: 600;
+  font-variant-numeric: tabular-nums; opacity: .8;
 }
 .nav-tab:hover { color: var(--text); background: var(--bg-sunk); }
-/* The plate split, doing a real job rather than decorating: the active tab is
+.nav-tab:hover .icon { color: var(--text-dim); }
+/* The plate split, doing a real job rather than decorating: the current row is
    the one printed twice, one plate off register under the other. Colour is an
-   event in this system and happens twice — here, and the lamp in the mark. */
-.nav-tab.on { color: var(--text); border-bottom-color: var(--plate-red); position: relative; }
+   event in this system and happens twice — here, and the lamp in a mark. */
+.nav-tab.on {
+  position: relative; color: var(--text); font-weight: 650; background: var(--bg-selected);
+}
+.nav-tab.on .icon { color: var(--text); }
+.nav-tab.on::before {
+  content: ''; position: absolute; left: 0; top: 6px; bottom: 6px; width: 2px;
+  border-radius: 2px; background: var(--plate-red);
+}
 .nav-tab.on::after {
-  content: ''; position: absolute; left: 2px; right: -2px; bottom: -2px; height: 2px;
-  background: var(--plate-blue); opacity: .55; z-index: -1;
+  content: ''; position: absolute; left: 2px; top: 8px; bottom: 4px; width: 2px;
+  border-radius: 2px; background: var(--plate-blue); opacity: .55; z-index: -1;
 }
 .nav-views { position: relative; flex: none; }
-.nav-new-session, .nav-views-button, .nav-quick-run {
+.nav-new-session, .nav-views-button {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  min-height: 38px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  min-height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r-sm);
   background: var(--bg-sunk); color: var(--text); font-size: var(--t-small); font-weight: 650;
   white-space: nowrap; touch-action: manipulation;
 }
@@ -365,68 +520,60 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .nav-views-button:hover, .nav-views-button[aria-expanded='true'], .nav-views-button.on {
   border-color: var(--accent); background: var(--accent-soft); color: var(--text);
 }
-.nav-quick-run { background: var(--bg-raised); color: var(--text-dim); }
-.nav-quick-run:hover { border-color: var(--text-faint); background: var(--bg-sunk); color: var(--text); }
-.nav-quick-run-plus { font-size: var(--t-lead); line-height: 1; }
-.nav-views-shortcut, .nav-shortcut, .nav-views-caret {
+.nav-views-shortcut, .nav-shortcut {
   color: var(--text-faint); font-size: var(--t-micro); font-weight: 600;
 }
-.nav-views-caret { font-size: var(--t-body); line-height: 1; transform: translateY(-1px); }
-.nav-menu {
-  position: absolute; top: calc(100% + 8px); right: 0; z-index: 130;
-  width: min(280px, calc(100vw - 24px)); max-height: min(70vh, 560px); overflow-y: auto;
-  padding: var(--s-2); border: 1px solid var(--line); border-radius: var(--r-md);
-  background: var(--bg-soft); box-shadow: var(--shadow-popover);
-}
-.nav-menu-group { display: grid; gap: 2px; padding: var(--s-2) 0; }
-.nav-menu-group + .nav-menu-group { border-top: 1px solid var(--line-soft); }
-.nav-menu-group-label {
-  padding: 0 var(--s-2) var(--s-1); color: var(--text-faint); font-family: var(--font-stencil);
-  font-size: var(--t-micro); font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
-}
-.nav-menu-item {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); width: 100%; min-height: 40px;
-  padding: 0 var(--s-2); border-radius: var(--r-sm); color: var(--text-dim); font-size: var(--t-body); text-align: left;
-}
-.nav-menu-item:hover, .nav-menu-item:focus-visible, .nav-menu-item.on { background: var(--accent-soft); color: var(--text); }
-.nav-menu-item.on { box-shadow: inset 2px 0 0 var(--plate-red); }
-.nav-menu-shortcut { color: var(--text-faint); font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace; font-size: var(--t-micro); }
+/* Faint text on the accent fill measured 1.15:1 in dark and 1.03:1 in light, so
+   the ⌘T hint was printed and invisible. Accent-ink at .72 clears 4.5:1 on the
+   fill in both palettes. */
+.nav-new-session .nav-shortcut { color: var(--accent-ink); opacity: .72; }
+/* The Views drop-down menu (.nav-menu*, .nav-views-caret), the project picker
+   (.nav-project*) and the unread dot (.nav-dot) were replaced by the command
+   palette and the nav marks; App.tsx renders none of them, so their rules and
+   media-query entries are gone rather than kept as a second, dead appearance. */
 .nav-usage-status {
-  flex: none; min-height: 38px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: none; min-height: 30px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r-sm);
   background: var(--bg-sunk); color: var(--text-dim); font-size: var(--t-micro); font-variant-numeric: tabular-nums;
 }
 .nav-usage-status:hover { border-color: var(--accent); color: var(--text); }
 .nav-usage-status.low { border-color: var(--warning); color: var(--warning); }
 .nav-usage-week { margin-left: 4px; }
-@media (max-width: 1180px) { .nav-usage-week { display: none; } .nav-usage-status { max-width: 138px; } }
+@media (max-width: 1180px) {
+  .nav-usage-week { display: none; }
+  .nav-usage-status { max-width: 138px; }
+  /* Narrower, not iconified. A column of glyphs is a quiz, and the label is
+     the part that has to survive: the chord is the one thing here with a
+     second home — the cheat sheet and the palette both print it. */
+  :root { --sidebar-w: 176px; }
+  .nav-tab-chord { display: none; }
+}
 @media (max-width: 920px) {
   .brand-context { display: none; }
   .nav-usage-status { display: none; }
 }
 @media (max-width: 700px) {
-  .nav-titlebar { min-height: 50px; gap: var(--s-2); padding-right: var(--s-2); }
+  .app-header { min-height: 50px; gap: var(--s-2); padding-right: var(--s-2); }
   .nav-actions { gap: 4px; }
-  .nav-project .label, .nav-views-shortcut, .nav-shortcut { display: none; }
-  .nav-project .field { max-width: 118px; }
-  .nav-quick-run { padding-inline: var(--s-2); }
-}
-@media (max-width: 620px) {
-  /* Starting an interactive session stays visible on a compact titlebar;
-     headless runs remain one tap away in Views/⌘K instead of competing for
-     the same narrow row. */
-  .nav-quick-run { display: none; }
+  .nav-views-shortcut, .nav-shortcut { display: none; }
+  /* At this width the sidebar and a terminal cannot both have room. It floats
+     over the view instead of squeezing it, and closing it is one ⌥⌘S away —
+     the same control, doing the same thing, in a window that cannot hold both. */
+  .workspace { position: relative; }
+  .sidebar {
+    position: absolute; inset: 0 auto 0 0; z-index: 30;
+    box-shadow: var(--shadow-popover);
+  }
 }
 @media (max-width: 520px) {
-  .nav-titlebar { padding-left: 68px; }
-  .nav-tab { padding-inline: 12px; }
-  .nav-quick-run-headless { display: none; }
+  .app-header { padding-left: 68px; }
 }
 @media (pointer: coarse) {
-  .nav-titlebar { padding-left: var(--s-4); }
-  .nav-new-session, .nav-views-button, .nav-quick-run, .nav-usage-status, .theme-control { min-height: 44px; }
+  .app-header { padding-left: var(--s-4); }
+  .nav-tab { min-height: 44px; }
+  .hdr-toggle { width: 44px; height: 44px; }
+  .nav-new-session, .nav-views-button, .nav-usage-status, .theme-control { min-height: 44px; }
   .theme-control select { min-height: 38px; }
-  .nav-menu-item { min-height: 44px; }
 }
 .command-backdrop {
   position: fixed; inset: 0; z-index: 110; display: grid; place-items: start center; padding-top: min(20vh, 180px);
@@ -438,25 +585,43 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 }
 .command-palette > .field { width: 100%; }
 .command-results { display: grid; gap: 3px; margin-top: 10px; max-height: min(52vh, 420px); overflow: auto; }
-.command-item { display: flex; justify-content: space-between; padding: 9px 10px; border-radius: var(--r-sm); text-align: left; }
-.command-item:hover, .command-item:focus-visible { background: var(--accent-soft); color: var(--text); }
-.command-item-primary { align-items: center; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--text); }
-.command-item-primary:hover, .command-item-primary:focus-visible { background: var(--accent); color: var(--accent-ink); }
-.command-item-copy { display: grid; gap: 2px; }
+/* A row spans the list and puts its shortcut in a right-hand column. As a
+   shrink-wrapped flex button the row ended where its text did, so the ⌘ hint
+   floated mid-row and the highlight stopped short of the palette's edge. */
+.command-item {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--s-3);
+  width: 100%; padding: 9px 10px; border-radius: var(--r-sm); text-align: left;
+}
+.command-item:hover, .command-item:focus-visible { background: var(--bg-sunk); color: var(--text); }
+/* The keyboard highlight is the selected fill, not the accent: the accent is
+   reserved for the one primary row, so the reader can tell "where I am" from
+   "the thing to do". aria-selected is the state the combobox already sets. */
+.command-item[aria-selected='true'] { background: var(--bg-selected); color: var(--text); }
+.command-item-primary { border: 1px solid var(--accent); background: var(--accent-soft); color: var(--text); }
+.command-item-primary:hover, .command-item-primary:focus-visible, .command-item-primary[aria-selected='true'] { background: var(--accent); color: var(--accent-ink); }
+.command-item-copy { display: grid; gap: 2px; min-width: 0; }
 .command-item-copy strong { font-size: var(--t-body); }
 .command-item-copy small { color: var(--text-dim); font-size: var(--t-small); }
-.command-item-primary:hover .command-item-copy small, .command-item-primary:focus-visible .command-item-copy small { color: inherit; opacity: .82; }
+.command-item-primary:hover .command-item-copy small, .command-item-primary:focus-visible .command-item-copy small, .command-item-primary[aria-selected='true'] .command-item-copy small { color: inherit; opacity: .82; }
+.command-group-label {
+  padding: 7px 10px 3px; font-size: var(--t-micro); font-weight: 600;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--text-faint);
+}
 .nav-badge {
+  display: inline-block; flex: none;
   min-width: 18px; padding: 0 5px; border-radius: var(--r-pill);
   background: var(--accent-soft); color: var(--accent);
   font-size: var(--t-micro); font-weight: 700; text-align: center;
+  font-variant-numeric: tabular-nums;
 }
-.nav-dot { width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--warn); }
 
-.body { flex: 1; min-height: 0; display: flex; }
+.body { flex: 1; min-width: 0; min-height: 0; display: flex; }
 
-/* Sessions keeps the rail + terminal layout inside its own view. */
-.sessions { display: grid; grid-template-columns: 248px 1fr; width: 100%; min-height: 0; }
+/* Sessions keeps the rail + terminal layout inside its own view. The first
+   column scales with the room this view has rather than sitting at a fixed
+   248px: with the destination list open, Sessions begins 208px in, and two
+   fixed rails plus a terminal is one column too many for the middle widths. */
+.sessions { display: grid; grid-template-columns: clamp(184px, 22%, 248px) minmax(0, 1fr); width: 100%; min-height: 0; }
 .session-rail {
   min-height: 0;
   display: flex; flex-direction: column;
@@ -465,31 +630,88 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .rail-scroll { flex: 1; overflow-y: auto; padding: 6px 8px 12px; }
 .session-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 
-/* A tablet keeps the session picker, but it must not take almost a third of a
-   768px viewport before the terminal even begins. The code/timeline pane is
-   collapsed by Sessions.tsx at this width; this rule gives the conversation
-   the rest of the usable space. */
-@media (max-width: 900px) {
-  .sessions { grid-template-columns: minmax(172px, 27vw) minmax(0, 1fr); }
-}
+/* The tablet rule that used to live here set a narrower first column below a
+   900px *window*. The clamp above does that job from the view's own width, so
+   it stays right when the destination list is open and the window is not the
+   measurement that matters. Narrower still, .sessions--compact-picker turns the
+   list into an overlay and this column stops existing at all. */
 
-/* Scrolling document views (Batches, Settings). */
+/* Scrolling document views. Every document view roots here so the content edge
+   lands at one gutter on every tab; compact.css steps the gutter on the ladder. */
 .pane {
   flex: 1; min-width: 0; overflow-y: auto;
-  padding: var(--s-5) var(--s-5) var(--s-6);
+  padding: var(--page-gutter) var(--page-gutter) var(--s-6);
   display: flex; flex-direction: column; gap: var(--s-4);
 }
+/* A pane whose first child is its sticky head supplies that head's top space
+   instead, so the rule sits where the padding used to end. */
+.pane:has(> .pane-head:first-child) { padding-top: 0; }
+/* A document has a measure. Nothing here had one: with the destination list
+   hidden on a 1440px window a Name field ran 1300px and a paragraph ran past a
+   140-character line, which is the width at which a reader loses the start of
+   the next one.
+   The scroll container still spans the window — the scrollbar and the sticky
+   head belong to the edge — and only the column of content is held. It is held
+   flush left rather than centred: the list is on the left, so content that
+   drifted toward the middle of a wide window would leave a gutter between the
+   two and read as two unrelated columns. */
+.pane > * { width: 100%; max-width: var(--page-max); }
+/* Two surfaces are grids rather than documents, and earn more than the measure. */
+.pane.control-view > *, .pane.set > *, .pane.wide > * { max-width: var(--page-wide); }
+
+/* The page head stays put. Every one of these surfaces is a list you scroll —
+   dockets, runs, knowledge items, commits — and the title is the only thing on
+   screen that says which one you are in once the first screenful has gone. It
+   was scrolling away, which is why several of these views grew a second,
+   in-list restatement of their own name. Sticky costs nothing here: .pane is
+   the scroll container, and this is chrome, not content.
+
+   The rule under it does the job the old 24px of top padding was doing badly:
+   it ends the header instead of merely leaving a gap, so the eye finds the
+   start of the content rather than measuring whitespace. */
 .pane-head { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
-.pane-head h1 { font-size: var(--t-title); font-weight: 600; letter-spacing: -.015em; }
+/* Only a head that is the pane's own first child gets the treatment: it is the
+   one that names the view, the one .pane's padding lines up with, and the one
+   .pane scrolls. A .pane-head nested inside a builder column or a detail card
+   is a section title reusing the type, and pinning that to the top of a scroll
+   container it does not own would park it over the content. */
+.pane > .pane-head:first-child {
+  position: sticky; top: 0; z-index: 5;
+  /* The rule ends where the content column ends, not at the window edge. A
+     first attempt bled it to both edges and put the head's own action slot out
+     at the scrollbar while everything below it stopped 250px earlier — the
+     title and the page it titles have to share a left and a right. */
+  margin-bottom: var(--s-2);
+  padding: var(--s-5) 0 var(--s-3);
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg);
+}
+/* h1 takes --t-display from the scale above; only the leading is tightened. */
+.pane-head h1 { line-height: 1.15; }
 .pane-head .dim { font-size: var(--t-small); margin-top: 3px; }
 .pane-head > div:last-child { margin-left: auto; }
+/* A head with no action slot has one child, which is also its last: without
+   this the title itself took the auto margin and slid to the right edge. */
+.pane-head > div:only-child { margin-left: 0; }
+/* Learning's hero used to be the exception that reached display size. Now every
+   page title is that size, so the modifier is what a view uses to go the other
+   way when its head sits above a dense working surface rather than a document. */
+.pane-head.compact h1 { font-size: var(--t-title); letter-spacing: -.015em; }
+/* The eyebrow reads as a kicker over the title rather than a line of its own. */
+.pane-head .label-stencil { margin-bottom: 2px; }
 
 .builder { display: grid; grid-template-columns: minmax(0,1fr) 320px; gap: 16px; align-items: start; }
 .builder-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .builder-side { position: sticky; top: 0; }
 
-.card { background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--r-md); }
-.sunk { background: var(--bg-sunk); border: 1px solid var(--line); border-radius: var(--r-md); }
+/* Surfaces are soft-lined. The full --line is reserved for inputs and table
+   dividers; a card at every depth wearing the same 2:1 line made hierarchy a
+   matter of counting borders. A box nested two deep loses its line entirely and
+   is told apart by fill alone — the fills already differ, the third border only
+   drew a box around a box around a box. */
+.card { background: var(--bg-soft); border: 1px solid var(--line-soft); border-radius: var(--r-md); }
+.sunk { background: var(--bg-sunk); border: 1px solid var(--line-soft); border-radius: var(--r-md); }
+.card .card, .card .sunk { border-color: transparent; }
 
 /* minmax(0, 1fr), not 1fr: a track's automatic minimum is its own content, so a
    single long unbreakable value pushed the whole pane sideways in the band
@@ -592,11 +814,10 @@ table.grid tr.clickable:hover { background: var(--bg-sunk); }
   text-align: center;
 }
 
-.modal-backdrop {
-  position: fixed; inset: 0; z-index: 50;
-  background: var(--scrim);
-  display: flex; align-items: center; justify-content: center; padding: 24px;
-}
+/* .modal-backdrop is gone: every dialog in the renderer now spreads
+   useDialog's backdropProps, which paints .overlay-backdrop in ui.css and
+   portals out of .body. .modal and .drawer below are still the surfaces those
+   dialogs put inside it. */
 .modal {
   width: 100%; max-width: 520px;
   background: var(--bg-soft); border: 1px solid var(--line);
@@ -621,9 +842,15 @@ html { scrollbar-color: var(--line) transparent; }
 
 /* ── charts ──────────────────────────────────────────────────────────── */
 .chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.chart-card { background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--r-md); padding: 15px; }
+.chart-card { background: var(--bg-soft); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: var(--card-pad); }
 .chart-card h3 { font-size: var(--t-body); font-weight: 600; }
-.chart-card .sub { font-size: var(--t-small); color: var(--text-dim); margin-top: 2px; line-height: 1.45; }
+/* A chart's subtitle predates the .sub label class and shares its name; inside
+   a chart card it stays a sentence, so the label's case and tracking are undone
+   here until Insights and Batches move these paragraphs onto .hint. */
+.chart-card .sub {
+  font-size: var(--t-small); font-weight: 400; letter-spacing: 0; text-transform: none;
+  color: var(--text-dim); margin-top: 2px; line-height: 1.45;
+}
 .chart-svg { display: block; width: 100%; margin-top: 12px; overflow: visible; }
 
 .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
@@ -756,8 +983,8 @@ html { scrollbar-color: var(--line) transparent; }
 /* ── shell additions · nav status marks, project picker, focus ring ───
    Status in the nav is never hue alone: every mark is a glyph plus a word,
    and the colour only reinforces what the text already said. "An agent is
-   blocked waiting for you" is the one signal that must survive greyscale. */
-.nav-badge { display: inline-block; }
+   blocked waiting for you" is the one signal that must survive greyscale.
+   .nav-badge itself is declared once, with the shell layout above. */
 
 .nav-mark {
   display: inline-flex; align-items: center; gap: 4px;
@@ -770,11 +997,10 @@ html { scrollbar-color: var(--line) transparent; }
 .nav-mark.tone-serious { background: var(--serious-soft);  color: var(--serious); }
 .nav-mark.tone-ok      { background: var(--good-soft);     color: var(--good); }
 .nav-mark.tone-warn    { background: var(--warning-soft);  color: var(--warning); }
-
-.nav-project {
-  display: flex; align-items: center; gap: 7px; flex: none; min-width: 0;
-}
-.nav-project .field { width: auto; min-height: 38px; max-width: 190px; padding: 3px 8px; font-size: var(--t-small); }
+/* A quiet mark for a setup gap ("needs key"): the glyph and word stay, the
+   colour goes. Painted as a warning it read as "Wanigan is not set up" from
+   every screen; the full-colour warning stays where the action is. */
+.nav-mark.tone-quiet   { background: transparent; border: 1px solid var(--line); color: var(--text-faint); }
 
 /* Every interactive element gets a visible focus ring. Zero-specificity
    selector so a feature sheet can still style its own. The terminal is
@@ -786,12 +1012,13 @@ html { scrollbar-color: var(--line) transparent; }
 }
 .terminal-host :focus-visible { outline: none; }
 
-/* A run's real progress, under the tab it belongs to: requests returned over
-   requests submitted. It moves when the count moves and never otherwise. */
-.nav-tab { position: relative; }
+/* A run's real progress, under the row it belongs to: requests returned over
+   requests submitted. It moves when the count moves and never otherwise. A
+   sibling of the row rather than an overlay inside it, so it cannot sit on top
+   of the label at a width where the label is already tight. */
 .nav-progress {
-  position: absolute; left: 11px; right: 11px; bottom: 5px;
-  height: 2px; border-radius: var(--r-pill); background: var(--bg-sunk); overflow: hidden;
+  display: block; height: 2px; margin: 1px 10px 3px; border-radius: var(--r-pill);
+  background: var(--bg-sunk); overflow: hidden;
 }
 .nav-progress > span { display: block; width: 100%; height: 100%; background: var(--accent); }
 

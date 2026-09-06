@@ -1,16 +1,18 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type {
+  AgentAccount,
   WaniganSettings, BackupCheck, BackupRestoreSummary, BackupSummary,
   EgressHost, LedgerEntry, McpServerConfig, MotionSetting, ThemeSetting,
   MobileMonitorConfig, MobileMonitorStatus, Project, ProviderInfo, ProviderManifestInspection,
   ProviderPackInfo, ProviderProfileInfo, QueueItem, QueueSlots, QueueState,
   TranscriptHit, TranscriptTurn, TrustLevel, UploadedFile, WorktreeInfo,
 } from '@shared/types';
-import { TRUST_COPY, TRUST_LEVELS } from '@shared/types';
-import { Note, Section, Stat, ago, num } from '../components/bits';
+import { TRUST_COPY, TRUST_LEVELS, trustCopy } from '@shared/types';
+import { ConfirmNote, Explainer, Note, Section, Stat, ago, num } from '../components/bits';
 import ThemeControl from '../components/ThemeControl';
 import type { ResolvedTheme } from '../theme-boot';
+import '../styles/settings.css';
 
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
 type ProviderKeyStatus = { present: boolean; fingerprint: string | null };
@@ -49,6 +51,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'agents', tabLabel: 'Agents', section: 'DeepSeek', hint: 'DeepSeek key for sessions', keywords: 'deepseek key anthropic-compatible' },
   { tab: 'agents', tabLabel: 'Agents', section: 'Installed agent runtimes', hint: 'Which CLIs Wanigan found, and where', keywords: 'cli path version claude codex installed runtime detect' },
   { tab: 'agents', tabLabel: 'Agents', section: 'Provider packs', hint: 'Packs, profiles, trust and enablement', keywords: 'provider pack manifest profile harness backend trust digest sha256 adapter enable disable remove restore' },
+  { tab: 'agents', tabLabel: 'Agents', section: 'Accounts', hint: 'Work and personal logins, and which is default', keywords: 'account login work personal switch claude config dir credentials organisation organization sign in profile' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Projects', hint: 'Add and remove repositories', keywords: 'project repository folder add remove' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Worktrees', hint: 'Isolated worktrees and cleanup', keywords: 'worktree isolated branch cleanup orphan' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Trust and the policy ledger', hint: 'Trust levels, decisions, export', keywords: 'trust policy ledger permission audit export' },
@@ -96,7 +99,7 @@ const SETTINGS_TABS: SettingsTabInfo[] = [
     id: 'agents', label: 'Agents', eyebrow: 'Accounts & runtime', title: 'Agents & providers',
     detail: 'Add provider keys, check their status, and manage the provider packs whose profiles Wanigan can launch.',
     help: 'Keys are verified before Wanigan stores them in your macOS credential store. A new key is ready for the next session; a session already running keeps the launch configuration it started with — including its frozen provider pack, even if you disable or remove that pack here.',
-    includes: ['Claude Platform', 'GLM Coding Plan', 'DeepSeek', 'installed runtimes', 'provider packs'],
+    includes: ['Claude Platform', 'GLM Coding Plan', 'DeepSeek', 'installed runtimes', 'provider packs', 'accounts'],
   },
   {
     id: 'projects', label: 'Projects & safety', eyebrow: 'Repositories & guardrails', title: 'Projects & safety',
@@ -374,6 +377,14 @@ function Result({ r }: { r: { tone: 'ok' | 'error'; text: string } | null }) {
 }
 
 /** One persistent panel per tab: changing category must never discard a draft. */
+/** Scroll to a section by the title it renders. A title that has drifted
+ *  simply does not scroll; the tab is already correct, which is the same
+ *  degradation the ⌘K jump accepts. */
+function jumpToSection(section: string): void {
+  document.querySelector(`[data-section-title="${CSS.escape(section)}"]`)
+    ?.scrollIntoView({ block: 'start', behavior: 'auto' });
+}
+
 function SettingsTabPanel({ tab, active, children }: {
   tab: SettingsTabInfo; active: boolean; children: React.ReactNode;
 }) {
@@ -388,8 +399,19 @@ function SettingsTabPanel({ tab, active, children }: {
           <span className="set-panel-help-mark" aria-hidden="true">?</span>
           <div><strong>How changes apply</strong><p>{tab.help}</p></div>
         </div>
+        {/* The section list was a sentence describing anchors that already
+            exist. Each entry is now the button that scrolls to its own
+            section, using the same lookup the palette's Settings rows use. */}
         <p className="set-panel-includes">
-          <strong>In this section</strong><span>{tab.includes.join(' · ')}</span>
+          <strong>In this section</strong>
+          <span>
+            {tab.includes.map((entry, i) => (
+              <span key={entry}>
+                {i > 0 && ' · '}
+                <button type="button" className="link set-jump" onClick={() => jumpToSection(entry)}>{entry}</button>
+              </span>
+            ))}
+          </span>
         </p>
       </header>
       {children}
@@ -551,8 +573,7 @@ export default function Settings({
     if (!jump.section) return;
     const section = jump.section;
     requestAnimationFrame(() => {
-      document.querySelector(`[data-section-title="${CSS.escape(section)}"]`)
-        ?.scrollIntoView({ block: 'start' });
+      jumpToSection(section);
     });
   }, [jump]);
 
@@ -623,29 +644,32 @@ export default function Settings({
 
   return (
     <div className="pane set" data-motion={prefs?.motion ?? 'auto'}>
-      <style>{SHEET}</style>
-
+      {/* One meta-layer, not three. The hero said what the grouping is, an
+          aside said how saving works and the rail intro said the same thing
+          again about drafts — three explanations of the page before the first
+          control. The rule is one line; the rest is a guide the operator can
+          hide. Per-control captions stay where they are. */}
       <header className="set-hero">
         <div>
           <div className="set-kicker">Wanigan control center</div>
           <h1>Settings</h1>
-          <p>Everything is grouped by the job you are trying to do, so provider setup, remote access, and safety controls stay easy to find.</p>
+          <p>Grouped by the job you are doing. Switches save at once; a Save button applies the fields beside it.</p>
         </div>
-        <aside className="set-save-guide" aria-label="How settings are saved">
-          <strong>How settings work</strong>
-          <span>Most switches save immediately. A button labelled Save applies the fields beside it. Each section calls out anything that waits for a new session or restart.</span>
-        </aside>
       </header>
+      <Explainer id="settings-how" title="How settings work">
+        <p>
+          Most switches save immediately. A button labelled Save applies the fields beside it, and each
+          section calls out anything that waits for a new session or a restart. Your unfinished form
+          entries stay put while you move between sections.
+        </p>
+      </Explainer>
 
       {prefsErr && <Callout level="critical" title="A preference did not save.">{prefsErr}</Callout>}
 
       <div className="set-layout">
         <nav ref={settingsTabsRef} className="set-tabs" role="tablist" aria-label="Settings sections"
              aria-orientation={compactSettingsLayout ? 'horizontal' : 'vertical'}>
-          <div className="set-tabs-intro">
-            <strong>Settings areas</strong>
-            <span>Choose a category. Your unfinished form entries stay here while you move between tabs.</span>
-          </div>
+          <div className="set-tabs-intro"><strong>Settings areas</strong></div>
           {SETTINGS_TABS.map((tab, index) => (
             <button id={`settings-tab-${tab.id}`} key={tab.id} type="button" role="tab"
                     aria-selected={settingsTab === tab.id} tabIndex={settingsTab === tab.id ? 0 : -1}
@@ -809,6 +833,7 @@ export default function Settings({
             </Section>
 
             <ProviderPacks providers={providers} />
+            <Accounts />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('projects')} active={settingsTab === 'projects'}>
@@ -1447,14 +1472,91 @@ function RemoveProjectConfirm({ project, onCancel, onConfirm }: {
   );
 }
 
+/** The one harness whose accounts a project can be pinned to today. */
+const PROJECT_ACCOUNT_HARNESS = 'claude-code';
+
 function Projects({ projects, onAddProject, onRemoveProject }: {
   projects: Project[]; onAddProject: () => void; onRemoveProject: (id: string) => void;
 }) {
   const [confirming, setConfirming] = useState<string | null>(null);
+  /*
+   * Which login each repository runs as.
+   *
+   * The record, the IPC and the launch resolver for this have existed since
+   * accounts shipped — `accounts:setForProject` was bound on both sides of the
+   * sandbox — and nothing in the window ever called it, so the only way to send
+   * a repo to a second account was to pick it by hand in every New session
+   * dialog. That is exactly the case two accounts exist for: one plan runs out,
+   * or a client's work belongs on the client's login, and neither should depend
+   * on remembering.
+   *
+   * Null in this map means "no saved choice", which is not the same as "the
+   * default account" — the default can change, and a project that never
+   * expressed a preference should follow it when it does.
+   */
+  const [accountRows, setAccountRows] = useState<AgentAccount[]>([]);
+  const [pinned, setPinned] = useState<Record<string, string | null>>({});
+  /**
+   * Why the pins could not be read, when they could not.
+   *
+   * A swallowed failure showed every project as "Follow the default" — which is
+   * a real, different answer, and one the operator can act on by "fixing" it
+   * and writing a genuine un-pin over a pin that was there all along. The
+   * picker states its own ignorance instead.
+   */
+  const [pinErr, setPinErr] = useState<string | null>(null);
   const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [cpCleanup, setCpCleanup] = useState<{ projectId: string; refs: number; rows: number } | null>(null);
   const [cpBusy, setCpBusy] = useState<string | null>(null);
   const target = projects.find((p) => p.id === confirming) ?? null;
+
+  // One list of accounts, then one saved choice per project. The picker is
+  // hidden below two accounts: with one login the control offers a choice that
+  // does not exist, on every row.
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      // Two reads, two failure meanings. If the account list fails there is no
+      // picker to draw at all; if the pins fail the picker must not present its
+      // own ignorance as the answer "follow the default".
+      let rows: AgentAccount[];
+      try {
+        rows = await window.wanigan.accounts.list(PROJECT_ACCOUNT_HARNESS);
+      } catch { return; /* the panel still lists projects; the picker does not appear */ }
+      if (!live) return;
+      setAccountRows(rows);
+      if (rows.length < 2) return;
+      try {
+        const pairs = await Promise.all(projects.map(async (p) => [
+          p.id,
+          (await window.wanigan.accounts.forProject(p.id, PROJECT_ACCOUNT_HARNESS))?.id ?? null,
+        ] as const));
+        if (!live) return;
+        setPinned(Object.fromEntries(pairs));
+        setPinErr(null);
+      } catch (e) {
+        if (live) setPinErr(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => { live = false; };
+  }, [projects]);
+
+  const pinAccount = async (project: Project, accountId: string | null) => {
+    setSaved(null);
+    try {
+      await window.wanigan.accounts.setForProject(project.id, PROJECT_ACCOUNT_HARNESS, accountId);
+      setPinned((cur) => ({ ...cur, [project.id]: accountId }));
+      const label = accountRows.find((row) => row.id === accountId)?.label;
+      setSaved({
+        tone: 'ok',
+        text: accountId
+          ? `New Claude sessions in “${project.name}” sign in as ${label}. A session already running keeps the login it started with.`
+          : `“${project.name}” follows the default account again.`,
+      });
+    } catch (e) {
+      setSaved({ tone: 'error', text: e instanceof Error ? e.message : String(e) });
+    }
+  };
 
   const askCheckpointCleanup = async (p: Project) => {
     setSaved(null); setConfirming(null); setCpBusy(p.id);
@@ -1504,6 +1606,22 @@ function Projects({ projects, onAddProject, onRemoveProject }: {
               {confirming === p.id ? 'cancel' : 'remove…'}
             </button>
           </div>
+          {accountRows.length > 1 && (
+            <label className="set-project-account">
+              <span className="faint">Claude account</span>
+              <select className="field field-inline" value={pinned[p.id] ?? ''} disabled={pinErr !== null}
+                      aria-label={`Claude account for ${p.name}`}
+                      onChange={(e) => void pinAccount(p, e.target.value || null)}>
+                <option value="">{pinErr === null ? 'Follow the default' : 'Not read'}</option>
+                {accountRows.map((row) => (
+                  <option key={row.id} value={row.id}>{row.label}</option>
+                ))}
+              </select>
+              {pinErr !== null && (
+                <span className="faint">Wanigan could not read which account this project uses: {pinErr}</span>
+              )}
+            </label>
+          )}
           {cpCleanup?.projectId === p.id && (
             <div style={{ margin: '10px 0 4px' }}>
               <Note tone="warn">
@@ -2301,14 +2419,14 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
                                       const next = e.target.value as TrustLevel;
                                       void pick(
                                         () => window.wanigan.policy.setTrust(p.id, next),
-                                        `${p.name} is now ${TRUST_COPY[next].label}. It no longer follows the default.`,
+                                        `${p.name} is now ${trustCopy(next).label}. It no longer follows the default.`,
                                       );
                                     }}>
                               {TRUST_LEVELS.map((t) => <option key={t} value={t}>{TRUST_COPY[t].label}</option>)}
                             </select>
                           </td>
                           <td className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
-                            {TRUST_COPY[lv].detail}
+                            {trustCopy(lv).detail}
                             {lv === d.dflt && (
                               <span className="faint"> — same as the default.</span>
                             )}
@@ -2472,7 +2590,7 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
                         </td>
                         <td style={{ maxWidth: 170 }}>
                           {r.projectName ?? <span className="faint">no project</span>}
-                          <div className="faint set-sub-line">{TRUST_COPY[r.trust]?.label ?? r.trust}</div>
+                          <div className="faint set-sub-line">{trustCopy(r.trust).label}</div>
                           {r.sessionId
                             ? <div className="faint set-path set-wrap">{r.sessionId}</div>
                             : <div className="faint set-sub-line">no session</div>}
@@ -2535,6 +2653,10 @@ const KIND_COPY: { id: keyof QueueSlots; label: string; detail: string; overLimi
     id: 'scout', label: 'Improvement Scout', detail: 'One bounded official-source research pass at a time.',
     overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
   },
+  {
+    id: 'node', label: 'Goal autopilot', detail: 'Unattended Goal tasks started without you at the keyboard.',
+    overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
+  },
 ];
 
 /**
@@ -2582,6 +2704,154 @@ function SlotMeter({ load, limit, enforcedLimit, source }: {
   );
 }
 
+/* ────────────────────────────────────────────────────────────────────────
+   Accounts · one operator, several logins
+   ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * An account is a labelled configuration directory, not a credential.
+ *
+ * Everything this panel can honestly say comes from files it can read. Whether
+ * a login is valid, whose organisation it belongs to, and when it expires are
+ * all inside a credential Wanigan does not hold — on macOS it is in the
+ * Keychain — so the panel reports "a login has been stored here" and stops. The
+ * browser sign-in belongs to the agent, and the copy says so rather than
+ * offering a button that could not work.
+ */
+function Accounts() {
+  const HARNESS = 'claude-code';
+  const [rows, setRows] = useState<AgentAccount[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [label, setLabel] = useState('');
+  const [dir, setDir] = useState('');
+  const [seed, setSeed] = useState(true);
+  const [busy, setBusy] = useState(false);
+  // Rename happens where the label is, not in a native prompt that steals
+  // focus from the window: Enter saves, Escape or blur cancels.
+  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
+
+  const load = () => {
+    window.wanigan.accounts.list(HARNESS)
+      .then((next) => { setRows(next); setErr(null); })
+      .catch((e) => setErr(msg(e)));
+  };
+  useEffect(load, []);
+
+  const act = async (run: () => Promise<unknown>, ok: string) => {
+    setBusy(true); setNote(null);
+    try { await run(); load(); setNote({ tone: 'ok', text: ok }); }
+    catch (e) { setNote({ tone: 'error', text: msg(e) }); }
+    finally { setBusy(false); }
+  };
+
+  const defaultAccount = rows?.find((row) => row.isDefault) ?? null;
+
+  return (
+    <Section title="Accounts"
+             hint="Run a work login and a personal login side by side. Each account is its own configuration directory, and the agent keys its stored sign-in to that directory — so two sessions can be signed in as two different people at the same time.">
+      {err && <Note tone="error">{err}</Note>}
+      {rows && (
+        <>
+          <div style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
+            {rows.map((row) => (
+              <div key={row.id} className="sunk" style={{ padding: '10px 12px', display: 'grid', gap: 6 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                  {renaming?.id === row.id ? (
+                    <input className="field field-inline" autoFocus value={renaming.value} aria-label="Account label"
+                           onChange={(e) => setRenaming({ id: row.id, value: e.target.value })}
+                           onBlur={() => setRenaming(null)}
+                           onKeyDown={(e) => {
+                             if (e.key === 'Escape') { e.preventDefault(); setRenaming(null); }
+                             if (e.key === 'Enter') {
+                               e.preventDefault();
+                               const next = renaming.value.trim();
+                               setRenaming(null);
+                               if (next && next !== row.label) void act(() => window.wanigan.accounts.rename(row.id, next), 'Label updated.');
+                             }
+                           }} />
+                  ) : (
+                    <strong style={{ fontSize: 'var(--t-small)' }}>{row.label}</strong>
+                  )}
+                  {row.isDefault && <span className="pill" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>Default</span>}
+                  {row.adopted && <span className="pill" title="This directory existed before Wanigan knew about it. Removing the account never deletes it.">Adopted</span>}
+                  {!row.present && <span className="pill" style={{ color: 'var(--bad)' }}>Directory missing</span>}
+                </div>
+                <div className="faint mono" style={{ fontSize: 'var(--t-micro)', wordBreak: 'break-all' }}>{row.configDir}</div>
+                <div className="dim" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>
+                  {row.signedIn === 'yes'
+                    ? 'A sign-in has been stored for this directory. Whether it is still valid, and which organisation it belongs to, are inside the credential itself — Wanigan does not hold it and cannot read it.'
+                    : 'Wanigan cannot tell whether this directory is signed in. On macOS the credential lives in the Keychain, keyed to the directory, and Wanigan neither holds it nor reads it. If a session here asks you to sign in, run /login once — the browser flow belongs to the agent, not to Wanigan.'}
+                </div>
+                <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 2 }}>
+                  {!row.isDefault && (
+                    <button className="btn" disabled={busy} style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                            onClick={() => act(() => window.wanigan.accounts.setDefault(row.id), `New sessions now use ${row.label} unless a project or launch says otherwise.`)}>
+                      Make default
+                    </button>
+                  )}
+                  <button className="btn" disabled={busy} style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                          onClick={() => setRenaming({ id: row.id, value: row.label })}>
+                    Rename
+                  </button>
+                  <button className="btn" disabled={busy} style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                          title="Wanigan stops using this directory. The directory, its sign-in and its history stay on disk."
+                          onClick={() => act(
+                            () => window.wanigan.accounts.remove(row.id),
+                            `Wanigan will not use ${row.label} any more. Its directory is untouched — delete it yourself if you meant to.`,
+                          )}>
+                    Forget
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="label">Add an account</div>
+          <div style={{ display: 'grid', gap: 7, marginBottom: 8 }}>
+            <input className="field" placeholder="Label, such as Work" value={label}
+                   onChange={(e) => setLabel(e.target.value)} />
+            <input className="field mono" placeholder="~/.claude-work" value={dir}
+                   onChange={(e) => setDir(e.target.value)} />
+            {defaultAccount && (
+              <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
+                <input type="checkbox" checked={seed} onChange={(e) => setSeed(e.target.checked)}
+                       style={{ marginTop: 3, accentColor: 'var(--accent)', width: 14, height: 14, flex: 'none' }} />
+                <span>
+                  Copy settings, skills, commands and subagents from <strong>{defaultAccount.label}</strong>.
+                  <span className="dim" style={{ display: 'block', marginTop: 2 }}>
+                    A new directory is otherwise empty. Copied, not linked, so editing one account's skills never
+                    edits the other's. Sign-ins are never copied — that is the point of a second account — and
+                    neither is conversation history.
+                  </span>
+                </span>
+              </label>
+            )}
+            <div>
+              <button className="btn btn-primary" disabled={busy || !label.trim() || !dir.trim()}
+                      onClick={() => act(async () => {
+                        await window.wanigan.accounts.create({
+                          harness: HARNESS, label: label.trim(), configDir: dir.trim(),
+                          seedFromAccountId: seed ? defaultAccount?.id ?? null : null,
+                        });
+                        setLabel(''); setDir('');
+                      }, 'Account added. Start a session on it and run /login once to sign in.')}>
+                Add account
+              </button>
+            </div>
+          </div>
+          {note && <Note tone={note.tone === 'ok' ? 'ok' : 'error'}>{note.text}</Note>}
+          <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 9, lineHeight: 1.45 }}>
+            A session picks its account from the launcher, then the project's saved account, then the default.
+            An <code>ANTHROPIC_API_KEY</code> or <code>ANTHROPIC_AUTH_TOKEN</code> in Wanigan's environment outranks
+            every stored sign-in; the launcher says so when one is set.
+          </p>
+        </>
+      )}
+    </Section>
+  );
+}
+
 function Dispatcher({ active }: { active: boolean }) {
   const [draft, setDraft] = useState<QueueSlots | null>(null);
   const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
@@ -2605,7 +2875,7 @@ function Dispatcher({ active }: { active: boolean }) {
   }, [active]);
 
   const running = useMemo(() => {
-    const by: Record<string, number> = { session: 0, headless: 0, batch: 0, scout: 0 };
+    const by: Record<string, number> = { session: 0, headless: 0, batch: 0, scout: 0, node: 0 };
     if (queue.v.s === 'ok') for (const q of queue.v.d) if (q.state === 'running') by[q.kind] = (by[q.kind] ?? 0) + 1;
     return by;
   }, [queue.v]);
@@ -2644,7 +2914,7 @@ function Dispatcher({ active }: { active: boolean }) {
       <Frame v={slots.v} what="the slot limits" onRetry={slots.reload}>
         {(loaded) => {
           const d = draft ?? loaded;
-          const dirty = (['session', 'headless', 'batch', 'scout'] as const).some((k) => d[k] !== loaded[k]);
+          const dirty = (['session', 'headless', 'batch', 'scout', 'node'] as const).some((k) => d[k] !== loaded[k]);
           return (
           <>
             {KIND_COPY.map(({ id, label, detail, overLimit }) => {
@@ -2973,8 +3243,12 @@ function Mcp({ projects, prefs, pending, setFlag }: {
     setReviewing(reviewing === s.id ? null : s.id);
   }
 
+  // Removing a server takes a tool away from every future session. It names
+  // the server and waits, like every other record-losing act.
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   async function remove(s: McpServerConfig) {
     setSaved(null);
+    setConfirmRemove(null);
     try {
       await window.wanigan.mcp.remove(s.id);
       setTick((t) => t + 1);
@@ -3174,9 +3448,19 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                               id: s.id, name: s.name, projectId: s.projectId ?? '', transport: s.transport,
                               command: s.command ?? '', args: s.args ?? '', url: s.url ?? '', enabled: s.enabled,
                             })}>edit</button>
-                            <button className="set-mini danger" onClick={() => void remove(s)}>remove</button>
+                            <button className="set-mini danger" aria-expanded={confirmRemove === s.id}
+                                    onClick={() => setConfirmRemove(confirmRemove === s.id ? null : s.id)}>remove…</button>
                           </td>
                         </tr>
+                        {confirmRemove === s.id && (
+                          <tr key={`${s.id}-confirm`}>
+                            <td colSpan={5}>
+                              <ConfirmNote
+                                what={<>Remove “{s.name}”? New sessions lose its tools; a session already running keeps it until it ends.</>}
+                                verb="Remove" onRun={() => remove(s)} onCancel={() => setConfirmRemove(null)} />
+                            </td>
+                          </tr>
+                        )}
                         {reviewing === s.id && (
                           <tr>
                             <td colSpan={5} style={{ padding: 0 }}>
@@ -3415,8 +3699,11 @@ function Storage({ prefs, pending, setPref }: {
 
   useEffect(() => { if (prefs && days === '') setDays(String(prefs.eventRetentionDays)); }, [prefs, days]);
 
+  const [confirmForget, setConfirmForget] = useState<string | null>(null);
+  const [confirmDrop, setConfirmDrop] = useState<string | null>(null);
   async function forget(sessionId: string, size: number) {
     setSaved(null);
+    setConfirmForget(null);
     try {
       await window.wanigan.transcripts.forget(sessionId);
       setTick((t) => t + 1);
@@ -3426,6 +3713,7 @@ function Storage({ prefs, pending, setPref }: {
 
   async function dropUpload(f: UploadedFile) {
     setSaved(null);
+    setConfirmDrop(null);
     try {
       await window.wanigan.uploads.remove(f.hash);
       setTick((t) => t + 1);
@@ -3490,7 +3778,8 @@ function Storage({ prefs, pending, setPref }: {
                       </thead>
                       <tbody>
                         {shown.map((t) => (
-                          <tr key={t.sessionId}>
+                          <Fragment key={t.sessionId}>
+                          <tr>
                             <td className="set-path set-wrap" style={{ maxWidth: 240 }}>{t.sessionId}</td>
                             <td className="set-n">{num(t.turns)}</td>
                             <td className="set-n">{bytes(t.bytes)}</td>
@@ -3499,11 +3788,24 @@ function Storage({ prefs, pending, setPref }: {
                               <div className="faint set-sub-line">{fullDate(t.archivedAt)}</div>
                             </td>
                             <td style={{ textAlign: 'right' }}>
-                              <button className="set-mini danger" onClick={() => void forget(t.sessionId, t.bytes)}>
-                                forget
+                              <button className="set-mini danger" aria-expanded={confirmForget === t.sessionId}
+                                      onClick={() => setConfirmForget(confirmForget === t.sessionId ? null : t.sessionId)}>
+                                forget…
                               </button>
                             </td>
                           </tr>
+                          {confirmForget === t.sessionId && (
+                            <tr>
+                              <td colSpan={5}>
+                                <ConfirmNote
+                                  what={<>Delete this transcript? {bytes(t.bytes)} of conversation text is removed for good. The session's
+                                    costs, events and evidence stay.</>}
+                                  verb="Delete transcript" tone="error"
+                                  onRun={() => forget(t.sessionId, t.bytes)} onCancel={() => setConfirmForget(null)} />
+                              </td>
+                            </tr>
+                          )}
+                          </Fragment>
                         ))}
                       </tbody>
                     </table>
@@ -3536,7 +3838,8 @@ function Storage({ prefs, pending, setPref }: {
                       </thead>
                       <tbody>
                         {[...uploads].sort((a, b) => b.bytes - a.bytes).map((u) => (
-                          <tr key={u.hash}>
+                          <Fragment key={u.hash}>
+                          <tr>
                             <td style={{ maxWidth: 260 }}>
                               {fileName(u.path)}
                               <div className="faint set-path set-wrap">{u.path}</div>
@@ -3548,9 +3851,21 @@ function Storage({ prefs, pending, setPref }: {
                               <div className="faint set-sub-line">{fullDate(u.uploadedAt)}</div>
                             </td>
                             <td style={{ textAlign: 'right' }}>
-                              <button className="set-mini danger" onClick={() => void dropUpload(u)}>remove</button>
+                              <button className="set-mini danger" aria-expanded={confirmDrop === u.hash}
+                                      onClick={() => setConfirmDrop(confirmDrop === u.hash ? null : u.hash)}>remove…</button>
                             </td>
                           </tr>
+                          {confirmDrop === u.hash && (
+                            <tr>
+                              <td colSpan={5}>
+                                <ConfirmNote
+                                  what={<>Remove {fileName(u.path)}? {bytes(u.bytes)} is reclaimed and the staged copy is gone; a session that
+                                    already read it is unaffected.</>}
+                                  verb="Remove file" onRun={() => dropUpload(u)} onCancel={() => setConfirmDrop(null)} />
+                              </td>
+                            </tr>
+                          )}
+                          </Fragment>
                         ))}
                       </tbody>
                     </table>
@@ -4110,244 +4425,6 @@ function Backup() {
    is declared — every value is a token from index.css.
    ════════════════════════════════════════════════════════════════════════ */
 
-const SHEET = `
-.set :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 5px; }
-
-.set.pane { width: 100%; max-width: none; flex: 1 1 auto; align-self: stretch; min-width: 0; box-sizing: border-box; overscroll-behavior: contain; }
-.set-kicker, .set-panel-kicker { color: var(--accent); font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
-.set-kicker { margin-bottom: 4px; }
-.set-hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(270px, .72fr); gap: var(--s-4); align-items: start; }
-.set-hero h1 { font-size: var(--t-title); font-weight: 600; letter-spacing: -.015em; }
-.set-hero > div > p { max-width: 640px; margin-top: 4px; color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
-.set-save-guide { padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
-.set-save-guide strong { display: block; color: var(--text); font-size: 12px; margin-bottom: 3px; }
-
-.set-layout { display: grid; grid-template-columns: clamp(196px, 18vw, 232px) minmax(0, 1fr); gap: var(--s-4); align-items: start; align-self: stretch; min-width: 0; width: 100%; }
-.set-tabs { position: sticky; top: 0; display: flex; flex-direction: column; gap: 4px; padding: 7px; max-height: calc(100vh - 104px); overflow-y: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); scrollbar-width: thin; }
-.set-tabs-intro { padding: 5px 6px 8px; color: var(--text-dim); font-size: var(--t-micro); line-height: 1.45; border-bottom: 1px solid var(--line-soft); margin-bottom: 2px; }
-.set-tabs-intro strong { display: block; color: var(--text); font-size: 11px; margin-bottom: 2px; }
-.set-tabs button { display: grid; gap: 2px; width: 100%; min-height: 48px; padding: 8px 10px; border-radius: 8px; color: var(--text-dim); text-align: left; font-size: 12px; font-weight: 650; touch-action: manipulation; }
-.set-tabs button:hover { color: var(--text); background: var(--bg-soft); }
-.set-tabs button.on { color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
-.set-tab-label { line-height: 1.2; }
-.set-tab-detail { color: var(--text-faint); font-size: 10.5px; font-weight: 500; line-height: 1.25; }
-.set-tabs button.on .set-tab-detail { color: var(--accent); opacity: .82; }
-.set-panels { min-width: 0; width: 100%; }
-.set-tab-panel { display: flex; flex-direction: column; gap: var(--s-4); min-width: 0; width: 100%; }
-.set-tab-panel[hidden] { display: none; }
-.set-panel-intro { padding: 14px 15px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); }
-.set-panel-intro h2 { margin-top: 3px; font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
-.set-panel-intro > p:not(.set-panel-includes) { margin-top: 4px; color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
-.set-panel-help { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; margin-top: 12px; padding: 9px 10px; border-radius: 8px; background: var(--bg-soft); color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
-.set-panel-help-mark { width: 20px; height: 20px; display: grid; place-items: center; border: 1px solid var(--accent); border-radius: 999px; color: var(--accent); font-size: 11px; font-weight: 750; }
-.set-panel-help strong { color: var(--text); font-size: 12px; }
-.set-panel-help p { margin-top: 2px; }
-.set-panel-includes { display: flex; flex-wrap: wrap; gap: 5px 8px; margin-top: 10px; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.45; }
-.set-panel-includes strong { color: var(--text-dim); font-size: inherit; }
-
-.set-field-action { display: flex; gap: 7px; align-items: center; margin-top: 4px; }
-.set-field-action > .field { min-width: 0; flex: 1; }
-.set-field-action > .btn { flex: none; }
-.set-key-status { display: flex; gap: 8px 11px; align-items: center; flex-wrap: wrap; margin-bottom: 11px; }
-.set-key-status .btn:first-of-type { margin-left: auto; }
-.set-runtime-row, .set-project-row { display: flex; gap: 11px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line-soft); min-width: 0; }
-
-/* Provider packs. One card per pack, because the decisions are per pack and a
-   table row cannot hold a consent block wide enough to read an argv line in. */
-.set-packs { display: grid; gap: 11px; }
-.set-pack { display: grid; gap: 8px; padding: 12px 13px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); min-width: 0; }
-.set-pack-head { display: flex; gap: 11px; align-items: flex-start; justify-content: space-between; min-width: 0; }
-.set-pack-head strong { font-size: 13px; font-weight: 650; }
-.set-pack-blurb { font-size: var(--t-small); line-height: 1.5; }
-.set-pack-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 8px 14px; margin: 2px 0; }
-.set-pack-meta dt { color: var(--text-faint); font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.set-pack-meta dd { margin-top: 2px; color: var(--text-dim); font-size: var(--t-small); line-height: 1.45; min-width: 0; }
-.set-pack-actions { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
-.set-pack-actions .faint { font-size: var(--t-micro); }
-.set-pack-review { display: grid; gap: 8px; padding: 10px 11px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg-soft); min-width: 0; }
-.set-pack-consent { max-height: 320px; overflow: auto; overscroll-behavior: contain; padding: 10px 11px;
-                    border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg);
-                    font-size: var(--t-micro); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
-
-/* The motion setting is real on the surface that sets it. */
-.set[data-motion='off'] * { transition: none !important; animation: none !important; }
-@media (prefers-reduced-motion: reduce) {
-  .set[data-motion='auto'] * { transition: none !important; animation: none !important; }
-}
-
-/* Wide tables scroll inside themselves. The page body never scrolls sideways. */
-.set-scroll { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
-.set-scroll > table { min-width: 560px; }
-.set-scroll.wide > table { min-width: 700px; }
-
-.set-n { text-align: right; white-space: nowrap;
-         font-variant-numeric: tabular-nums;
-         font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace; }
-.set-when { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text-dim); }
-.set-path { font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
-            font-size: 11.5px; word-break: break-all; font-variant-numeric: tabular-nums; }
-
-/* Sub-lines under a cell are still digits, so they line up like one. */
-.set-sub-line { font-size: 10.5px; font-variant-numeric: tabular-nums; }
-
-/* A mark is glyph + word + colour, in that order of importance. */
-.set-mark { display: inline-flex; align-items: center; gap: 5px;
-            font-size: 11px; font-weight: 600; white-space: nowrap; }
-.set-mark .g { line-height: 1; }
-
-.set-row { display: flex; gap: 16px; align-items: flex-start;
-           padding: 11px 2px; border-top: 1px solid var(--line-soft); }
-.set-row:first-child { border-top: none; padding-top: 2px; }
-.set-row .txt { flex: 1; min-width: 0; }
-.set-row h4 { font-size: 12.5px; font-weight: 600; }
-.set-row p { font-size: 12px; line-height: 1.5; color: var(--text-dim); margin-top: 3px; }
-
-.set-appearance { display: flex; align-items: center; justify-content: space-between; gap: var(--s-4); padding: 11px 2px; }
-.set-appearance > div { min-width: 0; }
-.set-appearance h3 { font-size: 12.5px; font-weight: 600; }
-.set-appearance p, .set-appearance-note { font-size: var(--t-small); line-height: 1.5; }
-.set-appearance p { margin-top: 3px; color: var(--text-dim); max-width: 680px; }
-.set-appearance-note { margin-top: 3px; }
-
-.set-switch { flex: none; display: flex; align-items: center; gap: 9px; padding: 3px; border-radius: 8px; }
-.set-switch:disabled { opacity: .5; cursor: not-allowed; }
-.set-state { width: 42px; text-align: right; font-size: 11px; font-weight: 700; }
-.set-track { position: relative; flex: none; width: 34px; height: 19px; border-radius: 999px;
-             background: var(--bg-sunk); border: 1px solid var(--line);
-             transition: background .12s, border-color .12s; }
-.set-switch[aria-checked='true'] .set-track { background: var(--accent-soft); border-color: var(--accent); }
-.set-knob { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 999px;
-            background: var(--text-faint); transition: transform .12s, background .12s; }
-.set-switch[aria-checked='true'] .set-knob { transform: translateX(15px); background: var(--accent); }
-
-.set-opts { display: grid; gap: 7px; }
-.set-opt { display: block; width: 100%; text-align: left; padding: 9px 11px; border-radius: 8px;
-           border: 1px solid var(--line); background: var(--bg-sunk);
-           transition: border-color .12s, background .12s; }
-.set-opt:hover { border-color: var(--text-faint); }
-.set-opt.on { border-color: var(--accent); background: var(--accent-soft); }
-.set-opt-top { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 650; }
-.set-opt .g { color: var(--text-faint); }
-.set-opt.on .g { color: var(--accent); }
-.set-opt-now { margin-left: auto; font-size: 10px; font-weight: 700; letter-spacing: .07em;
-               text-transform: uppercase; color: var(--accent); }
-.set-opt-detail { display: block; margin-top: 3px; font-size: 12px; line-height: 1.5; color: var(--text-dim); }
-
-.set-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.set-chip { padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line);
-            background: var(--bg-sunk); font-size: 11.5px; font-weight: 500; color: var(--text-dim); }
-.set-chip:hover { border-color: var(--text-faint); color: var(--text); }
-.set-chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
-
-.set-meter { height: 6px; border-radius: 3px; overflow: hidden;
-             background: var(--bg); border: 1px solid var(--line); }
-.set-meter > span { display: block; height: 100%; background: var(--series-1); }
-
-.set-sub { margin: 16px 0 7px; font-size: 10.5px; font-weight: 600;
-           letter-spacing: .07em; text-transform: uppercase; color: var(--text-faint); }
-
-/* Text that used to be a title attribute. A tooltip is nothing on a touch
-   screen, unreliable in a screen reader and unreachable from a keyboard, so
-   anything load-bearing wraps in place instead of hiding behind a hover. */
-.set-wrap { white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
-
-/* Visually hidden, still announced and still focusable by a screen reader. */
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-           overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-
-.set-list { margin: 0; padding-left: 17px; color: var(--text-dim);
-            font-size: var(--t-small); line-height: 1.55; }
-.set-list li { margin-top: 3px; }
-
-/* Filter bars: one labelled control per fact you can scope by. */
-.set-filters { display: flex; flex-wrap: wrap; gap: 9px 11px; align-items: flex-end;
-               margin: 12px 0 9px; }
-.set-filter-field { display: flex; flex-direction: column; gap: 3px; min-width: 150px; }
-.set-filter-field.grow { flex: 1 1 220px; }
-.set-filter-field > .field { max-width: 260px; }
-.set-filter-field.grow > .field { max-width: none; }
-.set-filter-actions { display: flex; gap: 8px; margin-left: auto; align-items: flex-end; flex-wrap: wrap; }
-
-/* A destructive confirmation and a consent review are the same shape: a bordered
-   region that is plainly not part of the list it grew out of. */
-.set-danger-zone, .set-review { display: grid; gap: 11px; padding: 13px;
-                                border-radius: var(--r-md); background: var(--bg-sunk);
-                                border: 1px solid var(--line); }
-.set-danger-zone { border-color: var(--critical); }
-.set-review { margin: 4px 0; }
-
-.set-facts { display: grid; gap: 9px; margin: 0; }
-.set-facts > div { display: grid; grid-template-columns: minmax(130px, 170px) minmax(0, 1fr); gap: 10px; }
-.set-facts dt { font-size: 11px; font-weight: 650; color: var(--text-dim); }
-.set-facts dd { margin: 0; min-width: 0; font-size: var(--t-small); line-height: 1.5; }
-
-.set-read-check { display: flex; gap: 8px; align-items: flex-start; margin-top: 4px;
-                  font-size: var(--t-small); line-height: 1.5; color: var(--text); }
-.set-read-check input { margin-top: 3px; flex: none; }
-
-/* Transcript search and the reader it opens. */
-.set-hit { background: var(--accent-soft); color: var(--accent); border-radius: 3px; padding: 0 2px; }
-.set-reader { border: 1px solid var(--line); border-radius: var(--r-md);
-              background: var(--bg-sunk); padding: 13px; }
-.set-reader-head { display: flex; gap: 11px; align-items: flex-start;
-                   justify-content: space-between; margin-bottom: 11px; }
-.set-turns { display: grid; gap: 9px; max-height: 520px; overflow-y: auto;
-             overscroll-behavior: contain; padding-right: 4px; }
-.set-turn { border-left: 2px solid var(--line); padding: 2px 0 2px 10px; }
-.set-turn[data-role='user'] { border-left-color: var(--accent); }
-.set-turn[data-role='assistant'] { border-left-color: var(--series-1); }
-.set-turn header { font-size: 11px; color: var(--text-dim); }
-.set-turn header strong { color: var(--text); font-size: 11.5px; }
-.set-turn pre { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere;
-                font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
-                font-size: 11.5px; line-height: 1.55; color: var(--text-dim); }
-
-.set-empty { padding: 20px 14px; text-align: center;
-             font-size: 12.5px; line-height: 1.55; color: var(--text-dim); }
-
-.set-mini { padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 600; color: var(--text-dim); }
-.set-mini:hover { background: var(--bg-sunk); color: var(--text); }
-.set-mini.danger:hover { background: var(--critical-soft); color: var(--critical); }
-
-/* A full-width desktop carries a rail. An iPad or a desktop split view gets a
-   scrollable touch tab strip instead of a narrow second column. */
-@media (max-width: 1024px), (pointer: coarse) and (max-width: 1180px) {
-  .set-hero { grid-template-columns: 1fr; gap: 10px; }
-  .set-save-guide { max-width: none; }
-  .set-layout { display: flex; flex-direction: column; gap: var(--s-4); }
-  .set-tabs { position: relative; top: auto; flex-direction: row; width: 100%; max-height: none; overflow-x: auto; overflow-y: hidden; padding: 5px; scroll-padding-inline: 8px; scroll-snap-type: x proximity; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; touch-action: pan-x; }
-  .set-tabs-intro { display: none; }
-  .set-tabs button { flex: 0 0 auto; width: auto; min-height: 42px; padding: 8px 11px; white-space: nowrap; scroll-snap-align: start; }
-  .set-tab-detail { display: none; }
-  .set-panels { width: 100%; }
-}
-
-@media (pointer: coarse) {
-  .set-tabs button, .set-switch, .set-opt { min-height: 44px; touch-action: manipulation; }
-  .set-mini, .set-chip { min-height: 40px; padding-inline: 10px; touch-action: manipulation; }
-  .set button:not(.set-mini):not(.set-chip) { min-height: 44px; touch-action: manipulation; }
-}
-
-@media (max-width: 640px) {
-  .set.pane { padding: 12px 12px calc(18px + env(safe-area-inset-bottom)); gap: 12px; }
-  .set-panel-intro { padding: 12px; }
-  .set .card { padding: 12px !important; }
-  .set .row2 { grid-template-columns: 1fr; }
-  .set-row { flex-direction: column; gap: 8px; }
-  .set-appearance { flex-direction: column; align-items: stretch; gap: 10px; }
-  .set-appearance .theme-control-card { align-self: flex-start; }
-  .set-switch { align-self: flex-start; }
-  .set-field-action { flex-direction: column; align-items: stretch; }
-  .set-field-action > .btn { align-self: flex-start; }
-  .set-key-status .btn:first-of-type { margin-left: 0; }
-  .set-runtime-row, .set-project-row { align-items: flex-start; flex-wrap: wrap; }
-  .set-runtime-row .trunc, .set-project-row .trunc,
-  .set-runtime-row .set-wrap, .set-project-row .set-wrap { flex-basis: 100%; }
-  .set-filter-field, .set-filter-field > .field { min-width: 0; max-width: none; width: 100%; }
-  .set-filter-actions { margin-left: 0; }
-  .set-facts > div { grid-template-columns: 1fr; gap: 2px; }
-}
-`;
 
 
 /* ── demo mode ────────────────────────────────────────────────────────────

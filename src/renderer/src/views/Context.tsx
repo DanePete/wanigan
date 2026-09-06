@@ -1745,7 +1745,7 @@ function LearningPanel({ settings, overview, onOpenLearning }: {
         </button>
         <button className="btn" onClick={() => onOpenLearning('optimize')}
                 title="Retrieval settings, including the per-task budget ceiling.">
-          Open Optimize
+          Open Learning › Context
         </button>
       </div>
     </>

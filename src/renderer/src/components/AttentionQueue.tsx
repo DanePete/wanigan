@@ -219,6 +219,13 @@ function Chip({ a, session, onJump }: {
           {project}
           {a.tool && <span className="mono"> · {a.tool}</span>}
         </span>
+        {/* What the agent is actually asking, on the chip rather than only in
+            a hover title: the sentence is the reason this chip is here, and a
+            title is unreachable by touch and invisible to a scan. One line,
+            ellipsised; the full text stays in the aria-label above. */}
+        {detail && (a.kind === 'permission' || a.kind === 'error') && (
+          <span className="atq-detail">{detail}</span>
+        )}
       </span>
     </button>
   );

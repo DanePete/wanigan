@@ -1,0 +1,71 @@
+/* ── shell ─────────────────────────────────────────────────────────────
+   Chrome that belongs to App.tsx and its shell-level components: the overlay
+   root every dialog portals into, the rail's mark buttons and their popover,
+   and the polite announcement strip. Feature sheets declare no colour; every
+   colour here is a token from index.css, and nothing in this file animates —
+   a live terminal can be on screen under any of it. */
+
+/* Overlay root. A sibling of .shell, so a dialog rendered from inside a view
+   escapes the stacking context .body's view-transition-name creates and paints
+   above the header. ui.css owns .overlay-root and index.css/ui.css own
+   .overlay-backdrop proper. The rule below is a fallback so a portaled dialog
+   is never invisible while that definition is behind: :where() gives it zero
+   specificity, so any real .overlay-backdrop rule wins wherever it is imported
+   — shell.css loads after ui.css, so plain specificity would not yield. */
+:where(.overlay-backdrop) {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  background: var(--scrim);
+}
+/* A popover anchored to a control dims nothing: the page behind it is what the
+   list is about. It still owns the keyboard, exactly as a dialog does. */
+.overlay-backdrop.clear { background: transparent; padding: 0; }
+
+/* Sidebar marks are doors, not decoration. The row and its marks are siblings
+   in a wrapper — never a button inside a button — the split Sessions' tab strip
+   already uses. In a column that means the mark sits on its own line, indented
+   to the label above it, so a route with something waiting reads as two facts
+   rather than one crowded row. */
+.nav-tab-wrap { display: block; }
+.nav-tab-wrap > button.nav-mark { margin: 1px 0 3px 34px; }
+button.nav-mark { cursor: pointer; }
+button.nav-mark:hover { filter: brightness(1.08); }
+
+/* The blocked list under "n need you": worst first, main's ranking untouched. */
+.need-popover {
+  position: absolute; left: var(--pop-left, 16px); top: var(--pop-top, 100px);
+  width: min(360px, calc(100vw - 24px)); padding: 8px;
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--bg-soft); box-shadow: var(--shadow-popover);
+}
+.need-popover h2 { margin: 0 0 6px; padding: 0 6px; font-size: var(--t-small); font-weight: 600; color: var(--text-dim); }
+.need-rows { display: grid; gap: 2px; max-height: min(48vh, 360px); overflow: auto; }
+.need-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px;
+  width: 100%; padding: 7px 8px; border-radius: var(--r-sm); text-align: left;
+}
+.need-row:hover, .need-row:focus-visible { background: var(--bg-sunk); }
+.need-row-project { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.need-row-wait { color: var(--text-faint); font-size: var(--t-micro); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* The polite region is mounted for the life of the window and empty by
+   default; assistive tech only announces a region that already existed. It
+   stays quiet in colour too — an error is the toast's job, not this strip's. */
+.announce-region {
+  position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+  z-index: 60; max-width: 620px;
+}
+.announce-strip {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 8px var(--s-4); border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--bg-soft); color: var(--text); font-size: var(--t-small);
+  box-shadow: var(--shadow-popover);
+}
+.announce-strip .glyph { font-weight: 800; }
+.announce-strip[data-tone='warn'] .glyph { color: var(--warning); }
+.announce-strip[data-tone='ok'] .glyph { color: var(--good); }
+.announce-strip .announce-actions { display: flex; gap: 6px; margin-left: auto; }
+
+/* The command palette's Recent group and its row marks. The row rules
+   themselves belong to index.css; only the mark's inline geometry lives here. */
+.command-item-copy .mark { margin-right: 6px; font-weight: 600; }
