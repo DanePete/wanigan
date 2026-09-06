@@ -854,8 +854,22 @@ function HowItWorks({ pipeline, windowDays, onNavigate }: {
         // for a candidate somebody had already approved or rejected, so an
         // Inbox emptied by review still reported a backlog. The title names the
         // destination rather than this number, because the Inbox's 'open'
-        // filter is a superset that also lists approved and failed proposals.
+        // filter also lists approved and failed proposals.
         { n: p.awaitingDecision, text: `awaiting a decision · ${w}`, go: () => onNavigate('inbox', 'open'), title: 'Open the Inbox filtered to open proposals' },
+        // The count and the filter overlap rather than nest, the same way the
+        // figure above and its filter do, and the title names the destination
+        // for that reason. The count and the filter do
+        // share a status list — DECIDED_CANDIDATE_STATUSES in main,
+        // DECIDED_STATUSES here, the same five — but the count adds two
+        // predicates the filter has not: reviewed_at inside the window, so the
+        // list also holds decisions older than it, and reviewed_at at all, so
+        // the list also holds rows automation promoted without a review
+        // (auto-applied, below, is the figure for those). It runs the other way
+        // too: the two disagree about how a project scope narrows them — the
+        // count uses artifactWhere, the filter project_id — so a personal
+        // proposal recorded under no project is counted here and not listed
+        // there. A snoozed proposal is
+        // in neither, so it stays in the awaiting figure and out of this one.
         { n: p.reviewed, text: `decided · ${w}`, go: () => onNavigate('inbox', 'decided'), title: 'Open the Inbox filtered to decided proposals' },
         { n: p.autoPromoted, text: `auto-applied · ${w}`, go: () => onNavigate('knowledge'), title: 'Open Knowledge — the auto-apply lane lands there' },
       ],
@@ -1362,6 +1376,10 @@ function TeachButton({ project, providers, busy, onRun }: {
 
 /* ── Inbox ─────────────────────────────────────────────────────────────── */
 
+// Hand-mirrored with DECIDED_CANDIDATE_STATUSES in src/main/learning/types.ts,
+// which is what the pipeline's decided figure counts. The two have to name the
+// same statuses; the figure then narrows further, to rows carrying a
+// reviewed_at inside its window, so this filter lists those and older ones too.
 const DECIDED_STATUSES = ['approved', 'rejected', 'promoted', 'applied', 'superseded'];
 
 function Inbox({ candidates, signals, providers, busy, act, initialStatus, read, scoped, onShowAll, emptyFrame }: {
@@ -1405,8 +1423,15 @@ function Inbox({ candidates, signals, providers, busy, act, initialStatus, read,
     ? <button className="learning-link" onClick={onShowAll}>Proposals exist outside this scope — switch to Everything</button>
     : null;
 
+  // Both halves are load-bearing. The status is what makes a row a decision:
+  // reviewCandidate stamps reviewedAt for a snooze too, so filtering on the
+  // timestamp alone put deferred proposals in this history and let the
+  // single-row line print "Last decision: snoozed", which is the one thing a
+  // snooze is not. reviewedAt is still required because it is the clock every
+  // line below reads, and a candidate automation promoted without review has
+  // none — counting it here would credit a person with a decision nobody made.
   const decided = useMemo(() => candidates
-    .filter((c) => c.reviewedAt != null)
+    .filter((c) => DECIDED_STATUSES.includes(c.status) && c.reviewedAt != null)
     .sort((a, b) => (b.reviewedAt ?? 0) - (a.reviewedAt ?? 0))
     .slice(0, 20), [candidates]);
   const approvedN = decided.filter((c) => ['approved', 'promoted', 'applied'].includes(c.status)).length;
@@ -1445,7 +1470,7 @@ function Inbox({ candidates, signals, providers, busy, act, initialStatus, read,
           {read.observed ? `${visible.length} proposal${pl(visible.length)}`
             : read.phase === 'error' ? '— proposals, not read' : '… reading proposals'}
         </strong></div>
-        {historyLine && <small className="inbox-history-line" title="Counted from stored candidate reviews.">{historyLine}</small>}
+        {historyLine && <small className="inbox-history-line" title="Counted from stored candidate decisions. A snoozed proposal is not one.">{historyLine}</small>}
         <label><span className="label">Status</span><select className="field" value={status} onChange={(e) => setStatus(e.target.value)}><option value="open">Needs a decision</option><option value="decided">Decided</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="snoozed">Snoozed</option><option value="rejected">Rejected</option><option value="promoted">Promoted</option><option value="applied">Applied</option><option value="all">All</option></select></label>
       </section>
       <Define term="Candidate">

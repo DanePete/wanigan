@@ -263,7 +263,7 @@ export type LaunchOptions = {
   projectId: string;
   /** Model alias ('opus', 'sonnet', 'fable') or a full id. Empty = the CLI default. */
   model?: string;
-  /** low | medium | high | xhigh | max. Empty = the CLI default (high). */
+  /** low | medium | high | xhigh | max. Empty = no --effort is passed, so the CLI's own default runs; Wanigan does not read what that default is. */
   effort?: string;
   /** acceptEdits | auto | bypassPermissions | manual | dontAsk | plan */
   permissionMode?: string;
@@ -2346,6 +2346,15 @@ export type LearningPipelineStats = {
    */
   awaitingDecision: number;
   autoPromoted: number;
+  /**
+   * Candidates a person decided inside the window: a COUNT over the statuses
+   * in DECIDED_CANDIDATE_STATUSES, timed by reviewed_at because that is when
+   * the decision was taken. It is deliberately not "reviewed_at is set" — a
+   * snooze stamps reviewed_at too, so that predicate counted a deferred
+   * proposal here while awaitingDecision counted the same row as still open.
+   * A candidate automation promoted without review has no reviewed_at and is
+   * not counted here; autoPromoted is the figure for those.
+   */
   reviewed: number;
   itemsPromoted: number;
   projectionsApplied: number;

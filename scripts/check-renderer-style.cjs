@@ -93,7 +93,7 @@ const FONT_PX_BASELINE = {
   'batches.css': 0,
   'control.css': 11,
   'insights.css': 17,
-  'evals.css': 20, 'skills.css': 20,
+  'evals.css': 19, 'skills.css': 19,
   'fleet.css': 15,
   'git.css': 13,
   'learning.css': 2,
@@ -104,7 +104,7 @@ const FONT_PX_BASELINE = {
   'session-learning.css': 1,
   'settings.css': 27,
   'sessions.css': 2,
-  'timeline.css': 26,
+  'timeline.css': 25,
 };
 
 // 4. Declarations with a literal duration, per file, relative to src/renderer/src.
@@ -158,30 +158,70 @@ const DURATION_BASELINE = {};
 //      - class names a component assembles at runtime. The combo reader strips
 //        ${...} out of a template literal, which under-counts — the safe
 //        direction for a gate.
-//      - the nine sheets a view imports from its own .tsx instead of from
-//        index.css. Where those land relative to index.css is decided by the
-//        bundler's module graph, not by a rule of CSS, so they are reviewed by
-//        hand and not gated here. compact.css is excluded for the opposite
-//        reason: main.tsx loads it after index.css, so it wins.
+//      - the ten sheets a view imports from its own .tsx instead of from
+//        index.css — batches, improvement-scout, insights, learning, observed,
+//        runs, session-learning, sessions, settings and usage. Where those land
+//        relative to index.css is decided by the bundler's module graph, not by
+//        a rule of CSS, so they are reviewed by hand and not gated here.
+//        compact.css is excluded for the opposite reason: main.tsx loads it
+//        after index.css, so it wins.
 //
 //    Run with --print-shadowed for the selector, property and line behind every
 //    count below. None of these is a permitted exception — each one is a
 //    declaration that does nothing today, so every number here should fall.
+//
+//    Every number has now fallen. The sixteen this check found when it landed
+//    were each read against the base rule and answered one of two ways:
+//      - the value differed from the base, so someone wanted something they
+//        never got, and the selector was made compound to give it to them.
+//        .field.field-inline, .field.tl-search, .field.skills-search,
+//        .field.gt-filter and .field.control-textarea are those; each carries a
+//        comment saying the second class is required, because a compound
+//        selector reads as redundant to anyone who has not traced the cascade.
+//      - the value equalled the base, or the frame owns the decision, so the
+//        declaration was deleted: .fleet-prov's padding and .pg-ver's font
+//        family were copies of .pill and .mono, and .pg-head's and .sc-head's
+//        `align-items: baseline` would have had to beat compact.css's 720px
+//        .pane-head step to apply, which would have left two heads alone in
+//        ignoring it.
+//    Raising specificity is not free: two classes beat a one-class rule inside
+//    a @media block as well, so a compound modifier silently opts its element
+//    out of compact.css's breakpoint ladder and its (pointer: coarse) touch
+//    targets. .gt-filter's min-height was dropped for exactly that reason.
+//    A zero here is not a permit to add a sixteenth; it is the floor.
+//
+//    runs.css was swept by hand in the same pass, and this check scores none of
+//    it: HeadlessRuns.tsx imports that sheet, so it is one of the ten in the
+//    blind-spot list above. Read against index.css and compact.css it held six
+//    shadowed declarations in two selectors — three times what this check would
+//    have reported had runs.css been in its scope, because four of the six sit
+//    inside @media, which it does not read.
+//      - .hr-stats lost grid-template-columns twice: to .stat-grid's four
+//        columns at full width, and to compact.css's two-column .stat-grid at
+//        720px. Both rules now read .stat-grid.hr-stats, so three stats get
+//        three columns and the row no longer paints an empty fourth cell.
+//      - .hr-view lost four: a gap in its base rule and another at 720px, and a
+//        padding at 980 and at 720. All four were deleted. .hr-view is a .pane,
+//        and .pane plus compact.css's two .pane steps were already painting the
+//        surface — in the padding cases with byte-identical values.
+//    Six is a reading of one sheet on one day, not a number this check keeps.
+//    Nothing here re-reads runs.css, or the other nine sheets a view imports
+//    for itself, when one of them grows a new modifier tomorrow.
 const SHADOWED_MODIFIER_BASELINE = {
   'attention.css': 0,
   'composer.css': 0,
-  'control.css': 1,
-  'evals.css': 2,
-  'fleet.css': 1,
-  'git.css': 4,
+  'control.css': 0,
+  'evals.css': 0,
+  'fleet.css': 0,
+  'git.css': 0,
   'motion.css': 0,
   'pet.css': 0,
   'policy.css': 0,
-  'queue.css': 2,
-  'schedule.css': 1,
+  'queue.css': 0,
+  'schedule.css': 0,
   'shell.css': 0,
-  'timeline.css': 2,
-  'ui.css': 3,
+  'timeline.css': 0,
+  'ui.css': 0,
 };
 
 const INLINE_STYLE = /style=\{\{/g;

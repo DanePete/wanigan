@@ -1,8 +1,12 @@
 /* plugins — the Plugins view. Tokens come from index.css; no colour is declared here. */
 
 /* .pg-wrap was a private copy of .pane, for the same reasons recorded in
-   schedule.css. Both are the shared frame now. */
-.pg-head { align-items: baseline; }
+   schedule.css. Both are the shared frame now, the head included: a private
+   `align-items: baseline` sat here and never once applied, because index.css
+   @imports this sheet above its own .pane-head rule. It is deleted rather than
+   won back — compact.css re-aligns .pane-head to flex-start at 720px at one
+   class of specificity, so a compound override here would have made Plugins
+   the only head in the app that ignores that step. */
 .pg-count { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px;
             color: var(--text-dim); font-variant-numeric: tabular-nums; }
 
@@ -12,7 +16,9 @@
 .pg-card.gone { border-color: var(--warning); }
 .pg-top { display: flex; align-items: baseline; gap: 9px; }
 .pg-name { font-size: 15px; font-weight: 600; letter-spacing: -.005em; }
-.pg-ver { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; color: var(--text-faint);
+/* The version carries .mono in the markup, so its family is the --mono token.
+   The shorter private list that used to sit here lost to it and is gone. */
+.pg-ver { font-size: 10.5px; color: var(--text-faint);
           margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
 .pg-desc { font-size: 13px; color: var(--text-dim); line-height: 1.48; }
 .pg-meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--text-faint);

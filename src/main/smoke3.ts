@@ -4568,9 +4568,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   `baseline rows: ${shadowRows.length}, imported sheets: ${shadowImported.length}, rows naming a sheet index.css does not import: ${shadowStrays.join(', ') || 'none'}`);
 
   const shadowCeiling = shadowRows.reduce((a, r) => a + r.allowed, 0);
-  check(shadowRows.length > 0 && shadowCeiling <= 16,
-  'the shadowed-modifier baselines total no more than the sixteen dead declarations measured the day the check landed, so the only way to change them is downward and a sheet cannot buy itself room by editing the gate instead of the CSS',
-  `baseline total: ${shadowCeiling} across ${shadowRows.length} sheets, ceiling: 16`);
+  check(shadowRows.length > 0 && shadowCeiling === 0,
+  'every one of the sixteen dead declarations this check found the day it landed has been paid off and the baseline is zero across all fourteen sheets, so there is no unspent allowance left for a new private modifier to hide inside and a sheet cannot buy itself room by editing the gate instead of the CSS',
+  `baseline total: ${shadowCeiling} across ${shadowRows.length} sheets, ceiling: 0`);
 
   check(!shadowRows.some((r) => r.sheet === 'compact.css')
     && shadowMainTsx.indexOf("'./styles/compact.css'") > shadowMainTsx.indexOf("'./index.css'"),
@@ -4582,6 +4582,91 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && shadowGateSrc.includes('no @import of ./styles/*.css found in index.css'),
   'the style gate names the blind spots of its fifth check in its own source, offers --print-shadowed for the line behind every count, and fails loudly rather than reporting zero if it can no longer find the import list its soundness depends on',
   `gate declares --print-shadowed, the blind-spot list and the empty-import-list guard: ${shadowGateSrc.includes('--print-shadowed') && shadowGateSrc.includes('What it cannot see, so a pass here is not proof') && shadowGateSrc.includes('no @import of ./styles/*.css found in index.css')}`);
+
+  /* ── the sixteen shadowed declarations, and how each was answered ──── */
+  // Check 5 of the style gate counts dead declarations; it cannot check that the
+  // fix was the right one. Five of the sixteen differed from their base rule, so
+  // the selector was compounded to let them apply; the rest were copies of the
+  // base or decisions the shared frame owns, and were deleted. A revert of this
+  // work looks like a passing gate — the count would still be zero if someone
+  // "simplified" .field.gt-filter back to .gt-filter, because a dead rule and a
+  // deleted one score the same. These pin the shape, not the count.
+  const cascadeRules = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '');
+  const CASCADE_COMPOUNDED: Record<string, string> = {
+    'src/renderer/src/styles/ui.css': '.field.field-inline {',
+    'src/renderer/src/styles/timeline.css': '.field.tl-search {',
+    'src/renderer/src/styles/evals.css': '.field.skills-search {',
+    'src/renderer/src/styles/git.css': '.field.gt-filter {',
+    'src/renderer/src/styles/control.css': '.field.control-textarea {',
+    'src/renderer/src/styles/runs.css': '.stat-grid.hr-stats {',
+  };
+  const cascadeCollapsed = Object.entries(CASCADE_COMPOUNDED)
+    .filter(([file, selector]) => !sourceOf(file).includes(selector))
+    .map(([file]) => path.basename(file));
+  check(cascadeCollapsed.length === 0,
+  'every modifier that had to beat a base rule still names both classes in its selector, because a bare .field-inline, .tl-search, .skills-search, .gt-filter, .control-textarea or .hr-stats loses on source order to .field, .stat-grid or .pane and renders nothing at all — which is the state each of these was found in',
+  `sheets whose compound selector was collapsed back to one class: ${cascadeCollapsed.join(', ') || 'none'}`);
+
+  // The negative half. A collapsed selector is the likeliest regression here,
+  // because a compound modifier reads as redundant to anyone who has not traced
+  // the bundle, and deleting the second class is a one-character edit that no
+  // type, test or gate would otherwise notice.
+  const CASCADE_BARE: [string, string][] = [
+    ['ui.css', 'field-inline'], ['timeline.css', 'tl-search'], ['evals.css', 'skills-search'],
+    ['git.css', 'gt-filter'], ['control.css', 'control-textarea'], ['runs.css', 'hr-stats'],
+  ];
+  const cascadeBareBack = CASCADE_BARE
+    .filter(([sheet, cls]) => new RegExp(`(^|[\\s,}])\\.${cls}\\s*\\{`)
+      .test(cascadeRules(sourceOf(`src/renderer/src/styles/${sheet}`))))
+    .map(([sheet, cls]) => `${sheet} .${cls}`);
+  check(cascadeBareBack.length === 0,
+  'no sheet has re-opened a one-class rule head for any of the six modifiers that need two, so a future edit cannot quietly restore a declaration that loses every value it sets while still reading like working CSS',
+  `one-class rule heads found: ${cascadeBareBack.join(', ') || 'none'}`);
+
+  // runs.css is imported from HeadlessRuns.tsx rather than index.css, so the
+  // gate refuses to score it and a person has to. Three Stat children were being
+  // painted in .stat-grid's four columns, and the 720px step has to be compound
+  // as well or compact.css's two-column .stat-grid wins it back.
+  const cascadeRuns = sourceOf('src/renderer/src/styles/runs.css');
+  const cascadeRunsRules = cascadeRules(cascadeRuns);
+  check(cascadeRuns.includes('.stat-grid.hr-stats { margin: var(--s-4) 0; grid-template-columns: repeat(3, minmax(0, 1fr)); }')
+    && cascadeRuns.includes('.stat-grid.hr-stats { grid-template-columns: minmax(0, 1fr); }')
+    && !/(^|[\s,}])\.hr-view\s*\{/.test(cascadeRunsRules),
+  'the Headless Runs stat row asks for three columns at two classes of specificity so it beats .stat-grid at both its own width and the 720px step, and .hr-view opens no rule of its own at all — the surface takes both its vertical rhythm and its two padding steps from .pane, base and compact, rather than private copies that never applied',
+  `three-column rule present: ${cascadeRuns.includes('grid-template-columns: repeat(3, minmax(0, 1fr))')}, hr-view rule heads: ${(cascadeRunsRules.match(/(^|[\s,}])\.hr-view\s*\{/g) ?? []).length}`);
+
+  // The four deletions. Each was a copy of the base rule's own value or a
+  // decision the shared frame owns, so restoring one would put back a
+  // declaration that either says nothing or has to defeat compact.css to speak.
+  const cascadeQueue = cascadeRules(sourceOf('src/renderer/src/styles/queue.css'));
+  const cascadeSchedule = cascadeRules(sourceOf('src/renderer/src/styles/schedule.css'));
+  const cascadeFleet = cascadeRules(sourceOf('src/renderer/src/styles/fleet.css'));
+  check(!/\.fleet-prov \{[^}]*padding/.test(cascadeFleet)
+    && !/\.pg-ver \{[^}]*font-family/.test(cascadeQueue)
+    && !/\.pg-head\s*\{/.test(cascadeQueue)
+    && !/\.sc-head\s*\{/.test(cascadeSchedule),
+  'no sheet keeps a private copy of a primitive it already wears — the provider pill takes .pill padding, the plugin version takes the --mono family from the .mono class beside it, and the Plugins and Schedules heads align the way .pane-head aligns every other head instead of overriding a rule compact.css re-states at 720px',
+  `fleet-prov padding: ${/\.fleet-prov \{[^}]*padding/.test(cascadeFleet)}, pg-ver font-family: ${/\.pg-ver \{[^}]*font-family/.test(cascadeQueue)}, pg-head rule: ${/\.pg-head\s*\{/.test(cascadeQueue)}, sc-head rule: ${/\.sc-head\s*\{/.test(cascadeSchedule)}`);
+
+  // Raising specificity is not free, and this is the sharpest edge: two classes
+  // beat a one-class rule inside a @media block as well, so a compound modifier
+  // that names min-height also outranks the coarse-pointer target. The Git
+  // history filter is a box a finger has to hit and type into.
+  const cascadeGit = cascadeRules(sourceOf('src/renderer/src/styles/git.css'));
+  const cascadeCompact = sourceOf('src/renderer/src/styles/compact.css');
+  check(!/\.field\.gt-filter \{[^}]*min-height/.test(cascadeGit)
+    && cascadeCompact.includes('@media (pointer: coarse)')
+    && /\.btn, \.field \{ min-height: 44px; \}/.test(cascadeCompact),
+  'the Git history filter declares no height of its own, so compact.css can still raise every .field to a 44px target on a coarse pointer — a compound selector would have outranked that media rule and shrunk a typing target to 26px, which is the cost of winning a cascade fight the shared rule was already winning correctly',
+  `gt-filter min-height declared: ${/\.field\.gt-filter \{[^}]*min-height/.test(cascadeGit)}, coarse-pointer field target present: ${/\.btn, \.field \{ min-height: 44px; \}/.test(cascadeCompact)}`);
+
+  // The gate's own table. Zero is the floor, not a permit, and a sheet that
+  // regrows one of these fails rather than spending an allowance.
+  const cascadeGateRows = [...shadowBaselineBlock.matchAll(/'([a-z0-9-]+\.css)': (\d+),/g)]
+    .map((m) => ({ sheet: m[1], allowed: Number(m[2]) }));
+  check(cascadeGateRows.length === 14 && cascadeGateRows.every((r) => r.allowed === 0),
+  'the shadowed-modifier baseline still lists all fourteen imported sheets and grants none of them a single dead declaration, so the debt this check measured cannot be re-opened one sheet at a time by editing the gate instead of the CSS',
+  `rows: ${cascadeGateRows.length}, sheets still holding an allowance: ${cascadeGateRows.filter((r) => r.allowed > 0).map((r) => `${r.sheet}=${r.allowed}`).join(', ') || 'none'}`);
 
   // A catalog row is an offer, and accepting one runs code on this machine, so
   // the consent screen has to be able to name the origin. Three shapes are real
@@ -4711,6 +4796,70 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !/zaiBackend|deepseekBackend|fallbackModels/.test(dialogCatalogueSrc),
     'the New session dialog holds no model catalogue of its own and no backend-id ladder choosing between four of them; it reads one channel and renders what main already resolved',
     dialogCatalogueSrc.includes('window.wanigan.providers.modelCatalogue('));
+
+  // A distinct name on purpose. smoke3 already binds this same file to
+  // `sessionsSrc` at :4877 and `sessionsViewSrc` at :5709, both inside
+  // runPhaseSmoke2 — so reusing `sessionsSrc` here would read a const
+  // declared further down and throw on the temporal dead zone.
+  const runBarSrc = sourceOf('src/renderer/src/views/Sessions.tsx');
+
+  // Negative, and the one that fails if this phase is ever reverted or
+  // dropped: the constant table and the id short-circuit are what the shared
+  // catalogue exists to replace, and neither name appears anywhere in the
+  // file, prose included.
+  check(!runBarSrc.includes('const MODEL_CHOICES')
+    && !runBarSrc.includes("provider.id !== 'glm'")
+    && !runBarSrc.includes('window.wanigan.key.glmModels(')
+    && !runBarSrc.includes('EFFORT_LEVELS')
+    && runBarSrc.includes('window.wanigan.providers.modelCatalogue(session.providerId)'),
+    'the picker on a running session holds no catalogue of its own, keeps no short-circuit that made one built-in profile the only route to a live read, and reaches every backend — DeepSeek included — through the one channel main already answers',
+    runBarSrc.includes('const MODEL_CHOICES'));
+
+  check(runBarSrc.includes('const frozen = session.providerProfile ?? null;')
+    && runBarSrc.includes("launchFieldChoices(launched, 'model')")
+    && runBarSrc.includes("launchFieldChoices(launched, 'effort')")
+    && runBarSrc.includes('const launchedBackend = session.backendId ?? frozen?.backendId ?? null;')
+    && !runBarSrc.includes("launchFieldChoices(provider, 'effort')"),
+    'a running session reads its model field and its effort scale from the profile snapshot frozen at launch rather than from whatever that profile id resolves to now, and refuses a catalogue read once the id names a different backend than the one it launched against',
+    runBarSrc.includes('const launched = frozen ?? provider ?? null;'));
+
+  check(runBarSrc.includes("CATALOGUE_MARK[shown ? shown.source : 'reading']")
+    && runBarSrc.includes('disabled={!shown}')
+    && runBarSrc.includes('That is not the same as this profile having none.')
+    && runBarSrc.includes('shown?.note')
+    && runBarSrc.includes('Typed into the session as a slash command. /model also sets your default')
+    && !runBarSrc.includes('models.length > 0'),
+    'the running-session picker names the provenance of the list it is showing as a glyph and a word, prints whatever note that read carried instead of letting a published fallback pass as the backend’s answer, keeps saying that these controls type a slash command into the session even when a note is present, says that nothing could be established rather than drawing no models, and holds a disabled reading state until the read returns rather than treating an unanswered read as an empty catalogue',
+    runBarSrc.includes("CATALOGUE_MARK[shown ? shown.source : 'reading']"));
+
+  check(runBarSrc.includes('const levels = effortField.choices.map((choice) => choice.value);')
+    && runBarSrc.includes('max={levels.length - 1}')
+    && runBarSrc.includes('setEffortIdx((i) => Math.max(0, Math.min(i, levels.length - 1)));')
+    && runBarSrc.includes("const showEffort = effortField.supported && levels.length > 0;")
+    && !runBarSrc.includes('EFFORT_LEVELS[effortIdx]'),
+    'the effort slider’s scale is the list the session’s own profile declares, the held index is clamped back into range whenever that list changes so an out-of-range notch can never send an undefined level, and a profile that declares no effort field draws no slider at all',
+    runBarSrc.includes('EFFORT_LEVELS[effortIdx]'));
+
+  const effortDialogSrc = sourceOf('src/renderer/src/components/NewSessionDialog.tsx');
+  check(effortDialogSrc.includes("...(effortField.required ? [] : [{ value: '', label: 'default' }])")
+    && !effortDialogSrc.includes("{[{ value: '', label: 'default' }, ...effortChoices"),
+    'the effort picker offers its "default" row only where the profile leaves the field optional — the same guard the model picker above it and withCliDefault on the phone both already keep — because an unconditional row arms a launch the profile’s own compiler refuses with "Effort is required."',
+    effortDialogSrc.includes("...(effortField.required ? [] : [{ value: '', label: 'default' }])"));
+  check(effortDialogSrc.includes("{effortField.required && effort === '' && (")
+    && effortDialogSrc.includes('This profile requires an effort level, and nothing is chosen yet.')
+    && !/Wanigan passes no effort flag/.test(effortDialogSrc),
+    'and where that row is gone the form says nothing is chosen yet rather than leaving a selection-less pill row, and never claims a flag is being omitted for a field the profile requires',
+    effortDialogSrc.includes("{effortField.required && effort === '' && ("));
+  check(!effortDialogSrc.includes('Claude permission and effort fields do not apply to it')
+    && effortDialogSrc.includes('{effortField.supported && (effortField.declared')
+    && effortDialogSrc.includes('? (permissionField.declared')
+    && !/So is the permission mode below\.|and Codex takes it/.test(effortDialogSrc),
+    'the Codex explainer no longer says Claude’s effort field does not apply to Codex, and each clause reads both facts its picker renders from — whether the profile takes the field, and whether the control shows the profile’s declaration or Wanigan’s fallback — so a profile that declares a field but names no values is never told its own declaration is on screen, and neither clause claims an argv the renderer is never handed',
+    effortDialogSrc.includes('and Codex takes it'));
+  check(/\{permissionField\.required\s*\n\s*\? <option value="" disabled>Required by provider<\/option>/.test(effortDialogSrc)
+    && effortDialogSrc.includes(': <option value="">default</option>}'),
+    'the permission select offers its "default" row only where the profile leaves the field optional; where the profile requires a mode the row is a disabled placeholder, because the empty value is the one fieldArgs refuses with "Permission mode is required." — the same guard the effort pills and the model picker above already keep',
+    /<option value="" disabled>/.test(effortDialogSrc));
 
   const mainIndexSrc = sourceOf('src/main/index.ts');
   check(!mainIndexSrc.includes('CODEX_MODELS_MAX_BYTES')
@@ -5029,6 +5178,19 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && learningSrc.split("title: 'Open the Inbox filtered to open proposals'").length - 1 === 2
     && !learningSrc.includes('Open the Inbox filtered to proposals needing a decision'),
   'both tooltips that open the Inbox on its open filter describe the filter that actually runs — open is a superset that also lists approved, snoozed and failed proposals — so neither promises a "needs a decision" filter the Inbox does not implement');
+
+  // The decided figure and the filter its click opens are two lists in two
+  // processes, and they have to name the same statuses or the number opens a
+  // list that disagrees with it. The negative is the revert: that exact
+  // predicate is the one that counted a snooze as a decision.
+  const learningLedgerSrc = sourceOf('src/main/learning/ledger.ts');
+  const learningTypesSrc = sourceOf('src/main/learning/types.ts');
+  check(learningSrc.includes("const DECIDED_STATUSES = ['approved', 'rejected', 'promoted', 'applied', 'superseded'];")
+    && learningTypesSrc.includes("  ['approved', 'rejected', 'promoted', 'applied', 'superseded'];")
+    && learningLedgerSrc.includes('AND status IN (${DECIDED_CANDIDATE_STATUSES.map')
+    && !learningLedgerSrc.includes('WHERE reviewed_at IS NOT NULL AND reviewed_at >= ?${artifactWhere}'),
+  'the decided figure counts the same five statuses the Inbox "Decided" filter lists, in main and in the renderer, and no longer counts every row whose reviewed_at is merely set — reviewCandidate stamps that column for a snooze as well, so the old predicate reported a deferred proposal as decided while the figure beside it reported the same row as still open',
+  'the decided figure and its filter have drifted apart');
   const scoutViewSrc = sourceOf('src/renderer/src/views/ImprovementScout.tsx');
   // The Runs history is a database read, and an empty `runs` array is what a
   // fresh mount, a slow read and a broken IPC read all look like. Every
@@ -6496,6 +6658,93 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && settingsSrc.includes('const dirty = KIND_COPY.some(({ id }) => d[id] !== loaded[id])'),
   'the Dispatcher offers a slot limit for the autopilot lane only if some renderer surface can actually arm it',
   `renderer files ${rendererFiles.length}, canArm ${canArmAutopilot}, row ${/id:\s*'node'/.test(slotRows)}`);
+
+  // The first caller of mcp:status. The handler and the preload binding existed
+  // for a release with nothing on the other end, which is the shape that lets a
+  // channel rot unnoticed; this asserts the whole path, plus the caption that
+  // stops the two columns reading as a health check, plus the removal of the
+  // three false present-tense clauses the old comment made about a table, and
+  // two writers, that no longer exist.
+  check(/handle\(\s*'mcp:status'/.test(mainSrc)
+    && /status:\s*\(\)\s*=>\s*call/.test(preloadSrc)
+    && settingsSrc.includes('window.wanigan.mcp.status()')
+    && settingsSrc.includes('Calls on record') && settingsSrc.includes('Last call')
+    && settingsSrc.includes('a floor and not a total')
+    && settingsSrc.includes('Zero means no call is on record — never that the server does not')
+    && !settingsSrc.includes('noteConnection') && !settingsSrc.includes('noteToolCall')
+    && !settingsSrc.includes('nothing in the app has ever written that table')
+    && !settingsSrc.includes('The table and its writers are left alone'),
+    'the MCP panel reads use from the hook-bus record through mcp:status, captions it as a floor rather than a health check, and no longer claims in a comment that a deleted table is merely unwritten',
+    `caller ${settingsSrc.includes('window.wanigan.mcp.status()')}, caption ${settingsSrc.includes('a floor and not a total')}`);
+
+  // Three load states, three renderings, and a number in exactly one of them.
+  // An empty count before the first read has returned, or a zero substituted for
+  // a read that failed, is the bug the deleted mcp_status columns shipped for the
+  // life of an install; this fails if either comes back.
+  const mcpUseCells = settingsSrc.slice(settingsSrc.indexOf('<th className="r">Calls on record</th>'),
+                                        settingsSrc.indexOf('a floor and not a total'));
+  check(mcpUseCells.length > 400
+    && mcpUseCells.includes('use.v.s === \'loading\' ? <span className="faint">reading…</span>')
+    && mcpUseCells.includes('use.v.s === \'err\' ? <span className="faint">unreadable</span>')
+    && mcpUseCells.includes("'no call on record'")
+    // The error branch may not reach for a number on any of its lines.
+    && !/'err'[^\n]*num\(/.test(mcpUseCells),
+    'a use read that has not returned and a use read that failed each say so in their own words, and neither is allowed to print a call count — only a read that came back does that',
+    `cells ${mcpUseCells.length}`);
+
+  // Independent loads, not one folded read. Folding use into the server list
+  // would mean a failed status read blanks the configured servers, and would
+  // collapse "could not read" and "nothing was called" into one empty cell.
+  check(settingsSrc.includes('const servers = useLoad(() => window.wanigan.mcp.servers(), [tick]);')
+    && settingsSrc.includes('const use = useLoad(() => window.wanigan.mcp.status(), [tick]);')
+    && settingsSrc.includes('const useOf = (id: string) => (use.v.s === \'ok\' ? use.v.d.find((u) => u.id === id) ?? null : null);'),
+    'the MCP server list and the MCP call record are two independent reads, so a failed use read cannot blank the servers and cannot be mistaken for a server that was never called',
+    String(settingsSrc.includes('const use = useLoad(() => window.wanigan.mcp.status(), [tick]);')));
+
+  // The caption explains a zero and the warn Note explains two blank columns.
+  // Both used to render as siblings of the Frame, so they also printed over the
+  // "no servers configured" empty state and over the server-list error panel —
+  // explaining a zero nobody had been shown, and telling a reader the server
+  // list was unaffected in the one state where that read had failed too.
+  check(settingsSrc.includes("const useColumnsShown = servers.v.s === 'ok' && servers.v.d.length > 0;")
+    && settingsSrc.includes("{useColumnsShown && use.v.s === 'err' && (")
+    && settingsSrc.includes('{useColumnsShown && (\n        <p className="set-caption">')
+    && !settingsSrc.includes('itself comes from a separate read and is unaffected'),
+    'the MCP use caption and the failed-read note render only when the columns they explain are on screen, so neither explains a zero nobody was shown nor reports on a read it did not inspect',
+    String(settingsSrc.includes("const useColumnsShown = servers.v.s === 'ok' && servers.v.d.length > 0;")));
+
+  // NEGATIVE, and the one that catches this work being reverted or dropped
+  // wholesale. Do NOT write this as
+  // !/colSpan=\{5\}/.test(settingsSrc.slice(settingsSrc.indexOf('function Mcp(')))
+  // — two unrelated colSpan={5} cells live far after function Mcp( ends, so that
+  // form is false today and would fail whether or not this change landed. Scope
+  // it to the Mcp function body.
+  const mcpFn = settingsSrc.slice(settingsSrc.indexOf('function Mcp({ projects, prefs, pending, setFlag }'),
+                                  settingsSrc.indexOf('function Worktrees()'));
+  check(mcpFn.length > 2000
+    && (mcpFn.match(/colSpan=\{7\}/g) ?? []).length === 2
+    && !mcpFn.includes('colSpan={5}')
+    && (mcpFn.match(/<th\b/g) ?? []).length === 7,
+    'the MCP table has seven header cells and both of the rows that span it were widened to seven with them, so the remove confirmation and the enable review still run the full width of the table',
+    `th ${(mcpFn.match(/<th\b/g) ?? []).length}, colSpan7 ${(mcpFn.match(/colSpan=\{7\}/g) ?? []).length}`);
+
+  // The Dispatcher row that caps a lane names the surface that arms it.
+  check(settingsSrc.includes('armed per goal in Control')
+    && !settingsSrc.includes('Tasks a goal dispatches on its own, unattended.'),
+    'the Dispatcher row that limits goal autopilot names the surface that switches it on, instead of describing a lane with no stated way in',
+    String(settingsSrc.includes('armed per goal in Control')));
+
+  // NEGATIVE. .set-jump is only ever worn as `className="link set-jump"`, and
+  // .link (index.css) already supplies the accent and the underline at the same
+  // specificity and the same values. Restating them there is a private duplicate
+  // of a base class, which is the shape that has bitten this repo three times.
+  const setJumpRule = /\.set-jump \{[^}]*\}/.exec(settingsSheet)?.[0] ?? '';
+  check(setJumpRule.length > 20
+    && !setJumpRule.includes('color:') && !setJumpRule.includes('text-decoration:')
+    && setJumpRule.includes('padding: 0')
+    && settingsSrc.includes('className="link set-jump"'),
+    'the settings jump link takes its colour and underline from .link rather than restating them at equal specificity, and keeps only the button reset .link does not provide',
+    setJumpRule);
 
   const kindDecl = /type Kind = ([^;]+);/.exec(schedulesSrc)?.[1] ?? '';
   check(kindDecl.includes("'batch'") && !kindDecl.includes("'session'"),

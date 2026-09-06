@@ -3213,7 +3213,7 @@ const KIND_COPY: { id: keyof QueueSlots; label: string; detail: string; overLimi
     overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
   },
   {
-    id: 'node', label: 'Goal autopilot', detail: 'Tasks a goal dispatches on its own, unattended.',
+    id: 'node', label: 'Goal autopilot', detail: 'Unattended Goal tasks, armed per goal in Control.',
     overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
   },
 ];
@@ -3751,13 +3751,42 @@ function Mcp({ projects, prefs, pending, setFlag }: {
   const [read, setRead] = useState(false);
 
   const own = useLoad(() => window.wanigan.mcp.server(), [prefs?.mcpServerEnabled]);
-  // Configuration only, no status. There were Connection and Calls columns here
-  // reading mcp_status, and nothing in the app has ever written that table —
-  // registry.ts's noteConnection and noteToolCall have no callers — so every
-  // server read “not seen yet” with zero calls, permanently, which is a false
-  // negative wearing the clothes of a measurement. The table and its writers are
-  // left alone for whoever wires them up; only the display is gone.
   const servers = useLoad(() => window.wanigan.mcp.servers(), [tick]);
+  // Use, and only use. There were Connection and Calls columns here once, reading
+  // an mcp_status table nothing in the app ever wrote, so every server read “not
+  // seen yet” with zero calls for the life of the install — a false negative
+  // wearing the clothes of a measurement. Both of its uncalled writers are gone
+  // from src/, and db.ts no longer creates the table on a new install; an install
+  // made before that keeps the empty table, because db.ts will not run a
+  // migration that destroys rows. db.ts and mcp/registry.ts each carry the
+  // gravestone.
+  //
+  // What stands here instead is not a status and cannot become one. Wanigan never
+  // sees an MCP server connect — the CLI spawns them inside the session's own
+  // process tree — but every MCP tool call reaches the hook bus as
+  // mcp__<server>__<tool> and lands in session_events, so serverStatuses() is a
+  // read over a table that is written on every call. It is a record of what the
+  // agents did, never of whether a server is up now, and the caption under the
+  // table says so where the numbers are read.
+  //
+  // Loaded independently of `servers` rather than folded into it, for two
+  // reasons: a failed use read must not blank the server list, and “Wanigan could
+  // not read this” and “nothing was called” have to stay two different sentences.
+  // An empty count before the first read has returned would be the third telling
+  // of a lie this codebase has already corrected twice, so ‘loading’, ‘failed’ and
+  // ‘zero’ get three renderings below and a failed read never prints a number.
+  const use = useLoad(() => window.wanigan.mcp.status(), [tick]);
+  // serverStatuses() returns one row per configured server, keyed by the same id
+  // the config list uses, so a server with nothing on record is present with a
+  // zero rather than absent.
+  const useOf = (id: string) => (use.v.s === 'ok' ? use.v.d.find((u) => u.id === id) ?? null : null);
+  // The two use columns exist only when the table does: the server-list read has
+  // to have come back, and it has to have rows. The caption and the failed-read
+  // note below both explain those columns, so they are gated on the same
+  // condition — an explanation of a zero must not print over an empty state
+  // where no zero was ever shown, and a note about one read must not report on
+  // the other read's health without looking at it.
+  const useColumnsShown = servers.v.s === 'ok' && servers.v.d.length > 0;
 
   const projectName = (id: string | null) =>
     id === null ? 'every project' : projects.find((p) => p.id === id)?.name ?? 'a project Wanigan no longer has';
@@ -3976,17 +4005,19 @@ function Mcp({ projects, prefs, pending, setFlag }: {
             );
           }
           return (
-            <div className="set-scroll wide">
+            <div className="set-scroll wide set-mcp-table">
               <table className="grid">
                 <thead>
                   <tr>
-                    <th>Name</th><th>Scope</th><th>Target</th><th>Given out</th><th />
+                    <th>Name</th><th>Scope</th><th>Target</th><th>Given out</th>
+                    <th className="r">Calls on record</th><th className="r">Last call</th><th />
                   </tr>
                 </thead>
                 <tbody>
                   {list.map((s) => {
                     const scopePath = s.projectId ? projects.find((p) => p.id === s.projectId)?.path ?? null : null;
                     const line = resolvedCommand(s, scopePath);
+                    const u = useOf(s.id);
                     return (
                       <Fragment key={s.id}>
                         <tr>
@@ -4006,6 +4037,33 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                               <Mark {...(s.enabled ? ON : OFF)} />
                             </button>
                           </td>
+                          {/* Three states, three renderings, and a number in only
+                              one of them. Before the read returns this says it has
+                              not returned; if it fails it says so and still prints
+                              nothing, because a zero the app supplied is
+                              indistinguishable on the page from a zero it counted —
+                              and that substitution is the exact bug the deleted
+                              mcp_status columns shipped for the life of an install. */}
+                          <td className="r mono">
+                            {use.v.s === 'loading' ? <span className="faint">reading…</span>
+                              : use.v.s === 'err' ? <span className="faint">unreadable</span>
+                                : <>
+                                    {num(u?.toolCalls ?? 0)}
+                                    {(u?.failures ?? 0) > 0 && (
+                                      <div className="faint set-sub-line">
+                                        {/* Not a .mark: a mark is a verdict with a tone,
+                                            and this is a count. The glyph is aria-hidden
+                                            because the words beside it already say it. */}
+                                        <span className="glyph" aria-hidden="true">✕</span> {num(u?.failures)} came back an error
+                                      </div>
+                                    )}
+                                  </>}
+                          </td>
+                          <td className="r faint mono">
+                            {use.v.s === 'loading' ? 'reading…'
+                              : use.v.s === 'err' ? 'unreadable'
+                                : u?.lastUsedAt ? ago(u.lastUsedAt) : 'no call on record'}
+                          </td>
                           <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                             <button className="set-mini" onClick={() => setDraft({
                               id: s.id, name: s.name, projectId: s.projectId ?? '', transport: s.transport,
@@ -4017,7 +4075,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                         </tr>
                         {confirmRemove === s.id && (
                           <tr key={`${s.id}-confirm`}>
-                            <td colSpan={5}>
+                            <td colSpan={7}>
                               <ConfirmNote
                                 what={<>Remove “{s.name}”? New sessions lose its tools; a session already running keeps it until it ends.</>}
                                 verb="Remove" onRun={() => remove(s)} onCancel={() => setConfirmRemove(null)} />
@@ -4026,7 +4084,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                         )}
                         {reviewing === s.id && (
                           <tr>
-                            <td colSpan={5} style={{ padding: 0 }}>
+                            <td colSpan={7} style={{ padding: 0 }}>
                               <McpEnableReview
                                 server={s} scopeName={projectName(s.projectId)} scopePath={scopePath}
                                 template={line.template} resolved={line.resolved}
@@ -4046,10 +4104,29 @@ function Mcp({ projects, prefs, pending, setFlag }: {
           );
         }}
       </Frame>
+      {useColumnsShown && use.v.s === 'err' && (
+        <div className="set-use-note">
+          <Note tone="warn" action={{ label: 'Retry', run: () => use.reload() }}>
+            Wanigan could not read the call record, so the two use columns read <em>unreadable</em>
+            rather than zero — a zero here would be a claim nothing established. The server list
+            above came back from its own separate read, so what it shows is unaffected.{' '}
+            <span className="mono">{use.v.e}</span>
+          </Note>
+        </div>
+      )}
+      {useColumnsShown && (
+        <p className="set-caption">
+          Counted from the hook bus, so this is a floor and not a total: a session run with hooks
+          switched off reports nothing, Codex is handed no hook settings at all, and events are pruned
+          on the retention schedule. Zero means no call is on record — never that the server does not
+          work.
+        </p>
+      )}
       <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.5 }}>
         Wanigan writes these into the config of each session it launches and does not watch them
         afterwards. Whether a server answered is between the agent and that server, and this page will
-        not guess: it reports what was handed out, not what connected.
+        not guess: it reports what was handed out and what the agents called through it, never what
+        connected.
       </p>
       <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 6, lineHeight: 1.5 }}>
         Enabling a stdio server requires a recorded approval of that exact command, arguments and

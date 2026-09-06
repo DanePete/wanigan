@@ -1,4 +1,4 @@
-import type { ProviderInfo } from '../shared/types';
+import type { LaunchModelCatalogue, LaunchModelRow, ProviderInfo } from '../shared/types';
 import { launchFieldChoices, type LaunchFieldChoices } from '../shared/launch-fields';
 import { glmModels } from './glm';
 import { deepseekModels } from './deepseek';
@@ -28,38 +28,15 @@ import * as codexStatus from './codex-status';
  */
 
 /*
- * These two types belong in src/shared/types.ts beside ProviderLaunchField, so
- * the preload can type the channel without importing across the trust
- * boundary. That file is centrally owned, so they are declared here and the
- * handoff carries the exact edit; once it lands, this block becomes
- *   import type { LaunchModelCatalogue, LaunchModelRow } from '../shared/types';
- * and the two `export type` lines below become a re-export.
+ * The catalogue contract lives in src/shared/types.ts beside ProviderLaunchField,
+ * so the preload can type the channel without importing across the trust
+ * boundary. It is re-exported here because this module is where it is built and
+ * every main-process caller already reaches for it by this name — but there is
+ * one declaration, not two. The doc comment that explains what each `source`
+ * value may and may not claim is on the declaration, where a reader of either
+ * side finds it.
  */
-
-/** One offerable model. `efforts` is null when nothing said which the model takes. */
-export type LaunchModelRow = {
-  value: string;
-  label: string;
-  description: string | null;
-  efforts: string[] | null;
-};
-
-/**
- * What a picker may honestly offer, and where it came from.
- *
- * `source` is the provenance of `rows`, and it is never rounded up:
- * - `declared` — the profile's own manifest said so.
- * - `live` — the backend was asked and answered.
- * - `published` — Wanigan's own list, because the backend cannot be asked or
- *   would not answer. A fallback, and `note` says so.
- * - `none` — nothing could be established. Not "this profile has no models".
- */
-export type LaunchModelCatalogue = {
-  rows: LaunchModelRow[];
-  source: 'declared' | 'live' | 'published' | 'none';
-  /** Why this list is what it is, when that is not obvious. Shown to the operator. */
-  note: string | null;
-};
+export type { LaunchModelCatalogue, LaunchModelRow } from '../shared/types';
 
 const EMPTY: LaunchModelCatalogue = { rows: [], source: 'none', note: null };
 

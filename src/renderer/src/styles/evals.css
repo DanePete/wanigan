@@ -31,7 +31,15 @@
 
 /* ── search + typeahead ──────────────────────────────────────────────── */
 .skills-search-wrap { position: relative; }
-.skills-search { padding: 9px 74px 9px 28px; font-size: 13px; }
+/* Compound on purpose. The magnifier sits at left 9px and Clear at right 6px,
+   so the text has to be inset past both — and a bare .skills-search lost
+   `padding` to .field, because index.css @imports this sheet above its own
+   rules. The query has been running under the glyph and under the Clear button
+   ever since. Do not collapse the selector.
+   The 13px font-size that sat beside the padding is deleted rather than raised:
+   it is half a pixel off .field's --t-body, is on no step of the type scale,
+   and has never been on screen to be missed. */
+.field.skills-search { padding: 9px 74px 9px 28px; }
 .skills-search-glyph {
   position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
   color: var(--text-faint); font-size: 12px; pointer-events: none;

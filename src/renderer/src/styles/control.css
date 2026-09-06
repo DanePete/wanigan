@@ -25,7 +25,15 @@
 /* Size comes from the h2 rule in index.css; only the leading is Control's. */
 .control-create h2, .control-list h2, .control-detail h2, .control-lower h2 { margin: 2px 0 6px; }
 .control-create label, .control-launch label { display: grid; gap: 5px; }
-.control-textarea { min-height: 76px; resize: vertical; font: inherit; }
+/* Compound on purpose: control.css is @imported above index.css's own rules,
+   so `min-height` lost to .field's --control-h, which at 32px sits below the
+   height a textarea already takes from its two default rows. The objective,
+   acceptance, plan-instruction and event boxes have therefore been opening at
+   the browser's two-row height rather than the four this asks for, and nothing
+   in the cascade could give it to them. Do not collapse the selector.
+   `font: inherit` rises with it and resolves to the same --t-body it already
+   computed to, because nothing between these textareas and body sets a size. */
+.field.control-textarea { min-height: 76px; resize: vertical; font: inherit; }
 .control-inline { align-items: end; }
 .control-inline > label { flex: 1; display: grid; gap: 5px; }
 .control-card-head { justify-content: space-between; align-items: start; }

@@ -40,7 +40,14 @@
 .set-panel-intro { padding: 14px 15px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); }
 .set-panel-intro h2 { margin-top: 3px; font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
 .set-panel-intro > p:not(.set-panel-includes) { margin-top: 4px; color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
-.set-jump { color: var(--accent); text-decoration: underline; background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
+/* Always worn as `className="link set-jump"`, so .link (index.css) already
+   supplies the accent and the underline at the same specificity and the same
+   values — this rule cannot win anything by restating them, and it never could.
+   Dead, not shadowed: dropped rather than promoted, because promoting a
+   duplicate of .link is how a link stops matching the other links. What is left
+   is the part .link does not do — kill the UA button padding so the word sits on
+   the baseline of the sentence around it, and drop the underline on hover. */
+.set-jump { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
 .set-jump:hover { text-decoration: none; }
 .set-panel-help { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; margin-top: 12px; padding: 9px 10px; border-radius: 8px; background: var(--bg-soft); color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
 .set-panel-help-mark { width: 20px; height: 20px; display: grid; place-items: center; border: 1px solid var(--accent); border-radius: 999px; color: var(--accent); font-size: 11px; font-weight: 750; }
@@ -82,10 +89,24 @@
   .set[data-motion='auto'] * { transition: none !important; animation: none !important; }
 }
 
+/* The sentence that says how to read a figure, directly under the figure. Its
+   own class rather than the neighbouring paragraphs' shape, because those spell
+   their size and margin as inline style objects and this file may not add
+   another. Tokens only, so it costs the px-font-size baseline nothing. */
+.set-caption { margin-top: var(--s-2); color: var(--text-faint); font-size: var(--t-micro); line-height: 1.5; }
+/* .note carries no outer margin of its own, by design — the surface that places
+   one decides how far it sits from what it is about. */
+.set-use-note { margin-top: var(--s-2); }
+
 /* Wide tables scroll inside themselves. The page body never scrolls sideways. */
 .set-scroll { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
 .set-scroll > table { min-width: 560px; }
 .set-scroll.wide > table { min-width: 700px; }
+/* The MCP table carries seven columns; the shared .wide floor above was measured
+   against the five it had. Raised here alone rather than in .wide, so the two use
+   columns do not put a horizontal scrollbar under the other tables that class
+   dresses and that did not change. */
+.set-mcp-table.set-scroll > table { min-width: 820px; }
 
 .set-n { text-align: right; white-space: nowrap;
          font-variant-numeric: tabular-nums;

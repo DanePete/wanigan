@@ -1,8 +1,10 @@
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
-  LaunchOptions, PastSession, Project, ProviderInfo, Session, TrustLevel, WorktreeInfo,
+  LaunchModelCatalogue, LaunchModelRow, LaunchOptions, PastSession, Project, ProviderInfo,
+  Session, TrustLevel, WorktreeInfo,
 } from '@shared/types';
-import { EFFORT_LEVELS, TRUST_LEVELS, trustCopy, trustGlyph } from '@shared/types';
+import { TRUST_LEVELS, trustCopy, trustGlyph } from '@shared/types';
+import { launchFieldChoices } from '@shared/launch-fields';
 import { providerTint } from '@shared/provider-status';
 import { applyUnreadCounts } from '@shared/unread';
 import TerminalPane, { disposePane } from '../components/TerminalPane';
@@ -13,7 +15,8 @@ import AttentionQueue from '../components/AttentionQueue';
 import Timeline from '../components/Timeline';
 import SessionLearning from '../components/SessionLearning';
 import Pet from '../components/Pet';
-import { Explainer, Note, ago, num, usd } from '../components/bits';
+import { Explainer, Mark, Note, ago, num, usd } from '../components/bits';
+import type { Tone } from '../components/bits';
 import { useDialog } from '../components/useDialog';
 import { bindingMatches, modalOpen } from '../bindings';
 import '../styles/sessions.css';
@@ -1210,13 +1213,23 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
 }) {
   const trust = session.trust ?? null;
   const elevated = !!trust && !!defaultTrust && rank(trust) > rank(defaultTrust);
-  const tunable = session.providerId !== 'codex' && session.status === 'running' &&
-    (provider?.supports.model === true || provider?.supports.effort === true);
+  // The profile this session launched under, and the harness it is actually
+  // running. Both come from the frozen snapshot first: a pack can be upgraded,
+  // disabled or removed while a session runs, and the live `provider` is only
+  // what that id means now. main gates /model and /effort on
+  // `harnessId === 'codex'` (sessions.ts), so the renderer asks the same
+  // question rather than branching on a profile id — a pack profile on the
+  // codex harness used to be offered Claude slash commands its CLI never took.
+  const launched = session.providerProfile ?? provider ?? null;
+  const harness = session.harnessId ?? session.providerProfile?.harness
+    ?? provider?.harnessId ?? session.providerId;
+  const tunable = harness !== 'codex' && session.status === 'running' &&
+    (launched?.supports.model === true || launched?.supports.effort === true);
   // Codex has its own live controls.  Its TUI's /model picker changes model,
   // reasoning effort and Auto choices, and /plan changes the next turn's
   // collaboration mode.  Treating it as Claude made this whole useful row
   // disappear merely because it does not accept Claude slash commands.
-  const codexControls = session.providerId === 'codex' && session.status === 'running';
+  const codexControls = harness === 'codex' && session.status === 'running';
   if (!elevated && !session.worktree && !tunable && !codexControls) return null;
 
   return (
@@ -1225,7 +1238,7 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
         <TrustBanner level={trust} fallback={defaultTrust} running={session.status !== 'exited'} />
       )}
       {session.worktree && <WorktreeBar session={session} path={session.worktree} onRefresh={onRefresh} />}
-      {tunable && provider && <RunConfigBar session={session} provider={provider} />}
+      {tunable && <RunConfigBar session={session} provider={provider} />}
       {codexControls && <CodexControlBar session={session} />}
     </div>
   );
@@ -1267,6 +1280,75 @@ function CodexControlBar({ session }: { session: Session }) {
   );
 }
 
+/**
+ * What a running session's picker may honestly offer, and where it came from.
+ *
+ * This bar used to keep its own answer: a constant table of models keyed on
+ * profile id, plus a short-circuit on that same id. Wanigan ships four
+ * built-in profiles and the table held three keys — `claude`, `glm`, and an
+ * empty `codex` entry this bar never reached, since a codex session gets
+ * `CodexControlBar` instead. `deepseek` was the id it left out, so a DeepSeek
+ * session got no picker here at all while `deepseekModels()` sat shipped in
+ * main with nothing on this surface calling it; a pack profile, keyed on
+ * nothing, was handed the same empty list. The short-circuit made `glm` the
+ * one id with a live read, and that branch did print the note its fetcher
+ * carries — "this is Wanigan's local list, not the service's" — so GLM was
+ * the one profile here that said where its list came from. Claude's four
+ * aliases were printed as bare fact, and they are Wanigan's own published
+ * list rather than Anthropic's answer.
+ * `providers:modelCatalogue` is the one place that question is answered now.
+ * It reaches DeepSeek's fetcher from this bar for the first time, answers for
+ * a pack profile from that profile's own declaration, and reports its own
+ * provenance rather than rounding it up. A local pack's backend id is
+ * namespaced `packId:backendId`, so it never matches a live or published
+ * table — a pack profile gets what it declared, or 'none', never a service's
+ * answer borrowed from a built-in that happens to share a name.
+ *
+ * Two rules this bar adds on top of that channel:
+ *
+ * The DECLARATION is the frozen one. `session.providerProfile` is the snapshot
+ * written when this session launched; `provider` is whatever that profile id
+ * resolves to now. A pack can be upgraded, disabled or removed while a session
+ * runs, and Wanigan keeps the frozen pack/profile/backend/harness snapshot
+ * until the session exits rather than reinterpreting a live session through a
+ * newer manifest. So the effort scale and the model field come from the
+ * snapshot, and the live provider is only the fallback for a session recorded
+ * before the snapshot existed.
+ *
+ * The CATALOGUE is refused when the id no longer names the same backend. The
+ * channel takes a profile id and main answers it from the pack snapshot loaded
+ * now — correct for the dialog, which is choosing a profile to launch, and not
+ * necessarily this session's. When the frozen backend and the current one are
+ * both known and differ, the rows describe a service this session never spoke
+ * to, and the profile's own declared list is shown instead with the reason.
+ */
+
+type CatalogueMark = { glyph: string; word: string; tone: Tone; title: string };
+
+/** Provenance, as a glyph and a word — never as a colour, and never rounded up. */
+const CATALOGUE_MARK: Record<LaunchModelCatalogue['source'] | 'reading', CatalogueMark> = {
+  reading: {
+    glyph: '◦', word: 'reading', tone: 'quiet',
+    title: 'Wanigan is asking this profile which models it can launch. Nothing has been established yet.',
+  },
+  live: {
+    glyph: '✓', word: 'live', tone: 'ok',
+    title: 'Wanigan asked this backend for its catalogue and this is the answer it gave.',
+  },
+  declared: {
+    glyph: '•', word: 'declared', tone: 'quiet',
+    title: 'This profile declares its own model list, so the list is the profile’s rather than the backend’s.',
+  },
+  published: {
+    glyph: '?', word: 'published', tone: 'warn',
+    title: 'Wanigan’s own published list, because this backend could not be asked or would not answer. It can be out of date; a model that is not on it still works if you type /model into the session yourself.',
+  },
+  none: {
+    glyph: '–', word: 'unknown', tone: 'dead',
+    title: 'Nothing could be established about this profile’s models. That is not the same as this profile having none.',
+  },
+};
+
 /* ── model and effort, on a session that is already running ──────────────
    --model and --effort are argv, and you cannot change a running process's
    arguments. What you CAN do is what you would do by hand: type the CLI's own
@@ -1275,48 +1357,88 @@ function CodexControlBar({ session }: { session: Session }) {
    they are disabled the moment a session exits.
    ─────────────────────────────────────────────────────────────────────── */
 
-const MODEL_CHOICES: Record<string, { value: string; label: string }[]> = {
-  claude: [
-    { value: 'opus', label: 'Opus' },
-    { value: 'sonnet', label: 'Sonnet' },
-    { value: 'haiku', label: 'Haiku' },
-    { value: 'fable', label: 'Fable' },
-  ],
-  // Filled from Z.ai's live catalog; this is only what shows before it answers.
-  glm: [
-    { value: 'glm-5.3', label: 'GLM 5.3' },
-    { value: 'glm-5.3-flash', label: 'GLM 5.3 Flash' },
-  ],
-  codex: [],
-};
+/** Reading, answered, or refused with the sentence that says why. */
+type CatalogueRead =
+  | { state: 'reading' }
+  | { state: 'read'; catalogue: LaunchModelCatalogue }
+  | { state: 'refused'; note: string };
 
-function RunConfigBar({ session, provider }: { session: Session; provider: ProviderInfo }) {
-  const [models, setModels] = useState<{ value: string; label: string }[]>(MODEL_CHOICES[provider.id] ?? []);
-  const [modelNote, setModelNote] = useState<string | null>(null);
+function RunConfigBar({ session, provider }: { session: Session; provider?: ProviderInfo }) {
+  // The profile this session actually started under, not what its id means now.
+  const frozen = session.providerProfile ?? null;
+  const launched = frozen ?? provider ?? null;
+  const modelField = launchFieldChoices(launched, 'model');
+  const effortField = launchFieldChoices(launched, 'effort');
+  const levels = effortField.choices.map((choice) => choice.value);
+  // `supported` is the conjunct that decides: launchFieldChoices hands back
+  // Wanigan's five levels for any profile that declares none of its own, so a
+  // slider guarded on the list alone would appear for a profile that takes no
+  // effort flag. The length test never falsifies on today's fallback; it is
+  // there so the slider's own max can never be asked to render -1.
+  const showEffort = effortField.supported && levels.length > 0;
 
-  // Z.ai ships models faster than a constant survives, so ask it. Anthropic's
-  // catalog is already fetched the same way in the Batches view.
+  // Both sides have to be known before a difference is worth calling drift; an
+  // absent backendId is a legacy row, not a re-pointed profile.
+  const launchedBackend = session.backendId ?? frozen?.backendId ?? null;
+  const drifted = !!launchedBackend && !!provider?.backendId && provider.backendId !== launchedBackend;
+
+  const [read, setRead] = useState<CatalogueRead>({ state: 'reading' });
+
   useEffect(() => {
-    if (provider.id !== 'glm') { setModels(MODEL_CHOICES[provider.id] ?? []); setModelNote(null); return; }
+    if (drifted) {
+      setRead({ state: 'refused', note: 'This profile id now points at a different backend than the one this session launched against, so Wanigan will not show you that backend’s models here.' });
+      return;
+    }
     let live = true;
-    window.wanigan.key.glmModels()
-      .then((r) => {
-        if (!live) return;
-        if (r.models.length) setModels(r.models.map((m) => ({ value: m.id, label: m.label })));
-        setModelNote(r.note);
-      })
-      .catch(() => { /* the fallback list is already showing */ });
+    setRead({ state: 'reading' });
+    window.wanigan.providers.modelCatalogue(session.providerId)
+      .then((catalogue) => { if (live) setRead({ state: 'read', catalogue }); })
+      // The channel rejects outright when the profile is no longer loaded —
+      // the pack was disabled or removed under a session that is still
+      // running. That is a fact worth printing, not an empty list.
+      .catch((e) => { if (live) setRead({ state: 'refused', note: `Wanigan could not read this profile’s model catalogue (${msg(e)}).` }); });
     return () => { live = false; };
-  }, [provider.id]);
+  }, [session.providerId, drifted]);
+
+  // The frozen profile's own list: what a refusal falls back to, and never a
+  // guess — an empty one reports 'none', which means nothing was established.
+  const declaredRows: LaunchModelRow[] = modelField.declared
+    ? modelField.choices.map((choice) => ({
+      value: choice.value, label: choice.label, description: choice.description ?? null, efforts: null,
+    }))
+    : [];
+  const shown: LaunchModelCatalogue | null =
+    read.state === 'read' ? read.catalogue
+      : read.state === 'refused'
+        ? {
+          rows: declaredRows,
+          source: declaredRows.length ? 'declared' : 'none',
+          // The second sentence is only true when there is a declared list to
+          // point at; a profile whose model field is free text has none, and
+          // 'none' says so rather than promising four aliases nobody wrote down.
+          note: declaredRows.length
+            ? `${read.note} These are the models the profile itself declared at launch.`
+            : read.note,
+        }
+        : null;
 
   const [model, setModel] = useState(session.model ?? '');
   const [effortIdx, setEffortIdx] = useState(() => {
-    const i = EFFORT_LEVELS.indexOf((session.effort ?? '') as (typeof EFFORT_LEVELS)[number]);
-    return i >= 0 ? i : 2;
+    const i = levels.indexOf(session.effort ?? '');
+    // Index 2 is 'high' on Wanigan's five-level scale and has been this
+    // slider's default since it landed; a shorter declared scale takes its last.
+    return i >= 0 ? i : Math.max(0, Math.min(2, levels.length - 1));
   });
   const [sent, setSent] = useState<string | null>(null);
 
-  function send(field: 'model' | 'effort', value: string) {
+  // A scale that changed under a held index would send `levels[i]` as
+  // undefined, which reads at the other end as no effort at all.
+  useEffect(() => {
+    setEffortIdx((i) => Math.max(0, Math.min(i, levels.length - 1)));
+  }, [levels.length]);
+
+  function send(field: 'model' | 'effort', value: string | undefined) {
+    if (!value) return;
     // A slash command is the whole action — there is nothing left to write —
     // and setTuning both types it and records the value on the session row.
     // Without that write-back, a tab switch remounts this bar and it re-seeds
@@ -1335,50 +1457,72 @@ function RunConfigBar({ session, provider }: { session: Session; provider: Provi
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
                   padding: '6px 12px', borderTop: '1px solid var(--line-soft)' }}>
-      {provider.supports.model && models.length > 0 && (
+      {modelField.supported && (
         <label style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-          <span className="label" style={{ margin: 0 }}>Model</span>
+          <span className="label" style={{ margin: 0 }}>{modelField.label}</span>
           <select
             className="field"
             style={{ padding: '3px 7px', fontSize: 'var(--t-small)' }}
             value={model}
+            /* A read that has not returned is not an empty catalogue, so the
+               control holds the session's own value and says it is reading
+               rather than offering a list it does not have yet. */
+            disabled={!shown}
+            aria-busy={!shown}
             onChange={(e) => { setModel(e.target.value); if (e.target.value) send('model', e.target.value); }}
           >
-            <option value="">CLI default</option>
-            {models.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            {shown
+              ? <>
+                <option value="">CLI default</option>
+                {shown.rows.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </>
+              : <option value={model}>{model || 'CLI default'}</option>}
           </select>
+          <Mark {...CATALOGUE_MARK[shown ? shown.source : 'reading']} />
         </label>
       )}
 
-      {provider.supports.effort && (
+      {showEffort && (
         <label style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-          <span className="label" style={{ margin: 0 }}>Effort</span>
+          <span className="label" style={{ margin: 0 }}>{effortField.label}</span>
           <input
             type="range"
             min={0}
-            max={EFFORT_LEVELS.length - 1}
+            max={levels.length - 1}
             step={1}
             value={effortIdx}
-            aria-label="Effort level"
-            aria-valuetext={EFFORT_LEVELS[effortIdx]}
+            aria-label={`${effortField.label} level`}
+            aria-valuetext={levels[effortIdx]}
             onChange={(e) => setEffortIdx(Number(e.target.value))}
-            onPointerUp={() => send('effort', EFFORT_LEVELS[effortIdx])}
-            onKeyUp={(e) => { if (e.key.startsWith('Arrow')) send('effort', EFFORT_LEVELS[effortIdx]); }}
+            onPointerUp={() => send('effort', levels[effortIdx])}
+            onKeyUp={(e) => { if (e.key.startsWith('Arrow')) send('effort', levels[effortIdx]); }}
             style={{ width: 128, accentColor: 'var(--accent)' }}
           />
-          {/* The word, not just the notch — a slider position is not a value. */}
+          {/* The word, not just the notch — a slider position is not a value.
+              And it is not a claim about the session either: with no --effort at
+              launch and no /effort sent since, the CLI's own default is what is
+              running and the slider is only a proposal. Saying 'high' there was
+              the same lie as an empty state drawn before the first read. */}
           <span className="mono" style={{ fontSize: 'var(--t-small)', color: 'var(--accent)', minWidth: 46 }}>
-            {EFFORT_LEVELS[effortIdx]}
+            {levels[effortIdx]}
           </span>
+          {!session.effort && (
+            <Mark glyph="◦" word="CLI default" tone="quiet"
+                  title="This session launched without an effort argument and none has been sent since, so it is running at the CLI’s own default. Move the slider to send one." />
+          )}
         </label>
       )}
 
       <span className="faint" style={{ fontSize: 'var(--t-micro)', marginLeft: 'auto', minWidth: 0 }}>
         {sent
           ? <><span className="mono" style={{ color: 'var(--ok)' }}>{sent}</span> sent to the session</>
-          : modelNote
-            ? modelNote
-            : 'Typed into the session as a slash command. /model also sets your default for new sessions.'}
+          /* Both sentences, never one instead of the other. The note says where
+             this list came from; the instruction says what these controls do,
+             and it is the only place on screen that says it. Choosing the note
+             would retire the instruction for every anthropic-backed session,
+             because that backend's catalogue always carries a note. */
+          : <>Typed into the session as a slash command. /model also sets your default
+              for new sessions.{shown?.note ? ` ${shown.note}` : ''}</>}
       </span>
     </div>
   );

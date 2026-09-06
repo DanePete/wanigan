@@ -11,6 +11,7 @@ import { DEFAULT_AUTOMATION_POLICY, automationDecision } from './classifier';
 import { recordMetric } from './experiments';
 import { getCandidate, getKnowledgeItem } from './repository';
 import { listSignals } from './signals';
+import { DECIDED_CANDIDATE_STATUSES } from './types';
 import type {
   CandidateExplanation, CandidateStatus, ConsolidationRun, KnowledgeBriefing,
   KnowledgeKind, KnowledgeStatus, LearningPipelineStats, SessionBriefingRecord,
@@ -504,7 +505,23 @@ export function pipelineStats(input: { projectId?: string | null; windowDays?: n
        WHERE kv.created_at >= ? AND kv.created_by = 'automation'${projectId === undefined ? '' : projectId === null ? ' AND ki.project_id IS NULL' : " AND (ki.scope='personal' OR ki.project_id=?)"}`,
       [since, ...artifactArgs],
     ),
-    reviewed: one(`SELECT COUNT(*) n FROM knowledge_candidates WHERE reviewed_at IS NOT NULL AND reviewed_at >= ?${artifactWhere}`, [since, ...artifactArgs]),
+    // "decided" is a claim about the row's status, not about a timestamp
+    // being set. This used to be `reviewed_at IS NOT NULL`, and reviewCandidate
+    // stamps reviewed_at for a snooze as well as for an approve or a reject —
+    // so one snoozed row was counted as decided here and as still open by
+    // awaitingDecision above, which is the contradiction the comment there
+    // already describes. The status list is DECIDED_CANDIDATE_STATUSES, the
+    // same set behind the Inbox's "Decided" filter this figure opens on click.
+    // reviewed_at stays as the clock, because "last Nd" here means the window
+    // the decision was taken in rather than the one the candidate was created
+    // in; it is also null on a candidate automation promoted without review,
+    // which is how those stay out of a figure about human decisions.
+    reviewed: one(
+      `SELECT COUNT(*) n FROM knowledge_candidates
+       WHERE reviewed_at IS NOT NULL AND reviewed_at >= ?
+         AND status IN (${DECIDED_CANDIDATE_STATUSES.map(() => '?').join(',')})${artifactWhere}`,
+      [since, ...DECIDED_CANDIDATE_STATUSES, ...artifactArgs],
+    ),
     itemsPromoted: one(`SELECT COUNT(*) n FROM knowledge_items WHERE created_at >= ?${artifactWhere}`, [since, ...artifactArgs]),
     projectionsApplied: one(`SELECT COUNT(*) n FROM knowledge_projections WHERE applied_at IS NOT NULL AND applied_at >= ?${plainWhere}`, [since, ...plainArgs]),
     briefingsServed: one(`SELECT COUNT(*) n FROM session_briefings WHERE at >= ?${plainWhere}`, [since, ...plainArgs]),

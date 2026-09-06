@@ -1,6 +1,21 @@
-/* Headless runs — local layout rules for the unattended-work surface. */
+/* Headless runs — local layout rules for the unattended-work surface.
 
-.hr-view { gap: var(--s-5); }
+   HeadlessRuns.tsx imports this sheet, index.css does not, so where it lands
+   relative to index.css is decided by the module graph rather than by a rule of
+   CSS. Today main.tsx imports ./App above ./index.css, which puts every rule in
+   this file ABOVE the frame classes it modifies: a bare .hr-* selector loses to
+   .pane, .stat-grid or .field at equal specificity, exactly as an @imported
+   sheet does. The style gate deliberately does not score this file, because the
+   next reshuffle of that graph could reverse it. Read the built CSS before
+   adding a rule that modifies a frame class here.
+
+   .hr-view asked for a --s-5 gap here and a --s-4 gap at 720px. Neither ever
+   applied — .pane's gap won both — so this surface has always been on the
+   shared pane rhythm and it stays there. A document view with its own vertical
+   rhythm is the private-copy-of-.pane mistake schedule.css and queue.css each
+   record having made. It also restated compact.css's own .pane padding at both
+   breakpoints; the note above the media blocks at the foot of this file says
+   why those two went the same way. */
 .hr-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-4); }
 .hr-head-copy { max-width: 76ch; }
 .hr-head h1 { margin: 3px 0 0; }
@@ -54,7 +69,13 @@
 .hr-detail { min-width: 0; }
 .hr-detail-title, .hr-row-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--s-3); flex-wrap: wrap; }
 .hr-detail-title p { margin-top: 3px; font-size: var(--t-small); }
-.hr-stats { margin: var(--s-4) 0; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* Three stats, so three columns — and the selector has to carry both classes
+   to say it: a bare .hr-stats lost grid-template-columns to .stat-grid's
+   repeat(4) and the row painted an empty fourth column beside Succeeded,
+   Changed and Cost. The 720px step below is compound for the mirror-image
+   reason: it has to answer compact.css's two-column .stat-grid, which is one
+   class and later in the bundle. Do not collapse either selector. */
+.stat-grid.hr-stats { margin: var(--s-4) 0; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .hr-rows { border-top: 1px solid var(--line); }
 .hr-row { padding: var(--s-3) 0; border-bottom: 1px solid var(--line-soft); }
 .hr-row:last-child { border-bottom: 0; }
@@ -65,8 +86,16 @@
 .hr-output { margin-top: var(--s-2); }
 .hr-output summary { color: var(--text-dim); cursor: pointer; font-size: var(--t-small); }
 .hr-output pre { max-height: 260px; overflow: auto; margin-top: var(--s-2); padding: var(--s-3); border-radius: var(--r-sm); background: var(--code-bg, var(--bg)); color: var(--code-fg, var(--text-dim)); white-space: pre-wrap; overflow-wrap: anywhere; font: var(--t-small)/1.55 ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace; }
-/* .hr-view is a .pane, so these repeat compact.css's padding steps 80 and 100px
-   late — the surface had already reflowed while its own contents had not. Both
-   now sit on the named ladder in index.css (medium 980, compact 720). */
-@media (max-width: 980px) { .hr-view { padding: var(--s-4); } .hr-workspace { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 720px) { .hr-view { padding: var(--s-3); gap: var(--s-4); } .hr-head, .hr-section-head, .hr-project-picker-head { flex-direction: column; } .hr-head-status, .hr-step { align-self: flex-start; } .hr-launch, .hr-history, .hr-detail { padding: var(--s-3); } .hr-form-grid, .hr-provider-fields { grid-template-columns: minmax(0, 1fr); } .hr-launch-footer { align-items: flex-start; flex-direction: column; } .hr-budget { width: 100%; } .hr-submit-row > .btn { width: 100%; justify-content: center; } .hr-stats { grid-template-columns: minmax(0, 1fr); } .hr-row-head > .btn, .hr-detail-title > .btn { width: 100%; justify-content: center; } }
+/* The two steps below are index.css's named ladder (medium 980, compact 720),
+   not a private pair: at 900 and 620 they fired 80 and 100px late, so .pane had
+   already reflowed around this surface while its own contents had not.
+   Neither block sets a padding on .hr-view any more, and neither needs to.
+   .hr-view is a .pane, and compact.css steps .pane's padding to --s-4 at 980
+   and --s-3 at 720 — the same two values these blocks used to name, at the same
+   two widths, from one class in the sheet main.tsx loads last. The copies here
+   lost to it every time. Compounding them to .pane.hr-view would have won back
+   a value that was already right and then owed compact.css a hand-kept copy for
+   good; deleting them leaves the padding where the frame owns it, which is the
+   same call the gaps got. */
+@media (max-width: 980px) { .hr-workspace { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 720px) { .hr-head, .hr-section-head, .hr-project-picker-head { flex-direction: column; } .hr-head-status, .hr-step { align-self: flex-start; } .hr-launch, .hr-history, .hr-detail { padding: var(--s-3); } .hr-form-grid, .hr-provider-fields { grid-template-columns: minmax(0, 1fr); } .hr-launch-footer { align-items: flex-start; flex-direction: column; } .hr-budget { width: 100%; } .hr-submit-row > .btn { width: 100%; justify-content: center; } .stat-grid.hr-stats { grid-template-columns: minmax(0, 1fr); } .hr-row-head > .btn, .hr-detail-title > .btn { width: 100%; justify-content: center; } }

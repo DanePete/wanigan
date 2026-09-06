@@ -585,7 +585,20 @@ export default function NewSessionDialog({
                          onChange={setEffort} />
             ) : (
               <div style={{ display: 'flex', gap: 5, margin: '6px 0 14px', flexWrap: 'wrap' }}>
-                {[{ value: '', label: 'default' }, ...effortChoices.filter((choice) => choice.value !== '')].map((choice) => (
+                {/*
+                  * A profile may declare this field required, and for that one
+                  * "default" is not a value at all: the launch compiler throws
+                  * "… is required." on an empty string. Offering the row anyway
+                  * is the same defect as offering a reasoning level the profile
+                  * never declared — a control whose value the profile has no
+                  * way to accept, which go() then refuses before the launch.
+                  * The model picker above guards its own default row for
+                  * exactly this reason.
+                  */}
+                {[
+                  ...(effortField.required ? [] : [{ value: '', label: 'default' }]),
+                  ...effortChoices.filter((choice) => choice.value !== ''),
+                ].map((choice) => (
                   <FocusBtn key={choice.value || 'default'} className="pill" onClick={() => setEffort(choice.value)}
                             aria-pressed={effort === choice.value}
                             style={effort === choice.value ? { background: 'var(--accent)', color: 'var(--accent-ink)' }
@@ -594,6 +607,15 @@ export default function NewSessionDialog({
                   </FocusBtn>
                 ))}
               </div>
+            )}
+            {/*
+              * Symmetry with the permission block below, and for the same
+              * reason: with the default row gone there is nothing selected and
+              * nothing on screen saying why. A fact about this form, not a
+              * claim about the profile.
+              */}
+            {effortField.required && effort === '' && (
+              <Hint>This profile requires an effort level, and nothing is chosen yet.</Hint>
             )}
           </>
         )}
@@ -606,8 +628,42 @@ export default function NewSessionDialog({
               {' '}and <span className="mono">Plan mode</span> directly above the terminal. The first opens Codex’s own
               picker, including its Auto choices and reasoning levels.
             </p>
+            {/*
+              * This line used to read "Claude permission and effort fields do
+              * not apply to it", which stopped being true the day the effort
+              * picker started reading the profile: the shipped Codex profile
+              * declares an effort field, so that picker renders directly above
+              * this box and the reader has just used it.
+              *
+              * Each clause reads both facts its own picker renders from —
+              * whether the profile takes the field at all, and whether what the
+              * control offers is the profile's declaration or Wanigan's
+              * fallback list. Those are different facts: `supports.effort` can
+              * be true for a field that names no levels, and the pills above
+              * are then Wanigan's fallback set, so a clause gated on support
+              * alone told a pack profile its own declaration was on screen
+              * when it was not.
+              *
+              * Neither clause says the value reaches Codex. `argv` is optional
+              * on a launch field and fieldArgs compiles `(field.argv ?? [])`,
+              * and the renderer is never handed it — launchFieldsFor() in
+              * providers.ts projects no argv — so delivery is not a fact this
+              * surface holds. Provenance is, and provenance is what it states.
+              *
+              * Both sentences also stand alone. "So is the permission mode
+              * below." rendered as an orphan for a codex-harness profile that
+              * declares a permission mode and no effort field: the clause it
+              * pointed back to was never on screen.
+              */}
             <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 5, lineHeight: 1.4 }}>
-              Codex uses its own controls — Claude permission and effort fields do not apply to it.
+              {effortField.supported && (effortField.declared
+                ? 'The effort control above comes from this profile’s own declaration. '
+                : 'This profile takes an effort level but declares no levels of its own, so the control above comes from Wanigan’s fallback list rather than from this profile. ')}
+              {permissionField.supported
+                ? (permissionField.declared
+                  ? 'The permission mode below comes from this profile’s own declaration.'
+                  : 'This profile takes a permission mode but declares no modes of its own, so the list below comes from Wanigan’s fallback set of Claude modes.')
+                : 'A permission mode is a Claude flag, and this profile declares none, so Wanigan offers no picker for one.'}
             </p>
           </div>
         )}
@@ -622,7 +678,23 @@ export default function NewSessionDialog({
             ) : (
               <select className="field" style={{ margin: '6px 0 5px' }} value={permissionMode}
                       onChange={(e) => setPermissionMode(e.target.value)}>
-                <option value="">default</option>
+                {/*
+                  * The guard the effort pills above already keep, one field
+                  * over: a profile that declares this field required has no
+                  * default to fall back on, so "default" is not a row it may
+                  * offer — choosing it only earns a refusal. This dialog gives
+                  * that refusal itself, before anything is launched: go() walks
+                  * the profile's required launch fields and stops on the first
+                  * one still empty, naming it. fieldArgs would refuse it too,
+                  * but nothing from this surface reaches it. The row becomes a
+                  * disabled placeholder rather than disappearing, because a
+                  * select holding a value no row matches has nothing to draw
+                  * and renders blank; the Hint below says what the placeholder
+                  * means: nothing chosen yet.
+                  */}
+                {permissionField.required
+                  ? <option value="" disabled>Required by provider</option>
+                  : <option value="">default</option>}
                 {permissionField.choices.filter((choice) => choice.value !== '').map((choice) => {
                   /*
                    * The words belong to the mode, not to whichever profile
@@ -704,7 +776,14 @@ export default function NewSessionDialog({
             ) : field.kind === 'select' && !field.allowCustom ? (
               <select className="field" value={String(providerOptions[field.id] ?? '')}
                       onChange={(e) => setProviderOptions((old) => ({ ...old, [field.id]: e.target.value }))}>
-                {!field.required && <option value="">Provider default</option>}
+                {/* Same shape as the permission select above, for the same
+                    reason: a required field has no default to offer, and a
+                    select holding a value no row matches renders blank rather
+                    than showing what it holds. The placeholder is disabled, so
+                    it names the empty state without being choosable. */}
+                {field.required
+                  ? <option value="" disabled>Required by provider</option>
+                  : <option value="">Provider default</option>}
                 {(field.options ?? []).map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
               </select>
             ) : (

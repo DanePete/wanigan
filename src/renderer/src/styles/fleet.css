@@ -61,8 +61,11 @@
   font-size: 14px; font-weight: 600; letter-spacing: -.01em;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* The padding is .pill's, and only .pill's: this rule declared the same
+   1px 7px pair, lost it to index.css on source order, and would have been a
+   copy free to drift out of step with the primitive. */
 .fleet-prov {
-  flex: none; padding: 1px 7px;
+  flex: none;
   border: 1px solid var(--line); background: var(--bg-sunk);
 }
 

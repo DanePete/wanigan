@@ -50,6 +50,7 @@ import {
   validateProjection,
 } from './learning';
 import {
+  BUILTIN_PROVIDER_PACKS,
   ProviderPackRegistry,
   validateProviderPackManifest,
   type ProviderPackManifest,
@@ -571,6 +572,74 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     check(pipelineStats({ windowDays: 7, projectId: null }).awaitingDecision <= pipelineStats({ windowDays: 7 }).awaitingDecision,
       'the awaiting-a-decision count is scoped like every other pipeline figure, so a project-scoped read can never exceed the unscoped one',
       JSON.stringify({ scoped: pipelineStats({ windowDays: 7, projectId: null }).awaitingDecision, all: pipelineStats({ windowDays: 7 }).awaitingDecision }));
+
+    // ── the decided figure ──────────────────────────────────────────────
+    // 'decided' used to be `reviewed_at IS NOT NULL`, and reviewCandidate
+    // stamps reviewed_at for a snooze as well as for an approve or a reject,
+    // so one snoozed row was counted as decided here while awaitingDecision
+    // counted the same row as still open. Deltas again, for the same reason
+    // the block above uses them.
+    const beforeDecide = pipelineStats({ windowDays: 7, projectId: project.id });
+    const toDefer = createCandidate({
+      targetKind: 'memory', scope: 'personal', title: `Deferline ${tag}`,
+      proposedText: `Deferline ${tag}: a proposal somebody puts off.`,
+      rationale: 'Decided-figure counting test.', confidence: 0.9, signalIds: [ledgerSignal.id],
+    });
+    reviewCandidate(toDefer.id, 'snooze');
+    const afterDefer = pipelineStats({ windowDays: 7, projectId: project.id });
+    check(afterDefer.reviewed === beforeDecide.reviewed
+      && afterDefer.awaitingDecision === beforeDecide.awaitingDecision + 1,
+      'snoozing a proposal moves it into the awaiting-a-decision figure and leaves the decided figure alone, so the two counts never both claim the same row — reviewCandidate stamps reviewed_at for a snooze too, and a figure keyed on that timestamp read a deferral as a decision',
+      JSON.stringify({ decidedBefore: beforeDecide.reviewed, decidedAfter: afterDefer.reviewed, openBefore: beforeDecide.awaitingDecision, openAfter: afterDefer.awaitingDecision }));
+
+    const toRefuse = createCandidate({
+      targetKind: 'memory', scope: 'personal', title: `Refuseline ${tag}`,
+      proposedText: `Refuseline ${tag}: a proposal somebody turns down.`,
+      rationale: 'Decided-figure counting test.', confidence: 0.9, signalIds: [ledgerSignal.id],
+    });
+    reviewCandidate(toRefuse.id, 'reject');
+    check(pipelineStats({ windowDays: 7, projectId: project.id }).reviewed === beforeDecide.reviewed + 1,
+      'rejecting a proposal is a decision and lands in the decided figure, so the figure counts a refusal and not only an acceptance',
+      JSON.stringify({ before: beforeDecide.reviewed, after: pipelineStats({ windowDays: 7, projectId: project.id }).reviewed }));
+
+    // The load-bearing one. Approving in the app runs approve and then
+    // promote, and applying a projection moves that row on to 'applied', so a
+    // candidate a person approved almost never rests at status 'approved'. A
+    // decided figure counting only ('approved','rejected') would report zero
+    // approvals on a store full of them.
+    const toAccept = createCandidate({
+      targetKind: 'memory', scope: 'personal', title: `Acceptline ${tag}`,
+      proposedText: `Acceptline ${tag}: a proposal somebody approves and promotes.`,
+      rationale: 'Decided-figure counting test.', confidence: 0.9, signalIds: [ledgerSignal.id],
+    });
+    reviewCandidate(toAccept.id, 'approve');
+    promoteCandidate(toAccept.id, { createdBy: 'user' });
+    const afterAccept = pipelineStats({ windowDays: 7, projectId: project.id });
+    check(afterAccept.reviewed === beforeDecide.reviewed + 2,
+      'a proposal a person approved and then promoted still counts as decided, because approving in the app promotes in the same breath and a projection moves the row on again — the decided figure follows the whole set of statuses that carry a decision rather than the two a candidate passes through on its way out of them',
+      JSON.stringify({ before: beforeDecide.reviewed, after: afterAccept.reviewed, status: 'promoted' }));
+
+    // Negative: the deferral is not counted late either. Approving the row
+    // snoozed above adds exactly one, so the snooze contributed nothing at the
+    // time and nothing retroactively.
+    reviewCandidate(toDefer.id, 'approve');
+    const afterUndefer = pipelineStats({ windowDays: 7, projectId: project.id });
+    check(afterUndefer.reviewed === beforeDecide.reviewed + 3
+      && afterUndefer.awaitingDecision === beforeDecide.awaitingDecision,
+      'a proposal that was snoozed and later approved is counted once, at the approval, so the earlier deferral neither counted as a decision when it happened nor was counted a second time when the real decision arrived',
+      JSON.stringify({ before: beforeDecide.reviewed, after: afterUndefer.reviewed, openAfter: afterUndefer.awaitingDecision }));
+
+    // Negative: the window is the decision's clock, not the candidate's.
+    // Backdating reviewed_at past the window has to drop the row while its
+    // created_at, and so candidatesCreated, stays inside it.
+    const createdStill = afterUndefer.candidatesCreated;
+    db().prepare('UPDATE knowledge_candidates SET reviewed_at=? WHERE id=?')
+      .run(Date.now() - 40 * 24 * 3600 * 1000, toRefuse.id);
+    const afterAging = pipelineStats({ windowDays: 7, projectId: project.id });
+    check(afterAging.reviewed === afterUndefer.reviewed - 1
+      && afterAging.candidatesCreated === createdStill,
+      'a proposal decided before the window opened drops out of the decided figure while the same row stays inside candidates-created, so "last 7d" on that figure means the window the decision was taken in and not the window the candidate was written in',
+      JSON.stringify({ decided: afterAging.reviewed, was: afterUndefer.reviewed, created: afterAging.candidatesCreated }));
 
     say('── compound · sweep hardening');
     const mkHardSig = (summary: string, session: string, task: string, at: number) => recordSignal({
@@ -1631,6 +1700,49 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
       && openOffer.choices.length === 2 && !effortOffer.custom && effortOffer.defaultValue === '',
       'a select the manifest opened with allowCustom keeps free text and its declared default; a closed one keeps neither',
       openOffer);
+
+    const requiredEffortShaped = {
+      supports: { model: false, effort: true, permissionMode: false, resume: false },
+      launchFields: [{
+        id: 'effort', label: 'Effort', kind: 'select' as const, allowCustom: false, required: true,
+        options: [{ value: 'slow', label: 'Slow' }, { value: 'fast', label: 'Fast' }],
+      }],
+    };
+    const requiredEffort = launchFieldChoices(requiredEffortShaped, 'effort');
+    check(requiredEffort.required && requiredEffort.declared
+      && !requiredEffort.choices.some((choice) => choice.value === ''),
+      'a profile that declares its effort required never names the empty value among its choices, so a picker that prepends a "default" row of its own is offering the one value fieldArgs refuses with "Effort is required." — the same defect as an undeclared reasoning level, one field over',
+      requiredEffort.choices.map((choice) => choice.value).join());
+
+    const codexManifestProfile = BUILTIN_PROVIDER_PACKS
+      .flatMap((pack) => pack.profiles).find((profile) => profile.id === 'codex');
+    const codexManifestFields = (codexManifestProfile?.launchFields ?? []).map((field) => field.id);
+    check(codexManifestProfile?.harness === 'codex'
+      && codexManifestFields.includes('effort') && !codexManifestFields.includes('permissionMode'),
+      'the shipped Codex profile declares a reasoning effort and declares no permission mode, which is the pair of facts the dialog’s Codex explainer states — so a manifest edit that adds or drops one of them fails here rather than quietly making that sentence false',
+      codexManifestFields.join());
+
+    // Behavioural, on the pure helper, beside legacyShaped.
+    // Wanigan's fallback list is five levels deep for ANY profile that
+    // declares none, so a picker that guarded its slider on choices.length
+    // would draw a five-notch scale for a profile that takes no effort flag.
+    // `supported` is the only field that answers the question.
+    const glmShaped = {
+      supports: { model: true, effort: false, permissionMode: true, resume: true },
+      launchFields: [
+        { id: 'model', label: 'Model', kind: 'text' as const },
+        {
+          id: 'permissionMode', label: 'Permission mode', kind: 'select' as const, allowCustom: false,
+          options: ['manual', 'acceptEdits'].map((value) => ({ value, label: value })),
+        },
+      ],
+    };
+    const glmEffort = launchFieldChoices(glmShaped, 'effort');
+    const glmModel = launchFieldChoices(glmShaped, 'model');
+    check(glmEffort.supported === false && glmEffort.choices.length === 5
+      && glmModel.supported && !glmModel.declared && glmModel.choices.length === 0 && glmModel.custom,
+      'a profile shaped like the shipped GLM one — a model field and no effort field — is unsupported for effort while Wanigan’s fallback still hands back five levels, so a running-session bar may only hide its slider on `supported`, and its model field declares nothing of its own and takes whatever the backend catalogue reports',
+      { effort: [glmEffort.supported, glmEffort.choices.length], model: [glmModel.declared, glmModel.choices.length] });
 
     /* ── and the phone makes the same offer, not a second weaker one ─
      * The launch form on the phone used to answer this question for itself:

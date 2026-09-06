@@ -78,7 +78,10 @@
 .tl-live-idle { color: var(--text-faint); }
 
 .tl-filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.tl-search { flex: 1 1 150px; min-width: 0; padding: 5px 8px; font-size: 12px; }
+/* Compound on purpose: index.css @imports this sheet above its own rules, so
+   a bare .tl-search lost `padding` and `font-size` to .field and the filter box
+   sat at full body size beside 11px chips. Do not collapse the selector. */
+.field.tl-search { flex: 1 1 150px; min-width: 0; padding: 5px var(--s-2); font-size: var(--t-small); }
 .tl-chips { display: flex; gap: 3px; flex-wrap: wrap; }
 .tl-chip {
   padding: 3px 8px; border-radius: 999px;
