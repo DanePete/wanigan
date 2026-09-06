@@ -3,7 +3,7 @@
 **Status file. Update the checkboxes as waves land.** This exists so the work can be
 picked up by someone (or something) with none of the originating context.
 
-Last updated: 2026-09-05, after wave 2. 842 smoke assertions.
+Last updated: 2026-09-05, after wave 3. 858 smoke assertions.
 
 ---
 
@@ -153,7 +153,11 @@ renaming a renderer symbol can break a test even when behaviour is identical. Gr
       name their prerequisites; the ambient credential strip reaches the headless path;
       openInEditor confines both exits; one provider tint table; the composer's skill menu
       announces itself.
-- [ ] Wave 3 (7) · [ ] Wave 4 (7) · [ ] Wave 5 (7) · [ ] Wave 6 (7)
+- [x] **Wave 3** — 7/7 (six built, one smoke-only folded in). Default docket plan shared
+      between processes; viewMemory made safe to consume; Git's diff pane reconciled with
+      the status each action returns; composer drafts bounded to one pruned key; the Usage
+      daily chart named and tabulated; Control remembers its status filter.
+- [ ] Wave 4 (7) · [ ] Wave 5 (7) · [ ] Wave 6 (7)
 - [ ] Wave 7 (7) · [ ] Wave 8 (7) · [ ] Wave 9 (7) · [ ] Wave 10 (6) · [ ] Wave 11 (1)
 - [ ] Wave 12 (4) · [ ] Wave 13 (2) · [ ] Wave 14 (2) · [ ] Wave 15 (1) · [ ] Wave 16 (1)
 

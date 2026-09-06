@@ -1983,6 +1983,15 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       acceptance: ['Review gate passes.', 'A human review decision is recorded.'], risk: 'elevated' });
     check(docket.nodes.length === 4 && docket.nodes[0].status === 'ready' && docket.nodes[1].status === 'blocked',
       'a docket creates a dependency graph rather than four uncoordinated sessions');
+    // The four default phases, their kinds and the plan limits left control.ts
+    // for shared/types so a renderer plan editor seeds from exactly what main
+    // would have written. Loaded dynamically because this one check is the only
+    // place the smoke needs the values, and the static import above is shared.
+    const sharedPlan = await import('../shared/types');
+    check(sharedPlan.DEFAULT_DOCKET_PLAN.length === 4
+      && sharedPlan.DEFAULT_DOCKET_PLAN.at(-1)?.kind === 'review'
+      && sharedPlan.DOCKET_NODE_KINDS.length === 4,
+      'the default docket plan still ends in review, and its four node kinds are declared once for both processes');
     const planNode = docket.nodes.find((node) => node.kind === 'plan')!;
     const implementNode = docket.nodes.find((node) => node.kind === 'implement')!;
     control.claimPath(implementNode.id, 'src/control.ts');
@@ -2672,6 +2681,34 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(missingSources.length === 0,
     'every source path this suite reads resolved to a non-empty file, so no negated assertion passes by reading nothing',
     missingSources.join(', '));
+  // viewMemory has no runtime assertion available here: there is no renderer
+  // to mount, and all four of these are bugs that were invisible in review and
+  // would be invisible again. Every one of the four fails against the file as
+  // it stood before this change, so they are a ratchet rather than a snapshot.
+  const viewMemorySrc = sourceOf('src/renderer/src/components/viewMemory.ts');
+  const vmScrollWrites = viewMemorySrc.split('store.set(full, el.scrollTop)').length - 1;
+  const vmScrollWriteAt = viewMemorySrc.indexOf('store.set(full, el.scrollTop)');
+  const vmCleanupAt = viewMemorySrc.lastIndexOf('return () => {');
+  const vmClaimAt = viewMemorySrc.indexOf('if (claimed.current !== view) {');
+  const vmEffectAt = viewMemorySrc.indexOf('pendingUnmount.current = false;');
+  check(viewMemorySrc.length > 1000
+    && viewMemorySrc.includes('export function useRememberedScrollRef')
+    && /const \[element, setElement\] = useState<HTMLElement \| null>\(null\)/.test(viewMemorySrc)
+    && /useMemo<RefObject<HTMLElement \| null>>\(\(\) => \(\{ current: element \}\), \[element\]\)/.test(viewMemorySrc)
+    && /useRememberedScroll\(ref, key\)/.test(viewMemorySrc),
+  'a scroller that mounts after first paint is restorable at all: the callback ref puts the node in state, so the effect re-runs against an element that exists rather than the null a ref object silently filled in behind it');
+  check(vmScrollWrites === 1 && vmScrollWriteAt > 0 && vmScrollWriteAt < vmCleanupAt
+    && /return \(\) => \{[^}]*want = null;/.test(viewMemorySrc.slice(vmCleanupAt)),
+  'the remembered offset has exactly one writer, the scroll listener: the cleanup disconnects and unsubscribes but saves nothing, so a StrictMode simulated unmount can no longer write a pre-restore 0 over the saved position and then restore it',
+  `cleanup still saves; writes found: ${vmScrollWrites}`);
+  check(viewMemorySrc.includes('const latest = useRef(value);')
+    && viewMemorySrc.includes('latest.current = resolved;')
+    && viewMemorySrc.includes('store?.set(full, resolved);')
+    && !/setValue\(\(previous\)/.test(viewMemorySrc),
+  'useViewMemory writes the store from the setter against a ref, not from inside a setState updater React discards when the component unmounts in the same tick — a filter changed by the click that also swapped tabs is still remembered');
+  check(vmClaimAt > 0 && vmClaimAt < vmEffectAt
+    && /if \(claimed\.current !== view\) \{\s*claimed\.current = view;\s*store\?\.scopeMounted\(view\);\s*\}/.test(viewMemorySrc),
+  'a scope claims its view while it renders, ahead of the view below reading its keys in a useState initializer, so Reload after a crash hands the fresh instance a cleared scope instead of the state that broke it');
 
   check(/registerRunner\(\s*'batch'/.test(mainSrc),
     "the 'batch' queue kind has a runner — without one every batch schedule blocks on 'no runner registered' forever");
@@ -2856,6 +2893,37 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   'the consumption window Usage opens on is one its picker can display, so the select and the heading name the same window',
   `offers ${usageWindowsOffered.join(', ')}; opens on ${usageWindowDefault?.[1] ?? 'nothing'}`);
 
+  // The chart's rules belong in a sheet, themed by token. usage.css is also
+  // where the specificity trap is handled: .viz-table th in index.css is
+  // (0,1,1) and aligns left, so a bare .u-th-r would silently lose and the
+  // model columns would drift back to the left edge of their numbers.
+  const usageCssSrc = sourceOf('src/renderer/src/styles/usage.css');
+  check(usageViewSrc.includes("import '../styles/usage.css';")
+    && usageCssSrc.includes('.u-s1 { background: var(--series-1); }')
+    && usageCssSrc.includes('.u-s4 { background: var(--series-4); }')
+    && usageCssSrc.includes('.viz-table th.u-th-r { text-align: right; }')
+    && !/#[0-9a-f]{3,8}\b/i.test(usageCssSrc)
+    && !/\bfont(?:-size)?:\s*[^;{}]*?[0-9]*\.?[0-9]+px\b/.test(usageCssSrc),
+  'the Usage chart rules live in styles/usage.css, draw their series from the themed tokens, and spell no colour or font size of their own');
+
+  // The daily chart carried its whole meaning in colour, and only in colour:
+  // six hues — --accent, --codex and four raw hex literals that were the
+  // dark-theme values in both themes — over an unnamed stack of empty divs
+  // whose day dimension appears nowhere else on this screen and was reachable
+  // only by hovering a fourteen-pixel column. The bars now carry a name, the
+  // series are the four themed --series-* tokens worn as classes, and the same
+  // figures are laid out as a table underneath, so a reader who cannot see the
+  // picture — or cannot separate its hues — still gets the record.
+  check(usageViewSrc.includes('className="u-bars" role="img"')
+    && usageViewSrc.includes('aria-label={`Tokens per day for ${accountLabel}, ${span}, stacked by model.')
+    && usageViewSrc.includes('<details className="u-days">')
+    && usageViewSrc.includes('<summary>Day by day</summary>')
+    && usageViewSrc.includes('{models.map((model) => <th key={model} className="u-th-r">{model}</th>)}')
+    && usageViewSrc.includes('{fmt.format(totals[dayIndex])}</td>')
+    && usageViewSrc.includes("const SERIES = ['u-s1', 'u-s2', 'u-s3', 'u-s4'];")
+    && !/#[0-9a-f]{3,8}\b/i.test(usageViewSrc),
+  'the Usage daily chart has an accessible name and a day-by-day table beneath it, and picks no colour of its own');
+
   // The advice above names a control, so the control has to exist. It did not:
   // accounts:setForProject was registered in main and bound in the preload and
   // no renderer ever called it, which left "pin this repo to that login" as a
@@ -2915,6 +2983,22 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !sessionsSrc.includes('feed(sessionId, data)')
     && !sessionsSrc.includes('import TerminalPane, { feed,'),
   'terminal output is pumped for the window’s lifetime rather than the Sessions view’s, so bytes printed while you are on another tab still land');
+
+  // The Git diff pane kept whatever patch it was holding when an action changed
+  // the tree beneath it: stage a file and it still showed the unstaged diff,
+  // commit or discard it and it still showed a patch for a path git no longer
+  // lists — a diff for a state the repository is not in, which reads exactly
+  // like a current one. `load` now hands its status back so the reconcile can
+  // resolve the selected path against the state that action actually produced,
+  // and clear the pane when the path is gone. The commit message is cleared
+  // with the project for the same reason: a sentence drafted about one
+  // repository's changes must not be waiting in the box over another's tree.
+  const gitViewSrc = sourceOf('src/renderer/src/views/Git.tsx');
+  check(gitViewSrc.length > 500
+    && gitViewSrc.includes('await syncSelection(await load())')
+    && gitViewSrc.includes('function findFile(status: Status, path: string)')
+    && gitViewSrc.includes("setProjectId(e.target.value); setSel(null); setDetail(null); setMsg('');"),
+  'the Git detail pane is re-resolved against the status each action returns, and a commit message does not follow you into another project');
 
   // ── what is left, for every agent ───────────────────────────────────
   // The Usage screen said "read live from each account" and read only the
@@ -3151,6 +3235,13 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(/handle\(\s*'control:create'/.test(mainSrc) && /control:\s*\{/.test(preloadSrc)
     && /<Control/.test(appSrc) && /Dockets/.test(controlViewSrc) && controlSrc.includes('work_dockets'),
     'the durable control plane has schema, IPC, renderer binding and a visible operator surface');
+  // control.ts kept its own DEFAULT_PLAN and NODE_KINDS until the renderer
+  // needed to seed a plan editor from them. A reintroduced local copy would
+  // read as identical on the day it was written and drift on every day after,
+  // so this fails on the declaration returning, not merely on the name.
+  check(controlSrc.includes('DEFAULT_DOCKET_PLAN') && controlSrc.includes('DOCKET_NODE_KINDS')
+    && !/^const DEFAULT_PLAN\b/m.test(controlSrc) && !/^const NODE_KINDS\b/m.test(controlSrc),
+    'control.ts reads the shared default plan and node kinds rather than keeping a second copy that can drift');
 
   // Control's goal header once copied `file:///…#goal=<id>` under the notice
   // "Opening it in Wanigan returns to this exact durable goal". Nothing in
@@ -3188,6 +3279,18 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && controlCssSrc.includes('.control-node-waits {')
     && !controlViewSrc.includes('Start <em>Plan</em> first.'),
     'every task card names the prerequisites it waits on and how each one stands, so a blocked task reads as "reopen that one" or "wait for that one" rather than a single ambiguous word');
+
+  // Opening a goal's session unmounts Control, and the status filter used to be
+  // component-local state: narrow the list to one status, press a task's Start,
+  // come back, and the list had widened to every goal with nothing having said
+  // so. That reads as goals changing status while the operator was away. The
+  // filter is view memory now. Source contract because the smoke process has no
+  // renderer to swap tabs in.
+  check(controlViewSrc.includes("useViewMemory<string>('statusFilter', 'all')")
+    && /import \{ useViewMemory \} from '\.\.\/components\/viewMemory';/.test(controlViewSrc)
+    && !/const \[statusFilter, setStatusFilter\] = useState/.test(controlViewSrc)
+    && controlViewSrc.includes("onToggle={() => setStatusFilter('all')}"),
+    'Control remembers which status the goal list is filtered to across a tab swap, instead of silently widening to every goal when the operator comes back from a session');
 
   // Settings used to split a single tab across multiple `tabpanel` nodes, and
   // switching categories unmounted whatever form was in the other one. This is

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AccountLimits, ConsumptionPoint, LimitWindow, ModelConsumption, UsageSnapshot } from '@shared/types';
 import { harnessLabel } from '@shared/types';
 import { EmptyState, Note } from '../components/bits';
+import '../styles/usage.css';
 
 /**
  * What is left, and what was spent — kept visibly apart.
@@ -32,6 +33,19 @@ const fmt = new Intl.NumberFormat();
  */
 const WINDOWS = [7, 14, 30, 90];
 const DEFAULT_WINDOW = 14;
+
+/**
+ * The four themed series tokens, worn as classes.
+ *
+ * The daily chart used to draw from --accent, --codex and four raw hex
+ * literals. Three faults in one array: the accent is this app's mark for
+ * something you can act on and a model is not that, the hexes were the dark
+ * values in both themes, and a chart that carries meaning in colour alone
+ * carries it for no one who cannot separate those hues. These are the same
+ * tokens every other chart in Wanigan reads, and as classes they let the bar
+ * segment and the legend swatch share one definition.
+ */
+const SERIES = ['u-s1', 'u-s2', 'u-s3', 'u-s4'];
 
 const compact = (n: number): string =>
   n >= 1_000_000_000 ? `${(n / 1_000_000_000).toFixed(1)}B`
@@ -153,6 +167,11 @@ function LimitCard({ limits, now }: { limits: AccountLimits; now: number }) {
  * Drawn from one scale so every column is comparable, with the axis labelled by
  * a value the chart actually reaches rather than a rounded ceiling nothing
  * touches.
+ *
+ * The picture is the summary, not the record. Day is the one dimension that
+ * reaches this screen nowhere else, and it used to be readable only by hovering
+ * a fourteen-pixel column with a mouse — so the same figures are laid out as a
+ * table underneath, and the bars carry a name for a reader who never sees them.
  */
 function DailyChart({ points, accountLabel }: { points: ConsumptionPoint[]; accountLabel: string }) {
   const mine = points.filter((p) => p.accountLabel === accountLabel);
@@ -166,46 +185,83 @@ function DailyChart({ points, accountLabel }: { points: ConsumptionPoint[]; acco
   }
   const totals = days.map((day) => [...(byDay.get(day)?.values() ?? [])].reduce((a, b) => a + b, 0));
   const peak = Math.max(1, ...totals);
-  const palette = ['var(--accent)', 'var(--codex, #6a9bcc)', '#7f9f7f', '#b08a5a', '#9a7fae', '#5f9ea0'];
 
   if (!days.length) {
-    return <p className="faint" style={{ fontSize: 'var(--t-small)', margin: 0 }}>No recorded requests for {accountLabel} in this window.</p>;
+    return <p className="faint u-empty">No recorded requests for {accountLabel} in this window.</p>;
   }
+  const span = days.length === 1 ? days[0] : `${days[0]} to ${days[days.length - 1]}`;
   return (
-    <div style={{ display: 'grid', gap: 8 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 116, overflowX: 'auto' }}>
+    <div className="u-chart">
+      {/* A stack of coloured rectangles is not a name. Unlabelled, this was a
+          group of empty divs to anything that could not see it, and the colour
+          was the only thing telling one model from another. The label says what
+          the picture is; the table below says what it is drawn from. */}
+      <div className="u-bars" role="img"
+           aria-label={`Tokens per day for ${accountLabel}, ${span}, stacked by model. `
+             + `Peak ${compact(peak)} tokens in a day. The day-by-day figures are in the table below.`}>
         {days.map((day, dayIndex) => {
           const bucket = byDay.get(day) ?? new Map();
           const total = totals[dayIndex];
           return (
-            <div key={day} title={`${day} · ${fmt.format(total)} tokens`}
-                 style={{ flex: '1 0 14px', minWidth: 14, display: 'flex', flexDirection: 'column',
-                          justifyContent: 'flex-end', height: '100%' }}>
+            <div key={day} className="u-col" title={`${day} · ${fmt.format(total)} tokens`}>
               {models.map((model, modelIndex) => {
                 const value = bucket.get(model) ?? 0;
                 if (!value) return null;
                 return (
-                  <div key={model}
-                       style={{ height: `${(value / peak) * 100}%`, background: palette[modelIndex % palette.length] }} />
+                  <div key={model} className={SERIES[modelIndex % SERIES.length]}
+                       style={{ height: `${(value / peak) * 100}%` }} />
                 );
               })}
             </div>
           );
         })}
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-        <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>{days[0]}</span>
-        <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>peak {compact(peak)} tokens/day</span>
-        <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>{days[days.length - 1]}</span>
+      <div className="u-axis">
+        <span className="faint mono">{days[0]}</span>
+        <span className="faint mono">peak {compact(peak)} tokens/day</span>
+        <span className="faint mono">{days[days.length - 1]}</span>
       </div>
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+      {/* .legend and its two children are already in index.css and are what
+          Insights uses; a second swatch family here would be the same thing
+          under a different name. Past the fourth model the hues repeat, which
+          is the other reason the table exists — it names every model in text. */}
+      <div className="legend">
         {models.map((model, index) => (
-          <span key={model} className="faint" style={{ fontSize: 'var(--t-micro)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-            <span style={{ width: 9, height: 9, background: palette[index % palette.length], display: 'inline-block' }} />
+          <span key={model} className="legend-item">
+            <span className={`legend-swatch ${SERIES[index % SERIES.length]}`} />
             {model}
           </span>
         ))}
       </div>
+      <details className="u-days">
+        <summary>Day by day</summary>
+        <div className="u-scroll">
+          <table className="viz-table">
+            <caption className="u-cap">
+              Tokens by model, per day, for {accountLabel}. A dash is a day with nothing recorded for that model.
+            </caption>
+            <thead>
+              <tr>
+                <th>Day</th>
+                {models.map((model) => <th key={model} className="u-th-r">{model}</th>)}
+                <th className="u-th-r">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {days.map((day, dayIndex) => (
+                <tr key={day}>
+                  <td className="mono">{day}</td>
+                  {models.map((model) => {
+                    const value = byDay.get(day)?.get(model) ?? 0;
+                    return <td key={model} className="n">{value ? fmt.format(value) : '—'}</td>;
+                  })}
+                  <td className="n">{fmt.format(totals[dayIndex])}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
     </div>
   );
 }

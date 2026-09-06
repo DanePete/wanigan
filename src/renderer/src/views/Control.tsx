@@ -3,6 +3,7 @@ import type {
   ControlEvent, DocketDetail, DocketNode, DocketNodeStatus, DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
 } from '@shared/types';
 import { Chip, EmptyState, Explainer, Mark, Note, PageHead, Reading, ago, markOf, usd } from '../components/bits';
+import { useViewMemory } from '../components/viewMemory';
 
 const errText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const risks: DocketRisk[] = ['low', 'elevated', 'high'];
@@ -27,9 +28,16 @@ export default function Control({ projects, providers, onOpenSession }: {
 }) {
   const [dockets, setDockets] = useState<WorkDocket[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  // Which status the goal list is filtered to. 'all' is the default and the
-  // way back; a filter that cannot be cleared is a list that lies about size.
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  /**
+   * Which status the goal list is filtered to. 'all' is the default and the
+   * way back; a filter that cannot be cleared is a list that lies about size.
+   *
+   * It is view memory rather than local state because opening a goal's session
+   * unmounts Control: narrow the list to Blocked, press a task's Start, come
+   * back, and the list had silently widened to every goal again. The operator
+   * reads that as goals having changed status while they were away.
+   */
+  const [statusFilter, setStatusFilter] = useViewMemory<string>('statusFilter', 'all');
   const [detail, setDetail] = useState<DocketDetail | null>(null);
   const [outcomes, setOutcomes] = useState<ModelOutcome[]>([]);
   const [events, setEvents] = useState<ControlEvent[]>([]);

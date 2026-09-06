@@ -15,6 +15,15 @@ import type {
   GoalCapsule, GoalResumeReceipt, GoalTraceEvent,
   McpTaskRecord, ModelOutcome, WorkDocket,
 } from '../shared/types';
+// Aliased at the import so the graph rules below still read in this module's
+// own vocabulary: these are the shared declarations, and the renderer's plan
+// editor seeds from the same four phases rather than from a second copy.
+import {
+  DEFAULT_DOCKET_PLAN as DEFAULT_PLAN,
+  DOCKET_NODE_KINDS as NODE_KINDS,
+  MAX_DOCKET_NODE_DEPENDENCIES as MAX_NODE_DEPENDENCIES,
+  MAX_DOCKET_PLAN_NODES as MAX_PLAN_NODES,
+} from '../shared/types';
 
 type DocketRow = {
   id: string; project_id: string; title: string; objective: string; acceptance_json: string;
@@ -32,10 +41,6 @@ type NodeRow = {
 const MAX_OBJECTIVE = 12_000;
 const MAX_NOTE = 4_000;
 const MAX_INSTRUCTIONS = 8_000;
-/** A docket is one reviewable contract. Past this, split it. */
-const MAX_PLAN_NODES = 40;
-const MAX_NODE_DEPENDENCIES = 16;
-const NODE_KINDS: DocketNodeKind[] = ['plan', 'implement', 'verify', 'review'];
 const RISKS: DocketRisk[] = ['low', 'elevated', 'high'];
 
 /**
@@ -243,24 +248,6 @@ export function docket(id: string): DocketDetail {
 }
 
 type PlannedNode = { kind: DocketNodeKind; title: string; instructions: string; dependsOn: number[]; claimPath: string | null };
-
-/**
- * The shape a docket gets when nobody proposed a graph.
- *
- * It is the same four phases Control always created, expressed as a plan so
- * there is exactly one code path that writes nodes. A planner that proposes
- * something richer is validated by the same rules this passes trivially.
- */
-const DEFAULT_PLAN: DocketPlanNode[] = [
-  { kind: 'plan', title: 'Plan and identify risks', dependsOn: [],
-    instructions: 'Produce an implementation plan, identify affected areas, unknowns, and evidence needed for acceptance. Do not make changes until the plan is accepted.' },
-  { kind: 'implement', title: 'Implement in an isolated worktree', dependsOn: [0],
-    instructions: 'Make the smallest changes that satisfy the accepted plan and the docket acceptance checks. Keep the worktree reviewable and report intentional trade-offs.' },
-  { kind: 'verify', title: 'Verify the change', dependsOn: [1],
-    instructions: 'Run the project review gate and targeted checks in the implementation worktree. Record failures as evidence; do not claim success without command results.' },
-  { kind: 'review', title: 'Independent review and decision', dependsOn: [2],
-    instructions: 'Review the diff, the acceptance checks, and the recorded evidence. Approve only with a passed verification proof; otherwise request changes or reject.' },
-];
 
 /**
  * Validate a proposed task graph before a single row is written.

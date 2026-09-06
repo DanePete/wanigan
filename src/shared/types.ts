@@ -938,6 +938,43 @@ export type DocketPlanNode = {
   claimPath?: string | null;
 };
 
+/**
+ * The four task kinds, as a runtime list beside the union.
+ *
+ * Validation in the main process interpolates this array straight into the
+ * refusal a planner reads, so the order is part of the message. Anything that
+ * offers the choice reads the same four words from here rather than retyping
+ * them and quietly gaining a fifth.
+ */
+export const DOCKET_NODE_KINDS: readonly DocketNodeKind[] = ['plan', 'implement', 'verify', 'review'];
+
+/** A docket is one reviewable contract. Past this, split it. */
+export const MAX_DOCKET_PLAN_NODES = 40;
+export const MAX_DOCKET_NODE_DEPENDENCIES = 16;
+
+/**
+ * The shape a docket gets when nobody proposed a graph.
+ *
+ * It is the same four phases Control always created, expressed as a plan so
+ * there is exactly one code path that writes nodes. A planner that proposes
+ * something richer is validated by the same rules this passes trivially.
+ *
+ * It sits in shared rather than in the main process because the renderer's
+ * plan editor seeds a new graph from this same array. A second copy of the
+ * instruction text would read as identical and then drift, and the operator
+ * would be editing phases that are not the ones main would have written.
+ */
+export const DEFAULT_DOCKET_PLAN: readonly DocketPlanNode[] = [
+  { kind: 'plan', title: 'Plan and identify risks', dependsOn: [],
+    instructions: 'Produce an implementation plan, identify affected areas, unknowns, and evidence needed for acceptance. Do not make changes until the plan is accepted.' },
+  { kind: 'implement', title: 'Implement in an isolated worktree', dependsOn: [0],
+    instructions: 'Make the smallest changes that satisfy the accepted plan and the docket acceptance checks. Keep the worktree reviewable and report intentional trade-offs.' },
+  { kind: 'verify', title: 'Verify the change', dependsOn: [1],
+    instructions: 'Run the project review gate and targeted checks in the implementation worktree. Record failures as evidence; do not claim success without command results.' },
+  { kind: 'review', title: 'Independent review and decision', dependsOn: [2],
+    instructions: 'Review the diff, the acceptance checks, and the recorded evidence. Approve only with a passed verification proof; otherwise request changes or reject.' },
+];
+
 export type DocketNode = {
   id: string;
   docketId: string;

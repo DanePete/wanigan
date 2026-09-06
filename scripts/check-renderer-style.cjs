@@ -69,7 +69,7 @@ const INLINE_STYLE_BASELINE = {
   'views/Sessions.tsx': 126,
   'views/Settings.tsx': 269,
   'views/Skills.tsx': 39,
-  'views/Usage.tsx': 56,
+  'views/Usage.tsx': 45,
 };
 
 // 2. Renderer files still carrying a stylesheet as a template string. Empty,

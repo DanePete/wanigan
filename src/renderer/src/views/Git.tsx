@@ -16,6 +16,13 @@ type Commit = {
 };
 type Branch = { name: string; current: boolean; remote: boolean; upstream: string | null; ahead: number; behind: number; at: number | null; subject: string | null };
 type Stash = { index: number; label: string; at: number | null; subject: string };
+/** What the detail pane is showing. It is named at module level because two
+    places have to agree on it now: the click that opens a diff, and the
+    reconcile that runs after a git action has moved the file underneath it. */
+type Sel =
+  | { kind: 'commit'; hash: string }
+  | { kind: 'file'; path: string; staged: boolean }
+  | null;
 
 const LANE_C = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--series-4)', 'var(--accent)', 'var(--claude)'];
 const ROW = 34, LANE_W = 13, X0 = 12;
@@ -106,6 +113,23 @@ function Diff({ text }: { text: string }) {
   );
 }
 
+/** Unstaged, untracked and conflicted read as one side: everything git knows
+    about that is not in the index. */
+function workingSide(status: Status): GFile[] {
+  return [...status.unstaged, ...status.untracked, ...status.conflicted];
+}
+
+/** Where a path sits in a freshly read status, or nothing when git no longer
+    lists it anywhere — which is what a commit or a discard does to it, and is
+    the case that has to empty the pane instead of leaving a patch up for a
+    file that is gone. */
+function findFile(status: Status, path: string): { file: GFile; staged: boolean } | null {
+  const staged = status.staged.find((f) => f.path === path);
+  if (staged) return { file: staged, staged: true };
+  const work = workingSide(status).find((f) => f.path === path);
+  return work ? { file: work, staged: false } : null;
+}
+
 export default function Git({ projects }: { projects: Project[] }) {
   const [projectId, setProjectId] = useState(projects[0]?.id ?? '');
   // A folder picked from the empty state below. The shell owns the project list
@@ -123,7 +147,7 @@ export default function Git({ projects }: { projects: Project[] }) {
   const [commits, setCommits] = useState<Commit[]>([]);
   const [brs, setBrs] = useState<Branch[]>([]);
   const [stash, setStash] = useState<Stash[]>([]);
-  const [sel, setSel] = useState<{ kind: 'commit'; hash: string } | { kind: 'file'; path: string; staged: boolean } | null>(null);
+  const [sel, setSel] = useState<Sel>(null);
   // A filter over the commits already in memory: no new gh or git process
   // runs for a keystroke, and the footer says how many rows it searched.
   const [commitFilter, setCommitFilter] = useState('');
@@ -145,12 +169,16 @@ export default function Git({ projects }: { projects: Project[] }) {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ title: '', body: '', draft: false, base: '' });
 
-  const load = useCallback(async () => {
-    if (!root) return;
+  // Hands the status back as well as storing it. A caller that has just run a
+  // git action has to read the result in the same tick to reconcile the diff
+  // pane against it: `st` in that caller's closure is still the status from
+  // before the action, and a setState does not arrive in time to help.
+  const load = useCallback(async (): Promise<Status | null> => {
+    if (!root) return null;
     try {
-      const s = await window.wanigan.git.status(root);
+      const s: Status = await window.wanigan.git.status(root);
       setSt(s);
-      if (!s.isRepo) { setCommits([]); setBrs([]); setStash([]); return; }
+      if (!s.isRepo) { setCommits([]); setBrs([]); setStash([]); return s; }
       const [l, b, sh] = await Promise.all([
         window.wanigan.git.log(s.root, { limit: 150, all: showAll }),
         window.wanigan.git.branches(s.root),
@@ -158,7 +186,8 @@ export default function Git({ projects }: { projects: Project[] }) {
       ]);
       setCommits(l as Commit[]); setBrs(b as Branch[]); setStash(sh as Stash[]);
       setErr(null);
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+      return s;
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); return null; }
   }, [root, showAll]);
 
   useEffect(() => { void load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [load]);
@@ -178,7 +207,7 @@ export default function Git({ projects }: { projects: Project[] }) {
     try {
       const r = await fn();
       setOk(note ?? (typeof r === 'string' && r ? r : `${label} done.`));
-      await load();
+      await syncSelection(await load());
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(null); }
   }
@@ -191,13 +220,35 @@ export default function Git({ projects }: { projects: Project[] }) {
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }
 
-  async function openFile(f: GFile, staged: boolean) {
+  // The repository root is a parameter because the reconcile below runs the
+  // instant a git action returns, holding the root from the status that action
+  // produced, while `st` in this closure is still the one read before it. It is
+  // deliberately not called `root`: that name is the selected project's path in
+  // this scope, and shadowing it here would be invisible at the call sites.
+  async function openFile(f: GFile, staged: boolean, repoRoot: string = st?.root ?? '') {
+    if (!repoRoot) return;
     setSel({ kind: 'file', path: f.path, staged });
     if (f.untracked) { setDetail({ title: f.path, patch: 'Untracked — this file is not in git yet, so there is nothing to diff against.' }); return; }
     try {
-      const d = await window.wanigan.git.fileDiff(st!.root, f.path, staged);
+      const d = await window.wanigan.git.fileDiff(repoRoot, f.path, staged);
       setDetail({ title: f.path, patch: d || 'No textual diff (binary, or a mode change only).' });
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  }
+
+  // A git action changes the tree under whatever the diff pane is showing, so
+  // the selection is re-resolved against the status that action produced. A
+  // file changes sides when it is staged or unstaged and leaves the status
+  // entirely when it is committed or discarded; in both cases the pane was
+  // left holding a patch for a state the repository is no longer in.
+  async function syncSelection(status: Status | null) {
+    if (!status || sel?.kind !== 'file') return;
+    // The side it was already on wins while the path is still listed on both:
+    // a file can be staged and then edited again, and staging some other file
+    // should not silently swap which half of this one is being read.
+    const stillThere = (sel.staged ? status.staged : workingSide(status)).find((f) => f.path === sel.path);
+    const hit = stillThere ? { file: stillThere, staged: sel.staged } : findFile(status, sel.path);
+    if (!hit) { setSel(null); setDetail(null); return; }
+    await openFile(hit.file, hit.staged, status.root);
   }
 
   async function createPr() {
@@ -247,7 +298,12 @@ export default function Git({ projects }: { projects: Project[] }) {
   const bar = (
     <div className="gt-bar">
       <select className="field" style={{ width: 'auto', fontSize: 'var(--t-small)' }} value={projectId}
-              onChange={(e) => { setProjectId(e.target.value); setSel(null); setDetail(null); }}>
+              onChange={(e) => {
+                // The message box is a draft about this repository's changes;
+                // carrying it to another project offers to commit the wrong
+                // sentence against the wrong tree.
+                setProjectId(e.target.value); setSel(null); setDetail(null); setMsg('');
+              }}>
         {options.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
       {st?.isRepo && (

@@ -1,5 +1,6 @@
 import { filterPalette, groupPalette, transcriptHitRow, TRANSCRIPT_RESULT_CAP, type PaletteEntry } from '../shared/palette';
 import type { TranscriptHit } from '../shared/types';
+import { COMPOSER_DRAFT_MAX, COMPOSER_DRAFT_TOTAL_CHARS, parseDraftMap, pruneDrafts, putDraft, type ComposerDraftMap } from '../shared/composer-drafts';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 type Say = (s: string) => void;
@@ -56,6 +57,42 @@ export async function runPaletteSmoke(check: Check, say: Say): Promise<void> {
     check(a.hint === 'before «rm -rf» after',
       'the snippet passes through untouched — the archive\u2019s evidence, not copy');
     check(TRANSCRIPT_RESULT_CAP === 8, 'the palette asks the archive for the number the count line describes');
+
+    say('── composer drafts · one bounded key, not one key per session');
+
+    const saved = putDraft({}, 's-1', 'half a prompt', 1_000);
+    check(saved['s-1']?.text === 'half a prompt' && saved['s-1']?.at === 1_000,
+      'a draft is stored under its session id with the moment it was typed');
+    check(!('s-1' in putDraft(saved, 's-1', '', 2_000)) && !('s-1' in putDraft(saved, 's-1', '   ', 2_000)),
+      'clearing the box — or leaving only whitespace, which the composer refuses to send — frees the slot instead of holding it');
+
+    const many: ComposerDraftMap = {};
+    for (let i = 0; i < 30; i++) many[`s-${i}`] = { text: 'x'.repeat(10), at: 1_000 + i };
+    const capped = pruneDrafts(many);
+    const ats = Object.values(capped).map((d) => d.at).sort((a, b) => a - b);
+    check(Object.keys(capped).length === COMPOSER_DRAFT_MAX && ats[0] === 1_005 && ats[ats.length - 1] === 1_029,
+      'thirty drafts prune to the count cap, keeping the newest and dropping the oldest',
+      `${Object.keys(capped).length} kept, ${ats[0]}..${ats[ats.length - 1]}`);
+
+    const fat = pruneDrafts({
+      old: { text: 'a'.repeat(100_000), at: 1 },
+      mid: { text: 'b'.repeat(100_000), at: 2 },
+      new: { text: 'c'.repeat(100_000), at: 3 },
+    });
+    check(Object.keys(fat).length < 3 && 'new' in fat,
+      'the character budget evicts before the count does, and never the draft being typed into',
+      Object.keys(fat).join(','));
+    const alone = pruneDrafts({
+      huge: { text: 'a'.repeat(COMPOSER_DRAFT_TOTAL_CHARS + 1), at: 9 },
+      other: { text: 'b', at: 1 },
+    });
+    check(Object.keys(alone).length === 1 && 'huge' in alone,
+      'the newest draft survives even when it alone is over budget — losing what is on screen is never the fix');
+
+    check(Object.keys(parseDraftMap(null)).length === 0
+      && Object.keys(parseDraftMap('not json')).length === 0
+      && Object.keys(parseDraftMap(JSON.stringify({ 's-1': { text: 7, at: 1 } }))).length === 0,
+      'a missing, unparseable or malformed key reads as no drafts rather than throwing at the composer');
   } catch (e) {
     check(false, `palette smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

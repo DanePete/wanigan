@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AttentionKind, Session, SessionStatus } from '@shared/types';
 import { runsClaudeHarness } from '@shared/provider-status';
+import {
+  COMPOSER_DRAFTS_KEY,
+  COMPOSER_DRAFT_PREFIX,
+  parseDraftMap,
+  putDraft,
+  pruneDrafts,
+  type ComposerDraftMap,
+} from '@shared/composer-drafts';
 
 /**
  * A composer beside the PTY, not instead of it.
@@ -25,7 +33,6 @@ const SUBMIT_DELAY_MS = 120;
 const QUEUE_POLL_MS = 2_000;
 const STASH_KEY = 'wanigan.promptStash';
 const STASH_MAX = 50;
-const DRAFT_PREFIX = 'wanigan.composerDraft.';
 
 export type ComposerSendState = {
   mode: 'send' | 'queue' | 'blocked';
@@ -153,6 +160,53 @@ async function drainOnce(): Promise<void> {
   finally { draining = false; }
 }
 
+/* ── drafts ──────────────────────────────────────────────────────────────
+   Every draft in one bounded map. The rules live in shared/composer-drafts.ts;
+   what is here is the storage the renderer alone can reach. */
+
+/** The fold is a one-time upgrade, not a per-read scan of localStorage. */
+let foldedLegacy = false;
+
+/**
+ * The keys the old per-session scheme left behind, merged in once and then
+ * deleted. They carry no timestamp, so they come in at 0 — older than anything
+ * written since, which is true, because the fold runs before the first write
+ * under the new key. If a profile holds more than the caps allow, that makes
+ * the abandoned drafts the first to go and the ones being typed into the last.
+ */
+function foldLegacyDrafts(map: ComposerDraftMap): ComposerDraftMap {
+  const legacy: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith(COMPOSER_DRAFT_PREFIX)) legacy.push(key);
+  }
+  if (!legacy.length) return map;
+  const merged: ComposerDraftMap = { ...map };
+  for (const key of legacy) {
+    const sessionId = key.slice(COMPOSER_DRAFT_PREFIX.length);
+    const text = localStorage.getItem(key);
+    if (text && text.trim() && !merged[sessionId]) merged[sessionId] = { text, at: 0 };
+    localStorage.removeItem(key);
+  }
+  return pruneDrafts(merged);
+}
+
+function readDrafts(): ComposerDraftMap {
+  try {
+    const stored = parseDraftMap(localStorage.getItem(COMPOSER_DRAFTS_KEY));
+    if (foldedLegacy) return stored;
+    foldedLegacy = true;
+    const merged = foldLegacyDrafts(stored);
+    if (merged !== stored) writeDrafts(merged);
+    return merged;
+  } catch { return {}; }
+}
+
+function writeDrafts(map: ComposerDraftMap) {
+  try { localStorage.setItem(COMPOSER_DRAFTS_KEY, JSON.stringify(map)); }
+  catch { /* the caps are the real bound; a quota error here is the fallback */ }
+}
+
 /* ── stash ───────────────────────────────────────────────────────────── */
 
 type StashEntry = { id: number; text: string; at: number };
@@ -202,7 +256,7 @@ export default function Composer({ session, onError, onCollapse }: {
   onCollapse?: () => void;
 }) {
   const sessionId = session.id;
-  const [draft, setDraft] = useState(() => localStorage.getItem(DRAFT_PREFIX + sessionId) ?? '');
+  const [draft, setDraft] = useState(() => readDrafts()[sessionId]?.text ?? '');
   const [attention, setAttention] = useState<AttentionKind | null>(null);
   const [queued, setQueued] = useState<QueuedMessage[]>(() => queuedFor(sessionId));
   const [stash, setStash] = useState<StashEntry[]>(readStash);
@@ -213,13 +267,13 @@ export default function Composer({ session, onError, onCollapse }: {
   const areaRef = useRef<HTMLTextAreaElement>(null);
 
   // Drafts are per session and survive a reload; queues deliberately do not.
-  useEffect(() => { setDraft(localStorage.getItem(DRAFT_PREFIX + sessionId) ?? ''); setMenu(null); }, [sessionId]);
+  useEffect(() => { setDraft(readDrafts()[sessionId]?.text ?? ''); setMenu(null); }, [sessionId]);
   useEffect(() => {
+    // Re-read before writing rather than closing over a map: the debounce and
+    // the caps mean this write can evict another session's draft, and it must
+    // do that to whatever is on disk now, not to a snapshot from a mount ago.
     const t = window.setTimeout(() => {
-      try {
-        if (draft) localStorage.setItem(DRAFT_PREFIX + sessionId, draft);
-        else localStorage.removeItem(DRAFT_PREFIX + sessionId);
-      } catch { /* quota */ }
+      writeDrafts(putDraft(readDrafts(), sessionId, draft, Date.now()));
     }, 300);
     return () => window.clearTimeout(t);
   }, [draft, sessionId]);
