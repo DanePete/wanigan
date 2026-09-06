@@ -35,48 +35,50 @@ If the scratchpad is gone, this document is the plan.
 
 The operator went to bed and asked for continuous work. State at 2026-09-06.
 
-**Committed and pushed** on `task-graphs-and-accounts`, **1077 assertions green**,
-`npm test` passing all five steps.
+**Committed and pushed** on `task-graphs-and-accounts`, **1148 assertions green**,
+`npm test` passing all five steps. The coverage floor is now 1125 (was 660, which would
+have let two thirds of the suite vanish and still reported a pass).
 
-**The iPad programme is complete: 28 of 28 phases.** The phone can watch the fleet,
-drive one agent's terminal, answer a blocked agent, launch a session on a chosen
-account, pin a project to an account, read a repository and one file's diff, run the
-project's review gate, commit what git already tracks, fire an installed skill into a
-live session, triage the review inbox, decide a docket review with the gate result
-beside it, see spend breaches, manage schedules and runs, and survive being offline.
+**The iPad programme is complete: 28 of 28 phases.**
 
-**In flight when this was written:** desktop wave 8, eight agents on disjoint files —
-observed sessions in Fleet (A8), permission-mode words (B8), "learning is paused" (C8),
-demo-mode blur in the settings table (D8), the batch badge query (E8), closing
-`projects:add` (F8), a fourth style ratchet for cascade-shadowed rules (G8), and
-`cancelMcpTask` reporting what it did (H8). Handoffs land in `<scratchpad>/wave8/*.md`.
+**Desktop waves 8 and 9 are landed.** The renderer can no longer widen `managedRoots`;
+provider-pack trust is confirmed in main rather than on a page the renderer draws; a fifth
+style ratchet found the cascade-shadowing bug's fourth instance and twelve more, and the
+count is now zero with the smoke ceiling pinned at `=== 0`.
+
+**In flight when this was written:** one agent on the three remaining Sessions phases —
+splitting the Recent read, counting what a truncated Recent list hides, and warning when a
+launch enters a checkout another agent has a session on. Handoff at
+`<scratchpad>/wave10/S.md`.
 
 **Next, in order:**
-1. Land wave 8: apply the reserved-file wiring and the assertions from each handoff,
-   run `npm test`, commit, push.
-2. Keep going through `<scratchpad>/waves.json` — but see the staleness trap below.
-   **Probe before dispatching.** Roughly a dozen phases are genuinely unbuilt; most of
-   the rest already shipped.
-3. Re-run the 20-agent research pass (`wanigan-deep-research-2`), killed at 3/20.
+1. Land wave 10: apply its reserved-file wiring and assertions, run `npm test`, commit.
+2. Re-run the 20-agent research pass (`wanigan-deep-research-2`), killed at 3/20.
+3. The install is still pending — see below.
 
-**The failure mode that has cost four runs:** a background Workflow is killed whenever
-anything interrupts, and then reports "started, N results, no completion record" —
-indistinguishable from still-running. NEVER wait with a blocking `TaskOutput`. Poll the
-journal from Bash and check the newest `agent-*.jsonl` mtime: no activity for >5 minutes
-means dead, not slow.
+**Two orchestration lessons from waves 8 and 9, both expensive:**
 
-**The discipline that makes parallel waves safe:** build agents never edit
-`src/main/smoke*.ts`, `index.ts`, `preload`, `shared/types.ts`, or the mobile shared
-files. They return the wiring and the assertions as pasteable code in a handoff, applied
-centrally between waves. `<scratchpad>/wave8/BRIEF.md` is the current brief — reuse it.
+- **Never apply a handoff patch with a multi-line regex.** A lazy `(?:.*?\n)*?` match in
+  `index.ts` started at an earlier comment and silently deleted 234 lines — every
+  `providerPacks` handler, `providers:list`, `projects:list`. TypeScript compiled clean
+  afterwards, because deleting a handler registration breaks nothing at the type level.
+  What caught it was one smoke assertion written specifically to fail if a trust
+  confirmation ever moved back out of the main process. Use exact unique strings, and diff
+  the handler list against `HEAD` after touching that file.
+- **Watch for use-before-declaration when inserting into `smoke*.ts`.** The file is one
+  long function body; `mainSrc`, `preloadSrc`, `appSrc`, `sessionsSrc`, `controlViewSrc`,
+  `fleetViewSrc`, `mobileSrc` and `withoutComments` are declared partway down, and a block
+  pasted above its dependency fails the build rather than the test. Six blocks had to be
+  relocated across the two waves.
 
-**Two recurring traps, both about checks that read source including comments.** The
-egress-table scanner and the "no model read this" assertion each scan whole files on
-purpose, so prose explaining why a thing must never happen trips the check that bans it.
-Reword the comment; never loosen the check. And when inserting an assertion block into
-`smoke*.ts`, watch for use-before-declaration: `mobileSrc`, `mainSrc`, `controlViewSrc`
-and `composedJs` are all declared partway down, and a block pasted above them typechecks
-as an error rather than failing at runtime. Four blocks had to be relocated in wave 7.
+**The build/verify pattern is worth keeping.** Wave 9 ran each package through an
+adversarial verifier that read the real diff instead of the agent's report. It refuted
+claims in six of seven packages — almost all of one kind: a comment the change itself made
+untrue. Then the repair pass reproduced the failure one level up: four of five repairs
+fixed their sentence and wrote a fresh over-claim doing it, because an agent correcting a
+vague sentence reaches for precision and precision it cannot support is a new falsehood.
+The recheck stage caught those. **Fix an over-claim by removing the derivation, not by
+replacing it with a better one.**
 
 ## The rule that makes this work
 
@@ -430,29 +432,30 @@ absolute path, `~` or a drive letter. That test is over-eager — it withholds
 
 ## Desktop backlog — probe before dispatching
 
-Verified genuinely unbuilt as of wave 8's launch, beyond what wave 8 is building:
+Waves 8 and 9 cleared most of it. Verified genuinely unbuilt as of 2026-09-06, beyond what
+wave 10 is building:
 
-- Refuse manifest process-source reads of ambient credentials (`provider-packs.ts`)
-- Warn when a launch enters a checkout another agent is editing
-- Show recorded MCP tool calls, and point the dispatcher row at Control (`Settings.tsx`)
-- Stop the Schedules action row mixing button heights
-- Offer only the effort and permission modes the profile declares
-- Feed the running-session model picker from the shared catalogue
+- **Pin the honesty invariants smoke can only check in source** (`smoke3.ts` only). The one
+  phase left that is entirely mine to write.
 
-Two known-real defects with no owner, both raised by agents and deliberately not fixed
-by them because each sits outside its phase:
+Everything else in `<scratchpad>/waves.json` that I probed is already shipped. **Probe
+before dispatching**: pick a symbol or file the phase must *create* and check it does not
+exist. Grepping for a phrase from the spec is not enough — a phrase matches a comment
+describing the change in the past tense, which is how `control.css` read as unbuilt when it
+was done.
 
-- **`reviewed` counts a snoozed candidate as decided.** `ledger.ts`'s "decided · last Nd"
-  counts by `reviewed_at`, and `reviewCandidate` stamps that on a snooze too — so one
-  snoozed row appears under both "awaiting a decision" and "decided", while the ledger's
-  own comment says a snooze "does not make" a decision. Two candidate fixes: count
-  `status IN ('approved','rejected')`, or relabel the figure. Someone has to choose. It
-  is deliberately **not** pinned by a test, because pinning it would make it harder to
-  fix rather than easier.
-- **Two Learning buttons reach one destination with different titles.** The PipelineSpine
-  "Proposed" station still says "filtered to proposals needing a decision"; the `'open'`
-  filter is `['pending','approved','snoozed','failed']`, so that names a filter which
-  does not exist.
+Two known-real defects with no owner, both raised by agents that correctly declined to fix
+them out of scope:
+
+- **Two Learning surfaces disagree about a project scope.** The decided figure scopes by
+  `artifactWhere` (`scope='personal' OR project_id=?`) and the Inbox filter it opens scopes
+  by `project_id IS ?`, so a personal proposal recorded under no project is counted and
+  never listed. Verified on an eight-row fixture with both real queries. The comments now
+  say the two overlap rather than nest, which is honest but is not the same as fixing it.
+  The same asymmetry affects `awaitingDecision` and predates all of this.
+- **`.pg-head` on `Plugins.tsx:210` now matches no rule in any sheet**, after the dead
+  private rule behind it was deleted. Inert, and removing the class is a one-line edit in a
+  file nobody owned that wave.
 
 ## Known traps
 
