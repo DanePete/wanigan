@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Attention, AttentionKind, Project, ProviderId, Session, SessionUsage, TrustLevel,
 } from '@shared/types';
-import { ATTENTION_ORDER, EMPTY_USAGE, TRUST_COPY } from '@shared/types';
-import { Note, Stat, ago, num, usd } from '../components/bits';
+import { ATTENTION_ORDER, EMPTY_USAGE, trustCopy, trustGlyph } from '@shared/types';
+import { EmptyState, Note, PageHead, Segmented, Stat, ago, num, usd } from '../components/bits';
 import TeamPanel from '../components/TeamPanel';
 
 /**
@@ -48,7 +48,6 @@ const MARK: Record<AttentionKind, Mark> = {
 };
 const UNKNOWN: Mark = { glyph: '·', word: 'Unknown', fg: 'var(--text-faint)', bg: 'var(--bg-sunk)' };
 
-const TRUST_GLYPH: Record<TrustLevel, string> = { readonly: '◇', project: '◈', trusted: '◆' };
 
 type SortKey = 'attention' | 'spend' | 'age';
 const SORTS: { key: SortKey; label: string; hint: string }[] = [
@@ -127,9 +126,11 @@ function costFigure(costUsd: number, status: SessionUsage['costStatus']): {
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export default function Fleet({ projects = [], onOpenSession }: {
+export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
   projects?: Project[];
   onOpenSession: (id: string) => void;
+  /** Fleet watches sessions; the shell is what starts one. */
+  onNewSession?: () => void;
 }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [attention, setAttention] = useState<Record<string, Attention>>({});
@@ -371,25 +372,19 @@ export default function Fleet({ projects = [], onOpenSession }: {
   }, [sessions, attention, only, sort, usageOf]);
 
   const head = (
-    <div className="pane-head">
-      <div>
-        <h1>Fleet</h1>
-        <p className="dim">Every agent on one screen. Whoever is blocked sorts to the top.</p>
-      </div>
-      <div className="fleet-controls">
-        <div className="fleet-seg" role="group" aria-label="Sort sessions by">
-          <span className="label" style={{ paddingRight: 2 }}>Sort</span>
-          {SORTS.map((s) => (
-            <button key={s.key} className={`fleet-segbtn${sort === s.key ? ' on' : ''}`}
-                    aria-pressed={sort === s.key} title={s.hint}
-                    onClick={() => setSort(s.key)}>{s.label}</button>
-          ))}
+    <PageHead
+      title="Fleet"
+      lead="Every agent on one screen. Whoever is blocked sorts to the top."
+      actions={(
+        <div className="fleet-controls">
+          <span className="label">Sort</span>
+          <Segmented label="Sort sessions by" value={sort} onChange={setSort}
+                     options={SORTS.map((s) => ({ value: s.key, label: s.label, title: s.hint }))} />
+          <span className="faint fleet-updated">
+            {updatedAt ? `updated ${ago(updatedAt)}` : 'never updated'} · every 3s
+          </span>
         </div>
-        <span className="faint fleet-updated">
-          {updatedAt ? `updated ${ago(updatedAt)}` : 'never updated'} · every 3s
-        </span>
-      </div>
-    </div>
+      )} />
   );
 
   if (!ready) {
@@ -427,18 +422,15 @@ export default function Fleet({ projects = [], onOpenSession }: {
       <div className="pane">
         {head}
         <TeamPanel />
-        <div className="card fleet-blank">
-          <h2>No agents are running</h2>
-          <p className="dim">
-            Fleet watches sessions that already exist — it does not start them. Open Sessions and
-            press <kbd className="fleet-kbd">⌘T</kbd> to launch one; it appears here within three
-            seconds, with its cost, its tokens and what it is waiting on.
-          </p>
-          <p className="faint">
-            Cards fill in as telemetry arrives. Cost and throughput come from the agent's own OTLP
-            stream, so the first numbers land after its first API call.
-          </p>
-        </div>
+        {/* Absence first, then one path. The mechanism sentence stays — Fleet
+            watching rather than starting is the thing people get wrong — and
+            the telemetry caveat moved to the table footer where the numbers
+            it qualifies actually appear. */}
+        <EmptyState posture="nothing-yet" title="No agents are running"
+                    cue={<>Fleet watches sessions that already exist; it does not start them. A new session appears here within three seconds.</>}
+                    action={onNewSession
+                      ? <button className="btn btn-primary" onClick={onNewSession}>New session <kbd className="fleet-kbd">⌘T</kbd></button>
+                      : undefined} />
       </div>
     );
   }
@@ -457,8 +449,9 @@ export default function Fleet({ projects = [], onOpenSession }: {
       )}
 
       {/* Announced as well as painted: stopping an agent is the one thing on
-          this screen that cannot be undone by looking again. */}
-      <div aria-live="polite">
+          this screen that cannot be undone by looking again. Note carries the
+          role itself now — a live region around it reads the message twice. */}
+      <>
         {acted && (
           <Note tone={acted.ok ? 'ok' : 'warn'}>
             <span aria-hidden="true" style={{ fontWeight: 700, marginRight: 6 }}>{acted.ok ? '✓' : '△'}</span>
@@ -466,7 +459,7 @@ export default function Fleet({ projects = [], onOpenSession }: {
             <button className="fleet-inline" onClick={() => setActed(null)}>Dismiss</button>
           </Note>
         )}
-      </div>
+      </>
 
       <p aria-live="polite" style={SR_ONLY}>{blockedSay}</p>
 
@@ -487,15 +480,23 @@ export default function Fleet({ projects = [], onOpenSession }: {
         </Note>
       )}
 
+      {/* The two tiles that count rows are the filters the chips already are:
+          pressing one is the same act as pressing its chip. Spend and lines
+          stay inert — one is an estimate, the other a total with no row set. */}
       <div className="stat-grid">
         <Stat label="Agents" value={`${num(totals.running)} running`}
-              sub={`${num(totals.exited)} exited · ${num(sessions.length)} cards`} />
+              sub={`${num(totals.exited)} exited · ${num(sessions.length)} cards`}
+              pressed={only === 'all'} onSelect={() => setOnly('all')}
+              title="Show every session" />
         <Stat label="Needs you"
               value={<>{blocked.length > 0 && <span aria-hidden="true">? </span>}{num(blocked.length)}</>}
               tone={blocked.length ? 'var(--critical)' : undefined}
               sub={blocked.length
                 ? `longest wait ${dur(Date.now() - (attention[blocked[0].id]?.since ?? Date.now()))}`
-                : 'nobody is blocked'} />
+                : 'nobody is blocked'}
+              pressed={only === 'permission'}
+              onSelect={blocked.length ? () => setOnly(only === 'permission' ? 'all' : 'permission') : undefined}
+              title={blocked.length ? 'Show only the sessions waiting on a permission prompt' : undefined} />
         {/* A fleet total that mixes billed dollars with a flat-rate backend's
             own arithmetic is not a bill, so the whole total inherits the
             weaker label rather than averaging the two claims into one. */}
@@ -615,8 +616,8 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onContr
         <span aria-hidden="true">·</span>
         <span>{s.effort ? `${s.effort} effort` : 'default effort'}</span>
         <span aria-hidden="true">·</span>
-        <span title={TRUST_COPY[trust].detail}>
-          <span aria-hidden="true">{TRUST_GLYPH[trust]} </span>{TRUST_COPY[trust].label.toLowerCase()}
+        <span title={trustCopy(trust).detail}>
+          <span aria-hidden="true">{trustGlyph(trust)} </span>{trustCopy(trust).label.toLowerCase()}
         </span>
         {branch && <><span aria-hidden="true">·</span><span>{branch}</span></>}
         {s.worktree && <><span aria-hidden="true">·</span><span title={s.worktree}>isolated</span></>}
@@ -869,8 +870,8 @@ function FleetTable({ rows, att, usageOf, spark, defaultTrust, onOpen }: {
                   <td className="r">{dur(Date.now() - (a?.since ?? s.createdAt))}</td>
                   <td className="mono trunc">{s.model || u.models[0] || 'default'}</td>
                   <td>{s.effort || 'default'}</td>
-                  <td title={TRUST_COPY[trust].detail}>
-                    <span aria-hidden="true">{TRUST_GLYPH[trust]} </span>{TRUST_COPY[trust].label.toLowerCase()}
+                  <td title={trustCopy(trust).detail}>
+                    <span aria-hidden="true">{trustGlyph(trust)} </span>{trustCopy(trust).label.toLowerCase()}
                   </td>
                   <td className="r">{num(u.requests)}</td>
                   <td className="r" title={cost.title}>

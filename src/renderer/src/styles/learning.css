@@ -8,7 +8,7 @@
   flex: none; display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s-4);
   padding: var(--s-5) var(--s-5) var(--s-4); border-bottom: 1px solid var(--line-soft);
 }
-.learning-head h1 { margin-top: 2px; font-size: var(--t-display); line-height: 1; letter-spacing: -.035em; }
+.learning-head h1 { margin-top: 2px; line-height: 1; letter-spacing: -.035em; }
 .learning-head p { margin-top: var(--s-2); max-width: 760px; color: var(--text-dim); line-height: 1.5; }
 .learning-head-actions { display: flex; align-items: center; gap: var(--s-2); flex: none; }
 .learning-scope { display: flex; align-items: center; gap: 7px; }
@@ -69,8 +69,13 @@
  * focus, so the panel carries a tab stop. The outline draws inward because the
  * container clips its own overflow and would otherwise swallow the ring. */
 .learning-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
-.learning-stack { display: flex; flex-direction: column; gap: var(--s-4); max-width: 1500px; margin: 0 auto; }
-.learning-grid { display: grid; gap: var(--s-4); align-items: start; max-width: 1500px; margin: 0 auto; }
+/* The same measure the document views use, from the same tokens: a stack is a
+   column of cards and takes the reading width, a grid is a two-column
+   workbench and takes the wide one. Both were centred at a 1500px cap, which
+   on a 1440px window is no cap at all — a paragraph ran the width of the
+   screen on the one view whose whole subject is reading. */
+.learning-stack { display: flex; flex-direction: column; gap: var(--s-4); max-width: var(--page-max); }
+.learning-grid { display: grid; gap: var(--s-4); align-items: start; max-width: var(--page-wide); }
 .learning-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .learning-banner { flex: none; padding: 8px var(--s-5); border-bottom: 1px solid; font-size: var(--t-small); }
 .learning-banner.error { color: var(--bad); background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
@@ -215,7 +220,10 @@
 .learning-empty p { margin-top: 4px; max-width: 680px; color: var(--text-faint); line-height: 1.45; }
 .learning-empty .learning-link { display: inline-block; margin-top: 8px; }
 .learning-empty-frame { display: block; margin-top: 8px; color: var(--text-faint); font-size: var(--t-micro); }
-.learning-modal-backdrop { position: fixed; inset: 0; z-index: 130; display: grid; place-items: center; padding: var(--s-4); background: var(--scrim-strong); backdrop-filter: blur(4px); }
+/* The blurred backdrop this sheet used to paint is gone with the hand-rolled
+   dialogs: ui.css records that blur is opt-in because a live terminal under a
+   blurred scrim costs the compositor on every repaint, and Learning's dialogs
+   had opted in only by accident. .learning-modal is unchanged. */
 .learning-modal { width: min(720px, 100%); max-height: calc(100vh - 48px); overflow: auto; padding: var(--s-5); display: flex; flex-direction: column; gap: var(--s-3); box-shadow: var(--shadow-modal); }
 .learning-modal > label { display: flex; flex-direction: column; gap: 5px; }
 
@@ -481,4 +489,14 @@
   .signal-list small { grid-column: 1; }
   .project-map-hero { grid-template-columns: 1fr; }
   .project-map-hero > div:not(:first-child) { padding: 0; border: 0; }
+}
+
+/* The decision row stays reachable while a long patch scrolls past it: a card
+   whose Approve sits below the fold makes reading and deciding two separate
+   trips. It carries the card's own background so the patch does not show
+   through, and it never moves — position, not motion. */
+.candidate-card .learning-actions {
+  position: sticky; bottom: 0; z-index: 1;
+  padding-top: var(--s-2); margin-top: var(--s-2);
+  background: var(--bg-soft); border-top: 1px solid var(--line-soft);
 }

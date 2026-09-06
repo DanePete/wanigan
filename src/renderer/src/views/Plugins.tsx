@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Note, Stat, ago, num } from '../components/bits';
+import { Explainer, Note, Stat, ago, num } from '../components/bits';
 
 /* Shapes mirror src/main/plugins.ts; the renderer cannot import from main. */
 type Component = { kind: 'skill' | 'command' | 'agent'; name: string; path: string };
@@ -154,15 +154,18 @@ export default function Plugins() {
     return rows.filter((a) => a.name.toLowerCase().includes(s) || a.description.toLowerCase().includes(s));
   }, [st, cat, q]);
 
+  // `err && !st` only catches a failure on the very first read. After one good
+  // scan `st` is set for good, so a later Rescan that fails used to put the
+  // button back to "Rescan", leave yesterday's list on screen, and say nothing
+  // at all. The error is rendered in the page below as well.
   if (err && !st) {
     return (
-      <div className="pg-wrap">
-        <Note tone="error">{err}</Note>
-        <button className="btn" style={{ marginTop: 10 }} onClick={() => void load(true)}>Try again</button>
+      <div className="pane pg-wrap">
+        <Note tone="error" action={{ label: 'Try again', run: () => void load(true) }}>{err}</Note>
       </div>
     );
   }
-  if (!st) return <div className="pg-wrap"><p className="dim">Reading your plugins…</p></div>;
+  if (!st) return <div className="pane pg-wrap"><p className="dim">Reading your plugins…</p></div>;
 
   const missing = st.installed.filter((p) => !p.present);
   // The one call that turns every card's unknown into an answer failed. Told on
@@ -171,14 +174,17 @@ export default function Plugins() {
   const askFailed = !cat && catNote !== null;
 
   return (
-    <div className="pg-wrap">
+    <div className="pane pg-wrap">
       {/* Named for whose plugins these are. "Plugins" on a control surface for
           coding agents reads as "things that extend this app", and nothing here
           does: every row is a Claude Code plugin, installed by the Claude Code
           CLI into its own directory, loaded by Claude Code sessions. Wanigan
           reads and drives that; it has no extension format of its own. */}
-      <div className="pg-head">
-        <h1>Claude Code plugins</h1>
+      <div className="pane-head pg-head">
+        <div className="pg-title">
+          <span className="label-stencil">Claude Code plugins</span>
+          <h1>Plugins</h1>
+        </div>
         <span className="pg-count">{st.installed.length} installed · {st.available.length} in the catalog</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           <button className="btn" disabled={busy} onClick={() => void load(true)}>
@@ -186,7 +192,21 @@ export default function Plugins() {
           </button>
         </div>
       </div>
-      <p className="dim" style={{ maxWidth: '76ch', marginTop: 6, lineHeight: 1.55 }}>
+      {/* Below the head, so the head stays the pane's first child and keeps its
+          sticky treatment. A rescan that fails after a good scan used to say
+          nothing at all: `err && !st` above only catches the first read. */}
+      {err && (
+        <Note tone="error" action={{ label: busy ? 'Scanning…' : 'Rescan', run: () => void load(true) }}
+              onDismiss={() => setErr(null)}>
+          {err} What is listed below is the last scan that succeeded, not the state on disk now.
+        </Note>
+      )}
+
+      {/* What a plugin is, and what it is not, is a guide: true, worth reading
+          once, and not the content of the page. The honest per-card state text
+          below is not this and stays on screen. */}
+      <Explainer id="plugins-guide" title="What these plugins are">
+      <p className="dim">
         These are Claude Code's own plugins — bundles of skills, slash commands, subagents, hooks and MCP
         servers that the <span className="mono">claude</span> CLI installs under{' '}
         <span className="mono">~/.claude/plugins</span> and loads into its sessions. Wanigan reads that
@@ -196,6 +216,7 @@ export default function Plugins() {
         <span className="mono">⌘⇧C</span>), and the skills it ships are listed in Skills (
         <span className="mono">⌘⇧S</span>).
       </p>
+      </Explainer>
 
       {/* The distinction the directory layout makes easy to get wrong. */}
       {st.notes.map((n, i) => (
@@ -349,11 +370,18 @@ export default function Plugins() {
                       the sentence says what it means. The one action that
                       resolves it lives at the top of this section, because it
                       answers for every card at once. */}
+                  {/* The same 40-word sentence under every card read as nine
+                      separate problems. The mark still carries the state in a
+                      glyph and a word; the sentence is one click away, per card,
+                      and the section Note above says it once for all of them. */}
                   {!known && (
-                    <p style={{ fontSize: 'var(--t-micro)', lineHeight: 1.5, color: 'var(--text-faint)' }}>
-                      {mark.blurb}
-                      {state === 'unread' && !askFailed && ' Ask the CLI at the top of this section to resolve it.'}
-                    </p>
+                    <details className="pg-why">
+                      <summary>why?</summary>
+                      <p>
+                        {mark.blurb}
+                        {state === 'unread' && !askFailed && ' Ask the CLI at the top of this section to resolve it.'}
+                      </p>
+                    </details>
                   )}
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                     {/* Each button runs the matching `claude plugin` command and

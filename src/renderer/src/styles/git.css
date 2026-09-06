@@ -15,8 +15,9 @@
 
 .gt-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 
-.gt-row { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
-          padding: 0 12px 0 0; height: 34px; cursor: pointer; border-bottom: 1px solid var(--line-soft); }
+.gt-row { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; width: 100%;
+          padding: 0 12px 0 0; height: 34px; cursor: pointer; border: 0; border-bottom: 1px solid var(--line-soft);
+          background: none; color: inherit; font: inherit; text-align: left; appearance: none; }
 .gt-row:hover { background: var(--bg-sunk); }
 .gt-row.on { background: var(--accent-soft); }
 .gt-graph { width: 92px; height: 34px; flex: none; display: block; }
@@ -39,7 +40,12 @@
 .gt-file.on { background: var(--accent-soft); }
 .gt-file .st { width: 12px; flex: none; font-weight: 700; text-align: center; font-family: ui-monospace, monospace; font-size: 11px; }
 .gt-file .p { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gt-file .go { margin-left: auto; font-size: 10.5px; color: var(--text-faint); flex: none; }
+.gt-file-row { display: flex; align-items: center; }
+.gt-file-row .gt-file { flex: 1; min-width: 0; }
+/* 24px hit area for the stage/unstage control, outside the path button. */
+.gt-go { flex: none; min-width: 24px; min-height: 24px; margin-right: 6px; border-radius: var(--r-sm);
+         font-size: var(--t-small); color: var(--text-faint); background: none; border: none; cursor: pointer; }
+.gt-go:hover { background: var(--bg-sunk); color: var(--text); }
 
 .gt-commit { padding: 10px 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 7px; }
 .gt-commit textarea { width: 100%; min-height: 58px; resize: vertical; background: var(--bg-sunk);
@@ -58,3 +64,12 @@
            background: var(--bg-soft); color: var(--text-dim); cursor: pointer; white-space: nowrap; }
 .gt-chip:hover { border-color: var(--accent); color: var(--accent); }
 .gt-chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+/* The history filter runs over the commits already loaded; the note under the
+   list says so, so a short result is never mistaken for a short history. */
+.gt-filter { width: 190px; min-height: var(--control-h-sm); padding: 2px 7px; font-size: var(--t-small); }
+.gt-filter-note { padding: 8px 12px; font-size: var(--t-micro); line-height: 1.5; }
+
+/* The one confirmation this view shares between push, discard, merge, delete
+   branch and drop stash. Inset to the same gutter as the panes it interrupts. */
+.gt-confirm { padding: var(--s-2) var(--s-3); }

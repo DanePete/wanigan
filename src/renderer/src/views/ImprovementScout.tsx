@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Project } from '@shared/types';
+import { EmptyState, Explainer } from '../components/bits';
 import '../styles/improvement-scout.css';
 
 /**
@@ -15,11 +16,25 @@ import '../styles/improvement-scout.css';
 
 type JsonObject = Record<string, unknown>;
 
+/** One scan. The main process has always returned this; the view discarded it. */
+type ScoutRun = {
+  id: string;
+  mode: string;
+  status: 'running' | 'completed' | 'blocked' | 'failed';
+  networkAllowed: boolean;
+  startedAt: number | null;
+  finishedAt: number | null;
+  suggestionCount: number;
+  error: string | null;
+};
+
 type ScoutOverview = {
   enabled: boolean;
   weeklyEnabled: boolean;
   networkEnabled: boolean;
   cadenceLabel: string;
+  /** The most recent scan, outcome included. `lastRunAt` is only its clock. */
+  latestRun: ScoutRun | null;
   lastRunAt: number | null;
   nextRunAt: number | null;
   pendingSuggestions: number;
@@ -94,6 +109,7 @@ const EMPTY_OVERVIEW: ScoutOverview = {
   weeklyEnabled: false,
   networkEnabled: false,
   cadenceLabel: 'weekly',
+  latestRun: null,
   lastRunAt: null,
   nextRunAt: null,
   pendingSuggestions: 0,
@@ -112,6 +128,11 @@ const EMPTY_SETTINGS: ScoutSettings = {
 };
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/** Glyph first, then the word. Colour is the third channel here, never the only one. */
+const RUN_GLYPH: Record<ScoutRun['status'], string> = {
+  running: '◐', completed: '✓', blocked: '⁃', failed: '✕',
+};
 
 function asRecord(value: unknown): JsonObject | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : null;
@@ -141,9 +162,31 @@ function array(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
+/**
+ * A scan's own account of itself. `status` is the field that matters: the main
+ * process reports 'blocked' when a consent gate stopped the scan and 'failed'
+ * when it broke, and this view used to read neither — so both looked exactly
+ * like a completed run, on the banner and on the "Last scan" card alike.
+ */
+function normalizeRun(value: unknown): ScoutRun {
+  const raw = asRecord(value) ?? {};
+  const status = string(raw.status, 'completed');
+  return {
+    id: string(raw.id),
+    mode: string(raw.mode, 'manual'),
+    status: (['running', 'completed', 'blocked', 'failed'].includes(status) ? status : 'completed') as ScoutRun['status'],
+    networkAllowed: bool(raw.networkAllowed ?? raw.allowNetwork),
+    startedAt: timestamp(raw.startedAt ?? raw.started_at),
+    finishedAt: timestamp(raw.finishedAt ?? raw.finished_at),
+    suggestionCount: numeric(raw.suggestionCount ?? raw.suggestions, 0) ?? 0,
+    error: typeof raw.error === 'string' && raw.error ? raw.error : null,
+  };
+}
+
 function normalizeOverview(value: unknown): ScoutOverview {
   const raw = asRecord(value) ?? {};
   return {
+    latestRun: raw.latestRun === null || raw.latestRun === undefined ? null : normalizeRun(raw.latestRun),
     enabled: bool(raw.enabled ?? raw.researchEnabled),
     weeklyEnabled: bool(raw.weeklyEnabled ?? raw.scheduleEnabled),
     networkEnabled: bool(raw.networkEnabled ?? raw.allowNetwork),
@@ -298,6 +341,16 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
   const [sources, setSources] = useState<ScoutSource[]>([]);
   const [suggestions, setSuggestions] = useState<ScoutSuggestion[]>([]);
   const [loading, setLoading] = useState(true);
+  /**
+   * Whether any read has ever succeeded.
+   *
+   * One failed IPC read used to make the Scout say, in four places at once, that
+   * there are no sources, no proposals, and that nothing has ever run — over a
+   * grid of zeros presented as observed counts, with advice about configuring
+   * things that may already be configured. A banner above them saying the load
+   * failed does not undo four confident statements below it.
+   */
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
@@ -332,6 +385,7 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
       setSources(array(nextSources).map(normalizeSource));
       setSuggestions(array(nextSuggestions).map(normalizeSuggestion));
       setError(null);
+      setLoaded(true);
     } catch (reason) {
       setError(errorText(reason));
     } finally {
@@ -374,11 +428,27 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
     { message: `${source.label} is ${enabled ? 'included' : 'excluded'} from future scans.` },
   ), [act, load]);
 
+  /**
+   * A run reports its own outcome, and the two that are not success are the
+   * ones worth reading: 'blocked' means a consent gate refused it, 'failed'
+   * means it broke. The banner used to be a constant, so a scan that never
+   * contacted anything still announced that "one explicit allow-listed online
+   * check completed" — the app stating an online check happened when the code
+   * had just declined to make one.
+   */
   const run = useCallback((mode: 'manual' | 'preview') => act(
     `run-${mode}`,
     async () => {
-      await scout().run(mode === 'manual' ? { mode, allowNetwork: true } : { mode });
+      const started = normalizeRun(await scout().run(mode === 'manual' ? { mode, allowNetwork: true } : { mode }));
       await load(true);
+      if (started.status === 'blocked' || started.status === 'failed') {
+        // Thrown rather than set directly, so it lands in the same error banner
+        // as every other failure instead of inventing a third notice style.
+        throw new Error(started.error
+          ?? (started.status === 'blocked'
+            ? 'The scan was blocked before it ran. Check that the workspace, online checks and at least one source are enabled.'
+            : 'The scan failed before it finished. No proposals were added.'));
+      }
     },
     { message: mode === 'preview'
       ? 'Local preview complete. No external source was contacted, nothing was scheduled, and no agent was started.'
@@ -438,17 +508,25 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
     <div className="scout-view">
       <header className="scout-head">
         <div className="scout-head-copy">
-          <span className="label">Wanigan improvement loop</span>
-          <h2>Improvement Scout</h2>
+          <span className="label-stencil">Improvement Scout · Wanigan improvement loop</span>
+          <h1>Scout</h1>
           <p>Track explicitly enabled, source-backed changes in the agent ecosystem, compare them to Wanigan’s capability inventory, and review the resulting proposals here.</p>
         </div>
         <div className="scout-head-actions">
-          <span className={`scout-state ${settings.enabled && settings.networkEnabled ? (settings.weeklyEnabled ? 'on' : 'warn') : 'muted'}`}>
-            {settings.enabled && settings.networkEnabled ? (settings.weeklyEnabled ? `weekly watch · ${WEEKDAYS[settings.weekday]}` : 'online research on · schedule off') : settings.enabled ? 'scheduled online research off' : 'Scout paused'}
+          {/* Every word of this pill is a claim about saved configuration, so
+              it waits for the read like the rest of the page. Before `loaded`
+              the settings object is still EMPTY_SETTINGS — all false — and the
+              pill would have read "Scout paused", which is not merely unknown
+              but the opposite of the main-process default. */}
+          <span className={`scout-state ${!loaded ? 'muted' : settings.enabled && settings.networkEnabled ? (settings.weeklyEnabled ? 'on' : 'warn') : 'muted'}`}>
+            {!loaded ? 'not read yet'
+              : settings.enabled && settings.networkEnabled ? (settings.weeklyEnabled ? `weekly watch · ${WEEKDAYS[settings.weekday]}` : 'online research on · schedule off') : settings.enabled ? 'scheduled online research off' : 'Scout paused'}
           </span>
-          <span className="scout-state muted" title="The current Scout builds proposals with local deterministic matching rules; it does not send source text to a provider model.">
-            {overview.analysisMethod === 'deterministic-rules' ? 'local rules' : overview.analysisMethod}
-          </span>
+          {loaded && (
+            <span className="scout-state muted" title="The current Scout builds proposals with local deterministic matching rules; it does not send source text to a provider model.">
+              {overview.analysisMethod === 'deterministic-rules' ? 'local rules' : overview.analysisMethod}
+            </span>
+          )}
           <button className="btn" type="button" disabled={loading || busy !== null || !settings.enabled}
                   title={settings.enabled ? 'Refresh the local capability inventory without contacting a source.' : 'Enable Scout workspace below before running it.'}
                   onClick={() => void run('preview')}>
@@ -467,17 +545,46 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
           {error && <div className="scout-banner error" role="alert"><span aria-hidden="true">!</span><div><strong>Scout could not load</strong><p>{error}</p></div></div>}
           {notice && <div className="scout-banner ok" role="status"><span aria-hidden="true">✓</span><div><strong>{notice.message}</strong>{notice.goalId && <p><a className="scout-goal-link" href={goalHref(notice.goalId)} onClick={() => onOpenGoal?.(notice.goalId!)}>Open Goal in Control →</a></p>}</div></div>}
 
+          {/* Nothing below this line is true until a read has succeeded. Until
+              then the page says so once, instead of publishing zeros as counts
+              and an empty allow-list as a configuration you have not done. */}
+          {!loaded ? (
+            <EmptyState posture={error === null ? 'nothing-yet' : 'could-not-read'}
+                        title={error === null ? 'Reading local Scout records' : 'Could not read the Scout records'}
+                        cue={error ?? 'Nothing is being scanned while this page loads.'}
+                        action={error === null ? undefined : (
+                          <button className="btn" type="button" onClick={() => void load()}>Try again</button>
+                        )} />
+          ) : (
+          <>
           <section className="scout-stat-grid" aria-label="Improvement Scout summary">
             <article className="card scout-stat"><span className="label">New to review</span><strong>{overview.pendingSuggestions.toLocaleString()}</strong><small>source-backed proposals</small></article>
             <article className="card scout-stat"><span className="label">Research sources</span><strong>{overview.enabledSourceCount}/{overview.sourceCount}</strong><small>enabled for the next scan</small></article>
-            <article className="card scout-stat"><span className="label">Last scan</span><strong className="scout-date">{formatWhen(overview.lastRunAt)}</strong><small>local run history</small></article>
+            {/* The timestamp alone said a scan started, never whether it got
+                anywhere: a weekly watch that has been blocked by a consent gate
+                for a month looked exactly like one running cleanly. Glyph and
+                word, per the house rule, and the error underneath when there
+                is one. */}
+            <article className="card scout-stat"><span className="label">Last scan</span><strong className="scout-date">{formatWhen(overview.lastRunAt)}</strong>
+              <small>{overview.latestRun === null ? 'local run history' : (
+                <span className={`scout-run-outcome ${overview.latestRun.status}`}>
+                  <span aria-hidden="true">{RUN_GLYPH[overview.latestRun.status]}</span>{' '}
+                  {overview.latestRun.status === 'completed'
+                    ? `completed · ${overview.latestRun.suggestionCount} ${overview.latestRun.suggestionCount === 1 ? 'proposal' : 'proposals'}`
+                    : overview.latestRun.status === 'running' ? 'still running'
+                    : overview.latestRun.error ?? overview.latestRun.status}
+                </span>
+              )}</small></article>
             <article className="card scout-stat"><span className="label">Next review</span><strong className="scout-date">{settings.weeklyEnabled && settings.enabled && settings.networkEnabled ? formatWhen(overview.nextRunAt) : 'not scheduled'}</strong><small>{settings.weeklyEnabled ? overview.cadenceLabel : 'enable a weekly watch below'}</small></article>
           </section>
 
-          <section className="card scout-guide" aria-labelledby="scout-safety-title">
+          {/* The boundary is worth reading once and worth reaching again; it
+              is not the page. Hidden only by the operator, and the four claims
+              stay verbatim because each one is a promise about what Scout will
+              not do. */}
+          <Explainer id="scout-safety" title="Ideas are not updates">
+            <div className="scout-guide-body">
             <div>
-              <span className="label">A controlled research loop</span>
-              <h3 id="scout-safety-title">Ideas are not updates.</h3>
               <p>This build uses local deterministic matching rules over allowed sources; it does not send source text to a provider model. Scout can collect release notes and trusted source metadata on a schedule, but it cannot modify Wanigan, install anything, change your provider, deploy code, or start an agent. A proposal becomes work only when you create a Goal and then choose to start its task.</p>
             </div>
             <ul className="scout-safety-list">
@@ -486,7 +593,8 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
               <li><span aria-hidden="true">✓</span><span>Each proposal retains its source evidence and uncertainty.</span></li>
               <li><span aria-hidden="true">✓</span><span>Creating a Goal preserves the evidence; it does not launch work.</span></li>
             </ul>
-          </section>
+            </div>
+          </Explainer>
 
           <section className="scout-grid">
             <article className="card scout-card">
@@ -576,6 +684,8 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
               </article>;
             })}
           </section>
+          </>
+          )}
         </div>
       </div>
     </div>

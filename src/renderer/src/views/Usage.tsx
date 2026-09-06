@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AccountLimits, ConsumptionPoint, LimitWindow, ModelConsumption, UsageSnapshot } from '@shared/types';
+import { harnessLabel } from '@shared/types';
+import { EmptyState, Note } from '../components/bits';
 
 /**
  * What is left, and what was spent — kept visibly apart.
@@ -23,20 +25,26 @@ const compact = (n: number): string =>
       : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k`
         : String(Math.round(n));
 
-/** A colour per window severity. Semantic, and separate from the accent. */
+/** A colour per window severity: status tokens for the two bands that mean
+ *  something, a data hue for the rest. The accent marks actionable things and a
+ *  quiet reading is not one; the old --danger token was never defined. */
 function tone(percent: number): string {
-  if (percent >= 95) return 'var(--danger, #c2453a)';
-  if (percent >= 75) return 'var(--warn, #b7791f)';
-  return 'var(--accent)';
+  if (percent >= 95) return 'var(--critical)';
+  if (percent >= 75) return 'var(--warning)';
+  return 'var(--series-1)';
 }
 
 /**
- * "resets in 2h 14m", or the provider's own words when the date did not parse.
+ * "resets in 2h 14m", the provider's own words when the date did not parse, or
+ * nothing at all when it named no reset — which is what a window with nothing
+ * used yet looks like. An empty string is the honest answer there; inventing
+ * "resets soon" would be a claim the agent did not make.
  *
  * The verbatim text is never discarded, so a countdown is a bonus rather than
  * something the screen depends on being able to compute.
  */
 function resetLabel(window: LimitWindow, now: number): string {
+  if (window.resetsAtText === null && window.resetsAt === null) return '';
   if (window.resetsAt === null) return `resets ${window.resetsAtText}`;
   const left = window.resetsAt - now;
   if (left <= 0) return 'resetting now';
@@ -53,13 +61,10 @@ function windowTitle(window: LimitWindow): string {
   return window.scope ? `${kind} · ${window.scope}` : kind;
 }
 
-/** The bar grows from zero on mount, so the page reads as a measurement being taken. */
-function Meter({ window, now, delay }: { window: LimitWindow; now: number; delay: number }) {
-  const [grown, setGrown] = useState(false);
-  useEffect(() => {
-    const timer = window.usedPercent >= 0 ? setTimeout(() => setGrown(true), 40 + delay) : null;
-    return () => { if (timer) clearTimeout(timer); };
-  }, [delay, window.usedPercent]);
+/** A limit reading is a value, not a measurement being taken, so the bar is
+ *  drawn at its value: .mo-fill scales on the compositor and is still when
+ *  motion is off. The percent word beside it carries the state. */
+function Meter({ window, now }: { window: LimitWindow; now: number; delay: number }) {
   const colour = tone(window.usedPercent);
   const exhausted = window.usedPercent >= 100;
   return (
@@ -70,11 +75,9 @@ function Meter({ window, now, delay }: { window: LimitWindow; now: number; delay
           {window.usedPercent}% used
         </span>
       </div>
-      <div style={{ height: 8, background: 'var(--bg-sunk, rgba(127,127,127,.18))', borderRadius: 2, overflow: 'hidden' }}>
-        <div style={{
-          height: '100%', width: `${grown ? window.usedPercent : 0}%`, background: colour, borderRadius: 2,
-          transition: 'width 900ms cubic-bezier(.22,.8,.3,1)',
-        }} />
+      <div style={{ height: 8, background: 'var(--bg)', border: '1px solid var(--line-soft)', borderRadius: 2, overflow: 'hidden' }}>
+        <div className="mo-fill" style={{ height: '100%', width: '100%', background: colour, borderRadius: 2,
+                                          ['--mo-p' as string]: Math.max(0, Math.min(1, window.usedPercent / 100)) } as React.CSSProperties} />
       </div>
       <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>
         {exhausted ? 'exhausted · ' : ''}{resetLabel(window, now)}
@@ -89,6 +92,10 @@ function LimitCard({ limits, now }: { limits: AccountLimits; now: number }) {
     <div className="sunk" style={{ padding: '14px 16px', display: 'grid', gap: 12, minWidth: 0 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <strong style={{ fontSize: 'var(--t-body)' }}>{limits.accountLabel}</strong>
+        {/* Which agent this login belongs to. "Personal" is the operator's word
+            and two agents can both have one; without the harness the two cards
+            are the same card twice. */}
+        <span className="pill">{harnessLabel(limits.harness)}</span>
         {limits.plan && <span className="pill">{limits.plan}</span>}
         {stale && <span className="pill" title="Older than ten minutes; press Refresh for a current reading.">stale</span>}
       </div>
@@ -106,6 +113,11 @@ function LimitCard({ limits, now }: { limits: AccountLimits; now: number }) {
           {limits.windows.map((window, index) => (
             <Meter key={`${window.kind}:${window.scope ?? 'all'}`} window={window} now={now} delay={index * 110} />
           ))}
+          {/* A reading can be complete and still carry something the meters do
+              not say. Codex reports a spend control separately from its
+              percentages, and it is the fact that explains a refused run while
+              every window still looks fine. */}
+          {limits.detail && <Note tone="warn">{limits.detail}</Note>}
         </div>
       ) : (
         <p className="dim" style={{ margin: 0, fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
@@ -160,9 +172,7 @@ function DailyChart({ points, accountLabel }: { points: ConsumptionPoint[]; acco
                 if (!value) return null;
                 return (
                   <div key={model}
-                       style={{ height: `${(value / peak) * 100}%`, background: palette[modelIndex % palette.length],
-                                animation: 'wanigan-rise 700ms cubic-bezier(.22,.8,.3,1) both',
-                                animationDelay: `${dayIndex * 18}ms` }} />
+                       style={{ height: `${(value / peak) * 100}%`, background: palette[modelIndex % palette.length] }} />
                 );
               })}
             </div>
@@ -247,6 +257,40 @@ export default function Usage() {
     return () => clearInterval(timer);
   }, []);
 
+  /**
+   * Where an exhausted window still has room on another account.
+   *
+   * Both readings are live, so this compares like with like: the same harness,
+   * the same window kind and the same model scope. The harness clause is not a
+   * detail — a Codex login has room on its own weekly window every hour of the
+   * day, and offering it as somewhere to run an exhausted Claude model would be
+   * a suggestion that cannot work. It reports only a real pairing — 100% here,
+   * under 100% there — and picks the emptiest alternative so the sentence names
+   * one account rather than listing every candidate.
+   */
+  const relief = useMemo(() => {
+    const ok = (snap?.limits ?? []).filter((l) => l.state === 'ok');
+    const key = (w: LimitWindow) => `${w.kind}:${w.scope ?? 'all'}`;
+    const out: { exhausted: string; window: string; spare: string; sparePercent: number }[] = [];
+    for (const account of ok) {
+      for (const window of account.windows) {
+        if (window.usedPercent < 100) continue;
+        const alternatives = ok
+          .filter((other) => other.accountId !== account.accountId && other.harness === account.harness)
+          .flatMap((other) => other.windows
+            .filter((w) => key(w) === key(window) && w.usedPercent < 100)
+            .map((w) => ({ label: other.accountLabel, percent: w.usedPercent })));
+        if (alternatives.length === 0) continue;
+        const best = alternatives.reduce((a, b) => (b.percent < a.percent ? b : a));
+        out.push({
+          exhausted: account.accountLabel, window: windowTitle(window),
+          spare: best.label, sparePercent: best.percent,
+        });
+      }
+    }
+    return out;
+  }, [snap]);
+
   const accountLabels = useMemo(
     () => [...new Set([...(snap?.limits ?? []).map((l) => l.accountLabel),
                        ...(snap?.consumption ?? []).map((c) => c.accountLabel)])],
@@ -254,12 +298,14 @@ export default function Usage() {
   );
 
   return (
-    <div className="view">
-      <style>{'@keyframes wanigan-rise{from{transform:scaleY(0);transform-origin:bottom}to{transform:scaleY(1);transform-origin:bottom}}'}</style>
-      <header style={{ display: 'flex', gap: 14, alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+    <div className="pane">
+      {/* Roots on the shared pane frame so the gutter, title size and compact
+          breakpoints match every other document view; the old root class had
+          no rule anywhere and rendered flush to the window edge. */}
+      <header className="pane-head">
         <div>
-          <div className="label">Usage</div>
-          <h1 style={{ margin: '2px 0 6px' }}>What is left, and what you spent</h1>
+          <div className="label-stencil">What is left, and what you spent</div>
+          <h1>Usage</h1>
           <p className="dim" style={{ margin: 0, maxWidth: '70ch', lineHeight: 1.5 }}>
             Limits are read live from each account, because a token count on this machine cannot tell you what a
             plan has left. Consumption below is Wanigan's own record of what actually ran.
@@ -268,7 +314,7 @@ export default function Usage() {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <select className="field" value={days} onChange={(e) => setDays(Number(e.target.value))}
                   style={{ width: 'auto' }} aria-label="Consumption window">
-            {[7, 14, 30, 90].map((value) => <option key={value} value={value}>Last {value} days</option>)}
+            {[7, 30, 90].map((value) => <option key={value} value={value}>Last {value} days</option>)}
           </select>
           <button className="btn btn-primary" disabled={busy} onClick={() => load(true)}>
             {busy ? 'Reading…' : 'Refresh limits'}
@@ -276,11 +322,49 @@ export default function Usage() {
         </div>
       </header>
 
-      {err && <div className="note error" style={{ marginTop: 14 }}>{err}</div>}
+      {/* An error beside the data, not instead of it: a refresh that fails after
+          a good read must not throw away the reading already on screen. When the
+          very first read fails there is nothing to keep, and the two sections
+          below say so themselves rather than claiming emptiness. */}
+      {err && (
+        <Note tone="error" action={{ label: busy ? 'Reading…' : 'Try again', run: () => load(true) }}>
+          {err}
+        </Note>
+      )}
 
-      <section style={{ marginTop: 22 }}>
+      {/* An exhausted window is only bad news if it is the only account you
+          have. This page already holds a live reading for each one, so it can
+          answer the question the red bar provokes — "can I keep working?" —
+          instead of leaving the operator to compare two cards themselves. It
+          names the account and the window, and says nothing at all unless a
+          window is genuinely exhausted on one account and genuinely has room on
+          another; a guess about which account you *should* use is not on
+          offer. */}
+      {relief.length > 0 && (
+        <Note tone="ok">
+          {relief.map((item) => (
+            <span key={`${item.exhausted}:${item.window}`} className="us-relief-line">
+              <strong>{item.exhausted}</strong> has nothing left on {item.window}.{' '}
+              <strong>{item.spare}</strong> is at {item.sparePercent}% on the same window.
+            </span>
+          ))}
+          <span className="faint us-relief-how">
+            Choose the account in the New session dialog, or per project in Settings › Projects.
+          </span>
+        </Note>
+      )}
+
+      <section>
         <div className="label">What is left</div>
         <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', marginTop: 8 }}>
+          {/* Loading is not empty: until the first probe returns there is nothing
+              to say about any account, so say that instead of an empty grid. */}
+          {snap === null && !err && (
+            <p className="faint" style={{ fontSize: 'var(--t-small)' }}>Reading each account…</p>
+          )}
+          {snap === null && err && (
+            <EmptyState posture="could-not-read" title="Could not read your accounts" cue={err} />
+          )}
           {(snap?.limits ?? []).map((limits) => <LimitCard key={limits.accountId} limits={limits} now={now} />)}
           {snap && snap.limits.length === 0 && (
             <p className="faint" style={{ fontSize: 'var(--t-small)' }}>No accounts are configured yet.</p>
@@ -288,9 +372,18 @@ export default function Usage() {
         </div>
       </section>
 
-      <section style={{ marginTop: 28 }}>
+      <section>
         <div className="label">What you spent · last {snap?.days ?? days} days</div>
-        {snap && snap.consumption.length === 0 ? (
+        {snap === null && err ? (
+          // Three states, not two. Without this branch a rejected read left
+          // "Reading Wanigan's records…" on screen for good: a claim that a read
+          // is still in progress, made by a page that had already given up.
+          <EmptyState posture="could-not-read" title="Could not read what you spent" cue={err} />
+        ) : snap === null ? (
+          <p className="faint" style={{ fontSize: 'var(--t-small)', marginTop: 8 }}>
+            Reading Wanigan's records for the last {days} days…
+          </p>
+        ) : snap.consumption.length === 0 ? (
           // One explanation, not a per-account chart plus an empty table plus a
           // note all saying the same thing. An empty state repeated three times
           // reads as three separate problems.
@@ -319,7 +412,7 @@ export default function Usage() {
       </section>
 
       {(snap?.limits ?? []).some((l) => l.factors.length > 0) && (
-        <section style={{ marginTop: 28 }}>
+        <section>
           <div className="label">What contributed</div>
           <p className="faint" style={{ fontSize: 'var(--t-micro)', margin: '4px 0 10px', lineHeight: 1.5, maxWidth: '80ch' }}>
             The agent's own breakdown, quoted as given. It describes this as approximate and based only on sessions

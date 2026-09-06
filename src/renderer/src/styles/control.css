@@ -1,23 +1,23 @@
-.control-view { flex: 1; min-height: 0; overflow-y: auto; max-width: 1500px; width: 100%; box-sizing: border-box; margin: 0 auto; padding: 26px 30px 54px; display: grid; gap: 18px; }
-.control-head, .control-card-head, .control-inline, .control-launch, .control-evidence, .control-node, .control-review-actions { display: flex; gap: 14px; }
-.control-head { justify-content: space-between; align-items: end; }
-.control-head h1 { margin: 4px 0; font-size: 28px; }
-.control-head p { margin: 0; color: var(--text-dim); max-width: 720px; }
-.control-head-stats { text-align: right; min-width: 94px; }
-.control-head-stats strong { display: block; font: 700 30px/1 var(--mono); color: var(--accent); }
-.control-head-stats span, .control-docket small, .control-table small, .control-evidence small { color: var(--text-faint); font-size: 11px; }
-.control-guide { padding: 19px 20px; display: grid; grid-template-columns: minmax(220px, .65fr) minmax(360px, 1fr) minmax(300px, .9fr); gap: 20px; align-items: start; }
-.control-guide h2 { margin: 3px 0 6px; font-size: 19px; }
-.control-guide p { margin: 0; color: var(--text-dim); line-height: 1.45; }
-.control-guide ol { margin: 0; padding-left: 19px; display: grid; gap: 8px; color: var(--text-dim); font-size: 13px; line-height: 1.4; }
-.control-guide strong { color: var(--text); }
-.control-guide code { color: var(--accent); font: 12px var(--mono); }
-.control-example { border-left: 2px solid var(--accent); padding-left: 12px; display: grid; gap: 5px; }
+/* Control sits on the shared .pane frame (index.css) so the gutter, the h1 and
+   the compact shelves come from one place; the old private padding and 28px
+   title were the visible half of "Control at 18px while .pane was at 24".
+   Only the centred maximum width is Control's own. */
+.control-view { max-width: 1500px; margin: 0 auto; display: grid; gap: 18px; }
+.control-card-head, .control-inline, .control-launch, .control-evidence, .control-node, .control-review-actions { display: flex; gap: 14px; }
+.control-docket small, .control-table small, .control-evidence small { color: var(--text-faint); font-size: var(--t-micro); }
+.control-guide-body { display: grid; grid-template-columns: minmax(220px, .65fr) minmax(360px, 1fr) minmax(300px, .9fr); gap: 20px; align-items: start; }
+.control-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.control-guide-body p { margin: 0; color: var(--text-dim); line-height: 1.45; }
+.control-guide-body ol { margin: 0; padding-left: 19px; display: grid; gap: 8px; color: var(--text-dim); font-size: var(--t-body); line-height: 1.4; }
+.control-guide-body strong { color: var(--text); }
+.control-guide-body code { font: var(--t-small) var(--mono); }
+.control-example { border-left: 2px solid var(--line); padding-left: 12px; display: grid; gap: 5px; }
 .control-example p { font-size: 13px; }
 .control-grid { display: grid; grid-template-columns: minmax(380px, 1fr) minmax(300px, .75fr); gap: 18px; align-items: start; }
 .control-grid > .card, .control-detail { padding: 20px; }
 .control-create, .control-list { display: grid; gap: 11px; }
-.control-create h2, .control-list h2, .control-detail h2, .control-lower h2 { margin: 2px 0 6px; font-size: 19px; }
+/* Size comes from the h2 rule in index.css; only the leading is Control's. */
+.control-create h2, .control-list h2, .control-detail h2, .control-lower h2 { margin: 2px 0 6px; }
 .control-create label, .control-launch label { display: grid; gap: 5px; }
 .control-textarea { min-height: 76px; resize: vertical; font: inherit; }
 .control-inline { align-items: end; }
@@ -26,13 +26,18 @@
 .control-goal-meta { display: flex; align-items: center; justify-content: end; flex-wrap: wrap; gap: 8px; font-size: 12px; }
 .control-goal-meta a { color: var(--accent); }
 .control-docket { appearance: none; border: 1px solid var(--line); background: var(--bg-raised); color: var(--text); text-align: left; border-radius: 8px; padding: 11px; display: grid; gap: 4px; cursor: pointer; }
-.control-docket:hover, .control-docket.selected { border-color: var(--accent); background: var(--accent-soft); }
+/* Hover lifts the border; selection is a different claim and gets the same
+   inset plate-red edge every other list in the app uses, on a neutral fill —
+   the old accent tint sat one shade from the critical tint in the light palette. */
+.control-docket:hover { border-color: var(--text-faint); }
+.control-docket.selected { border-color: var(--line); background: var(--bg-selected, var(--bg-sunk)); box-shadow: inset 3px 0 0 var(--plate-red); }
 .control-docket strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .control-status { display: inline-block; width: max-content; border-radius: 99px; padding: 2px 7px; font: 700 10px/1.3 var(--mono); background: var(--bg-sunk); color: var(--text-dim); text-transform: uppercase; }
 .control-status.executing, .control-status.running, .control-status.working { color: var(--accent); background: var(--accent-soft); }
 .control-status.review, .control-status.ready, .control-status.input_required { color: var(--warning); background: var(--warning-soft); }
 .control-status.accepted, .control-status.completed, .control-status.passed, .control-status.recorded, .control-status.triaged { color: var(--good); background: var(--good-soft); }
-.control-status.failed, .control-status.rejected, .control-status.blocked, .control-status.cancelled { color: var(--serious); background: var(--serious-soft); }
+/* DocketNodeStatus spells it 'canceled'; only McpTaskRecord uses 'cancelled'. Both are serious. */
+.control-status.failed, .control-status.rejected, .control-status.blocked, .control-status.canceled, .control-status.cancelled { color: var(--serious); background: var(--serious-soft); }
 .control-detail { display: grid; gap: 15px; }
 .control-detail > p { margin: 0; color: var(--text-dim); white-space: pre-wrap; }
 .control-acceptance { margin: 0; padding-left: 20px; color: var(--text-dim); display: grid; gap: 4px; }
@@ -41,13 +46,13 @@
 .control-nodes { display: grid; gap: 9px; }
 .control-node { justify-content: space-between; align-items: start; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg-raised); }
 .control-node > div:first-child { min-width: 0; flex: 1; }
-.control-node h3 { margin: 5px 0; font-size: 15px; }
+.control-node h3 { margin: 5px 0; }
 .control-node p { color: var(--text-dim); margin: 0 0 9px; font-size: 13px; white-space: pre-wrap; }
 .control-node-actions { width: min(340px, 44%); display: grid; gap: 7px; }
 .control-node-actions .field { min-width: 0; }
 .control-review-actions { flex-wrap: wrap; }
 .control-evidence { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding-top: 4px; border-top: 1px solid var(--line); }
-.control-evidence h3 { font-size: 14px; margin: 4px 0; }
+.control-evidence h3 { margin: 4px 0; }
 .control-evidence p { margin: 7px 0; font-size: 13px; color: var(--text-dim); }
 .control-evidence small { display: block; margin-top: 3px; }
 .control-claims { border-top: 1px solid var(--line); padding-top: 12px; }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   HeadlessConfig, HeadlessRowSummary, HeadlessRun, Project, ProviderId, ProviderInfo,
 } from '@shared/types';
-import { Note, Stat, ago, num, usd } from '../components/bits';
+import { ConfirmNote, EmptyState, Note, Stat, ago, num, usd } from '../components/bits';
 import '../styles/runs.css';
 
 const TIMEOUTS = [5, 15, 30, 60] as const;
@@ -23,6 +23,17 @@ type RowDetailState = { loading: boolean; output: string | null; error: string |
 const runSignature = (run: HeadlessRun | null): string => (run
   ? `${run.id}:${run.status}:${run.succeeded}:${run.failed}:${run.blocked}:${run.open}:${run.filesChanged}`
   : '');
+
+/**
+ * One row's cost, or the honest absence of one. A row whose agent named no
+ * figure is stored as 0 and must not be printed as "$0.00" beside rows that
+ * were actually priced — that is the same zero the run total used to sum
+ * under the words "never estimated".
+ */
+function rowCost(row: HeadlessRowSummary): string {
+  if (row.status !== 'succeeded' && row.status !== 'timeout') return usd(row.costUsd);
+  return row.costReported === true ? usd(row.costUsd) : 'no cost reported';
+}
 
 /**
  * The attended face of a headless fan-out.  Starting it from a schedule is
@@ -185,25 +196,52 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
     catch (e) { setErr(msg(e)); }
   }
 
+  // Merging a worktree into the project branch rewrites the branch and cannot
+  // be undone by looking again, so it names the branch and the file count and
+  // waits for a second, deliberate press. (CLAUDE.md: destructive git work is
+  // never one click.)
+  const [confirmMerge, setConfirmMerge] = useState<string | null>(null);
+  const [merging, setMerging] = useState<string | null>(null);
   async function merge(row: HeadlessRowSummary) {
     if (!row.worktree) return;
+    setMerging(row.projectId);
     try {
       const r = await window.wanigan.worktrees.merge(row.worktree, { squash: true, message: `wanigan: ${current?.name ?? 'headless run'} · ${row.projectName}` });
       if (!r.merged) throw new Error(r.detail);
+      setConfirmMerge(null);
       await load();
     } catch (e) { setErr(msg(e)); }
+    finally { setMerging(null); }
   }
 
   const totals = useMemo(() => rows.reduce((a, r) => ({
     changed: a.changed + r.filesChanged, cost: a.cost + r.costUsd,
   }), { changed: 0, cost: 0 }), [rows]);
 
+  /**
+   * How complete the cost total is, in the same three words the Usage screen
+   * already uses for the identical situation. Only rows where the agent
+   * actually ran can report anything, so a blocked or cancelled row is not a
+   * gap. `costReported === null` is a row written before the column existed:
+   * unknown, counted as not reported rather than assumed good.
+   */
+  const costStatus = useMemo(() => {
+    const ran = rows.filter((r) => r.status === 'succeeded' || r.status === 'timeout');
+    if (ran.length === 0) return { kind: 'reported' as const, missing: 0 };
+    const missing = ran.filter((r) => r.costReported !== true).length;
+    return {
+      kind: missing === 0 ? 'reported' as const
+        : missing === ran.length ? 'unreported' as const : 'partial' as const,
+      missing,
+    };
+  }, [rows]);
+
   return (
     <main className="pane hr-view">
       <header className="hr-head">
         <div className="hr-head-copy">
-          <span className="label">Unattended workflows</span>
-          <h1>Headless runs</h1>
+          <span className="label-stencil">Headless runs · unattended workflows</span>
+          <h1>Runs</h1>
           <p className="dim">
             One prompt × selected repositories. Each repository gets its own timeout and CLI budget;
             isolated worktrees stay on by default so review and merge remain deliberate.
@@ -286,16 +324,28 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
       <div className="hr-workspace">
         <section className="card hr-history" aria-labelledby="headless-history-title">
           <div className="hr-section-head"><div><span className="label">History</span><h2 id="headless-history-title">Recent runs</h2></div><span className="hr-count">{runs.length}</span></div>
-          {runs.length === 0 ? <p className="faint hr-empty">Nothing has run yet. Your completed fan-outs will remain here for review.</p> : runs.map((r) => (
+          {runs.length === 0 ? (
+            <EmptyState posture="nothing-yet" title="Nothing has run yet"
+                        cue="A completed fan-out stays here for review, with its cost and every repository's outcome." />
+          ) : runs.map((r) => (
             <button key={r.id} className={`hr-run${r.id === selected ? ' on' : ''}`} onClick={() => setSelected(r.id)} aria-pressed={r.id === selected}>
               <strong>{r.name}</strong>
               <span>{r.succeeded} passed · {r.failed} failed · {r.blocked} blocked · {r.open} open</span>
-              <small>{usd(r.costUsd)} · {ago(r.createdAt)}</small>
+              <small>{r.costStatus === 'unreported' ? 'no cost reported'
+                : r.costStatus === 'partial' ? `≥ ${usd(r.costUsd)}` : usd(r.costUsd)} · {ago(r.createdAt)}</small>
             </button>
           ))}
         </section>
         <section className="card hr-detail">
-          {!current ? <p className="faint hr-empty">Select a run to inspect the repositories it touched.</p> : <>
+          {/* Nothing to inspect until a run exists: an inspector panel with no
+              subject is a card that can only say it is empty. */}
+          {!current ? (
+            runs.length === 0
+              ? <EmptyState posture="nothing-yet" title="No run selected"
+                            cue="Start a fan-out above; its repositories, outputs and costs appear here." />
+              : <EmptyState posture="nothing-in-scope" title="No run selected"
+                            cue="Choose a run on the left to inspect the repositories it touched." />
+          ) : <>
             {/* Only the outcome line is announced. The panel below it is
                 replaced by a three-second poll, and a live region around all of
                 it would re-read every repository, its output and its cost on
@@ -306,16 +356,41 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
             <div className="stat-grid hr-stats">
               <Stat label="Succeeded" value={num(current.succeeded)} sub={`${num(current.failed)} failed · ${num(current.blocked)} blocked`} />
               <Stat label="Changed" value={num(totals.changed)} sub="files outside the launch baseline" />
-              <Stat label="Cost" value={usd(totals.cost)} sub="CLI-reported; never estimated" />
+              {/* The strongest truth claim on this screen used to sit on its
+                  least complete number: a repository whose agent reported no
+                  cost is stored as $0.00, so "never estimated" was true of the
+                  arithmetic and false about the total. Same three readings the
+                  Usage screen gives, and the confident wording is kept only
+                  for the case that earns it. */}
+              <Stat label="Cost"
+                    value={costStatus.kind === 'unreported' ? '—' : costStatus.kind === 'partial' ? `≥ ${usd(totals.cost)}` : usd(totals.cost)}
+                    sub={costStatus.kind === 'unreported'
+                      ? 'no repository reported a cost, so there is no figure to show'
+                      : costStatus.kind === 'partial'
+                        ? `a floor · ${num(costStatus.missing)} ${costStatus.missing === 1 ? 'repository' : 'repositories'} reported no cost`
+                        : 'CLI-reported; never estimated'} />
             </div>
             <div className="hr-rows">{rows.map((row) => {
               const d = details[row.projectId];
               const expandable = row.hasError || row.hasOutput;
               return (
                 <article key={row.projectId} className="hr-row">
-                  <div className="hr-row-head"><div><strong>{row.projectName}</strong><span className="faint">{row.status} · {row.filesChanged} files · {usd(row.costUsd)}</span></div>
-                    {row.worktree && row.status === 'succeeded' && <button className="btn" onClick={() => void merge(row)}>Squash merge</button>}
+                  <div className="hr-row-head"><div><strong>{row.projectName}</strong><span className="faint">{row.status} · {row.filesChanged} files · {rowCost(row)}</span></div>
+                    {row.worktree && row.status === 'succeeded' && (
+                      <button className="btn" aria-expanded={confirmMerge === row.projectId}
+                              onClick={() => setConfirmMerge(confirmMerge === row.projectId ? null : row.projectId)}>
+                        Squash merge…
+                      </button>
+                    )}
                   </div>
+                  {confirmMerge === row.projectId && (
+                    <ConfirmNote
+                      what={<>Squash-merge {row.filesChanged === 1 ? 'the 1 changed file' : `the ${num(row.filesChanged)} changed files`} from
+                        this run's worktree into <strong>{row.projectName}</strong>'s branch? The worktree's history is squashed into one
+                        commit on the branch; this cannot be undone from here.</>}
+                      verb="Squash merge" busy={merging === row.projectId}
+                      onRun={() => merge(row)} onCancel={() => setConfirmMerge(null)} />
+                  )}
                   {/* The list channel deliberately carries no text at all, so
                       even a one-line error is behind this expander. The summary
                       says which of the two is waiting there, so a failed row is

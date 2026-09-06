@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountResolution, AgentAccount, LaunchOptions, Project, ProviderId, ProviderInfo, TrustLevel } from '@shared/types';
-import { EFFORT_LEVELS, PERMISSION_MODES, TRUST_COPY, TRUST_LEVELS } from '@shared/types';
+import { EFFORT_LEVELS, PERMISSION_MODES, TRUST_LEVELS, trustCopy, trustGlyph } from '@shared/types';
+import { useDialog } from './useDialog';
 
 const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)', glm: 'var(--glm)', deepseek: 'var(--series-4)' };
 
 /** Same filled progression the session header uses: ◇ → ◈ → ◆ reads in greyscale. */
-const TRUST_GLYPH: Record<TrustLevel, string> = { readonly: '◇', project: '◈', trusted: '◆' };
 
 /**
  * What Wanigan is missing, grouped by the command it actually runs.
@@ -110,7 +110,6 @@ export default function NewSessionDialog({
   const [trustErr, setTrustErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
   const [codexModels, setCodexModels] = useState([
     { value: '', label: 'Auto (default)', description: 'Codex current default', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
     { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', description: 'Latest frontier agentic coding model', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
@@ -233,32 +232,12 @@ export default function NewSessionDialog({
     setEffort((current) => effortChoices.includes(current) ? current : '');
   }, [codexHarness, model, codexModels]);
 
-  useEffect(() => {
-    const priorFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const frame = requestAnimationFrame(() => {
-      dialogRef.current?.querySelector<HTMLElement>('button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled)')?.focus();
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-      priorFocus?.focus?.();
-    };
-  }, []);
-
+  // ⌘↵ submits from anywhere in the form. Everything else this listener used to
+  // do — Escape, the Tab trap, restoring focus to the opener — is useDialog's,
+  // so only the one binding this dialog actually adds is left.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void go();
-      if (e.key === 'Tab') {
-        const dialog = dialogRef.current;
-        if (!dialog) return;
-        const focusable = [...dialog.querySelectorAll<HTMLElement>(
-          'button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'
-        )].filter((node) => !node.hasAttribute('hidden'));
-        if (!focusable.length) return;
-        const first = focusable[0], last = focusable[focusable.length - 1];
-        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -321,10 +300,16 @@ export default function NewSessionDialog({
   const elevated = !!trust && !!trustDefault
     && TRUST_LEVELS.indexOf(trust) > TRUST_LEVELS.indexOf(trustDefault);
 
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="new-session-title"
-           onClick={(e) => e.stopPropagation()}>
+  const { portal, backdropProps, dialogProps } = useDialog<HTMLDivElement>({ onClose, initialFocus: 'first' });
+
+  // onClick on the backdrop discarded the whole form when a text-selection drag
+  // that started inside the dialog happened to release outside it: the click
+  // event fires on the common ancestor, which is the backdrop. useDialog closes
+  // on mousedown for exactly that reason, and owns Escape, the Tab trap and
+  // handing focus back to the control that opened this.
+  return portal(
+    <div {...backdropProps}>
+      <div {...dialogProps} className="modal" aria-labelledby="new-session-title">
         <h2 id="new-session-title" style={{ fontSize: 'var(--t-lead)', fontWeight: 600, marginBottom: 14 }}>New session</h2>
 
         <div className="label">Agent</div>
@@ -428,22 +413,22 @@ export default function NewSessionDialog({
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
                 <span aria-hidden="true"
                       style={{ color: elevated ? 'var(--warning)' : 'var(--text-dim)', fontWeight: 700 }}>
-                  {TRUST_GLYPH[trust]}
+                  {trustGlyph(trust)}
                 </span>
                 <span style={{ fontWeight: 650, fontSize: 'var(--t-small)',
                                color: elevated ? 'var(--warning)' : 'var(--text)' }}>
-                  {TRUST_COPY[trust].label}
+                  {trustCopy(trust).label}
                 </span>
                 {trustDefault && (
                   <span className="faint" style={{ fontSize: 'var(--t-micro)', marginLeft: 'auto' }}>
                     {trust === trustDefault
                       ? 'your default'
-                      : `default is ${TRUST_COPY[trustDefault].label} ${TRUST_GLYPH[trustDefault]}`}
+                      : `default is ${trustCopy(trustDefault).label} ${trustGlyph(trustDefault)}`}
                   </span>
                 )}
               </div>
               <p className="dim" style={{ fontSize: 'var(--t-small)', marginTop: 3, lineHeight: 1.45 }}>
-                {TRUST_COPY[trust].detail}
+                {trustCopy(trust).detail}
               </p>
               {elevated && (
                 <p style={{ color: 'var(--warning)', fontSize: 'var(--t-small)', marginTop: 5, lineHeight: 1.45 }}>
@@ -662,7 +647,7 @@ export default function NewSessionDialog({
         </div>
         <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, textAlign: 'right' }}>⌘↵ to start</p>
       </div>
-    </div>
+    </div>,
   );
 }
 

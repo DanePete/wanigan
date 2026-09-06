@@ -2,8 +2,8 @@ import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'r
 import type {
   LaunchOptions, PastSession, Project, ProviderId, ProviderInfo, Session, TrustLevel, WorktreeInfo,
 } from '@shared/types';
-import { EFFORT_LEVELS, TRUST_COPY, TRUST_LEVELS } from '@shared/types';
-import TerminalPane, { feed, disposePane } from '../components/TerminalPane';
+import { EFFORT_LEVELS, TRUST_LEVELS, trustCopy, trustGlyph } from '@shared/types';
+import TerminalPane, { disposePane } from '../components/TerminalPane';
 import Composer from '../components/Composer';
 import NewSessionDialog from '../components/NewSessionDialog';
 import CodePanel from '../components/CodePanel';
@@ -11,7 +11,9 @@ import AttentionQueue from '../components/AttentionQueue';
 import Timeline from '../components/Timeline';
 import SessionLearning from '../components/SessionLearning';
 import Pet from '../components/Pet';
-import { Note, ago, num, usd } from '../components/bits';
+import { Explainer, Note, ago, num, usd } from '../components/bits';
+import { useDialog } from '../components/useDialog';
+import { bindingMatches, modalOpen } from '../bindings';
 import '../styles/sessions.css';
 
 const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)', glm: 'var(--glm)' };
@@ -61,21 +63,35 @@ const KIND: Record<AttachKind, { glyph: string; word: string }> = {
   unsupported: { glyph: '✕', word: 'unsupported' },
 };
 
-/**
+/*
  * Trust reads as a filled progression: ◇ → ◈ → ◆. The shape carries the
  * escalation on its own, so the banner still says "more than usual is allowed"
- * in greyscale, and the wording always comes from TRUST_COPY.
+ * in greyscale, and the wording always comes from trustCopy().
+ *
+ * Both the glyph and the copy live in shared/types.ts. Three files declared the
+ * same three characters, and five call sites indexed TRUST_COPY directly with a
+ * level that came from a database row rather than from TRUST_LEVELS — one
+ * unrecognised value and the view went to its error boundary instead of saying
+ * it did not recognise the level.
  */
-const TRUST_GLYPH: Record<TrustLevel, string> = { readonly: '◇', project: '◈', trusted: '◆' };
-
 const rank = (t: TrustLevel) => TRUST_LEVELS.indexOf(t);
 
-// The session picker has a different breakpoint from the code/timeline rail.
-// A 960px coarse-pointer viewport includes iPad portrait without hiding the
-// picker on a roomy desktop, while 860px keeps ordinary narrow windows from
-// spending a third of their width on a list.
-const SESSION_PICKER_COMPACT_QUERY = '(max-width: 860px), (pointer: coarse) and (max-width: 960px)';
-const CODE_RAIL_COMPACT_QUERY = '(max-width: 900px), (pointer: coarse) and (max-width: 960px)';
+// Measured on this view, not on the window. These were window-width media
+// queries, and they were right while Sessions had the window to itself: the
+// destination list now takes 208px off the left before Sessions begins, so a
+// 900px window meant a 692px view — under both thresholds — while matchMedia
+// still reported "roomy" and left the terminal 444px between two rails.
+// A ResizeObserver on the view answers the question the layout is actually
+// asking, and keeps answering it when the sidebar is hidden or the side panel
+// opens. Coarse pointer stays a media query: it is not a width.
+//
+// A 960px coarse-pointer view includes iPad portrait without hiding the picker
+// on a roomy desktop; 860px keeps ordinary narrow views from spending a third
+// of their width on a list.
+const SESSION_PICKER_COMPACT_QUERY = '(pointer: coarse)';
+const SESSION_PICKER_COMPACT_WIDTH = 860;
+const SESSION_PICKER_COARSE_WIDTH = 960;
+const CODE_RAIL_COMPACT_WIDTH = 900;
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -143,6 +159,9 @@ export default function Sessions({
 }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [dialog, setDialog] = useState(false);
+  // Which project the per-project '+' asked for; the rail button used to open
+  // the dialog on whichever project the active session belonged to.
+  const [dialogProject, setDialogProject] = useState<string | undefined>(undefined);
   const [exactRecoveryDialog, setExactRecoveryDialog] = useState(false);
   // Loading is not empty. Until the first list() answers, "no sessions running"
   // would be a claim Wanigan has not checked.
@@ -151,10 +170,11 @@ export default function Sessions({
   // Remembered per machine: whether the side rail is open is a working
   // preference, not session state.
   const [showRail, setShowRail] = useState(() => localStorage.getItem('wanigan.code') === '1');
-  const [compactLayout, setCompactLayout] = useState(() => window.matchMedia(CODE_RAIL_COMPACT_QUERY).matches);
-  const [sessionPickerCompact, setSessionPickerCompact] = useState(() =>
-    window.matchMedia(SESSION_PICKER_COMPACT_QUERY).matches,
-  );
+  // Both start collapsed and are corrected on the first measurement, one frame
+  // later. Starting expanded would flash two rails into a view that has no room
+  // for them, which is the exact failure this measurement exists to prevent.
+  const [compactLayout, setCompactLayout] = useState(true);
+  const [sessionPickerCompact, setSessionPickerCompact] = useState(true);
   const [sessionPickerOpen, setSessionPickerOpen] = useState(false);
   const [railPane, setRailPane] = useState<Record<string, RailPane>>(readPanes);
   // Visible by default: the composer earns its keep by being seen once.
@@ -193,6 +213,11 @@ export default function Sessions({
   const [resuming, setResuming] = useState<string | null>(null);
   const [teachSession, setTeachSession] = useState<Session | null>(null);
   const activeRef = useRef<string | null>(null);
+  /** The list as of this render, for handlers that outlive the closure. */
+  const sessionsRef = useRef<Session[]>([]);
+  // The element the two rail breakpoints are measured against: everything
+  // Sessions has to fit, and nothing the window has spent elsewhere.
+  const sessionsBoxRef = useRef<HTMLDivElement | null>(null);
   const sessionPickerRef = useRef<HTMLElement | null>(null);
   const sessionPickerButtonRef = useRef<HTMLButtonElement | null>(null);
   // React state does not change until the next render. The ref closes the
@@ -202,6 +227,7 @@ export default function Sessions({
   const unreadPending = useRef(new Map<string, number>());
   const unreadTimer = useRef<number | undefined>(undefined);
   activeRef.current = activeId;
+  sessionsRef.current = sessions;
 
   const flushUnread = useCallback(() => {
     unreadTimer.current = undefined;
@@ -246,32 +272,36 @@ export default function Sessions({
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
 
+  // Both rails, from one measurement of the room this view actually has.
+  //
   // An iPad-sized terminal beside a persistent 340px code rail becomes an
-  // unreadable sliver. Keep the saved desktop preference, but deliberately
-  // collapse the secondary pane below tablet width so the live conversation is
-  // always the full working surface.
+  // unreadable sliver, so the saved desktop preference is kept but the
+  // secondary pane collapses below tablet width. Narrower still and the session
+  // list becomes an overlay, which makes the terminal the full working surface
+  // instead of a column squeezed between two persistent rails. That overlay
+  // state is deliberately local: it is a momentary switcher, not a preference
+  // the next launch should surprise you with.
   useEffect(() => {
-    const media = window.matchMedia(CODE_RAIL_COMPACT_QUERY);
-    const sync = () => setCompactLayout(media.matches);
-    sync();
-    media.addEventListener('change', sync);
-    return () => media.removeEventListener('change', sync);
-  }, []);
-
-  // On a tablet or a narrow window, the session list becomes an overlay. That
-  // makes the terminal the full working surface instead of a column squeezed
-  // between two persistent rails. The state is deliberately local: it is a
-  // momentary switcher, not a preference the next launch should surprise you
-  // with.
-  useEffect(() => {
-    const media = window.matchMedia(SESSION_PICKER_COMPACT_QUERY);
-    const sync = () => {
-      setSessionPickerCompact(media.matches);
-      if (!media.matches) setSessionPickerOpen(false);
+    const el = sessionsBoxRef.current;
+    if (!el) return;
+    const coarse = window.matchMedia(SESSION_PICKER_COMPACT_QUERY);
+    const measure = () => {
+      const width = el.getBoundingClientRect().width;
+      // A width of 0 is a view that is not laid out yet (a hidden tab, the
+      // frame before first paint). Measuring it would collapse both rails and
+      // then expand them, which reads as a flicker rather than a layout.
+      if (width <= 0) return;
+      const limit = coarse.matches ? SESSION_PICKER_COARSE_WIDTH : SESSION_PICKER_COMPACT_WIDTH;
+      const compactPicker = width <= limit;
+      setSessionPickerCompact(compactPicker);
+      if (!compactPicker) setSessionPickerOpen(false);
+      setCompactLayout(width <= (coarse.matches ? SESSION_PICKER_COARSE_WIDTH : CODE_RAIL_COMPACT_WIDTH));
     };
-    sync();
-    media.addEventListener('change', sync);
-    return () => media.removeEventListener('change', sync);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    coarse.addEventListener('change', measure);
+    return () => { ro.disconnect(); coarse.removeEventListener('change', measure); };
   }, []);
 
   useEffect(() => {
@@ -322,7 +352,11 @@ export default function Sessions({
 
   useEffect(() => {
     const offData = window.wanigan.on.data(({ sessionId, data }) => {
-      feed(sessionId, data);
+      // Writing the bytes into the terminal is not this view's job and never
+      // was: App.tsx runs startTerminalOutputPump for the window's lifetime, so
+      // output arriving while you are on another tab still lands. What is left
+      // here is the unread accounting, which only means anything while the
+      // session list is on screen.
       if (sessionId === activeRef.current) return;
       /*
        * A chunk arrives per burst of agent output, and rebuilding every session
@@ -341,11 +375,8 @@ export default function Sessions({
         return list.map((s) => ({ ...s, unread: s.id === activeRef.current ? 0 : (unread.get(s.id) ?? 0) }));
       });
     });
-    const offExit = window.wanigan.on.exit(({ sessionId, exitCode }) => {
-      feed(sessionId, `\r\n\x1b[38;5;244m── session exited (code ${exitCode}) ──\x1b[0m\r\n`);
-    });
     return () => {
-      offData(); offList(); offExit();
+      offData(); offList();
       window.clearTimeout(unreadTimer.current);
       unreadTimer.current = undefined;
     };
@@ -395,7 +426,7 @@ export default function Sessions({
       const el = document.activeElement as HTMLElement | null;
       // The terminal and an open dialog own their keystrokes. In particular
       // Ctrl+B/Ctrl+W are ordinary readline shortcuts, not app navigation.
-      if (el?.closest('.terminal-host') || document.querySelector('.modal-backdrop, [role="dialog"][aria-modal="true"]')) return;
+      if (el?.closest('.terminal-host') || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       if (e.key === 't') { e.preventDefault(); setDialog(true); return; }
       if (e.key === 'b') {
         e.preventDefault();
@@ -411,17 +442,49 @@ export default function Sessions({
         });
         return;
       }
-      if (e.key === 'w' && activeRef.current) {
+      // ⌘⌫, not ⌘W. macOS registers ⌘W as Close Window at the menu-bar level,
+      // so it is consumed before this handler ever runs — the cheat sheet has
+      // been printing a chord that closed the whole app instead of one exited
+      // tab. ⌘⌫ is unclaimed here and already reads as "remove this".
+      if (e.key === 'Backspace' && activeRef.current) {
         const s = sessions.find((x) => x.id === activeRef.current);
         if (s?.status === 'exited') { e.preventDefault(); void closeTab(s.id); }
         return;
       }
-      const n = Number(e.key);
-      if (n >= 1 && n <= 9 && sessions[n - 1]) { e.preventDefault(); select(sessions[n - 1].id); }
+      // ⌘1–9 used to select the Nth session here and could never run: the
+      // shell binds those to the view routes on window in the capture phase and
+      // calls stopPropagation, so this bubble-phase listener was never reached.
+      // Switching sessions is ⌥⌘← / ⌥⌘→ now, in its own effect below.
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   });
+
+  // ⌥⌘← / ⌥⌘→ walk the open sessions. Its own effect because the handler above
+  // takes ⌘ alone and would have to widen its guard to see Option, and because
+  // bindingMatches is what keeps the printed chord and the working chord the
+  // same string — it also refuses every chord inside a terminal host, so the
+  // PTY keeps its arrow keys.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (modalOpen()) return;
+      const back = bindingMatches(e, 'session-prev');
+      if (!back && !bindingMatches(e, 'session-next')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const list = sessionsRef.current;
+      if (list.length < 2) return;
+      const at = list.findIndex((s) => s.id === activeRef.current);
+      // No selection yet walks in from the end the arrow points from, so the
+      // first press always lands somewhere rather than doing nothing.
+      const next = at < 0
+        ? (back ? list.length - 1 : 0)
+        : (at + (back ? -1 : 1) + list.length) % list.length;
+      select(list[next].id);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [select]);
 
   // A file dropped anywhere but the terminal would otherwise navigate the
   // window to it, which unmounts the whole app.
@@ -524,7 +587,9 @@ export default function Sessions({
           answer to "where do I go next" outranks the rail and the terminal. */}
       <AttentionQueue onJump={select} />
 
-      <div className={`sessions${sessionPickerCompact ? ' sessions--compact-picker' : ''}${sessionPickerOpen ? ' sessions--picker-open' : ''}`} style={{ flex: 1, minHeight: 0 }}>
+      <div ref={sessionsBoxRef}
+           className={`sessions${sessionPickerCompact ? ' sessions--compact-picker' : ''}${sessionPickerOpen ? ' sessions--picker-open' : ''}`}
+           style={{ flex: 1, minHeight: 0 }}>
         <aside ref={sessionPickerRef} id="wanigan-session-picker"
                className="session-rail" aria-label="Session picker"
                aria-hidden={sessionPickerCompact && !sessionPickerOpen ? true : undefined}>
@@ -558,9 +623,9 @@ export default function Sessions({
                 <div key={p.id}>
                   <div className="group-title">
                     <span style={{ fontWeight: 600, fontSize: 'var(--t-small)' }}>{p.name}</span>
-                    {p.branch && <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>{p.branch}</span>}
-                    <FocusBtn className="faint" style={{ marginLeft: 'auto', fontSize: 'var(--t-lead)', lineHeight: 1, borderRadius: 'var(--r-sm)' }}
-                              title={`New session in ${p.name}`} onClick={() => setDialog(true)}>+</FocusBtn>
+                    {p.branch && <span className="faint mono trunc" style={{ fontSize: 'var(--t-micro)', minWidth: 0 }} title={p.branch}>{p.branch}</span>}
+                    <FocusBtn className="faint" style={{ marginLeft: 'auto', flex: 'none', fontSize: 'var(--t-lead)', lineHeight: 1, borderRadius: 'var(--r-sm)' }}
+                              title={`New session in ${p.name}`} onClick={() => { setDialogProject(p.id); setDialog(true); }}>+</FocusBtn>
                   </div>
                   {list.length === 0 && <p className="faint" style={{ padding: '2px 8px 4px', fontSize: 'var(--t-small)' }}>no sessions</p>}
                   {list.map((s) => {
@@ -717,7 +782,9 @@ export default function Sessions({
 
             <FocusBtn className="btn" style={{ width: '100%', justifyContent: 'center', marginTop: 14 }}
                       onClick={onAddProject}>+ Add project</FocusBtn>
-            {projects.length > 0 && (
+            {/* Codex-only recovery: hide the route when no Codex CLI is installed
+                rather than offering a dialog that can only fail. */}
+            {projects.length > 0 && providers.some((p) => p.harnessId === 'codex' && p.path) && (
               <FocusBtn className="faint" style={{ width: '100%', justifyContent: 'center', marginTop: 8,
                                                      fontSize: 'var(--t-small)', borderRadius: 'var(--r-sm)' }}
                         onClick={() => setExactRecoveryDialog(true)}>
@@ -756,7 +823,7 @@ export default function Sessions({
               {active && <span className="session-picker-trigger-current">{nameOf(active) || active.projectName}</span>}
               <span className="session-picker-count" aria-hidden="true">{sessions.length}</span>
             </FocusBtn>
-            {sessions.map((s, i) => (
+            {sessions.map((s) => (
               <div key={s.id} className={`session-tab-wrap${s.id === activeId ? ' active' : ''}`}>
                 <FocusBtn className={`tab session-tab${s.id === activeId ? ' active' : ''}`} onClick={() => select(s.id)}
                           aria-current={s.id === activeId ? 'page' : undefined}
@@ -765,10 +832,9 @@ export default function Sessions({
                   <span className="dot" style={{ width: 6, height: 6, borderRadius: 'var(--r-pill)',
                                                  background: s.status === 'running' ? (TINT[s.providerId] ?? 'var(--accent)') : 'var(--text-faint)' }} />
                   {nameOf(s) || s.projectName}
-                  <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>⌘{i + 1}</span>
                 </FocusBtn>
                 {s.status === 'exited' && (
-                  <FocusBtn className="session-tab-close faint" title="Close exited session (⌘W)"
+                  <FocusBtn className="session-tab-close faint" title="Close exited session (⌘⌫)"
                             aria-label={`Close exited session for ${s.projectName}`}
                             onClick={() => void closeTab(s.id)}>×</FocusBtn>
                 )}
@@ -778,7 +844,7 @@ export default function Sessions({
                       aria-label="New session (Command T)">+<span className="tab-new-session-text"> New</span></FocusBtn>
             <FocusBtn className={`tab session-side-panel-toggle faint${railOpen ? ' active' : ''}`} style={{ marginLeft: 'auto' }}
                       title={compactLayout ? 'The side panel is collapsed on tablets so the terminal stays readable.' : 'Toggle the side panel (⌘B)'}
-                      disabled={compactLayout}
+                      disabled={compactLayout || !active}
                       onClick={() => setShowRail((v) => { localStorage.setItem('wanigan.code', v ? '0' : '1'); return !v; })}>
               {compactLayout ? 'terminal full width' : railOpen ? '⟨ hide' : `${pane} ⟩`}
             </FocusBtn>
@@ -928,7 +994,7 @@ export default function Sessions({
                                   setPane(active.id, 'code');
                                 }} />
                     ) : (
-                      <div style={{ overflowY: 'auto', minHeight: 0, borderLeft: '1px solid var(--line)', padding: 'var(--s-2)' }}>
+                      <div style={{ overflowY: 'auto', minHeight: 0, borderLeft: '1px solid var(--line)' }}>
                         <SessionLearning key={`sl-${active.id}`} sessionId={active.id}
                                          harness={active.harnessId ?? null} />
                       </div>
@@ -971,14 +1037,14 @@ export default function Sessions({
                             onClick={() => window.wanigan.sessions.kill(active.id)}>end session</FocusBtn>
                 )}
               </>
-            ) : <span>⌘T new session · ⌘1–9 switch · ⌘W close · ⌘B side panel</span>}
+            ) : <span>⌘T new session · ⌥⌘←→ switch · ⌘⌫ close · ⌘B side panel</span>}
           </div>
         </div>
       </div>
 
       {dialog && (
-        <NewSessionDialog providers={providers} projects={projects} defaultProjectId={active?.projectId}
-                          onClose={() => setDialog(false)} onCreate={createSession} onAddProject={onAddProject} />
+        <NewSessionDialog providers={providers} projects={projects} defaultProjectId={dialogProject ?? active?.projectId}
+                          onClose={() => { setDialog(false); setDialogProject(undefined); }} onCreate={createSession} onAddProject={onAddProject} />
       )}
       {exactRecoveryDialog && (
         <ExactCodexRecoveryDialog projects={projects} defaultProjectId={active?.projectId}
@@ -1014,10 +1080,16 @@ function ExactCodexRecoveryDialog({ projects, defaultProjectId, onClose, onRecov
       setBusy(false);
     }
   };
-  return (
-    <div className="modal-backdrop" onMouseDown={onClose}>
-      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="recover-codex-title"
-               onMouseDown={(event) => event.stopPropagation()}>
+  const { portal, backdropProps, dialogProps } = useDialog<HTMLElement>({ onClose, initialFocus: 'first' });
+  // Both dialogs in this file used to hand-roll a backdrop: no Escape, no Tab
+  // trap, and focus dropped on the document body when they closed. That last
+  // one matters more here than in most of the app, because the thing under the
+  // scrim is a live terminal with tabIndex 0 that hands the caret to xterm — a
+  // few Shift-Tabs from an untrapped dialog and the operator is typing into a
+  // running agent. useDialog owns the keyboard and portals out of .body.
+  return portal(
+    <div {...backdropProps}>
+      <section {...dialogProps} className="modal" aria-labelledby="recover-codex-title">
         <div className="label" style={{ color: 'var(--codex)', marginBottom: 4 }}>Safe recovery</div>
         <h2 id="recover-codex-title" style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>Recover an exact Codex conversation</h2>
         <p className="dim" style={{ marginTop: 7, fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
@@ -1028,7 +1100,7 @@ function ExactCodexRecoveryDialog({ projects, defaultProjectId, onClose, onRecov
         <label style={{ display: 'block', marginTop: 16 }}>
           <span className="label">Codex conversation UUID</span>
           <input className="field mono" style={{ width: '100%', marginTop: 6, boxSizing: 'border-box' }}
-                 autoFocus value={threadId} onChange={(event) => setThreadId(event.target.value)}
+                 data-initial-focus value={threadId} onChange={(event) => setThreadId(event.target.value)}
                  placeholder="00000000-0000-0000-0000-000000000000" spellCheck={false}
                  aria-describedby="recover-codex-help" />
         </label>
@@ -1057,7 +1129,7 @@ function ExactCodexRecoveryDialog({ projects, defaultProjectId, onClose, onRecov
           </FocusBtn>
         </div>
       </section>
-    </div>
+    </div>,
   );
 }
 
@@ -1091,17 +1163,20 @@ function SessionTeachModal({ session, onClose, onError }: {
     } catch (e) { onError(msg(e)); }
     finally { setBusy(false); }
   };
-  return (
-    <div className="learning-modal-backdrop" onMouseDown={onClose}>
-      <section className="learning-modal card" role="dialog" aria-modal="true" aria-label="Teach Wanigan from this session"
-               onMouseDown={(e) => e.stopPropagation()}>
+  // 'least-destructive' is the safe default for a form that writes durable
+  // knowledge, but the Title input carries data-initial-focus and wins: landing
+  // on Close would put the caret nowhere useful in a dialog opened to type.
+  const { portal, backdropProps, dialogProps } = useDialog<HTMLElement>({ onClose, initialFocus: 'least-destructive' });
+  return portal(
+    <div {...backdropProps}>
+      <section {...dialogProps} className="learning-modal card" aria-label="Teach Wanigan from this session">
         <div className="learning-card-head">
           <div><span className="label">{session.providerId} · {session.projectName}</span><h2>Teach Wanigan from this session</h2></div>
           <button className="btn" onClick={onClose}>Close</button>
         </div>
         <p className="dim">This stores your explanation and a reference to this session as evidence. It does not copy the whole transcript or edit project files.</p>
         <label><span className="label">What happened?</span><select className="field" value={outcome} onChange={(e) => setOutcome(e.target.value as typeof outcome)}><option value="worked">This worked</option><option value="failed">This failed</option><option value="corrected">I corrected the agent</option><option value="preference">My preference</option></select></label>
-        <label><span className="label">Title</span><input className="field" autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="The reusable lesson" /></label>
+        <label><span className="label">Title</span><input className="field" data-initial-focus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="The reusable lesson" /></label>
         <label><span className="label">What should future agents know?</span><textarea className="field" rows={8} value={text} onChange={(e) => setText(e.target.value)} placeholder="State the outcome, constraint, correction, or procedure clearly…" /></label>
         <div className="learning-form-grid">
           <label><span className="label">Scope</span><select className="field" value={scope} onChange={(e) => setScope(e.target.value as typeof scope)}><option value="project">This project</option><option value="path">A path in this project</option><option value="personal">My knowledge</option></select></label>
@@ -1109,7 +1184,7 @@ function SessionTeachModal({ session, onClose, onError }: {
         </div>
         <div className="learning-actions"><button className="btn btn-primary" disabled={busy || !title.trim() || !text.trim()} onClick={() => void submit()}>{busy ? 'Adding…' : 'Add reviewable lesson'}</button></div>
       </section>
-    </div>
+    </div>,
   );
 }
 
@@ -1345,21 +1420,21 @@ function RunConfigBar({ session, provider }: { session: Session; provider: Provi
 function TrustBanner({ level, fallback, running }: {
   level: TrustLevel; fallback: TrustLevel; running: boolean;
 }) {
-  const copy = TRUST_COPY[level];
+  const copy = trustCopy(level);
   return (
     <div role="status" style={{
       display: 'flex', alignItems: 'baseline', gap: 8, padding: '6px 12px',
       background: 'var(--warning-soft)', borderLeft: '3px solid var(--warning)', lineHeight: 1.45,
     }}>
       <span aria-hidden="true" style={{ color: 'var(--warning)', fontWeight: 700, fontSize: 'var(--t-small)' }}>
-        {TRUST_GLYPH[level]}
+        {trustGlyph(level)}
       </span>
       <span style={{ color: 'var(--warning)', fontWeight: 650, fontSize: 'var(--t-small)', flex: 'none' }}>
         {copy.label} trust
       </span>
       <span style={{ color: 'var(--text-dim)', fontSize: 'var(--t-small)', minWidth: 0 }}>
         {copy.detail} {running ? 'This session is running' : 'This session ran'} above your default,
-        {' '}{TRUST_COPY[fallback].label} ({TRUST_GLYPH[fallback]}).
+        {' '}{trustCopy(fallback).label} ({trustGlyph(fallback)}).
       </span>
     </div>
   );
@@ -1813,11 +1888,15 @@ function AttachStrip({ session, att }: { session: Session; att: AttachState }) {
       ) : att.phase === 'loading' ? (
         <p className="faint" style={{ fontSize: 'var(--t-small)' }}>Reading what is staged for this session…</p>
       ) : att.items.length === 0 ? (
-        <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
-          Nothing staged yet. Drop a file on the terminal, paste a screenshot with ⌘V, or add one —
-          Wanigan copies it where {session.projectName}'s agent can read it and writes the path into your
-          prompt, so all you add is the question. Sent files leave this strip.
-        </p>
+        // Three lines of teaching, permanently, under the terminal on the view
+        // an operator spends the day in — and it is a lesson learned once. The
+        // remembered one-liner keeps it for a newcomer and gives it back to
+        // everyone else as a "Show:" link.
+        <Explainer id="attach-how" title="How attachments work" compact>
+          Drop a file on the terminal, paste a screenshot with ⌘V, or add one. Wanigan copies it where
+          this project's agent can read it and writes the path into your prompt, so all you add is the
+          question. Sent files leave this strip.
+        </Explainer>
       ) : (
         // Its own scroller: a dozen chips are wider than the pane, and the view
         // never scrolls sideways as a whole.

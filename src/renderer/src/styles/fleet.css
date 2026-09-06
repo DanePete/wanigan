@@ -4,18 +4,10 @@
 .fleet-controls {
   display: flex; flex-direction: column; align-items: flex-end; gap: 5px;
 }
-.fleet-seg {
-  display: flex; align-items: center; gap: 2px;
-  padding: 3px; border-radius: 8px;
-  border: 1px solid var(--line); background: var(--bg-soft);
-}
-.fleet-segbtn {
-  padding: 4px 10px; border-radius: 6px;
-  font-size: 12px; font-weight: 500; color: var(--text-dim);
-  transition: background .12s, color .12s;
-}
-.fleet-segbtn:hover { color: var(--text); background: var(--bg-sunk); }
-.fleet-segbtn.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+/* The sort control here is the shared <Segmented> primitive, so its rules live
+   with .seg in ui.css. A private .fleet-seg/.fleet-segbtn pair outlived that
+   swap and matched nothing in any .tsx — a second segmented family to reason
+   about beside .seg, and one of this sheet's two literal-duration debts. */
 .fleet-updated { font-size: 11px; font-variant-numeric: tabular-nums; }
 
 .fleet-chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -51,7 +43,9 @@
   width: 100%; padding: 12px 13px; text-align: left;
   border: 1px solid var(--line); border-left-width: 3px; border-radius: 10px;
   background: var(--bg-soft);
-  transition: background .12s, border-color .12s;
+  /* Tokens, not a literal: a card's hover fade obeys data-motion='off' and the
+     OS reduced-motion preference the same way a view swap does. */
+  transition: background var(--mo-state) var(--mo-ease), border-color var(--mo-state) var(--mo-ease);
 }
 .fleet-card:hover { background: var(--bg-sunk); border-color: var(--text-faint); }
 /* Blocked reads as urgent from across the room — but the pill's glyph and word
@@ -148,7 +142,7 @@
   padding: 30px 22px; text-align: center;
   display: flex; flex-direction: column; align-items: center; gap: 9px;
 }
-.fleet-blank h2 { font-size: 15px; font-weight: 600; }
+.fleet-blank h2 { font-size: var(--t-lead); font-weight: 600; }
 .fleet-blank p { max-width: 520px; line-height: 1.55; font-size: 12.5px; }
 .fleet-blank .btn { margin-top: 4px; }
 .fleet-kbd {
@@ -160,7 +154,6 @@
 /* ── focus ───────────────────────────────────────────────────────────── */
 .fleet-card:focus-visible,
 .fleet-chip:focus-visible,
-.fleet-segbtn:focus-visible,
 .fleet-inline:focus-visible,
 .fleet-rowbtn:focus-visible,
 .fleet-retry:focus-visible {

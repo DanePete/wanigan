@@ -198,6 +198,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
     try {
       const plan = await window.wanigan.checkpoints.revertPlan(sessionId, row.start.id);
       setCpPlan({ ...plan, targetLabel: row.turn === 0 ? 'before the session started' : `before turn ${row.turn}` });
+      setErr(null);
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }
 
@@ -208,6 +209,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
       const res = await window.wanigan.checkpoints.revert(sessionId, cpPlan.checkpointId);
       setCpResult(res);
       setCpPlan(null);
+      setErr(null);
       loadCheckpoints();
       loadChanges();
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
@@ -256,13 +258,19 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
 
   useEffect(() => {
     if (tab !== 'files') return;
-    window.wanigan.code.list(projectPath, dir).then(setEntries).catch((e) => setErr(String(e.message ?? e)));
+    // Every read below clears `err` on the way through: the strip describes the
+    // last thing that was attempted, so a failure that has since been re-read
+    // successfully must not keep sitting above the file list.
+    window.wanigan.code.list(projectPath, dir)
+      .then((rows) => { setEntries(rows); setErr(null); })
+      .catch((e) => setErr(String(e.message ?? e)));
   }, [tab, dir, projectPath]);
 
   async function askRevert(p: string) {
     const f = changes.files.find((x) => x.path === p);
     try {
       setPlan(await window.wanigan.revert.plan(projectPath, p, baseHead, f?.preexisting === true));
+      setErr(null);
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }
 
@@ -274,6 +282,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
       const r = await window.wanigan.revert.file(projectPath, plan.file, baseHead, f?.preexisting === true);
       setReverted(r.detail);
       setPlan(null);
+      setErr(null);
       if (r.ok) { loadChanges(); if (sel === plan.file) { setSel(null); setDiff(''); } }
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
     finally { setReverting(false); }
@@ -290,6 +299,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
       );
       setBulkResult({ reverted: r.reverted.length, failed: r.failed });
       setBulk(null);
+      setErr(null);
       // A file that is gone has no diff left to show.
       if (sel && r.reverted.includes(sel)) { setSel(null); setDiff(''); }
       loadChanges();
@@ -301,14 +311,14 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
 
   async function openDiff(p: string) {
     setSel(p); setFile(null); setPlan(null); setReverted(null);
-    try { setDiff(await window.wanigan.code.diff(projectPath, p)); }
+    try { setDiff(await window.wanigan.code.diff(projectPath, p)); setErr(null); }
     catch (e) { setDiff(''); setErr(e instanceof Error ? e.message : String(e)); }
   }
 
   async function openFile(rel: string) {
     try {
       const f = await window.wanigan.code.read(projectPath, rel);
-      setFile({ rel, ...f }); setSel(null); setDiff('');
+      setFile({ rel, ...f }); setSel(null); setDiff(''); setErr(null);
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }
 
@@ -401,7 +411,16 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
         </div>
       </div>
 
-      {err && <div className="code-err" onClick={() => setErr(null)}>{err} — click to dismiss</div>}
+      {/* A failed read is a Note, not a clickable strip. This was a bare div
+          with onClick and the words "click to dismiss": no role, so it was
+          never announced; no button, so a keyboard or screen-reader user could
+          not clear it; and since nothing else in this component ever cleared
+          `err`, the mouse click was the only thing that would ever remove it. */}
+      {err && (
+        <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--line)' }}>
+          <Note tone="error" onDismiss={() => setErr(null)}>{err}</Note>
+        </div>
+      )}
 
       {bulk && (
         <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--line)' }}>

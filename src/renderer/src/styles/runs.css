@@ -3,7 +3,7 @@
 .hr-view { gap: var(--s-5); }
 .hr-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-4); }
 .hr-head-copy { max-width: 76ch; }
-.hr-head h1 { margin: 3px 0 0; font-size: var(--t-title); font-weight: 680; letter-spacing: -.018em; }
+.hr-head h1 { margin: 3px 0 0; }
 .hr-head-copy > .dim { margin-top: 5px; line-height: 1.55; }
 .hr-head-status, .hr-step, .hr-count {
   flex: none; padding: 5px 9px; border: 1px solid var(--line); border-radius: var(--r-pill);
