@@ -25,6 +25,16 @@ export { readableTerminal } from './mobile/terminal-text';
 export { configureSnapshotSource } from './mobile/snapshot';
 
 export { configureMobileControlSource } from './mobile/control';
+
+// Firing an installed skill into a live session, from the Agent screen. The
+// Skills SCREEN stays on the Mac — writing one edits a file inside a working
+// tree — and only the invocation crosses. The two pure functions are exported
+// for the offline suite, which has to prove the search, the cap and the
+// path-free wire without a skill directory on the machine.
+export { MOBILE_SKILL_LIMITS, configureMobileSkillsSource, mobileSkillList, mobileSkillsPayload } from './mobile/skills';
+export type { MobileSkill, MobileSkillsPayload, MobileSkillsSource } from './mobile/skills';
+export { configureMobileExploreSource } from './mobile/explore';
+export type { MobileExploreBudgets, MobileExploreSource } from './mobile/explore';
 export type { MobileControlSource } from './mobile/control';
 
 // The repository review: the one route family that puts a file path on this

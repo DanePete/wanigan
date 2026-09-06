@@ -512,6 +512,66 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
         signals: stats.signals, briefingsServed: stats.briefingsServed, days: stats.signalsByDay.length,
       }));
 
+    // The Inbox figure used to be candidatesCreated - autoPromoted, which never
+    // fell for a decided row. Measured as a delta because this suite has already
+    // created a dozen candidates by now, and an absolute would pin the suite's
+    // own history rather than the arithmetic.
+    const openBefore = pipelineStats({ windowDays: 7, projectId: project.id }).awaitingDecision;
+    const toDecide = createCandidate({
+      targetKind: 'memory', scope: 'personal', title: `Decideline ${tag}`,
+      proposedText: `Decideline ${tag}: a proposal somebody rejects.`,
+      rationale: 'Awaiting-decision counting test.', confidence: 0.9, signalIds: [ledgerSignal.id],
+    });
+    const toLeaveOpen = createCandidate({
+      targetKind: 'memory', scope: 'personal', title: `Openline ${tag}`,
+      proposedText: `Openline ${tag}: a proposal nobody has touched.`,
+      rationale: 'Awaiting-decision counting test.', confidence: 0.9, signalIds: [ledgerSignal.id],
+    });
+    const openAfterCreate = pipelineStats({ windowDays: 7, projectId: project.id }).awaitingDecision;
+    reviewCandidate(toDecide.id, 'reject');
+    const afterReject = pipelineStats({ windowDays: 7, projectId: project.id });
+    check(openAfterCreate === openBefore + 2
+      && afterReject.awaitingDecision === openBefore + 1
+      && afterReject.awaitingDecision < afterReject.candidatesCreated,
+      'awaiting-a-decision counts open candidates directly, so rejecting a proposal removes it from the figure and the count stays below the candidates created in the same window',
+      JSON.stringify({ openBefore, openAfterCreate, afterReject: afterReject.awaitingDecision, created: afterReject.candidatesCreated }));
+
+    // A snooze defers a decision rather than making one, and reviewCandidate
+    // accepts 'snooze' only from 'pending' — so this has to run on the candidate
+    // left untouched above.
+    reviewCandidate(toLeaveOpen.id, 'snooze');
+    const afterSnooze = pipelineStats({ windowDays: 7, projectId: project.id });
+    check(afterSnooze.awaitingDecision === openBefore + 1,
+      'a snoozed candidate is still awaiting a decision, because deferring a decision is not making one',
+      JSON.stringify({ expected: openBefore + 1, actual: afterSnooze.awaitingDecision }));
+
+    // Negative: the figure is not the arithmetic it replaced. autoPromoted is a
+    // COUNT(DISTINCT item_id) over knowledge_versions, so the old expression
+    // subtracted knowledge items from candidates and never removed a decided row.
+    check(afterSnooze.candidatesCreated - afterSnooze.autoPromoted !== afterSnooze.awaitingDecision,
+      'the awaiting-a-decision figure is a count of open candidate rows and not candidatesCreated minus autoPromoted, which subtracted a count of knowledge items from a count of candidates',
+      JSON.stringify({ candidatesCreated: afterSnooze.candidatesCreated, autoPromoted: afterSnooze.autoPromoted, awaitingDecision: afterSnooze.awaitingDecision }));
+
+    // Negative: the window is real. Backdating the row past the window has to
+    // drop it, or "last 7d" is decoration on a store-wide count.
+    const aged = createCandidate({
+      targetKind: 'memory', scope: 'personal', title: `Agedline ${tag}`,
+      proposedText: `Agedline ${tag}: created before the window opened.`,
+      rationale: 'Awaiting-decision window test.', confidence: 0.9, signalIds: [ledgerSignal.id],
+    });
+    const insideWindow = pipelineStats({ windowDays: 7, projectId: project.id }).awaitingDecision;
+    db().prepare('UPDATE knowledge_candidates SET created_at=? WHERE id=?')
+      .run(Date.now() - 40 * 24 * 3600 * 1000, aged.id);
+    const outsideWindow = pipelineStats({ windowDays: 7, projectId: project.id }).awaitingDecision;
+    check(insideWindow === openBefore + 2 && outsideWindow === openBefore + 1,
+      'an open candidate created before the window opened is not counted as awaiting a decision in that window, so the figure means what its "last 7d" label says',
+      JSON.stringify({ insideWindow, outsideWindow }));
+
+    // Scope travels with the count the same way it does for every sibling figure.
+    check(pipelineStats({ windowDays: 7, projectId: null }).awaitingDecision <= pipelineStats({ windowDays: 7 }).awaitingDecision,
+      'the awaiting-a-decision count is scoped like every other pipeline figure, so a project-scoped read can never exceed the unscoped one',
+      JSON.stringify({ scoped: pipelineStats({ windowDays: 7, projectId: null }).awaitingDecision, all: pipelineStats({ windowDays: 7 }).awaitingDecision }));
+
     say('── compound · sweep hardening');
     const mkHardSig = (summary: string, session: string, task: string, at: number) => recordSignal({
       kind: 'tool-success', providerId: 'claude', backendId: 'anthropic',

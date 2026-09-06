@@ -3,6 +3,8 @@ import type { TranscriptHit } from '../shared/types';
 import { COMPOSER_DRAFT_MAX, COMPOSER_DRAFT_TOTAL_CHARS, parseDraftMap, pruneDrafts, putDraft, type ComposerDraftMap } from '../shared/composer-drafts';
 import { deriveSendState, observeQueueTargets, queueWatcherWanted, type QueueTargetState } from '../shared/composer-queue';
 import { QR_MAX_BYTES, qrMatrix } from '../shared/qr';
+import { shouldBumpUnread, applyUnreadCounts } from '../shared/unread';
+import type { Session } from '../shared/types';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 type Say = (s: string) => void;
@@ -171,4 +173,42 @@ export async function runPaletteSmoke(check: Check, say: Say): Promise<void> {
   } catch (e) {
     check(false, `palette smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }
+  say('── unread · main owns the count, and the words match what it counts');
+
+  // The badge counts output that arrived while you were somewhere else, and
+  // both halves of that sentence are load-bearing. A session you are looking at
+  // must never raise its own badge — the bytes are on screen as they land, so a
+  // count of them is a count of what was just read. An exited session must not
+  // either: its last output arrives as it dies, and a badge on a session that
+  // has stopped forever invites you to open a tab and find nothing.
+  check(shouldBumpUnread({ sessionId: 'a', focusedSessionId: 'a', status: 'running' }) === false
+    && shouldBumpUnread({ sessionId: 'a', focusedSessionId: 'b', status: 'running' }) === true
+    && shouldBumpUnread({ sessionId: 'a', focusedSessionId: null, status: 'running' }) === true
+    && shouldBumpUnread({ sessionId: 'a', focusedSessionId: null, status: 'starting' }) === true,
+  'the session on screen never raises its own badge, and every other running session does while the operator is on another tab — which is the case the badge exists for',
+  `self ${shouldBumpUnread({ sessionId: 'a', focusedSessionId: 'a', status: 'running' })}, other ${shouldBumpUnread({ sessionId: 'a', focusedSessionId: 'b', status: 'running' })}, unwatched ${shouldBumpUnread({ sessionId: 'a', focusedSessionId: null, status: 'running' })}`);
+
+  // Negative, and the one a naive "not focused" test gets wrong.
+  check(shouldBumpUnread({ sessionId: 'a', focusedSessionId: null, status: 'exited' }) === false,
+    'a session that has exited raises no badge no matter where the operator is, so a dead tab cannot advertise output nobody can act on',
+    `exited bumps: ${shouldBumpUnread({ sessionId: 'a', focusedSessionId: null, status: 'exited' })}`);
+
+  const unreadList = [
+    { id: 'a', unread: 0 }, { id: 'b', unread: 2 },
+  ] as unknown as readonly Session[];
+  // Identity, not tidiness. The rail, the tab strip and every Fleet card
+  // re-render off this array, and a coalesced flush lands once a second whether
+  // or not it carries news.
+  check(applyUnreadCounts(unreadList, {}) === unreadList
+    && applyUnreadCounts(unreadList, { a: 0 }) === unreadList
+    && applyUnreadCounts(unreadList, { zzz: 9 }) === unreadList,
+  'a flush that moves no number returns the very same array, so a count the list already agrees with cannot repaint the rail, the tab strip and every card in Fleet',
+  `empty same: ${applyUnreadCounts(unreadList, {}) === unreadList}; unchanged same: ${applyUnreadCounts(unreadList, { a: 0 }) === unreadList}`);
+
+  const unreadBumped = applyUnreadCounts(unreadList, { a: 3 });
+  check(unreadBumped !== unreadList && unreadBumped[0].unread === 3
+    && unreadBumped[1] === unreadList[1],
+  'a count that did move produces a new array with the new number, and leaves the untouched session as the identical object it already was',
+  `a=${unreadBumped[0].unread}, b reused: ${unreadBumped[1] === unreadList[1]}`);
+
 }

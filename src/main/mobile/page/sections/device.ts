@@ -116,7 +116,7 @@ export const DEVICE_SECTION: DeviceSection = {
             </div>
             <div class="device-item">
               <strong>Repository review</strong>
-              <span>Whether the Git screen may read which files changed and what changed in them. It is the one thing that puts a file path on this wire, so it is off on every install and every upgrade, and switching the agent console on does not switch it on.</span>
+              <span>Whether the Git screen may read which files changed and what changed in them, run that project's saved review gate, and commit what git already tracks. It is the one thing that puts a file path on this wire, and the only one that writes to a repository — never adding an untracked file, and never pushing — so it is off on every install and every upgrade, and switching the agent console on does not switch it on.</span>
             </div>
             <div class="device-item">
               <strong>The pairing link</strong>

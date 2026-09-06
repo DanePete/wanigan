@@ -319,10 +319,10 @@ Discovery is not installation consent.
 
 1. A newly seen or newly changed local manifest is `needs-trust` and cannot
    launch anything.
-2. `trustManifest` records the **exact** manifest SHA-256 you reviewed, and
-   leaves the pack disabled.
+2. `trustManifest` records the **exact** manifest SHA-256 you reviewed, after a
+   main-process confirmation, and leaves the pack disabled.
 3. If the pack has an adapter, `trustAdapter` records the adapter's digest
-   separately. Trusting one never trusts the other.
+   separately, behind its own confirmation. Trusting one never trusts the other.
 4. Only then does enabling succeed, and only while both digests still match.
 
 Editing one byte of an enabled manifest returns it to `needs-trust`, which is
@@ -332,6 +332,27 @@ environment destination, source, literal and fallback before you approve it.
 Automatic version and help probes run with a minimal credential-free
 environment. Upgrading the external CLI a pack names is a separate trust class
 that Wanigan does not observe.
+
+Both digests are confirmed in the **main process**, not on the page. A
+confirmation the renderer draws is not a trust boundary, because a compromised
+renderer can simply decline to draw it, so `trustManifest` and `trustAdapter`
+each open a system dialog before anything is recorded — the same way
+`plugins:marketAdd` confirms a marketplace. They are two separate questions
+with two separate buttons: approving one never approves the other, and neither
+enables the pack. Cancelling records nothing and enables nothing.
+
+That dialog builds its own summary rather than displaying text the renderer
+handed it, and every field in it is length-capped. A manifest is untrusted
+data, and one declaring a hundred profiles, or environment destinations with
+very long names, could otherwise pad the question off the screen and leave only
+the buttons. When the summary has to elide anything it says so, and it keeps
+the digest, the true destination count, the redirect warning and the note that
+the adapter is a separate grant — those are never the part that gets cut. It
+then names the manifest file on disk, deliberately rather than the Settings
+page, since the page is the surface this dialog exists to survive. The complete
+argv and environment listing required above stays on the Providers page, fed by
+`inspectManifest`, and the dialog always names the file that is the
+authoritative record of it.
 
 Statuses a pack can hold: `enabled`, `disabled`, `needs-trust`,
 `pending-removal`, `invalid`, `removed`.

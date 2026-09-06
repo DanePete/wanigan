@@ -26,6 +26,27 @@ import type { MobileSection } from '../sections';
  * perfectly good account as broken. Inventing a time here would be the same
  * mistake pointed the other way.
  *
+ * What goes first is neither of those. Nobody opens a phone to browse a cost
+ * curve; they open it because they want to know whether to worry, and the
+ * answer to that is whether something has gone past a line. So the breach
+ * reading is the top of the screen and the two halves above sit under it.
+ *
+ * Two kinds of line exist and they are printed as two kinds of thing. A budget
+ * is a monthly cap the operator set themselves on the Mac, and the Mac decides
+ * which of its three lines was crossed; this screen repeats that decision in
+ * the same words the desktop's own banner uses. A limit window is the
+ * provider's ceiling, and Wanigan holds one reading of it — so every entry
+ * prints the value that was measured and the age of the reading that carries
+ * it, and none of them prints a time it crossed, because that moment was never
+ * observed. There is no number for the fleet: a budget being fine has never
+ * meant an account has room, and blending the two would produce a figure that
+ * is true of nothing.
+ *
+ * Exactly one figure here is arithmetic about days that have not happened, and
+ * it is the only one that leads with the word estimate. The rest lead with
+ * measured. Both words sit at the front of the line they qualify rather than in
+ * a note under the card, because a footnote is read after the decision.
+ *
  * Every age on this screen is the Mac's own measurement plus the time since the
  * bytes arrived, which the device measures on its own clock. The two clocks are
  * never subtracted from each other — the same rule the Device screen states —
@@ -45,6 +66,10 @@ export const SPEND_SECTION: SpendSection = {
   anchorId: 'spend',
   slot: 'spend',
   markup: `        <section id="spend" class="spend">
+          <h2>Anything past a limit</h2>
+          <p class="spend-lead">Each line reports itself: a budget you set on the Mac, or a ceiling the provider set. Every figure is a reading Wanigan already holds — the one that is a run rate says so where you read it.</p>
+          <div id="spend-breaches" class="spend-breaches"></div>
+
           <h2>What is left</h2>
           <p class="spend-lead">Read live from each account, because a token count on the Mac cannot tell you what a plan has left. This is the reading Wanigan already had; asking again starts a real CLI process, so it stays a thing you do at the Mac.</p>
           <div id="spend-limits" class="spend-limits"></div>
@@ -60,7 +85,18 @@ export const SPEND_SECTION: SpendSection = {
         </section>`,
   style: `    .spend > h2:first-child { margin-top:4px; }
     .spend-lead { color:var(--dim); font-size:12px; margin-bottom:10px; }
-    .spend-limits,.spend-cost { display:grid; gap:10px; }
+    .spend-limits,.spend-cost,.spend-breaches { display:grid; gap:10px; }
+    .spend-breach { padding:14px; display:grid; gap:6px; min-width:0; }
+    .spend-breach-top { display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+    .spend-breach-name { font-weight:720; overflow:hidden; text-overflow:ellipsis; }
+    .spend-chip { flex:none; display:inline-flex; align-items:center; gap:5px; border:1px solid currentColor; border-radius:999px; padding:2px 8px; font-size:11px; font-weight:760; white-space:nowrap; }
+    .spend-chip[data-tone="alert"] { color:var(--critical); background:var(--critical-soft); }
+    .spend-chip[data-tone="serious"] { color:var(--serious); background:var(--panel-raised); }
+    .spend-chip[data-tone="quiet"] { color:var(--dim); background:var(--panel-raised); }
+    .spend-breach-where { font-size:13px; font-weight:700; overflow:hidden; text-overflow:ellipsis; }
+    .spend-breach-figure { color:var(--dim); font-size:12px; line-height:1.5; font-variant-numeric:tabular-nums; }
+    .spend-breach-note { color:var(--serious); font-size:12px; font-weight:700; }
+    .spend-breach-detail,.spend-breach-relief { color:var(--dim); font-size:12px; line-height:1.5; }
     .spend-account,.spend-row { padding:14px; display:grid; gap:12px; min-width:0; }
     .spend-account-top { display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap; }
     .spend-account-name { font-weight:720; overflow:hidden; text-overflow:ellipsis; }
@@ -210,6 +246,215 @@ export const SPEND_SECTION: SpendSection = {
         return card;
       }
 
+      // Glyph, then word, then colour, in that order of importance — the same
+      // order the repository screen uses and for the same reason: on a phone in
+      // sunlight the shape is the channel that survives, and the word is what a
+      // screen reader reads. The words are the desktop's own words for these
+      // three lines, so one product does not call one state two things on two
+      // screens. Only the over-budget glyph differs: the Mac marks it with a
+      // cross, and on this page a cross already means a read that failed.
+      const SPEND_BUDGET_SHAPE = {
+        'over-budget': { glyph: '■', word: 'Over budget', tone: 'alert' },
+        'warning-threshold': { glyph: '!', word: 'Past warning', tone: 'serious' },
+        'projected-over': { glyph: '▲', word: 'Trending over', tone: 'serious' },
+        unknown: { glyph: '?', word: 'Not recognised', tone: 'serious' },
+      };
+
+      const SPEND_LIMIT_SHAPE = {
+        past: { glyph: '■', word: 'Past its limit', tone: 'alert' },
+        control: { glyph: '⊘', word: 'Provider control', tone: 'alert' },
+        near: { glyph: '!', word: 'Close to its limit', tone: 'serious' },
+        stale: { glyph: '○', word: 'Reading is old', tone: 'serious' },
+      };
+
+      // An account with no reading is four different true sentences, and which
+      // one it is comes from the state the Mac reported rather than from
+      // reading its explanation back apart. 'Wanigan cannot ask' is not a
+      // failure and does not wear a failure's glyph.
+      const SPEND_UNREAD_SHAPE = {
+        'signed-out': { glyph: '○', word: 'Signed out', tone: 'serious' },
+        unsupported: { glyph: '○', word: 'Wanigan cannot ask', tone: 'quiet' },
+        unreadable: { glyph: '✕', word: 'Could not be read', tone: 'alert' },
+        ok: { glyph: '·', word: 'No limit reported', tone: 'quiet' },
+        stale: { glyph: '○', word: 'Reading is old', tone: 'serious' },
+      };
+
+      function spendChip(shape) {
+        const chip = node('span', 'spend-chip');
+        const glyph = node('span', '', shape.glyph);
+        glyph.setAttribute('aria-hidden', 'true');
+        chip.append(glyph, node('span', '', shape.word));
+        chip.setAttribute('data-tone', shape.tone);
+        return chip;
+      }
+
+      function spendBreachCard(name, shape, where) {
+        const card = node('article', 'card spend-breach');
+        const top = node('div', 'spend-breach-top');
+        top.append(node('div', 'spend-breach-name', name), spendChip(shape));
+        card.append(top);
+        if (where) card.append(node('p', 'spend-breach-where', where));
+        return card;
+      }
+
+      // The month a budget's figures cover. A run rate is unreadable without
+      // how far into the month it was taken, and 'day 2 of 30' is what tells
+      // an operator the projection is noisy.
+      function spendMonthWords(row) {
+        const month = row.monthLabel || 'this month';
+        return row.daysInMonth > 0
+          ? month + ' · day ' + row.daysElapsed + ' of ' + row.daysInMonth
+          : month;
+      }
+
+      // The word that qualifies the figure leads the line it qualifies. Only
+      // the run rate is arithmetic about days that have not happened, and it is
+      // the only line that opens with 'estimate' — and it repeats the Mac's own
+      // sentence about what a run rate is, because a projection printed beside
+      // two measured figures is otherwise read as a third one.
+      function spendBudgetFigure(row) {
+        const against = ' of a ' + dollars(row.limitUsd) + ' monthly budget';
+        if (row.reason === 'projected-over') {
+          return 'estimate · ' + dollars(row.spentUsd) + ' spent so far. At that rate the month ends near ' +
+            dollars(row.projectedUsd) + ' against a ' + dollars(row.limitUsd) +
+            ' budget — a run rate from the days so far, not a forecast.';
+        }
+        if (row.reason === 'over-budget') {
+          return 'measured · ' + dollars(row.spentUsd) + ' spent' + against + ' — over by ' +
+            dollars(row.spentUsd - row.limitUsd) + '.';
+        }
+        if (row.reason === 'warning-threshold') {
+          return 'measured · ' + dollars(row.spentUsd) + ' spent' + against + ', past the ' +
+            row.warnPercent + '% warning line at ' + dollars(row.warnUsd) + '.';
+        }
+        return 'measured · ' + dollars(row.spentUsd) + ' spent' + against + '.';
+      }
+
+      function spendBudgetCard(row) {
+        const shape = SPEND_BUDGET_SHAPE[row.reason] || SPEND_BUDGET_SHAPE.unknown;
+        const card = spendBreachCard(row.scopeName, shape, spendMonthWords(row));
+        card.append(node('p', 'spend-breach-figure', spendBudgetFigure(row)));
+        if (row.reason === 'unknown') {
+          card.append(node('p', 'spend-breach-note',
+            'Wanigan does not recognise which line this budget crossed, so only what it measured is shown.'));
+        }
+        return card;
+      }
+
+      function spendLimitShape(row) {
+        if (row.reason === 'unread') return SPEND_UNREAD_SHAPE[row.accountState] || SPEND_UNREAD_SHAPE.unreadable;
+        return SPEND_LIMIT_SHAPE[row.reason] || SPEND_UNREAD_SHAPE.unreadable;
+      }
+
+      // What was measured, and how old that measurement is. Never a rate and
+      // never a crossing time: one reading is not a series, so the moment a
+      // window went past its limit was not observed and there is nothing here
+      // to project from. The observed value and the age of the reading holding
+      // it are the whole of the evidence, which is what makes this a state
+      // rather than a rumour.
+      function spendLimitFigure(row) {
+        const parts = [];
+        if (row.usedPercent !== null) parts.push('measured at ' + row.usedPercent + '% used');
+        const age = spendAge(row.readAgeMs);
+        if (age) parts.push('read ' + age + ' ago');
+        else if (row.readAgeMs === null) parts.push('never read');
+        const reset = spendReset(row);
+        if (reset) parts.push(reset);
+        return parts.join(' · ');
+      }
+
+      function spendLimitCard(row) {
+        const where = row.harnessLabel + (row.kind ? ' · ' + spendWindowTitle(row) : ' account');
+        const card = spendBreachCard(row.accountLabel, spendLimitShape(row), where);
+        const figure = spendLimitFigure(row);
+        if (figure) card.append(node('p', 'spend-breach-figure', figure));
+        // Said once. An entry that is already on the list because its reading
+        // is old does not need telling twice.
+        if (row.reason !== 'stale' && spendStale(row)) {
+          card.append(node('p', 'spend-breach-note',
+            'That reading is older than Wanigan calls current, so it may have moved since.'));
+        }
+        if (row.detail) card.append(node('p', 'spend-breach-detail', row.detail));
+        if (row.relief) {
+          card.append(node('p', 'spend-breach-relief', row.relief.accountLabel + ' is at ' +
+            row.relief.usedPercent + '% on the same window. Choose the account when you start a session.'));
+        }
+        return card;
+      }
+
+      // What a clear screen is allowed to claim, built only out of what was
+      // actually read. A budget nobody set was not checked, and an account that
+      // reported no window was not read — so neither contributes a clause, and
+      // with no clauses at all the honest answer is that nothing has been
+      // established rather than that everything is fine.
+      // A budget read that failed is not a budget that is fine, and it is the
+      // one sentence on this screen that has to survive being read quickly.
+      const SPEND_BUDGETS_UNREAD =
+        'Wanigan could not read your budgets, so nothing here says whether one is over.';
+
+      function spendClearNote() {
+        const parts = [];
+        const budgets = Number(spendPayload.budgetsCapped) || 0;
+        const windows = Number(spendPayload.clearWindows) || 0;
+        // A budget nobody set was never checked, so it contributes no clause. A
+        // clear claim is only as wide as what was actually read.
+        if (spendPayload.budgetsRead && budgets > 0) {
+          parts.push(budgets === 1
+            ? 'the one budget you set is not past its line'
+            : 'none of the ' + budgets + ' budgets you set is past its line');
+        }
+        if (windows > 0) {
+          parts.push(windows === 1
+            ? 'the one limit window it read is below ' + spendPayload.nearPercent + '% used'
+            : 'none of the ' + windows + ' limit windows it read is at or above ' +
+              spendPayload.nearPercent + '% used');
+        }
+        return parts.length ? 'Wanigan checked: ' + parts.join(', ') + '.' : '';
+      }
+
+      function paintSpendBreaches(box) {
+        const budgets = spendPayload.budgetBreaches || [];
+        const limits = spendPayload.limitBreaches || [];
+        const cards = [];
+        // Money first, because a budget is the line this operator drew, and the
+        // provider ceilings below are lines somebody else drew.
+        cards.push(...budgets.map(spendBudgetCard));
+        if (spendPayload.budgetBreachesOmitted > 0) {
+          cards.push(node('p', 'spend-breach-detail', 'And ' + spendPayload.budgetBreachesOmitted +
+            ' more budget' + (spendPayload.budgetBreachesOmitted === 1 ? '' : 's') + ' past a line, on the Mac.'));
+        }
+        cards.push(...limits.map(spendLimitCard));
+        if (spendPayload.limitBreachesOmitted > 0) {
+          cards.push(node('p', 'spend-breach-detail', 'And ' + spendPayload.limitBreachesOmitted +
+            ' more account reading' + (spendPayload.limitBreachesOmitted === 1 ? '' : 's') + ' that is not clear, on the Mac.'));
+        }
+        if (cards.length) {
+          // Above the cards, because a list that is missing a whole class of
+          // line has to say so before it is read as the complete answer.
+          if (!spendPayload.budgetsRead) cards.unshift(node('p', 'spend-breach-note', SPEND_BUDGETS_UNREAD));
+          box.replaceChildren(...cards);
+          return;
+        }
+        // Nothing is over anything — which is a claim about the Mac, so it is
+        // only made once a poll has actually returned.
+        if (!ui.observed()) { box.replaceChildren(ui.reading('what is past a limit')); return; }
+        const note = spendClearNote();
+        if (!spendPayload.budgetsRead) {
+          // Narrowed to what was read rather than dropped. The accounts were
+          // read and saying so is the reason this screen was opened; what it
+          // must not say is that nothing at all is over a line.
+          box.replaceChildren(note
+            ? ui.empty('Nothing Wanigan could read is over its limit.', SPEND_BUDGETS_UNREAD + ' ' + note)
+            : ui.empty('Nothing has been established here yet.', SPEND_BUDGETS_UNREAD +
+              ' No account reported a limit window it could read either, so there is no line to be past.'));
+          return;
+        }
+        box.replaceChildren(note
+          ? ui.empty('Nothing is over its limit.', note)
+          : ui.empty('Nothing has been established here yet.',
+            'No budget carries a cap and no account reported a limit window Wanigan could read, so there is no line to be past.'));
+      }
+
       function spendFact(label, value) {
         const fact = node('div', 'spend-fact');
         fact.append(node('span', '', label), node('strong', '', value));
@@ -268,14 +513,18 @@ export const SPEND_SECTION: SpendSection = {
       }
 
       function paintSpend() {
+        const breachBox = byId('spend-breaches');
         const limitsBox = byId('spend-limits'), costBox = byId('spend-cost');
         if (!spendPayload) {
+          const over = 'what is past a limit';
           const left = 'what each account has left', cost = 'what the fleet has cost';
+          breachBox.replaceChildren(spendFailure ? ui.failed(over, spendFailure, spendRetry) : ui.reading(over));
           limitsBox.replaceChildren(spendFailure ? ui.failed(left, spendFailure, spendRetry) : ui.reading(left));
           costBox.replaceChildren(spendFailure ? ui.failed(cost, spendFailure, spendRetry) : ui.reading(cost));
           text('spend-window-note', 'Wanigan’s own record of what ran.');
           return;
         }
+        paintSpendBreaches(breachBox);
         // Drawn from the window the Mac answered for. A heading drawn from what
         // this page asked for can caption fourteen days of figures "last 30
         // days" and never notice it is doing it.

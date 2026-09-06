@@ -1022,7 +1022,7 @@ export default function App() {
     <AnnounceProvider onError={announceError}>
     <ViewMemoryProvider>
       {startup?.phase === 'recovery' && (
-        <section className="startup-recovery" role="alert" aria-live="assertive">
+        <section className="startup-recovery" role="alert">
           <div>
             <strong>Wanigan is open in recovery mode.</strong>
             <span>{startup.stage ?? 'Startup'}: {startup.message ?? 'Unknown local-data error.'}</span>

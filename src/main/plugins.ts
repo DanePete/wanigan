@@ -53,9 +53,48 @@ export type InstalledPlugin = {
   bytes: number;
 };
 
+/**
+ * Where a catalog row's code actually comes from.
+ *
+ * A catalog row is an offer, not an installation, and accepting one runs code
+ * on this machine — so the screen that asks for that consent has to be able to
+ * name the origin. Two readers record it and they agree: the marketplace's own
+ * `.claude-plugin/marketplace.json`, and the rows of
+ * `claude plugin list --json --available`. Three shapes are real here today:
+ *
+ *   { source: 'url',        url, sha }             a repository of its own
+ *   { source: 'git-subdir', url, path, ref, sha }  one directory of one
+ *   "./plugins/<name>"                             a path inside the marketplace
+ *
+ * `repo` is the key `known_marketplaces.json` uses for a MARKETPLACE's origin,
+ * and it appears on no plugin row in either reader. The object branch below
+ * used to read that key alone, which resolved every object-shaped row to null
+ * while looking like it worked. It stays as a branch because a record may carry
+ * it, not because one here does.
+ *
+ * Nothing below derives an origin. An unrecorded source returns null so the
+ * screen can say so: an unknown origin is a stronger reason to hesitate than a
+ * known one, and filling it in from the marketplace name would turn the
+ * catalog's own address into a claim about the plugin's.
+ */
+export type PluginSource = {
+  /** The `source.source` discriminator as recorded, or 'path' for a bare string. */
+  kind: string;
+  /** Verbatim from the metadata — a URL, an owner/repo, or a path. Never built. */
+  origin: string;
+  /** True when `origin` is a path inside the marketplace checkout, not a remote. */
+  local: boolean;
+  /** The directory of `origin` this plugin occupies, when the record names one. */
+  subpath: string | null;
+  /** The ref or commit the record pins, when it pins one. */
+  pinned: string | null;
+};
+
 export type AvailablePlugin = {
   id: string; name: string; marketplace: string;
   description: string | null; installed: boolean; path: string;
+  /** Null when no source is recorded for this row. Never the marketplace's own. */
+  source: PluginSource | null;
 };
 
 export type MarketplaceInfo = {
@@ -165,6 +204,66 @@ function manifestOf(dir: string): { description: string | null; author: string |
   };
 }
 
+const REMOTE_URL = /^[a-z][a-z0-9+.-]*:\/\//i;
+
+function text(v: unknown): string | null {
+  return typeof v === 'string' && v.trim().length > 0 && v.length <= 2048 ? v.trim() : null;
+}
+
+/** One recorded source, in whichever of the shapes above it arrives. */
+export function readSource(raw: unknown): PluginSource | null {
+  const bare = text(raw);
+  if (bare !== null) {
+    const remote = REMOTE_URL.test(bare);
+    return { kind: remote ? 'url' : 'path', origin: bare, local: !remote, subpath: null, pinned: null };
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const origin = text(o.url) ?? text(o.repo) ?? text(o.path);
+  if (origin === null) return null;
+  const kind = text(o.source) ?? (text(o.url) !== null ? 'url' : text(o.repo) !== null ? 'github' : 'path');
+  return {
+    kind,
+    origin,
+    local: !REMOTE_URL.test(origin) && kind !== 'github',
+    // Null when the path IS the origin, so a bare directory is not reported as
+    // a subdirectory of itself.
+    subpath: origin === text(o.path) ? null : text(o.path),
+    pinned: text(o.ref) ?? text(o.sha),
+  };
+}
+
+/**
+ * Every plugin a marketplace declares, keyed by the directory name the catalog
+ * scan walks.
+ *
+ * The marketplace manifest is the only place on disk that records a catalog
+ * row's origin, and it is read once per marketplace because the loop that needs
+ * it runs over every cloned directory. `renames` maps a plugin's former name to
+ * its current one: a directory cloned before a rename still carries the old
+ * name, and without this the row would report no recorded source while the
+ * manifest holds one — a false unknown, which is the one mistake this field
+ * must not make in either direction.
+ */
+function marketplaceSources(mkt: string): Map<string, unknown> {
+  const out = new Map<string, unknown>();
+  const j = readJson(path.join(MARKETPLACES, mkt, '.claude-plugin', 'marketplace.json'));
+  if (!j) return out;
+  const rows: unknown[] = Array.isArray(j.plugins) ? (j.plugins as unknown[]) : [];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    const o = row as Record<string, unknown>;
+    if (typeof o.name === 'string' && o.source !== undefined) out.set(o.name, o.source);
+  }
+  const renames = j.renames;
+  if (renames && typeof renames === 'object' && !Array.isArray(renames)) {
+    for (const [was, now] of Object.entries(renames as Record<string, unknown>)) {
+      if (typeof now === 'string' && out.has(now) && !out.has(was)) out.set(was, out.get(now));
+    }
+  }
+  return out;
+}
+
 /* ── the scan ────────────────────────────────────────────────────────── */
 
 let cache: { at: number; value: PluginState } | null = null;
@@ -213,6 +312,7 @@ export function readPlugins(): PluginState {
   let markets: string[] = [];
   try { markets = fs.readdirSync(MARKETPLACES); } catch { /* none yet */ }
   for (const mkt of markets) {
+    const sources = marketplaceSources(mkt);
     for (const bucket of ['plugins', 'external_plugins']) {
       const base = path.join(MARKETPLACES, mkt, bucket);
       let names: string[];
@@ -225,6 +325,10 @@ export function readPlugins(): PluginState {
           id, name: n, marketplace: mkt, path: dir,
           description: manifestOf(dir).description,
           installed: installedIds.has(id),
+          // The marketplace's manifest, not the plugin's own plugin.json: where
+          // a plugin came from is a fact about the offer, and a plugin cannot be
+          // the authority on its own provenance.
+          source: readSource(sources.get(n)),
         });
       }
     }
@@ -350,7 +454,7 @@ export function pluginFile(p: string): { text: string; truncated: boolean; bytes
 
 export type CatalogPlugin = {
   id: string; name: string; marketplace: string; description: string;
-  installed: boolean; enabled: boolean; source: string | null;
+  installed: boolean; enabled: boolean; source: PluginSource | null;
 };
 
 export type PluginAction = { ok: boolean; output: string; error: string | null };
@@ -446,7 +550,6 @@ export async function catalog(): Promise<{ plugins: CatalogPlugin[]; note: strin
   const plugins = rows.map((r) => {
     const id = String(r.pluginId ?? r.id ?? '');
     const hit = installedById.get(id);
-    const src = r.source;
     return {
       id,
       name: String(r.name ?? id.split('@')[0]),
@@ -454,9 +557,7 @@ export async function catalog(): Promise<{ plugins: CatalogPlugin[]; note: strin
       description: String(r.description ?? ''),
       installed: Boolean(hit),
       enabled: hit?.enabled ?? false,
-      source: typeof src === 'string' ? src
-        : src && typeof src === 'object' && typeof (src as { repo?: unknown }).repo === 'string'
-          ? String((src as { repo: string }).repo) : null,
+      source: readSource(r.source),
     };
   }).sort((a, b) => a.name.localeCompare(b.name));
 

@@ -11,8 +11,9 @@ type Installed = {
   skills: Component[]; commands: Component[]; agents: Component[];
   hookEvents: string[]; mcpServers: string[]; hasReadme: boolean; present: boolean; bytes: number;
 };
-type Available = { id: string; name: string; marketplace: string; description: string | null; installed: boolean; path: string };
-type CatalogItem = { id: string; name: string; marketplace: string; description: string; installed: boolean; enabled: boolean; source: string | null };
+type Src = { kind: string; origin: string; local: boolean; subpath: string | null; pinned: string | null };
+type Available = { id: string; name: string; marketplace: string; description: string | null; installed: boolean; path: string; source: Src | null };
+type CatalogItem = { id: string; name: string; marketplace: string; description: string; installed: boolean; enabled: boolean; source: Src | null };
 type Action = { ok: boolean; output: string; error: string | null };
 type Market = { name: string; source: string; installLocation: string; lastUpdated: number | null; present: boolean };
 type State = {
@@ -21,6 +22,31 @@ type State = {
 };
 
 const kb = (b: number) => (b < 1024 ? `${b} B` : b < 1048576 ? `${Math.round(b / 1024)} KB` : `${(b / 1048576).toFixed(1)} MB`);
+
+/**
+ * Where an offered plugin's code comes from, said at the moment of consent.
+ *
+ * The catalog is a list of offers, and accepting one runs code on this machine,
+ * so the dialog that answers the CLI on your behalf has to name the origin.
+ * The marketplace records it per plugin and Wanigan repeats that field; nothing
+ * here is derived. Three things this must not do: go blank when no source is
+ * recorded, put the marketplace's own address there instead — the catalog's
+ * address is not the plugin's — or call any of it checked, contained or safe.
+ * Naming an origin is not a judgement about one.
+ */
+function origin(s: Src | null, marketplace: string) {
+  if (!s) {
+    return <>Nothing in the <span className="mono">{marketplace}</span> manifest records where this
+      plugin comes from, so Wanigan cannot name what installing it will fetch.</>;
+  }
+  if (s.local) {
+    return <>Recorded source: <span className="mono">{s.origin}</span> — a path inside the{' '}
+      <span className="mono">{marketplace}</span> checkout, not a remote of its own.</>;
+  }
+  return <>Recorded source: <span className="mono">{s.origin}</span>
+    {s.subpath && <>, directory <span className="mono">{s.subpath}</span></>}
+    {s.pinned && <>, pinned at <span className="mono">{s.pinned}</span></>}.</>;
+}
 
 /**
  * What is known about whether Claude Code currently has a plugin switched on.
@@ -149,7 +175,7 @@ export default function Plugins() {
     const s = q.trim().toLowerCase();
     const rows: CatalogItem[] = cat ?? (st?.available ?? []).map((a) => ({
       id: a.id, name: a.name, marketplace: a.marketplace,
-      description: a.description ?? '', installed: a.installed, enabled: false, source: null,
+      description: a.description ?? '', installed: a.installed, enabled: false, source: a.source,
     }));
     if (!s) return rows;
     return rows.filter((a) => a.name.toLowerCase().includes(s) || a.description.toLowerCase().includes(s));
@@ -467,8 +493,10 @@ export default function Plugins() {
               <div style={{ marginBottom: 10 }}>
                 <Note tone="warn">
                   <strong>Install {confirming.name}?</strong> A plugin can ship hooks, an MCP server or an LSP —
-                  code that runs on this machine. Wanigan has no terminal to answer the CLI's own prompt, so it
-                  passes <span className="mono">-y</span>, which accepts the marketplace-declared install command
+                  code that runs on this machine.
+                  <br />{origin(confirming.source, confirming.marketplace)}
+                  <br />Wanigan has no terminal to answer the CLI's own prompt, so it passes{' '}
+                  <span className="mono">-y</span>, which accepts the marketplace-declared install command
                   on your behalf. This dialog is that prompt.
                   <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
                     <button className="btn btn-primary" disabled={!!working}

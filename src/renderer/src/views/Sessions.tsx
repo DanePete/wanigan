@@ -4,6 +4,7 @@ import type {
 } from '@shared/types';
 import { EFFORT_LEVELS, TRUST_LEVELS, trustCopy, trustGlyph } from '@shared/types';
 import { providerTint } from '@shared/provider-status';
+import { applyUnreadCounts } from '@shared/unread';
 import TerminalPane, { disposePane } from '../components/TerminalPane';
 import Composer from '../components/Composer';
 import NewSessionDialog from '../components/NewSessionDialog';
@@ -222,32 +223,8 @@ export default function Sessions({
   // React state does not change until the next render. The ref closes the
   // same-tick gap so a double click cannot launch two writers for one thread.
   const resumePendingRef = useRef(false);
-  // Unread increments waiting to be folded into the list in one pass.
-  const unreadPending = useRef(new Map<string, number>());
-  const unreadTimer = useRef<number | undefined>(undefined);
   activeRef.current = activeId;
   sessionsRef.current = sessions;
-
-  const flushUnread = useCallback(() => {
-    unreadTimer.current = undefined;
-    const pending = unreadPending.current;
-    if (!pending.size) return;
-    const batch = new Map(pending);
-    pending.clear();
-    setSessions((prev) => {
-      let changed = false;
-      const next = prev.map((s) => {
-        const add = batch.get(s.id);
-        // A session selected during the window has already been read; its
-        // badge was cleared by select(), and re-adding here would resurrect it.
-        if (!add || s.id === activeRef.current) return s;
-        changed = true;
-        return { ...s, unread: s.unread + add };
-      });
-      // Identity matters: an unchanged array skips the whole rail re-render.
-      return changed ? next : prev;
-    });
-  }, []);
 
   // The shell can ask for a new interactive session from any route. Consume
   // the request immediately after opening the dialog: returning to Sessions
@@ -350,42 +327,29 @@ export default function Sessions({
   }
 
   useEffect(() => {
-    const offData = window.wanigan.on.data(({ sessionId, data }) => {
-      // Writing the bytes into the terminal is not this view's job and never
-      // was: App.tsx runs startTerminalOutputPump for the window's lifetime, so
-      // output arriving while you are on another tab still lands. What is left
-      // here is the unread accounting, which only means anything while the
-      // session list is on screen.
-      if (sessionId === activeRef.current) return;
-      /*
-       * A chunk arrives per burst of agent output, and rebuilding every session
-       * object in the list for each one made an unread badge cost a full
-       * re-render of the rail and the tab strip. The increments are collected
-       * and applied together instead; the badge is a count, not a clock.
-       */
-      unreadPending.current.set(sessionId, (unreadPending.current.get(sessionId) ?? 0) + 1);
-      if (unreadTimer.current === undefined) {
-        unreadTimer.current = window.setTimeout(flushUnread, 250);
-      }
+    // The count is main's now, and it had to be. This view counted output from
+    // its own `session:data` subscription, and App.tsx unmounts it on every tab
+    // change — so the badge counted nothing during the only stretch a badge is
+    // for, and the number that survived leaving the view was the old one being
+    // carried forward by the handler below rather than anything observed.
+    // Main sees every chunk whatever tab is on screen, and it knows which
+    // session that is, so it owns both halves of the question.
+    const offUnread = window.wanigan.on.unread((counts) => {
+      setSessions((prev) => applyUnreadCounts(prev, counts));
     });
-    const offList = window.wanigan.on.sessions((list) => {
-      setSessions((prev) => {
-        const unread = new Map(prev.map((s) => [s.id, s.unread]));
-        return list.map((s) => ({ ...s, unread: s.id === activeRef.current ? 0 : (unread.get(s.id) ?? 0) }));
-      });
-    });
-    return () => {
-      offData(); offList();
-      window.clearTimeout(unreadTimer.current);
-      unreadTimer.current = undefined;
-    };
-  }, [flushUnread]);
+    // The pushed list can now simply be used. It used to have its `unread`
+    // overwritten from local state on arrival, because main's copy was the one
+    // nothing maintained; that is the wrong way round today.
+    const offList = window.wanigan.on.sessions((list) => setSessions(list));
+    return () => { offUnread(); offList(); };
+  }, []);
 
   const select = useCallback((id: string) => {
     onActiveChange(id, sessions.find((session) => session.id === id)?.projectId);
-    // Drop anything queued for this session too, or the next flush would put
-    // the badge straight back on the tab you are now looking at.
-    unreadPending.current.delete(id);
+    // Clear it here as well as in main. markRead below is the authority and
+    // answers within a frame or two, but the badge sits on the tab now filling
+    // the screen, and a badge that outlives the click by a round trip reads as
+    // one the click failed to clear.
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, unread: 0 } : s)));
     if (sessionPickerCompact) {
       setSessionPickerOpen(false);
@@ -667,9 +631,18 @@ export default function Sessions({
                               {multiAccount && s.accountLabel && ` · ${s.accountLabel}`}
                             </span>
                           </span>
+                          {/* One increment is one second in which output
+                              arrived while you were elsewhere — not one
+                              message, which is what a bare number beside a
+                              chat-shaped list is read as. The sentence is on
+                              the badge because the digit cannot carry it, and
+                              it is the accessible name because a lone integer
+                              announces as nothing at all. */}
                           {s.unread > 0 && s.id !== activeId && (
                             <span className="pill" style={{ background: 'var(--accent-soft)', color: 'var(--accent)',
-                                                            fontVariantNumeric: 'tabular-nums' }}>
+                                                            fontVariantNumeric: 'tabular-nums' }}
+                                  title={`Output arrived ${s.unread} times while this session was not on screen`}
+                                  aria-label={`Output arrived ${s.unread} times while this session was not on screen`}>
                               {s.unread > 99 ? '99+' : s.unread}
                             </span>
                           )}

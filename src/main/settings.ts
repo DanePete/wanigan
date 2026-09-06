@@ -61,7 +61,8 @@ export function flags() {
 }
 
 /**
- * Whether a paired phone or iPad may read this Mac's working trees.
+ * Whether a paired phone or iPad may read this Mac's working trees, run a
+ * project's saved review gate, and commit what git already tracks.
  *
  * Every other route the phone monitor serves keeps the promise stated at the
  * top of mobile/snapshot.ts: no filesystem path, pid, worktree or transcript
@@ -71,9 +72,11 @@ export function flags() {
  * agent console quietly includes. Turning either of those on does not turn this
  * on, and it is off on every install and every upgrade.
  *
- * mobile/git.ts is the only reader. Its routes carry the dispatcher's 'repo'
- * scope, so they answer 403 until this is true, and the paths they do send are
- * relative to the project rather than to the disk.
+ * mobile/git.ts is the only module behind this scope. Its five routes carry the
+ * dispatcher's 'repo' scope — three reads and two writes — so they answer 403
+ * until this is true; the paths they send are relative to the project rather
+ * than to the disk, the writes never add an untracked file, and none of them
+ * pushes.
  */
 export function mobileRepositoryReview(): boolean {
   return bool('mobile_repository_review', false);

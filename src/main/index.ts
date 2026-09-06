@@ -2,10 +2,9 @@ import { app, BrowserWindow, ipcMain, dialog, shell, session } from 'electron';
 import type { WebContents, WebFrameMain } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  detectProviders, effectiveProviderBackendId, providerById, providerPackRegistry, refreshProviderPacks,
+  detectProviders, effectiveProviderBackendId, launchFieldsFor, providerById, providerPackRegistry, refreshProviderPacks,
   runsClaudeCli, usesAnthropicAccount,
 } from './providers';
 import {
@@ -13,6 +12,7 @@ import {
   killSession, closeSession, scrollback, markRead, shutdownAll, sessionBaseline, interruptSession,
   pastSessions, forgetPastSession, recoverExactCodexThread, setSessionExitObserver,
   setSessionTuning, setConversationFlag, renameSession, redirectsAnthropicApiFor,
+  setFocusedSession,
 } from './sessions';
 import { listProjects, addProject, removeProject, refreshBranches, projectById } from './store';
 import * as batch from './batch';
@@ -28,9 +28,9 @@ import type {
   ProviderInfo, ProviderManifestInspection, QueueSlots, RunConfig, Session,
   SourceConfig, ThemeSetting, TrustLevel,
 } from '../shared/types';
-import { EFFORT_LEVELS } from '../shared/types';
 import { assertManagedRoot, assertOpenablePath } from './roots';
 import { installApplicationMenu } from './menu';
+import { adapterTrustPrompt, manifestTrustPrompt } from './pack-consent';
 
 // ── phases 1-24 ────────────────────────────────────────────────────────
 import * as otel from './otel';
@@ -48,12 +48,13 @@ import * as notify from './notify';
 import * as mobile from './mobile';
 import { mobileFleetSnapshot } from './fleet-snapshot';
 import * as tailnet from './tailnet';
-import { mobileLaunchProviders } from './mobile/launch-options';
+import { configureMobileLaunchPinSource, mobileLaunchProviders } from './mobile/launch-options';
 import * as awake from './awake';
 import { qrSvg } from '../shared/qr';
 import * as skills from './skills';
 import * as plugins from './plugins';
 import { glmModels, verifyGlmKey } from './glm';
+import { providerModelCatalogue } from './launch-choices';
 import { deepseekModels, verifyDeepSeekKey } from './deepseek';
 import * as gitOps from './git';
 import * as gh from './gh';
@@ -455,155 +456,6 @@ function marketplaceSource(value: unknown): string {
   return source;
 }
 
-type ModelChoice = { value: string; label: string };
-
-/**
- * Model aliases each built-in backend publishes.
- *
- * Keyed on the BACKEND, never on the profile. Which models exist is a property
- * of the service being called: 'anthropic' answers for any profile pointed at
- * Anthropic no matter what that profile is named, and a pack that points the
- * same harness somewhere else does not inherit the list by accident. spend.ts
- * already draws this line in the same place and for the same reason.
- *
- * It is the last resort, not the rule — see providerModelChoices.
- */
-/** Bounds for the Codex model probe — it runs while a picker is rendering. */
-const CODEX_MODELS_TIMEOUT_MS = 4_000;
-const CODEX_MODELS_MAX_BYTES = 512 * 1024;
-
-const PUBLISHED_BACKEND_MODELS: Record<string, ModelChoice[]> = {
-  anthropic: [
-    { value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' },
-    { value: 'haiku', label: 'Haiku' }, { value: 'fable', label: 'Fable' },
-  ],
-  openai: [
-    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
-    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
-    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
-  ],
-};
-
-/**
- * Backends Wanigan can ask for a live catalogue, because it holds the
- * credential that call needs — the same two ids managedProviderCredentialId
- * governs, keyed the same way.
- */
-const LIVE_BACKEND_MODELS: Record<string, (provider: ProviderInfo) => Promise<ModelChoice[]>> = {
-  zai: async () => (await glmModels()).models.map((m) => ({ value: m.id, label: m.label })),
-  deepseek: async () => (await deepseekModels()).models.map((m) => ({ value: m.id, label: m.label })),
-  openai: (provider) => codexModels(provider),
-};
-
-/**
- * Ask the installed Codex CLI what it can run, rather than shipping a list that
- * is wrong the day OpenAI names a new model.
- *
- * `codex app-server` speaks JSON-RPC over stdio and answers `model/list` with
- * the ids, display names and per-model reasoning efforts the binary actually
- * accepts. That is the authority: a model this build has never heard of is a
- * launch failure no matter what Wanigan offers, and a model it gained this
- * morning works without anyone editing this file.
- *
- * Bounded on every axis, because it runs on the launch path: no credential is
- * passed, output is capped, and the child is killed on the timeout, on a parse
- * failure and on the success path alike — an unbounded probe that spawns a
- * process per picker render is worse than a stale list.
- */
-async function codexModels(provider: ProviderInfo): Promise<ModelChoice[]> {
-  const bin = provider.path;
-  if (!bin) return [];
-  return new Promise<ModelChoice[]>((resolve) => {
-    let child: ReturnType<typeof spawn> | null = null;
-    let out = '';
-    let settled = false;
-    const finish = (models: ModelChoice[]) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      // Terminate on every path, not just the error one: a probe that leaves an
-      // app-server behind on success leaks one process per refresh.
-      try { child?.kill('SIGKILL'); } catch { /* already gone is the outcome we wanted */ }
-      resolve(models);
-    };
-    const timer = setTimeout(() => finish([]), CODEX_MODELS_TIMEOUT_MS);
-    try {
-      child = spawn(bin, ['app-server'], { stdio: ['pipe', 'pipe', 'ignore'] });
-    } catch { return finish([]); }
-    child.on('error', () => finish([]));
-    child.on('exit', () => finish([]));
-    child.stdout?.on('data', (chunk: Buffer) => {
-      out += chunk.toString('utf8');
-      if (out.length > CODEX_MODELS_MAX_BYTES) return finish([]);
-      for (const line of out.split('\n')) {
-        if (!line.trim()) continue;
-        let msg: { id?: unknown; result?: { data?: unknown } };
-        try { msg = JSON.parse(line); } catch { continue; }
-        if (msg.id !== 2) continue;
-        const rows = Array.isArray(msg.result?.data) ? msg.result.data : [];
-        finish(rows
-          .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object')
-          // `hidden` is the CLI's own word for a model it lists but does not
-          // want offered; honour it rather than second-guessing it.
-          .filter((row) => row.hidden !== true)
-          .map((row) => ({
-            value: String(row.id ?? row.model ?? ''),
-            label: String(row.displayName ?? row.id ?? ''),
-          }))
-          .filter((choice) => choice.value !== ''));
-        return;
-      }
-    });
-    child.stdin?.on('error', () => finish([]));
-    child.stdin?.write(JSON.stringify({
-      jsonrpc: '2.0', id: 1, method: 'initialize',
-      params: { clientInfo: { name: 'wanigan', version: app.getVersion() } },
-    }) + '\n');
-    child.stdin?.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'model/list', params: {} }) + '\n');
-  });
-}
-
-/** The choices a profile's own launch field declares, which is the manifest's
- *  existing mechanism for saying what a profile accepts. */
-function declaredChoices(provider: ProviderInfo, fieldId: string): ModelChoice[] {
-  const field = provider.launchFields?.find((value) => value.id === fieldId);
-  return (field?.options ?? []).map((option) => ({ value: option.value, label: option.label }));
-}
-
-/**
- * What to offer for a provider's model, in the order Wanigan can vouch for it.
- *
- * This used to be a table keyed on four hardcoded profile ids, which is the
- * shape CLAUDE.md forbids: a pack declaring its own models got an empty picker,
- * a renamed built-in got somebody else's list, and neither could be fixed
- * without editing this file. The manifest wins, then the backend Wanigan can
- * ask, then what that backend publishes.
- */
-async function providerModelChoices(provider: ProviderInfo): Promise<ModelChoice[]> {
-  const declared = declaredChoices(provider, 'model');
-  if (declared.length) return declared;
-  const live = provider.backendId ? LIVE_BACKEND_MODELS[provider.backendId] : undefined;
-  if (live) {
-    // One backend that will not answer must not empty the whole picker, and a
-    // stale cached list is better than claiming the provider has no models.
-    try { return await live(provider); } catch { return []; }
-  }
-  return (provider.backendId ? PUBLISHED_BACKEND_MODELS[provider.backendId] : undefined) ?? [];
-}
-
-/**
- * Effort values the profile itself declares.
- *
- * The previous list appended 'ultra' whenever the id read 'codex' — a value no
- * manifest declares, so picking it produced an argv entry the profile's own
- * select rejects. EFFORT_LEVELS stands in only for a legacy definition that
- * carries no launch fields at all.
- */
-function providerEffortChoices(provider: ProviderInfo): string[] {
-  if (!provider.supports.effort) return [];
-  const declared = declaredChoices(provider, 'effort').map((choice) => choice.value);
-  return declared.length ? declared : [...EFFORT_LEVELS];
-}
 
 /**
  * Which provider an unattended run uses when the request did not name one.
@@ -1174,6 +1026,18 @@ function configureMobileSources(): void {
       otel.usageForMany(sessions.map((value) => value.id)),
     );
   });
+  // Which projects have an agent running, and nothing else about them. The pin
+  // screen states in the past tense how many sessions were already running when
+  // a repository's login changed, and that number has to be counted at the
+  // moment of the write rather than read off a cached page. sessions.ts cannot
+  // be imported from ./mobile — it reaches notify.ts, which imports the mobile
+  // facade — so the answer is handed in, and an unwired seam answers null
+  // rather than an honest-looking zero.
+  configureMobileLaunchPinSource({
+    liveProjectIds: () => listSessions()
+      .filter((session) => session.status !== 'exited')
+      .map((session) => session.projectId),
+  });
   mobile.configureMobileControlSource({
     projects: async () => listProjects().map((project) => ({ id: project.id, name: project.name, branch: project.branch })),
     providers: async () => mobileLaunchProviders(await detectProviders()),
@@ -1205,6 +1069,60 @@ function configureMobileSources(): void {
       if (!session) throw new Error('That session is no longer available.');
       return { title: session.title, running: session.status !== 'exited', text: scrollback(sessionId) };
     },
+  });
+
+  // Firing an installed skill into a live session. Three narrow capabilities and
+  // no more: read the catalogue for the project a session is open on, ask
+  // ../skills whether typing into that session is something Wanigan has actually
+  // verified, and write already-decided text. The phone holds an opaque id and
+  // never the command, and no directory crosses the HTTP boundary.
+  mobile.configureMobileSkillsSource({
+    read: async (sessionId) => {
+      const live = listSessions().find((value) => value.id === sessionId) ?? null;
+      const catalogue = skills.discoverSkills(live?.projectId ?? undefined);
+      // Asked of ../skills rather than answered here. An empty command can never
+      // match a row, so what comes back is the part of the decision that is about
+      // the SESSION — none chosen, exited, or a harness whose invocation form
+      // Wanigan has not verified — and 'unknown-skill' is that check having
+      // passed. If the order inside skillSendDecision ever changes, this reports
+      // no banner rather than a wrong one, and the tap still refuses with the
+      // real reason.
+      const gate = skills.skillSendDecision(live, '');
+      return {
+        skills: catalogue.skills,
+        agentSkillCount: catalogue.agentSkills.length,
+        builtinNote: catalogue.roots.find((root) => root.source === 'builtin')?.note ?? null,
+        blocked: gate.ok || gate.code === 'unknown-skill' ? null : gate.reason,
+      };
+    },
+    decide: async (sessionId, invoke) =>
+      skills.skillSendDecision(listSessions().find((value) => value.id === sessionId) ?? null, invoke),
+    type: async (sessionId, text) => {
+      // The same liveness question ./mobile/control.ts's prompt and key ask, for
+      // the same reason: text written into an exited session is typing into
+      // nothing that the phone would see reported as typed.
+      const session = listSessions().find((value) => value.id === sessionId && value.status !== 'exited');
+      if (!session) throw new Error('That session is no longer running.');
+      writeSession(sessionId, text);
+    },
+  });
+
+  // The Explore seam: what each account has left, what the fleet spent, and
+  // which lines either of those has crossed. Never forced — usage.snapshot()
+  // without `force` reuses the reading the Mac already had, because a phone
+  // polled while it is open must not be a second, silent trigger for a real
+  // CLI probe. The budgets are a second call because they are a second
+  // question, and mobile/explore.ts holds a failure of that one apart from a
+  // budget that is fine.
+  mobile.configureMobileExploreSource({
+    spend: ({ days }) => usage.snapshot({ days }),
+    budgets: () => ({
+      breached: spend.budgetBreached(),
+      // A budget of 0 tracks spend without capping it and cannot be breached,
+      // so it is not counted. The count is what stops the phone printing "no
+      // budget is over" at an operator who has never set one.
+      capped: spend.budgets().filter((row) => row.monthlyUsd > 0).length,
+    }),
   });
 }
 
@@ -1375,6 +1293,22 @@ function registerIpc() {
   });
 
   handle('providers:list', () => detectProviders());
+  /*
+   * The catalogue for one profile's model field.
+   *
+   * providerById reads the frozen pack SNAPSHOT. detectProviders() would call
+   * refreshProviderPacks() and re-probe the version and capabilities of every
+   * installed CLI, which is far too much work to hang off a picker opening.
+   */
+  handle('providers:modelCatalogue', async (providerId: unknown) => {
+    const def = providerById(String(providerId));
+    if (!def) throw new Error('That provider profile is not loaded.');
+    return providerModelCatalogue({
+      backendId: def.backendId,
+      supports: def.supports,
+      launchFields: launchFieldsFor(def),
+    });
+  });
   handle('providerPacks:list', (includeRemoved?: boolean) =>
     publicProviderPacks(includeRemoved === true));
   handle('providerPacks:inspectManifest', (packId: string): ProviderManifestInspection => {
@@ -1470,7 +1404,40 @@ function registerIpc() {
     providerPackRegistry.setEnabled(packId, enabled);
     refreshProviderPacks(); return publicProviderPacks();
   });
-  handle('providerPacks:trustManifest', (packId: string, sha256: string) => {
+  // Recording a trusted digest is the durable, on-disk grant that lets a local
+  // pack choose the argv and the entire environment of an already-installed CLI,
+  // and agentEnv assigns a pack's environment after it sets PATH, so a pack that
+  // names PATH wins. It was a bare pass-through, and the only place a human was
+  // asked was a page the renderer draws — which is not a trust boundary, because
+  // a compromised renderer can decline to draw it. plugins:marketAdd states the
+  // rule for the smaller of the two grants; this is the larger one.
+  //
+  // The registry's own refusals are re-checked before the dialog rather than
+  // after it, so the operator is never asked to approve something trustManifest
+  // would reject a moment later. The manifest and the adapter stay two separate
+  // questions: trusting one must not trust the other.
+  handle('providerPacks:trustManifest', async (packId: unknown, sha256: unknown) => {
+    if (typeof packId !== 'string' || !packId.trim()) throw new Error('That provider pack is not installed.');
+    if (typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sha256)) throw new Error('A digest to trust is required.');
+    const pack = providerPackRegistry.listPacks({ includeRemoved: true })
+      .find((entry) => entry.id === packId && entry.source === 'local');
+    if (!pack) throw new Error('That provider pack is not installed.');
+    if (!pack.manifest || !pack.manifestSha256) throw new Error('That provider pack has no inspectable manifest.');
+    if (pack.manifestSha256 !== sha256) {
+      throw new Error('The provider manifest changed after inspection. Review the new digest before trusting it.');
+    }
+    const w = win;
+    if (!w || w.isDestroyed()) {
+      throw new Error('Trusting a provider pack needs the Wanigan window open to confirm it.');
+    }
+    const answer = await dialog.showMessageBox(w, {
+      type: 'warning',
+      buttons: ['Cancel', 'Trust this manifest digest'],
+      defaultId: 0,
+      cancelId: 0,
+      ...manifestTrustPrompt(pack),
+    });
+    if (answer.response !== 1) throw new Error('Cancelled. Nothing was trusted and nothing was enabled.');
     providerPackRegistry.trustManifest(packId, sha256);
     refreshProviderPacks(); return publicProviderPacks();
   });
@@ -1489,7 +1456,31 @@ function registerIpc() {
         : 'This provider pack has no executable adapter to inspect.',
     };
   });
-  handle('providerPacks:trustAdapter', (packId: string, sha256: string) => {
+  handle('providerPacks:trustAdapter', async (packId: unknown, sha256: unknown) => {
+    if (typeof packId !== 'string' || !packId.trim()) throw new Error('That provider pack is not installed.');
+    if (typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sha256)) throw new Error('A digest to trust is required.');
+    const pack = providerPackRegistry.listPacks({ includeRemoved: true })
+      .find((entry) => entry.id === packId && entry.source === 'local');
+    if (!pack) throw new Error('That provider pack is not installed.');
+    // inspectAdapter hashes the file on disk, so the digest in the dialog is the
+    // main process's own reading and not a number the caller supplied.
+    const inspected = providerPackRegistry.inspectAdapter(packId);
+    if (!inspected) throw new Error('That provider pack has no executable adapter to trust.');
+    if (inspected.sha256 !== sha256) {
+      throw new Error('The adapter changed after it was inspected. Review the new digest before trusting it.');
+    }
+    const w = win;
+    if (!w || w.isDestroyed()) {
+      throw new Error('Trusting a provider pack needs the Wanigan window open to confirm it.');
+    }
+    const answer = await dialog.showMessageBox(w, {
+      type: 'warning',
+      buttons: ['Cancel', 'Trust this adapter digest'],
+      defaultId: 0,
+      cancelId: 0,
+      ...adapterTrustPrompt(pack, inspected),
+    });
+    if (answer.response !== 1) throw new Error('Cancelled. The adapter was not trusted.');
     providerPackRegistry.trustAdapter(packId, sha256);
     refreshProviderPacks(); return publicProviderPacks();
   });
@@ -1880,6 +1871,12 @@ function registerIpc() {
   // switch notifications off.
   handle('notify:setWatchedSession', (sessionId: string | null) => {
     notify.setWatchedSession(sessionId);
+    // The same fact answers a second question. "Which session is on screen" is
+    // what decides whether output should raise an unread badge, and the
+    // renderer already reports it here on every tab and selection change —
+    // null whenever the operator is anywhere but Sessions, which is exactly
+    // when the badge is the only way to learn an agent said something.
+    setFocusedSession(sessionId);
     // Switching tabs/sessions can reveal that an alert previously suppressed
     // on the Mac is no longer on screen. Run after this IPC answer rather than
     // making renderer navigation wait on database reads and notification APIs.

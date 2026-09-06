@@ -4,6 +4,7 @@ import { GOALS_SECTION } from './sections/goals';
 import { LEARNING_SECTION } from './sections/learning';
 import { MANAGE_SECTION } from './sections/manage';
 import { SCOUT_SECTION } from './sections/scout';
+import { SKILLS_SECTION } from './sections/skills';
 import { SPEND_SECTION } from './sections/spend';
 import { CONSOLE_SECTION } from './sections/console';
 import { FLEET_SECTION } from './sections/fleet';
@@ -79,10 +80,11 @@ export type MobileSection = {
 
 // Order is render order: the alert panel sits above the fleet on the Fleet
 // screen — an alert below the session it is about is an alert you find after
-// you did not need it — then the console and the launch form fill the
-// remote-control slot on the Agent screen. The last two each own a screen.
+// you did not need it — then the console, the skill launcher beneath it and the
+// launch form fill the remote-control slot on the Agent screen. The last two
+// each own a screen.
 export const MOBILE_SECTIONS: readonly MobileSection[] = [
-  ALERTS_SECTION, FLEET_SECTION, CONSOLE_SECTION, LAUNCH_SECTION, GIT_SECTION,
+  ALERTS_SECTION, FLEET_SECTION, CONSOLE_SECTION, SKILLS_SECTION, LAUNCH_SECTION, GIT_SECTION,
   SPEND_SECTION, MANAGE_SECTION, GOALS_SECTION, LEARNING_SECTION, SCOUT_SECTION, DEVICE_SECTION,
 ];
 

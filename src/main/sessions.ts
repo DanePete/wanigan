@@ -25,6 +25,7 @@ import { slots } from './queue';
 import { budgetBreached } from './spend';
 import { cleanupMcpConfig, writeMcpConfig } from './mcp/registry';
 import { noteOutput, forgetSession } from './attention';
+import { shouldBumpUnread } from '../shared/unread';
 import { flags, learningSettings } from './settings';
 import { attachmentsDir, cleanupSessionAttachments, markSessionAttachmentsSent, prepareAttachmentDir } from './attachments';
 import { redactCredentials } from './redact';
@@ -483,10 +484,12 @@ export function listSessions(): Session[] {
  *
  * `baseline.dirty` holds one string per file that was already modified when a
  * session started — 84 in this repository, thousands in a monorepo — and this
- * module pushes the whole list again on every launch, exit, close, rename,
- * unread change and Codex identity discovery. Nothing in the list renders a
- * path; the code panel asks `sessions:baseline` for one session's worth when
- * it actually needs them.
+ * module pushes the whole list again on every launch, exit, close, rename and
+ * Codex identity discovery. An unread change is no longer one of them: it
+ * moves one number on one session, so it goes out on `session:unread` as the
+ * counts that changed. Nothing in the list renders a path; the code panel
+ * asks `sessions:baseline` for one session's worth when it actually needs
+ * them.
  *
  * Exported because index.ts answers the poll for the same list. Two
  * projections would eventually disagree about what a session row contains,
@@ -545,6 +548,43 @@ function queueSessionData(live: Live, data: string): void {
     live.pendingTimer = null;
     flushSessionData(live);
   }, DATA_FLUSH_MS);
+}
+
+/**
+ * How long an unread bump waits for company.
+ *
+ * This is the same coalescing trick DATA_FLUSH_MS plays, at a far coarser
+ * grain because nobody reads a badge the way they read a terminal. A bump can
+ * only happen once a second per session (the OUTPUT_NOTE_MS throttle on the
+ * hot path gates it), so a one-second window collapses a fleet of talking
+ * agents into one small message a second instead of one push per session per
+ * second — and the message carries only the counts that moved, never the
+ * whole session list.
+ */
+const UNREAD_FLUSH_MS = 1_000;
+/** Sessions whose count has moved since the last flush. */
+const unreadDirty = new Set<string>();
+let unreadTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Send the counts that moved, and stop the timer if one is running. */
+function flushUnread(): void {
+  if (unreadTimer) { clearTimeout(unreadTimer); unreadTimer = null; }
+  if (!unreadDirty.size) return;
+  const counts: Record<string, number> = {};
+  // Read the count now rather than at queue time: a session read or closed
+  // inside the window must publish what it ended at, not what it passed
+  // through. A session gone from the map reads 0, which is what the renderer
+  // should show for a row it is about to lose anyway.
+  for (const id of unreadDirty) counts[id] = sessions.get(id)?.meta.unread ?? 0;
+  unreadDirty.clear();
+  broadcast('session:unread', counts);
+}
+
+/** Mark a session's count dirty, starting the one-shot timer if none is running. */
+function queueUnread(sessionId: string): void {
+  unreadDirty.add(sessionId);
+  if (unreadTimer) return;
+  unreadTimer = setTimeout(() => { unreadTimer = null; flushUnread(); }, UNREAD_FLUSH_MS);
 }
 
 const OSC9_PREFIX = '\x1b]9;';
@@ -1507,6 +1547,11 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     if (now - live.notedAt >= OUTPUT_NOTE_MS) {
       live.notedAt = now;
       noteOutput(id, now);
+      // Inside the same throttle, so the badge costs one map lookup a second
+      // per session rather than one per chunk. It also fixes what the number
+      // means: one increment is one second in which output arrived, not one
+      // message and not one chunk — the renderer says so in as many words.
+      bumpUnread(id);
     }
     if (live.meta.harnessId === 'codex') {
       const scanned = scanCodexNotifications(live.providerControl, data);
@@ -2065,14 +2110,43 @@ export function closeSession(sessionId: string) {
   broadcast('session:list', sessionListEntries());
 }
 
+/**
+ * The session on screen, as the renderer last reported it through
+ * `notify:setWatchedSession`. Null whenever the operator is on another tab —
+ * which is not an edge case here but the whole point: that is when a badge is
+ * the only way to learn an agent said something.
+ */
+let focusedSessionId: string | null = null;
+
+/**
+ * Tell main which session the operator is looking at.
+ *
+ * Selecting one is also reading it, so the count is cleared on the way in.
+ * Without that, switching to a session whose badge stood would leave the
+ * badge on the tab now filling the screen.
+ */
+export function setFocusedSession(sessionId: string | null): void {
+  focusedSessionId = sessionId;
+  if (sessionId) markRead(sessionId);
+}
+
 export function markRead(sessionId: string) {
   const s = sessions.get(sessionId);
-  if (s && s.meta.unread) { s.meta.unread = 0; broadcast('session:list', sessionListEntries()); }
+  if (!s || !s.meta.unread) return;
+  s.meta.unread = 0;
+  unreadDirty.add(sessionId);
+  // Flushed now rather than queued. Marking read is a deliberate act on a tab
+  // that is already on screen; leaving it in the one-second window lets an
+  // unrelated flush put the old number back and blink a badge onto the
+  // session being read.
+  flushUnread();
 }
 
 export function bumpUnread(sessionId: string) {
   const s = sessions.get(sessionId);
-  if (s) s.meta.unread++;
+  if (!s || !shouldBumpUnread({ sessionId, focusedSessionId, status: s.meta.status })) return;
+  s.meta.unread++;
+  queueUnread(sessionId);
 }
 
 /** Kill everything on quit so no orphaned agent keeps running headless. */

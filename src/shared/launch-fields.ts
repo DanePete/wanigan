@@ -15,8 +15,9 @@ import { EFFORT_LEVELS, PERMISSION_MODES, type ProviderInfo } from './types';
  * shape with PERMISSION_MODES: six Claude modes offered to every profile,
  * including one that declares its own set.
  *
- * src/main/index.ts already keeps this rule for the mobile control surface
- * (providerEffortChoices). This module is the same answer for the window, and
+ * src/main/launch-choices.ts keeps this rule for the model field, reading the
+ * frozen profile rather than a table keyed on a profile id. This module is the
+ * same answer for the launch window's own fields, and
  * is deliberately pure — no IPC, no Electron — so a smoke test can drive it
  * with a fabricated profile.
  */

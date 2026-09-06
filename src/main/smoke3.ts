@@ -40,6 +40,7 @@ import { isManagedRoot } from './roots';
 import { redactCredentials } from './redact';
 import * as providers from './providers';
 import * as plugins from './plugins';
+import { adapterTrustPrompt, manifestTrustPrompt } from './pack-consent';
 import * as batch from './batch';
 import { egressReport } from './egress';
 import { mobileFleetSnapshot } from './fleet-snapshot';
@@ -1468,6 +1469,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   "a file's diff too large for the phone is refused with the size it was and the size allowed, carrying none of the patch it refused — never a hunk truncated into something that reads complete",
   oversizedReason);
 
+
+
   say('── phone fleet · authenticated loopback transport');
   const mobilePort = await unusedLoopbackPort();
   const sourceWithExtras = Object.assign({}, remote, {
@@ -1905,6 +1908,149 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && composedShell.split('data-spend-days=').length === 4,
     'the Spend screen is composed exactly once, carrying both what is left and what it cost, and all three consumption windows',
     `${composedShell.split('id="spend"').length - 1} spend screens`);
+
+    /* ── the Spend screen · the breach reading, and what it may not claim ──
+     * The reason to open this screen away from a desk is not the cost curve;
+     * it is whether something has gone past a line. Everything below is
+     * asserted against the served JSON and the served page rather than against
+     * the source, because a breach reading that reads well and reports the
+     * wrong state is exactly the failure this screen exists to prevent.
+     */
+    const spendProbeNow = Date.now();
+    const spendWindowFixture = (kind: string, scope: string | null, used: number) =>
+      ({ kind, scope, usedPercent: used, resetsAtText: null, resetsAt: null });
+    mobile.configureMobileExploreSource({
+      spend: () => ({
+        days: 14,
+        limits: [
+          { accountId: 'a_work', accountLabel: 'Work', harness: 'claude-code', identity: null,
+            state: 'ok', detail: null, fetchedAt: spendProbeNow - 60_000, plan: 'max',
+            windows: [spendWindowFixture('session', null, 40), spendWindowFixture('week', null, 100)], factors: [] },
+          { accountId: 'a_personal', accountLabel: 'Personal', harness: 'claude-code', identity: null,
+            state: 'ok', detail: null, fetchedAt: spendProbeNow - 60_000, plan: 'max',
+            windows: [spendWindowFixture('week', null, 41)], factors: [] },
+          { accountId: 'a_codex', accountLabel: 'Codex', harness: 'codex', identity: null,
+            state: 'ok', detail: 'Codex reports a spend control has been reached for this account.',
+            fetchedAt: spendProbeNow - 60_000, plan: null,
+            windows: [spendWindowFixture('week', null, 12)], factors: [] },
+          { accountId: 'a_old', accountLabel: 'Ancient', harness: 'claude-code', identity: null,
+            state: 'ok', detail: null, fetchedAt: spendProbeNow - 40 * 60_000, plan: 'max',
+            windows: [spendWindowFixture('session', null, 10)], factors: [] },
+          { accountId: 'a_other', accountLabel: 'Gemini', harness: 'gemini', identity: null,
+            state: 'unsupported', detail: 'Wanigan has no way to ask a gemini account what it has left.',
+            fetchedAt: null, plan: null, windows: [], factors: [] },
+        ],
+        consumption: [], daily: [],
+      }),
+      budgets: () => ({
+        capped: 2,
+        breached: [
+          { scopeId: null, scopeName: 'All projects', monthlyUsd: 40, spentUsd: 42.1, sessionUsd: 42.1,
+            batchUsd: 0, warnAt: 0.8, projectedUsd: 210.5, daysElapsed: 6, daysInMonth: 30,
+            reason: 'over-budget', limitUsd: 40, warnUsd: 32, summary: 'unused by the phone',
+            window: { monthStart: spendProbeNow, monthLabel: 'September 2026', daysElapsed: 6, daysInMonth: 30 } },
+          { scopeId: 'p_smoke', scopeName: 'wanigan', monthlyUsd: 50, spentUsd: 12, sessionUsd: 12,
+            batchUsd: 0, warnAt: 0.8, projectedUsd: 60, daysElapsed: 6, daysInMonth: 30,
+            reason: 'projected-over', limitUsd: 50, warnUsd: 40, summary: 'unused by the phone',
+            window: { monthStart: spendProbeNow, monthLabel: 'September 2026', daysElapsed: 6, daysInMonth: 30 } },
+        ],
+      }),
+    });
+    type PhoneBudgetBreach = { reason: string; basis: string; scopeName: string; projectedUsd: number };
+    type PhoneLimitBreach = {
+      reason: string; accountLabel: string; accountState: string; kind: string | null;
+      usedPercent: number | null; readAgeMs: number | null;
+      relief: { accountLabel: string; usedPercent: number } | null;
+    };
+    type PhoneSpend = {
+      budgetsRead: boolean; budgetsCapped: number; clearWindows: number; nearPercent: number;
+      budgetBreaches: PhoneBudgetBreach[]; limitBreaches: PhoneLimitBreach[];
+      accounts: { label: string }[];
+    };
+    const spendRead = await fetch(new URL('api/explore?panel=spend&days=14', monitor.localUrl),
+      { headers: { authorization: `Bearer ${token}` } });
+    const spendBody = await spendRead.json() as PhoneSpend;
+    const breachOf = (label: string, kind: string | null) =>
+      spendBody.limitBreaches.find((row) => row.accountLabel === label && row.kind === kind);
+
+    check(spendRead.status === 200
+      && spendBody.budgetBreaches[0]?.reason === 'over-budget'
+      && spendBody.limitBreaches[0]?.reason === 'past'
+      && spendBody.limitBreaches[0]?.accountLabel === 'Work'
+      && spendBody.limitBreaches[0]?.usedPercent === 100
+      && spendBody.limitBreaches[0]?.readAgeMs !== null,
+    'the phone Spend reading answers what is past a line before it answers anything else, with the money the operator capped ahead of the provider ceiling, and every entry carries the value that was measured and the age of the reading that carries it rather than an unevidenced state',
+    `${spendRead.status} budgets=${spendBody.budgetBreaches.map((row) => row.reason).join(',')} limits=${spendBody.limitBreaches.map((row) => `${row.reason}:${row.accountLabel}`).join(',')}`);
+
+    // The negative. Exactly one figure on this screen is arithmetic about days
+    // that have not happened, and it must be the only thing wearing the
+    // estimate label — a measured overspend presented as a projection is as
+    // wrong as a projection presented as a fact.
+    const spendMislabelled = spendBody.budgetBreaches.filter((row) =>
+      (row.basis === 'estimate') !== (row.reason === 'projected-over'));
+    check(spendMislabelled.length === 0
+      && spendBody.budgetBreaches.some((row) => row.reason === 'projected-over' && row.basis === 'estimate')
+      && spendBody.budgetBreaches.some((row) => row.reason === 'over-budget' && row.basis === 'measured'),
+    'the run rate is the only figure on the Spend reading that calls itself an estimate, and it calls itself one in the payload rather than in a footnote — a budget that is genuinely over is never softened into a projection, and a projection is never presented as spend',
+    spendBody.budgetBreaches.map((row) => `${row.reason}=${row.basis}`).join(' '));
+
+    // A reading old enough to be stale is not evidence that a window is below
+    // its line now; it is evidence of where it was. Neither the stale account
+    // nor the account Wanigan cannot ask may be counted as clear.
+    check(breachOf('Ancient', null)?.reason === 'stale'
+      && breachOf('Gemini', null)?.reason === 'unread'
+      && breachOf('Gemini', null)?.accountState === 'unsupported'
+      && spendBody.clearWindows === 3
+      && spendBody.nearPercent === 95,
+    'a limit reading that has gone stale and an account Wanigan has no way to ask each report themselves as their own state on the phone rather than being counted as clear or quietly left off the screen, so the count behind "nothing is over its limit" only ever covers windows a current reading actually established',
+    `stale=${breachOf('Ancient', null)?.reason} unasked=${breachOf('Gemini', null)?.reason} clear=${spendBody.clearWindows} of ${spendBody.accounts.length} accounts`);
+
+    // A complete reading can still carry the fact the percentages do not: the
+    // Codex spend control is what explains a refused run while every window
+    // looks fine, and the relief pairing is measured rather than advised.
+    check(breachOf('Codex', null)?.reason === 'control'
+      && breachOf('Work', 'week')?.relief?.accountLabel === 'Personal'
+      && breachOf('Work', 'week')?.relief?.usedPercent === 41
+      && spendBody.limitBreaches.every((row) => row.relief === null || row.reason === 'past'),
+    'a provider control reported alongside a complete reading reaches the phone as its own entry rather than being lost behind three healthy percentages, and the only entries offering somewhere else to work are the ones genuinely exhausted, paired against a measured window on another login of the same agent',
+    `control=${breachOf('Codex', null)?.reason} relief=${JSON.stringify(breachOf('Work', 'week')?.relief)}`);
+
+    // A budget read that failed is not a budget that is fine. The empty list
+    // and the failed read must not arrive as the same answer.
+    mobile.configureMobileExploreSource({
+      spend: () => ({ days: 14, limits: [], consumption: [], daily: [] }),
+      budgets: () => { throw new Error('the budgets table is unreadable'); },
+    });
+    const spendNoBudgets = await fetch(new URL('api/explore?panel=spend&days=14', monitor.localUrl),
+      { headers: { authorization: `Bearer ${token}` } });
+    const spendNoBudgetsBody = await spendNoBudgets.json() as PhoneSpend;
+    check(spendNoBudgets.status === 200
+      && spendNoBudgetsBody.budgetsRead === false
+      && spendNoBudgetsBody.budgetBreaches.length === 0
+      && spendNoBudgetsBody.budgetsCapped === 0,
+    'a budget reading that failed reaches the phone as a failed reading rather than as an empty one, and it does not take the accounts and the cost figures down with it — an unreadable budgets table is evidence about spend and never a reason to stop reporting everything else',
+    `${spendNoBudgets.status} budgetsRead=${spendNoBudgetsBody.budgetsRead} capped=${spendNoBudgetsBody.budgetsCapped}`);
+
+    // The second negative, on the shape rather than the values: no field on
+    // this wire blends a budget and a provider ceiling into one number, and
+    // none of the four honest states is a colour with no word beside it.
+    const spendSectionSrc = sourceOf('src/main/mobile/page/sections/spend.ts');
+    const spendRouteSrc = sourceOf('src/main/mobile/explore.ts');
+    check(!/\b(healthScore|budgetHealth|overallScore|spendScore|grade)\b/.test(spendRouteSrc)
+      && !/\b(healthScore|budgetHealth|overallScore|spendScore|grade)\b/.test(spendSectionSrc)
+      && spendSectionSrc.includes("word: 'Over budget'")
+      && spendSectionSrc.includes("word: 'Past its limit'")
+      && spendSectionSrc.includes("word: 'Trending over'")
+      && spendSectionSrc.includes('ui.empty(\'Nothing is over its limit.\'')
+      && spendSectionSrc.includes('ui.observed()'),
+    'the Spend breach reading never blends a budget and a provider ceiling into one number, every state on it carries a word beside its glyph in the desktop’s own vocabulary, and the claim that nothing is over a limit is gated on a poll having actually returned rather than printed over an empty payload',
+    `${spendBody.budgetBreaches.length} budget and ${spendBody.limitBreaches.length} limit entries, none scored`);
+
+    check(composedShell.split('id="spend-breaches"').length === 2
+      && composedShell.indexOf('id="spend-breaches"') < composedShell.indexOf('id="spend-limits"')
+      && composedShell.indexOf('id="spend-limits"') < composedShell.indexOf('id="spend-cost"'),
+    'the breach block is composed exactly once and above both halves of the Spend screen, because the reason to open this screen away from a desk goes first on it and a cost curve nobody asked for does not',
+    `${composedShell.split('id="spend-breaches"').length - 1} breach blocks`);
     /* ── the Scout screen · composed once, and honest about being a read ──
      * The generic anchor sweep above passes vacuously for a screen that was
      * never registered, so this one is named here as Spend and the alert
@@ -1921,6 +2067,99 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && scoutCalls.length === 1 && scoutCalls[0] === "api('api/scout')",
     'the Scout screen is composed exactly once and is a read and nothing else: one GET, no write of any kind, and it says plainly that starting a scan and creating a Goal are Mac actions',
     `${composedShell.split('id="scout"').length - 1} scout screens, calls: ${scoutCalls.join(' | ') || 'none'}`);
+
+    /* ── firing a skill · a command you can send, not a file you can edit ──
+     * shared/mobile-nav.ts still keeps the Skills SCREEN on the Mac, and it
+     * should: writing one edits a file inside a working tree this device does
+     * not have. Firing one that already exists needs no working tree and edits
+     * nothing, so it lives on the Agent screen — and the absent reason was
+     * narrowed in the same change rather than left standing while a route
+     * quietly contradicted it. These hold the two properties that keep those
+     * halves apart: no path crosses, and the phone never says what to type. */
+    const skillsWire = await import('./mobile/skills');
+    const skillsSection = (await import('./mobile/page/sections/skills')).SKILLS_SECTION;
+    const skillsSrc = sourceOf('src/main/mobile/skills.ts');
+    const skillRows = [
+      { invoke: '/review-gate', name: 'review-gate', label: 'Review gate', description: 'Hold the gate before handing off.', source: 'project', harness: 'claude-code', invocable: { user: true } },
+      { invoke: '/tdd', name: 'tdd', label: 'Red, green, refactor', description: 'Test-driven development.', source: 'user', harness: 'claude-code', invocable: { user: true } },
+      { invoke: '/locked', name: 'locked', label: 'Locked', description: 'Turned off in settings.', source: 'plugin', harness: 'claude-code', invocable: { user: false } },
+      { invoke: '', name: 'codex-only', label: 'Codex only', description: 'A Codex skill file with no verified invocation.', source: 'agents-user', harness: 'codex', invocable: { user: 'unknown' } },
+    ] as const;
+    const skillList = skillsWire.mobileSkillList(skillRows, '');
+    const skillJson = JSON.stringify(skillList.skills);
+    // Both routes' declared scopes, in file order. The repository scope is the
+    // only one allowed to put a path on this wire and neither of these is it —
+    // asserted from the route declarations rather than from a bare substring,
+    // because ./mobile/skills.ts deliberately never spells that literal even in
+    // prose: a false hit in the grep dispatch.ts names is the one thing that
+    // would make its sentence untrustworthy.
+    const skillScopes = (skillsSrc.match(/scope: '(?:monitor|control|repo)'/g) ?? []).join(' ');
+    check(skillList.total === 3 && skillList.skills.length === 3
+      && !/"(?:path|dir|projectId)"\s*:/.test(skillJson) && !/\.claude|\.agents|\/Users\//.test(skillJson)
+      && skillList.skills.map((row) => row.origin).join(',') === 'project,personal,plugin'
+      && skillScopes === "scope: 'monitor' scope: 'control'",
+    'the phone is told a command, one line of description and a WORD for where a skill came from, never the directory it came from — neither of these routes declares the repository scope that dispatch.ts promises is the complete list of routes able to put a path on this wire',
+    `${skillList.skills.map((row) => `${row.invoke} · ${row.origin}`).join(', ') || 'none'}; scopes: ${skillScopes || 'none'}`);
+
+    const skillOmitted = skillsWire.mobileSkillsPayload(
+      { skills: skillRows, agentSkillCount: 4, builtinNote: 'the ones seen so far, not every built-in', blocked: null }, '');
+    const skillBuiltin = skillsWire.mobileSkillsPayload({
+      skills: [...skillRows, { invoke: '/dataviz', name: 'dataviz', label: 'Dataviz', description: 'Charts.', source: 'builtin', harness: 'claude-code', invocable: { user: true } }],
+      agentSkillCount: 0, builtinNote: 'the ones seen so far, not every built-in', blocked: null,
+    }, '');
+    check(skillOmitted.total === 3 && skillOmitted.agentSkillCount === 4 && skillOmitted.builtinNote === null
+      && skillBuiltin.builtinCount === 1 && skillBuiltin.builtinNote !== null
+      && skillsSection.script.includes('Wanigan has not verified how Codex invokes one'),
+    'a skill file whose invocation form Wanigan has not verified is dropped from the list and counted where it was dropped, and ../skills’ own caveat about the built-in family is carried verbatim only while a built-in row is actually on screen — a catalogue quietly missing rows is a short list, and a short list is a lie',
+    `${skillOmitted.total} listed, ${skillOmitted.agentSkillCount} Codex files omitted, built-in note ${skillBuiltin.builtinNote === null ? 'absent' : 'present'} with a built-in row`);
+
+    const skillMany = Array.from({ length: skillsWire.MOBILE_SKILL_LIMITS.skills + 12 }, (_, index) => ({
+      invoke: `/s${index}`, name: `s${index}`, label: `S${index}`, description: 'One of many.',
+      source: 'user', harness: 'claude-code', invocable: { user: true as boolean | 'unknown' },
+    }));
+    const skillCapped = skillsWire.mobileSkillList(skillMany, '');
+    const skillSearched = skillsWire.mobileSkillList(skillRows, 'RED, GREEN');
+    check(skillCapped.skills.length === skillsWire.MOBILE_SKILL_LIMITS.skills
+      && skillCapped.truncated && skillCapped.matchCount === skillMany.length
+      && skillSearched.skills.length === 1 && skillSearched.skills[0].invoke === '/tdd'
+      && skillSearched.matchCount === 1 && skillSearched.total === 3 && !skillSearched.truncated,
+    'the search runs in the main process over the command, both of its names and its description, and the answer says how many matched before the cap cut it — thirty rows out of forty-two with nothing said about the other twelve is a silently short list',
+    `capped ${skillCapped.skills.length} of ${skillCapped.matchCount}; the search matched ${skillSearched.matchCount} of ${skillSearched.total}`);
+
+    // The negative. Typing a command into a prompt and sending a turn are two
+    // different acts, and only the first one happens here.
+    check(skillsWire.MOBILE_SKILL_LIMITS.typedSuffix === ' '
+      && !skillsSrc.includes('\\r') && !skillsSection.script.includes('\\r')
+      && skillsSrc.includes('submitted: false')
+      && skillsSection.script.includes('Nothing was sent')
+      && !/\bran the skill\b|\bskill ran\b|successfully/i.test(skillsSection.script),
+    'firing a skill types the command into the agent’s prompt and stops there: no carriage return is ever written, the answer carries submitted:false, and nothing the screen can print afterwards claims the skill ran — the PTY owns keystrokes and Wanigan has not parsed what the agent will do with them',
+    `suffix ${JSON.stringify(skillsWire.MOBILE_SKILL_LIMITS.typedSuffix)}`);
+
+    const skillCalls = skillsSection.script.match(/api\('api\/[^']*'/g) ?? [];
+    const skillBody = /body:JSON\.stringify\(\{([^}]*)\}\)/.exec(skillsSection.script)?.[1] ?? '';
+    check(sectionAnchors.includes('agent-skills') && composedShell.split('id="agent-skills"').length === 2
+      && composedShell.includes('id="skill-q"') && composedShell.includes('id="skill-list"')
+      && skillsSection.slot === 'controls' && skillCalls.length === 2
+      && skillBody.includes('skillId:row.id') && !skillBody.includes('invoke'),
+    'the skill card is composed exactly once into the Agent screen’s remote-control block and posts an id and a session — never the text to write, because the Mac decides what an id means and a route that accepted the text would be an unrestricted terminal write wearing a skill’s name',
+    `${composedShell.split('id="agent-skills"').length - 1} cards, calls: ${skillCalls.join(' | ') || 'none'}, body: ${skillBody.trim() || 'none'}`);
+
+    check(skillsSection.script.includes("ui.off('Sending a skill is off.'")
+      && skillsSection.script.includes('Wanigan Settings → Phone monitor')
+      && skillsSection.script.includes('skillsPayload.blocked')
+      && skillsSection.style.includes('.skill-row-flat')
+      && skillsSection.wiring.includes("ui.watch('agent', loadSkills)")
+      && !/setInterval/.test(skillsSection.script + skillsSection.wiring),
+    'the skill card draws its absences through the shared ui helpers rather than as a list of dead buttons — off names the exact setting, and a session Wanigan will not type into flattens the rows to readable names — and it registers its read with the frame instead of holding an interval of its own',
+    `${skillsSection.wiring.includes("ui.watch('agent', loadSkills)") ? 'ui.watch' : 'no watch'}, ${/setInterval/.test(skillsSection.script + skillsSection.wiring) ? 'holds an interval' : 'no interval'}`);
+
+    const skillAbsent = MOBILE_ABSENT.find((entry) => entry.tab === 'skills');
+    check(!!skillAbsent && /stays on the Mac/.test(skillAbsent.reason) && /Agent screen/.test(skillAbsent.reason)
+      && !MOBILE_VIEWS.some((view) => String(view.id) === 'skills')
+      && composedShell.includes(skillAbsent!.reason),
+    'the Skills SCREEN is still deliberately absent and the Device screen still prints why, but its reason now separates the two halves it used to fold together: editing a skill is work against a repository this device does not have, and typing one that already exists is on the Agent screen',
+    skillAbsent?.reason ?? 'no absent entry for skills');
     /* ── the Scout digest · three outcomes that are not one outcome ──────
      * A scan reports 'running', 'completed', 'blocked' or 'failed'. 'blocked'
      * means a consent gate stopped the pass before it contacted anything, so
@@ -3371,6 +3610,102 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && phoneWire.claimsHeld === 1,
     'no absolute path, claimed path or conversation id reaches the phone with a goal — it is told that a claim is held and that a thread exists, and nothing that names either',
     phoneLeakyJson.slice(0, 240));
+
+    /* ── the decision this phone can record, and the gate in front of it ── */
+    // The gate reading and control.ts's approval rule read the same proofs, so
+    // the two must never disagree: a phone showing a pass over work the Mac
+    // would refuse to approve is the whole failure this screen exists to stop.
+    const phoneDecide = control.createDocket({ projectId: controlProject.id, title: 'Phone decision',
+      objective: 'Record the human review decision from a paired device.',
+      acceptance: ['The gate result is on screen before the verdict is.'], risk: 'low' });
+    const decideRead = () => control.docket(phoneDecide.id);
+    const decidePlan = phoneDecide.nodes.find((node) => node.kind === 'plan')!;
+    const decideImplement = phoneDecide.nodes.find((node) => node.kind === 'implement')!;
+    const decideVerify = phoneDecide.nodes.find((node) => node.kind === 'verify')!;
+    const decideReview = phoneDecide.nodes.find((node) => node.kind === 'review')!;
+    const blockedDecision = phoneGoals.mobileGoalDecision(decideRead());
+    check(blockedDecision.awaiting === false && /have not finished/.test(blockedDecision.refusal ?? '')
+      && blockedDecision.unfinished.length > 0
+      && phoneGoals.mobileGoalGate(decideRead()).state === 'not-run',
+    'a phone is refused a decision on a review whose upstream tasks have not finished, in a sentence naming that state, and a gate nobody has run reads as not run rather than as nothing being wrong',
+    `${blockedDecision.refusal} / ${phoneGoals.mobileGoalGate(decideRead()).state}`);
+
+    control.completeNode(decidePlan.id, { detail: 'Planned.' });
+    control.completeNode(decideImplement.id, { detail: 'Implemented.' });
+    review.saveRecipe(controlProject.id, ['false']);
+    await control.runProof(decideVerify.id);
+    const redGate = phoneGoals.mobileGoalGate(decideRead());
+    review.saveRecipe(controlProject.id, ['true']);
+    await control.runProof(decideVerify.id);
+    const greenGate = phoneGoals.mobileGoalGate(decideRead());
+    check(redGate.state === 'failed' && redGate.unproven.includes(decideVerify.title)
+      && /Review gate failed/.test(redGate.tasks[0]?.summary?.text ?? '')
+      && greenGate.state === 'passed' && greenGate.unproven.length === 0,
+    "the phone reads the review gate out of the goal's own proofs, naming the verification task it failed on in the Mac's own sentence, and the newest run decides rather than any historical pass",
+    `${redGate.state} → ${greenGate.state}`);
+
+    control.completeNode(decideVerify.id, { detail: 'Gate passed.' });
+    const readyDecision = phoneGoals.mobileGoalDecision(decideRead());
+    check(readyDecision.awaiting === true && readyDecision.nodeId === decideReview.id
+      && readyDecision.refusal === null
+      && phoneGoals.mobileGoal(decideRead()).decision.nodeId === decideReview.id,
+    'once its prerequisites are complete the review task is the one thing the phone may decide, and the only node id that crosses to the device is that task',
+    readyDecision.nodeId);
+
+    // The one that matters: a gate that goes red under a screen already showing
+    // a ready review. The phone must report the failure, and the Mac must refuse
+    // the approval — a disagreement here is an approval nobody could audit.
+    review.saveRecipe(controlProject.id, ['false']);
+    await control.runProof(decideVerify.id);
+    const redUnderReady = phoneGoals.mobileGoalGate(decideRead());
+    const stillAwaiting = phoneGoals.mobileGoalDecision(decideRead()).awaiting;
+    let approvalRefusal = '';
+    try { control.completeNode(decideReview.id, { decision: 'approve' }); }
+    catch (error) { approvalRefusal = error instanceof Error ? error.message : String(error); }
+    review.saveRecipe(controlProject.id, ['true']);
+    await control.runProof(decideVerify.id);
+    check(redUnderReady.state === 'failed' && stillAwaiting === true
+      && /Still unproven/.test(approvalRefusal) && approvalRefusal.includes(decideVerify.title)
+      && phoneGoals.mobileGoalDecision(decideRead()).awaiting === true,
+    "the phone's gate reading and control.ts's approval rule never disagree: a gate that went red under a ready review is reported as failed, the decision is still offered, and the Mac refuses the approval in its own words — naming the verification task and writing nothing",
+    approvalRefusal);
+
+    control.completeNode(decideReview.id, {
+      detail: `${phoneGoals.MOBILE_GOAL_DECISION_NOTE.prefix}Read the diff on the train.`,
+      decision: 'approve',
+    });
+    const decided = decideRead();
+    const decidedWire = phoneGoals.mobileGoal(decided);
+    check(decidedWire.status === 'accepted' && decidedWire.decision.awaiting === false
+      && /already been decided/.test(decidedWire.decision.refusal ?? '')
+      && decided.nodes.find((node) => node.id === decideReview.id)?.detail
+        === 'From the paired phone: Read the diff on the train.'
+      && decided.proofs.some((proof) => proof.kind === 'decision' && /Human decision: approve/.test(proof.summary)),
+    'a decision recorded from the phone is the desktop decision — the goal is accepted, the record carries the note saying which device made it, and a second tap on a stale screen is refused with the state the task is actually in',
+    `${decidedWire.status} / ${decidedWire.decision.refusal}`);
+
+    const goalsRoute = sourceOf('src/main/mobile/goals.ts');
+    const goalsScreen = sourceOf('src/main/mobile/page/sections/goals.ts');
+    check(goalsScreen.includes(phoneGoals.MOBILE_GOAL_DECISION_NOTE.prefix)
+      && goalsScreen.includes(phoneGoals.MOBILE_GOAL_DECISION_NOTE.alone)
+      && goalsScreen.indexOf("card.append(goalGateBlock(") < goalsScreen.indexOf("node('div', 'goal-decide-acts')")
+      && goalsScreen.includes('Gate not run') && goalsScreen.includes('Wanigan Settings'),
+    'the screen shows the exact note the Mac will store, draws the gate result above the verdict buttons rather than below them, and has words for a gate nobody ran and for the setting that is switched off',
+    goalsScreen.indexOf("card.append(goalGateBlock("));
+
+    // The negative. The decision widened what a paired device may write; it must
+    // not have widened what it may see. No route in this module asks for the one
+    // scope that can put a file path on this wire, and no path, worktree,
+    // session or conversation id rides along with a gate result or a decision.
+    const decidedJson = JSON.stringify(decidedWire);
+    // The bare declaration line, not the substring: both files discuss
+    // `scope: 'repo'` in prose about why they do not use it.
+    check(!/^\s*scope: 'repo',\s*$/m.test(goalsRoute)
+      && !decidedJson.includes(controlRepo) && !decidedJson.includes('conversation-')
+      && !/"worktree"|"sessionId"|"claimPath"/.test(decidedJson)
+      && goalsRoute.includes("path: '/api/goal',\n  method: 'POST',\n  scope: 'control',"),
+    "recording a decision is a control-scope write and nothing more: the goals routes still claim no repo scope, and no path, worktree, session id or conversation id reaches the phone with a gate result or a decision",
+    decidedJson.slice(0, 240));
     // ── P32 · agent accounts ─────────────────────────────────────────────
     // An account is a labelled config directory, never a credential Wanigan
     // holds. These assertions cover the boundary rules; the browser sign-in
@@ -3562,6 +3897,87 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && !JSON.stringify(phoneOverridden).includes('sk-ant-phone-smoke'),
     'the phone is told by name that an exported credential outranks the account it is picking, and the value of that credential never leaves the Mac',
     phoneOverridden.override);
+    // ── the phone pins the login to the repository ───────────────────────
+    // Choosing an account for one launch already worked from a phone; making
+    // the choice stick to a repository meant walking to the Mac. The half that
+    // has to be exactly right is that there is still only ONE record of which
+    // login a repository uses — two of them is not a stale screen, it is a
+    // commit authored by the wrong person.
+    const phonePin = phoneLaunch.mobileAccountOffer('claude', [controlProject.id])
+      .follow.find((row) => row.projectId === controlProject.id);
+    check(phonePin?.pinnedAccountId === work.id && phonePin?.accountId === work.id
+      && phonePin?.fallbackAccountId === personal.id && phonePin?.fallbackLabel === personal.label,
+    'the phone is told which account a project is pinned to and, separately, what clearing that pin would restore — one answer cannot stand in for the other, or a screen would offer to “correct” a project that never expressed a preference and would stop following the default the day it changes',
+    phonePin);
+    const phonePinned = phoneLaunch.setMobileProjectAccount({
+      projectId: controlProject.id, providerId: 'claude', accountId: personal.id,
+    });
+    check(accounts.projectAccount(controlProject.id, 'claude-code')?.id === personal.id
+      && phonePinned.follow.pinnedAccountId === personal.id && phonePinned.follow.source === 'project',
+    'a pin set from a phone is written to the one record the desktop panel and the launch resolver already read, rather than to a second place a repository’s login could live',
+    accounts.projectAccount(controlProject.id, 'claude-code')?.id);
+    const phoneCleared = phoneLaunch.setMobileProjectAccount({
+      projectId: controlProject.id, providerId: 'claude', accountId: null,
+    });
+    check(accounts.projectAccount(controlProject.id, 'claude-code') === null
+      && phoneCleared.follow.pinnedAccountId === null && phoneCleared.follow.source === 'default'
+      && phoneCleared.follow.accountId === phoneCleared.follow.fallbackAccountId,
+    'clearing the pin from a phone deletes the saved choice instead of writing today’s default into it, so the project follows the default again when the default changes',
+    phoneCleared.follow);
+    const phonePinRefusal = (projectId: string, providerId: string, accountId: string | null): string => {
+      try { phoneLaunch.setMobileProjectAccount({ projectId, providerId, accountId }); return ''; }
+      catch (error) { return error instanceof Error ? error.message : String(error); }
+    };
+    check(phonePinRefusal('prj_not_a_real_project', 'claude', work.id).includes('not one this Mac has')
+      && phonePinRefusal(controlProject.id, 'not_a_real_provider', work.id).includes('not installed')
+      && phonePinRefusal(controlProject.id, 'claude', 'acct_not_a_real_account').includes('no longer exists')
+      && phonePinRefusal(controlProject.id, 'claude', phoneCodexAccount).includes('different harness')
+      && phonePinRefusal(controlProject.id, 'glm', work.id).includes('another vendor')
+      && accounts.projectAccount(controlProject.id, 'claude-code') === null,
+    'an unknown project, an uninstalled profile, an account that no longer exists, an account belonging to another harness and a profile that authenticates elsewhere are five refusals with five sentences — and the stored pin is left exactly as it was, never silently written to something that does not exist',
+    phonePinRefusal(controlProject.id, 'claude', 'acct_not_a_real_account'));
+    const phonePinJson = JSON.stringify(phonePinned);
+    check(!phonePinJson.includes(work.configDir) && !phonePinJson.includes(personal.configDir)
+      && !phonePinJson.includes('configDir') && !phonePinJson.includes('CLAUDE_CONFIG_DIR')
+      && !phonePinJson.includes(controlRepo) && !phonePinJson.includes(os.homedir())
+      && !phonePinJson.includes(dataDir()),
+    'setting which identity a repository’s agents sign in as answers with ids and labels only — never the config directory that selects the login, never the repository path, and never the name of the variable that points at it',
+    phonePinJson);
+    // The sentence the phone prints — "this applies to the next session" — is
+    // only worth printing if the code behaves that way. sessions.ts resolves the
+    // account once at spawn and freezes it onto the row, so a pin changed
+    // afterwards must not reach it.
+    const pinStamp = Date.now();
+    const pinFrozenRow = `s_pin_frozen_${pinStamp}`;
+    db().prepare(`INSERT INTO session_log (id, provider_id, harness_id, project_id, project_path, project_name, started_at, account_id)
+      VALUES (?,?,?,?,?,?,?,?)`).run(pinFrozenRow, 'claude', 'claude-code', controlProject.id, controlRepo, 'control', pinStamp, personal.id);
+    try {
+      phoneLaunch.setMobileProjectAccount({ projectId: controlProject.id, providerId: 'claude', accountId: work.id });
+      const frozen = db().prepare('SELECT account_id FROM session_log WHERE id=?')
+        .get(pinFrozenRow) as { account_id: string | null };
+      check(frozen.account_id === personal.id
+        && accounts.projectAccount(controlProject.id, 'claude-code')?.id === work.id,
+      'changing the pin from a phone does not reach a session that already started — the account is resolved once at spawn and frozen onto the row — so the screen’s promise that a change applies to the next session is what the code actually does',
+      frozen.account_id);
+    } finally {
+      db().prepare('DELETE FROM session_log WHERE id=?').run(pinFrozenRow);
+    }
+    // A counted zero and an unread fleet are different answers. Only the first
+    // may be printed as a claim about what is running.
+    phoneLaunch.configureMobileLaunchPinSource(null);
+    const phoneUncounted = phoneLaunch.setMobileProjectAccount({
+      projectId: controlProject.id, providerId: 'claude', accountId: work.id,
+    });
+    phoneLaunch.configureMobileLaunchPinSource({
+      liveProjectIds: () => [controlProject.id, controlProject.id, 'prj_somewhere_else'],
+    });
+    const phoneCounted = phoneLaunch.setMobileProjectAccount({
+      projectId: controlProject.id, providerId: 'claude', accountId: work.id,
+    });
+    phoneLaunch.configureMobileLaunchPinSource(null);
+    check(phoneUncounted.runningSessions === null && phoneCounted.runningSessions === 2,
+      'how many sessions were already running is counted at the moment of the write, and is null rather than zero when nothing answered — the screen makes a liveness claim only from a number something actually produced',
+      [phoneUncounted.runningSessions, phoneCounted.runningSessions]);
     // GLM runs the reviewed Claude harness but bills another vendor, and its
     // environment is empty until a key is stored — so the runtime environment
     // alone cannot answer this. The declared backend can.
@@ -4030,13 +4446,274 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // wiring with a caller already waiting on it, which is the failure that hides
   // best: a channel nobody registered looks exactly like a feature nobody used.
   say('── wiring');
+
+  // A catalog row is an offer, and accepting one runs code on this machine, so
+  // the consent screen has to be able to name the origin. Three shapes are real
+  // in the marketplace manifest and in `claude plugin list --json --available`:
+  // a whole repository, one directory of one, and a path inside the marketplace
+  // itself. The third is what almost every cloned row actually is, and calling
+  // it a remote would be the comfortable lie.
+  const srcWholeRepo = plugins.readSource({ source: 'url', url: 'https://example.invalid/p.git', sha: 'abc123' });
+  const srcSubdir = plugins.readSource({ source: 'git-subdir', url: 'https://example.invalid/p.git', path: 'plugins/one', ref: 'v1.5.5', sha: 'abc123' });
+  const srcInMarket = plugins.readSource('./plugins/one');
+  check(srcWholeRepo?.origin === 'https://example.invalid/p.git' && srcWholeRepo.local === false && srcWholeRepo.pinned === 'abc123'
+    && srcSubdir?.subpath === 'plugins/one' && srcSubdir.pinned === 'v1.5.5' && srcSubdir.local === false
+    && srcInMarket?.origin === './plugins/one' && srcInMarket.local === true && srcInMarket.subpath === null,
+    'a plugin source reads back as the origin the metadata actually records — a repository, one directory of one with its pinned ref, or a path inside the marketplace checkout that is not reported as a remote',
+    { whole: srcWholeRepo, subdir: srcSubdir, inMarket: srcInMarket });
+
+  // The negative that matters. An unknown origin is a stronger reason to
+  // hesitate than a known one, so a row with nothing recorded must resolve to
+  // null and reach the screen as a sentence — never as a blank, and never
+  // backfilled from the marketplace's own address, which is not the plugin's.
+  // `repo` is the marketplace key: reading it alone resolved 0 of 282 real CLI
+  // rows while looking like it worked.
+  check(plugins.readSource(undefined) === null
+    && plugins.readSource(null) === null
+    && plugins.readSource({}) === null
+    && plugins.readSource('   ') === null
+    && plugins.readSource(['https://example.invalid/p.git']) === null
+    && plugins.readSource({ source: 'github', repo: 'owner/name' })?.origin === 'owner/name',
+    'an unrecorded plugin source stays null instead of being invented from the marketplace, an array or a blank string, while a record that really does carry a repo is read',
+    { missing: plugins.readSource(undefined), empty: plugins.readSource({}), array: plugins.readSource(['x']) });
+
+  // The origin comes from the marketplace's manifest, which is a fact about the
+  // offer. A plugin's own plugin.json is self-attested and cannot be the
+  // authority on where the plugin came from.
+  const pluginsSrc = sourceOf('src/main/plugins.ts');
+  check(pluginsSrc.includes("readJson(path.join(MARKETPLACES, mkt, '.claude-plugin', 'marketplace.json'))")
+    && pluginsSrc.includes('source: readSource(sources.get(n)),')
+    && pluginsSrc.includes('source: readSource(r.source),')
+    && pluginsSrc.includes('source: PluginSource | null;')
+    && !/\(src as \{ repo\?: unknown \}\)\.repo/.test(pluginsSrc),
+    'both catalog readers take a row’s origin from the marketplace manifest through one parser, instead of the plugin’s self-declared manifest or a repo key that no plugin row carries',
+    pluginsSrc.split('readSource(').length - 1);
+
+  // Consent is the point. The origin is stated in the dialog that passes -y on
+  // the operator’s behalf, not in the "Where this comes from" table below it,
+  // and the offline fallback keeps the origin the disk scan read rather than
+  // dropping it on the floor.
+  const pluginsViewSrc2 = sourceOf('src/renderer/src/views/Plugins.tsx');
+  const consentAt = pluginsViewSrc2.indexOf('<strong>Install {confirming.name}?</strong>');
+  const originAt = pluginsViewSrc2.indexOf('{origin(confirming.source, confirming.marketplace)}');
+  check(consentAt > 0 && originAt > consentAt
+    && originAt < pluginsViewSrc2.indexOf('This dialog is that prompt.')
+    && pluginsViewSrc2.includes('enabled: false, source: a.source,')
+    && !/source: null/.test(pluginsViewSrc2),
+    'the plugin’s origin is named inside the install confirmation itself, before the sentence explaining what pressing Install accepts, and the offline catalog row no longer throws away the source the disk scan read',
+    { consentAt, originAt });
+
+  // Naming an origin is not a judgement about it. This view must not describe an
+  // install as verified, sandboxed or safe — the screen states where code comes
+  // from and stops.
+  check(!/\b(verified|vetted|sandboxed|is safe|guaranteed)\b/i.test(
+      pluginsViewSrc2.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')),
+    'the plugin catalog names an origin without anywhere calling an install verified, vetted, sandboxed or safe',
+    (pluginsViewSrc2.match(/\b(verified|vetted|sandboxed|guaranteed)\b/gi) ?? []).length);
+
+
+  say('── model catalogue · the profile is the contract, the backend is the catalogue');
+  const { resolveModelCatalogue } = await import('./launch-choices');
+  const openModelField = { supported: true, label: 'Model', required: false, choices: [],
+    declared: false, custom: true, defaultValue: '' };
+  const liveRows = { rows: [{ value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', description: 'frontier',
+    efforts: ['low', 'high', 'ultra'] }], source: 'live' as const, note: null };
+  const openResolved = resolveModelCatalogue(openModelField, liveRows);
+  // The dialog's own narrowing, asserted separately because it is the half that
+  // used to be missing: the declared contract filtered by the live row.
+  const narrowed = ['low', 'medium', 'high', 'xhigh', 'max']
+    .filter((value) => (openResolved.rows[0]?.efforts ?? []).includes(value));
+  check(openResolved.source === 'live' && openResolved.rows.length === 1
+    && openResolved.rows[0].efforts?.join(',') === 'low,high,ultra'
+    && narrowed.join(',') === 'low,high',
+    'a profile that declares no model list takes its backend catalogue verbatim, and the effort intersection then narrows that live row to what the profile will actually compile — a live catalogue can never widen a declared contract, which is the launch failure "Reasoning effort has an unsupported value." this dialog used to arm',
+    narrowed.join(','));
+
+  const declaredModelField = { supported: true, label: 'Model', required: false,
+    choices: [{ value: 'pack-a', label: 'Pack A' }, { value: 'pack-b', label: 'Pack B' }, { value: 'pack-c', label: 'Pack C' }],
+    declared: true, custom: false, defaultValue: 'pack-a' };
+  const packOnly = resolveModelCatalogue(declaredModelField, { rows: [], source: 'none', note: null });
+  const superset = resolveModelCatalogue(declaredModelField, { rows: [
+    { value: 'pack-a', label: 'Pack A', description: null, efforts: null },
+    { value: 'pack-b', label: 'Pack B', description: null, efforts: null },
+    { value: 'pack-c', label: 'Pack C', description: null, efforts: null },
+    { value: 'not-declared', label: 'Not declared', description: null, efforts: null },
+  ], source: 'live' as const, note: null });
+  check(packOnly.source === 'declared' && packOnly.rows.map((row) => row.value).join(',') === 'pack-a,pack-b,pack-c'
+    && superset.rows.map((row) => row.value).join(',') === 'pack-a,pack-b,pack-c',
+    'a pack that declares its own models is launchable with no backend catalogue at all, and a backend reporting a superset of that declaration is narrowed back to it — the declaration is the contract in both directions',
+    superset.rows.map((row) => row.value).join(','));
+
+  const disjoint = resolveModelCatalogue(declaredModelField, { rows: [
+    { value: 'something-else', label: 'Something else', description: null, efforts: null },
+  ], source: 'live' as const, note: null });
+  const fallbackNote = 'No Z.ai key yet, so this is Wanigan’s local list.';
+  const carried = resolveModelCatalogue(openModelField, { rows: [
+    { value: 'glm-5.3', label: 'GLM 5.3', description: null, efforts: null },
+  ], source: 'published' as const, note: fallbackNote });
+  check(disjoint.rows.map((row) => row.value).join(',') === 'pack-a,pack-b,pack-c'
+    && disjoint.note !== null && disjoint.source !== 'live'
+    && carried.note === fallbackNote && carried.source !== 'live',
+    'an empty intersection is NOT reported as a profile with no models — it falls back to the declared list with a note and stops calling itself live — and a fallback list a fetcher handed back with its own disclosure keeps that sentence rather than passing as a catalogue',
+    { disjoint: disjoint.source, carried: carried.note });
+
+  const dialogCatalogueSrc = sourceOf('src/renderer/src/components/NewSessionDialog.tsx');
+  check(dialogCatalogueSrc.includes('window.wanigan.providers.modelCatalogue(')
+    && !dialogCatalogueSrc.includes("value: 'glm-5.3'")
+    && !dialogCatalogueSrc.includes("value: 'deepseek-v4-pro'")
+    && !dialogCatalogueSrc.includes("{ value: 'opus', label: 'opus' }")
+    && !dialogCatalogueSrc.includes('window.wanigan.codex.models()')
+    && !/zaiBackend|deepseekBackend|fallbackModels/.test(dialogCatalogueSrc),
+    'the New session dialog holds no model catalogue of its own and no backend-id ladder choosing between four of them; it reads one channel and renders what main already resolved',
+    dialogCatalogueSrc.includes('window.wanigan.providers.modelCatalogue('));
+
+  const mainIndexSrc = sourceOf('src/main/index.ts');
+  check(!mainIndexSrc.includes('CODEX_MODELS_MAX_BYTES')
+    && !mainIndexSrc.includes("from 'node:child_process'")
+    && sourceOf('src/preload/index.ts').includes('providers:modelCatalogue'),
+    'Wanigan runs one Codex model probe rather than two — the private four-second copy in index.ts is gone and the ten-minute cached app-server read in codex-status.ts is the only one left — and the catalogue reaches the window through a typed preload binding rather than a renderer-side guess',
+    mainIndexSrc.includes('CODEX_MODELS_MAX_BYTES'));
   const mainSrc = sourceOf('src/main/index.ts');
+
+  // A manifest is untrusted data and the consent dialog is the surface that
+  // survives a compromised renderer, so the dialog builds its own summary and
+  // bounds every part of it. This pack declares one hundred environment
+  // destinations whose names are four thousand characters each — the padding
+  // attack sessions.ts already warns about. Note what is asserted: not that the
+  // text was truncated (it is not; the caps do their job long before the 2,000
+  // character bound) but that the count is honest. Ninety-nine of these names
+  // clip to the same sixty-four characters, so a summary that de-duplicated
+  // rendered lines would show two entries and hide ninety-eight.
+  const paddedEnv: Record<string, { source: 'literal'; value: string }> = {
+    HOME: { source: 'literal', value: '/tmp/packhome' },
+  };
+  for (let i = 0; i < 99; i++) paddedEnv[`${'A'.repeat(4000)}${i}`] = { source: 'literal', value: 'x' };
+  const hostilePack = {
+    id: 'orbit.pack', label: 'Orbit', version: '1.0.0', source: 'local' as const,
+    sourcePath: '/packs/orbit.pack/provider-pack.json',
+    manifestSha256: 'a'.repeat(64), trustedManifestSha256: null,
+    adapterSha256: null, trustedAdapterSha256: null,
+    status: 'needs-trust' as const, enabled: false, errors: [],
+    pendingActiveProfileIds: [], removedAt: null, recoverable: false,
+    manifest: {
+      schemaVersion: 1 as const, id: 'orbit.pack', label: 'Orbit', version: '1.0.0',
+      profiles: [{
+        id: 'orbit.main', label: 'Orbit', harness: 'generic-cli' as const,
+        backend: { id: 'orbit', label: 'Orbit' },
+        command: { bin: 'orbit', baseArgs: ['--tty'] },
+        environment: paddedEnv,
+      }],
+    },
+  };
+  const padded = manifestTrustPrompt(hostilePack as never);
+  check(padded.detail.length <= 2000
+    && padded.message.length <= 200
+    && padded.detail.includes('100 destination(s)')
+    && padded.detail.includes('HOME')
+    && !padded.detail.includes('A'.repeat(200))
+    && padded.detail.includes('/packs/orbit.pack/provider-pack.json'),
+    'the trust dialog builds its own bounded summary, so a hundred four-thousand-character environment names cannot pad the question off the screen — and it states the true destination count rather than collapsing the ninety-nine that clip to the same string',
+    padded.detail.length);
+
+  // When the body does have to be cut, the part that survives is the part
+  // Wanigan wrote. Cutting one long string from the end would have dropped the
+  // redirect warning, the adapter note and the closing — so the manifest big
+  // enough to overflow the dialog would have been the one whose warnings went
+  // missing. Forty profiles with twenty launch fields each forces the cut.
+  const wide = {
+    ...hostilePack,
+    manifest: {
+      ...hostilePack.manifest,
+      adapter: { kind: 'process' as const, protocolVersion: 1 as const, executable: 'bin/probe', args: [] },
+      profiles: Array.from({ length: 40 }, (_unused, i) => ({
+        id: `profile-${i}`, label: `P${i}`, harness: 'generic-cli' as const,
+        backend: { id: 'b', label: 'B' },
+        command: { bin: `bin${i}`, baseArgs: ['--a', '--b', '--c'] },
+        launchFields: Array.from({ length: 20 }, (_f, j) => ({ id: `field${j}`, label: 'F', kind: 'text' as const, argv: ['--f'] })),
+        resume: { conversationArgs: ['--r'], continueArgs: ['--c'] },
+        environment: { PATH: { source: 'literal' as const, value: '/evil' } },
+      })),
+    },
+  };
+  const cut = manifestTrustPrompt(wide as never);
+  check(cut.detail.length <= 2000
+    && cut.detail.includes('summary truncated')
+    && cut.detail.includes('This pack sets PATH, which redirects')
+    && cut.detail.includes('trusting this manifest does not trust it')
+    && cut.detail.endsWith('Approve only a pack you would install by hand.'),
+    'a manifest large enough to force the summary to elide loses argv listings and never the warnings: the redirect sentence, the separate-adapter note and the closing all still stand under the truncation line',
+    cut.detail.length);
+
+  // An honest small pack gets the whole listing docs/provider-packs.md requires,
+  // with no truncation sentence — and a credential is named by its id and never
+  // by its value, while a literal and a process fallback are both shown.
+  const honest = {
+    ...hostilePack,
+    manifest: {
+      ...hostilePack.manifest,
+      profiles: [{
+        ...hostilePack.manifest.profiles[0],
+        resume: { conversationArgs: ['--resume'], continueArgs: ['--continue'] },
+        launchFields: [{ id: 'model', label: 'Model', kind: 'select' as const, argv: ['--model'] }],
+        environment: {
+          ORBIT_TOKEN: { source: 'credential' as const, id: 'orbit.main' },
+          ORBIT_REGION: { source: 'process' as const, name: 'REGION', fallback: 'us' },
+        },
+      }],
+    },
+  };
+  const plain = manifestTrustPrompt(honest as never);
+  check(!plain.detail.includes('summary truncated')
+    && plain.detail.includes('a'.repeat(64))
+    && plain.detail.includes('orbit.main — orbit --tty')
+    && plain.detail.includes('resume --resume / --continue')
+    && plain.detail.includes('ORBIT_TOKEN ← stored credential orbit.main')
+    && plain.detail.includes('ORBIT_REGION ← process REGION (fallback "us")')
+    && plain.detail.includes('The complete record is the manifest file at /packs/orbit.pack/provider-pack.json.'),
+    'an ordinary pack is described in the dialog in full — digest, command, argv templates, resume and every environment destination with its source and fallback — and the file on disk is named as the complete record even when nothing had to be elided');
+
+  // Two negatives. A record whose manifest could not be read must say so rather
+  // than render an empty command list, which reads as a pack that runs nothing;
+  // and an adapter prompt with nothing inspected must not invent a digest.
+  const unreadable = manifestTrustPrompt({ ...hostilePack, manifest: null } as never);
+  const noAdapter = adapterTrustPrompt(hostilePack as never, null);
+  check(unreadable.detail.includes('could not read')
+    && !unreadable.detail.includes('profile(s)')
+    && !unreadable.detail.includes('Environment set for the agent')
+    && noAdapter.detail.includes('no executable adapter')
+    && noAdapter.detail.includes('Nothing was trusted.')
+    && !noAdapter.detail.includes('SHA-256'),
+    'a manifest Wanigan could not read is described as unreadable and names no profiles and no environment, and an adapter prompt with nothing inspected offers no digest to approve instead of inventing one');
+
+  // Source pins: the grant is recorded behind a main-process confirmation, and
+  // the two approvals stay separate. The negatives are the old pass-through
+  // signatures, so re-introducing either one fails here rather than silently
+  // moving the trust boundary back into the renderer.
+  check(mainSrc.includes("handle('providerPacks:trustManifest', async (packId: unknown, sha256: unknown) => {")
+    && mainSrc.includes('...manifestTrustPrompt(pack),')
+    && mainSrc.includes("if (answer.response !== 1) throw new Error('Cancelled. Nothing was trusted and nothing was enabled.');")
+    && mainSrc.includes('...adapterTrustPrompt(pack, inspected),')
+    && mainSrc.includes("if (answer.response !== 1) throw new Error('Cancelled. The adapter was not trusted.');")
+    && !mainSrc.includes("handle('providerPacks:trustManifest', (packId: string, sha256: string) => {")
+    && !mainSrc.includes("handle('providerPacks:trustAdapter', (packId: string, sha256: string) => {"),
+    'execution trust for a provider pack is confirmed in the main process, separately for the manifest and for the adapter, and is not a step the renderer can decline to render');
   const preloadSrc = sourceOf('src/preload/index.ts');
   const providerSrc = sourceOf('src/main/providers.ts');
   const daemonSrc = sourceOf('src/main/daemon.ts');
   const reviewSrc = sourceOf('src/main/review.ts');
   const controlSrc = sourceOf('src/main/control.ts');
   const controlViewSrc = sourceOf('src/renderer/src/views/Control.tsx');
+  // retryNode writes the node back to 'pending'; mapNodes then still reports
+  // every dependent as 'blocked', because a prerequisite short of 'completed'
+  // is a wait either way. The old copy promised the dependents were unblocked,
+  // which is a visible status the operator could check and find unchanged —
+  // and it is the kind of sentence someone rewrites back, reading "reopen" and
+  // assuming it means "unblock".
+  check(controlViewSrc.includes('tasks that wait on it stay blocked until it completes.')
+    && controlViewSrc.includes('title="Reopen this task so it can be started again. Tasks waiting on it stay blocked until it completes."')
+    && !/dependents are unblocked|dependents stop being blocked|unblocks its dependents/.test(controlViewSrc),
+    'Control tells the operator that reopening a failed task removes its failure but not the wait, in both the toast and the button tooltip, and nowhere claims that reopening unblocks what waits on it',
+    controlViewSrc.slice(controlViewSrc.indexOf('Task reopened'), controlViewSrc.indexOf('Task reopened') + 160));
   const schedulesSrc = sourceOf('src/renderer/src/views/Schedules.tsx');
   const sessionsSrc = sourceOf('src/renderer/src/views/Sessions.tsx');
   const settingsSrc = sourceOf('src/renderer/src/views/Settings.tsx');
@@ -4062,6 +4739,84 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     .map((file) => path.relative(appRoot(), file))];
   if (mobileFiles.length < 10) missingSources.push(`src/main/mobile/** (walked only ${mobileFiles.length} files)`);
   const mobileSrc = mobileFiles.map((file) => sourceOf(file)).join('\n');
+
+  // The digest and the drift sentence. `Reading` is annotated rather than
+  // inferred so the `where` literals narrow instead of widening to string.
+  type Reading = import('./mobile/git').MobileRepoReading;
+  const shownTree: Reading = { branch: 'main', detached: false, operation: null, dropped: 0, rows: [
+    { path: 'src/b.ts', status: ' M', where: 'unstaged' },
+    { path: 'src/a.ts', status: 'M ', where: 'staged' },
+  ] };
+  const reorderedTree: Reading = { ...shownTree, rows: [...shownTree.rows].reverse() };
+  const movedTree: Reading = { ...shownTree, rows: [
+    { path: 'src/a.ts', status: 'M ', where: 'staged' },
+    { path: 'src/b.ts', status: 'MM', where: 'both' },
+    { path: 'src/c.ts', status: '??', where: 'untracked' },
+  ] };
+  const staleRefusal = repoGit.driftSentence(shownTree, movedTree);
+  check(repoGit.repoDigest(shownTree) === repoGit.repoDigest(reorderedTree)
+    && repoGit.repoDigest(shownTree) !== repoGit.repoDigest(movedTree)
+    && /1 file changed that had not \(src\/c\.ts\)/.test(staleRefusal)
+    && /1 file with a different status \(src\/b\.ts\)/.test(staleRefusal)
+    && /Nothing was committed/.test(staleRefusal)
+    && !/\bstale\b/i.test(staleRefusal),
+  'a commit made against a working tree that has moved is refused with the paths that moved rather than the word “stale”, and the digest it is checked against ignores the order git happened to report the rows in',
+  staleRefusal);
+
+  const untrackedOnly: Reading = { ...shownTree, rows: [{ path: '.env', status: '??', where: 'untracked' }] };
+  const conflictedTree: Reading = { ...shownTree, rows: [{ path: 'a', status: 'UU', where: 'conflicted' }] };
+  const midRebase: Reading = { ...shownTree, operation: 'rebase' };
+  const cappedTree: Reading = { ...shownTree, rows: new Array(repoGit.MOBILE_REPO_LIMITS.files + 1)
+    .fill(0).map((_, i) => ({ path: `f${i}`, status: ' M', where: 'unstaged' as const })) };
+  const withUntracked: Reading = { ...shownTree, rows: [...shownTree.rows, { path: '.env', status: '??', where: 'untracked' }] };
+  check(repoGit.whyNotCommittable(shownTree) === null
+    && /never adds a file to a commit/.test(String(repoGit.whyNotCommittable(untrackedOnly)))
+    && /conflict/.test(String(repoGit.whyNotCommittable(conflictedTree)))
+    && /rebase is in progress/.test(String(repoGit.whyNotCommittable(midRebase)))
+    && /shown in full/.test(String(repoGit.whyNotCommittable(cappedTree)))
+    && repoGit.commitOffer(withUntracked).untracked === 1,
+  'a phone is refused a commit of an untracked-only tree, a conflicted tree, a tree mid-rebase and a reading the list cap cut short — the last because the screen has to have shown the whole of what the commit would carry before the tap counts as deliberate',
+  [untrackedOnly, conflictedTree, midRebase, cappedTree]
+    .map((tree) => String(repoGit.whyNotCommittable(tree)).slice(0, 24)).join(' | '));
+
+  const keptMessage = repoGit.commitMessage('subject line\n\nand a body');
+  const belledMessage = repoGit.commitMessage('tidyup');
+  const hugeMessage = repoGit.commitMessage('x'.repeat(9_000));
+  check(keptMessage.ok && keptMessage.message === 'subject line\n\nand a body'
+    && belledMessage.ok && belledMessage.message === 'tidyup'
+    && repoGit.commitMessage('   ').ok === false
+    && repoGit.commitMessage(undefined).ok === false
+    && hugeMessage.ok === false && /9000 bytes/.test(hugeMessage.ok ? '' : hugeMessage.error),
+  'a commit message from a phone keeps its paragraphs, loses its control characters, and is refused outright when it is empty, missing or larger than the wire accepts',
+  keptMessage.ok ? JSON.stringify(keptMessage.message) : keptMessage.error);
+
+  const namedStep = repoGit.gateStep([{ command: 'npm run typecheck', exitCode: 0 }, { command: 'npm test', exitCode: 1 }], 3);
+  const withheldStep = repoGit.gateStep([{ command: '/Users/someone/bin/check --strict', exitCode: 2 }], 1);
+  const homeStep = repoGit.gateStep([{ command: 'sh ~/bin/gate', exitCode: 1 }], 1);
+  check(namedStep !== null && namedStep.position === 2 && namedStep.total === 3
+    && namedStep.command === 'npm test' && namedStep.exitCode === 1
+    && repoGit.gateStep([{ command: 'npm test', exitCode: 0 }], 1) === null
+    && withheldStep !== null && withheldStep.command === null && withheldStep.position === 1
+    && /names a path on this Mac/.test(String(withheldStep.withheld))
+    && homeStep !== null && homeStep.command === null
+    && !mobileSrc.includes('output: '),
+  'a failed review gate names the command that failed and its exit code, withholds the command text when it carries an absolute path or a home directory, and never puts the command’s output on the wire at any size',
+  JSON.stringify({ step: namedStep, withheld: withheldStep && withheldStep.command }));
+
+  check(mobileSrc.includes("import { history as gateHistory, recipe as gateRecipe, run as startGate } from '../review';")
+    && mobileSrc.includes('const pending = startGate(projectId);')
+    && mobileSrc.includes('if (before.latest && before.latest.live) {')
+    && mobileSrc.includes('json(res, 200, { ok: true, started: false, gate: before });')
+    && !/spawn\(|execFile\(/.test(mobileSrc),
+  'the phone drives the project’s own review gate through ../review rather than a second definition of it, spawns nothing itself, and a second request while one is live joins the live run instead of starting a competing build');
+
+  check(mobileSrc.includes("['running', 'running'], ['passed', 'passed'], ['failed', 'failed'],")
+    && mobileSrc.includes("GATE_STATUSES.get(String(run.status)) ?? 'unknown'")
+    && mobileSrc.includes("unknown: { glyph: '?', word: 'Not recognised', tone: 'quiet' },")
+    && mobileSrc.includes('This project has no review gate.')
+    && mobileSrc.includes('did not record which working tree this run saw')
+    && mobileSrc.includes('The working tree has changed since this ran, so this result is not about the files above.'),
+  'a review gate that has no commands, a stored status this build cannot name, and a run whose working tree was never recorded each render as their own state on the phone rather than borrowing the shape of a gate that passed');
   const cssSrc = sourceOf('src/renderer/src/index.css');
   const sessionsCssSrc = sourceOf('src/renderer/src/styles/sessions.css');
   const compactCssSrc = sourceOf('src/renderer/src/styles/compact.css');
@@ -4467,11 +5222,49 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && terminalPaneSrc.includes("window.wanigan.on.data(({ sessionId, data }) => feed(sessionId, data))")
     && terminalPaneSrc.includes('window.wanigan.on.exit(')
     && appSrc.includes('useEffect(() => startTerminalOutputPump(), [])')
-    // The view keeps the unread accounting, which only means anything while the
-    // session list is on screen, and writes no bytes itself.
+    // The view writes no bytes, and no longer counts either: the unread
+    // accounting moved to main, which can see output arrive while this view is
+    // unmounted — the only stretch a badge is for.
     && !sessionsSrc.includes('feed(sessionId, data)')
     && !sessionsSrc.includes('import TerminalPane, { feed,'),
   'terminal output is pumped for the window’s lifetime rather than the Sessions view’s, so bytes printed while you are on another tab still land');
+
+  // bumpUnread sat in main from the initial commit with no caller, and
+  // sessions:markRead zeroed a field nothing had ever raised, because the count
+  // was really being kept in the Sessions view — the one place that cannot see
+  // what it is counting, since App.tsx unmounts it on every tab change. Main
+  // sees every chunk whatever tab is on screen and is told which session that
+  // is, so it owns both halves now.
+  const sessionsMainSrc = sourceOf('src/main/sessions.ts');
+  check(sessionsMainSrc.split('bumpUnread').length - 1 >= 2
+    && sessionsMainSrc.includes("broadcast('session:unread'")
+    && sessionsMainSrc.includes('export function setFocusedSession')
+    && mainSrc.includes('setFocusedSession(sessionId)')
+    && preloadSrc.includes("ipcRenderer.on('session:unread'")
+    // The whole session list must not be pushed per burst of PTY output: the
+    // channel carries the counts that moved, and nothing else.
+    && !sessionsMainSrc.includes("s.meta.unread = 0; broadcast('session:list'"),
+  'the unread count is kept by the process that sees the output, and a change to it pushes the counts that moved rather than re-broadcasting every session row per burst of PTY output',
+  `bumpUnread mentions: ${sessionsMainSrc.split('bumpUnread').length - 1}`);
+
+  // Negative on the renderer half: the view must not keep a second, private
+  // count. Two counters for one number is how the badge came to survive
+  // leaving the view while counting nothing during the trip.
+  check(!sessionsSrc.includes('unreadPending')
+    && sessionsSrc.includes('window.wanigan.on.unread(')
+    && sessionsSrc.includes('applyUnreadCounts(')
+    && sessionsSrc.includes('window.wanigan.sessions.markRead(id)'),
+  'the Sessions view keeps no private unread tally beside main’s, and clearing a badge is a real write rather than a local repaint over a number nobody owned',
+  `unreadPending present: ${sessionsSrc.includes('unreadPending')}`);
+
+  // The number is seconds in which output arrived, not messages waiting. "3
+  // unread" beside a chat-shaped list is read as three things to read; it never
+  // was that, and one of them cannot even be opened separately.
+  check(!fleetViewSrc.includes('} unread')
+    && fleetViewSrc.includes('while this session was not on screen')
+    && sessionsSrc.includes('Output arrived ${s.unread} times while this session was not on screen'),
+  'neither surface calls a count of output-seconds a count of unread messages, and the digit on the badge carries the sentence that says what it counted',
+  `fleet still says unread: ${fleetViewSrc.includes('} unread')}`);
 
   // Two always-mounted shell polls kept working behind a hidden window: a
   // six-second badge tick that makes three IPC round trips a beat, and a
@@ -4503,6 +5296,23 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // with the project for the same reason: a sentence drafted about one
   // repository's changes must not be waiting in the box over another's tree.
   const gitViewSrc = sourceOf('src/renderer/src/views/Git.tsx');
+
+  // Two surfaces name this view: the page head a person reads on arrival, and
+  // the palette hint they search to get there. They are not one string — a head
+  // may say what a hint must not, and this head adds that Wanigan only reads the
+  // repository until a button is pressed — but they must not describe different
+  // views, and the palette hint is MATCHED, not merely printed, so a word that
+  // drifts out of it stops being a way to find this screen. What is pinned is
+  // the list of things both promise, not the sentence either wraps it in.
+  const gitNouns = ['working tree', 'branches', 'stashes', 'review gate'];
+  const gitLead = /lead="([^"]+)"/.exec(gitViewSrc)?.[1] ?? '';
+  const gitHint = /\{ id: 'git',[^}]*hint: '([^']+)'/.exec(routesSrc)?.[1] ?? '';
+  check(gitLead.length > 0 && gitHint.length > 0
+    && gitNouns.every((noun) => gitLead.toLowerCase().includes(noun) && gitHint.toLowerCase().includes(noun))
+    && /histor/i.test(gitLead) && /histor/i.test(gitHint)
+    && !/worktree/i.test(gitHint),
+    'the Git page head and the Git palette hint name the same five things this view holds, so neither can be rewritten into a description of a different screen, and the hint still does not claim the worktree UI that lives in Settings',
+    JSON.stringify({ lead: gitLead.slice(0, 70), hint: gitHint.slice(0, 70) }));
   check(gitViewSrc.length > 500
     && gitViewSrc.includes('await syncSelection(await load())')
     && gitViewSrc.includes('function findFile(status: Status, path: string)')
@@ -4818,26 +5628,39 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // is refused, and mobile/git.ts holds no second copy of the condition that
   // could drift out of step with it. The count is the point — 'which routes can
   // put a file path on a phone' has to stay answerable by grep.
+  // The negative that matters most on this whole surface. `git commit -a` is
+  // tracked-only by construction rather than by a filter anyone could edit, and
+  // the way to keep that true is to have no other write imported at all.
+  check(mobileSrc.includes("import { commit as gitCommit, runGit, status, type GitFile, type GitStatus } from '../git';")
+    && mobileSrc.includes('await gitCommit(project.path, message.message, { all: true });')
+    && !mobileSrc.includes("'-A'")
+    && !/\bstage\(|\bdiscard\(|\bcheckout\(|gitPush|push\(project/.test(mobileSrc)
+    && mobileSrc.includes('pushed: false'),
+  'the only repository write a phone can reach is `git commit -a`: the mobile surface imports no stage, discard, checkout or push from ../git, never passes -A, and says in the answer itself that nothing was pushed');
   const repoScopedRoutes = (mobileSrc.match(/scope: 'repo', handler:/g) ?? []).length;
   check(mobileSrc.includes("export type MobileApiScope = 'monitor' | 'control' | 'repo';")
     && mobileSrc.includes("if (route.scope === 'repo' && !repoScopeAllowed()) {")
     && mobileSrc.includes('registerRepoGate(repoReviewAllowed);')
-    // Three now, not two: the file-diff route joined this scope, which is the
-    // deliberate friction — a widening of the set that can put a path, or now a
-    // hunk, on a phone has to be typed here by hand before the suite goes green.
-    && repoScopedRoutes === 3
+    // Five now, not three: the gate and the commit joined this scope, and they
+    // are the first WRITES on it. That is the deliberate friction — a widening
+    // of the set that can put a path or a hunk on a phone, or do something to a
+    // repository, has to be typed here by hand before the suite goes green.
+    && repoScopedRoutes === 5
     && !mobileSrc.includes('if (!repoReviewAllowed())'),
   'the repository-review widening is enforced by the dispatcher’s declared scope rather than by a condition inside a handler, so the routes that can send a file path stay enumerable',
   `${repoScopedRoutes} repo-scope routes`);
-  // The third repo-scope route is the one that carries source lines rather
-  // than only paths, and the count above has to move with it: 'which routes can
-  // put a file path — or a hunk — on a phone' stays answerable by grep only
-  // while the number in this suite is the number in the route table.
+  // The third repo-scope read is the one that carries source lines rather than
+  // only paths, and the two POSTs beside it are the only writes; the count above
+  // has to move with all of them, because 'what may a phone be shown of a
+  // repository, and what may it do to one' stays answerable by grep only while
+  // the number in this suite is the number in the route table.
   const repoScopedRouteLines = (mobileSrc.match(/scope: 'repo', handler:/g) ?? []).length;
-  check(repoScopedRouteLines === 3
+  check(repoScopedRouteLines === 5
     && mobileSrc.includes("registerApiRoute({ path: '/api/repo/file', method: 'GET', scope: 'repo'")
+    && mobileSrc.includes("registerApiRoute({ path: '/api/repo/gate', method: 'POST', scope: 'repo'")
+    && mobileSrc.includes("registerApiRoute({ path: '/api/repo/commit', method: 'POST', scope: 'repo'")
     && !mobileSrc.includes('if (!repoReviewAllowed())'),
-  "one file's diff is declared on the dispatcher's repo scope like the two routes beside it, so everything that can send a file path or its contents stays enumerable",
+  "one file's diff and the two repository writes are declared on the dispatcher's repo scope like the reads beside them, so everything that can send a file path or its contents, or change a repository, stays enumerable",
   `${repoScopedRouteLines} repo-scope routes`);
   // A mark is a glyph and a number wide, with nowhere to print 'as of eleven
   // minutes ago' — so when the Mac stops answering it leaves rather than keeps
@@ -5021,6 +5844,47 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && cssSrc.includes('.pane.control-view > *, .pane.set > *, .pane.wide > * { max-width: var(--page-wide); }')
     && controlViewSrc.includes('className="pane control-view"'),
     'Control is held flush left at --page-wide by the shared .pane rule every document surface uses, not centred by a private 1500px cap of its own');
+
+  // The three checks below close the gaps the assertion above leaves. It pins
+  // that the private cap is gone; these pin the reasons deleting it was safe,
+  // because every one of those reasons is a fact about a *different* file and
+  // any of them can be changed by someone who never opens control.css.
+  const compactSheet = sourceOf('src/renderer/src/styles/compact.css');
+  check(/\.control-grid/.test(controlCssRules)
+    && !/@media \(max-width: 980px\)[^}]*\.control-view\s*\{[^}]*padding/.test(controlCssRules)
+    && /\.pane \{ padding: var\(--s-4\); \}/.test(compactSheet),
+    'Control spells no gutter of its own at the 980px shelf and takes the same --s-4 step compact.css gives every other .pane there, so the two cannot drift apart',
+    `control shelf rules ${/\.control-grid/.test(controlCssRules)}`);
+
+  // Every "the shared rule already won" argument in control.css's header comment
+  // is an argument about source order, and source order here is two imports in
+  // main.tsx plus one @import in index.css. Swap either and the private rules
+  // this phase deleted would have been the winners all along — which means the
+  // comment would have been wrong rather than the code.
+  const mainEntrySrc = sourceOf('src/renderer/src/main.tsx');
+  check(mainEntrySrc.indexOf("import './index.css';") >= 0
+    && mainEntrySrc.indexOf("import './index.css';") < mainEntrySrc.indexOf("import './styles/compact.css';")
+    && cssSrc.indexOf("@import './styles/control.css';") < cssSrc.indexOf('\n.pane {'),
+    'compact.css loads after index.css and control.css is imported above the .pane rule, which is the whole reason a private .control-view declaration lost to .pane at equal specificity instead of winning',
+    `index<compact ${mainEntrySrc.indexOf("import './index.css';") < mainEntrySrc.indexOf("import './styles/compact.css';")}`);
+
+  // .pane must never grow a max-width or a margin of its own. If it does, a
+  // document surface stops being capped on its children and starts being capped
+  // — or centred — as a container, which is the exact shape of the bug deleted
+  // out of control.css.
+  const paneBlock = /\n\.pane \{([^}]*)\}/.exec(cssSrc.replace(/\/\*[\s\S]*?\*\//g, ''))?.[1] ?? '';
+  check(paneBlock.includes('display: flex')
+    && !paneBlock.includes('max-width')
+    && !paneBlock.includes('margin'),
+    'the shared .pane rule sets the flex column and the gutter but never a max-width or a margin, so a document surface is capped on its children and never centred as a container',
+    `pane block ${paneBlock.trim().slice(0, 60)}`);
+
+  // A comment that still says Control is not a .pane, or that a centred maximum
+  // width is Control's own, describes a sheet that no longer exists. This repo
+  // treats that as worse than no comment, so the prose is pinned too.
+  check(!controlCssSrc.includes("Only the centred maximum width is Control's own")
+    && !controlCssSrc.includes('Control is not a .pane'),
+    'control.css prose describes the sheet that exists rather than the two private rules deleted out of it, and no comment still claims a centred width or a pane Control is not');
 
   // .btn-small in control.css and .skills-btn-sm in evals.css each declared only
   // padding, font-size and border-radius, and index.css's own .btn redeclares all

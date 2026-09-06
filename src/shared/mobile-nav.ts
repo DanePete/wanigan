@@ -104,7 +104,7 @@ export type MobileAbsentView = {
  * that holds the credentials.
  */
 export const MOBILE_ABSENT: readonly MobileAbsentView[] = [
-  { tab: 'skills', reason: 'Skills are files you write and edit against a repository, so Wanigan keeps them on the Mac.' },
+  { tab: 'skills', reason: 'Writing and editing a skill is work against a repository, so the Skills screen stays on the Mac. Typing one you already have into a live agent is on the Agent screen.' },
   { tab: 'context', reason: 'Instructions, memory and configuration are edited against a working tree, which this device does not have.' },
   { tab: 'plugins', reason: 'Installing or trusting a plugin is a consent decision Wanigan only takes at the Mac.' },
   { tab: 'settings', reason: 'Keys, provider packs and privacy controls stay on the Mac. This phone is paired to Wanigan; it does not configure it.' },

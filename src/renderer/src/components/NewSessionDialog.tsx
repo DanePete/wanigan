@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AccountResolution, AgentAccount, LaunchOptions, Project, ProviderId, ProviderInfo, TrustLevel } from '@shared/types';
+import type { AccountResolution, AgentAccount, LaunchModelCatalogue, LaunchOptions, Project, ProviderId, ProviderInfo, TrustLevel } from '@shared/types';
 import { TRUST_LEVELS, trustCopy, trustGlyph } from '@shared/types';
 import { intersectChoices, launchFieldChoices, type LaunchChoice } from '@shared/launch-fields';
 import { providerTint } from '@shared/provider-status';
+import { Note } from './bits';
 import { useDialog } from './useDialog';
 
 /** Same filled progression the session header uses: ◇ → ◈ → ◆ reads in greyscale. */
@@ -149,14 +150,18 @@ export default function NewSessionDialog({
   const [trustErr, setTrustErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [codexModels, setCodexModels] = useState([
-    { value: '', label: 'Auto (default)', description: 'Codex current default', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
-    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', description: 'Latest frontier agentic coding model', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
-    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', description: 'Balanced agentic coding model', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
-    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', description: 'Fast, affordable agentic coding model', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
-    { value: 'gpt-5.5', label: 'GPT-5.5', description: null, efforts: ['low', 'medium', 'high', 'xhigh'] },
-    { value: 'gpt-5.4', label: 'GPT-5.4', description: null, efforts: ['low', 'medium', 'high', 'xhigh'] },
-  ]);
+  /*
+   * What the selected profile can actually launch, read once from main.
+   *
+   * This dialog used to hold four hardcoded model tables — Codex, GLM, DeepSeek
+   * and Claude — chosen by branching on harness and profile ids, which is the
+   * shape CLAUDE.md forbids and one a provider pack could never join. Two of
+   * those backends already had live fetchers in main that nothing here called.
+   * `null` is "not read yet", which is a different thing from an empty list,
+   * and the two states say different words below.
+   */
+  const [catalogue, setCatalogue] = useState<LaunchModelCatalogue | null>(null);
+  const [catalogueErr, setCatalogueErr] = useState<string | null>(null);
 
   const options = useMemo(() => {
     const seen = new Set(projects.map((p) => p.id));
@@ -220,32 +225,27 @@ export default function NewSessionDialog({
   // harness, and carrying it across would submit an id the launch must refuse.
   useEffect(() => { setAccountId(null); }, [providerId]);
 
-  // Codex's Auto/default route; its live /model picker offers the full dynamic
-  // catalog and reasoning choices once the session is running.
+  // Only the Codex explainer below reads this now; the model and effort
+  // pickers route by what the profile declares and what its backend reports,
+  // never by a harness or profile id.
   const codexHarness = provider?.harnessId === 'codex' || providerId === 'codex';
-  const genericHarness = provider?.harnessId === 'generic-cli';
-  const zaiBackend = provider?.backendId === 'zai' || providerId === 'glm';
-  const deepseekBackend = provider?.backendId === 'deepseek' || providerId === 'deepseek';
-  /*
-   * What Wanigan can vouch for when a profile names no models of its own.
-   * The built-in Claude and Codex profiles declare `model` as free text, so
-   * this list is Wanigan's suggestion and not the profile's contract; a pack
-   * that declares its own models replaces it wholesale rather than being
-   * matched against a table keyed on a harness id it has never heard of.
-   */
-  const fallbackModels: LaunchChoice[] = genericHarness
-    ? []
-    : codexHarness
-    ? codexModels
-    : zaiBackend
-      ? [{ value: 'glm-5.3', label: 'GLM 5.3' }, { value: 'glm-5.3-flash', label: 'GLM 5.3 Flash' }, { value: 'glm-5.2', label: 'GLM 5.2' }, { value: '', label: 'Provider default' }]
-      : deepseekBackend
-        ? [{ value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' }, { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' }, { value: '', label: 'Provider default' }]
-    : [{ value: '', label: 'default' }, { value: 'opus', label: 'opus' }, { value: 'sonnet', label: 'sonnet' }, { value: 'haiku', label: 'haiku' }, { value: 'fable', label: 'fable' }];
-  const modelField = launchFieldChoices(provider, 'model', fallbackModels);
+  const modelField = launchFieldChoices(provider, 'model');
   const effortField = launchFieldChoices(provider, 'effort');
   const permissionField = launchFieldChoices(provider, 'permissionMode');
-  const modelChoices = modelField.choices;
+  /*
+   * main already intersected the profile's declaration with its backend's
+   * catalogue, so these rows are the whole offer and this component adds no
+   * list of its own. A closed declared set arrives already narrowed; an open
+   * one arrives as whatever the backend reported.
+   */
+  const modelChoices: LaunchChoice[] = (catalogue?.rows ?? [])
+    .map((row) => ({ value: row.value, label: row.label, description: row.description }));
+  /*
+   * Free text only where there is nothing to offer and the profile accepts a
+   * value it never listed. Where rows exist they are what Wanigan can vouch
+   * for, and typing past them would be a promise nobody made.
+   */
+  const modelOpen = modelField.custom && modelChoices.length === 0;
   /*
    * A free-text control appears only where the profile's own declaration is
    * the whole story: it declared a list and opened it with `allowCustom`, or
@@ -282,32 +282,39 @@ export default function NewSessionDialog({
     setProviderOptions(next);
   }, [providerId, provider?.launchFields]);
 
+  /*
+   * One read per selected profile, for every backend rather than only Codex.
+   * Nothing else on this form waits on it: effort, permission mode and Start
+   * render immediately, because the Codex catalogue is read through a CLI probe
+   * that main allows twelve seconds to answer. Both pieces of state reset
+   * first, so switching profiles never shows the previous profile's models.
+   */
   useEffect(() => {
-    if (!codexHarness) return;
+    setCatalogue(null);
+    setCatalogueErr(null);
+    if (!providerId) return;
     let live = true;
-    window.wanigan.codex.models().then((catalog) => {
-      if (!live || !catalog.models.length) return;
-      setCodexModels([
-        { value: '', label: 'Auto (default)', description: 'Codex current default', efforts: catalog.models.find((m) => m.isDefault)?.reasoningEfforts ?? ['low', 'medium', 'high', 'xhigh', 'max'] },
-        ...catalog.models.map((m) => ({ value: m.id, label: m.label, description: m.description, efforts: m.reasoningEfforts })),
-      ]);
-    }).catch(() => { /* static current-model fallback remains usable */ });
+    window.wanigan.providers.modelCatalogue(providerId)
+      .then((next) => { if (live) setCatalogue(next); })
+      .catch((e) => { if (live) setCatalogueErr(e instanceof Error ? e.message : String(e)); });
     return () => { live = false; };
-  }, [codexHarness]);
+  }, [providerId]);
 
   /*
    * Two claims about one launch, so the offer is where they agree: the profile
-   * says which efforts it will compile, and Codex's catalog says which ones the
-   * chosen model accepts. Reading only the catalog is how 'ultra' reached this
-   * picker for a profile that declares low…max, and the launch it armed died in
-   * the compiler with "unsupported value".
+   * says which efforts it will compile, and the backend's catalogue says which
+   * ones the chosen model accepts. Reading only the catalogue is how 'ultra'
+   * reached this picker for a profile that declares low…max, and the launch it
+   * armed died in the compiler with "unsupported value". The intersection now
+   * runs for every profile whose catalogue reports a per-model range, not only
+   * for Codex — it can only ever narrow the declared contract, never widen it.
    */
   const effortChoices = useMemo(
     () => intersectChoices(
       launchFieldChoices(provider, 'effort').choices,
-      codexHarness ? codexModels.find((choice) => choice.value === model)?.efforts : null,
+      catalogue?.rows.find((row) => row.value === model)?.efforts ?? null,
     ),
-    [provider, codexHarness, model, codexModels],
+    [provider, catalogue, model],
   );
 
   // An effort the current offer no longer contains cannot be launched, so it is
@@ -529,8 +536,16 @@ export default function NewSessionDialog({
         </div>
 
         {modelField.supported && <>
-          <div className="label">{modelField.label} <span style={{ textTransform: 'none' }}>— {codexHarness ? 'Auto uses Codex’s current default' : 'blank uses the CLI default'}</span></div>
-          {openField(modelField) ? (
+          <div className="label">{modelField.label} <span style={{ textTransform: 'none' }}>— blank leaves the model to the CLI</span></div>
+          {/* "Not read yet" and "read, and there is nothing" are different
+              facts, and only the second one may be stated as an absence. */}
+          {catalogue === null && catalogueErr === null && (
+            <p className="faint">Reading what {provider?.label ?? 'this profile'} offers…</p>
+          )}
+          {catalogueErr !== null && (
+            <Note tone="warn">Wanigan could not read what models this profile offers, so type one or leave it blank for the CLI’s own default.</Note>
+          )}
+          {modelOpen ? (
             <OpenField id="new-session-model" value={model} choices={modelChoices}
                        placeholder={modelField.required ? 'Required by provider' : 'Provider default'}
                        onChange={setModel} />
@@ -555,6 +570,10 @@ export default function NewSessionDialog({
               ))}
             </div>
           )}
+          {/* Both live fetchers answer with Wanigan's local list and a note
+              when the service cannot be reached. The note is the difference
+              between a catalogue and a guess, so it is shown, not dropped. */}
+          {catalogue?.note && <p className="faint">{catalogue.note}</p>}
         </>}
 
         {effortField.supported && (

@@ -1468,7 +1468,7 @@ function RemoveProjectConfirm({ project, onCancel, onConfirm }: {
   );
 }
 
-/** The one harness whose accounts a project can be pinned to today. */
+/** The one harness whose accounts THIS PANEL pins a project to today. */
 const PROJECT_ACCOUNT_HARNESS = 'claude-code';
 
 function Projects({ projects, onAddProject, onRemoveProject }: {
@@ -2367,11 +2367,14 @@ function PhoneMonitor() {
     <>
     <Section title="Phone monitor"
              hint="Walk away without losing the fleet: a private read-only status page and opt-in phone alerts for the same states as desktop notifications.">
-      <Callout title="The dashboard is read-only until you explicitly enable iPad control.">
+      <Callout title="The dashboard reads only, until you enable iPad control or Repository review.">
         Read-only monitoring receives the Mac hostname, Wanigan version, an internal session id, project/session
         names, provider/model, state, timestamps, spend and aggregate usage. With paired iPad control enabled,
         the selected session’s terminal output is also shown and may contain paths, prompt text, or other sensitive
         text printed by an agent. Treat every paired device as trusted: whatever it sends is typed into the agent’s terminal, exactly as it would be at the Mac.
+        With Repository review enabled, a paired browser can also read which files each project has changed, read one
+        file’s diff, run that project’s saved review gate, and commit what git already tracks — never adding an
+        untracked file, and never pushing.
       </Callout>
 
       {!status ? (

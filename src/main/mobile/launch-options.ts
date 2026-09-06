@@ -1,3 +1,4 @@
+import type http from 'node:http';
 import {
   intersectChoices,
   launchFieldChoices,
@@ -5,13 +6,15 @@ import {
   type LaunchFieldChoices,
   type LaunchFieldProvider,
 } from '../../shared/launch-fields';
-import type { ProviderInfo } from '../../shared/types';
+import type { AgentAccount, ProviderInfo } from '../../shared/types';
 import * as accounts from '../accounts';
 import { readCodexModels } from '../codex-status';
 import { deepseekModels } from '../deepseek';
 import { glmModels } from '../glm';
 import { providerById, type ProviderDef } from '../providers';
-import { listProjects } from '../store';
+import { listProjects, projectById } from '../store';
+import { json, registerApiRoute, requestJson } from './dispatch';
+import { safeString } from './snapshot';
 
 /**
  * What the phone's launch form may honestly offer for model and effort.
@@ -42,6 +45,16 @@ import { listProjects } from '../store';
  * It is not a launch field — no manifest declares it, and it compiles to an
  * environment variable rather than to argv — so it is built here rather than
  * folded into `launchOffer`, which stays pure and stays about argv.
+ *
+ * The pin is the durable half of that question, and the reason this module now
+ * writes as well as reads. Choosing an account for one launch was already
+ * possible from a phone; making the choice STICK to a repository was not, so an
+ * operator whose client work belongs on the client's login had to walk to the
+ * Mac to say so once. There is exactly one place that fact can live —
+ * `project_accounts`, through accounts.setProjectAccount() — and this module
+ * drives it rather than keeping a phone-shaped copy beside it: two records of
+ * which login a repository uses is not a stale screen, it is a commit authored
+ * by the wrong person.
  */
 
 /** A model as a live CLI catalogue describes it, reduced to what a picker needs. */
@@ -124,7 +137,79 @@ export type MobileAccountFollow = {
   accountId: string;
   label: string;
   source: 'project' | 'default';
+  /**
+   * The account this project is PINNED to, or null when nothing is pinned and
+   * the default is simply being followed.
+   *
+   * Carried beside `accountId` rather than inferred from it, because the two
+   * answer different questions and a screen with only the resolved one cannot
+   * tell them apart. "This project uses Work" is true both when somebody chose
+   * Work for this repository and when Work merely happens to be the default
+   * today; a control drawn from the first reading would offer to "correct" the
+   * second by writing a genuine pin over a project that had never expressed a
+   * preference — and would silently stop following the default the day it
+   * changed. Settings.tsx keeps null for exactly this distinction and says so.
+   */
+  pinnedAccountId: string | null;
+  /**
+   * What this project resolves to with NO pin: the answer clearing one restores,
+   * and the sentence the "no pin" option has to be able to write.
+   */
+  fallbackAccountId: string;
+  fallbackLabel: string;
 };
+
+/**
+ * The one fact about the live fleet this module is allowed to want, injected
+ * rather than imported.
+ *
+ * sessions.ts owns which sessions are running, and this module cannot ask it:
+ * sessions.ts reaches notify.ts, notify.ts imports the ./mobile facade, and the
+ * import would close a cycle through the very split mobile.ts exists to keep
+ * free of one. So the desktop hands the answer in, and an unwired seam answers
+ * `null` — which the screen renders as the timeless truth rather than as "no
+ * session is running", a claim nothing here established.
+ *
+ * Project ids and nothing else. A session's title, path, prompt and account are
+ * none of this seam's business; what it is asked is how many agents a pin
+ * change would NOT affect.
+ */
+export type MobileLaunchPinSource = {
+  /** The project id of every session that has not exited, one entry per session. */
+  liveProjectIds: () => readonly string[];
+};
+
+let pinSource: MobileLaunchPinSource | null = null;
+
+/** The desktop main process supplies the live-session count; null unwires it. */
+export function configureMobileLaunchPinSource(source: MobileLaunchPinSource | null): void {
+  pinSource = source;
+}
+
+/**
+ * Running sessions per project, or null when nothing can answer.
+ *
+ * null is not zero and the two must never be collapsed: zero is a reading, null
+ * is the absence of one, and a phone told "nothing is running in this project"
+ * on the strength of an unwired seam has been told something Wanigan never
+ * checked.
+ */
+function runningByProject(): Map<string, number> | null {
+  const source = pinSource;
+  if (!source) return null;
+  try {
+    const counts = new Map<string, number>();
+    for (const id of source.liveProjectIds()) {
+      if (typeof id !== 'string' || !id) continue;
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    return counts;
+  } catch {
+    // A bridge that threw has not reported an empty fleet; it has reported
+    // nothing, and that is what null says.
+    return null;
+  }
+}
 
 export type MobileAccountOffer = {
   /** False when this profile has no account decision to make at all. */
@@ -331,6 +416,43 @@ const NO_ACCOUNTS: MobileAccountOffer = {
  * and it means there is exactly one implementation of "which account would this
  * be", so the phone cannot drift from what pressing the button actually does.
  */
+/**
+ * One project's account answer: what it resolves to, whether that is a pin, and
+ * what clearing the pin would leave behind.
+ *
+ * `fallback` is passed in rather than resolved here because it does not vary by
+ * project — it is the harness default — and resolving it per project would stat
+ * every account's directory once more for every repository on this Mac.
+ *
+ * Resolved through accounts.resolve() rather than by restating its rule, so
+ * there is exactly one implementation of "which account would this be" and the
+ * phone cannot drift from what pressing the button actually does.
+ */
+function accountFollow(
+  def: ProviderDef, projectId: string, fallback: AgentAccount | null,
+): MobileAccountFollow | null {
+  const resolution = accounts.resolve({
+    harness: def.harness, projectId, appliesToAnthropic: anthropicApplies(def),
+  });
+  const source = resolution.source;
+  // 'explicit' cannot appear — nothing was chosen here — and 'none' is a
+  // profile with no account decision. Both are dropped rather than coerced: a
+  // follow row is a claim about what would happen, and there is no honest row
+  // to write for a project this launch would resolve no account for. A missing
+  // fallback is dropped for the same reason: the row could not say what
+  // clearing a pin would restore, and inventing that is inventing an identity.
+  if (!resolution.account || (source !== 'project' && source !== 'default') || !fallback) return null;
+  return {
+    projectId,
+    accountId: resolution.account.id,
+    label: resolution.account.label,
+    source,
+    pinnedAccountId: source === 'project' ? resolution.account.id : null,
+    fallbackAccountId: fallback.id,
+    fallbackLabel: fallback.label,
+  };
+}
+
 export function mobileAccountOffer(
   providerId: string, projectIds: readonly string[],
 ): MobileAccountOffer {
@@ -341,6 +463,11 @@ export function mobileAccountOffer(
     appliesToAnthropic: anthropicApplies(def),
   });
   if (!applies.account) return { ...NO_ACCOUNTS, reason: applies.reason };
+  // The harness default, resolved once: it is the same answer for every project
+  // on this Mac, and it is what each row's "no pin" option has to name.
+  const fallback = accounts.resolve({
+    harness: def.harness, appliesToAnthropic: anthropicApplies(def),
+  }).account;
   return {
     supported: true,
     reason: null,
@@ -353,17 +480,8 @@ export function mobileAccountOffer(
       signedIn: account.signedIn,
     })),
     follow: projectIds.flatMap((projectId): MobileAccountFollow[] => {
-      const resolution = accounts.resolve({ harness: def.harness, projectId });
-      const source = resolution.source;
-      // 'explicit' cannot appear — nothing was chosen here — and 'none' is a
-      // profile with no account decision, which the guard above already
-      // returned. Both are dropped rather than coerced: a follow row is a claim
-      // about what would happen, and there is no honest row to write for a
-      // project this launch would resolve no account for.
-      if (!resolution.account || (source !== 'project' && source !== 'default')) return [];
-      return [{
-        projectId, accountId: resolution.account.id, label: resolution.account.label, source,
-      }];
+      const row = accountFollow(def, projectId, fallback);
+      return row ? [row] : [];
     }),
   };
 }
@@ -450,3 +568,153 @@ export async function mobileLaunchProviders(
     };
   }));
 }
+
+
+/**
+ * What changing a pin actually changed, answered from the Mac.
+ *
+ * `runningSessions` is counted at the moment of the write and travels only with
+ * the write, deliberately. The read this screen is drawn from — /api/control —
+ * is fetched once per page load and cached there, because composing it can
+ * spawn a CLI to ask for its model catalogue; a liveness count riding on it
+ * would be minutes or hours old by the time the operator read it, and "one
+ * session is running in this project right now" is precisely the sentence that
+ * must not be stale. Before a write the screen says the thing that is true
+ * whenever it is said — a session already running keeps the login it started
+ * with — and only the confirmation counts anything.
+ */
+export type MobileProjectAccountPin = {
+  follow: MobileAccountFollow;
+  /**
+   * Sessions in this project that had not exited when the pin changed, or null
+   * when no bridge was wired to answer. Null is the absence of a reading and is
+   * never rendered as zero.
+   */
+  runningSessions: number | null;
+};
+
+/** Longer than any id this Mac issues; an id past it is refused unread. */
+const MAX_PIN_ID = 160;
+
+/**
+ * An id from a paired browser, shaped before it is looked up.
+ *
+ * The lookup against the real record is the gate that matters — an id this Mac
+ * never issued is refused whatever it looks like — so this is the cheap fence
+ * in front of it: bounded, no control characters, and the character set every
+ * id here is actually built from (`prj_`, `acct_` and a manifest profile id).
+ */
+function pinId(value: unknown, label: string): string {
+  if (typeof value !== 'string') throw new Error(`${label} is required.`);
+  const id = value.trim();
+  if (!id || id.length > MAX_PIN_ID || !/^[A-Za-z0-9._-]+$/.test(id)) {
+    throw new Error(`${label} is not an id this Mac issued.`);
+  }
+  return id;
+}
+
+/**
+ * The account to pin, or the deliberate absence of one.
+ *
+ * `undefined` is refused rather than read as "clear the pin". A field that is
+ * simply missing — a truncated body, a page built against an older shape — must
+ * not silently un-pin a repository from the login its commits are supposed to
+ * carry; clearing a pin is a decision, and it has to be sent as one.
+ */
+function pinAccountId(value: unknown): string | null {
+  if (value === null || value === '') return null;
+  if (value === undefined) throw new Error('Send an account id to pin, or null to clear the pin.');
+  return pinId(value, 'Account');
+}
+
+/**
+ * Pin a project to an account, or clear the pin — the same record the desktop
+ * writes, driven from a phone.
+ *
+ * Everything is checked against the database rather than against the payload
+ * this server just served, because a paired browser can post anything and a
+ * page can be minutes out of date. An unknown project, an uninstalled profile,
+ * a profile that signs in against another vendor, an account that no longer
+ * exists and an account belonging to another harness are five refusals with
+ * five sentences — never a silent no-op, and never a fallback to the default.
+ * A pin quietly landing somewhere other than where it was aimed is how a
+ * repository ends up committing under the wrong identity.
+ *
+ * Nothing here touches a live session, and nothing needs to: sessions.ts
+ * resolves the account once at spawn, freezes it onto the session and into
+ * `session_log.account_id`, and builds the child's environment from that frozen
+ * answer. A session already running keeps the login it started with because the
+ * pin is never read again, not because this function is careful.
+ */
+export function setMobileProjectAccount(input: {
+  projectId?: unknown; providerId?: unknown; accountId?: unknown;
+}): MobileProjectAccountPin {
+  const projectId = pinId(input.projectId, 'Project');
+  const providerId = pinId(input.providerId, 'Provider');
+  const accountId = pinAccountId(input.accountId);
+  if (!projectById(projectId)) throw new Error('That project is not one this Mac has.');
+  const def = providerById(providerId);
+  if (!def) throw new Error('That provider is not installed on this Mac.');
+  const applies = accounts.resolve({
+    harness: def.harness, appliesToAnthropic: anthropicApplies(def),
+  });
+  if (!applies.account) {
+    throw new Error(applies.reason ?? 'This profile does not sign in with an account you can choose.');
+  }
+  if (accountId) {
+    // The same discipline resolveMobileLaunchAccount() applies to a launch, for
+    // the same reason: accounts.resolve() drops an explicit id that does not
+    // apply and hands back the fallback, which is right for a choice nobody
+    // made and wrong for one somebody did. Anything that does not come back as
+    // 'explicit' ends here.
+    const chosen = accounts.resolve({
+      harness: def.harness, explicitAccountId: accountId, appliesToAnthropic: anthropicApplies(def),
+    });
+    if (!chosen.account || chosen.source !== 'explicit') {
+      throw new Error(chosen.reason ?? 'That account cannot be pinned to this project.');
+    }
+  }
+  accounts.setProjectAccount(projectId, def.harness, accountId);
+  const follow = accountFollow(def, projectId, applies.account);
+  if (!follow) throw new Error('Wanigan could not read back which login this project now uses.');
+  // A counted zero and an uncounted fleet are different answers and stay
+  // different: `running` exists only when something actually answered, so a
+  // project with nothing running reports 0 and an unwired bridge reports null.
+  const running = runningByProject();
+  return { follow, runningSessions: running ? running.get(projectId) ?? 0 : null };
+}
+
+/**
+ * The pin, written from a phone.
+ *
+ * 'control' scope, not 'repo'. Setting which identity a repository's agents
+ * sign in as is a write and it is gated by the remote-control opt-in — but it
+ * is not a repository-review operation and nothing here needs a filesystem
+ * path: a project is an id the Mac issued, an account is an id the Mac issued,
+ * and the config directory that actually selects the login stays on the Mac in
+ * both directions. `grep "scope: 'repo'"` remains the complete list of routes
+ * that can put a path on this wire, and this route is not on it.
+ */
+async function servePin(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const body = await requestJson(req, 2_048);
+  try {
+    json(res, 200, { ok: true, ...setMobileProjectAccount({
+      projectId: body?.projectId, providerId: body?.providerId, accountId: body?.accountId,
+    }) });
+  } catch (error) {
+    // The sentence is the point of the refusal, so it crosses — bounded, and
+    // through the same allow-list every other message on this wire passes.
+    json(res, 400, {
+      error: safeString(
+        error instanceof Error ? error.message : String(error), 240, 'Wanigan refused that account pin.',
+      ),
+    });
+  }
+}
+
+registerApiRoute({
+  path: '/api/project-account',
+  method: 'POST',
+  scope: 'control',
+  handler: (req, res) => servePin(req, res),
+});

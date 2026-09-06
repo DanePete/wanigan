@@ -125,6 +125,30 @@ export type ProviderManifestInspection = {
   warning: string;
 };
 
+/** One offerable model. `efforts` is null when nothing said which the model takes. */
+export type LaunchModelRow = {
+  value: string;
+  label: string;
+  description: string | null;
+  efforts: string[] | null;
+};
+
+/**
+ * What a model picker may honestly offer, and where it came from.
+ *
+ * `source` is the provenance of `rows`, and it is never rounded up:
+ * `declared` — the profile's own manifest said so; `live` — the backend was
+ * asked and answered; `published` — Wanigan's own list, because the backend
+ * cannot be asked or would not answer, and `note` says so; `none` — nothing
+ * could be established, which is not the same as "this profile has no models".
+ */
+export type LaunchModelCatalogue = {
+  rows: LaunchModelRow[];
+  source: 'declared' | 'live' | 'published' | 'none';
+  /** Why this list is what it is, when that is not obvious. Shown to the operator. */
+  note: string | null;
+};
+
 export type ProviderLaunchField = {
   id: string;
   label: string;
@@ -170,7 +194,14 @@ export type Session = {
   exitCode: number | null;
   createdAt: number;
   endedAt: number | null;
-  /** Bumped on output while the session is not focused. */
+  /**
+   * Owned by the main process. Incremented at most once a second while the
+   * session is producing output and is not the one on screen — so it counts
+   * SECONDS IN WHICH OUTPUT ARRIVED, not messages and not chunks. Zeroed when
+   * the session becomes the focused one, and on `sessions:markRead`. The two
+   * surfaces that render it say so in words, because a bare integer beside a
+   * chat-shaped list is read as a message count.
+   */
   unread: number;
   model?: string;
   effort?: string;
@@ -1702,7 +1733,8 @@ export type WaniganSettings = {
   mcpServerEnabled: boolean;
   pet: boolean;
   /**
-   * Whether a paired phone may read this Mac's working trees. Off by default and
+   * Whether a paired phone may read this Mac's working trees, run a project's
+   * saved review gate, and commit what git already tracks. Off by default and
    * separate from every other mobile switch: it is the one setting that widens
    * the promise mobile/snapshot.ts states, because a changed-file list is made
    * of paths. See settings.ts's mobileRepositoryReview().
@@ -2197,6 +2229,15 @@ export type LearningPipelineStats = {
   signalsAllTime: number;
   eligibleSignals: number;
   candidatesCreated: number;
+  /**
+   * Candidates created in the window that nobody has decided on yet: a COUNT
+   * over knowledge_candidates still sitting at 'pending' or 'snoozed'. It is
+   * deliberately not candidatesCreated minus autoPromoted. autoPromoted counts
+   * knowledge items rather than candidates, so that subtraction mixed units,
+   * and nothing in it ever removed a candidate a person approved or rejected —
+   * a fully reviewed Inbox still reported a backlog.
+   */
+  awaitingDecision: number;
   autoPromoted: number;
   reviewed: number;
   itemsPromoted: number;

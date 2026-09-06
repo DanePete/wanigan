@@ -638,9 +638,14 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onContr
         <span className="faint fleet-since">
           {kind === 'permission' ? 'waiting ' : 'for '}{dur(Date.now() - (att?.since ?? s.createdAt))}
         </span>
+        {/* "unread" was a promise this number never made: it counts seconds
+            in which output arrived while the session was off screen, not
+            messages waiting to be read. "new" is what it can honestly claim,
+            and the title says the rest. */}
         {s.unread > 0 && (
-          <span className="pill" style={{ marginLeft: 'auto', background: 'var(--accent-soft)', color: 'var(--accent)' }}>
-            {s.unread > 99 ? '99+' : s.unread} unread
+          <span className="pill" style={{ marginLeft: 'auto', background: 'var(--accent-soft)', color: 'var(--accent)' }}
+                title={`Output arrived ${s.unread} times while this session was not on screen`}>
+            {s.unread > 99 ? '99+' : s.unread} new
           </span>
         )}
       </div>

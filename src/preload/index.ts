@@ -25,8 +25,7 @@ import type {
   ImprovementScoutGoal, ImprovementScoutOverview, ImprovementScoutRun,
   ImprovementScoutSettings, ImprovementScoutSource, ImprovementScoutSuggestion, ImprovementScoutSuggestionStatus,
   AccountResolution, AgentAccount, ControlEvent, UsageSnapshot, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode, DocketPlanNode, DocketProof,
-  DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, WorkDocket,
-} from '../shared/types';
+  DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, WorkDocket, LaunchModelCatalogue,} from '../shared/types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -47,6 +46,8 @@ const api = {
   },
   providers: {
     list: () => call<ProviderInfo[]>('providers:list'),
+    modelCatalogue: (providerId: string) =>
+      call<LaunchModelCatalogue>('providers:modelCatalogue', providerId),
   },
   providerPacks: {
     list: (includeRemoved?: boolean) => call<ProviderPackInfo[]>('providerPacks:list', includeRemoved),
@@ -695,6 +696,11 @@ const api = {
       const h = (_e: unknown, s: Session[]) => cb(s);
       ipcRenderer.on('session:list', h);
       return () => ipcRenderer.removeListener('session:list', h);
+    },
+    unread: (cb: (counts: Record<string, number>) => void) => {
+      const h = (_e: unknown, counts: Record<string, number>) => cb(counts);
+      ipcRenderer.on('session:unread', h);
+      return () => ipcRenderer.removeListener('session:unread', h);
     },
     // A clicked notification. Main has already raised the window; this says
     // which session or run the banner was about, so the operator lands on it

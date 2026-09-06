@@ -33,38 +33,52 @@ If the scratchpad is gone, this document is the plan.
 
 ## Overnight run — read this first if you are picking up
 
-The operator went to bed and asked for continuous work. State at handoff:
+The operator went to bed and asked for continuous work. State at 2026-09-06.
 
-**Committed and pushed** on `task-graphs-and-accounts`, 923 assertions green:
+**Committed and pushed** on `task-graphs-and-accounts`, **1009 assertions green**:
 the shared renderer frame, the sidebar, the CLI parser fixes, cost provenance,
-seven dialogs on one contract, three waves of audit phases, the iPad transport
-(Wanigan drives Tailscale itself + a verified QR encoder), the iPad's three
-connection states, the sleep blocker, and goal autopilot armable from Control.
+seven dialogs on one contract, three waves of desktop audit phases, the iPad
+transport (Wanigan drives Tailscale itself + a verified QR encoder), the iPad's
+four connection states, the sleep blocker, goal autopilot armable from Control,
+and **22 of the 28 iPad phases** — the `mobile.ts` split into 25 modules, the
+nav, the four view states, Git with one file's diff, Spend, Manage, Runs you can
+stop, Goals, the review inbox, the Scout, and an offline shell.
 
-**In flight when this was written:** the `mobile.ts` split (one large refactor,
-18 files, everything iPad depends on it), and four desktop phases.
+**In flight when this was written:** iPad wave 7, five agents on disjoint files —
+firing a skill into a session (A), commit + review gate from the phone (B),
+pinning a project to an account (C), Spend breaches (D), recording a docket
+review decision (E). Their handoffs land in `<scratchpad>/wave7/{A..E}.md`.
 
 **Next, in order:**
-1. Land the split. If its agent dies mid-move, FINISH IT BY HAND — that has
-   happened four times today and the partial work has been good every time.
-2. Then `scratchpad/ipad-waves.json`: 26 menu phases in 10 waves, 3–4 at a time.
-   Ten destinations earn a phone surface (Fleet, Agent, Goals, Batches, Runs,
-   Spend, Learning, Scout, Git, Device); Skills, Context, Plugins and full
-   Settings deliberately do not, and the phone says so rather than omitting them.
-3. Then re-run the 20-agent research pass (`wanigan-deep-research-2`), which was
-   killed at 3/20.
+1. Land wave 7. If an agent dies mid-edit, **finish it by hand** — that has
+   happened five times now and the partial work has been good every time.
+   Then wire the reserved files centrally from the handoffs, run the suite,
+   commit, push.
+2. Then the remaining **~29 desktop audit phases** in
+   `<scratchpad>/waves.json`, waves 4 onward, 5–7 at a time.
+3. Then re-run the 20-agent research pass (`wanigan-deep-research-2`), killed
+   at 3/20.
 
-**The failure mode that has cost four runs today:** a background Workflow is
-killed whenever anything interrupts, and then reports "started, N results, no
+**The failure mode that has cost four runs:** a background Workflow is killed
+whenever anything interrupts, and then reports "started, N results, no
 completion record" — which looks identical to still-running. NEVER wait with a
 blocking `TaskOutput`. Poll the journal from Bash, and check the newest
 `agent-*.jsonl` mtime: no activity for >5 minutes means dead, not slow.
 
-**The other discipline that matters:** build agents never edit `src/main/smoke*.ts`.
-They return the assertion as code plus an anchor line, and it is applied centrally
-between waves. Thirty phases wanted `smoke3.ts`; serialising on it would turn
-every wave into a queue.
+**The discipline that makes parallel waves safe:** build agents never edit
+`src/main/smoke*.ts`, `index.ts`, `preload`, `shared/types.ts`, or the mobile
+shared files (`dispatch.ts`, `server.ts`, `page/sections.ts`, `shell.ts`,
+`script.ts`, `style.ts`). They return the wiring and the assertions as pasteable
+code in a handoff file, and it is applied centrally between waves. Thirty phases
+wanted `smoke3.ts`; serialising on it would turn every wave into a queue.
+`<scratchpad>/wave7/BRIEF.md` is the brief that encodes all of this — reuse it.
 
+**Two false positives worth knowing about**, because both cost real time and
+both were fixed the same way. The egress-table scanner and the "no model read
+this" assertion each scan source *including comments*, on purpose. Prose that
+explains why a thing must never happen will trip the check that bans it. The
+honest fix is to reword the comment, never to loosen the check — a check that
+skips comments is a check that can be commented around.
 
 ## The rule that makes this work
 
@@ -226,6 +240,27 @@ renaming a renderer symbol can break a test even when behaviour is identical. Gr
 
 ---
 
+### iPad programme — 22 of 28 phases built
+
+Phases are numbered as in `<scratchpad>/ipad-phases.json`.
+
+- [x] 0 split · 1 nav · 2 four view states · 3 Device · 4 nav marks and ⌘1–4
+- [x] 5 account per session · 6 launch fields from `launch-fields.ts` · 7 account per launch
+- [x] 9 repo opt-in and git read · 10 one file's diff · 13 explore seam and Usage
+- [x] 15 Scout · 17 Learning · 18 Manage and pause a schedule · 19 stop a live run
+- [x] 20 goal contract and task graph · 22 Settings about the phone · 23 section registry
+- [x] 24 terminal deltas · 25 alerts · 26 answer a blocked agent · 27 offline shell
+- [ ] 8 pin a project to an account · 11 commit from the phone · 12 the review gate
+- [ ] 14 Spend breaches · 16 fire a skill · 21 record a review decision
+
+**Phase 16 was reshaped, not built as written.** It asked for a Skills panel, but
+`src/shared/mobile-nav.ts` already declares skills deliberately absent with a reason the
+Device screen prints verbatim: skills are files you write against a repository, so they
+stay on the Mac. That is true of *authoring* a skill and false of *invoking* one. So the
+phase became: fire an installed skill into a live session from the Agent screen, and
+narrow that absent reason to say what is actually true. Building the screen as specified
+would have made a shipped sentence false.
+
 ## The largest items
 
 Three phases are marked `large` and deserve their own attention rather than being run
@@ -361,6 +396,30 @@ offline shell.
 
 
 ## Known traps
+
+- **The phase list in `<scratchpad>/waves.json` is stale, and the cause is known.** The
+  specs were written against `61ee461^`. Commit `61ee461` ("Nine more: page heads, the
+  profile as the contract, and two path grants closed") landed a batch of them, and later
+  waves landed more incidentally. **All seven desktop wave-4 phases were already built**
+  when picked up — a whole wave of agents was dispatched onto finished work before the
+  first one noticed. Two more — "Put Settings on the shared PageHead" and "Call the record a goal in the
+  palette" — were found already built when picked up, because later waves touching
+  Settings.tsx and routes.ts landed them incidentally. Both were written before those
+  waves ran. **Verify a phase is still unbuilt before handing it to an agent**, and tell
+  the agent the spec's line numbers are from plan time and the file wins on any
+  disagreement. The specs are still worth following: their *reasoning* about specificity,
+  source order and what a sentence may claim is what makes the change safe, and it is
+  right even where its line numbers are not.
+
+  Cheapest reliable probe: pick a symbol or file the phase must *create* and check whether
+  it exists (`ls src/main/pack-consent.ts`, `grep -c awaitingDecision src/shared/types.ts`).
+  Grepping the tree for a phrase from the spec is not enough — a phrase can match a comment
+  describing the change in the past tense, which is what happened with `control.css`.
+
+  One agent audited its stale spec line by line and found **seven wrong claims in one
+  phase**, including "no smoke assertion reads this file" when the assertion for that exact
+  change already existed. Ask every agent to report the discrepancies it finds; that audit
+  is worth more than the edit it replaces.
 
 - **Packaging corrupts `node_modules`.** `electron-builder --mac` rebuilds native addons
   per target arch and can leave `node-pty` without build output. The `dist:mac*` scripts
