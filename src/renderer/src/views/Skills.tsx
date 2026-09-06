@@ -1113,17 +1113,17 @@ function SkillCard({ hit, selected, canSend, flash, onRead, onSend, onCopy }: {
             offered until there is a terminal to type into. */}
         {canSend && (
           <button
-            className="btn btn-primary skills-btn-sm"
+            className="btn btn-primary"
             title={`Type ${s.invoke} into the selected live session`}
             onClick={onSend}
           >
             Send to session
           </button>
         )}
-        <button className="btn skills-btn-sm" onClick={onCopy} title={`Copy ${s.invoke} to the clipboard`}>
+        <button className="btn" onClick={onCopy} title={`Copy ${s.invoke} to the clipboard`}>
           Copy <span className="mono">{s.invoke}</span>
         </button>
-        <button className="btn skills-btn-sm" onClick={onRead}>
+        <button className="btn" onClick={onRead}>
           {selected ? 'Close SKILL.md' : 'Read SKILL.md'}
         </button>
       </div>

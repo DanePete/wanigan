@@ -812,6 +812,7 @@ function dashboardHtml(nonce: string, appearance = theme(), remoteControl = cont
     .dot { width:8px; height:8px; border-radius:50%; background:var(--faint); box-shadow:0 0 0 3px color-mix(in srgb,var(--ink) 7%,transparent); }
     .dot.live { background:var(--good); }
     .dot.bad { background:var(--critical); }
+    .dot.stale { background:var(--serious); }
     .stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:9px; }
     .stat,.card,.notice { border:1px solid var(--line); background:linear-gradient(145deg,var(--panel),var(--panel-raised)); border-radius:13px; box-shadow:0 12px 35px var(--shadow); }
     .stat { padding:13px; min-height:82px; }
@@ -838,6 +839,9 @@ function dashboardHtml(nonce: string, appearance = theme(), remoteControl = cont
     .notice { padding:18px; color:var(--dim); }
     .notice strong { color:var(--ink); display:block; margin-bottom:4px; }
     .hidden { display:none; }
+    .why { margin-top:7px; }
+    .stale-note { color:var(--serious); font-size:12px; font-weight:720; margin:0 0 11px; }
+    #dashboard.stale .stats,#dashboard.stale .grid { opacity:.62; }
     .controls { margin-top:20px; }
     .control-card { border:1px solid var(--line); border-radius:13px; background:linear-gradient(145deg,var(--panel),var(--panel-raised)); padding:14px; margin-top:10px; }
     .control-card h3 { margin:0 0 4px; font-size:15px; }
@@ -869,8 +873,9 @@ function dashboardHtml(nonce: string, appearance = theme(), remoteControl = cont
       <div class="connection"><span id="dot" class="dot"></span><span id="connection">Connecting…</span></div>
     </header>
     <section id="pair" class="notice hidden"><strong>This Wanigan app is not paired yet.</strong><p style="margin-top:6px">On the Mac, open Wanigan Settings → Phone monitor and type its ten-character pairing code here.</p><form id="pair-form" style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><input id="pair-token" aria-label="Pairing code" autocomplete="one-time-code" autocapitalize="characters" placeholder="Pairing code" maxlength="12" style="flex:1;min-width:220px"><button>Pair this app</button></form></section>
-    <section id="error" class="notice hidden"><strong>Could not read Wanigan.</strong><span id="error-text">The next poll will retry.</span></section>
+    <section id="error" class="notice hidden"><strong id="error-title">Could not read Wanigan.</strong><span id="error-text">The next poll will retry.</span><p id="error-why" class="why"></p></section>
     <section id="dashboard" class="hidden">
+      <p id="stale-note" class="stale-note hidden"></p>
       <div class="stats">
         <div class="stat"><strong id="needs">0</strong><span>Needs you</span></div>
         <div class="stat"><strong id="running">0</strong><span>Running</span></div>
@@ -879,7 +884,7 @@ function dashboardHtml(nonce: string, appearance = theme(), remoteControl = cont
       </div>
       <h2>Sessions</h2>
       <div id="sessions" class="grid"></div>
-      <div id="empty" class="notice hidden"><strong>No session panes are open.</strong>Start one in Wanigan and it will appear on the next poll.</div>
+      <div id="empty" class="notice hidden"><strong id="empty-claim">No session panes are open.</strong><span id="empty-note">Start one in Wanigan and it will appear on the next poll.</span></div>
       <div id="monitor-note" class="notice monitor-note hidden"><strong>Read-only monitor</strong>Enable remote control in Wanigan Settings → Phone monitor to open a terminal, send a message, or start an agent from this device.</div>
       <section id="controls" class="controls hidden">
         <h2>Agent console</h2>
@@ -921,6 +926,21 @@ function dashboardHtml(nonce: string, appearance = theme(), remoteControl = cont
       const control = byId('controls');
       const controlResult = byId('control-result');
       const monitorNote = byId('monitor-note');
+      const staleNote = byId('stale-note');
+      // Three different situations used to render identically here: the Mac is
+      // awake with nothing running, the Mac has stopped answering, and this
+      // device has never reached the Mac at all. All three arrived as an empty
+      // fleet, which is the worst answer to give someone in a coffee shop
+      // wondering whether their agents are still working. So the page keeps the
+      // time of the last poll that actually returned, and names which of the
+      // three it is in words; the dot's colour is only a second channel.
+      const POLL_FAST_MS = 3000;
+      const POLL_SLOW_MS = 60000;
+      let lastGoodAt = 0;
+      let lastSessionCount = -1;
+      let connectionState = 'never';
+      let pollDelay = POLL_FAST_MS;
+      let pollTimer = null;
 
       function setRemoteMode(next) {
         remoteControlEnabled = next === true;
@@ -1112,7 +1132,8 @@ function dashboardHtml(nonce: string, appearance = theme(), remoteControl = cont
         text('tokens', number(totals.outTokens));
         const list = byId('sessions');
         list.replaceChildren(...sessions.map(card));
-        byId('empty').classList.toggle('hidden', sessions.length !== 0);
+        lastSessionCount = sessions.length;
+        applyEmptyClaim();
         text('updated', 'Updated ' + new Date(snapshot.generatedAt || Date.now()).toLocaleTimeString() +
           (snapshot.version ? ' · Wanigan ' + snapshot.version : ''));
         if (remoteControlEnabled) void renderControls(sessions);
@@ -1124,12 +1145,69 @@ function dashboardHtml(nonce: string, appearance = theme(), remoteControl = cont
         connection.textContent = label;
       }
 
+      function setConnection(next) {
+        connectionState = next;
+        applyFreshness();
+      }
+
+      function applyFreshness() {
+        const age = lastGoodAt ? ago(lastGoodAt) : '';
+        if (connectionState === 'connected') {
+          state('live', 'Live · polling every ' + Math.round(POLL_FAST_MS / 1000) + 's');
+          staleNote.classList.add('hidden');
+          dashboard.classList.remove('stale');
+        } else if (connectionState === 'stale') {
+          // The numbers below are still worth showing - the last thing the fleet
+          // was doing is real information - but a tile reading '3 running'
+          // twenty minutes after the Mac went quiet is the app stating
+          // something it cannot know, so the whole reading is dated instead.
+          state('stale', 'Stale · last seen ' + age + ' ago');
+          text('error-title', 'The Mac stopped answering ' + age + ' ago.');
+          text('error-why', 'The usual reasons are that the Mac went to sleep, its lid was closed on battery, or it left the network. This page cannot tell which. Wanigan will reconnect on its own when the Mac answers again.');
+          text('stale-note', 'Last reading from ' + age + ' ago · not the fleet right now.');
+          staleNote.classList.remove('hidden');
+          dashboard.classList.add('stale');
+        } else {
+          state('bad', 'Never connected');
+          text('error-title', 'This device has not reached Wanigan yet.');
+          text('error-why', 'Nothing has been heard from the Mac on this device, so there is no fleet reading to show. That is usually the pairing token or the private tunnel in front of Wanigan rather than the Mac being asleep.');
+          staleNote.classList.add('hidden');
+        }
+        applyEmptyClaim();
+      }
+
+      function applyEmptyClaim() {
+        // 'No session panes are open' is a claim about the Mac, not about this
+        // page, so it may only appear when a poll came back and came back
+        // empty. Before the first success there is nothing to claim at all, and
+        // once the Mac goes quiet the same box has to speak in the past tense.
+        const observed = lastGoodAt > 0 && lastSessionCount === 0;
+        byId('empty').classList.toggle('hidden', !observed);
+        if (!observed) return;
+        const fresh = connectionState === 'connected';
+        text('empty-claim', fresh ? 'No session panes are open.' : 'Nothing was open when the Mac last answered.');
+        text('empty-note', fresh
+          ? 'Start one in Wanigan and it will appear on the next poll.'
+          : 'That reading is ' + ago(lastGoodAt) + ' old, so the fleet may have changed since.');
+      }
+
+      // A phone on cellular retrying a sleeping Mac every three seconds is a
+      // battery bug: the Mac cannot answer until it wakes, and the retries buy
+      // nothing but radio time. Stay fast while the Mac is answering, step the
+      // retry out towards a ceiling while it is not, and drop straight back to
+      // the fast interval on the first success.
+      function schedulePoll() {
+        if (pollTimer) clearTimeout(pollTimer);
+        pollTimer = setTimeout(() => { pollTimer = null; void poll(); }, pollDelay);
+      }
+
       async function poll() {
-        if (busy || document.hidden) return;
+        if (busy) return;
+        if (document.hidden) { schedulePoll(); return; }
         const token = localStorage.getItem(KEY);
         if (!token) {
           pair.classList.remove('hidden'); dashboard.classList.add('hidden'); error.classList.add('hidden');
-          state('bad', 'Pairing required'); return;
+          state('bad', 'Pairing required'); schedulePoll(); return;
         }
         busy = true;
         const controller = new AbortController();
@@ -1148,14 +1226,21 @@ function dashboardHtml(nonce: string, appearance = theme(), remoteControl = cont
             state('bad', 'Pairing expired'); return;
           }
           if (!response.ok) throw new Error('Wanigan returned HTTP ' + response.status + '.');
-          render(await response.json());
+          const snapshot = await response.json();
+          lastGoodAt = Date.now();
+          pollDelay = POLL_FAST_MS;
+          render(snapshot);
           pair.classList.add('hidden'); error.classList.add('hidden'); dashboard.classList.remove('hidden');
-          state('live', 'Live · polling every 3s');
+          setConnection('connected');
         } catch (failure) {
+          pollDelay = Math.min(POLL_SLOW_MS, pollDelay * 2);
           text('error-text', failure instanceof Error ? failure.message : 'The next poll will retry.');
           error.classList.remove('hidden');
-          state('bad', 'Disconnected');
-        } finally { clearTimeout(timeout); busy = false; }
+          // Having heard from the Mac earlier in this session and having never
+          // heard from it are different problems with different fixes, and the
+          // page is the only thing that knows which one this is.
+          setConnection(lastGoodAt ? 'stale' : 'never');
+        } finally { clearTimeout(timeout); busy = false; schedulePoll(); }
       }
 
       tokenFromFragment();
@@ -1203,9 +1288,15 @@ function dashboardHtml(nonce: string, appearance = theme(), remoteControl = cont
         finally { setActionBusy(false); }
       });
       void poll();
-      setInterval(() => { void poll(); }, 3000);
-      setInterval(() => { if (!document.hidden) void loadTerminal(); }, 1500);
-      document.addEventListener('visibilitychange', () => { if (!document.hidden) void poll(); });
+      setInterval(() => { if (!document.hidden && connectionState === 'connected') void loadTerminal(); }, 1500);
+      // Age the 'last seen' wording between attempts. Once the retry has backed
+      // off to a minute, a label written at the last attempt would understate
+      // how long the Mac has actually been quiet.
+      setInterval(() => { if (!document.hidden && lastGoodAt && connectionState !== 'connected') applyFreshness(); }, 15000);
+      // Someone bringing the page back to the front is asking for a fresh
+      // answer, so drop the backoff and try immediately rather than making them
+      // wait out the current ceiling.
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) { pollDelay = POLL_FAST_MS; void poll(); } });
     })();
   </script>
 </body>

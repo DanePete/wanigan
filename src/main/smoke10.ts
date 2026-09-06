@@ -2,6 +2,7 @@ import { filterPalette, groupPalette, transcriptHitRow, TRANSCRIPT_RESULT_CAP, t
 import type { TranscriptHit } from '../shared/types';
 import { COMPOSER_DRAFT_MAX, COMPOSER_DRAFT_TOTAL_CHARS, parseDraftMap, pruneDrafts, putDraft, type ComposerDraftMap } from '../shared/composer-drafts';
 import { deriveSendState, observeQueueTargets, queueWatcherWanted, type QueueTargetState } from '../shared/composer-queue';
+import { QR_MAX_BYTES, qrMatrix } from '../shared/qr';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 type Say = (s: string) => void;
@@ -60,6 +61,46 @@ export async function runPaletteSmoke(check: Check, say: Say): Promise<void> {
     check(TRANSCRIPT_RESULT_CAP === 8, 'the palette asks the archive for the number the count line describes');
 
     say('── composer drafts · one bounded key, not one key per session');
+
+    /** The message a call threw, or null if it returned. */
+    const thrownMessage = (run: () => unknown): string | null => {
+      try { run(); return null; } catch (error) { return error instanceof Error ? error.message : String(error); }
+    };
+
+    say('── pairing QR · a code that does not scan is worse than no code');
+
+    // This encoder is hand-written rather than a dependency, so the thing that
+    // matters is whether a real camera reads what it emits — not whether it
+    // agrees with itself. The fixture below was produced by this encoder and
+    // then DECODED BACK by macOS Core Image, an implementation that shares no
+    // code with ours: `swift qrdecode.swift` returned the original string for
+    // versions 1, 4 and 8 across four different mask patterns. What is pinned
+    // here is that exact verified bitmap, so a change to the Reed-Solomon
+    // tables, the block interleave or the mask penalty fails loudly instead of
+    // shipping a plausible square nobody can scan.
+    const qrBits = (m: { size: number; modules: Uint8Array }): string => {
+      let bits = '';
+      for (let i = 0; i < m.modules.length; i++) bits += m.modules[i] ? '1' : '0';
+      return (bits.match(/.{1,4}/g) ?? [])
+        .map((nibble) => parseInt(nibble.padEnd(4, '0'), 2).toString(16)).join('');
+    };
+    const known = qrMatrix('wanigan');
+    check(known.version === 1 && known.size === 21 && known.mask === 4
+      && qrBits(known) === 'fe8bfc12506e8ebb7555dba8aec16907faafe017008bf7c8e1c19cdce5aa8e38aaf8805763fbb3d04f13ba920dd2c4ee8ca1044c0fecf08',
+      'the QR encoder reproduces a bitmap macOS Core Image decoded back to its original string');
+
+    // Version selection is a capacity calculation, and getting it wrong shows up
+    // as a code that encodes fewer bytes than it was given.
+    const longer = qrMatrix('https://mac.example.ts.net/#token=abc123def456');
+    check(longer.version === 4 && longer.size === 33,
+      'a longer payload picks the smallest version that actually holds it', longer.version);
+
+    // Refusing beats degrading: an empty symbol and a truncated URL both scan
+    // cleanly and both lie about what they carry.
+    check(thrownMessage(() => qrMatrix('')) !== null
+      && thrownMessage(() => qrMatrix('x'.repeat(QR_MAX_BYTES + 1))) !== null,
+      'an empty string and an over-long payload are both refused rather than silently truncated');
+
 
     const saved = putDraft({}, 's-1', 'half a prompt', 1_000);
     check(saved['s-1']?.text === 'half a prompt' && saved['s-1']?.at === 1_000,

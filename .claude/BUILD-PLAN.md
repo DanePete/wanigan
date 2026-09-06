@@ -219,6 +219,95 @@ the UI has to carry".
 
 ---
 
+## The iPad programme
+
+Started 2026-09-05, after the operator said the iPad should become their primary device and
+that requiring Tailscale "is not a SaaS product".
+
+### The constraint, stated once
+
+The Mac is the engine and always will be: Wanigan spawns PTYs, owns the SQLite evidence, and
+runs Claude Code and Codex against real checkouts. The iPad can only ever be a remote control
+for that Mac. "iPad as primary" therefore means **reliable remote access to the Mac from
+anywhere**, not a second place the work happens.
+
+Reaching a machine behind NAT from anywhere has exactly three mechanisms: a mesh VPN, a relay
+someone operates, or port forwarding. Port forwarding is dead under CGNAT. A relay is a cloud
+tier, which `CLAUDE.md` forbids. That leaves the mesh VPN — so Tailscale is not the problem,
+**exposing it as a CLI command and a URL field is the problem.** The fix is to drive it from
+Wanigan: detect it, run `tailscale serve` ourselves, read the URL back, show a QR code.
+
+### Why not just serve on the LAN
+
+Considered and rejected as the primary path. iOS Safari treats plain HTTP on a LAN address as
+an insecure context: no Home Screen install, no service worker, no WebCrypto — and a bearer
+token plus live terminal bytes would cross Wi-Fi in clear. Real TLS needs a certificate the
+iPad trusts, which means shipping our own CA and a profile install. That is worth doing later
+for at-desk use, but it does not serve "carry it everywhere", which is the actual requirement.
+
+### The client question
+
+- **PWA (what ships today)** — iOS 16.4+ supports Web Push for Home Screen apps, so
+  notifications are reachable without a second codebase. This is the right next step.
+- **Native Swift** — the real answer if the iPad becomes the daily driver: Stage Manager,
+  keyboard shortcuts, Split View, Pencil, and no certificate problem at all. It talks to the
+  same endpoint and the same pairing, so the transport work below is not thrown away.
+- **React Native** — only if Android ever matters. For an iPad-first tool it buys the App
+  Store and costs the platform's best parts.
+
+### Open question, deliberately not decided
+
+If "SaaS product" ever means other people paying to run agents, the agents would run on rented
+compute rather than the customer's Mac. That contradicts the local-first premise this whole
+codebase is built on. Decide it deliberately; do not drift into it.
+
+### Transport phases (in flight)
+
+1. **Drive Tailscale from Wanigan** — `src/main/tailnet.ts`. Five honest states (absent,
+   logged-out, ready, serving, error), argv never a shell string, `tailscale serve` run by us.
+2. **Generate the pairing QR in main** — `src/shared/qr.ts`, pure and dependency-free. This
+   repo ships three runtime dependencies and that leanness is deliberate.
+3. **Make the phone setup a QR, not a page of instructions** — the Settings panel shows one
+   state-appropriate action; the manual URL and CLI command move behind an Advanced disclosure.
+
+Twenty view phases (navigation, accounts and providers, Git, Explore, Manage, depth) are being
+designed separately. The Git one is the interesting case: `mobile.ts` promises that no
+filesystem paths reach the wire, and a Git surface is made of paths. That is a deliberate,
+separately-consented widening of a stated promise — never a quiet relaxation of
+`privacyFilterSnapshot`.
+
+
+### Leaving the laptop at home
+
+The operator's actual scenario: Mac at home, iPad on cellular. Tailscale handles the transport
+for this without further work — that is the whole point of a mesh VPN. What does NOT work today
+is everything around it, and none of it is transport:
+
+- **macOS sleeps, and a sleeping Mac leaves the tailnet.** `grep -rn powerSaveBlocker src/main/`
+  returns nothing: Wanigan has never held sleep off. Agents stop mid-turn and the iPad shows an
+  empty fleet. Electron's `powerSaveBlocker.start('prevent-app-suspension')` is the mechanism,
+  held while sessions are running or the dashboard is on, and **announced** — silently keeping a
+  laptop awake is rude and drains a battery someone thought was idle.
+- **A closed lid on battery sleeps regardless.** No software overrides that; it has to be plugged
+  in. Wanigan can read the power source and say so before the operator walks away.
+- **A reboot kills interactive sessions.** CLAUDE.md is explicit that a live PTY cannot survive a
+  quit. Headless runs and schedules come back; interactive Claude Code sessions do not. Worth
+  knowing at the desk, not from a coffee shop.
+
+The feature this wants is a **leaving-your-desk readiness check**: one panel answering whether the
+Mac is safe to walk away from — plugged in, sleep held, tailnet up, dashboard reachable, and what
+would survive a restart.
+
+Phases:
+4. **Tell the iPad why the Mac is unreachable** — `src/main/mobile.ts`. Three connection states
+   (connected / stale-with-age / never-connected), the empty-fleet claim gated on an observed
+   successful poll, and a backed-off retry so a phone on cellular does not poll a sleeping Mac
+   every two seconds.
+5. **Hold the Mac awake while work is live** — new `src/main/awake.ts` + IPC. Blocked until the
+   tailnet phase releases `src/main/index.ts`, `src/preload/index.ts` and `src/shared/types.ts`.
+6. **The readiness check panel** — `Settings.tsx`. Blocked until the QR-panel phase releases it.
+
+
 ## Known traps
 
 - **Packaging corrupts `node_modules`.** `electron-builder --mac` rebuilds native addons
