@@ -1,0 +1,52 @@
+import { CONSOLE_SECTION } from './sections/console';
+import { FLEET_SECTION } from './sections/fleet';
+import { LAUNCH_SECTION } from './sections/launch';
+
+/**
+ * The registry of screens the phone page is made of. A screen owns its markup,
+ * its style and its script fragment together, so adding one is a new module
+ * plus one line here rather than an edit in four places of a single template.
+ */
+
+export type MobileSectionSlot = 'dashboard' | 'controls';
+
+export type MobileSection = {
+  id: string;
+  /**
+   * The one DOM id this section's markup contributes. The smoke suite asserts
+   * each appears exactly once in the served page, so a section that is dropped
+   * or composed twice fails loudly instead of rendering a second console.
+   */
+  anchorId: string;
+  slot: MobileSectionSlot;
+  markup: string;
+  style: string;
+  script: string;
+  wiring: string;
+};
+
+// Order is render order: the fleet fills the dashboard, then the two console
+// screens fill the remote-control slot inside it.
+export const MOBILE_SECTIONS: readonly MobileSection[] = [FLEET_SECTION, CONSOLE_SECTION, LAUNCH_SECTION];
+
+export const MOBILE_SECTION_ANCHORS: readonly string[] = MOBILE_SECTIONS.map((section) => section.anchorId);
+
+function joined(parts: readonly string[]): string {
+  return parts.filter((part) => part.length > 0).join('\n');
+}
+
+export function sectionMarkup(slot: MobileSectionSlot): string {
+  return joined(MOBILE_SECTIONS.filter((section) => section.slot === slot).map((section) => section.markup));
+}
+
+export function sectionStyle(): string {
+  return joined(MOBILE_SECTIONS.map((section) => section.style));
+}
+
+export function sectionScript(): string {
+  return joined(MOBILE_SECTIONS.map((section) => section.script));
+}
+
+export function sectionWiring(): string {
+  return joined(MOBILE_SECTIONS.map((section) => section.wiring));
+}

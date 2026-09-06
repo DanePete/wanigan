@@ -798,6 +798,27 @@ function Overview({ overview, settings, pipeline, read, pipelineErr, pipelineBus
   );
 }
 
+/**
+ * The Inbox stage's "awaiting a decision" figure, read from the pipeline stats
+ * rather than derived. It used to be `candidatesCreated - autoPromoted`, which
+ * was wrong twice over: autoPromoted counts knowledge items, not candidates, so
+ * the two terms were different units, and no part of that subtraction ever fell
+ * for a candidate a person had approved or rejected — an Inbox emptied by
+ * review still showed a backlog. The main process now counts the open rows
+ * itself.
+ *
+ * LearningPipelineStats is declared twice, once in src/main/learning/types.ts
+ * for the main process and once in src/shared/types.ts for the wire, and only
+ * the main copy carries awaitingDecision so far; the widening here is what lets
+ * the renderer read it, and it goes away when the wire type catches up. A stats
+ * object that does not carry the number reports nothing rather than guessing
+ * one, because the old guess is exactly the number this replaced.
+ */
+function awaitingDecisionOf(pipeline: LearningPipelineStats): number | null {
+  const n = (pipeline as LearningPipelineStats & { awaitingDecision?: unknown }).awaitingDecision;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+
 /** The pipeline, stated as the four tabs themselves — so the navigation is the
  * explanation. It replaced a collapsed wall of prose whose disclosure was
  * inverted: it defaulted open on an empty store and closed once there was data,
@@ -810,7 +831,7 @@ function HowItWorks({ pipeline, windowDays, onNavigate }: {
   onNavigate: (tab: LearningTab, inboxStatus?: string) => void;
 }) {
   const p = pipeline;
-  const toReview = Math.max(0, p.candidatesCreated - p.autoPromoted);
+  const awaiting = awaitingDecisionOf(p);
   const w = `last ${windowDays}d`;
   const steps: {
     tab: LearningTab; label: string; body: ReactNode;
@@ -833,7 +854,7 @@ function HowItWorks({ pipeline, windowDays, onNavigate }: {
         derived from a session qualifies for it.</>,
       stats: [
         { n: p.candidatesCreated, text: `candidates created · ${w}`, go: () => onNavigate('inbox', 'all'), title: 'Open the Inbox filtered to every proposal' },
-        { n: toReview, text: `awaiting a decision · ${w}`, go: () => onNavigate('inbox', 'open'), title: 'Open the Inbox filtered to proposals needing a decision' },
+        ...(awaiting === null ? [] : [{ n: awaiting, text: `awaiting a decision · ${w}`, go: () => onNavigate('inbox', 'open'), title: 'Open the Inbox filtered to proposals needing a decision' }]),
         { n: p.reviewed, text: `decided · ${w}`, go: () => onNavigate('inbox', 'decided'), title: 'Open the Inbox filtered to decided proposals' },
         { n: p.autoPromoted, text: `auto-applied · ${w}`, go: () => onNavigate('knowledge'), title: 'Open Knowledge — the auto-apply lane lands there' },
       ],

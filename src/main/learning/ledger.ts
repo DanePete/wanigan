@@ -485,6 +485,19 @@ export function pipelineStats(input: { projectId?: string | null; windowDays?: n
       [since, ...signalArgs],
     ),
     candidatesCreated: one(`SELECT COUNT(*) n FROM knowledge_candidates WHERE created_at >= ?${artifactWhere}`, [since, ...artifactArgs]),
+    // Counted directly, because the Inbox figure this feeds used to be
+    // candidatesCreated - autoPromoted and that arithmetic was wrong twice
+    // over: autoPromoted is a COUNT(DISTINCT item_id) over knowledge_versions,
+    // so it counts knowledge items rather than candidates and the two terms
+    // were different units; and no term in it ever fell for a candidate a
+    // person approved or rejected, so an Inbox emptied by review still claimed
+    // a backlog. 'pending' and 'snoozed' are the two statuses that carry no
+    // recorded decision — a snooze defers the decision, it does not make one.
+    awaitingDecision: one(
+      `SELECT COUNT(*) n FROM knowledge_candidates
+       WHERE created_at >= ? AND status IN ('pending','snoozed')${artifactWhere}`,
+      [since, ...artifactArgs],
+    ),
     autoPromoted: one(
       `SELECT COUNT(DISTINCT kv.item_id) n FROM knowledge_versions kv
        JOIN knowledge_items ki ON ki.id = kv.item_id

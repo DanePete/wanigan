@@ -98,15 +98,25 @@
   transform: translateX(-104%);
   visibility: hidden;
   pointer-events: none;
-  /* The terminal is never moved or resized as the switcher opens. */
-  transition: transform 140ms ease, visibility 0s linear 140ms;
+  /* The terminal is never moved or resized as the switcher opens, and the
+     slide reads its duration from the motion token rather than spelling its
+     own 140ms: this rail slides beside a live PTY, and a literal here was one
+     of the last places Settings > Motion = off and the OS reduced-motion
+     preference could not reach.
+     visibility carries the same token instead of a 0s-plus-delay pair. CSS
+     interpolates visibility as visible across the whole range whenever one end
+     is visible, so the rail stays on screen for the slide out and flips hidden
+     on the last frame — the delay's behaviour, without a second literal. */
+  transition: transform var(--mo-state) var(--mo-ease), visibility var(--mo-state) linear;
 }
 
 .sessions-view .sessions--compact-picker.sessions--picker-open .session-rail {
   transform: translateX(0);
   visibility: visible;
   pointer-events: auto;
-  transition: transform 140ms ease;
+  /* Opening deliberately leaves visibility out of the transition so the rail is
+     already painted before the first frame of the slide in. */
+  transition: transform var(--mo-state) var(--mo-ease);
 }
 
 .sessions-view .sessions--compact-picker .session-picker-heading {
@@ -299,11 +309,4 @@
   .sessions-view .session-picker-trigger-current { display: none; }
   .sessions-view .tab-new-session-text { display: none; }
   .sessions-view .session-picker-trigger { padding-inline: 9px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sessions-view .session-rail,
-  .sessions-view .sessions--picker-open .session-rail {
-    transition: none;
-  }
 }

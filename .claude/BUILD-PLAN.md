@@ -3,7 +3,7 @@
 **Status file. Update the checkboxes as waves land.** This exists so the work can be
 picked up by someone (or something) with none of the originating context.
 
-Last updated: 2026-09-05, after wave 3. 858 smoke assertions.
+Last updated: 2026-09-06 overnight, running autonomously. 923 smoke assertions at last commit.
 
 ---
 
@@ -30,6 +30,41 @@ Artifacts, in the session scratchpad
 If the scratchpad is gone, this document is the plan.
 
 ---
+
+## Overnight run — read this first if you are picking up
+
+The operator went to bed and asked for continuous work. State at handoff:
+
+**Committed and pushed** on `task-graphs-and-accounts`, 923 assertions green:
+the shared renderer frame, the sidebar, the CLI parser fixes, cost provenance,
+seven dialogs on one contract, three waves of audit phases, the iPad transport
+(Wanigan drives Tailscale itself + a verified QR encoder), the iPad's three
+connection states, the sleep blocker, and goal autopilot armable from Control.
+
+**In flight when this was written:** the `mobile.ts` split (one large refactor,
+18 files, everything iPad depends on it), and four desktop phases.
+
+**Next, in order:**
+1. Land the split. If its agent dies mid-move, FINISH IT BY HAND — that has
+   happened four times today and the partial work has been good every time.
+2. Then `scratchpad/ipad-waves.json`: 26 menu phases in 10 waves, 3–4 at a time.
+   Ten destinations earn a phone surface (Fleet, Agent, Goals, Batches, Runs,
+   Spend, Learning, Scout, Git, Device); Skills, Context, Plugins and full
+   Settings deliberately do not, and the phone says so rather than omitting them.
+3. Then re-run the 20-agent research pass (`wanigan-deep-research-2`), which was
+   killed at 3/20.
+
+**The failure mode that has cost four runs today:** a background Workflow is
+killed whenever anything interrupts, and then reports "started, N results, no
+completion record" — which looks identical to still-running. NEVER wait with a
+blocking `TaskOutput`. Poll the journal from Bash, and check the newest
+`agent-*.jsonl` mtime: no activity for >5 minutes means dead, not slow.
+
+**The other discipline that matters:** build agents never edit `src/main/smoke*.ts`.
+They return the assertion as code plus an anchor line, and it is applied centrally
+between waves. Thirty phases wanted `smoke3.ts`; serialising on it would turn
+every wave into a queue.
+
 
 ## The rule that makes this work
 

@@ -102,3 +102,31 @@
    stepping .pane like every other surface. Only the grid collapses are here. */
 @media (max-width: 1180px) { .control-guide { grid-template-columns: 1fr 1fr; } .control-example { grid-column: 1 / -1; } }
 @media (max-width: 980px) { .control-grid, .control-guide { grid-template-columns: 1fr; } .control-example { grid-column: auto; } .control-node { display: grid; } .control-node-actions { width: 100%; } .control-evidence { grid-template-columns: 1fr; } }
+
+/* The task-graph editor in the create card.
+   Rows sit on the sunk plate the launch and autopilot rows already use, so the
+   graph reads as one nested object rather than as four more fields in the same
+   column as Title and Objective — the create card is a grid, and without the
+   plate an eight-row graph looked like the form had grown eight sections. Every
+   size here is a token: control.css carries eleven px font literals from before
+   the scale existed and the gate only lets that number fall.
+   A problem line is red *behind* a ✕ and a full sentence, never the colour
+   alone, because the whole point of stating a refusal before the button is that
+   it can be read and acted on. */
+.control-plan { display: grid; gap: var(--s-2); }
+.control-plan-lead { margin: 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.45; }
+.control-plan-rows { display: grid; gap: var(--s-2); }
+.control-plan-row { display: grid; gap: var(--s-2); padding: var(--s-3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); }
+.control-plan-top { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); flex-wrap: wrap; }
+.control-plan-actions, .control-plan-add { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+/* Kind is a four-word enum next to a free-text title, so it takes what it needs
+   instead of .control-inline's flex:1 half of the row. */
+.control-plan-row .control-inline > label:first-child { flex: 0 0 132px; }
+.control-plan-deps { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1); }
+.control-plan-parallel { color: var(--text-faint); font-size: var(--t-small); }
+.control-plan-problem { display: flex; gap: var(--s-1); margin: 0; color: var(--bad); font-size: var(--t-small); line-height: 1.45; }
+/* Closed, the graph still says what it holds: a field nobody opened is not a
+   field nobody submitted. */
+.control-plan-open { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); }
+.control-plan-state { margin: 2px 0 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.4; }
+.control-plan-slot:empty { display: none; }

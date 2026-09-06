@@ -106,16 +106,13 @@ const FONT_PX_BASELINE = {
 };
 
 // 4. Declarations with a literal duration, per file, relative to src/renderer/src.
-const DURATION_BASELINE = {
-  'styles/attention.css': 2,
-  'styles/evals.css': 1, 'styles/skills.css': 1,
-  'styles/fleet.css': 2,
-  'styles/learning.css': 2,
-  'styles/pet.css': 0,
-  'styles/sessions.css': 2,
-  'styles/timeline.css': 1,
-  'views/Settings.tsx': 3, 'styles/settings.css': 3,
-};
+//    Empty, and it stays empty. Every literal duration in the renderer is now
+//    a --mo-state / --mo-view token, so Settings > Motion = off and the OS
+//    reduced-motion preference reach all of them; a sheet that spells its own
+//    140ms or .12s silently opts that one element out of both, which is how a
+//    session rail kept sliding beside a live terminal after the operator asked
+//    it to stop. motion.css is the one file exempt, because it owns the tokens.
+const DURATION_BASELINE = {};
 
 const INLINE_STYLE = /style=\{\{/g;
 const STYLE_TAG = /<style[\s>]/;

@@ -79,7 +79,9 @@
   padding: 4px 11px; border-radius: 999px;
   border: 1px solid var(--line); background: var(--bg-soft);
   font-size: 12px; font-weight: 500; color: var(--text-dim);
-  transition: background .12s, border-color .12s, opacity .12s;
+  /* Tokens, not a literal: a source chip's hover fade stops when the operator
+     sets Motion to off, the same as everything else on the surface. */
+  transition: background var(--mo-state) var(--mo-ease), border-color var(--mo-state) var(--mo-ease), opacity var(--mo-state) var(--mo-ease);
 }
 .skills-chip:hover:not(:disabled) { border-color: var(--text-faint); color: var(--text); }
 .skills-chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }

@@ -4,6 +4,8 @@ import type {
 } from '@shared/types';
 import { Chip, ConfirmNote, EmptyState, Explainer, Hint, Mark, Note, PageHead, Reading, SectionHead, ago, markOf, usd } from '../components/bits';
 import type { MarkSpec } from '../components/bits';
+import PlanEditor, { planProblems, planRowsFromDefault, toPlanNodes } from '../components/PlanEditor';
+import type { PlanRow } from '../components/PlanEditor';
 import { useViewMemory } from '../components/viewMemory';
 
 const errText = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -129,6 +131,22 @@ export default function Control({ projects, providers, onOpenSession }: {
   const [acceptance, setAcceptance] = useState('');
   const [risk, setRisk] = useState<DocketRisk>('elevated');
   const [budget, setBudget] = useState('');
+  /**
+   * The task graph this goal would be created with.
+   *
+   * Seeded from the shared default, so a goal created without opening the
+   * editor gets exactly the four phases Control has always created — the same
+   * array main falls back to, not a second copy of it. control.create has
+   * accepted a `plan` since the validator landed and no renderer surface ever
+   * sent one, which is why the node cap, the terminal-review rule and the
+   * claim-overlap check had only ever run against a default that passes them
+   * all trivially.
+   */
+  const [plan, setPlan] = useState<PlanRow[]>(planRowsFromDefault);
+  // Collapsed by default. The graph is the one field on this card that already
+  // has a right answer for most goals, so it announces what it holds and opens
+  // only for someone who wants something else.
+  const [planOpen, setPlanOpen] = useState(false);
   const [providerId, setProviderId] = useState('');
   const [model, setModel] = useState('');
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -196,9 +214,13 @@ export default function Control({ projects, providers, onOpenSession }: {
   const create = () => act('create', async () => {
     const created = await window.wanigan.control.create({ projectId, title, objective,
       acceptance: acceptance.split('\n').map((line) => line.trim()).filter(Boolean), risk,
-      budgetUsd: budget.trim() ? Number(budget) : null });
-    setTitle(''); setObjective(''); setAcceptance(''); setBudget(''); await load(created.id);
-  }, 'Goal created. Start with the planning task; downstream work stays blocked until its prerequisites are complete.');
+      budgetUsd: budget.trim() ? Number(budget) : null, plan: toPlanNodes(plan) });
+    setTitle(''); setObjective(''); setAcceptance(''); setBudget('');
+    // The graph goes back to the default with the rest of the form. Leaving the
+    // last goal's custom graph loaded would silently apply it to the next one.
+    setPlan(planRowsFromDefault()); setPlanOpen(false);
+    await load(created.id);
+  }, 'Goal created. Start with a task that has no unfinished prerequisite; the rest stays blocked until theirs are complete.');
 
   // Control is reachable before any project exists, and every field on the
   // create card depends on one. Without a route out of that state the card is a
@@ -303,6 +325,25 @@ export default function Control({ projects, providers, onOpenSession }: {
   const shownDockets = statusFilter === 'all' ? dockets : dockets.filter((docket) => docket.status === statusFilter);
   const missingText = missing.length < 2 ? missing.join('')
     : `${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]}`;
+  /**
+   * Everything main would refuse about the drawn graph, from the same function
+   * the editor renders beside the offending task.
+   *
+   * The button is gated on this list rather than on a submit-time catch,
+   * because a validator that only speaks after the press is the rule stated
+   * twice and heard once. main still validates — this is a courtesy, not the
+   * authority — but a refusal that arrives with the goal already discarded is
+   * a worse version of the same sentence.
+   */
+  const planFaults = useMemo(() => planProblems(plan), [plan]);
+  const planIsDefault = useMemo(() => {
+    const base = planRowsFromDefault();
+    return plan.length === base.length && plan.every((row, index) => row.kind === base[index].kind
+      && row.title === base[index].title && row.instructions === base[index].instructions
+      && row.claimPath === base[index].claimPath
+      && row.dependsOn.length === base[index].dependsOn.length
+      && row.dependsOn.every((dep, at) => dep === base[index].dependsOn[at]));
+  }, [plan]);
 
   return <div className="pane control-view">
     {/* The h1 is the route label the rail and the window title use; the
@@ -316,7 +357,7 @@ export default function Control({ projects, providers, onOpenSession }: {
       <div className="control-guide-body">
       <div><p>A <strong>goal</strong> is work you delegate without losing the reason for it, the evidence, or the final decision.</p></div>
       <ol>
-        <li><strong>Define the contract.</strong> Choose a project, write the objective, then add observable acceptance checks. These become the shared definition of done.</li>
+        <li><strong>Define the contract.</strong> Choose a project, write the objective, then add observable acceptance checks. These become the shared definition of done. The task graph is the standard four phases until you open it and draw something else — parallel implement tasks with disjoint claims, reviewed by one task at the end.</li>
         <li><strong>Work the graph, not a fixed list.</strong> Start any task that has no unfinished prerequisite. Each card names what it waits on and how those tasks stand, so a task held by a failed prerequisite is told apart from one whose prerequisite is still running. Claim paths such as <code>src/cart/total.ts</code> before parallel work touches them.</li>
         <li><strong>Capture proof and continuity.</strong> Save a checkpoint before a handoff or interruption. In <em>Verify</em>, run the project review gate; a passing command result is required before the task can complete.</li>
         <li><strong>Make the final call.</strong> The <em>Review</em> task can approve only after verification passed. Request changes or reject when the evidence does not meet the contract.</li>
@@ -336,8 +377,28 @@ export default function Control({ projects, providers, onOpenSession }: {
         <label><span className="label">Objective</span><textarea className="field control-textarea" value={objective} onChange={(event) => setObjective(event.target.value)} placeholder="What must change, and why?" /></label>
         <label><span className="label">Acceptance checks · one per line</span><textarea className="field control-textarea" value={acceptance} onChange={(event) => setAcceptance(event.target.value)} placeholder={'Targeted tests pass\nFailure mode is covered\nDiff is reviewed'} /></label>
         <div className="control-inline"><label><span className="label">Risk</span><select className="field" value={risk} onChange={(event) => setRisk(event.target.value as DocketRisk)}>{risks.map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label><span className="label">Budget · USD</span><input className="field" inputMode="decimal" value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="optional" /></label></div>
-        {missing.length > 0 && <p className="faint control-hint" id="control-create-blocked">Still needed: {missingText}.</p>}
-        <button className="btn btn-primary" disabled={busy !== null || missing.length > 0} aria-describedby={missing.length > 0 ? 'control-create-blocked' : undefined} onClick={() => void create()}>{busy === 'create' ? 'Creating…' : 'Create goal'}</button>
+        {/* The graph announces what it holds while it is closed, so a goal
+            created without opening it is not created out of an unread field. */}
+        <div className="control-plan-open">
+          <div><span className="label">Task graph</span>
+            <p className="control-plan-state">{planIsDefault
+              ? 'The four phases every goal gets: plan, implement, verify, review.'
+              : `${plan.length} task${plan.length === 1 ? '' : 's'} of your own, in place of the default four.`}</p></div>
+          <button className="btn btn-sm" type="button" aria-expanded={planOpen} aria-controls="control-plan-editor"
+                  onClick={() => setPlanOpen(!planOpen)}>{planOpen ? 'Hide the graph' : 'Design the graph'}</button>
+        </div>
+        {/* The slot is always in the tree so the toggle's aria-controls names an
+            element that exists while the graph is closed; :empty keeps it from
+            taking a grid row when it holds nothing. */}
+        <div className="control-plan-slot" id="control-plan-editor">{planOpen && <PlanEditor rows={plan} onChange={setPlan} />}</div>
+        {(missing.length > 0 || planFaults.length > 0) && <p className="faint control-hint" id="control-create-blocked">
+          {missing.length > 0 ? `Still needed: ${missingText}.` : ''}
+          {missing.length > 0 && planFaults.length > 0 ? ' ' : ''}
+          {planFaults.length > 0
+            ? `The task graph has ${planFaults.length} problem${planFaults.length === 1 ? '' : 's'} Wanigan would refuse${planOpen ? ', named beside the tasks above' : '; open it to read them'}.`
+            : ''}
+        </p>}
+        <button className="btn btn-primary" disabled={busy !== null || missing.length > 0 || planFaults.length > 0} aria-describedby={missing.length > 0 || planFaults.length > 0 ? 'control-create-blocked' : undefined} onClick={() => void create()}>{busy === 'create' ? 'Creating…' : 'Create goal'}</button>
       </article>
 
       <article className="card control-list"><div className="control-card-head"><div><span className="label">Durable work</span><h2>Goals</h2></div><span className="faint">{dockets.length}</span></div>

@@ -218,6 +218,43 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   'every provider row tints from one shared table: the shipped DeepSeek profile has a colour, and an id this build has no colour for draws in the accent rather than transparent',
   `renderer files still declaring a tint table: ${rendererTintTables.join(', ') || 'none'}`);
 
+  /* ── the compact session rail obeys the motion setting ────────────── */
+  // Two separate defects, and only one of them was a literal. The rail's slide
+  // now reads --mo-state, and its visibility flip rides the same token rather
+  // than the old 0s-plus-140ms-delay pair, so the rail is still painted while
+  // it slides out and gone the frame it lands — with no second literal for the
+  // setting to miss. The other half was an @media (prefers-reduced-motion:
+  // reduce) block in each of these two sheets with no [data-motion] guard: it
+  // silenced a deliberate Motion = full, which motion.css's own reduced-motion
+  // rule is careful not to do. Both sheets take reduced motion from the tokens
+  // now, so neither should mention the query at all.
+  const railCssSrc = sourceOf('src/renderer/src/styles/sessions.css');
+  const timelineCssSrc = sourceOf('src/renderer/src/styles/timeline.css');
+  check(railCssSrc.includes('transition: transform var(--mo-state) var(--mo-ease), visibility var(--mo-state) linear;')
+    && !railCssSrc.includes('prefers-reduced-motion')
+    && !timelineCssSrc.includes('prefers-reduced-motion'),
+  "the compact session rail slides and hides on --mo-state, and neither sheet re-silences motion behind the operator's deliberate Motion = full");
+
+  /* ── every duration comes from the motion tokens ──────────────────── */
+  // motion.css zeroes --mo-state when the operator picks Motion = off and when
+  // the OS asks for reduced motion, so a sheet that spells its own 140ms or
+  // .12s quietly opts that one element out of both settings. Nine declarations
+  // did, and the worst of them slid a rail beside a live PTY for 140ms no
+  // matter what the operator had asked for. Re-deriving the style gate's own
+  // regex here covers the half the gate cannot: an empty DURATION_BASELINE is
+  // what makes its ratchet absolute, and a baseline edit would re-open the debt
+  // without touching a sheet.
+  const DURATION_LITERAL = /\b(?:transition|animation)[\w-]*:[^;{}]*?[\s,(]([0-9]*\.?[0-9]+)m?s(?![\w-])/g;
+  const literalDurationFiles = filesUnder(path.join(appRoot(), 'src/renderer/src'))
+    .filter((f) => /\.(?:css|tsx)$/.test(f) && path.basename(f) !== 'motion.css')
+    .filter((f) => (fs.readFileSync(f, 'utf8').match(DURATION_LITERAL) || []).length > 0)
+    .map((f) => path.relative(appRoot(), f));
+  const styleGateSrc = sourceOf('scripts/check-renderer-style.cjs');
+  check(literalDurationFiles.length === 0
+    && /const DURATION_BASELINE = \{\};/.test(styleGateSrc),
+  'no renderer file outside motion.css spells its own transition duration, and the style gate baseline is empty so none can be added back',
+  `renderer files with a literal duration: ${literalDurationFiles.join(', ') || 'none'}`);
+
   /* ── phase 9 · worktrees against a real repo ───────────────────────── */
   say('── phase 9 · worktrees');
   const repo = path.join(tmp, 'repo');
@@ -1471,6 +1508,26 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const controlUrl = new URL('api/control', monitor.localUrl).toString();
     const lockedControl = await fetch(controlUrl, { headers: { authorization: `Bearer ${token}` } });
     check(lockedControl.status === 403, 'paired monitoring stays read-only until remote control is separately enabled', lockedControl.status);
+    // The page tells a switched-off console apart from a broken one with
+    // /disabled/ against this sentence, so it is a contract, and it has to hold
+    // on every control-scope route rather than only the one the console asks
+    // for first. The route table is what makes that automatic.
+    const lockedControlBody = await lockedControl.json() as { error?: string };
+    const lockedTerminal = await fetch(new URL('api/terminal?session=s_mobile', monitor.localUrl), { headers: { authorization: `Bearer ${token}` } });
+    const lockedTerminalBody = await lockedTerminal.json() as { error?: string };
+    check(lockedControlBody.error === 'Remote control is disabled in Wanigan Settings.'
+      && lockedTerminal.status === 403
+      && lockedTerminalBody.error === 'Remote control is disabled in Wanigan Settings.',
+    'every control-scope route is refused with the exact sentence the page matches on, not just the first one the console asks for',
+    `${lockedControl.status}:${lockedControlBody.error} / ${lockedTerminal.status}:${lockedTerminalBody.error}`);
+    const unknownRoute = await fetch(new URL('api/not-a-route', monitor.localUrl), { headers: { authorization: `Bearer ${token}` } });
+    const unknownRouteBody = await unknownRoute.json() as { error?: string };
+    const wrongVerb = await fetch(controlUrl, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: '{}' });
+    await wrongVerb.arrayBuffer();
+    check(unknownRoute.status === 404 && unknownRouteBody.error === 'Not found.'
+      && wrongVerb.status === 405 && wrongVerb.headers.get('allow') === 'GET',
+    'the phone API is a route table: an unregistered path is 404, and a registered path reached with the wrong verb is 405 naming the verbs it does answer',
+    `${unknownRoute.status}/${wrongVerb.status} allow=${wrongVerb.headers.get('allow')}`);
     const remoteActions: string[] = [];
     mobile.configureMobileControlSource({
       projects: async () => [{ id: 'prj_mobile', name: 'Mobile repo', branch: 'main' }],
@@ -1484,6 +1541,12 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const controlShell = await fetch(monitor.localUrl);
     check((await controlShell.text()).includes('Private remote control'),
       'the iPad shell labels its remote-control capability directly when the opt-in is enabled');
+    const composedShell = await (await fetch(monitor.localUrl)).text();
+    const sectionAnchors = mobile.MOBILE_SECTION_ANCHORS;
+    const misplacedSections = sectionAnchors.filter((anchor) => composedShell.split(`id="${anchor}"`).length !== 2);
+    check(sectionAnchors.length >= 3 && misplacedSections.length === 0,
+      'the served page composes every registered screen section exactly once — none dropped by the registry, none rendered twice',
+      `${sectionAnchors.length} sections, wrong count for: ${misplacedSections.join(', ') || 'none'}`);
     const controls = await fetch(controlUrl, { headers: { authorization: `Bearer ${token}` } });
     const launch = await fetch(new URL('api/action', monitor.localUrl), {
       method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -1506,6 +1569,19 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const terminalBody = JSON.parse(await terminal.text()) as { text?: string };
     check(terminal.ok && terminalBody.text === 'safe output for s_mobile' && !terminalBody.text.includes('\x1b'),
       'a paired device receives readable terminal text with ANSI and terminal metadata removed');
+    // The console polls /api/terminal every 1.5 seconds and /api/control on
+    // every render. Charging those reads to the same 20-per-minute budget as a
+    // launch would 429 a console that is working perfectly, within seconds of
+    // opening it — so the limiter is deliberately POST-only.
+    const pollCodes: number[] = [];
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const polled = await fetch(new URL('api/terminal?session=s_mobile', monitor.localUrl), { headers: { authorization: `Bearer ${token}` } });
+      pollCodes.push(polled.status);
+      await polled.arrayBuffer();
+    }
+    check(pollCodes.every((status) => status === 200),
+      'polling the console reads never spends the remote-action write budget, so an iPad left open does not rate-limit itself out of its own terminal',
+      pollCodes.filter((status) => status !== 200).length);
 
     const rotated = await mobile.regenerateMobileToken();
     const oldToken = await fetch(apiUrl, { headers: { authorization: `Bearer ${token}` } });
@@ -2774,7 +2850,19 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const themeSrc = sourceOf('src/renderer/src/theme.ts');
   const themeBootSrc = sourceOf('src/renderer/src/theme-boot.ts');
   const terminalPaneSrc = sourceOf('src/renderer/src/components/TerminalPane.tsx');
-  const mobileSrc = sourceOf('src/main/mobile.ts');
+  // mobile.ts is a re-export facade: the credential store, the gated API
+  // dispatcher and the served page all live in src/main/mobile/. Reading only
+  // the facade would leave every *negated* mobile assertion below satisfied by
+  // a file that no longer contains any of the code they are about — a whole
+  // block of contracts turning green by looking at nothing. So this globs the
+  // subtree rather than naming files, which also means a later phase cannot
+  // hide a line from a negative assertion by putting it in an unlisted module,
+  // and refuses a walk that came back suspiciously small.
+  const mobileFiles = ['src/main/mobile.ts', ...filesUnder(path.join(appRoot(), 'src/main/mobile'))
+    .filter((file) => file.endsWith('.ts'))
+    .map((file) => path.relative(appRoot(), file))];
+  if (mobileFiles.length < 10) missingSources.push(`src/main/mobile/** (walked only ${mobileFiles.length} files)`);
+  const mobileSrc = mobileFiles.map((file) => sourceOf(file)).join('\n');
   const cssSrc = sourceOf('src/renderer/src/index.css');
   const sessionsCssSrc = sourceOf('src/renderer/src/styles/sessions.css');
   const compactCssSrc = sourceOf('src/renderer/src/styles/compact.css');
@@ -3185,6 +3273,26 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !sessionsSrc.includes('feed(sessionId, data)')
     && !sessionsSrc.includes('import TerminalPane, { feed,'),
   'terminal output is pumped for the window’s lifetime rather than the Sessions view’s, so bytes printed while you are on another tab still land');
+
+  // Two always-mounted shell polls kept working behind a hidden window: a
+  // six-second badge tick that makes three IPC round trips a beat, and a
+  // thirty-second branch refresh that handed `setProjects` a brand-new array
+  // every time — re-rendering every view that takes `projects` as a prop for a
+  // list that had not changed. Chromium only throttles a hidden renderer's
+  // timers after about five minutes, so the guard is what buys the first five.
+  // Neither guard is allowed to cost freshness: one visibilitychange listener
+  // catches both polls up on return, so a restored window never shows a stale
+  // count or a stale branch.
+  check(appSrc.includes('const t = setInterval(() => { if (document.hidden) return; void tick(); }, 6000);')
+    && appSrc.includes('const t = setInterval(() => { if (document.hidden) return; refreshProjects(); }, 30_000);')
+    && appSrc.includes('const onVisible = () => { if (document.hidden) return; void tick(); refreshProjects(); };')
+    && appSrc.includes("document.addEventListener('visibilitychange', onVisible);")
+    && appSrc.includes("document.removeEventListener('visibilitychange', onVisible)")
+    // And the refresh compares before it sets, so an unchanged list keeps the
+    // array identity every consumer re-renders on.
+    && appSrc.includes('projectShape(prev) === projectShape(list) ? prev : list')
+    && !appSrc.includes('window.wanigan.projects.refresh().then(setProjects)'),
+  'the shell’s badge and branch polls stop while the window is hidden, one visibilitychange listener catches both up on return, and an unchanged project list keeps its array identity');
 
   // The Git diff pane kept whatever patch it was holding when an action changed
   // the tree beneath it: stage a file and it still showed the unstaged diff,
@@ -3750,6 +3858,75 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && mainSrc.includes("handle('control:setAutopilot'")
     && controlSrc.includes('export function setAutopilot('),
     'Control can arm and disarm goal autopilot, so the sweep, the node queue runner and the halt behind control.setAutopilot have a caller instead of being a finished lane no screen could enter');
+
+  // control.create has accepted a `plan` since buildPlan landed, and no renderer
+  // surface ever sent one: every goal in the app got the same four phases, so the
+  // node cap, the cycle walk, the terminal-review rule and the claim-overlap check
+  // had only ever run against the one graph they pass trivially — a validator with
+  // no way in looks exactly like a validator nobody violates. Control now hands the
+  // editor's rows to that same call, seeded from DEFAULT_DOCKET_PLAN, so a goal
+  // created without opening the editor is the goal Control always created. Source
+  // contract because the smoke process has no renderer to press a button in.
+  const planEditorSrc = sourceOf('src/renderer/src/components/PlanEditor.tsx');
+  const planTypesSrc = sourceOf('src/shared/types.ts');
+  check(planEditorSrc.length > 2000
+    && controlViewSrc.includes("import PlanEditor, { planProblems, planRowsFromDefault, toPlanNodes } from '../components/PlanEditor';")
+    && controlViewSrc.includes('useState<PlanRow[]>(planRowsFromDefault)')
+    && controlViewSrc.includes('plan: toPlanNodes(plan)')
+    && controlViewSrc.includes('<PlanEditor rows={plan} onChange={setPlan} />')
+    && planEditorSrc.includes('return DEFAULT_DOCKET_PLAN.map((node) => ({')
+    && preloadSrc.includes('plan?: DocketPlanNode[]')
+    && controlSrc.includes('const planned = buildPlan(input.plan?.length ? input.plan : DEFAULT_PLAN);'),
+    'Control creates a goal from a task graph the operator can edit and submits its nodes, seeded from the shared default plan, so buildPlan validates something other than the one graph it always passed');
+
+  // The kind picker reads DOCKET_NODE_KINDS. control.ts interpolates that same
+  // array into the refusal it writes for a bad kind, so a private list retyped
+  // here could offer a word this app would then reject in its own dialect — and
+  // the day a fifth kind is added, the picker would be the surface that silently
+  // did not learn about it.
+  check(planEditorSrc.includes("import type { DocketNodeKind, DocketPlanNode } from '@shared/types';")
+    && /DOCKET_NODE_KINDS\.map\(\(kind\) => <option key=\{kind\} value=\{kind\}>\{kind\}<\/option>\)/.test(planEditorSrc)
+    && !/\[\s*'plan',\s*'implement'/.test(planEditorSrc)
+    && planTypesSrc.includes("export const DOCKET_NODE_KINDS: readonly DocketNodeKind[] = ['plan', 'implement', 'verify', 'review'];")
+    && /use one of: \$\{NODE_KINDS\.join\(', '\)\}/.test(controlSrc),
+    'the plan editor offers exactly the four task kinds shared/types declares and main names in its own refusal, rather than a private list beside them that can drift');
+
+  // A cycle needs a forward edge, so the editor does not render the control that
+  // would draw one: a task's prerequisite chips are built from rows.slice(0, index)
+  // and the first task is told in words that it has nothing above it. Reordering is
+  // where a naive editor invents the cycle it spent the rest of its code
+  // preventing, so a swap is applied to a rebuilt graph and refused unless every
+  // edge still points backwards — refused rather than silently repaired, because
+  // dropping the edge would change the graph the operator drew without saying so.
+  // control.ts's walk still runs; it is the one that has to survive a hand-written
+  // plan. Source contract because the smoke process has no renderer to drag a row in.
+  check(/rows\.slice\(0, index\)\.map\(\(earlier, dep\) => \{/.test(planEditorSrc)
+    && planEditorSrc.includes('The first task has nothing above it to wait on')
+    && planEditorSrc.includes('export function reordered(rows: PlanRow[], from: number, to: number): PlanRow[] | null {')
+    && planEditorSrc.includes('const backwards = next.every((row, index) => row.dependsOn.every((dep) => dep < index));')
+    && planEditorSrc.includes('return backwards ? next : null;')
+    && planEditorSrc.includes('disabled={up === null}')
+    && planEditorSrc.includes('disabled={down === null}')
+    && controlSrc.includes('This task graph has a cycle'),
+    'a dependency drawn in the plan editor can only point at a row above it, and a reorder that would turn an existing edge forward is refused, so the cycle control.ts rejects cannot be drawn in the first place');
+
+  // The rules the editor cannot make structurally impossible are stated inline,
+  // in main's own sentences, before the button — and Create is gated on the same
+  // exported list the editor renders, so it is never disabled for a reason nobody
+  // can see. A validator that only speaks after the press is the rule stated twice
+  // and heard once, with the goal already discarded by the time it is read.
+  check(controlViewSrc.includes('const planFaults = useMemo(() => planProblems(plan), [plan]);')
+    && controlViewSrc.includes('disabled={busy !== null || missing.length > 0 || planFaults.length > 0}')
+    && controlViewSrc.includes("aria-describedby={missing.length > 0 || planFaults.length > 0 ? 'control-create-blocked' : undefined}")
+    && planEditorSrc.includes('export function planProblems(rows: PlanRow[]): PlanProblem[] {')
+    && planEditorSrc.includes('A goal needs one review task; the human decision is its final gate.')
+    && controlSrc.includes('A goal needs one review task; the human decision is its final gate.')
+    && planEditorSrc.includes('would be accepted without anyone reviewing it.')
+    && controlSrc.includes('would be accepted without anyone reviewing it.')
+    && planEditorSrc.includes('Order them with a dependency, or narrow one of the paths.')
+    && controlSrc.includes('Order them with a dependency, or narrow one of the paths.')
+    && controlCssSrc.includes('.control-plan-problem {'),
+    'every graph control.ts would refuse is named beside the offending task before Create is pressed, in the same words main would have thrown, and the button is gated on that same list');
 
   // Fleet is the view most likely to be left behind, because its cards exist to
   // be clicked into and every click unmounts it. Sort, status filter and scroll

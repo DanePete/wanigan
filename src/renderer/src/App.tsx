@@ -123,6 +123,8 @@ const NEED_MARK: Record<string, { glyph: string; tone: string; phrase: (n: numbe
 const shape = (l: Session[]) => l.map((s) => `${s.id}:${s.status}:${s.projectId}`).join('|');
 /** Likewise for the ranked attention list: identity, kind and when it began. */
 const attentionShape = (l: Attention[]) => l.map((a) => `${a.sessionId}:${a.kind}:${a.since}`).join('|');
+/** Likewise for the shared project list: identity, name, path and branch. */
+const projectShape = (l: Project[]) => l.map((p) => `${p.id}:${p.name}:${p.path}:${p.branch}`).join('|');
 
 /**
  * The palette's Recent group: the last five keys run from it, per machine.
@@ -393,20 +395,42 @@ export default function App() {
 
   useEffect(() => {
     void tick();
-    const t = setInterval(tick, 6000);
+    const t = setInterval(() => { if (document.hidden) return; void tick(); }, 6000);
     const offBatch = window.wanigan.on.batchChanged(() => void tick());
     const offList = window.wanigan.on.sessions((list) =>
       setSessions((prev) => (shape(prev) === shape(list) ? prev : list)));
     return () => { clearInterval(t); offBatch(); offList(); };
   }, [tick]);
 
-  // Branches move constantly; keep the shared project list honest.
-  useEffect(() => {
-    const t = setInterval(() => {
-      window.wanigan.projects.refresh().then(setProjects).catch(() => {});
-    }, 30_000);
-    return () => clearInterval(t);
+  // Branches move constantly; keep the shared project list honest. Handing
+  // `setProjects` the refresh result directly installed a new array identity
+  // every thirty seconds whether or not a branch had actually moved, and
+  // `projects` is a prop of a dozen views — so compare first, the way the
+  // session and attention polls above already do.
+  const refreshProjects = useCallback(() => {
+    window.wanigan.projects.refresh()
+      .then((list) => setProjects((prev) => (projectShape(prev) === projectShape(list) ? prev : list)))
+      .catch(() => {});
   }, []);
+
+  // Both shell polls stop while the window is hidden. Chromium already
+  // throttles a hidden renderer's timers toward roughly once a minute, but only
+  // after about five minutes of hiding; the guard is what makes the first five
+  // minutes free too, and it costs nothing because the catch-up effect below
+  // re-reads the moment the window comes back.
+  useEffect(() => {
+    const t = setInterval(() => { if (document.hidden) return; refreshProjects(); }, 30_000);
+    return () => clearInterval(t);
+  }, [refreshProjects]);
+
+  // One listener for both guarded polls: returning to a window that fell behind
+  // should show current badge counts and current branches at once, not after
+  // the next six- or thirty-second beat.
+  useEffect(() => {
+    const onVisible = () => { if (document.hidden) return; void tick(); refreshProjects(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [tick, refreshProjects]);
 
   // A project added from another surface (or over IPC) must not stay invisible
   // to Context/Learning until the 30s branch tick: refresh on window focus and

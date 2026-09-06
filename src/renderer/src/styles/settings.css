@@ -111,16 +111,16 @@
 .set-state { width: 42px; text-align: right; font-size: 11px; font-weight: 700; }
 .set-track { position: relative; flex: none; width: 34px; height: 19px; border-radius: 999px;
              background: var(--bg-sunk); border: 1px solid var(--line);
-             transition: background .12s, border-color .12s; }
+             transition: background var(--mo-state) var(--mo-ease), border-color var(--mo-state) var(--mo-ease); }
 .set-switch[aria-checked='true'] .set-track { background: var(--accent-soft); border-color: var(--accent); }
 .set-knob { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 999px;
-            background: var(--text-faint); transition: transform .12s, background .12s; }
+            background: var(--text-faint); transition: transform var(--mo-state) var(--mo-ease), background var(--mo-state) var(--mo-ease); }
 .set-switch[aria-checked='true'] .set-knob { transform: translateX(15px); background: var(--accent); }
 
 .set-opts { display: grid; gap: 7px; }
 .set-opt { display: block; width: 100%; text-align: left; padding: 9px 11px; border-radius: 8px;
            border: 1px solid var(--line); background: var(--bg-sunk);
-           transition: border-color .12s, background .12s; }
+           transition: border-color var(--mo-state) var(--mo-ease), background var(--mo-state) var(--mo-ease); }
 .set-opt:hover { border-color: var(--text-faint); }
 .set-opt.on { border-color: var(--accent); background: var(--accent-soft); }
 .set-opt-top { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 650; }

@@ -544,6 +544,15 @@ export interface LearningPipelineStats {
   signalsAllTime: number;
   eligibleSignals: number;
   candidatesCreated: number;
+  /**
+   * Candidates created in the window that nobody has decided on yet: a COUNT
+   * over knowledge_candidates still sitting at 'pending' or 'snoozed'. It is
+   * deliberately not candidatesCreated minus autoPromoted. autoPromoted counts
+   * knowledge items rather than candidates, so that subtraction mixed units,
+   * and nothing in it ever removed a candidate a person approved or rejected —
+   * a fully reviewed Inbox still reported a backlog.
+   */
+  awaitingDecision: number;
   autoPromoted: number;
   reviewed: number;
   itemsPromoted: number;
