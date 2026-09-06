@@ -46,6 +46,8 @@ import * as spend from './spend';
 import * as notify from './notify';
 import * as mobile from './mobile';
 import { mobileFleetSnapshot } from './fleet-snapshot';
+import * as tailnet from './tailnet';
+import { qrSvg } from '../shared/qr';
 import * as skills from './skills';
 import * as plugins from './plugins';
 import { glmModels, verifyGlmKey } from './glm';
@@ -1264,6 +1266,26 @@ function forgetDemoMasking(): void {
   demoModeCheckedAt = 0;
 }
 
+/**
+ * Which port a tailnet action is allowed to touch: the one the phone monitor is
+ * configured to listen on, read here in main. The renderer may send its number
+ * along, but it is only ever checked against this one — a mismatch is a screen
+ * working from stale configuration, and publishing the port it asked for would
+ * put a proxy in front of something Wanigan is not listening on.
+ */
+function servedPort(requested?: number): number {
+  const port = mobile.mobileConfig().port;
+  if (requested !== undefined && requested !== port) {
+    throw new Error(`Wanigan can only serve the port its phone monitor listens on (${port}).`);
+  }
+  return port;
+}
+
+/** Same URL, ignoring the trailing slash the settings normaliser strips. */
+function sameUrl(a: string, b: string): boolean {
+  return a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
+}
+
 function registerIpc() {
   const handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => {
     ipcMain.handle(channel, async (event, ...args) => {
@@ -1825,6 +1847,67 @@ function registerIpc() {
         ? 'Test alert accepted by ntfy; device receipt is not reported.'
         : result.error ?? (result.skipped ? 'Phone alerts are disabled.' : 'ntfy did not accept the test alert.'),
     };
+  });
+
+  // ── the private transport in front of that loopback listener ─────────
+  //
+  // Settings used to print a `tailscale serve` command to copy into a terminal
+  // and then ask for the URL back. These three drive the CLI instead, so the
+  // panel reports a transport it can observe rather than describing one it
+  // cannot.
+  handle('tailnet:status', (port?: number) => tailnet.tailnetStatus(servedPort(port)));
+  handle('tailnet:serve', async (port?: number) => {
+    const status = await tailnet.tailnetServe(servedPort(port));
+    if (status.state !== 'serving') return status;
+    if (sameUrl(mobile.mobileConfig().dashboardUrl, status.url)) return status;
+    try {
+      // The other half of removing the paste step: deep links in phone alerts
+      // read this setting, so a URL Wanigan just watched Tailscale print is a
+      // fact it should record rather than ask for.
+      await mobile.setMobileConfig({ dashboardUrl: status.url });
+    } catch (e) {
+      // Serving succeeded and only the bookkeeping failed. Reporting a bare
+      // failure would deny what the operator just watched happen, so the reply
+      // carries both facts and names the one that still needs a hand.
+      throw new Error(`Tailscale is serving ${status.url}, but Wanigan could not save it as the dashboard URL: `
+        + `${e instanceof Error ? e.message : String(e)}`);
+    }
+    return status;
+  });
+  /**
+   * The pairing QR, rendered in main from main's own pairing URL.
+   *
+   * The renderer never supplies the text. It could — the URL is on screen
+   * beside the code — but then an SVG built from renderer input would be
+   * injected into the settings panel, and the one thing that makes that
+   * injection safe is that nothing outside this process chose what it encodes.
+   * The renderer asks for "the QR for pairing"; it does not get to say what
+   * the camera will read.
+   */
+  handle('tailnet:qr', () => {
+    const status = mobile.mobileStatus();
+    if (!status.config.dashboardEnabled) {
+      throw new Error('The phone dashboard is off, so there is no address to pair against yet.');
+    }
+    return qrSvg(status.pairingUrl);
+  });
+
+  handle('tailnet:unserve', async (port?: number) => {
+    const wanted = servedPort(port);
+    // Read first: after the mapping is gone there is no URL left to compare the
+    // stored dashboard URL against, and clearing one Wanigan did not publish
+    // would throw away an operator's own proxy.
+    const before = await tailnet.tailnetStatus(wanted);
+    const status = await tailnet.tailnetUnserve(wanted);
+    if (status.state !== 'ready' || before.state !== 'serving') return status;
+    if (!sameUrl(mobile.mobileConfig().dashboardUrl, before.url)) return status;
+    try {
+      await mobile.setMobileConfig({ dashboardUrl: '' });
+    } catch (e) {
+      throw new Error(`Tailscale is no longer serving ${before.url}, but Wanigan could not clear the dashboard URL: `
+        + `${e instanceof Error ? e.message : String(e)}`);
+    }
+    return status;
   });
 
   // ══ phase 19 · trust and the ledger ═════════════════════════════════

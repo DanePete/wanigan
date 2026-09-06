@@ -11,7 +11,7 @@ import type {
   McpServerConfig, McpServerStatus, BudgetState, Reconciliation, TrustLevel, LedgerEntry,
   WaniganSettings, ThemeSetting, UploadedFile, EvalPair, GoldenSet,
   EgressReport, ObservedSession, ObservedState,
-  MobileMonitorConfig, MobileMonitorStatus,
+  MobileMonitorConfig, MobileMonitorStatus, TailnetStatus,
   ReviewRecipe, ReviewRun,
   ArtifactRoiSummary, CandidateExplanation, ForgedSkill, FreshnessReport,
   KnowledgeBriefing, KnowledgeCandidate,
@@ -293,6 +293,18 @@ const api = {
     regenerateToken: () => call<MobileMonitorStatus>('mobile:regenerateToken'),
     regenerateTopic: () => call<MobileMonitorStatus>('mobile:regenerateTopic'),
     testPush: () => call<{ ok: boolean; detail: string }>('mobile:testPush'),
+  },
+  // ── the private HTTPS transport in front of that loopback listener ───
+  // The port is optional and advisory: main serves the port the phone monitor
+  // is actually listening on and refuses a number that disagrees with it, so a
+  // stale screen cannot publish the wrong one.
+  tailnet: {
+    status: (port?: number) => call<TailnetStatus>('tailnet:status', port),
+    serve: (port?: number) => call<TailnetStatus>('tailnet:serve', port),
+    unserve: (port?: number) => call<TailnetStatus>('tailnet:unserve', port),
+    /** The pairing QR as an SVG string. Main chooses what it encodes, never the
+     *  renderer — see the handler for why that is the whole safety property. */
+    qrSvg: () => call<string>('tailnet:qr'),
   },
   // ── phase 19 · trust and the ledger ──────────────────────────────────
   policy: {

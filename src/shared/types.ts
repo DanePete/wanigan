@@ -750,6 +750,40 @@ export type MobileMonitorStatus = {
   lastPushError: string | null;
 };
 
+/**
+ * What Wanigan observed about Tailscale for the loopback port the phone monitor
+ * listens on. Five states because each one is a different next action — install
+ * Tailscale, sign in to Tailscale, start serving, open this URL, and read what
+ * went wrong — and a boolean plus a message would let the panel offer the wrong
+ * one. Nothing here is inferred from a path existing: every state is the result
+ * of a probe that exited.
+ */
+export type TailnetStatus = { port: number; checkedAt: number } & (
+  /** No tailscale CLI at any known location or on PATH. */
+  | { state: 'absent' }
+  /**
+   * The CLI answered but the daemon is not connected, so Serve cannot run. The
+   * raw BackendState travels with the sentence: 'waiting for admin approval' is
+   * not 'not signed in', and sending one operator to the other's fix wastes the
+   * only move they have.
+   */
+  | { state: 'logged-out'; backendState: string; message: string }
+  /** Connected, with nothing serving our port yet. Wanigan can start it. */
+  | { state: 'ready'; magicDnsName: string | null }
+  | {
+    state: 'serving';
+    /** Read back from the serve configuration, never assembled from a hostname. */
+    url: string;
+    magicDnsName: string | null;
+    /** True means Funnel is on for this mount: the URL is public, not tailnet-only. */
+    funnel: boolean;
+    /** False when a foreground `tailscale serve` owns it, which Wanigan cannot stop. */
+    background: boolean;
+  }
+  /** The probe itself failed; the message is the CLI's, never a guess. */
+  | { state: 'error'; message: string }
+);
+
 /* ── P9 · worktrees ─────────────────────────────────────────────────── */
 
 export type WorktreeInfo = {

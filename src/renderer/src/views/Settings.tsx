@@ -2037,6 +2037,105 @@ function Egress() {
    Phone monitor
    ════════════════════════════════════════════════════════════════════════ */
 
+/**
+ * The tailnet transport bridge ships in the same wave as this panel, so the
+ * preload surface this file compiles against may not carry `tailnet` yet.
+ * Reading it through a narrow optional shape keeps the view honest in both
+ * directions: it builds before the bridge lands, and a Wanigan whose main
+ * process has no tailnet handler reports the transport as unreadable rather
+ * than throwing under a button the operator just pressed.
+ */
+type TailnetState = 'absent' | 'logged-out' | 'ready' | 'serving' | 'error';
+
+type TailnetStatus = {
+  state: TailnetState;
+  /** The HTTPS address Serve publishes; present only while it is serving. */
+  url: string | null;
+  /** Verbatim CLI text for the error state, never paraphrased into advice. */
+  message: string | null;
+};
+
+type TailnetBridge = {
+  status: () => Promise<TailnetStatus>;
+  serve: (port: number) => Promise<TailnetStatus>;
+  unserve: (port: number) => Promise<TailnetStatus>;
+  /** A QR for one of Wanigan's own URLs, drawn in main. */
+  /** Takes no argument on purpose: main encodes its OWN pairing URL, so an
+   *  SVG injected into this panel can never carry text the renderer chose. */
+  qrSvg?: () => Promise<string>;
+};
+
+function tailnetBridge(): TailnetBridge | null {
+  return (window.wanigan as unknown as { tailnet?: TailnetBridge }).tailnet ?? null;
+}
+
+/* Glyph and word carry the transport state; colour only agrees with them. */
+const TRANSPORT_MARK: Record<TailnetState, MarkSpec> = {
+  absent:       { glyph: '○', word: 'not installed', color: 'var(--text-faint)' },
+  'logged-out': { glyph: '⊘', word: 'signed out',    color: 'var(--warning)' },
+  ready:        { glyph: '◐', word: 'ready',         color: 'var(--text-dim)' },
+  serving:      { glyph: '✓', word: 'connected',     color: 'var(--good)' },
+  error:        { glyph: '✕', word: 'failed',        color: 'var(--critical)' },
+};
+
+/** Reading, unsupported and unreadable are states this panel must not conflate. */
+type Transport =
+  | { s: 'unsupported' }
+  | { s: 'reading' }
+  | { s: 'ok'; d: TailnetStatus }
+  | { s: 'unreadable'; e: string };
+
+/**
+ * The pairing QR, as an `<img>` over a `data:` URI rather than
+ * dangerouslySetInnerHTML.
+ *
+ * The SVG is generated in the main process from Wanigan's own pairing URL and
+ * never from anything the renderer or a paired device typed. An image element
+ * costs nothing over an inline SVG and closes the case where that stops being
+ * true: a browser will not run script inside an `<img>`, so no later change to
+ * how this string is produced can turn the QR into a code path.
+ *
+ * The generated SVG owns its quiet zone and its light background. A camera
+ * needs both, and neither can be borrowed from a theme that may be dark.
+ */
+function PairingQr({ url }: { url: string }) {
+  // `url` is never sent to main — it is the re-render key, so rotating the
+  // token redraws the code. Main encodes the pairing URL it already holds.
+  const [svg, setSvg] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  useEffect(() => {
+    const bridge = tailnetBridge();
+    if (!bridge?.qrSvg) {
+      setFailed('This build cannot draw a pairing code.');
+      return;
+    }
+    let live = true;
+    setSvg(null); setFailed(null);
+    bridge.qrSvg()
+      .then((drawn) => { if (live) setSvg(drawn); })
+      .catch((e) => { if (live) setFailed(`The code was not drawn: ${msg(e)}`); });
+    return () => { live = false; };
+  }, [url]);
+
+  if (failed) {
+    return (
+      <div className="sunk set-qr set-qr-empty">
+        <p className="faint set-fine">{failed} Open the pairing link beside it instead.</p>
+      </div>
+    );
+  }
+  if (!svg) {
+    return <div className="sunk set-qr set-qr-empty"><p className="faint set-fine">Drawing the code…</p></div>;
+  }
+  return (
+    <div className="sunk set-qr">
+      <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`}
+           alt="QR code for this Mac’s private pairing link" />
+    </div>
+  );
+}
+
 function PhoneMonitor() {
   const [status, setStatus] = useState<MobileMonitorStatus | null>(null);
   const [server, setServer] = useState('https://ntfy.sh');
@@ -2045,6 +2144,7 @@ function PhoneMonitor() {
   const [port, setPort] = useState('47831');
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [net, setNet] = useState<Transport>({ s: 'reading' });
 
   const absorb = useCallback((next: MobileMonitorStatus) => {
     setStatus(next);
@@ -2059,6 +2159,16 @@ function PhoneMonitor() {
       .catch((e) => setResult({ tone: 'error', text: `Phone monitoring could not be read: ${msg(e)}` }));
   }, [absorb]);
   useEffect(() => { load(); }, [load]);
+
+  const readTransport = useCallback(() => {
+    const bridge = tailnetBridge();
+    if (!bridge) { setNet({ s: 'unsupported' }); return; }
+    setNet({ s: 'reading' });
+    bridge.status()
+      .then((d) => setNet({ s: 'ok', d }))
+      .catch((e) => setNet({ s: 'unreadable', e: msg(e) }));
+  }, []);
+  useEffect(() => { readTransport(); }, [readTransport]);
 
   const configure = useCallback(async (patch: Partial<MobileMonitorConfig>, label: string) => {
     setBusy(label); setResult(null);
@@ -2108,7 +2218,142 @@ function PhoneMonitor() {
     } finally { setBusy(null); }
   }
 
+  /**
+   * Serve maps the loopback port Wanigan is *actually* listening on, which is
+   * the saved one — not whatever half-typed number is sitting in the advanced
+   * port field. Publishing an unsaved port would map an address nothing
+   * answers on, and the failure would only show up on the phone.
+   */
+  async function connect() {
+    const bridge = tailnetBridge();
+    if (!bridge || !status) return;
+    setBusy('tailnet'); setResult(null);
+    try {
+      const next = await bridge.serve(status.config.port);
+      setNet({ s: 'ok', d: next });
+      // Serve prints the address the phone will use. Saving it here is what
+      // turns the pairing link from a loopback URL no phone can open into one
+      // it can; asking the operator to copy it back by hand was the step this
+      // panel used to spend four paragraphs explaining.
+      if (next.url && next.url !== status.config.dashboardUrl) {
+        absorb(await window.wanigan.mobile.configure({ dashboardUrl: next.url }));
+      }
+      setResult(next.state === 'serving' && next.url
+        ? { tone: 'ok', text: `This Mac answers at ${next.url} inside your tailnet.` }
+        : { tone: 'error', text: next.message ?? 'Tailscale did not report a published address.' });
+    } catch (e) {
+      setResult({ tone: 'error', text: `Tailscale Serve did not start: ${msg(e)}` });
+    } finally { setBusy(null); }
+  }
+
+  async function disconnect() {
+    const bridge = tailnetBridge();
+    if (!bridge || !status) return;
+    const served = net.s === 'ok' ? net.d.url : null;
+    setBusy('tailnet'); setResult(null);
+    try {
+      const next = await bridge.unserve(status.config.port);
+      setNet({ s: 'ok', d: next });
+      // A saved dashboard URL that Serve no longer publishes is a QR that fails
+      // silently on the phone, so it leaves with the mapping that produced it.
+      // A URL the operator typed themselves is theirs and is left alone.
+      if (served && status.config.dashboardUrl === served) {
+        absorb(await window.wanigan.mobile.configure({ dashboardUrl: '' }));
+      }
+      setResult({ tone: 'ok', text: 'Tailscale no longer publishes this Mac.' });
+    } catch (e) {
+      setResult({ tone: 'error', text: `Tailscale Serve was not withdrawn: ${msg(e)}` });
+    } finally { setBusy(null); }
+  }
+
   const serveCommand = `tailscale serve --bg ${status?.config.port ?? 47831}`;
+  // A QR of http://127.0.0.1 is a picture of an address the phone cannot reach.
+  // The code is offered only once there is a real HTTPS base behind the token.
+  const pairable = Boolean(status?.running && status.config.dashboardUrl);
+
+  /** One state, one sentence, one action. Never a list of instructions. */
+  function transport() {
+    if (net.s === 'reading') {
+      return <p className="dim set-fine">Reading Tailscale…</p>;
+    }
+    if (net.s === 'unsupported' || net.s === 'unreadable') {
+      return (
+        <div className="sunk set-transport">
+          <div className="set-transport-say">
+            <Mark glyph="?" word="unreadable" color="var(--text-faint)" />
+            <p className="dim">
+              {net.s === 'unsupported'
+                ? 'This build of Wanigan cannot see whether Tailscale is installed or running.'
+                : net.e}
+              {' '}Set the private HTTPS URL by hand below and the rest of this panel still works.
+            </p>
+          </div>
+          {net.s === 'unreadable' && (
+            <div className="set-transport-do">
+              <button className="btn" onClick={readTransport}>Check again</button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const { state, url, message } = net.d;
+    return (
+      <div className="sunk set-transport">
+        <div className="set-transport-say">
+          <Mark {...TRANSPORT_MARK[state]} />
+          {state === 'absent' && (
+            <p className="dim">
+              A phone cannot reach this Mac from outside its own network on its own. Tailscale is the
+              private carrier Wanigan knows how to drive; without it the dashboard stays on loopback.
+            </p>
+          )}
+          {state === 'logged-out' && (
+            <p className="dim">
+              Tailscale is installed on this Mac but not signed in. Sign in from its menu-bar item, then check again.
+            </p>
+          )}
+          {state === 'ready' && (
+            <p className="dim">
+              Connecting publishes port <span className="mono">{status?.config.port ?? 47831}</span> of
+              this Mac to your tailnet over HTTPS. It is not published to the LAN or the public internet,
+              and the pairing token still applies.
+            </p>
+          )}
+          {state === 'serving' && <code className="set-path set-wrap">{url ?? 'address not reported'}</code>}
+          {state === 'error' && <code className="set-path set-wrap">{message ?? 'Tailscale reported a failure with no message.'}</code>}
+        </div>
+        <div className="set-transport-do">
+          {state === 'absent' && (
+            <>
+              <a className="btn" href="https://tailscale.com/download" target="_blank" rel="noreferrer">Install Tailscale</a>
+              <button className="btn" onClick={readTransport}>Check again</button>
+            </>
+          )}
+          {state === 'logged-out' && (
+            <>
+              <a className="btn" href="https://login.tailscale.com/start" target="_blank" rel="noreferrer">Sign in</a>
+              <button className="btn" onClick={readTransport}>Check again</button>
+            </>
+          )}
+          {state === 'ready' && (
+            <button className="btn btn-primary" disabled={busy !== null || !status?.running}
+                    onClick={() => void connect()}>
+              {busy === 'tailnet' ? 'Connecting…' : 'Connect this Mac'}
+            </button>
+          )}
+          {state === 'serving' && (
+            <button className="set-mini" disabled={busy !== null} onClick={() => void disconnect()}>
+              {busy === 'tailnet' ? 'Disconnecting…' : 'Disconnect'}
+            </button>
+          )}
+          {state === 'error' && (
+            <button className="btn" disabled={busy !== null} onClick={() => void connect()}>Try again</button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <Section title="Phone monitor"
@@ -2121,11 +2366,11 @@ function PhoneMonitor() {
       </Callout>
 
       {!status ? (
-        <p className="dim" style={{ fontSize: 'var(--t-small)', marginTop: 12 }}>Reading phone monitoring…</p>
+        <p className="dim set-fine">Reading phone monitoring…</p>
       ) : (
         <>
           {status.error && !status.config.dashboardEnabled && (
-            <div style={{ marginTop: 10 }}><Callout level="critical" title={status.error} /></div>
+            <div className="set-stack"><Callout level="critical" title={status.error} /></div>
           )}
           <div className="set-sub">Read-only Fleet page</div>
           <Toggle title="Run the phone dashboard" on={status.config.dashboardEnabled} busy={busy !== null}
@@ -2141,73 +2386,108 @@ function PhoneMonitor() {
           </Toggle>
 
           {status.config.dashboardEnabled && (
-            <div className="sunk" style={{ padding: '12px 13px', marginTop: 10 }}>
-              <div style={{ display: 'flex', gap: 9, alignItems: 'center', flexWrap: 'wrap' }}>
-                <Mark {...(status.running
-                  ? { glyph: '✓', word: 'listening', color: 'var(--good)' }
-                  : { glyph: '✕', word: 'not listening', color: 'var(--critical)' })} />
-                <code className="set-path">{status.localUrl}</code>
-              </div>
-              {status.error && <div style={{ marginTop: 9 }}><Callout level="critical" title={status.error} /></div>}
+            <>
+              <div className="set-sub">Reaching this Mac from a phone</div>
+              {/* A listener error still has to be readable while the listener
+                  happens to be up — a credential the keychain refused reports
+                  an error and a running server at the same time — so the two
+                  conditions are separate rather than one fallback chain. */}
+              {status.error && <div className="set-stack"><Callout level="critical" title={status.error} /></div>}
+              {!status.running && !status.error && (
+                <div className="set-stack">
+                  <Callout level="critical" title="The loopback listener is not running, so nothing can be published yet." />
+                </div>
+              )}
+              {transport()}
 
-              <div className="row2" style={{ marginTop: 12 }}>
-                <div>
-                  <label className="label" htmlFor="mobile-port">Loopback port</label>
-                  <input id="mobile-port" className="field mono" inputMode="numeric" value={port}
-                         onChange={(e) => setPort(e.target.value)} disabled={busy !== null} />
+              {pairable ? (
+                <div className="set-pair">
+                  <PairingQr url={status.pairingUrl} />
+                  <div className="set-pair-facts">
+                    <div>
+                      <label className="label">Point the iPad camera at the code</label>
+                      <p className="faint set-fine">
+                        It opens the pairing link below. The credential sits after <span className="mono">#</span>, so it is
+                        absent from the initial navigation request and Referer; the page saves it on that device, removes it
+                        from the address bar, then sends it only as the Authorization header on status requests.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="label">Or type this pairing code</label>
+                      <div className="set-inline">
+                        <code className="set-path set-code">{status.pairingCode}</code>
+                        <button className="set-mini" onClick={() => void copy(status.pairingCode, 'Pairing code')}>copy code</button>
+                      </div>
+                      <p className="faint set-fine">
+                        Type this code in the Home Screen Wanigan app. It expires after ten minutes; reopen this panel for a fresh code.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="label">Pairing link</label>
+                      <div className="set-inline">
+                        <code className="set-path set-grow">{status.pairingUrl}</code>
+                        <button className="set-mini" onClick={() => void copy(status.pairingUrl, 'Pairing link')}>copy link</button>
+                        <button className="set-mini" disabled={busy !== null}
+                                onClick={async () => {
+                                  setBusy('rotate'); setResult(null);
+                                  try { absorb(await window.wanigan.mobile.regenerateToken()); setResult({ tone: 'ok', text: 'Old pairing links were revoked.' }); }
+                                  catch (e) { setResult({ tone: 'error', text: `The pairing token was not changed: ${msg(e)}` }); }
+                                  finally { setBusy(null); }
+                                }}>revoke &amp; replace</button>
+                      </div>
+                      <p className="faint set-fine">
+                        Replacing the token immediately signs every paired browser out, and the code above changes with it.
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <label className="label" htmlFor="mobile-url">Private HTTPS URL</label>
-                  <input id="mobile-url" className="field mono" value={dashboardUrl}
-                         placeholder="https://this-mac.example.ts.net" spellCheck={false}
-                         onChange={(e) => setDashboardUrl(e.target.value)} disabled={busy !== null} />
-                </div>
-              </div>
-              <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 6 }}>
-                Install Tailscale on this Mac and your phone, run the command below once, then paste the HTTPS URL it prints.
-                Wanigan stays bound to loopback; tailnet ACLs and the pairing token both still apply.
-                Tailscale&apos;s background Serve mapping persists independently: turning this switch off or changing ports does not remove it,
-                so disable/reset that mapping in Tailscale when you stop using it.
-              </p>
-              <div style={{ display: 'flex', gap: 7, alignItems: 'center', marginTop: 9, flexWrap: 'wrap' }}>
-                <code className="set-path" style={{ userSelect: 'all', flex: 1 }}>{serveCommand}</code>
-                <button className="set-mini" onClick={() => void copy(serveCommand, 'Tailscale command')}>copy command</button>
-                <a className="set-mini" style={{ textDecoration: 'none' }} href="https://tailscale.com/download" target="_blank" rel="noreferrer">get Tailscale</a>
-              </div>
-
-              <div style={{ marginTop: 13 }}>
-                <label className="label">Pairing code</label>
-                <div style={{ display: 'flex', gap: 7, alignItems: 'center', marginTop: 5 }}>
-                  <code className="set-path" style={{ letterSpacing: '0.12em', fontWeight: 700 }}>{status.pairingCode}</code>
-                  <button className="set-mini" onClick={() => void copy(status.pairingCode, 'Pairing code')}>copy code</button>
-                </div>
-                <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 6 }}>
-                  Type this code in the Home Screen Wanigan app. It expires after ten minutes; reopen this panel for a fresh code.
+              ) : (
+                <p className="faint set-fine">
+                  The pairing code appears here once this Mac has a private HTTPS address. A code for
+                  <span className="mono"> 127.0.0.1 </span>is a picture of an address no phone can open.
                 </p>
-              </div>
+              )}
 
-              <div style={{ marginTop: 13 }}>
-                <label className="label">Pairing link</label>
-                <div style={{ display: 'flex', gap: 7, alignItems: 'center', marginTop: 5, flexWrap: 'wrap' }}>
-                  <code className="set-path" style={{ userSelect: 'all', flex: 1, overflowWrap: 'anywhere' }}>{status.pairingUrl}</code>
-                  <button className="set-mini" disabled={!status.running || !status.config.dashboardUrl}
-                          onClick={() => void copy(status.pairingUrl, 'Pairing link')}>copy link</button>
-                  <button className="set-mini" disabled={busy !== null}
-                          onClick={async () => {
-                            setBusy('rotate'); setResult(null);
-                            try { absorb(await window.wanigan.mobile.regenerateToken()); setResult({ tone: 'ok', text: 'Old pairing links were revoked.' }); }
-                            catch (e) { setResult({ tone: 'error', text: `The pairing token was not changed: ${msg(e)}` }); }
-                            finally { setBusy(null); }
-                          }}>revoke &amp; replace</button>
+              <details className="set-hand">
+                <summary>Set it up by hand</summary>
+                <div className="set-hand-body">
+                  <div className="set-inline">
+                    <Mark {...(status.running
+                      ? { glyph: '✓', word: 'listening', color: 'var(--good)' }
+                      : { glyph: '✕', word: 'not listening', color: 'var(--critical)' })} />
+                    <code className="set-path">{status.localUrl}</code>
+                  </div>
+
+                  <div className="row2">
+                    <div>
+                      <label className="label" htmlFor="mobile-port">Loopback port</label>
+                      <input id="mobile-port" className="field mono" inputMode="numeric" value={port}
+                             onChange={(e) => setPort(e.target.value)} disabled={busy !== null} />
+                    </div>
+                    <div>
+                      <label className="label" htmlFor="mobile-url">Private HTTPS URL</label>
+                      <input id="mobile-url" className="field mono" value={dashboardUrl}
+                             placeholder="https://this-mac.example.ts.net" spellCheck={false}
+                             onChange={(e) => setDashboardUrl(e.target.value)} disabled={busy !== null} />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="set-inline">
+                      <code className="set-path set-grow">{serveCommand}</code>
+                      <button className="set-mini" onClick={() => void copy(serveCommand, 'Tailscale command')}>copy command</button>
+                      <a className="set-mini" href="https://tailscale.com/download" target="_blank" rel="noreferrer">get Tailscale</a>
+                    </div>
+                    <p className="faint set-fine">
+                      Run that command once, then paste the HTTPS URL it prints into the field above and save the connection below.
+                      Wanigan stays bound to loopback; tailnet ACLs and the pairing token both still apply.
+                      Tailscale&apos;s background Serve mapping persists independently: turning this switch off or changing ports does not remove it,
+                      so disable/reset that mapping in Tailscale when you stop using it.
+                    </p>
+                  </div>
                 </div>
-                <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 6 }}>
-                  Open this once on the phone. The credential sits after <span className="mono">#</span>, so it is absent from the initial navigation request and Referer;
-                  the page saves it on that device, removes it from the address bar, then sends it only as the Authorization header on status requests.
-                  Replacing it immediately signs every paired browser out.
-                  {!status.config.dashboardUrl && ' Save the private HTTPS URL above before copying this link to a phone.'}
-                </p>
-              </div>
-            </div>
+              </details>
+            </>
           )}
 
           <div className="set-sub">Phone alerts · ntfy</div>
@@ -2219,12 +2499,12 @@ function PhoneMonitor() {
             commands, paths and terminal output are excluded. Permission waits and errors use ntfy&apos;s urgent/maximum priority;
             finished turns are normal priority.
           </Toggle>
-          <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 6 }}>
+          <p className="faint set-fine">
             Built-in Claude-compatible and Codex sessions expose those in-turn states. A provider pack
             without a lifecycle channel still reports process exit, but not arbitrary prompts inferred from terminal text.
           </p>
 
-          <div className="sunk" style={{ padding: '12px 13px', marginTop: 10 }}>
+          <div className="sunk set-block">
             <div className="row2">
               <div>
                 <label className="label" htmlFor="mobile-ntfy-server">ntfy server</label>
@@ -2237,11 +2517,11 @@ function PhoneMonitor() {
                        onChange={(e) => setTopic(e.target.value)} disabled={busy !== null} />
               </div>
             </div>
-            <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 6 }}>
+            <p className="faint set-fine">
               Install the ntfy app and subscribe to this exact topic on the server above. The generated topic is the subscription credential:
               anyone who learns it can subscribe or publish, so do not use a guessable word. With <span className="mono">ntfy.sh</span>, the alert text leaves this machine for delivery.
             </p>
-            <div style={{ display: 'flex', gap: 7, marginTop: 10, flexWrap: 'wrap' }}>
+            <div className="set-inline set-stack">
               <button className="btn" disabled={busy !== null} onClick={() => void saveConnection()}>Save connection</button>
               <button className="btn" disabled={busy !== null || !topic.trim()} onClick={() => void testPush()}>
                 {busy === 'test' ? 'Sending…' : 'Send test alert'}
@@ -2257,10 +2537,10 @@ function PhoneMonitor() {
                         } catch (e) { setResult({ tone: 'error', text: `The ntfy topic was not changed: ${msg(e)}` }); }
                         finally { setBusy(null); }
                       }}>replace topic</button>
-              <a className="set-mini" style={{ textDecoration: 'none' }} href="https://ntfy.sh" target="_blank" rel="noreferrer">get ntfy</a>
+              <a className="set-mini" href="https://ntfy.sh" target="_blank" rel="noreferrer">get ntfy</a>
             </div>
             {(status.lastPushAt || status.lastPushError) && (
-              <p className={status.lastPushError ? 'critical' : 'faint'} style={{ fontSize: 'var(--t-micro)', marginTop: 8 }}>
+              <p className={`set-fine ${status.lastPushError ? 'critical' : 'faint'}`}>
                 {status.lastPushError
                   ? `Last delivery failed: ${status.lastPushError}`
                   : `Last alert accepted by ntfy ${status.lastPushAt ? ago(status.lastPushAt) : 'recently'} (device receipt is not reported).`}

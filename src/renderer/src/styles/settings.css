@@ -242,3 +242,44 @@
   .set-filter-actions { margin-left: 0; }
   .set-facts > div { grid-template-columns: 1fr; gap: 2px; }
 }
+
+/* ── Phone monitor ────────────────────────────────────────────────────
+   This panel used to open with a shell command and bury the thing an
+   operator actually wanted — a code an iPad camera can read — four
+   paragraphs down. The transport now says one state and offers one action;
+   everything it used to lead with lives in the disclosure at the bottom. */
+.set-stack { margin-top: var(--s-3); }
+
+.set-transport { display: flex; gap: var(--s-3); align-items: flex-start; flex-wrap: wrap;
+                 padding: var(--card-pad-tight); margin-top: var(--s-2); }
+.set-transport-say { flex: 1 1 260px; min-width: 0; display: grid; gap: var(--s-1); }
+.set-transport-say p { font-size: var(--t-small); line-height: 1.5; }
+.set-transport-do { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; }
+
+/* The QR and the code beside it are two routes to the same pairing link: one
+   for a camera, one for a Home Screen app that has none pointed at this
+   screen. The plate is only padding — the generated SVG carries its own quiet
+   zone and light ground, because a camera needs both and neither survives a
+   dark theme. */
+.set-pair { display: grid; grid-template-columns: minmax(0, 172px) minmax(0, 1fr);
+            gap: var(--s-3); align-items: start; margin-top: var(--s-3); }
+.set-qr { display: grid; place-items: center; padding: var(--s-2); min-height: 172px; }
+.set-qr img { display: block; width: 100%; height: auto; }
+.set-qr-empty { text-align: center; }
+.set-pair-facts { display: grid; gap: var(--s-3); min-width: 0; }
+.set-code { letter-spacing: .12em; font-weight: 700; }
+
+.set-hand { margin-top: var(--s-3); border: 1px solid var(--line); border-radius: var(--r-md); }
+.set-hand > summary { padding: var(--s-2) var(--s-3); cursor: pointer;
+                      font-size: var(--t-small); font-weight: 650; }
+.set-hand-body { display: grid; gap: var(--s-3); padding: 0 var(--s-3) var(--s-3); }
+
+.set-block { padding: var(--card-pad-tight); margin-top: var(--s-3); }
+.set-inline { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; }
+.set-grow { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+/* Micro copy under a control, sized by token; the colour comes from the
+   .faint / .dim / .critical utility it is paired with. */
+.set-fine { font-size: var(--t-micro); line-height: 1.55; margin-top: var(--s-1); }
+
+/* A link wearing a button or a mini-button is still a link to the browser. */
+a.set-mini, a.btn { text-decoration: none; }

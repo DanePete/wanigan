@@ -43,6 +43,7 @@ import * as batch from './batch';
 import { egressReport } from './egress';
 import { mobileFleetSnapshot } from './fleet-snapshot';
 import * as mobile from './mobile';
+import * as tailnet from './tailnet';
 import {
   __test as sessionsTest,
   createSession, forgetPastSession, goalCapsuleText, killSession, listSessions, pastSessions,
@@ -1421,6 +1422,23 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(shellText.includes('Private fleet monitor') && !shellText.includes('Read-only fleet monitor')
       && shellText.includes('Live terminal output') && shellText.includes('data-theme='),
     'the iPad shell labels its monitor state honestly, prepares a focused agent console, and carries an appearance mode');
+    // The three connection states live in the page's own script, and the
+    // offline suite has no browser to run it in — so this reads the page the
+    // server actually served rather than the module source. The one part that
+    // is not a string check is the parse: the page's JS is assembled inside a
+    // template literal, where a stray backtick or ${ silently escapes into
+    // main-process code, and new Function proves the shipped text is at least
+    // valid JavaScript before a phone is asked to run it.
+    const pageJs = shellText.slice(shellText.indexOf('<script nonce='), shellText.indexOf('</script>'));
+    let pageJsParses = true;
+    try { new Function(pageJs.slice(pageJs.indexOf('>') + 1)); } catch { pageJsParses = false; }
+    check(pageJsParses
+      && pageJs.includes("state('live', 'Live · polling every ")
+      && pageJs.includes("state('stale', 'Stale · last seen ' + age + ' ago')")
+      && pageJs.includes("state('bad', 'Never connected')")
+      && pageJs.includes("setConnection(lastGoodAt ? 'stale' : 'never')")
+      && shellText.includes('id="stale-note"'),
+    'the phone page separates a live Mac, a Mac that has gone quiet with the age of the last reading, and a device that has never reached it — and the script it ships parses as JavaScript');
     const manifest = await fetch(new URL('manifest.webmanifest', monitor.localUrl));
     check(manifest.ok && JSON.parse(await manifest.text()).display === 'standalone',
       'the paired dashboard is installable as an iPad Home Screen web app');
@@ -1502,6 +1520,36 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     mobile.configureSnapshotSource(null);
     mobile.configureMobileControlSource(null);
   }
+
+  /* ── the transport Wanigan drives itself ──────────────────────────
+   * Setting the phone up used to mean reading a CLI command out of a settings
+   * panel, running it, and pasting a URL back. These pin the parts of driving
+   * Tailscale that are pure: the argv (never a shell string — a MagicDNS name
+   * and a port both reach it), and the five states, which exist because
+   * "not installed", "signed out" and "installed and ready" need three
+   * different sentences and collapsing any two puts a wrong instruction on
+   * screen. The probes themselves are not asserted: tailscale may not be
+   * installed on the machine running this suite, and a test that passes only
+   * where the binary happens to exist is worse than none. */
+  say('── phone fleet · the tailnet transport');
+  const tsPort = 47_899;
+  check(Array.isArray(tailnet.__test.serveArgv(tsPort))
+    && tailnet.__test.serveArgv(tsPort).includes(String(tsPort))
+    && tailnet.__test.serveArgv(tsPort).every((part: unknown) => typeof part === 'string'),
+    'the serve command is an argv array carrying the validated port, never a shell string a hostname could break out of');
+  const loggedOut = tailnet.__test.readBackend(tsPort, { ok: true, text: JSON.stringify({ BackendState: 'NeedsLogin' }) });
+  const stopped = tailnet.__test.readBackend(tsPort, { ok: true, text: JSON.stringify({ BackendState: 'Stopped' }) });
+  check(loggedOut.kind === 'status' && loggedOut.status.state === 'logged-out'
+    && stopped.kind === 'status' && stopped.status.state === 'logged-out',
+    'a Tailscale that is installed but signed out reads as logged-out, so the panel offers a sign-in rather than a button that would fail',
+    `${loggedOut.kind === 'status' ? loggedOut.status.state : loggedOut.kind}`);
+  const garbled = tailnet.__test.readBackend(tsPort, { ok: true, text: 'not json at all' });
+  check(garbled.kind === 'status' && garbled.status.state === 'error',
+    'an unreadable status reply is an error carrying the text, never a cheerful "not installed"');
+  check(tailnet.__test.serveUrl('mac.tail1234.ts.net:443', '/') === 'https://mac.tail1234.ts.net/'
+    && tailnet.__test.serveUrl('mac.tail1234.ts.net:8443', '/') === 'https://mac.tail1234.ts.net:8443/'
+    && tailnet.__test.serveUrl('nonsense', '/') === null,
+    'a serve mapping becomes an https URL, and a mapping it cannot parse becomes null rather than a guessed address');
 
   say('── phone fleet · bounded outbound alert');
   const originalFetch = globalThis.fetch;
@@ -3114,6 +3162,62 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && gitViewSrc.includes("setProjectId(e.target.value); setSel(null); setDetail(null); setMsg('');"),
   'the Git detail pane is re-resolved against the status each action returns, and a commit message does not follow you into another project');
 
+  // Git is a view you leave in order to look at something else: open the
+  // session that made these changes, read the run that broke them, come back.
+  // Every one of those swaps unmounted it, and it returned on the first project
+  // in the list, on the changes pane, unfiltered, with nothing selected and an
+  // empty commit box — a sentence typed about staged changes, gone with nothing
+  // on screen saying it had ever been written. Those six are view memory now.
+  // Source contract because the smoke process has no renderer to swap tabs in.
+  check(gitViewSrc.includes("useViewMemory('projectId', projects[0]?.id ?? '')")
+    && gitViewSrc.includes("useViewMemory<Sel>('sel', null)")
+    && gitViewSrc.includes("useViewMemory('commitFilter', '')")
+    && gitViewSrc.includes("useViewMemory('commitMsg', '')")
+    && gitViewSrc.includes("useViewMemory('showAll', true)")
+    && gitViewSrc.includes("useViewMemory<'changes' | 'branches' | 'stash'>('pane', 'changes')")
+    && /import \{ useRememberedScrollRef, useViewMemory \} from '\.\.\/components\/viewMemory';/.test(gitViewSrc)
+    && !/const \[sel, setSel\] = useState/.test(gitViewSrc)
+    && !/const \[msg, setMsg\] = useState/.test(gitViewSrc)
+    && !/const \[pane, setPane\] = useState/.test(gitViewSrc)
+    // Remembered per return, not per repository: changing the project still
+    // clears the draft, because a message about one tree's changes waiting
+    // over another's is a worse outcome than losing it.
+    && gitViewSrc.includes("setProjectId(e.target.value); setSel(null); setDetail(null); setMsg('');"),
+  'Git comes back on the repository, pane, commit filter, selected row and half-typed commit message the operator left it on, rather than resetting to the first project with an empty message box');
+
+  // A remembered selection with nothing under it is worse than no selection at
+  // all: the row is highlighted, the pane below it is blank, and that reads as
+  // a file with no changes rather than a diff nobody re-fetched. The patch is
+  // deliberately not remembered — it is a read of the repository and goes stale
+  // — so the selection is re-resolved on mount through the same syncSelection a
+  // git action uses, and a remembered commit waits for the log rather than
+  // being discarded against the empty list `load` renders one await early. The
+  // project id is reconciled for a related reason: the lookup above it already
+  // falls back to the first option, so a project removed while another tab was
+  // on screen left the picker naming a dead id while every pane read a
+  // different repository.
+  check(gitViewSrc.includes('const restored = useRef(false);')
+    && /if \(restored\.current \|\| !st\?\.isRepo\) return;/.test(gitViewSrc)
+    && gitViewSrc.includes("if (sel?.kind === 'commit' && commits.length === 0) return;")
+    && gitViewSrc.includes('void syncSelection(st);')
+    && gitViewSrc.includes('if (!project || project.id === projectId) return;')
+    && gitViewSrc.includes('setProjectId(project.id);'),
+  'a remembered Git selection is re-fetched on mount instead of being shown as a highlighted row over an empty pane, and a remembered project that has since been removed is rewritten rather than left naming a repository nothing is reading');
+
+  // .gt-scroll is four elements, not one: the commit log on the left, and the
+  // right-hand pane that changes, branches and stash take turns filling. A
+  // single key would restore the log's offset onto a three-row stash list and
+  // drop the reader somewhere they had never been, so the right-hand scroller
+  // carries the open pane in its key.
+  check(gitViewSrc.includes("const logRef = useRememberedScrollRef('log');")
+    && gitViewSrc.includes('const paneRef = useRememberedScrollRef(`pane:${pane}`);')
+    && (gitViewSrc.match(/<div className="gt-scroll" ref=\{paneRef\}>/g) ?? []).length === 3
+    && gitViewSrc.includes('<div className="gt-scroll" ref={logRef} onKeyDown={')
+    // No .gt-scroll may be left without a ref: an unremembered one is the one
+    // that snaps to the top while its three neighbours do not.
+    && !/<div className="gt-scroll">/.test(gitViewSrc),
+  'Git remembers one scroll offset for the commit log and one for each right-hand pane, so returning to the stash list cannot land the reader at the offset they left the branch list at');
+
   // Git was the only .pane document route that never named itself. All three of
   // its states — no project, a project that is not a repository, and the
   // workbench — opened straight onto their content with no h1 for the route, so
@@ -3328,6 +3432,18 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && /(^|[\s,])\.seg button,/.test(coarseRule)
     && !compactCssSrc.includes('.fleet-seg'),
   'the shared chip and segmented primitives carry the same coarse-pointer target as the private chip families beside them, and compact.css no longer sizes the .fleet-seg pair no .tsx renders');
+  // 'No session panes are open' is a claim about the Mac, and the page used to
+  // make it whenever the session array was empty — including on a device that
+  // had never heard from the Mac at all, which is how a closed lid and an idle
+  // fleet came to look the same. The claim is now gated on a poll that actually
+  // returned, and the retry backs off instead of waking a phone radio every
+  // three seconds against a Mac that cannot answer.
+  check(mobileSrc.includes('const observed = lastGoodAt > 0 && lastSessionCount === 0;')
+    && !mobileSrc.includes("byId('empty').classList.toggle('hidden', sessions.length !== 0)")
+    && mobileSrc.includes('pollDelay = Math.min(POLL_SLOW_MS, pollDelay * 2);')
+    && mobileSrc.includes('pollDelay = POLL_FAST_MS;')
+    && !mobileSrc.includes('setInterval(() => { void poll(); }, 3000)'),
+  'the phone page only claims an empty fleet about a poll that returned, and steps its retry out to a ceiling while the Mac is not answering');
   check(/setSessionExitObserver/.test(mainSrc) && /exitObserver\?\./.test(sessionManagerSrc),
     'PTY exits reach the notification classifier even for providers with no hook bus');
   check(/tui\.notifications=/.test(sessionManagerSrc) && /scanCodexNotifications/.test(sessionManagerSrc)
@@ -3479,6 +3595,33 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && cssSrc.includes('.pane.control-view > *, .pane.set > *, .pane.wide > * { max-width: var(--page-wide); }')
     && controlViewSrc.includes('className="pane control-view"'),
     'Control is held flush left at --page-wide by the shared .pane rule every document surface uses, not centred by a private 1500px cap of its own');
+
+  // .btn-small in control.css and .skills-btn-sm in evals.css each declared only
+  // padding, font-size and border-radius, and index.css's own .btn redeclares all
+  // three at equal specificity from later in the same built stylesheet — both
+  // sheets are @imported at the top of index.css, so in the bundle the two private
+  // rules land ahead of .btn and lost every declaration they made. Nine buttons
+  // carried a class that promised a small button and rendered a full 32px one.
+  // They are deleted rather than repointed at .btn-sm, because shrinking a control
+  // is a design decision and this was a cleanup. Comments are stripped before the
+  // scan so prose explaining the removal cannot fail it, and the scanned file
+  // count is asserted so an empty walk cannot pass by looking at nothing. Source
+  // contract because the smoke process has no renderer to measure a button in.
+  const withoutComments = (text: string): string => text
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+  const rendererSources = filesUnder(path.join(appRoot(), 'src/renderer/src'))
+    .filter((file) => /\.(?:tsx?|css)$/.test(file));
+  const deadButtonClass = /\b(?:btn-small|skills-btn-sm)\b/;
+  const stillNamingOne = rendererSources
+    .filter((file) => deadButtonClass.test(withoutComments(fs.readFileSync(file, 'utf8'))))
+    .map((file) => path.relative(appRoot(), file));
+  check(rendererSources.length > 40
+    && stillNamingOne.length === 0
+    && !/\.btn-small\s*\{/.test(withoutComments(sourceOf('src/renderer/src/styles/control.css')))
+    && !/\.skills-btn-sm\s*\{/.test(withoutComments(sourceOf('src/renderer/src/styles/evals.css'))),
+    'no renderer source claims a .btn-small or .skills-btn-sm button, and neither sheet declares one, because neither class ever moved a pixel: .btn redeclares padding, font-size and border-radius from later in the same stylesheet',
+    stillNamingOne);
 
   // Opening a goal's session unmounts Control, and the status filter used to be
   // component-local state: narrow the list to one status, press a task's Start,
