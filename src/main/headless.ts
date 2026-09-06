@@ -9,7 +9,7 @@ import { trustFor, registerPolicyContext, releasePolicyContext } from './policy'
 import { writeHookSettings, cleanupHookSettings } from './hooks';
 import { flags, learningSettings } from './settings';
 import { createWorktree, removeWorktree } from './worktrees';
-import { buildBriefing, recordSessionBriefing } from './learning';
+import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } from './learning';
 import { claimFireForRun, recordFireOutcome, type ScheduleFire } from './schedule';
 import { announceRunEnded } from './notify';
 import * as accounts from './accounts';
@@ -1011,6 +1011,8 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   // start, --append-system-prompt is its lossless fallback. Retrieval is keyed
   // to the exact task and frozen backend rather than dumping a whole project.
   let learningCapsule: string | null = null;
+  // The items inside that capsule, kept until the child is actually spawned.
+  let learningEntries: { itemId: string }[] = [];
   if (learningSettings().enabled && (
     def.harness === 'codex' || (def.harness === 'claude-code' && !hookSettings)
   )) {
@@ -1025,6 +1027,7 @@ async function runRow(runId: string, projectId: string): Promise<void> {
         allowedEvidenceRoots: [row.project_path],
       });
       learningCapsule = learned.text.trim() || null;
+      if (learningCapsule) learningEntries = learned.entries;
       // Keyed by the same synthetic id the run's hook events use, so the
       // delivery stays auditable even though fan-out rows have no session_log.
       try {
@@ -1106,6 +1109,13 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   }
 
   liveChildren.set(key, child);
+
+  // Delivery, not retrieval, is what buys a derived item another ninety days.
+  // The cancel check and the fingerprint refresh above can both end this row
+  // after the briefing was built, so the extension waits until a child is
+  // holding the capsule. A Claude row whose briefing went through the
+  // SessionStart hook instead refreshes on the hook path, where it is served.
+  refreshDeliveredKnowledgeTtl(learningEntries);
 
   // Held to PARSE_LIMIT rather than OUTPUT_LIMIT: the cost lives in the result
   // object, and cutting the buffer at the storage size would throw away the one

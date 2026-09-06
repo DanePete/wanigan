@@ -598,6 +598,35 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const same = evals.variableBetween(baseCfg(), baseCfg());
   check(same.differences.length === 0, 'identical configs differ in nothing');
 
+  // A golden set that nothing can read back is a snapshot with no reader: rows
+  // were pinned, stored, listed — and the Evals tab told the operator to pin
+  // them — while evals.goldenSource() had no caller anywhere in the app. These
+  // two assertions are the pair that was missing: that a renderer reads a set
+  // back into a run's source at all, and that the run it builds is the same
+  // size as the thing that was pinned. A replay that quietly loses rows is
+  // worse than no replay, because the comparison still looks like one.
+  const batchesViewSrc = sourceOf('src/renderer/src/views/Batches.tsx');
+  check(/source: await window\.wanigan\.evals\.goldenSource\(/.test(batchesViewSrc),
+    'the batch builder reads a pinned set back through evals.goldenSource and makes it the run’s source');
+  check(/'command', 'golden'\] as const/.test(batchesViewSrc),
+    'and it is offered as an arm of the dataset picker, beside CSV, JSONL, Files and Command');
+  check(/sets\.length === 0[\s\S]{0,200}Nothing pinned yet/.test(batchesViewSrc),
+    'with nothing pinned it says so, rather than rendering a select with no options in it');
+
+  const goldenPinRun = await batch.createAndSubmitRun(baseCfg({
+    name: 'smoke golden source',
+    source: { kind: 'jsonl', text: Array.from({ length: 4 }, (_, i) => `{"text":"gold ${i}"}`).join('\n') },
+  }));
+  const pinnedSet = evals.saveGoldenSet('smoke pinned set', goldenPinRun.runId);
+  const pinnedSource = evals.goldenSetSource(pinnedSet.id);
+  check(pinnedSource.kind === 'jsonl',
+    'a pinned set reads back as jsonl — the one source kind that cannot re-read the world at submit time',
+    pinnedSource.kind);
+  const goldenReplay = await batch.createAndSubmitRun(baseCfg({ name: 'smoke golden replay', source: pinnedSource }));
+  check(goldenReplay.requests === pinnedSet.rows,
+    'a run built from the golden set carries exactly the pinned row count',
+    `${goldenReplay.requests} vs ${pinnedSet.rows}`);
+
   /* ── which CLI a provider actually runs ────────────────────────────── */
   // Everything a session gets — hooks, MCP servers, --session-id, an archived
   // transcript — used to be gated on `id === 'claude'`. GLM is that same binary
@@ -2004,6 +2033,21 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     const byExplicit = accounts.resolve({ harness: 'claude-code', projectId: controlProject.id, explicitAccountId: personal.id });
     check(byExplicit.account?.id === personal.id && byExplicit.source === 'explicit',
       'a per-launch choice beats the project’s saved account');
+    // The follow option is the ABSENCE of a choice, so its label has to come
+    // from a resolution asked with no choice in it. Reading it back off the
+    // current selection is how the dialog came to call an explicitly picked
+    // account "the default" — false twice over right here, where the fallback
+    // is the project's account and the pick is the default one.
+    check(byProject.source === 'project' && byExplicit.source === 'explicit'
+      && byProject.account?.id !== byExplicit.account?.id,
+    'what a launch falls back to and what the operator picked are two questions with two different answers');
+    const accountDialogSrc = sourceOf('src/renderer/src/components/NewSessionDialog.tsx');
+    check(/resolveForLaunch\(providerId, projectId \|\| null, null\)/.test(accountDialogSrc)
+      && /\{followRes\?\.account/.test(accountDialogSrc)
+      && /followRes\.source === 'project' \? 'this project' : 'your default'/.test(accountDialogSrc)
+      && !/Follow \$\{accountRes/.test(accountDialogSrc)
+      && /accountRes\.source === 'explicit' \? ' — chosen for this session only\./.test(accountDialogSrc),
+    'the follow option is labelled from a no-choice resolution, and an explicitly chosen account reads as chosen rather than as the default');
 
     check(accounts.resolve({ harness: 'generic-cli', projectId: controlProject.id }).account === null
       && !accounts.supportsAccounts('generic-cli'),
@@ -2493,6 +2537,28 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const compactCssSrc = sourceOf('src/renderer/src/styles/compact.css');
   const learningSrc = sourceOf('src/renderer/src/views/Learning.tsx');
   const scoutViewSrc = sourceOf('src/renderer/src/views/ImprovementScout.tsx');
+  // The Runs history is a database read, and an empty `runs` array is what a
+  // fresh mount, a slow read and a broken IPC read all look like. Every
+  // sentence that depends on that read therefore waits for it: the count beside
+  // "Recent runs", "Nothing has run yet", and the inspector's invitation to
+  // start a fan-out. A failed read shows the error and a retry instead.
+  const runsViewSrc = sourceOf('src/renderer/src/views/HeadlessRuns.tsx');
+  const runsGate = runsViewSrc.indexOf('{!loaded ? (');
+  const runsNothingYet = runsViewSrc.indexOf('title="Nothing has run yet"');
+  const runsNoSelection = runsViewSrc.indexOf('title="No run selected"');
+  const runsDetailReading = runsViewSrc.indexOf('<Reading what="the run history" />');
+  check(runsViewSrc.includes('const [loaded, setLoaded] = useState(false)')
+    && runsViewSrc.includes('setLoaded(true);')
+    && runsGate > 0
+    && runsNothingYet > runsGate
+    && runsNoSelection > runsGate
+    && runsDetailReading > 0 && runsDetailReading < runsNoSelection
+    && /\{loaded \? runs\.length/.test(runsViewSrc)
+    && runsViewSrc.includes('<Reading what="recent runs" />')
+    && runsViewSrc.includes('posture="could-not-read" title="Could not read recent runs"')
+    && runsViewSrc.includes('cue={loadFailed}')
+    && /Try again<\/button>/.test(runsViewSrc),
+  'Runs holds its run count, "Nothing has run yet" and "No run selected" behind a loaded flag set only by a read that returned, and a failed first read shows that error with a retry rather than a confident zero');
   const scoutCssSrc = sourceOf('src/renderer/src/styles/improvement-scout.css');
   const sessionManagerSrc = sourceOf('src/main/sessions.ts');
   check(mainSrc.length > 1000 && preloadSrc.length > 500 && schedulesSrc.length > 500
@@ -2634,6 +2700,24 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && usageViewSrc.includes('{relief.length > 0 && ('),
   'an exhausted limit window names the other account that still has room on the same window, and says nothing when there is none');
 
+  // The Usage page opened on a 14-day window while its picker offered 7, 30 and
+  // 90. A <select> whose value matches no <option> renders with nothing
+  // selected, so the control sat blank above a heading that read "last 14
+  // days" — two halves of one screen, neither of which could be believed about
+  // which window the figures below covered. This parses both halves rather than
+  // matching a phrase, so it fails again the moment the list and the default
+  // drift apart.
+  const usageWindowList = /const WINDOWS = \[([\d,\s]+)\];/.exec(usageViewSrc);
+  const usageWindowDefault = /const DEFAULT_WINDOW = (\d+);/.exec(usageViewSrc);
+  const usageWindowsOffered = (usageWindowList?.[1] ?? '')
+    .split(',').map((n) => Number(n.trim())).filter((n) => n > 0);
+  check(usageWindowList !== null && usageWindowDefault !== null
+    && usageWindowsOffered.includes(Number(usageWindowDefault?.[1]))
+    && usageViewSrc.includes('useState<number>(DEFAULT_WINDOW)')
+    && usageViewSrc.includes('{WINDOWS.map((value) => <option key={value} value={value}>Last {value} days</option>)}'),
+  'the consumption window Usage opens on is one its picker can display, so the select and the heading name the same window',
+  `offers ${usageWindowsOffered.join(', ')}; opens on ${usageWindowDefault?.[1] ?? 'nothing'}`);
+
   // The advice above names a control, so the control has to exist. It did not:
   // accounts:setForProject was registered in main and bound in the preload and
   // no renderer ever called it, which left "pin this repo to that login" as a
@@ -2654,6 +2738,28 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // change, and a project that never chose should follow it when it does.
     && settingsSrc.includes('e.target.value || null'),
   'a project can be pinned to a Claude account from Settings › Projects, cleared back to the default, and the picker is hidden when there is only one account');
+
+  // Fleet's second tile said "Needs you" and counted only the agents blocked on
+  // a permission prompt, while the rail's "n need you" mark counts those plus
+  // the failed and the finished. Both numbers were right and they were on
+  // screen together under the same words. The count stays narrow because
+  // pressing the tile filters to `permission`, so the label has to say which
+  // set it counts and the sub-line has to name the remainder.
+  const fleetViewSrc = sourceOf('src/renderer/src/views/Fleet.tsx');
+  check(fleetViewSrc.length > 500
+    && !/<Stat label="Needs you"/.test(fleetViewSrc)
+    && fleetViewSrc.includes('<Stat label="Asking permission"')
+    && fleetViewSrc.includes('value={<>{blocked.length > 0 && <span aria-hidden="true">? </span>}{num(blocked.length)}</>}')
+    && fleetViewSrc.includes('const blocked = useMemo(')
+    && fleetViewSrc.includes("attention[s.id]?.kind === 'permission'")
+    // The rest of the rail's total is named on the tile rather than left as an
+    // unexplained gap between two visible numbers.
+    && fleetViewSrc.includes('const reviewable = (counts.error ?? 0) + (counts.finished ?? 0);')
+    && fleetViewSrc.includes('failed or finished')
+    // And the wider set really is wider: if the rail ever narrows to permission
+    // alone, this tile's careful wording becomes the confusing one.
+    && appSrc.includes("const NEEDS_YOU: AttentionKind[] = ['permission', 'error', 'finished'];"),
+  'the Fleet tile is labelled by what it actually counts — the agents asking permission — and names the failed and finished that the rail\'s wider "n need you" total also carries');
 
   // A live agent does not stop printing because you stepped over to Git, and
   // the only subscription that wrote its bytes into the terminal used to live
@@ -2729,7 +2835,6 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // that it does not know the level rather than relabelling it as one of the
   // three the reader already trusts.
   const sessionsViewSrc = sourceOf('src/renderer/src/views/Sessions.tsx');
-  const fleetViewSrc = sourceOf('src/renderer/src/views/Fleet.tsx');
   const dialogSrc = sourceOf('src/renderer/src/components/NewSessionDialog.tsx');
   const unknownTrust = trustCopy('elevated-by-a-later-build');
   check(trustCopy('project').label === 'Project'
@@ -2909,6 +3014,27 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && /<Control/.test(appSrc) && /Dockets/.test(controlViewSrc) && controlSrc.includes('work_dockets'),
     'the durable control plane has schema, IPC, renderer binding and a visible operator surface');
 
+  // Control's goal header once copied `file:///…#goal=<id>` under the notice
+  // "Opening it in Wanigan returns to this exact durable goal". Nothing in
+  // src/main registers a URL scheme and the app has no address bar, so that
+  // address resolved in a browser or nowhere: a copy affordance promising a
+  // door the app never built. These two read the source because the smoke
+  // process has no renderer to click. The first pins the clipboard write and
+  // the sentence beside it to the same subject; the second keeps the URL from
+  // coming back under any of its old names.
+  const copyGoalAt = controlViewSrc.indexOf('const copyGoalId =');
+  const copyGoalBlock = copyGoalAt < 0 ? '' : controlViewSrc.slice(copyGoalAt, copyGoalAt + 500);
+  check(copyGoalBlock.includes('await copyText(id);')
+    && copyGoalBlock.includes('Goal ID copied.')
+    && !copyGoalBlock.includes('goalHash(')
+    && !copyGoalBlock.includes('window.location.href')
+    && controlViewSrc.includes('>Copy goal ID<'),
+    'Control puts the goal id on the clipboard, and the button and the notice beside it name that same id rather than describing something the app did not copy');
+  check(!/Copy goal link|Goal link copied|copyGoalLink|>Goal link</.test(controlViewSrc)
+    && !/copyText\(\s*(?:url\b|`)/.test(controlViewSrc)
+    && !controlViewSrc.includes('window.location.href.split'),
+    'no copy affordance in Control offers a goal URL, because Wanigan registers no URL scheme and cannot open one back');
+
   // Settings used to split a single tab across multiple `tabpanel` nodes, and
   // switching categories unmounted whatever form was in the other one. This is
   // a source contract because the Electron smoke process has no renderer: it
@@ -2938,6 +3064,28 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !settingsSrc.includes('<style>')
     && !settingsSrc.includes('<div className="pane set" style={{ maxWidth'),
   'Settings keeps every operator surface in seven labelled persistent full-width tab panels, with keyboard navigation and no draft-destroying unmount');
+
+  // Settings' Dispatcher shipped a "slots" row for the 'node' lane — Goal
+  // autopilot — while nothing in the renderer could arm it. control.setAutopilot
+  // is registered in main and bound in preload, but no view calls it, so no
+  // docket is ever autopilot=1, the sweep never writes a node queue row, and
+  // that meter could only ever read "none running". A concurrency limit for a
+  // lane with no launcher configures a feature the operator cannot switch on.
+  //
+  // Written as a biconditional rather than a flat "the row is gone" so it stays
+  // true in both directions: the phase that gives Control a way to arm autopilot
+  // has to bring the row back in the same change, and a row cannot reappear
+  // ahead of its launcher. The explanatory comment lives inside KIND_COPY and
+  // names the lane, so this matches the field syntax rather than the label text.
+  const slotRows = /const KIND_COPY[\s\S]*?\n\];/.exec(settingsSrc)?.[0] ?? '';
+  const rendererFiles = filesUnder(path.join(appRoot(), 'src/renderer/src')).filter((f) => /\.tsx?$/.test(f));
+  const canArmAutopilot = rendererFiles.some((f) => /\.setAutopilot\s*\(/.test(fs.readFileSync(f, 'utf8')));
+  check(slotRows.length > 200 && rendererFiles.length > 10
+    && ["'session'", "'headless'", "'batch'", "'scout'"].every((id) => slotRows.includes(`id: ${id}`))
+    && /id:\s*'node'/.test(slotRows) === canArmAutopilot
+    && settingsSrc.includes('const dirty = KIND_COPY.some(({ id }) => d[id] !== loaded[id])'),
+  'the Dispatcher offers a slot limit for the autopilot lane only if some renderer surface can actually arm it',
+  `renderer files ${rendererFiles.length}, canArm ${canArmAutopilot}, row ${/id:\s*'node'/.test(slotRows)}`);
 
   const kindDecl = /type Kind = ([^;]+);/.exec(schedulesSrc)?.[1] ?? '';
   check(kindDecl.includes("'batch'") && !kindDecl.includes("'session'"),

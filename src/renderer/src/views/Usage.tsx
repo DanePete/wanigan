@@ -19,6 +19,20 @@ import { EmptyState, Note } from '../components/bits';
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const fmt = new Intl.NumberFormat();
 
+/**
+ * The consumption windows the picker offers, and the one the page opens on.
+ *
+ * Fourteen days is the main process's own default — usage.ts DEFAULT_DAYS — so
+ * it has to appear on this list. It did not: the page opened on 14 while the
+ * picker offered 7, 30 and 90, and a <select> whose value matches no <option>
+ * renders with nothing selected. The screen then showed a blank picker above a
+ * heading that read "last 14 days", so neither half could be trusted to say
+ * which window the figures below it covered. Keep the default a member of this
+ * list, and keep the list in step with usage.ts.
+ */
+const WINDOWS = [7, 14, 30, 90];
+const DEFAULT_WINDOW = 14;
+
 const compact = (n: number): string =>
   n >= 1_000_000_000 ? `${(n / 1_000_000_000).toFixed(1)}B`
     : n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M`
@@ -237,7 +251,7 @@ export default function Usage() {
   const [snap, setSnap] = useState<UsageSnapshot | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [days, setDays] = useState(14);
+  const [days, setDays] = useState<number>(DEFAULT_WINDOW);
   const [now, setNow] = useState(Date.now());
 
   const load = useCallback((force: boolean) => {
@@ -314,7 +328,7 @@ export default function Usage() {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <select className="field" value={days} onChange={(e) => setDays(Number(e.target.value))}
                   style={{ width: 'auto' }} aria-label="Consumption window">
-            {[7, 30, 90].map((value) => <option key={value} value={value}>Last {value} days</option>)}
+            {WINDOWS.map((value) => <option key={value} value={value}>Last {value} days</option>)}
           </select>
           <button className="btn btn-primary" disabled={busy} onClick={() => load(true)}>
             {busy ? 'Reading…' : 'Refresh limits'}

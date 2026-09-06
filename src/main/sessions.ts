@@ -28,7 +28,7 @@ import { noteOutput, forgetSession } from './attention';
 import { flags, learningSettings } from './settings';
 import { attachmentsDir, cleanupSessionAttachments, markSessionAttachmentsSent, prepareAttachmentDir } from './attachments';
 import { redactCredentials } from './redact';
-import { buildBriefing, recordSessionBriefing } from './learning';
+import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } from './learning';
 import {
   assertCodexThreadWriterUnlocked, backfillCodexThreadIds, captureNewCodexThreadId,
   codexThreadIdForSession, discoverCodexThreadId, normalizeCodexThreadId, validateExactCodexThread,
@@ -1041,6 +1041,9 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   // AGENTS.md / CLAUDE.md / provider-owned generated memory untouched.
   const instructionChannel = harnessProven && (def.harness === 'codex' || def.harness === 'claude-code');
   let learnedText = '';
+  // Held for the spawn below, not used here: which derived items this launch
+  // delivers can only be settled once something actually runs with them.
+  let learnedEntries: { itemId: string }[] = [];
   if (instructionChannel && learningSettings().enabled) {
     try {
       const learned = await buildBriefing({
@@ -1052,6 +1055,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
         projectRoot: project.path, allowedEvidenceRoots: [project.path],
       });
       learnedText = learned.text;
+      learnedEntries = learned.entries;
       // Record what was actually delivered — entries, estimated tokens, and
       // what retrieval held back — so "this session received briefing X" is a
       // stored fact, not a guess. An empty result is recorded too: "retrieval
@@ -1289,6 +1293,14 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   meta.status = 'running';
   meta.baseline = baseline;
   meta.conversationId = conversationId;
+
+  // The briefing is in a live process's arguments now, so the derived items it
+  // carried have earned another TTL. Deliberately here and not beside the
+  // record above: everything between the two can still refuse the launch — a
+  // provider disabled mid-preparation, a taken session slot, a Codex writer
+  // lock, a binary that will not start — and knowledge assembled into argv
+  // that nobody ever ran has not been used by anything.
+  refreshDeliveredKnowledgeTtl(learnedEntries);
 
   // `bin` is the binary that actually ran, resolved path and all. provider_id
   // cannot answer "which CLI produced this" on its own now that claude and glm

@@ -105,6 +105,15 @@ export default function NewSessionDialog({
   const [accountId, setAccountId] = useState<string | null>(null);
   const [accountList, setAccountList] = useState<AgentAccount[]>([]);
   const [accountRes, setAccountRes] = useState<AccountResolution | null>(null);
+  /*
+   * What this launch would use if nothing were chosen here, resolved on its own.
+   * `accountRes` follows the CURRENT selection, so the moment you pick an
+   * account its source is 'explicit' — and the follow option was reading that
+   * resolution back out and calling your deliberate choice "the default", for an
+   * account that may not be the default at all. Which account a project is
+   * pinned to is a main-process fact, so the honest answer costs a second ask.
+   */
+  const [followRes, setFollowRes] = useState<AccountResolution | null>(null);
   const [trust, setTrust] = useState<TrustLevel | null>(null);
   const [trustDefault, setTrustDefault] = useState<TrustLevel | null>(null);
   const [trustErr, setTrustErr] = useState<string | null>(null);
@@ -154,20 +163,24 @@ export default function NewSessionDialog({
    */
   useEffect(() => {
     let live = true;
-    if (!providerId) { setAccountList([]); setAccountRes(null); return; }
+    if (!providerId) { setAccountList([]); setAccountRes(null); setFollowRes(null); return; }
     void (async () => {
       try {
-        const [rows, resolution] = await Promise.all([
+        const [rows, resolution, follow] = await Promise.all([
           window.wanigan.accounts.listForProvider(providerId),
           window.wanigan.accounts.resolveForLaunch(providerId, projectId || null, accountId),
+          // With nothing chosen the two questions have the same answer, so only
+          // an explicit choice pays for the extra round trip.
+          accountId ? window.wanigan.accounts.resolveForLaunch(providerId, projectId || null, null) : null,
         ]);
         if (!live) return;
         setAccountList(rows);
         setAccountRes(resolution);
+        setFollowRes(follow ?? resolution);
       } catch {
         // A removed account or an uninstalled provider: show no picker rather
         // than a stale one naming a login this launch would not use.
-        if (live) { setAccountList([]); setAccountRes(null); }
+        if (live) { setAccountList([]); setAccountRes(null); setFollowRes(null); }
       }
     })();
     return () => { live = false; };
@@ -547,10 +560,14 @@ export default function NewSessionDialog({
             <select className="field" value={accountId ?? ''}
                     onChange={(e) => setAccountId(e.target.value || null)}
                     style={{ marginBottom: 6 }}>
+              {/* This option is the absence of a choice, so it describes the
+                  fallback and never the row above it: naming whatever the
+                  project or the app default currently resolves to, so choosing
+                  an account tells you what you are leaving behind. */}
               <option value="">
-                {accountRes?.account
-                  ? `Follow ${accountRes.source === 'project' ? 'this project' : 'the default'} — ${accountRes.account.label}`
-                  : 'Follow this project'}
+                {followRes?.account
+                  ? `Follow ${followRes.source === 'project' ? 'this project' : 'your default'} — ${followRes.account.label}`
+                  : 'Follow this project or your default'}
               </option>
               {accountList.map((row) => (
                 <option key={row.id} value={row.id}>

@@ -93,6 +93,43 @@ export function recordSessionBriefing(input: RecordSessionBriefingInput): Sessio
   };
 }
 
+/**
+ * Derived knowledge expires; human teaching does not. Consolidation stamps a
+ * machine-authored claim with an expiry so a pattern nothing uses any more
+ * ages out of the canonical store instead of being briefed forever.
+ */
+export const MACHINE_KNOWLEDGE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * Push that expiry forward for the derived items a launch actually delivered.
+ * Without this the clock was set once at promotion and never moved, so a claim
+ * that earned its place in every briefing still self-quarantined on the same
+ * ninety-day schedule as one nothing had loaded since the day it was written.
+ *
+ * Three rules, each a guard in the statement. It only extends, so a machine
+ * whose clock ran backwards cannot shorten a life. It only touches rows that
+ * already carry an expiry, so human teaching never acquires one here. And it
+ * takes the entries a briefing shipped, never the candidates it ranked: an
+ * item retrieval held back — stale citation, over budget, never synthesized
+ * into a claim — was considered and not used, and being considered has never
+ * earned anything. Never throws; a launch that reached the agent is not a
+ * failure because one bookkeeping update did not land.
+ */
+export function refreshDeliveredKnowledgeTtl(entries: { itemId: string }[], at = Date.now()): void {
+  if (!entries.length) return;
+  const next = at + MACHINE_KNOWLEDGE_TTL_MS;
+  try {
+    const statement = db().prepare(
+      "UPDATE knowledge_items SET expires_at=? WHERE id=? AND expires_at IS NOT NULL AND expires_at < ? AND status='active'",
+    );
+    db().transaction(() => {
+      for (const entry of entries) statement.run(next, entry.itemId, next);
+    })();
+  } catch (error) {
+    console.warn('[wanigan] delivered knowledge TTL not refreshed:', error);
+  }
+}
+
 type BriefingRow = {
   session_id: string; at: number; delivery: string; provider_id: string | null;
   project_id: string | null; entries_json: string; estimated_tokens: number;

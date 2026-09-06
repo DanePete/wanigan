@@ -282,6 +282,15 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
     return c;
   }, [sessions, attention]);
 
+  /**
+   * The sessions the rail's "n need you" mark counts and this screen's blocked
+   * banner does not: an agent that failed, and an agent that finished and is
+   * waiting to be read. Both are work for the operator; neither is a process
+   * halted mid-turn. Naming the remainder is what keeps the two numbers from
+   * looking like a disagreement when they are seen side by side.
+   */
+  const reviewable = (counts.error ?? 0) + (counts.finished ?? 0);
+
   const totals = useMemo(() => {
     let cost = 0, requests = 0, added = 0, removed = 0, commits = 0, running = 0, costUnavailable = false;
     for (const s of sessions) {
@@ -488,15 +497,29 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
               sub={`${num(totals.exited)} exited · ${num(sessions.length)} cards`}
               pressed={only === 'all'} onSelect={() => setOnly('all')}
               title="Show every session" />
-        <Stat label="Needs you"
+        {/* Labelled "Needs you", this tile counted only the agents blocked on a
+            permission prompt, while the rail's "n need you" mark counts those
+            plus the failed and the finished. Two numbers under the same words,
+            visible at once, disagreeing — and the tile was the one that could
+            not be believed. The count stays as it is, because pressing this
+            tile filters to `permission` and a tile that counts rows its own
+            click will not show is worse than one that is narrow; the label is
+            what changes, and the sub-line names where the rest of the rail's
+            total went. */}
+        <Stat label="Asking permission"
               value={<>{blocked.length > 0 && <span aria-hidden="true">? </span>}{num(blocked.length)}</>}
               tone={blocked.length ? 'var(--critical)' : undefined}
               sub={blocked.length
                 ? `longest wait ${dur(Date.now() - (attention[blocked[0].id]?.since ?? Date.now()))}`
-                : 'nobody is blocked'}
+                  + (reviewable ? ` · ${num(reviewable)} failed or finished` : '')
+                : reviewable ? `nobody is blocked · ${num(reviewable)} failed or finished`
+                  : 'nobody is blocked'}
               pressed={only === 'permission'}
               onSelect={blocked.length ? () => setOnly(only === 'permission' ? 'all' : 'permission') : undefined}
-              title={blocked.length ? 'Show only the sessions waiting on a permission prompt' : undefined} />
+              title={blocked.length
+                ? 'Show only the sessions waiting on a permission prompt. Failed and finished sessions '
+                  + 'also need you and are counted by the rail, not here; their chips are below.'
+                : undefined} />
         {/* A fleet total that mixes billed dollars with a flat-rate backend's
             own arithmetic is not a bill, so the whole total inherits the
             weaker label rather than averaging the two claims into one. */}

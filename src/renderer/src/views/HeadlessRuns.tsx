@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   HeadlessConfig, HeadlessRowSummary, HeadlessRun, Project, ProviderId, ProviderInfo,
 } from '@shared/types';
-import { ConfirmNote, EmptyState, Note, Stat, ago, num, usd } from '../components/bits';
+import { ConfirmNote, EmptyState, Note, Reading, Stat, ago, num, usd } from '../components/bits';
 import '../styles/runs.css';
 
 const TIMEOUTS = [5, 15, 30, 60] as const;
@@ -70,6 +70,17 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   const [isolate, setIsolate] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  /**
+   * Whether the run list has ever come back, and why the last attempt did not.
+   *
+   * `runs` starts empty, so this screen spent its first frames — and the whole
+   * of a broken IPC read — reporting a history of zero, "Nothing has run yet",
+   * and "No run selected". That empty array reads the same whether the history
+   * really is empty or was never fetched, and only one of those is a fact.
+   * `loaded` is set by a read that returned, never by one that threw.
+   */
+  const [loaded, setLoaded] = useState(false);
+  const [loadFailed, setLoadFailed] = useState<string | null>(null);
 
   const installed = providers.filter((p) => p.path && p.capabilities.headlessJson);
   const provider = providers.find((p) => p.id === providerId);
@@ -110,9 +121,17 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
     const next = await window.wanigan.headless.runs(50);
     setRuns(next);
     setSelected((old) => old && next.some((r) => r.id === old) ? old : (next[0]?.id ?? null));
+    setLoaded(true);
+    setLoadFailed(null);
   }, []);
 
-  useEffect(() => { void load().catch((e) => setErr(msg(e))); const t = setInterval(() => void load().catch(() => {}), 3000); return () => clearInterval(t); }, [load]);
+  // Every beat records its own failure rather than the first one alone. Before
+  // a read has ever landed the failure is the only thing this screen can
+  // honestly show, and the three-second beat is also the automatic retry
+  // standing behind the button in the history panel.
+  const reload = useCallback(() => void load().catch((e) => setLoadFailed(msg(e))), [load]);
+
+  useEffect(() => { reload(); const t = setInterval(reload, 3000); return () => clearInterval(t); }, [reload]);
 
   const signature = runSignature(current);
   useEffect(() => {
@@ -323,8 +342,17 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
 
       <div className="hr-workspace">
         <section className="card hr-history" aria-labelledby="headless-history-title">
-          <div className="hr-section-head"><div><span className="label">History</span><h2 id="headless-history-title">Recent runs</h2></div><span className="hr-count">{runs.length}</span></div>
-          {runs.length === 0 ? (
+          {/* The count is a claim about the database, so it waits for the read
+              too: a bare 0 beside "Recent runs" is indistinguishable from a
+              history nobody has fetched. */}
+          <div className="hr-section-head"><div><span className="label">History</span><h2 id="headless-history-title">Recent runs</h2></div><span className="hr-count">{loaded ? runs.length : '—'}</span></div>
+          {!loaded ? (
+            loadFailed === null
+              ? <Reading what="recent runs" />
+              : <EmptyState posture="could-not-read" title="Could not read recent runs"
+                            cue={loadFailed}
+                            action={<button className="btn" onClick={reload}>Try again</button>} />
+          ) : runs.length === 0 ? (
             <EmptyState posture="nothing-yet" title="Nothing has run yet"
                         cue="A completed fan-out stays here for review, with its cost and every repository's outcome." />
           ) : runs.map((r) => (
@@ -338,8 +366,16 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
         </section>
         <section className="card hr-detail">
           {/* Nothing to inspect until a run exists: an inspector panel with no
-              subject is a card that can only say it is empty. */}
-          {!current ? (
+              subject is a card that can only say it is empty. Which of its two
+              empty sentences is the true one depends on the history read, so it
+              waits for that read instead of inviting a fan-out over a list that
+              may be full. */}
+          {!loaded ? (
+            loadFailed === null
+              ? <Reading what="the run history" />
+              : <EmptyState posture="could-not-read" title="No run to inspect"
+                            cue="The run history could not be read, so there is nothing here to select. Recent runs carries the error and a retry." />
+          ) : !current ? (
             runs.length === 0
               ? <EmptyState posture="nothing-yet" title="No run selected"
                             cue="Start a fan-out above; its repositories, outputs and costs appear here." />

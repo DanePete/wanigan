@@ -2653,10 +2653,19 @@ const KIND_COPY: { id: keyof QueueSlots; label: string; detail: string; overLimi
     id: 'scout', label: 'Improvement Scout', detail: 'One bounded official-source research pass at a time.',
     overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
   },
-  {
-    id: 'node', label: 'Goal autopilot', detail: 'Unattended Goal tasks started without you at the keyboard.',
-    overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
-  },
+  // The 'node' lane — Goal autopilot — deliberately has no row here.
+  //
+  // Main owns the whole lane already: a 'node' runner, the sweep that writes
+  // its queue rows, control.setAutopilot behind a budget precondition, and a
+  // preload binding for it. What nothing owns is arming it. No renderer surface
+  // calls control.setAutopilot, so no docket is ever autopilot=1, so the sweep
+  // never enqueues a node row and the meter for it could only ever read "none
+  // of 2 running". A slot limit for a lane the operator cannot switch on is a
+  // control for a feature that does not exist yet, and it reads as a promise
+  // that unattended dispatch is a thing you have. The key stays in QueueSlots
+  // because the stored shape is shared with main and the draft carries it
+  // through a save untouched; only the control is gone. Bring the row back in
+  // the same change that gives the Control goal card a way to arm autopilot.
 ];
 
 /**
@@ -2914,7 +2923,11 @@ function Dispatcher({ active }: { active: boolean }) {
       <Frame v={slots.v} what="the slot limits" onRetry={slots.reload}>
         {(loaded) => {
           const d = draft ?? loaded;
-          const dirty = (['session', 'headless', 'batch', 'scout', 'node'] as const).some((k) => d[k] !== loaded[k]);
+          // Dirtiness is read off the rows that are actually on screen. A key with
+          // no control can never differ from what was loaded, and lighting “Save
+          // slots” for a difference the operator cannot see or undo is worse than
+          // not offering it.
+          const dirty = KIND_COPY.some(({ id }) => d[id] !== loaded[id]);
           return (
           <>
             {KIND_COPY.map(({ id, label, detail, overLimit }) => {

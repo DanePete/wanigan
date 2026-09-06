@@ -14,7 +14,7 @@ async function copyText(value: string): Promise<void> {
   field.value = value; field.setAttribute('readonly', ''); field.style.position = 'fixed'; field.style.opacity = '0';
   document.body.append(field); field.select();
   const copied = document.execCommand('copy'); field.remove();
-  if (!copied) throw new Error('Your system clipboard did not accept the goal link.');
+  if (!copied) throw new Error('Your system clipboard did not accept the goal ID.');
 }
 
 /**
@@ -130,10 +130,20 @@ export default function Control({ projects, providers, onOpenSession }: {
     if (window.location.hash !== goalHash(id)) window.history.replaceState(null, '', goalHash(id));
     await load(id);
   });
-  const copyGoalLink = (id: string) => act(`link-${id}`, async () => {
-    const url = `${window.location.href.split('#')[0]}${goalHash(id)}`;
-    await copyText(url);
-  }, 'Goal link copied. Opening it in Wanigan returns to this exact durable goal.');
+  /**
+   * The clipboard gets the goal's own id, never a URL.
+   *
+   * This used to copy `file:///…#goal=…` under a notice promising that opening
+   * it in Wanigan came back to this goal. Nothing in the app registers a URL
+   * scheme and there is no address bar to paste one into, so that address
+   * resolved in a browser or nowhere at all — a promise the app had no way to
+   * keep. The id is what actually names the goal: in its own records, and in
+   * the goalId an agent passes to wanigan_get_goal. So the id is what is
+   * copied, and the notice says only that.
+   */
+  const copyGoalId = (id: string) => act(`copy-id-${id}`, async () => {
+    await copyText(id);
+  }, 'Goal ID copied. It names this goal in Wanigan’s records — an identifier, not a link.');
   const start = (node: DocketNode) => act(`start-${node.id}`, async () => {
     const launched = await window.wanigan.control.start(node.id, { providerId, model: model.trim() || undefined });
     await load(detail?.id);
@@ -251,7 +261,7 @@ export default function Control({ projects, providers, onOpenSession }: {
       </article>
     </section>
 
-    {detail && <section className="control-detail card" id={`goal-${detail.id}`}><div className="control-card-head"><div><span className="label">Goal · {detail.status} · {detail.risk} risk{detail.budgetUsd !== null ? ` · ${usd(detail.budgetUsd)} budget` : ''}</span><h2>{detail.title}</h2></div><div className="control-goal-meta"><span className="mono">base {detail.baseCommit?.slice(0, 10) ?? 'not a git repo'}</span><a href={goalHash(detail.id)} onClick={() => void choose(detail.id)}>Goal link</a><button className="btn btn-small" onClick={() => void copyGoalLink(detail.id)} disabled={busy !== null}>Copy goal link</button></div></div>
+    {detail && <section className="control-detail card" id={`goal-${detail.id}`}><div className="control-card-head"><div><span className="label">Goal · {detail.status} · {detail.risk} risk{detail.budgetUsd !== null ? ` · ${usd(detail.budgetUsd)} budget` : ''}</span><h2>{detail.title}</h2></div><div className="control-goal-meta"><span className="mono">base {detail.baseCommit?.slice(0, 10) ?? 'not a git repo'}</span><span className="mono">id {detail.id}</span><button className="btn btn-small" onClick={() => void copyGoalId(detail.id)} disabled={busy !== null}>Copy goal ID</button></div></div>
       <p>{detail.objective}</p><ol className="control-acceptance">{detail.acceptance.map((check, index) => <li key={index}>{check}</li>)}</ol>
       <div className="control-launch"><label><span className="label">Provider for next task</span><select className="field" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{enabledProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label><span className="label">Model override</span><input className="field" value={model} onChange={(event) => setModel(event.target.value)} placeholder="provider default" /></label></div>
       <div className="control-nodes">{detail.nodes.map((node) => <NodeCard key={node.id} node={node} busy={busy} note={notes[node.id] ?? ''} claim={claims[node.id] ?? ''}

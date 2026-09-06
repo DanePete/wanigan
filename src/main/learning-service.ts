@@ -17,6 +17,7 @@ import {
   CODEX_ARTIFACT_COMPILER,
   DEFAULT_AUTOMATION_POLICY,
   KNOWLEDGE_KINDS,
+  MACHINE_KNOWLEDGE_TTL_MS,
   applyProjection,
   automationDecision,
   buildBriefing,
@@ -29,6 +30,7 @@ import {
   recordMetric,
   recordSessionBriefing,
   recordTranscriptCitations,
+  refreshDeliveredKnowledgeTtl,
   sessionLearningLedger,
   compileCandidateProjection,
   completeExperiment,
@@ -673,42 +675,18 @@ function ruleDerivedConfidence(taskCount: number): number {
 const MACHINE_DERIVED_RATIONALE = 'Rule-derived from repeated observations.';
 
 /**
- * Derived knowledge expires; human teaching does not. knowledge_items has
- * carried expires_at, and staleness.ts has honoured it, since the schema
- * landed — but no production path ever set it, so a derived claim stayed
- * canonical no matter how stale the pattern behind it became. The clock is
- * pushed forward whenever the item is actually delivered to a session.
+ * knowledge_items has carried expires_at, and staleness.ts has honoured it,
+ * since the schema landed — but no production path ever set it, so a derived
+ * claim stayed canonical no matter how stale the pattern behind it became.
+ * Promotion stamps the clock here; the launch paths push it forward through
+ * the ledger's refreshDeliveredKnowledgeTtl, which owns the length itself.
  */
-const MACHINE_KNOWLEDGE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
-
 function isMachineDerived(candidate: KnowledgeCandidate): boolean {
   return candidate.rationale.startsWith(MACHINE_DERIVED_RATIONALE);
 }
 
 function machineExpiry(candidate: KnowledgeCandidate, at = Date.now()): number | null {
   return isMachineDerived(candidate) ? at + MACHINE_KNOWLEDGE_TTL_MS : null;
-}
-
-/**
- * Refresh the TTL of derived knowledge a session actually received. Expiry
- * exists to collect claims nothing uses; an artifact that keeps earning its
- * place in a briefing must not age out on schedule. This only ever extends,
- * and only rows that already carry an expiry: human teaching has none and
- * never acquires one here.
- */
-function refreshDeliveredKnowledgeTtl(entries: { itemId: string }[], at = Date.now()): void {
-  if (!entries.length) return;
-  const next = at + MACHINE_KNOWLEDGE_TTL_MS;
-  try {
-    const statement = db().prepare(
-      "UPDATE knowledge_items SET expires_at=? WHERE id=? AND expires_at IS NOT NULL AND expires_at < ? AND status='active'",
-    );
-    db().transaction(() => {
-      for (const entry of entries) statement.run(next, entry.itemId, next);
-    })();
-  } catch (error) {
-    console.warn('[wanigan] delivered knowledge TTL not refreshed:', error);
-  }
 }
 
 /**
@@ -1190,28 +1168,6 @@ export async function briefingForContext(context: {
     }
   }
   return value.text || null;
-}
-
-/**
- * Record a briefing that a launch site already computed and injected. Kept
- * separate from buildBriefing so recording remains a plain fact about what
- * happened, and a recording failure can never become a launch failure.
- */
-export function recordBriefingDelivery(input: {
-  sessionId: string;
-  delivery: 'argv' | 'hook';
-  providerId: string | null;
-  projectId: string | null;
-  briefing: Awaited<ReturnType<typeof buildBriefing>>;
-  maxTokens: number;
-}): void {
-  refreshDeliveredKnowledgeTtl(input.briefing.entries);
-  try {
-    recordSessionBriefing(input);
-    emitLearningChanged();
-  } catch (error) {
-    console.warn('[wanigan] briefing delivery not recorded:', error);
-  }
 }
 
 /** Everything recorded about one session's learning: briefing, signals, reach. */

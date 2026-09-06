@@ -377,6 +377,49 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
       'an entry says how many citations were re-hashed and how many were carried with nothing checkable');
     check(getKnowledgeItem(budgetItem.item.id)?.lastValidatedAt === null,
       'an item that passed with zero checkable citations is not stamped as validated');
+    say('── compound · a delivered artifact keeps its place, a held-back one does not');
+    const ttlPromote = (title: string, text: string, slug: string): string => {
+      const signal = recordSignal({
+        kind: 'explicit-teach', providerId: 'claude', backendId: 'anthropic',
+        sessionId: `session-ttl-${slug}-${tag}`, taskHash: `task-ttl-${slug}-${tag}`,
+        summary: `Ttlkeeper ${slug} ${tag}.`, semanticEligible: true,
+      });
+      const candidate = createCandidate({
+        targetKind: 'memory', scope: 'personal', providerId: 'claude',
+        title, proposedText: text, confidence: 0.9, signalIds: [signal.id],
+        rationale: 'Rule-derived from repeated observations.',
+      });
+      reviewCandidate(candidate.id, 'approve');
+      return promoteCandidate(candidate.id, { createdBy: 'smoke' }).item.id;
+    };
+    // The held-back one is a nomination: its text is its title, so retrieval
+    // ranks it for the same query and then refuses it as unsynthesized.
+    const ttlServed = ttlPromote(`Ttlkeeper served ${tag}`,
+      `Ttlkeeper served ${tag}: this claim is worth its tokens on every launch.`, 'served');
+    const ttlHeld = ttlPromote(`Ttlkeeper heldback ${tag}`, `Ttlkeeper heldback ${tag}`, 'heldback');
+    const ttlPrior = compound.settings().enabled;
+    try {
+      compound.updateSettings({ enabled: true });
+      const ttlContext = {
+        providerId: 'claude', projectId: project.id, projectPath: projectRoot, query: 'ttlkeeper',
+      };
+      const ttlFirst = await compound.briefingForContext(ttlContext);
+      check(!!ttlFirst?.includes(ttlServed) && !ttlFirst?.includes(ttlHeld),
+        'the fixture delivers one derived item and holds the unsynthesized one back', ttlFirst);
+      check(getKnowledgeItem(ttlServed)?.expiresAt == null,
+        'delivery does not invent an expiry for an item that carries none');
+      const ttlNear = Date.now() + 60_000;
+      db().prepare('UPDATE knowledge_items SET expires_at=? WHERE id IN (?,?)').run(ttlNear, ttlServed, ttlHeld);
+      await compound.briefingForContext(ttlContext);
+      check((getKnowledgeItem(ttlServed)?.expiresAt ?? 0) > ttlNear + 30 * 24 * 60 * 60 * 1000,
+        'a derived item a launch briefed has its expiry pushed forward instead of ageing out while in use',
+        getKnowledgeItem(ttlServed)?.expiresAt);
+      check(getKnowledgeItem(ttlHeld)?.expiresAt === ttlNear,
+        'an item retrieval held back keeps the expiry it had; being considered earns nothing',
+        getKnowledgeItem(ttlHeld)?.expiresAt);
+    } finally {
+      compound.updateSettings({ enabled: ttlPrior });
+    }
     check(KNOWLEDGE_KINDS.every((kind) => (kindDelivery(kind).briefed === 'never') === !INJECTABLE_KINDS.includes(kind))
       && kindDelivery('mission').briefed === 'standing' && kindDelivery('project-map').briefed === 'never',
     'the shared kind-delivery table agrees with the injector about which kinds can be briefed');
