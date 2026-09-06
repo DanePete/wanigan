@@ -1,8 +1,9 @@
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
-  LaunchOptions, PastSession, Project, ProviderId, ProviderInfo, Session, TrustLevel, WorktreeInfo,
+  LaunchOptions, PastSession, Project, ProviderInfo, Session, TrustLevel, WorktreeInfo,
 } from '@shared/types';
 import { EFFORT_LEVELS, TRUST_LEVELS, trustCopy, trustGlyph } from '@shared/types';
+import { providerTint } from '@shared/provider-status';
 import TerminalPane, { disposePane } from '../components/TerminalPane';
 import Composer from '../components/Composer';
 import NewSessionDialog from '../components/NewSessionDialog';
@@ -15,8 +16,6 @@ import { Explainer, Note, ago, num, usd } from '../components/bits';
 import { useDialog } from '../components/useDialog';
 import { bindingMatches, modalOpen } from '../bindings';
 import '../styles/sessions.css';
-
-const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)', glm: 'var(--glm)' };
 
 /* ── phase 21 · what an attachment looks like ─────────────────────────
    The shapes live in the main process (src/main/attachments.ts) and cross the
@@ -649,7 +648,7 @@ export default function Sessions({
                                   aria-current={s.id === activeId ? 'page' : undefined}
                                   title={s.title}
                                   onClick={() => select(s.id)}>
-                          <span className="dot" style={{ background: s.status === 'running' ? TINT[s.providerId] : 'var(--text-faint)' }} />
+                          <span className="dot" style={{ background: s.status === 'running' ? providerTint(s.providerId) : 'var(--text-faint)' }} />
                           <span style={{ minWidth: 0, flex: 1 }}>
                             <span className="trunc" style={{ display: 'block', fontSize: 'var(--t-small)' }}>
                               {name || providerLabel}
@@ -830,7 +829,7 @@ export default function Sessions({
                           title={nameOf(s) ? `${nameOf(s)} — ${s.title}` : s.title}
                           aria-label={`${nameOf(s) || s.projectName}, ${s.status === 'running' ? 'running' : 'exited'} session`}>
                   <span className="dot" style={{ width: 6, height: 6, borderRadius: 'var(--r-pill)',
-                                                 background: s.status === 'running' ? (TINT[s.providerId] ?? 'var(--accent)') : 'var(--text-faint)' }} />
+                                                 background: s.status === 'running' ? providerTint(s.providerId) : 'var(--text-faint)' }} />
                   {nameOf(s) || s.projectName}
                 </FocusBtn>
                 {s.status === 'exited' && (

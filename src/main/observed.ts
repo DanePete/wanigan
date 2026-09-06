@@ -153,8 +153,25 @@ function within(parent: string, child: string): boolean {
 const START_SLACK_MS = 60_000;
 
 /**
+ * One `ps -o pid=,lstart=` line, split into the pid and when that process began.
+ *
+ * Separated out because ps cannot be made to print a foreign-locale line on
+ * demand, so the only way to hold the parse to its contract is to hand it the
+ * lines directly. Three answers, and they are genuinely three: null when the
+ * line is not a pid line at all (an empty trailing line always, and a header if
+ * the format string ever loses its `=`), a null `at` when the pid is there but
+ * the date is not one Date.parse understands, and a number when it is.
+ */
+export function parsePsStart(line: string): { pid: number; at: number | null } | null {
+  const m = line.trim().match(/^(\d+)\s+(.+)$/);
+  if (!m) return null;
+  const at = Date.parse(m[2].replace(/\s+/g, ' ').trim());
+  return { pid: Number(m[1]), at: Number.isFinite(at) ? at : null };
+}
+
+/**
  * When each of these processes actually started, so a pid can be checked
- * against the session that claims it.
+ * against the session that claims it, and which pids ps admitted to at all.
  *
  * A pid is not an identity. A registry file left behind by a SIGKILL keeps its
  * pid, and the kernel hands that number to something else eventually — at which
@@ -167,18 +184,36 @@ const START_SLACK_MS = 60_000;
  * the machine's offset — five hours here — on every machine that is not on UTC.
  * `startedAt` is epoch milliseconds and is what gets compared.
  */
-async function processStarts(pids: number[]): Promise<Map<number, number> | null> {
-  if (!pids.length) return new Map();
+async function processStarts(
+  pids: number[],
+): Promise<{ starts: Map<number, number>; listed: Set<number> } | null> {
+  if (!pids.length) return { starts: new Map(), listed: new Set() };
   try {
-    const { stdout } = await exec('ps', ['-o', 'pid=,lstart=', '-p', pids.join(',')], { timeout: 5000 });
-    const out = new Map<number, number>();
+    // LC_ALL=C, because `lstart` is rendered through the C library's locale and
+    // Date.parse only reads English. On a French machine `dim 6 sep 2026` still
+    // happens to parse; a Japanese one returns NaN, which would have cost the
+    // row its verification; and a locale that prints 07/09/2026 for the 7th of
+    // September parses as the 9th of July — sixty days out, past START_SLACK_MS,
+    // and dropped down the branch that is supposed to mean "this file is stale".
+    // A silently missing row is the failure this whole module exists to end, so
+    // the probe asks for the one format the parser can read.
+    const { stdout } = await exec('ps', ['-o', 'pid=,lstart=', '-p', pids.join(',')], {
+      timeout: 5000,
+      env: { ...process.env, LC_ALL: 'C' },
+    });
+    const starts = new Map<number, number>();
+    const listed = new Set<number>();
     for (const line of stdout.split('\n')) {
-      const m = line.trim().match(/^(\d+)\s+(.+)$/);
-      if (!m) continue;
-      const at = Date.parse(m[2].replace(/\s+/g, ' ').trim());
-      if (Number.isFinite(at)) out.set(Number(m[1]), at);
+      const parsed = parsePsStart(line);
+      if (!parsed) continue;
+      // Listed and dated are not the same fact. "ps never mentioned this pid"
+      // means the process is gone; "ps mentioned it and the date was unreadable"
+      // means it is running and we cannot say since when. Collapsing them into
+      // one map made the second look like the first and dropped a live session.
+      listed.add(parsed.pid);
+      if (parsed.at !== null) starts.set(parsed.pid, parsed.at);
     }
-    return out;
+    return { starts, listed };
   } catch {
     // ps missing, or it refused the whole list because one pid had already
     // gone. Dropping every row over that would be worse than saying so: the
@@ -396,7 +431,7 @@ export async function listObserved(): Promise<ObservedSession[]> {
   const alive = foreign.filter((c) => pidAlive(c.pid));
   if (!alive.length) return [];
 
-  const starts = await processStarts(alive.map((c) => c.pid));
+  const ps = await processStarts(alive.map((c) => c.pid));
   const projects = knownProjects();
   const roots = worktreeRoots();
   const folders = editorFolders();
@@ -404,13 +439,23 @@ export async function listObserved(): Promise<ObservedSession[]> {
 
   const out: ObservedSession[] = [];
   for (const c of alive) {
+    // Three answers from ps, and each one means something different about this
+    // row. ps itself failed (`ps` is null): nothing is known, so the row stands
+    // unverified. ps ran and never mentioned the pid: the process exited between
+    // kill(pid, 0) and the probe, so the row goes. ps mentioned it but its start
+    // time did not parse: it is running, we cannot date it, and that is the
+    // unverified case rather than the dead one — treating it as dead is how a
+    // live session disappears from the count without anybody being told.
     let verified = false;
-    if (starts) {
-      const began = starts.get(c.pid);
-      // Absent from ps output means it exited between the two reads.
-      if (began === undefined) continue;
-      if (c.startedAt !== null && Math.abs(began - c.startedAt) > START_SLACK_MS) continue;
-      verified = c.startedAt !== null;
+    if (ps) {
+      if (!ps.listed.has(c.pid)) continue;
+      const began = ps.starts.get(c.pid);
+      if (began !== undefined && c.startedAt !== null) {
+        // Far enough apart and this is not the process the file describes; the
+        // kernel handed its pid to something else after a SIGKILL left the file.
+        if (Math.abs(began - c.startedAt) > START_SLACK_MS) continue;
+        verified = true;
+      }
     }
 
     const project = projectFor(c.cwd, projects, roots);

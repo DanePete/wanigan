@@ -94,11 +94,23 @@ function approvedEditorPath(requested: unknown, editors: Editor[]): string {
 export async function openInEditor(editorPath: string | null, target: string, line?: number) {
   const safeTarget = normalizeEditorTarget(target);
   const safeLine = normalizeEditorLine(line);
+  // normalizeEditorTarget above is a shape check: it makes the value
+  // unambiguously an absolute path, so it cannot reach an editor as a flag. It
+  // says nothing about where that path lands. Both exits below hand the target
+  // to something that acts on it — LaunchServices, or an editor process — so
+  // the containment check belongs above the branch, not on one arm of it.
+  // Confining only the Finder exit left the editor exit opening any absolute
+  // path a compromised renderer named.
+  //
+  // The canonical path it returns is deliberately dropped. Both exits keep
+  // passing the un-canonicalised spelling, for the reason listDir records
+  // further down: a project added as /tmp/x canonicalises to /private/tmp/x,
+  // and that is not the spelling the rest of the app — or the operator reading
+  // the panel — is holding.
+  assertOpenablePath(safeTarget);
   if (editorPath === null) {
     // shell.openPath hands the path to LaunchServices, which decides what
-    // "open" means for it. Confine it the way every other renderer-named path
-    // in this module is confined.
-    assertOpenablePath(safeTarget);
+    // "open" means for it.
     const error = await shell.openPath(safeTarget);
     if (error) throw new Error(error);
     return { opened: 'finder' };

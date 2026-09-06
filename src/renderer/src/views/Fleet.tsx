@@ -3,6 +3,7 @@ import type {
   Attention, AttentionKind, Project, ProviderId, Session, SessionUsage, TrustLevel,
 } from '@shared/types';
 import { ATTENTION_ORDER, EMPTY_USAGE, trustCopy, trustGlyph } from '@shared/types';
+import { providerTint } from '@shared/provider-status';
 import { EmptyState, Note, PageHead, Segmented, Stat, ago, num, usd } from '../components/bits';
 import TeamPanel from '../components/TeamPanel';
 
@@ -20,7 +21,6 @@ import TeamPanel from '../components/TeamPanel';
  *    blocked waiting for you" is the one signal that must never go invisible.
  */
 
-const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)', glm: 'var(--glm)' };
 const PROVIDER: Record<ProviderId, string> = { claude: 'Claude', codex: 'Codex', glm: 'GLM' };
 
 /**
@@ -629,7 +629,7 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onContr
 
       <div className="fleet-row fleet-title">
         <span className="fleet-name">{s.projectName}</span>
-        <span className="pill fleet-prov" style={{ color: TINT[s.providerId] }}>
+        <span className="pill fleet-prov" style={{ color: providerTint(s.providerId) }}>
           {providerName(s.providerId)}
         </span>
       </div>
@@ -882,7 +882,7 @@ function FleetTable({ rows, att, usageOf, spark, defaultTrust, onOpen }: {
                     <button className="fleet-rowbtn" onClick={(e) => { e.stopPropagation(); onOpen(s.id); }}>
                       {s.projectName}
                     </button>
-                    <span className="faint" style={{ marginLeft: 6, color: TINT[s.providerId] }}>
+                    <span className="faint" style={{ marginLeft: 6, color: providerTint(s.providerId) }}>
                       {providerName(s.providerId)}
                     </span>
                   </td>

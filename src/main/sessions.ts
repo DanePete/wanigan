@@ -183,6 +183,54 @@ export function redirectsAnthropicApiFor(def: { env?: () => Record<string, strin
 }
 
 /**
+ * Drops the operator's own ambient Anthropic credential from an environment a
+ * provider profile has aimed at some other host.
+ *
+ * Both launch paths call this. The attended path has stripped the ambient key
+ * since the redirect guard was written; a headless run inherits the same shell
+ * and reaches the same host.
+ */
+export function stripAmbientAnthropicCredentials(
+  out: Record<string, string | undefined>, providerEnv: Record<string, string>,
+): void {
+  // A provider pack chooses this host, and a pack is untrusted data. Consent
+  // is otherwise the only control on where it points, and a consent dialog
+  // can be padded off-screen by a large manifest — so an ambient Anthropic
+  // key must not be along for the ride when the operator scrolls past.
+  if (!redirectsAnthropicApi(providerEnv)) return;
+
+  // Only the *inherited* value is dropped. GLM and DeepSeek supply their own
+  // credential through this same providerEnv (as ANTHROPIC_AUTH_TOKEN), and a
+  // profile that deliberately declares one of these names keeps it: that
+  // value was declared and consented to, not borrowed from the shell.
+  for (const key of ANTHROPIC_AMBIENT_KEYS) {
+    if (!(key in providerEnv)) delete out[key];
+  }
+  // The name test above is not enough on its own, and the gap is not a
+  // rename: a manifest can declare `{ source: 'process', name:
+  // 'ANTHROPIC_API_KEY' }` under *any* destination — including
+  // ANTHROPIC_API_KEY itself — and the resolved value lands in providerEnv.
+  // The exemption then reads "the profile declared this name, so keep it" and
+  // hands the operator's own Anthropic credential to the redirected host,
+  // which is exactly what the strip exists to prevent.
+  //
+  // So the value decides, not the name. GLM and DeepSeek are untouched:
+  // their ANTHROPIC_AUTH_TOKEN carries their own credential, which is not the
+  // ambient Anthropic key. A pack that hard-codes the operator's key as a
+  // literal is dropped too, and should be.
+  const ambient = new Set(
+    ANTHROPIC_AMBIENT_KEYS
+      .map((key) => process.env[key]?.trim())
+      .filter((value): value is string => value !== undefined && value.length > 0),
+  );
+  if (ambient.size === 0) return;
+  for (const [key, value] of Object.entries(out)) {
+    if (value === undefined) continue;
+    if (ambient.has(value.trim())) delete out[key];
+  }
+}
+
+/**
  * Telemetry and hooks are how Wanigan knows anything about a running agent, and
  * both are set here rather than asked of the user, because Wanigan spawns the
  * CLI and therefore owns its environment. Content logging stays off: prompt and
@@ -225,42 +273,7 @@ function agentEnv(
   // beats an inherited CLAUDE_CONFIG_DIR from the operator's shell, so the
   // account shown at launch is the one the session actually uses.
   Object.assign(out, accountEnv);
-  if (redirectsAnthropicApi(providerEnv)) {
-    // A provider pack chooses this host, and a pack is untrusted data. Consent
-    // is otherwise the only control on where it points, and a consent dialog
-    // can be padded off-screen by a large manifest — so an ambient Anthropic
-    // key must not be along for the ride when the operator scrolls past.
-    //
-    // Only the *inherited* value is dropped. GLM and DeepSeek supply their own
-    // credential through this same providerEnv (as ANTHROPIC_AUTH_TOKEN), and a
-    // profile that deliberately declares one of these names keeps it: that
-    // value was declared and consented to, not borrowed from the shell.
-    for (const key of ANTHROPIC_AMBIENT_KEYS) {
-      if (!(key in providerEnv)) delete out[key];
-    }
-    // The name test above is not enough on its own, and the gap is not a
-    // rename: a manifest can declare `{ source: 'process', name:
-    // 'ANTHROPIC_API_KEY' }` under *any* destination — including
-    // ANTHROPIC_API_KEY itself — and the resolved value lands in providerEnv.
-    // The exemption then reads "the profile declared this name, so keep it" and
-    // hands the operator's own Anthropic credential to the redirected host,
-    // which is exactly what the strip exists to prevent.
-    //
-    // So the value decides, not the name. GLM and DeepSeek are untouched:
-    // their ANTHROPIC_AUTH_TOKEN carries their own credential, which is not the
-    // ambient Anthropic key. A pack that hard-codes the operator's key as a
-    // literal is dropped too, and should be.
-    const ambient = new Set(
-      ANTHROPIC_AMBIENT_KEYS
-        .map((key) => process.env[key]?.trim())
-        .filter((value): value is string => value !== undefined && value.length > 0),
-    );
-    if (ambient.size > 0) {
-      for (const [key, value] of Object.entries(out)) {
-        if (ambient.has(value.trim())) delete out[key];
-      }
-    }
-  }
+  stripAmbientAnthropicCredentials(out, providerEnv);
   return out;
 }
 

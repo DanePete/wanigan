@@ -193,6 +193,30 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && selectedSessionTelemetry(null, 'exited') === 'ended',
   'non-Codex header values are selected-session telemetry or state, never a fabricated account percentage');
 
+  /* ── one provider tint table ──────────────────────────────────────── */
+  // Sessions, Fleet and NewSessionDialog each carried their own copy of the
+  // provider colour map and the copies had drifted: only the dialog knew
+  // DeepSeek, so a running DeepSeek session drew its rail dot in no colour at
+  // all — React drops an undefined background and .session-item .dot paints
+  // none of its own. providerTint is the one table now, and because the ids
+  // reaching it come from untrusted pack manifests, an inherited Object key
+  // has to fall through to the accent the same way an unknown pack id does.
+  const { providerTint } = await import('../shared/provider-status');
+  const rendererTintTables = filesUnder(path.join(appRoot(), 'src/renderer/src'))
+    .filter((f) => /\.tsx?$/.test(f) && /const\s+\w*TINT\w*\s*[:=]/.test(fs.readFileSync(f, 'utf8')))
+    .map((f) => path.relative(appRoot(), f));
+  check(providerTint('claude') === 'var(--claude)'
+    && providerTint('codex') === 'var(--codex)'
+    && providerTint('glm') === 'var(--glm)'
+    && providerTint('deepseek') === 'var(--series-4)'
+    && providerTint('acme.pack/coder') === 'var(--accent)'
+    && providerTint('') === 'var(--accent)'
+    && providerTint('toString') === 'var(--accent)'
+    && providerTint('constructor') === 'var(--accent)'
+    && rendererTintTables.length === 0,
+  'every provider row tints from one shared table: the shipped DeepSeek profile has a colour, and an id this build has no colour for draws in the accent rather than transparent',
+  `renderer files still declaring a tint table: ${rendererTintTables.join(', ') || 'none'}`);
+
   /* ── phase 9 · worktrees against a real repo ───────────────────────── */
   say('── phase 9 · worktrees');
   const repo = path.join(tmp, 'repo');
@@ -425,6 +449,28 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     fs.mkdirSync(path.dirname(detectedEditor), { recursive: true });
     fs.writeFileSync(detectedEditor, '#!/bin/sh\nexit 0\n');
     fs.chmodSync(detectedEditor, 0o755);
+    // Both exits of openInEditor act on the target — LaunchServices decides
+    // what "open" means, or an editor process is handed it as an argument — so
+    // the containment check has to sit above the branch that picks between
+    // them. It guarded only the Finder exit, which left the editor exit
+    // reaching exec() with any absolute path the renderer named. The launcher
+    // refusal must be the containment one, not "that editor is no longer
+    // available": the wrong message means detectEditors() ran first and the
+    // check is back on one arm of the branch.
+    const unmanagedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-unmanaged-'));
+    const unmanagedTarget = path.join(unmanagedDir, 'secret.txt');
+    fs.writeFileSync(unmanagedTarget, 'not inside any project');
+    const openRefusal = async (editor: string | null): Promise<string> => {
+      try { await code.openInEditor(editor, unmanagedTarget); return 'opened'; }
+      catch (error) { return error instanceof Error ? error.message : String(error); }
+    };
+    const finderExit = await openRefusal(null);
+    const launcherExit = await openRefusal(detectedEditor);
+    check(/not inside a project Wanigan manages/.test(finderExit)
+      && /not inside a project Wanigan manages/.test(launcherExit),
+    'openInEditor refuses a target under no managed root on both exits, before Finder opens it or an editor is spawned',
+    { finderExit, launcherExit });
+    fs.rmSync(unmanagedDir, { recursive: true, force: true });
     const editorTarget = code.__test.normalizeEditorTarget('--disable-gpu');
     check(path.isAbsolute(editorTarget) && path.basename(editorTarget) === '--disable-gpu',
       'an editor target is made absolute, so a filename beginning with a dash cannot become a CLI option', editorTarget);
@@ -1817,6 +1863,21 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     check(unverified?.verified === false,
       'a file with no start time survives as unverified rather than as a claim the module cannot support');
 
+    // ps renders lstart through the C library's locale and Date.parse only reads
+    // English, so the machine that breaks this reader is one that is not in an
+    // English locale — and ps cannot be asked for a Japanese line on demand, so
+    // the parse is exercised directly. The three answers are three different
+    // facts about a process, and collapsing any two of them loses a row.
+    const psEnglish = observed.parsePsStart('54186 Sun Sep  6 01:14:20 2026');
+    check(psEnglish !== null && psEnglish.pid === 54186 && psEnglish.at !== null,
+      'a C-locale ps line yields its pid and a real start time', JSON.stringify(psEnglish));
+    const psJapanese = observed.parsePsStart('54186 2026年 9月 6日 日曜日 01時14分20秒');
+    check(psJapanese !== null && psJapanese.pid === 54186 && psJapanese.at === null,
+      'a date Date.parse cannot read still yields the pid, so "ps listed this process" outlives "we could not date it"',
+      JSON.stringify(psJapanese));
+    check(observed.parsePsStart('PID STARTED') === null && observed.parsePsStart('   ') === null,
+      'and a line with no pid on it is not a process at all, which is a third answer rather than a pid of NaN');
+
     fs.rmSync(path.join(obsReg, `${process.pid}.json`));
     writeEntry('999999', { pid: 999999, sessionId: 'smoke-dead', cwd: tmp, startedAt: Date.now() });
     check((await observed.listObserved()).length === 0, 'a pid that is not alive is dropped');
@@ -1836,6 +1897,14 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     await observed.listObserved();
     check(filesUnder(obsHome).map((f) => `${f}:${fs.statSync(f).size}`).join('|') === before,
       'observing writes nothing under the CLI’s own config directory — reading is the whole feature');
+
+    // Parsing three answers is only half of it; the locale has to be pinned on
+    // the probe itself. A machine printing 07/09/2026 for the 7th of September
+    // parses as the 9th of July — sixty days out, past START_SLACK_MS — so the
+    // row leaves down the branch that is supposed to mean "this registry file is
+    // stale", and a live session vanishes from the count with nobody told.
+    check(/LC_ALL:\s*'C'/.test(sourceOf('src/main/observed.ts')),
+      'the ps probe pins LC_ALL=C, so lstart arrives in the one format the parser can read');
   } finally {
     observed.setObservedEnabled(obsWasOn);
     if (obsPrevDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
@@ -2378,6 +2447,39 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       'a docket at its cap stops dispatching instead of continuing on unreported cost');
     check(control.docket(capped.id).proofs.some((proof) => proof.summary.startsWith('Autopilot stopped:')),
       'the halt is written into the docket’s own evidence, not just a flipped flag');
+    const haltState = control.docket(capped.id).autopilot;
+    check(haltState.haltedReason !== null && haltState.haltedReason.includes('budget')
+      && !haltState.haltedReason.startsWith('Autopilot stopped')
+      && (haltState.haltedAt ?? 0) > 0,
+      'the halt reason reaches a surface as a typed field with its prefix already stripped, so no view has to parse a summary sentence to say why dispatch stopped',
+      haltState);
+
+    // A cap cannot be pulled out from under an armed docket. The sweep would
+    // otherwise find budget_usd null on its next tick and halt the run
+    // somewhere nobody was looking, so the refusal happens where the operator
+    // is standing instead.
+    control.setAutopilot(capped.id, { enabled: true, providerId: 'claude' });
+    let budgetRemovalRefused = false;
+    try { control.setDocketBudget(capped.id, null); } catch { budgetRemovalRefused = true; }
+    check(budgetRemovalRefused && control.docket(capped.id).autopilot.budgetUsd === 0,
+      'a spend cap cannot be removed while autopilot is armed; disarming stays a separate, deliberate decision');
+    control.setAutopilot(capped.id, { enabled: false });
+    check(control.setDocketBudget(capped.id, null).autopilot.budgetUsd === null,
+      'the same cap comes off once autopilot is disarmed, so the refusal is a sequence and not a dead end');
+
+    // Without this the earlier uncapped refusal was unrecoverable: nothing
+    // could give a goal a budget after the insert, so a goal created without
+    // one could never arm autopilot at all.
+    const funded = control.setDocketBudget(unbudgeted.id, 3);
+    const armedAfterFunding = control.setAutopilot(unbudgeted.id, { enabled: true, providerId: 'claude' }).autopilot.enabled;
+    control.setAutopilot(unbudgeted.id, { enabled: false });
+    check(funded.budgetUsd === 3 && funded.autopilot.budgetUsd === 3 && armedAfterFunding,
+      'a goal created without a cap can be given one afterwards, which is the only route it has to ever arm autopilot',
+      { budgetUsd: funded.budgetUsd, armedAfterFunding });
+    let badBudgetRefused = false;
+    try { control.setDocketBudget(unbudgeted.id, 1_000_000); } catch { badBudgetRefused = true; }
+    check(badBudgetRefused && control.docket(unbudgeted.id).autopilot.budgetUsd === 3,
+      'an out-of-range cap is refused and leaves the previous one standing, rather than half-writing a budget autopilot would spend against');
 
     const event = control.addEvent({ projectId: controlProject.id, source: 'ci', kind: 'failure', summary: 'Smoke CI failed.' });
     const triaged = control.triageEvent(event.id, {});
@@ -2686,6 +2788,42 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // but the palette must stay truthful if a route is added and ungrouped.
     && appSrc.includes('meta: TAB_SHORTCUTS[item.id].label'),
   'the keyboard palette traps focus, moves an announced highlight on arrow keys and restores its opener, while navigation remains reachable and truthful on Views-only routes');
+
+  // The composer's $ menu was a listbox that owned no options — role="option"
+  // sat on a button inside a listitem, two roles below the list — and the
+  // textarea said nothing about it at all, so a screen reader heard a plain
+  // text box while Enter had quietly stopped meaning send. A textarea cannot
+  // be the combobox this pattern usually is (implicit role textbox, no role
+  // change permitted, aria-expanded unsupported), so the wiring is the two
+  // attributes a textbox does support, over a list that is always in the DOM
+  // so the id they name always resolves.
+  const composerSrc = sourceOf('src/renderer/src/components/Composer.tsx');
+  const composerCssSrc = sourceOf('src/renderer/src/styles/composer.css');
+  const composerMenuBlock = composerSrc.slice(
+    composerSrc.indexOf('<ul id="composer-skill-menu"'),
+    composerSrc.indexOf('</ul>'),
+  );
+  check(composerSrc.includes('aria-controls="composer-skill-menu"')
+    && composerSrc.includes('aria-activedescendant={menu && menuOptions.length ? `composer-skill-${menu.index}` : undefined}')
+    // The two an invalid fix would reach for, and a textbox supports neither.
+    && !composerSrc.includes('role="combobox"')
+    && !composerSrc.includes('aria-expanded={menu')
+    // Rendered even when empty, so aria-controls never points at nothing.
+    && composerSrc.includes('<ul id="composer-skill-menu"')
+    && composerSrc.includes('hidden={!menu || menuOptions.length === 0}')
+    // The option is the li itself; nothing stands between listbox and option.
+    && /<li key=\{option\.invoke\}[\s\S]{0,200}role="option"/.test(composerSrc)
+    && composerMenuBlock.length > 0
+    && !composerMenuBlock.includes('<button')
+    // Focus stays in the textarea, or aria-activedescendant names nothing.
+    && composerMenuBlock.includes('onMouseDown={(e) => e.preventDefault()}')
+    && composerMenuBlock.includes('onClick={() => insertSkill(option)}')
+    // The count and the changed Enter, which no ARIA attribute carries.
+    && composerSrc.includes('<p className="composer-sr" role="status">')
+    && composerSrc.includes("`${menuOptions.length} skill${menuOptions.length === 1 ? '' : 's'} match")
+    && composerCssSrc.includes('.composer-menu[hidden] { display: none; }')
+    && composerCssSrc.includes('.composer-sr {'),
+  'the composer announces its skill menu: textbox-legal aria-controls and aria-activedescendant over a list that is always in the DOM, options owned directly by the listbox with focus kept in the textarea, and a live region for the count and the changed meaning of Enter');
 
   // Two accounts is the whole point of the accounts feature, and an exhausted
   // window on one of them is exactly when it pays off. The page holds both live
@@ -3034,6 +3172,22 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !/copyText\(\s*(?:url\b|`)/.test(controlViewSrc)
     && !controlViewSrc.includes('window.location.href.split'),
     'no copy affordance in Control offers a goal URL, because Wanigan registers no URL scheme and cannot open one back');
+
+  // mapNodes() reports 'blocked' for two different situations — a prerequisite
+  // that failed or was canceled, and one that has not finished yet — and the
+  // operator's answer differs: reopen the first, wait out the second. The card
+  // therefore names each prerequisite beside its own status mark, and the guide
+  // no longer teaches the default chain as though every graph were
+  // plan → implement → verify → review. Source contract because the smoke
+  // process has no renderer to look at.
+  const controlCssSrc = sourceOf('src/renderer/src/styles/control.css');
+  check(controlViewSrc.includes('prereqs: { title: string; status: DocketNodeStatus }[]')
+    && /prereqs=\{node\.dependsOn\.map\(/.test(controlViewSrc)
+    && controlViewSrc.includes('className="control-node-waits">Waits on ')
+    && /prereqs\.map\(\(prereq, index\) => \{ const mark = markOf\(prereq\.status\)/.test(controlViewSrc)
+    && controlCssSrc.includes('.control-node-waits {')
+    && !controlViewSrc.includes('Start <em>Plan</em> first.'),
+    'every task card names the prerequisites it waits on and how each one stands, so a blocked task reads as "reopen that one" or "wait for that one" rather than a single ambiguous word');
 
   // Settings used to split a single tab across multiple `tabpanel` nodes, and
   // switching categories unmounted whatever form was in the other one. This is

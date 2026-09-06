@@ -59,6 +59,11 @@
   box-shadow: 0 6px 22px rgba(0, 0, 0, 0.25);
   z-index: 6; max-height: 220px; overflow-y: auto;
 }
+/* The list stays in the DOM whether or not it has options, so the composer's
+   aria-controls always resolves. The browser's own display:none for [hidden]
+   loses to any display this class later grows, and a popup that reappears
+   empty is worse than one that never opened; the rule is spelled out. */
+.composer-menu[hidden] { display: none; }
 .composer-menu-item {
   display: flex; gap: 8px; align-items: baseline; width: 100%;
   border: 0; background: none; cursor: pointer;
@@ -69,6 +74,15 @@
 .composer-menu-desc {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: var(--t-micro);
+}
+
+/* Read aloud, never drawn: the skill menu's count and the changed meaning of
+   Enter. Same clip as .skills-sr — display:none would take it out of the
+   accessibility tree with it. */
+.composer-sr {
+  position: absolute; width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
 }
 
 .composer-stash-pop {

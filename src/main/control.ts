@@ -38,6 +38,16 @@ const MAX_NODE_DEPENDENCIES = 16;
 const NODE_KINDS: DocketNodeKind[] = ['plan', 'implement', 'verify', 'review'];
 const RISKS: DocketRisk[] = ['low', 'elevated', 'high'];
 
+/**
+ * The single prefix every automatic autopilot halt is written with.
+ *
+ * `haltAutopilot` writes it and `autopilotHalt` reads it back off, so the
+ * reason a docket stopped itself survives a restart as evidence rather than as
+ * a sentence some surface has to parse. Both sides naming this constant is the
+ * point: a halt row and the field that reports it cannot drift apart.
+ */
+export const AUTOPILOT_HALT_PREFIX = 'Autopilot stopped: ';
+
 const uid = (prefix: string) => `${prefix}_${randomUUID().slice(0, 12)}`;
 const safeText = (value: unknown, label: string, max: number) => {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${label} is required.`);
@@ -100,6 +110,29 @@ function autopilotSpend(docketId: string): Pick<DocketAutopilot, 'spendUsd' | 's
   return { spendUsd, spendStatus };
 }
 
+/**
+ * Why unattended dispatch last stopped itself, if it ever did.
+ *
+ * The reason is read back out of the proof `haltAutopilot` already writes
+ * rather than kept in a second column, so there is exactly one durable account
+ * of a halt and no way for a flag and its evidence to disagree. Review
+ * decisions are also `kind='decision'`, so the prefix — not the kind — is what
+ * separates a halt from an operator's approval; it contains no `%` or `_`, so
+ * the LIKE pattern needs no escape clause. The prefix is sliced off here
+ * because a surface should be handed a reason, not a string to parse.
+ *
+ * This runs once per row of `listDockets`, which is why it is a single indexed
+ * seek: idx_work_proofs_docket covers (docket_id, created_at DESC).
+ */
+function autopilotHalt(docketId: string): Pick<DocketAutopilot, 'haltedReason' | 'haltedAt'> {
+  const row = db().prepare(`SELECT summary, created_at FROM work_proofs
+    WHERE docket_id=? AND kind='decision' AND summary LIKE ?
+    ORDER BY created_at DESC LIMIT 1`)
+    .get(docketId, `${AUTOPILOT_HALT_PREFIX}%`) as { summary: string; created_at: number } | undefined;
+  if (!row) return { haltedReason: null, haltedAt: null };
+  return { haltedReason: row.summary.slice(AUTOPILOT_HALT_PREFIX.length), haltedAt: row.created_at };
+}
+
 function autopilotState(row: DocketRow): DocketAutopilot {
   return {
     enabled: row.autopilot === 1,
@@ -107,6 +140,7 @@ function autopilotState(row: DocketRow): DocketAutopilot {
     model: row.autopilot_model,
     budgetUsd: row.budget_usd,
     ...autopilotSpend(row.id),
+    ...autopilotHalt(row.id),
   };
 }
 
@@ -821,7 +855,7 @@ function clearDispatch(nodeId: string): void {
 function haltAutopilot(docketId: string, reason: string): void {
   db().prepare('UPDATE work_dockets SET autopilot=0,updated_at=? WHERE id=? AND autopilot=1').run(now(), docketId);
   db().prepare('INSERT INTO work_proofs (id,docket_id,node_id,kind,status,summary,created_at) VALUES (?,?,?,?,?,?,?)')
-    .run(uid('proof'), docketId, null, 'decision', 'recorded', `Autopilot stopped: ${reason}`, now());
+    .run(uid('proof'), docketId, null, 'decision', 'recorded', `${AUTOPILOT_HALT_PREFIX}${reason}`, now());
 }
 
 /**
@@ -850,6 +884,39 @@ export function setAutopilot(docketId: string, input: { enabled: boolean; provid
   const model = input.model?.trim() || null;
   db().prepare('UPDATE work_dockets SET autopilot=1,autopilot_provider=?,autopilot_model=?,updated_at=? WHERE id=?')
     .run(providerId, model, now(), docketId);
+  return docket(docketId);
+}
+
+/**
+ * Give an existing goal a spend cap, or take one away.
+ *
+ * Without this a goal created without a budget could never arm autopilot at
+ * all: `setAutopilot` requires a cap and nothing else could set one after the
+ * insert, so the refusal above was unrecoverable rather than actionable.
+ *
+ * Removing a cap while autopilot is armed is refused instead of quietly
+ * disarming for the operator. Disarming on their behalf would be a second,
+ * unasked-for change to what the machine is doing, and the sweep would
+ * otherwise find `budget_usd` null on its next tick and halt the run somewhere
+ * the operator was not looking. Making them disarm first keeps the two
+ * decisions — stop dispatching, change the cap — separately made and separately
+ * visible. The bounds match createDocket's, because the same value read back
+ * from a different screen has to mean the same thing.
+ */
+export function setDocketBudget(docketId: string, budgetUsd: number | null): DocketDetail {
+  const row = docketRow(docketId);
+  // The declared type is not a guarantee: this arrives from the renderer, where
+  // `Number([])` is 0 and would quietly install a zero-dollar cap. Anything
+  // that is not already a number falls through to the range refusal below.
+  const value = budgetUsd === null || budgetUsd === undefined ? null
+    : typeof budgetUsd === 'number' ? budgetUsd : Number.NaN;
+  if (value === null && row.autopilot === 1) {
+    throw new Error('Disarm autopilot before removing this goal’s budget. An armed goal with no cap is the one thing Wanigan will not run.');
+  }
+  if (value !== null && (!Number.isFinite(value) || value < 0 || value > 100_000)) {
+    throw new Error('Budget must be a number between 0 and 100,000 USD.');
+  }
+  db().prepare('UPDATE work_dockets SET budget_usd=?,updated_at=? WHERE id=?').run(value, now(), docketId);
   return docket(docketId);
 }
 

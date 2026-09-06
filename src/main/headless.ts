@@ -13,7 +13,7 @@ import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } fr
 import { claimFireForRun, recordFireOutcome, type ScheduleFire } from './schedule';
 import { announceRunEnded } from './notify';
 import * as accounts from './accounts';
-import { redirectsAnthropicApi } from './sessions';
+import { redirectsAnthropicApi, stripAmbientAnthropicCredentials } from './sessions';
 import { rememberReportedContextWindows } from './transcripts';
 import type {
   AgentAccount, HeadlessConfig, HeadlessRow, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, TrustLevel,
@@ -193,6 +193,12 @@ export function headlessEnv(
   out.PATH = PATH;
   Object.assign(out, providerEnv);
   Object.assign(out, accountEnv);
+  // The same strip an attended launch applies, and this path needed it more.
+  // It copies process.env wholesale, so a fan-out on any profile that redirects
+  // ANTHROPIC_BASE_URL — the built-in GLM and DeepSeek profiles among them —
+  // handed the operator's own Anthropic key to whichever host the profile
+  // named, with no terminal in front of anyone to show that it had.
+  stripAmbientAnthropicCredentials(out, providerEnv);
   // The PTY path forces colour on. Here stdout is JSON that has to be parsed,
   // and an SGR escape in the middle of it is a parse failure, so colour is off.
   out.NO_COLOR = '1';

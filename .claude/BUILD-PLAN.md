@@ -3,7 +3,7 @@
 **Status file. Update the checkboxes as waves land.** This exists so the work can be
 picked up by someone (or something) with none of the originating context.
 
-Last updated: 2026-09-05, after wave 1.
+Last updated: 2026-09-05, after wave 2. 842 smoke assertions.
 
 ---
 
@@ -69,6 +69,39 @@ The workflow script that drives a wave is at
 array — one object per phase, each `{title, cluster, effort, files, goal, approach,
 migration, risk, verify}` — taken from `waves.json`.
 
+Build the args for wave N (1-indexed) like this. Note `_own`, not `files`: it is the
+phase's file list with the smoke files already removed, which is what the agent is
+allowed to touch.
+
+```bash
+python3 -c "
+import json
+N = 3   # the wave you are about to run
+w = json.load(open('$SP/waves.json'))[N-1]
+out = []
+for p in w:
+    out.append({
+        'title': p['title'], 'cluster': p['cluster'], 'effort': p['effort'],
+        'files': p['_own'],
+        'goal': p['goal'][:600], 'approach': p['approach'][:1400],
+        'migration': (p.get('migration') or 'none')[:300],
+        'risk': (p.get('risk') or '')[:500], 'verify': (p.get('verify') or '')[:500],
+    })
+print(json.dumps(out))
+"
+```
+
+Then pass that JSON as the Workflow tool's `args`. Seven agents is a comfortable width;
+the tool caps concurrency below that anyway.
+
+**If the workflow dies mid-wave** — it has, twice, on session limits — the partial edits
+are still on disk and have been good quality every time. Do not discard them reflexively.
+Run `wave.sh diff`, read each changed file, finish what is half-done, and only revert
+what is actually incoherent. The journal at
+`.../subagents/workflows/<runId>/journal.jsonl` holds one `{"type":"result",…}` line per
+agent that finished, including the assertions it wanted; agent prompts are recoverable
+from the sibling `agent-<id>.jsonl` files when the labels are missing.
+
 ### After every wave, in order
 
 1. `wave.sh diff` — confirm only the expected files moved.
@@ -115,7 +148,12 @@ renaming a renderer symbol can break a test even when behaviour is identical. Gr
       source; Runs waits for its first read; the autopilot slot row removed; Usage window
       and Fleet tile say what they count; Control copies a goal id not a dead URL; the
       follow-account label describes the fallback.
-- [ ] Wave 2 (7) · [ ] Wave 3 (7) · [ ] Wave 4 (7) · [ ] Wave 5 (7) · [ ] Wave 6 (7)
+- [x] **Wave 2** — 7/7. ps locale pinned and three liveness states separated; autopilot
+      halt reason as a typed field plus a budget an existing goal can be given; task cards
+      name their prerequisites; the ambient credential strip reaches the headless path;
+      openInEditor confines both exits; one provider tint table; the composer's skill menu
+      announces itself.
+- [ ] Wave 3 (7) · [ ] Wave 4 (7) · [ ] Wave 5 (7) · [ ] Wave 6 (7)
 - [ ] Wave 7 (7) · [ ] Wave 8 (7) · [ ] Wave 9 (7) · [ ] Wave 10 (6) · [ ] Wave 11 (1)
 - [ ] Wave 12 (4) · [ ] Wave 13 (2) · [ ] Wave 14 (2) · [ ] Wave 15 (1) · [ ] Wave 16 (1)
 

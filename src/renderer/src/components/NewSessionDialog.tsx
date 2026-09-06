@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountResolution, AgentAccount, LaunchOptions, Project, ProviderId, ProviderInfo, TrustLevel } from '@shared/types';
 import { EFFORT_LEVELS, PERMISSION_MODES, TRUST_LEVELS, trustCopy, trustGlyph } from '@shared/types';
+import { providerTint } from '@shared/provider-status';
 import { useDialog } from './useDialog';
-
-const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)', glm: 'var(--glm)', deepseek: 'var(--series-4)' };
 
 /** Same filled progression the session header uses: ◇ → ◈ → ◆ reads in greyscale. */
 
@@ -337,12 +336,12 @@ export default function NewSessionDialog({
                 className="btn"
                 style={{
                   flex: 1, flexDirection: 'column', alignItems: 'flex-start', gap: 2, padding: '9px 11px',
-                  borderColor: on ? (TINT[p.id] ?? 'var(--accent)') : 'var(--line)',
+                  borderColor: on ? providerTint(p.id) : 'var(--line)',
                   background: on ? 'var(--bg-sunk)' : 'var(--bg-soft)',
                 }}
                 title={p.path ?? `${p.bin} was not found on the PATH Wanigan resolved`}
               >
-                <span style={{ fontWeight: 600, color: on ? (TINT[p.id] ?? 'var(--accent)') : undefined }}>{p.label}</span>
+                <span style={{ fontWeight: 600, color: on ? providerTint(p.id) : undefined }}>{p.label}</span>
                 {/* The reason a button is disabled is on the button, not in a
                     title: a tooltip is unreachable by keyboard and touch, and
                     this is the sentence a first run turns on. */}

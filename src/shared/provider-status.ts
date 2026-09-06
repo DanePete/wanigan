@@ -1,4 +1,4 @@
-import type { ClaudeContextUsage, ProviderInfo, Session, SessionUsage } from './types';
+import type { ClaudeContextUsage, ProviderId, ProviderInfo, Session, SessionUsage } from './types';
 
 /**
  * The compact status control in the application header is about the session
@@ -37,6 +37,41 @@ export function runsClaudeHarness(session: Pick<Session, 'harnessId' | 'provider
   return session.harnessId
     ? session.harnessId === 'claude-code'
     : ['claude', 'glm', 'deepseek'].includes(session.providerId);
+}
+
+/**
+ * The accent a provider is drawn in, as a token name from index.css — never a
+ * literal colour, so light and dark each keep their own value for one provider.
+ *
+ * This table used to be copied into Sessions, Fleet and NewSessionDialog, and
+ * the three copies had already drifted apart: only the dialog knew DeepSeek's
+ * colour, so a running DeepSeek session drew a rail dot in nothing at all.
+ * Nothing complained: those lookups were typed `Record<string, string>`, which
+ * calls a miss a `string` rather than `undefined`, React drops an undefined
+ * background, and `.session-item .dot` paints none of its own.
+ */
+const PROVIDER_TINT = new Map<string, string>([
+  ['claude', 'var(--claude)'],
+  ['codex', 'var(--codex)'],
+  ['glm', 'var(--glm)'],
+  ['deepseek', 'var(--series-4)'],
+]);
+
+/**
+ * A provider id is an opaque string — an installed pack coins ids no build of
+ * Wanigan has heard of — so an unknown id is expected, not an error. Answer the
+ * neutral accent for it: a profile drawn in the house colour still reads as a
+ * provider, where an unset colour reads as a missing session.
+ *
+ * A Map, not an object literal, because the ids reaching here come from local
+ * pack manifests and manifests are untrusted data. A plain object answers
+ * `providerTint('toString')` with an inherited Object.prototype function, which
+ * React would then hand to a `background` or `color` as a style value; a Map
+ * has no inherited keys, so every id this table does not list falls through to
+ * the accent.
+ */
+export function providerTint(providerId: ProviderId): string {
+  return PROVIDER_TINT.get(providerId) ?? 'var(--accent)';
 }
 
 /** Return null until there is an actual selected session; never default to Codex. */

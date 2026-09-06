@@ -356,25 +356,55 @@ export default function Composer({ session, onError, onCollapse }: {
               ? 'Session exited — resume it from Recent to keep talking'
               : 'Message the agent — Enter sends, Shift+Enter for a new line, $ inserts a skill, ⌘S stashes'}
             aria-label="Message the agent"
+            // A textarea's implicit role is textbox and HTML-ARIA permits no
+            // role change on it, so this cannot be the combobox the pattern
+            // usually is, and aria-expanded is not supported on textbox — a
+            // reader may ignore an unsupported attribute or the element with
+            // it. The two a textbox does support carry the whole message:
+            // aria-controls names the list that just opened, and
+            // aria-activedescendant says which option the arrow keys are on
+            // while focus never leaves this box.
+            aria-controls="composer-skill-menu"
+            aria-activedescendant={menu && menuOptions.length ? `composer-skill-${menu.index}` : undefined}
             disabled={state.mode === 'blocked'}
             onChange={onChange}
             onKeyDown={onKeyDown}
             onBlur={() => window.setTimeout(() => setMenu(null), 150)}
           />
-          {menu && menuOptions.length > 0 && (
-            <ul className="composer-menu" role="listbox" aria-label="Skills">
-              {menuOptions.map((option, i) => (
-                <li key={option.invoke}>
-                  <button type="button" role="option" aria-selected={i === menu.index}
-                          className={`composer-menu-item${i === menu.index ? ' on' : ''}`}
-                          onMouseDown={(e) => { e.preventDefault(); insertSkill(option); }}>
-                    <span className="mono">{option.invoke}</span>
-                    <span className="faint composer-menu-desc">{option.description}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+          {/* Always in the DOM, hidden when there is nothing to offer, because
+              the textarea's aria-controls has to resolve to something: an id
+              that points at nothing drops the relationship silently, and the
+              menu then opens with no announcement at all. A listbox may only
+              own options, so the option is the li itself — the earlier
+              listbox → listitem → button nesting put two roles between them
+              and the ownership never reached the option. */}
+          <ul id="composer-skill-menu" className="composer-menu" role="listbox" aria-label="Skills"
+              hidden={!menu || menuOptions.length === 0}>
+            {menuOptions.map((option, i) => (
+              <li key={option.invoke}
+                  id={`composer-skill-${i}`}
+                  role="option"
+                  aria-selected={i === menu?.index}
+                  className={`composer-menu-item${i === menu?.index ? ' on' : ''}`}
+                  // Focus must stay in the textarea for aria-activedescendant
+                  // to mean anything, so the mousedown never gets to move it;
+                  // the insert rides the click that follows instead.
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => insertSkill(option)}>
+                <span className="mono">{option.invoke}</span>
+                <span className="faint composer-menu-desc">{option.description}</span>
+              </li>
+            ))}
+          </ul>
+          {/* aria-activedescendant names the highlighted option; nothing else
+              says how many there are, or that Enter has stopped meaning send
+              while the menu is open. Clipped rather than absent, because a
+              live region only announces text that arrives after it exists. */}
+          <p className="composer-sr" role="status">
+            {menu && menuOptions.length
+              ? `${menuOptions.length} skill${menuOptions.length === 1 ? '' : 's'} match — arrow keys choose, Enter inserts instead of sending`
+              : ''}
+          </p>
         </div>
         <div className="composer-actions">
           {onCollapse && (

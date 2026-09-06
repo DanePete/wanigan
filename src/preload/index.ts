@@ -415,6 +415,8 @@ const api = {
     retry: (nodeId: string) => call<DocketNode>('control:retry', nodeId),
     setAutopilot: (docketId: string, input: { enabled: boolean; providerId?: string; model?: string | null }) =>
       call<DocketDetail>('control:setAutopilot', docketId, input),
+    setBudget: (docketId: string, budgetUsd: number | null) =>
+      call<DocketDetail>('control:setBudget', docketId, budgetUsd),
     checkpoint: (nodeId: string, note: string) => call<DocketCheckpoint>('control:checkpoint', nodeId, note),
     runProof: (nodeId: string) => call<DocketProof>('control:runProof', nodeId),
     complete: (nodeId: string, input?: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }) =>

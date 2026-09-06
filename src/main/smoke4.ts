@@ -56,6 +56,7 @@ import {
 } from './provider-packs';
 import { probeProviderAdapter } from './provider-adapter';
 import { headlessArgs, headlessEnv, headlessRows, headlessRuns, parseCliOutput, resolveBin, runOneRepo } from './headless';
+import { stripAmbientAnthropicCredentials } from './sessions';
 import { effectiveProviderBackendId, type ProviderDef } from './providers';
 import { kindDelivery, type Session } from '../shared/types';
 import * as compound from './learning-service';

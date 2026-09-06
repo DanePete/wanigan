@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
-  ControlEvent, DocketDetail, DocketNode, DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
+  ControlEvent, DocketDetail, DocketNode, DocketNodeStatus, DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
 } from '@shared/types';
 import { Chip, EmptyState, Explainer, Mark, Note, PageHead, Reading, ago, markOf, usd } from '../components/bits';
 
@@ -206,7 +206,7 @@ export default function Control({ projects, providers, onOpenSession }: {
       <div><p>A <strong>goal</strong> is work you delegate without losing the reason for it, the evidence, or the final decision.</p></div>
       <ol>
         <li><strong>Define the contract.</strong> Choose a project, write the objective, then add observable acceptance checks. These become the shared definition of done.</li>
-        <li><strong>Work the graph in order.</strong> Start <em>Plan</em> first. Once you mark it complete, <em>Implement</em> unlocks in an isolated worktree. Claim paths such as <code>src/cart/total.ts</code> before parallel work touches them.</li>
+        <li><strong>Work the graph, not a fixed list.</strong> Start any task that has no unfinished prerequisite. Each card names what it waits on and how those tasks stand, so a task held by a failed prerequisite is told apart from one whose prerequisite is still running. Claim paths such as <code>src/cart/total.ts</code> before parallel work touches them.</li>
         <li><strong>Capture proof and continuity.</strong> Save a checkpoint before a handoff or interruption. In <em>Verify</em>, run the project review gate; a passing command result is required before the task can complete.</li>
         <li><strong>Make the final call.</strong> The <em>Review</em> task can approve only after verification passed. Request changes or reject when the evidence does not meet the contract.</li>
       </ol>
@@ -265,6 +265,7 @@ export default function Control({ projects, providers, onOpenSession }: {
       <p>{detail.objective}</p><ol className="control-acceptance">{detail.acceptance.map((check, index) => <li key={index}>{check}</li>)}</ol>
       <div className="control-launch"><label><span className="label">Provider for next task</span><select className="field" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{enabledProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label><span className="label">Model override</span><input className="field" value={model} onChange={(event) => setModel(event.target.value)} placeholder="provider default" /></label></div>
       <div className="control-nodes">{detail.nodes.map((node) => <NodeCard key={node.id} node={node} busy={busy} note={notes[node.id] ?? ''} claim={claims[node.id] ?? ''}
+        prereqs={node.dependsOn.map((id) => detail.nodes.find((other) => other.id === id)).filter((other): other is DocketNode => !!other).map((other) => ({ title: other.title, status: other.status }))}
         onNote={(value) => setNotes((previous) => ({ ...previous, [node.id]: value }))} onClaim={(value) => setClaims((previous) => ({ ...previous, [node.id]: value }))}
         onStart={() => start(node)} onCheckpoint={() => checkpoint(node)} onClaimAdd={() => addClaim(node)} onProof={() => proof(node)} onComplete={(decision) => complete(node, decision)} onRetry={() => retry(node)} />)}</div>
       <div className="control-evidence"><div><span className="label">Proof bundle</span><h3>{detail.proofs.length} record{detail.proofs.length === 1 ? '' : 's'}</h3>{detail.proofs.length === 0 ? <p className="faint">No evidence yet. A review gate result is required before verification can pass.</p> : detail.proofs.map((proof) => <p key={proof.id}><span className={`control-status ${proof.status}`}>{proof.status}</span> {proof.summary} <small>{ago(proof.createdAt)}</small></p>)}</div><div><span className="label">Continuity</span><h3>{detail.checkpoints.length} checkpoint{detail.checkpoints.length === 1 ? '' : 's'}</h3>{detail.checkpoints.length === 0 ? <p className="faint">Save a checkpoint before handoff or interruption. It records the exact provider conversation when one exists.</p> : detail.checkpoints.slice(0, 4).map((checkpoint) => <p key={checkpoint.id}>{checkpoint.note}<small>{checkpoint.conversationId ? ` · thread ${checkpoint.conversationId.slice(0, 12)}…` : ''} · {ago(checkpoint.createdAt)}</small></p>)}</div></div>
@@ -282,15 +283,26 @@ export default function Control({ projects, providers, onOpenSession }: {
   </div>;
 }
 
-function NodeCard({ node, busy, note, claim, onNote, onClaim, onStart, onCheckpoint, onClaimAdd, onProof, onComplete, onRetry }: {
+/**
+ * One task in the graph, with the prerequisites it waits on named on the card.
+ *
+ * The main process reports 'blocked' for two different situations — a
+ * prerequisite that failed or was canceled, and one that simply has not
+ * finished yet (control.ts, mapNodes) — and the operator's next move differs:
+ * reopen the failed task, or wait for the unfinished one. On any graph wider
+ * than a chain the status word alone cannot say which, so each prerequisite is
+ * listed with its own status.
+ */
+function NodeCard({ node, busy, note, claim, prereqs, onNote, onClaim, onStart, onCheckpoint, onClaimAdd, onProof, onComplete, onRetry }: {
   node: DocketNode; busy: string | null; note: string; claim: string;
+  prereqs: { title: string; status: DocketNodeStatus }[];
   onNote: (value: string) => void; onClaim: (value: string) => void; onStart: () => void; onCheckpoint: () => void;
   onClaimAdd: () => void; onProof: () => void; onComplete: (decision?: 'approve' | 'request_changes' | 'reject') => void;
   onRetry: () => void;
 }) {
   const actionable = ['ready', 'running'].includes(node.status);
   const reopenable = ['failed', 'canceled'].includes(node.status);
-  return <article className="control-node"><div><span className={`control-status ${node.status}`}>{node.status}</span><span className="label">{node.kind}</span><h3>{node.title}</h3><p>{node.instructions}</p>{node.sessionId && <button className="btn btn-small" onClick={onCheckpoint} disabled={busy !== null}>Checkpoint</button>}</div>
+  return <article className="control-node"><div><span className={`control-status ${node.status}`}>{node.status}</span><span className="label">{node.kind}</span><h3>{node.title}</h3>{prereqs.length > 0 && <p className="control-node-waits">Waits on {prereqs.map((prereq, index) => { const mark = markOf(prereq.status); return <span key={`${prereq.title}-${index}`}>{index > 0 ? ', ' : ''}{prereq.title} <Mark glyph={mark.glyph} word={mark.word} tone={mark.tone} /></span>; })}</p>}<p>{node.instructions}</p>{node.sessionId && <button className="btn btn-small" onClick={onCheckpoint} disabled={busy !== null}>Checkpoint</button>}</div>
     <div className="control-node-actions">{node.status === 'ready' && <button className="btn btn-primary" onClick={onStart} disabled={busy !== null}>Start isolated task</button>}{reopenable && <button className="btn" onClick={onRetry} disabled={busy !== null}
       title="Reopen this task so it can be started again. Its dependents stop being blocked.">Reopen task</button>}{node.kind === 'verify' && actionable && <button className="btn" onClick={onProof} disabled={busy !== null}>Run review gate</button>}<input className="field" value={note} onChange={(event) => onNote(event.target.value)} placeholder="Evidence or handoff note" disabled={!actionable} />{node.kind === 'implement' && actionable && <div className="control-inline"><input className="field" value={claim} onChange={(event) => onClaim(event.target.value)} placeholder="src/path.ts" /><button className="btn btn-small" onClick={onClaimAdd} disabled={busy !== null || !claim.trim()}>Claim</button></div>}{node.kind === 'review' && actionable ? <div className="control-review-actions"><button className="btn btn-primary" onClick={() => onComplete('approve')} disabled={busy !== null}>Approve</button><button className="btn" onClick={() => onComplete('request_changes')} disabled={busy !== null}>Request changes</button><button className="btn btn-danger" onClick={() => onComplete('reject')} disabled={busy !== null}>Reject</button></div> : actionable && <button className="btn" onClick={() => onComplete('approve')} disabled={busy !== null}>Mark complete</button>}</div>
   </article>;

@@ -907,6 +907,18 @@ export type DocketAutopilot = {
   budgetUsd: number | null;
   spendUsd: number;
   spendStatus: 'reported' | 'partial' | 'unreported' | 'none';
+  /**
+   * Why the last automatic halt happened, with the halt prefix already
+   * removed, or null if this docket has never stopped itself. It is a typed
+   * field rather than a summary string so no surface has to parse a sentence
+   * to find out whether the cap, a missing provider or a missing budget ended
+   * the run. It outlives the halt on purpose: re-arming does not erase the
+   * evidence, so `enabled` says what is running now and this says what last
+   * stopped, which is the pair an operator needs to decide whether to re-arm.
+   */
+  haltedReason: string | null;
+  /** When that halt was recorded, or null if there has never been one. */
+  haltedAt: number | null;
 };
 
 /**

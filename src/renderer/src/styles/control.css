@@ -48,6 +48,11 @@
 .control-node > div:first-child { min-width: 0; flex: 1; }
 .control-node h3 { margin: 5px 0; }
 .control-node p { color: var(--text-dim); margin: 0 0 9px; font-size: 13px; white-space: pre-wrap; }
+/* The prerequisite line sits between the title and the instructions. It is
+   generated prose rather than an agent's own text, so it wraps normally
+   instead of inheriting the pre-wrap the instructions need, and it sits one
+   step tighter to the title than the paragraph below it. */
+.control-node-waits { margin: 0 0 var(--s-2); white-space: normal; }
 .control-node-actions { width: min(340px, 44%); display: grid; gap: 7px; }
 .control-node-actions .field { min-width: 0; }
 .control-review-actions { flex-wrap: wrap; }

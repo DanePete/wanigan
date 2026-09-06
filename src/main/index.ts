@@ -1999,6 +1999,12 @@ function registerIpc() {
     control.completeNode(nodeId, input ?? {}));
   handle('control:setAutopilot', (docketId: string, input: { enabled: boolean; providerId?: string; model?: string | null }) =>
     control.setAutopilot(docketId, input));
+  // Budget is a separate call rather than a field on setAutopilot: arming and
+  // capping are two decisions, and a goal created without a cap needs a way to
+  // get one before it can ever be armed. The value stays untrusted until
+  // setDocketBudget bounds it in the main process.
+  handle('control:setBudget', (docketId: string, budgetUsd: number | null) =>
+    control.setDocketBudget(docketId, budgetUsd));
   handle('control:outcomes', (projectId?: string | null) => control.outcomes(projectId));
   handle('control:events', (status?: 'new' | 'triaged' | 'dismissed' | 'all', limit?: number) => control.listEvents(status ?? 'all', limit));
   handle('control:addEvent', (input: { projectId?: string | null; source: string; kind: string; summary: string }) => control.addEvent(input));
