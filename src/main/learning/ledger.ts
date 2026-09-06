@@ -11,6 +11,7 @@ import { DEFAULT_AUTOMATION_POLICY, automationDecision } from './classifier';
 import { recordMetric } from './experiments';
 import { getCandidate, getKnowledgeItem } from './repository';
 import { listSignals } from './signals';
+import { DECIDED_CANDIDATE_STATUSES } from './types';
 import type {
   CandidateExplanation, CandidateStatus, ConsolidationRun, KnowledgeBriefing,
   KnowledgeKind, KnowledgeStatus, LearningPipelineStats, SessionBriefingRecord,
@@ -91,6 +92,43 @@ export function recordSessionBriefing(input: RecordSessionBriefingInput): Sessio
     omittedUnverified: input.briefing.omittedUnverified,
     sessionStartAt: null,
   };
+}
+
+/**
+ * Derived knowledge expires; human teaching does not. Consolidation stamps a
+ * machine-authored claim with an expiry so a pattern nothing uses any more
+ * ages out of the canonical store instead of being briefed forever.
+ */
+export const MACHINE_KNOWLEDGE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * Push that expiry forward for the derived items a launch actually delivered.
+ * Without this the clock was set once at promotion and never moved, so a claim
+ * that earned its place in every briefing still self-quarantined on the same
+ * ninety-day schedule as one nothing had loaded since the day it was written.
+ *
+ * Three rules, each a guard in the statement. It only extends, so a machine
+ * whose clock ran backwards cannot shorten a life. It only touches rows that
+ * already carry an expiry, so human teaching never acquires one here. And it
+ * takes the entries a briefing shipped, never the candidates it ranked: an
+ * item retrieval held back — stale citation, over budget, never synthesized
+ * into a claim — was considered and not used, and being considered has never
+ * earned anything. Never throws; a launch that reached the agent is not a
+ * failure because one bookkeeping update did not land.
+ */
+export function refreshDeliveredKnowledgeTtl(entries: { itemId: string }[], at = Date.now()): void {
+  if (!entries.length) return;
+  const next = at + MACHINE_KNOWLEDGE_TTL_MS;
+  try {
+    const statement = db().prepare(
+      "UPDATE knowledge_items SET expires_at=? WHERE id=? AND expires_at IS NOT NULL AND expires_at < ? AND status='active'",
+    );
+    db().transaction(() => {
+      for (const entry of entries) statement.run(next, entry.itemId, next);
+    })();
+  } catch (error) {
+    console.warn('[wanigan] delivered knowledge TTL not refreshed:', error);
+  }
 }
 
 type BriefingRow = {
@@ -448,13 +486,42 @@ export function pipelineStats(input: { projectId?: string | null; windowDays?: n
       [since, ...signalArgs],
     ),
     candidatesCreated: one(`SELECT COUNT(*) n FROM knowledge_candidates WHERE created_at >= ?${artifactWhere}`, [since, ...artifactArgs]),
+    // Counted directly, because the Inbox figure this feeds used to be
+    // candidatesCreated - autoPromoted and that arithmetic was wrong twice
+    // over: autoPromoted is a COUNT(DISTINCT item_id) over knowledge_versions,
+    // so it counts knowledge items rather than candidates and the two terms
+    // were different units; and no term in it ever fell for a candidate a
+    // person approved or rejected, so an Inbox emptied by review still claimed
+    // a backlog. 'pending' and 'snoozed' are the two statuses that carry no
+    // recorded decision — a snooze defers the decision, it does not make one.
+    awaitingDecision: one(
+      `SELECT COUNT(*) n FROM knowledge_candidates
+       WHERE created_at >= ? AND status IN ('pending','snoozed')${artifactWhere}`,
+      [since, ...artifactArgs],
+    ),
     autoPromoted: one(
       `SELECT COUNT(DISTINCT kv.item_id) n FROM knowledge_versions kv
        JOIN knowledge_items ki ON ki.id = kv.item_id
        WHERE kv.created_at >= ? AND kv.created_by = 'automation'${projectId === undefined ? '' : projectId === null ? ' AND ki.project_id IS NULL' : " AND (ki.scope='personal' OR ki.project_id=?)"}`,
       [since, ...artifactArgs],
     ),
-    reviewed: one(`SELECT COUNT(*) n FROM knowledge_candidates WHERE reviewed_at IS NOT NULL AND reviewed_at >= ?${artifactWhere}`, [since, ...artifactArgs]),
+    // "decided" is a claim about the row's status, not about a timestamp
+    // being set. This used to be `reviewed_at IS NOT NULL`, and reviewCandidate
+    // stamps reviewed_at for a snooze as well as for an approve or a reject —
+    // so one snoozed row was counted as decided here and as still open by
+    // awaitingDecision above, which is the contradiction the comment there
+    // already describes. The status list is DECIDED_CANDIDATE_STATUSES, the
+    // same set behind the Inbox's "Decided" filter this figure opens on click.
+    // reviewed_at stays as the clock, because "last Nd" here means the window
+    // the decision was taken in rather than the one the candidate was created
+    // in; it is also null on a candidate automation promoted without review,
+    // which is how those stay out of a figure about human decisions.
+    reviewed: one(
+      `SELECT COUNT(*) n FROM knowledge_candidates
+       WHERE reviewed_at IS NOT NULL AND reviewed_at >= ?
+         AND status IN (${DECIDED_CANDIDATE_STATUSES.map(() => '?').join(',')})${artifactWhere}`,
+      [since, ...DECIDED_CANDIDATE_STATUSES, ...artifactArgs],
+    ),
     itemsPromoted: one(`SELECT COUNT(*) n FROM knowledge_items WHERE created_at >= ?${artifactWhere}`, [since, ...artifactArgs]),
     projectionsApplied: one(`SELECT COUNT(*) n FROM knowledge_projections WHERE applied_at IS NOT NULL AND applied_at >= ?${plainWhere}`, [since, ...plainArgs]),
     briefingsServed: one(`SELECT COUNT(*) n FROM session_briefings WHERE at >= ?${plainWhere}`, [since, ...plainArgs]),

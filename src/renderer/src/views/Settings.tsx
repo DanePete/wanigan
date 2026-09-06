@@ -9,7 +9,7 @@ import type {
   TranscriptHit, TranscriptTurn, TrustLevel, UploadedFile, WorktreeInfo,
 } from '@shared/types';
 import { TRUST_COPY, TRUST_LEVELS, trustCopy } from '@shared/types';
-import { ConfirmNote, Explainer, Note, Section, Stat, ago, num } from '../components/bits';
+import { ConfirmNote, Explainer, Note, PageHead, Section, Stat, ago, num } from '../components/bits';
 import ThemeControl from '../components/ThemeControl';
 import type { ResolvedTheme } from '../theme-boot';
 import '../styles/settings.css';
@@ -58,6 +58,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'automation', tabLabel: 'Automation', section: 'Spending', hint: 'Cap the estimated cost per batch run', keywords: 'spend cap cost limit usd budget' },
   { tab: 'automation', tabLabel: 'Automation', section: 'Dispatcher', hint: 'Concurrency limits and the queue', keywords: 'concurrency limits queue dispatcher interactive headless batch parallel' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Phone monitor', hint: 'iPad/phone monitor, alerts, remote', keywords: 'phone ipad mobile tailscale ntfy push alerts remote pairing' },
+  { tab: 'connections', tabLabel: 'Connections', section: 'Before you leave', hint: 'Can this Mac be left alone and still answer', keywords: 'sleep awake battery power lid closed walk away leave readiness restart resume reachable overnight' },
   { tab: 'connections', tabLabel: 'Connections', section: 'MCP servers', hint: 'Tool servers agents may use', keywords: 'mcp server tools stdio http' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Observation', hint: 'Telemetry, hooks, checkpoints, archive', keywords: 'telemetry hooks checkpoints notifications archive transcripts observation pet retention' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Search transcripts', hint: 'Full-text search of the archive', keywords: 'transcript search fts archive conversation history full-text' },
@@ -649,13 +650,8 @@ export default function Settings({
           again about drafts — three explanations of the page before the first
           control. The rule is one line; the rest is a guide the operator can
           hide. Per-control captions stay where they are. */}
-      <header className="set-hero">
-        <div>
-          <div className="set-kicker">Wanigan control center</div>
-          <h1>Settings</h1>
-          <p>Grouped by the job you are doing. Switches save at once; a Save button applies the fields beside it.</p>
-        </div>
-      </header>
+      <PageHead compact title="Settings"
+                lead="Grouped by the job you are doing. Switches save at once; a Save button applies the fields beside it." />
       <Explainer id="settings-how" title="How settings work">
         <p>
           Most switches save immediately. A button labelled Save applies the fields beside it, and each
@@ -1472,7 +1468,7 @@ function RemoveProjectConfirm({ project, onCancel, onConfirm }: {
   );
 }
 
-/** The one harness whose accounts a project can be pinned to today. */
+/** The one harness whose accounts THIS PANEL pins a project to today. */
 const PROJECT_ACCOUNT_HARNESS = 'claude-code';
 
 function Projects({ projects, onAddProject, onRemoveProject }: {
@@ -2042,6 +2038,105 @@ function Egress() {
    Phone monitor
    ════════════════════════════════════════════════════════════════════════ */
 
+/**
+ * The tailnet transport bridge ships in the same wave as this panel, so the
+ * preload surface this file compiles against may not carry `tailnet` yet.
+ * Reading it through a narrow optional shape keeps the view honest in both
+ * directions: it builds before the bridge lands, and a Wanigan whose main
+ * process has no tailnet handler reports the transport as unreadable rather
+ * than throwing under a button the operator just pressed.
+ */
+type TailnetState = 'absent' | 'logged-out' | 'ready' | 'serving' | 'error';
+
+type TailnetStatus = {
+  state: TailnetState;
+  /** The HTTPS address Serve publishes; present only while it is serving. */
+  url: string | null;
+  /** Verbatim CLI text for the error state, never paraphrased into advice. */
+  message: string | null;
+};
+
+type TailnetBridge = {
+  status: () => Promise<TailnetStatus>;
+  serve: (port: number) => Promise<TailnetStatus>;
+  unserve: (port: number) => Promise<TailnetStatus>;
+  /** A QR for one of Wanigan's own URLs, drawn in main. */
+  /** Takes no argument on purpose: main encodes its OWN pairing URL, so an
+   *  SVG injected into this panel can never carry text the renderer chose. */
+  qrSvg?: () => Promise<string>;
+};
+
+function tailnetBridge(): TailnetBridge | null {
+  return (window.wanigan as unknown as { tailnet?: TailnetBridge }).tailnet ?? null;
+}
+
+/* Glyph and word carry the transport state; colour only agrees with them. */
+const TRANSPORT_MARK: Record<TailnetState, MarkSpec> = {
+  absent:       { glyph: '○', word: 'not installed', color: 'var(--text-faint)' },
+  'logged-out': { glyph: '⊘', word: 'signed out',    color: 'var(--warning)' },
+  ready:        { glyph: '◐', word: 'ready',         color: 'var(--text-dim)' },
+  serving:      { glyph: '✓', word: 'connected',     color: 'var(--good)' },
+  error:        { glyph: '✕', word: 'failed',        color: 'var(--critical)' },
+};
+
+/** Reading, unsupported and unreadable are states this panel must not conflate. */
+type Transport =
+  | { s: 'unsupported' }
+  | { s: 'reading' }
+  | { s: 'ok'; d: TailnetStatus }
+  | { s: 'unreadable'; e: string };
+
+/**
+ * The pairing QR, as an `<img>` over a `data:` URI rather than
+ * dangerouslySetInnerHTML.
+ *
+ * The SVG is generated in the main process from Wanigan's own pairing URL and
+ * never from anything the renderer or a paired device typed. An image element
+ * costs nothing over an inline SVG and closes the case where that stops being
+ * true: a browser will not run script inside an `<img>`, so no later change to
+ * how this string is produced can turn the QR into a code path.
+ *
+ * The generated SVG owns its quiet zone and its light background. A camera
+ * needs both, and neither can be borrowed from a theme that may be dark.
+ */
+function PairingQr({ url }: { url: string }) {
+  // `url` is never sent to main — it is the re-render key, so rotating the
+  // token redraws the code. Main encodes the pairing URL it already holds.
+  const [svg, setSvg] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  useEffect(() => {
+    const bridge = tailnetBridge();
+    if (!bridge?.qrSvg) {
+      setFailed('This build cannot draw a pairing code.');
+      return;
+    }
+    let live = true;
+    setSvg(null); setFailed(null);
+    bridge.qrSvg()
+      .then((drawn) => { if (live) setSvg(drawn); })
+      .catch((e) => { if (live) setFailed(`The code was not drawn: ${msg(e)}`); });
+    return () => { live = false; };
+  }, [url]);
+
+  if (failed) {
+    return (
+      <div className="sunk set-qr set-qr-empty">
+        <p className="faint set-fine">{failed} Open the pairing link beside it instead.</p>
+      </div>
+    );
+  }
+  if (!svg) {
+    return <div className="sunk set-qr set-qr-empty"><p className="faint set-fine">Drawing the code…</p></div>;
+  }
+  return (
+    <div className="sunk set-qr">
+      <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`}
+           alt="QR code for this Mac’s private pairing link" />
+    </div>
+  );
+}
+
 function PhoneMonitor() {
   const [status, setStatus] = useState<MobileMonitorStatus | null>(null);
   const [server, setServer] = useState('https://ntfy.sh');
@@ -2050,6 +2145,7 @@ function PhoneMonitor() {
   const [port, setPort] = useState('47831');
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [net, setNet] = useState<Transport>({ s: 'reading' });
 
   const absorb = useCallback((next: MobileMonitorStatus) => {
     setStatus(next);
@@ -2064,6 +2160,20 @@ function PhoneMonitor() {
       .catch((e) => setResult({ tone: 'error', text: `Phone monitoring could not be read: ${msg(e)}` }));
   }, [absorb]);
   useEffect(() => { load(); }, [load]);
+
+  const readTransport = useCallback(() => {
+    const bridge = tailnetBridge();
+    if (!bridge) { setNet({ s: 'unsupported' }); return; }
+    setNet({ s: 'reading' });
+    bridge.status()
+      .then((d) => setNet({ s: 'ok', d }))
+      .catch((e) => setNet({ s: 'unreadable', e: msg(e) }));
+  }, []);
+  useEffect(() => { readTransport(); }, [readTransport]);
+
+  /* The readiness block below reads both of these and neither of them alone,
+     so its one 'Check again' has to move both. */
+  const recheck = useCallback(() => { load(); readTransport(); }, [load, readTransport]);
 
   const configure = useCallback(async (patch: Partial<MobileMonitorConfig>, label: string) => {
     setBusy(label); setResult(null);
@@ -2113,24 +2223,166 @@ function PhoneMonitor() {
     } finally { setBusy(null); }
   }
 
-  const serveCommand = `tailscale serve --bg ${status?.config.port ?? 47831}`;
+  /**
+   * Serve maps the loopback port Wanigan is *actually* listening on, which is
+   * the saved one — not whatever half-typed number is sitting in the advanced
+   * port field. Publishing an unsaved port would map an address nothing
+   * answers on, and the failure would only show up on the phone.
+   */
+  async function connect() {
+    const bridge = tailnetBridge();
+    if (!bridge || !status) return;
+    setBusy('tailnet'); setResult(null);
+    try {
+      const next = await bridge.serve(status.config.port);
+      setNet({ s: 'ok', d: next });
+      // Serve prints the address the phone will use. Saving it here is what
+      // turns the pairing link from a loopback URL no phone can open into one
+      // it can; asking the operator to copy it back by hand was the step this
+      // panel used to spend four paragraphs explaining.
+      if (next.url && next.url !== status.config.dashboardUrl) {
+        absorb(await window.wanigan.mobile.configure({ dashboardUrl: next.url }));
+      }
+      setResult(next.state === 'serving' && next.url
+        ? { tone: 'ok', text: `This Mac answers at ${next.url} inside your tailnet.` }
+        : { tone: 'error', text: next.message ?? 'Tailscale did not report a published address.' });
+    } catch (e) {
+      setResult({ tone: 'error', text: `Tailscale Serve did not start: ${msg(e)}` });
+    } finally { setBusy(null); }
+  }
 
+  async function disconnect() {
+    const bridge = tailnetBridge();
+    if (!bridge || !status) return;
+    const served = net.s === 'ok' ? net.d.url : null;
+    setBusy('tailnet'); setResult(null);
+    try {
+      const next = await bridge.unserve(status.config.port);
+      setNet({ s: 'ok', d: next });
+      // A saved dashboard URL that Serve no longer publishes is a QR that fails
+      // silently on the phone, so it leaves with the mapping that produced it.
+      // A URL the operator typed themselves is theirs and is left alone.
+      if (served && status.config.dashboardUrl === served) {
+        absorb(await window.wanigan.mobile.configure({ dashboardUrl: '' }));
+      }
+      setResult({ tone: 'ok', text: 'Tailscale no longer publishes this Mac.' });
+    } catch (e) {
+      setResult({ tone: 'error', text: `Tailscale Serve was not withdrawn: ${msg(e)}` });
+    } finally { setBusy(null); }
+  }
+
+  const serveCommand = `tailscale serve --bg ${status?.config.port ?? 47831}`;
+  // A QR of http://127.0.0.1 is a picture of an address the phone cannot reach.
+  // The code is offered only once there is a real HTTPS base behind the token.
+  const pairable = Boolean(status?.running && status.config.dashboardUrl);
+
+  /** One state, one sentence, one action. Never a list of instructions. */
+  function transport() {
+    if (net.s === 'reading') {
+      return <p className="dim set-fine">Reading Tailscale…</p>;
+    }
+    if (net.s === 'unsupported' || net.s === 'unreadable') {
+      return (
+        <div className="sunk set-transport">
+          <div className="set-transport-say">
+            <Mark glyph="?" word="unreadable" color="var(--text-faint)" />
+            <p className="dim">
+              {net.s === 'unsupported'
+                ? 'This build of Wanigan cannot see whether Tailscale is installed or running.'
+                : net.e}
+              {' '}Set the private HTTPS URL by hand below and the rest of this panel still works.
+            </p>
+          </div>
+          {net.s === 'unreadable' && (
+            <div className="set-transport-do">
+              <button className="btn" onClick={readTransport}>Check again</button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const { state, url, message } = net.d;
+    return (
+      <div className="sunk set-transport">
+        <div className="set-transport-say">
+          <Mark {...TRANSPORT_MARK[state]} />
+          {state === 'absent' && (
+            <p className="dim">
+              A phone cannot reach this Mac from outside its own network on its own. Tailscale is the
+              private carrier Wanigan knows how to drive; without it the dashboard stays on loopback.
+            </p>
+          )}
+          {state === 'logged-out' && (
+            <p className="dim">
+              Tailscale is installed on this Mac but not signed in. Sign in from its menu-bar item, then check again.
+            </p>
+          )}
+          {state === 'ready' && (
+            <p className="dim">
+              Connecting publishes port <span className="mono">{status?.config.port ?? 47831}</span> of
+              this Mac to your tailnet over HTTPS. It is not published to the LAN or the public internet,
+              and the pairing token still applies.
+            </p>
+          )}
+          {state === 'serving' && <code className="set-path set-wrap">{url ?? 'address not reported'}</code>}
+          {state === 'error' && <code className="set-path set-wrap">{message ?? 'Tailscale reported a failure with no message.'}</code>}
+        </div>
+        <div className="set-transport-do">
+          {state === 'absent' && (
+            <>
+              <a className="btn" href="https://tailscale.com/download" target="_blank" rel="noreferrer">Install Tailscale</a>
+              <button className="btn" onClick={readTransport}>Check again</button>
+            </>
+          )}
+          {state === 'logged-out' && (
+            <>
+              <a className="btn" href="https://login.tailscale.com/start" target="_blank" rel="noreferrer">Sign in</a>
+              <button className="btn" onClick={readTransport}>Check again</button>
+            </>
+          )}
+          {state === 'ready' && (
+            <button className="btn btn-primary" disabled={busy !== null || !status?.running}
+                    onClick={() => void connect()}>
+              {busy === 'tailnet' ? 'Connecting…' : 'Connect this Mac'}
+            </button>
+          )}
+          {state === 'serving' && (
+            <button className="set-mini" disabled={busy !== null} onClick={() => void disconnect()}>
+              {busy === 'tailnet' ? 'Disconnecting…' : 'Disconnect'}
+            </button>
+          )}
+          {state === 'error' && (
+            <button className="btn" disabled={busy !== null} onClick={() => void connect()}>Try again</button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* Two sections from one component, deliberately: the readiness block below
+     answers a different question but off the same readings, and a second pair
+     of reads would disagree with these switches the moment one is flipped. */
   return (
+    <>
     <Section title="Phone monitor"
              hint="Walk away without losing the fleet: a private read-only status page and opt-in phone alerts for the same states as desktop notifications.">
-      <Callout title="The dashboard is read-only until you explicitly enable iPad control.">
+      <Callout title="The dashboard reads only, until you enable iPad control or Repository review.">
         Read-only monitoring receives the Mac hostname, Wanigan version, an internal session id, project/session
         names, provider/model, state, timestamps, spend and aggregate usage. With paired iPad control enabled,
         the selected session’s terminal output is also shown and may contain paths, prompt text, or other sensitive
-        text printed by an agent. Treat every paired device as trusted. It does not expose permission approval.
+        text printed by an agent. Treat every paired device as trusted: whatever it sends is typed into the agent’s terminal, exactly as it would be at the Mac.
+        With Repository review enabled, a paired browser can also read which files each project has changed, read one
+        file’s diff, run that project’s saved review gate, and commit what git already tracks — never adding an
+        untracked file, and never pushing.
       </Callout>
 
       {!status ? (
-        <p className="dim" style={{ fontSize: 'var(--t-small)', marginTop: 12 }}>Reading phone monitoring…</p>
+        <p className="dim set-fine">Reading phone monitoring…</p>
       ) : (
         <>
           {status.error && !status.config.dashboardEnabled && (
-            <div style={{ marginTop: 10 }}><Callout level="critical" title={status.error} /></div>
+            <div className="set-stack"><Callout level="critical" title={status.error} /></div>
           )}
           <div className="set-sub">Read-only Fleet page</div>
           <Toggle title="Run the phone dashboard" on={status.config.dashboardEnabled} busy={busy !== null}
@@ -2142,77 +2394,112 @@ function PhoneMonitor() {
           <Toggle title="Allow paired iPad control" on={status.config.remoteControlEnabled} busy={busy !== null}
                   onChange={(on) => void configure({ remoteControlEnabled: on }, on ? 'Paired iPad control enabled' : 'Paired iPad control disabled')}>
             Requires the dashboard above. A paired browser can start an agent session, view its live terminal,
-            send its next instruction, or interrupt a turn. It cannot approve permissions, manage files, or change settings.
+            send its next instruction, or interrupt a turn. Typing is the whole of it: a message, or one of the arrow, Enter and Escape keys a waiting prompt needs — which is how a permission prompt gets answered. It cannot manage files or change Wanigan’s settings.
           </Toggle>
 
           {status.config.dashboardEnabled && (
-            <div className="sunk" style={{ padding: '12px 13px', marginTop: 10 }}>
-              <div style={{ display: 'flex', gap: 9, alignItems: 'center', flexWrap: 'wrap' }}>
-                <Mark {...(status.running
-                  ? { glyph: '✓', word: 'listening', color: 'var(--good)' }
-                  : { glyph: '✕', word: 'not listening', color: 'var(--critical)' })} />
-                <code className="set-path">{status.localUrl}</code>
-              </div>
-              {status.error && <div style={{ marginTop: 9 }}><Callout level="critical" title={status.error} /></div>}
+            <>
+              <div className="set-sub">Reaching this Mac from a phone</div>
+              {/* A listener error still has to be readable while the listener
+                  happens to be up — a credential the keychain refused reports
+                  an error and a running server at the same time — so the two
+                  conditions are separate rather than one fallback chain. */}
+              {status.error && <div className="set-stack"><Callout level="critical" title={status.error} /></div>}
+              {!status.running && !status.error && (
+                <div className="set-stack">
+                  <Callout level="critical" title="The loopback listener is not running, so nothing can be published yet." />
+                </div>
+              )}
+              {transport()}
 
-              <div className="row2" style={{ marginTop: 12 }}>
-                <div>
-                  <label className="label" htmlFor="mobile-port">Loopback port</label>
-                  <input id="mobile-port" className="field mono" inputMode="numeric" value={port}
-                         onChange={(e) => setPort(e.target.value)} disabled={busy !== null} />
+              {pairable ? (
+                <div className="set-pair">
+                  <PairingQr url={status.pairingUrl} />
+                  <div className="set-pair-facts">
+                    <div>
+                      <label className="label">Point the iPad camera at the code</label>
+                      <p className="faint set-fine">
+                        It opens the pairing link below. The credential sits after <span className="mono">#</span>, so it is
+                        absent from the initial navigation request and Referer; the page saves it on that device, removes it
+                        from the address bar, then sends it only as the Authorization header on status requests.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="label">Or type this pairing code</label>
+                      <div className="set-inline">
+                        <code className="set-path set-code">{status.pairingCode}</code>
+                        <button className="set-mini" onClick={() => void copy(status.pairingCode, 'Pairing code')}>copy code</button>
+                      </div>
+                      <p className="faint set-fine">
+                        Type this code in the Home Screen Wanigan app. It expires after ten minutes; reopen this panel for a fresh code.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="label">Pairing link</label>
+                      <div className="set-inline">
+                        <code className="set-path set-grow">{status.pairingUrl}</code>
+                        <button className="set-mini" onClick={() => void copy(status.pairingUrl, 'Pairing link')}>copy link</button>
+                        <button className="set-mini" disabled={busy !== null}
+                                onClick={async () => {
+                                  setBusy('rotate'); setResult(null);
+                                  try { absorb(await window.wanigan.mobile.regenerateToken()); setResult({ tone: 'ok', text: 'Old pairing links were revoked.' }); }
+                                  catch (e) { setResult({ tone: 'error', text: `The pairing token was not changed: ${msg(e)}` }); }
+                                  finally { setBusy(null); }
+                                }}>revoke &amp; replace</button>
+                      </div>
+                      <p className="faint set-fine">
+                        Replacing the token immediately signs every paired browser out, and the code above changes with it.
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <label className="label" htmlFor="mobile-url">Private HTTPS URL</label>
-                  <input id="mobile-url" className="field mono" value={dashboardUrl}
-                         placeholder="https://this-mac.example.ts.net" spellCheck={false}
-                         onChange={(e) => setDashboardUrl(e.target.value)} disabled={busy !== null} />
-                </div>
-              </div>
-              <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 6 }}>
-                Install Tailscale on this Mac and your phone, run the command below once, then paste the HTTPS URL it prints.
-                Wanigan stays bound to loopback; tailnet ACLs and the pairing token both still apply.
-                Tailscale&apos;s background Serve mapping persists independently: turning this switch off or changing ports does not remove it,
-                so disable/reset that mapping in Tailscale when you stop using it.
-              </p>
-              <div style={{ display: 'flex', gap: 7, alignItems: 'center', marginTop: 9, flexWrap: 'wrap' }}>
-                <code className="set-path" style={{ userSelect: 'all', flex: 1 }}>{serveCommand}</code>
-                <button className="set-mini" onClick={() => void copy(serveCommand, 'Tailscale command')}>copy command</button>
-                <a className="set-mini" style={{ textDecoration: 'none' }} href="https://tailscale.com/download" target="_blank" rel="noreferrer">get Tailscale</a>
-              </div>
-
-              <div style={{ marginTop: 13 }}>
-                <label className="label">Pairing code</label>
-                <div style={{ display: 'flex', gap: 7, alignItems: 'center', marginTop: 5 }}>
-                  <code className="set-path" style={{ letterSpacing: '0.12em', fontWeight: 700 }}>{status.pairingCode}</code>
-                  <button className="set-mini" onClick={() => void copy(status.pairingCode, 'Pairing code')}>copy code</button>
-                </div>
-                <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 6 }}>
-                  Type this code in the Home Screen Wanigan app. It expires after ten minutes; reopen this panel for a fresh code.
+              ) : (
+                <p className="faint set-fine">
+                  The pairing code appears here once this Mac has a private HTTPS address. A code for
+                  <span className="mono"> 127.0.0.1 </span>is a picture of an address no phone can open.
                 </p>
-              </div>
+              )}
 
-              <div style={{ marginTop: 13 }}>
-                <label className="label">Pairing link</label>
-                <div style={{ display: 'flex', gap: 7, alignItems: 'center', marginTop: 5, flexWrap: 'wrap' }}>
-                  <code className="set-path" style={{ userSelect: 'all', flex: 1, overflowWrap: 'anywhere' }}>{status.pairingUrl}</code>
-                  <button className="set-mini" disabled={!status.running || !status.config.dashboardUrl}
-                          onClick={() => void copy(status.pairingUrl, 'Pairing link')}>copy link</button>
-                  <button className="set-mini" disabled={busy !== null}
-                          onClick={async () => {
-                            setBusy('rotate'); setResult(null);
-                            try { absorb(await window.wanigan.mobile.regenerateToken()); setResult({ tone: 'ok', text: 'Old pairing links were revoked.' }); }
-                            catch (e) { setResult({ tone: 'error', text: `The pairing token was not changed: ${msg(e)}` }); }
-                            finally { setBusy(null); }
-                          }}>revoke &amp; replace</button>
+              <details className="set-hand">
+                <summary>Set it up by hand</summary>
+                <div className="set-hand-body">
+                  <div className="set-inline">
+                    <Mark {...(status.running
+                      ? { glyph: '✓', word: 'listening', color: 'var(--good)' }
+                      : { glyph: '✕', word: 'not listening', color: 'var(--critical)' })} />
+                    <code className="set-path">{status.localUrl}</code>
+                  </div>
+
+                  <div className="row2">
+                    <div>
+                      <label className="label" htmlFor="mobile-port">Loopback port</label>
+                      <input id="mobile-port" className="field mono" inputMode="numeric" value={port}
+                             onChange={(e) => setPort(e.target.value)} disabled={busy !== null} />
+                    </div>
+                    <div>
+                      <label className="label" htmlFor="mobile-url">Private HTTPS URL</label>
+                      <input id="mobile-url" className="field mono" value={dashboardUrl}
+                             placeholder="https://this-mac.example.ts.net" spellCheck={false}
+                             onChange={(e) => setDashboardUrl(e.target.value)} disabled={busy !== null} />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="set-inline">
+                      <code className="set-path set-grow">{serveCommand}</code>
+                      <button className="set-mini" onClick={() => void copy(serveCommand, 'Tailscale command')}>copy command</button>
+                      <a className="set-mini" href="https://tailscale.com/download" target="_blank" rel="noreferrer">get Tailscale</a>
+                    </div>
+                    <p className="faint set-fine">
+                      Run that command once, then paste the HTTPS URL it prints into the field above and save the connection below.
+                      Wanigan stays bound to loopback; tailnet ACLs and the pairing token both still apply.
+                      Tailscale&apos;s background Serve mapping persists independently: turning this switch off or changing ports does not remove it,
+                      so disable/reset that mapping in Tailscale when you stop using it.
+                    </p>
+                  </div>
                 </div>
-                <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 6 }}>
-                  Open this once on the phone. The credential sits after <span className="mono">#</span>, so it is absent from the initial navigation request and Referer;
-                  the page saves it on that device, removes it from the address bar, then sends it only as the Authorization header on status requests.
-                  Replacing it immediately signs every paired browser out.
-                  {!status.config.dashboardUrl && ' Save the private HTTPS URL above before copying this link to a phone.'}
-                </p>
-              </div>
-            </div>
+              </details>
+            </>
           )}
 
           <div className="set-sub">Phone alerts · ntfy</div>
@@ -2224,12 +2511,12 @@ function PhoneMonitor() {
             commands, paths and terminal output are excluded. Permission waits and errors use ntfy&apos;s urgent/maximum priority;
             finished turns are normal priority.
           </Toggle>
-          <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 6 }}>
+          <p className="faint set-fine">
             Built-in Claude-compatible and Codex sessions expose those in-turn states. A provider pack
             without a lifecycle channel still reports process exit, but not arbitrary prompts inferred from terminal text.
           </p>
 
-          <div className="sunk" style={{ padding: '12px 13px', marginTop: 10 }}>
+          <div className="sunk set-block">
             <div className="row2">
               <div>
                 <label className="label" htmlFor="mobile-ntfy-server">ntfy server</label>
@@ -2242,11 +2529,11 @@ function PhoneMonitor() {
                        onChange={(e) => setTopic(e.target.value)} disabled={busy !== null} />
               </div>
             </div>
-            <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.55, marginTop: 6 }}>
+            <p className="faint set-fine">
               Install the ntfy app and subscribe to this exact topic on the server above. The generated topic is the subscription credential:
               anyone who learns it can subscribe or publish, so do not use a guessable word. With <span className="mono">ntfy.sh</span>, the alert text leaves this machine for delivery.
             </p>
-            <div style={{ display: 'flex', gap: 7, marginTop: 10, flexWrap: 'wrap' }}>
+            <div className="set-inline set-stack">
               <button className="btn" disabled={busy !== null} onClick={() => void saveConnection()}>Save connection</button>
               <button className="btn" disabled={busy !== null || !topic.trim()} onClick={() => void testPush()}>
                 {busy === 'test' ? 'Sending…' : 'Send test alert'}
@@ -2262,10 +2549,10 @@ function PhoneMonitor() {
                         } catch (e) { setResult({ tone: 'error', text: `The ntfy topic was not changed: ${msg(e)}` }); }
                         finally { setBusy(null); }
                       }}>replace topic</button>
-              <a className="set-mini" style={{ textDecoration: 'none' }} href="https://ntfy.sh" target="_blank" rel="noreferrer">get ntfy</a>
+              <a className="set-mini" href="https://ntfy.sh" target="_blank" rel="noreferrer">get ntfy</a>
             </div>
             {(status.lastPushAt || status.lastPushError) && (
-              <p className={status.lastPushError ? 'critical' : 'faint'} style={{ fontSize: 'var(--t-micro)', marginTop: 8 }}>
+              <p className={`set-fine ${status.lastPushError ? 'critical' : 'faint'}`}>
                 {status.lastPushError
                   ? `Last delivery failed: ${status.lastPushError}`
                   : `Last alert accepted by ntfy ${status.lastPushAt ? ago(status.lastPushAt) : 'recently'} (device receipt is not reported).`}
@@ -2276,9 +2563,281 @@ function PhoneMonitor() {
       )}
       <Result r={result} />
     </Section>
+    <BeforeYouLeave status={status} net={net} onStatus={absorb} onRecheck={recheck} />
+    </>
   );
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+   Before you leave
+   ════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * What macOS is doing about sleep, as Wanigan observes it.
+ *
+ * The awake bridge lands in the same wave as this block, so this file can be
+ * compiled against a preload surface that does not carry it yet — the same
+ * position the transport panel above is in, and it takes the same shape: a
+ * narrow optional read, and an honest "unreadable" when the handler is absent.
+ *
+ * The value is then narrowed field by field rather than trusted through the
+ * cast. A bridge that lands beside this one with a different shape would
+ * otherwise turn an absent field into `false` and print "plugged in, held
+ * awake" about a laptop that is neither — and a confidently wrong "you can
+ * walk away" is the one answer this panel must never give.
+ */
+type AwakeReading = {
+  /** macOS reports no wall power: this Mac is running off its battery. */
+  onBattery: boolean;
+  /** Wanigan is currently holding an assertion against idle sleep. */
+  held: boolean;
+  /** What holds it, in Wanigan's own words — "3 sessions running". */
+  reason: string | null;
+};
+
+type AwakeBridge = { state: () => Promise<unknown> };
+
+function awakeBridge(): AwakeBridge | null {
+  return (window.wanigan as unknown as { awake?: AwakeBridge }).awake ?? null;
+}
+
+function awakeReading(value: unknown): AwakeReading | null {
+  if (!value || typeof value !== 'object') return null;
+  const d = value as Record<string, unknown>;
+  if (typeof d.onBattery !== 'boolean' || typeof d.held !== 'boolean') return null;
+  const reason = typeof d.reason === 'string' && d.reason.trim() ? d.reason.trim() : null;
+  return { onBattery: d.onBattery, held: d.held, reason };
+}
+
+/** Reading, unsupported and unreadable are three answers, and none of them is "no". */
+type Awake =
+  | { s: 'unsupported' }
+  | { s: 'reading' }
+  | { s: 'ok'; d: AwakeReading }
+  | { s: 'unreadable'; e: string };
+
+/* A reading that has not arrived and a reading that cannot arrive look
+   identical if both render as a blank, so both get a mark of their own. */
+const STILL_READING: MarkSpec = { glyph: '·', word: 'reading', color: 'var(--text-faint)' };
+const UNREADABLE: MarkSpec = { glyph: '?', word: 'unreadable', color: 'var(--text-faint)' };
+
+/** One line of the check: what it is, what was observed, and what follows. */
+type Check = { what: string; mark: MarkSpec; say: React.ReactNode; act?: React.ReactNode };
+
+/**
+ * The question an operator actually has before closing the lid, answered once.
+ *
+ * It is a readiness check rather than a settings group: every row is something
+ * Wanigan observed a moment ago, in the order that decides the answer — power,
+ * then sleep, then the carrier, then the listener — and only a row Wanigan can
+ * itself change carries a button. Nothing here is a default or an assumption;
+ * a fact that could not be read says so instead of passing.
+ *
+ * The readings are borrowed from the panel above rather than fetched again.
+ * Two independent reads of the same listener disagree the moment someone flips
+ * the switch twenty pixels higher, and this block would be the one still
+ * saying the reassuring half of it.
+ */
+function BeforeYouLeave({ status, net, onStatus, onRecheck }: {
+  status: MobileMonitorStatus | null;
+  net: Transport;
+  onStatus: (next: MobileMonitorStatus) => void;
+  onRecheck: () => void;
+}) {
+  const [awake, setAwake] = useState<Awake>({ s: 'reading' });
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+
+  const readAwake = useCallback(() => {
+    const bridge = awakeBridge();
+    if (!bridge) { setAwake({ s: 'unsupported' }); return; }
+    setAwake({ s: 'reading' });
+    bridge.state()
+      .then((value) => {
+        const d = awakeReading(value);
+        setAwake(d ? { s: 'ok', d } : {
+          s: 'unreadable',
+          e: 'The sleep reading came back in a shape this panel does not recognise, so it is not reporting one.',
+        });
+      })
+      .catch((e) => setAwake({ s: 'unreadable', e: msg(e) }));
+  }, []);
+  useEffect(() => { readAwake(); }, [readAwake]);
+
+  function recheck() {
+    setResult(null);
+    readAwake();
+    onRecheck();
+  }
+
+  /**
+   * The one repair this block owns. It goes through the same configure call the
+   * switch above uses and hands the answer back to that panel, so the switch and
+   * this row can never end up describing different listeners.
+   */
+  async function startDashboard() {
+    setBusy(true); setResult(null);
+    try {
+      const next = await window.wanigan.mobile.configure({ dashboardEnabled: true });
+      onStatus(next);
+      setResult(next.running
+        ? { tone: 'ok', text: `The dashboard is listening on ${next.localUrl}.` }
+        : { tone: 'error', text: next.error ?? 'The loopback listener did not start.' });
+      // Starting the dashboard is one of the things that asks macOS to stay
+      // awake, so the sleep row above this one is stale the moment it returns.
+      readAwake();
+    } catch (e) {
+      setResult({ tone: 'error', text: `The dashboard did not start: ${msg(e)}` });
+    } finally { setBusy(false); }
+  }
+
+  const again = <button className="btn" onClick={recheck}>Check again</button>;
+
+  function powerCheck(): Check {
+    const what = 'Power';
+    if (awake.s === 'reading') return { what, mark: STILL_READING, say: 'Asking macOS what this Mac is running on.' };
+    if (awake.s === 'unsupported') {
+      return { what, mark: UNREADABLE, say: 'This build of Wanigan cannot see whether this Mac is on wall power, so it cannot tell you what closing the lid will do.' };
+    }
+    if (awake.s === 'unreadable') return { what, mark: UNREADABLE, say: awake.e, act: again };
+    return awake.d.onBattery
+      ? {
+          what,
+          mark: { glyph: '⚠', word: 'on battery', color: 'var(--warning)' },
+          say: 'A Mac on battery sleeps when the lid closes, whatever any application asks for. This is the one line here that Wanigan cannot fix from inside the app: put it on wall power, or leave the lid open.',
+        }
+      : {
+          what,
+          mark: { glyph: '✓', word: 'plugged in', color: 'var(--good)' },
+          say: 'On wall power a request to stay awake can hold. Closing the lid still sleeps this Mac unless an external display keeps it in clamshell mode.',
+        };
+  }
+
+  function sleepCheck(): Check {
+    const what = 'Sleep';
+    if (awake.s === 'reading') return { what, mark: STILL_READING, say: 'Asking macOS whether anything is holding this Mac awake.' };
+    if (awake.s === 'unsupported') {
+      return { what, mark: UNREADABLE, say: 'This build of Wanigan cannot see whether anything is holding this Mac awake.' };
+    }
+    if (awake.s === 'unreadable') return { what, mark: UNREADABLE, say: awake.e, act: again };
+    if (awake.d.held) {
+      return {
+        what,
+        mark: { glyph: '✓', word: 'held awake', color: 'var(--good)' },
+        say: (
+          <>
+            Wanigan is asking macOS not to idle-sleep this Mac{awake.d.reason ? <> — {awake.d.reason}</> : null}.
+            {' '}The hold ends when that does, and the Mac goes back to its own sleep schedule.
+          </>
+        ),
+      };
+    }
+    return {
+      what,
+      mark: { glyph: '○', word: 'not held', color: 'var(--text-faint)' },
+      say: 'Nothing is asking macOS to stay awake, so this Mac may sleep on its own schedule and drop off the tailnet until something wakes it. A running session is what holds it awake, and so is the phone dashboard below.',
+    };
+  }
+
+  /* The five transport states are the transport panel's, read from the same
+     status it read. Naming a sixth here would be a second vocabulary for one
+     fact, and the two would drift the first time Tailscale changed. */
+  function transportCheck(): Check {
+    const what = 'Transport';
+    if (net.s === 'reading') return { what, mark: STILL_READING, say: 'Asking Tailscale where this Mac is published.' };
+    if (net.s === 'unsupported') {
+      return { what, mark: UNREADABLE, say: 'This build of Wanigan cannot see whether Tailscale is installed or running. A private HTTPS address you set by hand still works; Wanigan just cannot confirm it from here.' };
+    }
+    if (net.s === 'unreadable') return { what, mark: UNREADABLE, say: net.e, act: again };
+    const { state, url, message } = net.d;
+    const say: React.ReactNode =
+      state === 'serving'
+        ? <>This Mac answers at <code className="set-path set-wrap">{url ?? 'an address Tailscale did not report'}</code> inside your tailnet, and only inside it.</>
+        : state === 'error'
+          ? <>Tailscale reported: <code className="set-path set-wrap">{message ?? 'a failure with no message'}</code></>
+          : state === 'ready'
+            ? 'Tailscale is signed in but this Mac is not published, so the pairing link points at an address no iPad can open. Connect it in the panel above.'
+            : state === 'logged-out'
+              ? 'Tailscale is installed but signed out, so nothing is published. Sign in from its menu-bar item, then connect above.'
+              : 'Tailscale is not installed, so the dashboard stays on loopback and no device off this network can reach it.';
+    return { what, mark: TRANSPORT_MARK[state], say };
+  }
+
+  function reachCheck(): Check {
+    const what = 'Reachability';
+    if (!status) return { what, mark: STILL_READING, say: 'Reading the dashboard listener.' };
+    if (!status.config.dashboardEnabled) {
+      return {
+        what,
+        mark: OFF,
+        say: 'The read-only Fleet page is switched off, so a paired iPad has nothing to open however well the rest of this reads.',
+        act: (
+          <button className="btn btn-primary" disabled={busy} onClick={() => void startDashboard()}>
+            {busy ? 'Starting…' : 'Start the dashboard'}
+          </button>
+        ),
+      };
+    }
+    if (!status.running) {
+      return {
+        what,
+        mark: { glyph: '✕', word: 'not listening', color: 'var(--critical)' },
+        say: status.error ?? 'The switch is on but the loopback listener is not answering, so a published address maps to nothing.',
+        act: again,
+      };
+    }
+    // Listening and faulted at once is a real combination — a credential the
+    // keychain refused leaves the server up and the requests rejected — so it
+    // gets its own reading rather than being rounded up to a tick.
+    if (status.error) {
+      return {
+        what,
+        mark: { glyph: '⚠', word: 'faulted', color: 'var(--warning)' },
+        say: <>The listener is up but reported: {status.error}</>,
+        act: again,
+      };
+    }
+    return {
+      what,
+      mark: { glyph: '✓', word: 'listening', color: 'var(--good)' },
+      say: <>The dashboard is answering on <code className="set-path">{status.localUrl}</code>, which is what anything published above points at.</>,
+    };
+  }
+
+  const checks = [powerCheck(), sleepCheck(), transportCheck(), reachCheck()];
+
+  return (
+    <Section title="Before you leave"
+             hint="Whether the iPad still finds this Mac once the lid is closed. Every line is something Wanigan observed just now, not a setting."
+             right={<button className="set-mini" onClick={recheck}>Check again</button>}>
+      <ul className="set-leave">
+        {checks.map((c) => (
+          <li key={c.what} className="sunk set-leave-row">
+            <div className="set-leave-what">{c.what}</div>
+            <div className="set-leave-say">
+              <Mark {...c.mark} />
+              <p className="dim">{c.say}</p>
+            </div>
+            {c.act ? <div className="set-leave-do">{c.act}</div> : null}
+          </li>
+        ))}
+      </ul>
+
+      <div className="set-stack">
+        <Note tone="info" role="none">
+          <strong>What a restart would cost.</strong> A queued job that never started is still queued, and
+          Wanigan dispatches it once it is running again. A schedule keeps its next fire and catches up
+          once after the Mac is awake — once, not once for every interval it slept through. A headless
+          repository that was mid-run is not resumed: its agent went with the app, and the row is marked
+          interrupted so you restart that repository deliberately rather than have an unwatched agent
+          spend again. An interactive session is a live terminal process, so it ends when the process
+          that owns it ends; nothing re-attaches to it afterwards.
+        </Note>
+      </div>
+      <Result r={result} />
+    </Section>
+  );
+}
 /* ════════════════════════════════════════════════════════════════════════
    2 · Trust and the policy ledger
    ════════════════════════════════════════════════════════════════════════ */
@@ -2654,7 +3213,7 @@ const KIND_COPY: { id: keyof QueueSlots; label: string; detail: string; overLimi
     overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
   },
   {
-    id: 'node', label: 'Goal autopilot', detail: 'Unattended Goal tasks started without you at the keyboard.',
+    id: 'node', label: 'Goal autopilot', detail: 'Unattended Goal tasks, armed per goal in Control.',
     overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
   },
 ];
@@ -2914,7 +3473,11 @@ function Dispatcher({ active }: { active: boolean }) {
       <Frame v={slots.v} what="the slot limits" onRetry={slots.reload}>
         {(loaded) => {
           const d = draft ?? loaded;
-          const dirty = (['session', 'headless', 'batch', 'scout', 'node'] as const).some((k) => d[k] !== loaded[k]);
+          // Dirtiness is read off the rows that are actually on screen. A key with
+          // no control can never differ from what was loaded, and lighting “Save
+          // slots” for a difference the operator cannot see or undo is worse than
+          // not offering it.
+          const dirty = KIND_COPY.some(({ id }) => d[id] !== loaded[id]);
           return (
           <>
             {KIND_COPY.map(({ id, label, detail, overLimit }) => {
@@ -3188,13 +3751,42 @@ function Mcp({ projects, prefs, pending, setFlag }: {
   const [read, setRead] = useState(false);
 
   const own = useLoad(() => window.wanigan.mcp.server(), [prefs?.mcpServerEnabled]);
-  // Configuration only, no status. There were Connection and Calls columns here
-  // reading mcp_status, and nothing in the app has ever written that table —
-  // registry.ts's noteConnection and noteToolCall have no callers — so every
-  // server read “not seen yet” with zero calls, permanently, which is a false
-  // negative wearing the clothes of a measurement. The table and its writers are
-  // left alone for whoever wires them up; only the display is gone.
   const servers = useLoad(() => window.wanigan.mcp.servers(), [tick]);
+  // Use, and only use. There were Connection and Calls columns here once, reading
+  // an mcp_status table nothing in the app ever wrote, so every server read “not
+  // seen yet” with zero calls for the life of the install — a false negative
+  // wearing the clothes of a measurement. Both of its uncalled writers are gone
+  // from src/, and db.ts no longer creates the table on a new install; an install
+  // made before that keeps the empty table, because db.ts will not run a
+  // migration that destroys rows. db.ts and mcp/registry.ts each carry the
+  // gravestone.
+  //
+  // What stands here instead is not a status and cannot become one. Wanigan never
+  // sees an MCP server connect — the CLI spawns them inside the session's own
+  // process tree — but every MCP tool call reaches the hook bus as
+  // mcp__<server>__<tool> and lands in session_events, so serverStatuses() is a
+  // read over a table that is written on every call. It is a record of what the
+  // agents did, never of whether a server is up now, and the caption under the
+  // table says so where the numbers are read.
+  //
+  // Loaded independently of `servers` rather than folded into it, for two
+  // reasons: a failed use read must not blank the server list, and “Wanigan could
+  // not read this” and “nothing was called” have to stay two different sentences.
+  // An empty count before the first read has returned would be the third telling
+  // of a lie this codebase has already corrected twice, so ‘loading’, ‘failed’ and
+  // ‘zero’ get three renderings below and a failed read never prints a number.
+  const use = useLoad(() => window.wanigan.mcp.status(), [tick]);
+  // serverStatuses() returns one row per configured server, keyed by the same id
+  // the config list uses, so a server with nothing on record is present with a
+  // zero rather than absent.
+  const useOf = (id: string) => (use.v.s === 'ok' ? use.v.d.find((u) => u.id === id) ?? null : null);
+  // The two use columns exist only when the table does: the server-list read has
+  // to have come back, and it has to have rows. The caption and the failed-read
+  // note below both explain those columns, so they are gated on the same
+  // condition — an explanation of a zero must not print over an empty state
+  // where no zero was ever shown, and a note about one read must not report on
+  // the other read's health without looking at it.
+  const useColumnsShown = servers.v.s === 'ok' && servers.v.d.length > 0;
 
   const projectName = (id: string | null) =>
     id === null ? 'every project' : projects.find((p) => p.id === id)?.name ?? 'a project Wanigan no longer has';
@@ -3413,17 +4005,19 @@ function Mcp({ projects, prefs, pending, setFlag }: {
             );
           }
           return (
-            <div className="set-scroll wide">
+            <div className="set-scroll wide set-mcp-table">
               <table className="grid">
                 <thead>
                   <tr>
-                    <th>Name</th><th>Scope</th><th>Target</th><th>Given out</th><th />
+                    <th>Name</th><th>Scope</th><th>Target</th><th>Given out</th>
+                    <th className="r">Calls on record</th><th className="r">Last call</th><th />
                   </tr>
                 </thead>
                 <tbody>
                   {list.map((s) => {
                     const scopePath = s.projectId ? projects.find((p) => p.id === s.projectId)?.path ?? null : null;
                     const line = resolvedCommand(s, scopePath);
+                    const u = useOf(s.id);
                     return (
                       <Fragment key={s.id}>
                         <tr>
@@ -3443,6 +4037,33 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                               <Mark {...(s.enabled ? ON : OFF)} />
                             </button>
                           </td>
+                          {/* Three states, three renderings, and a number in only
+                              one of them. Before the read returns this says it has
+                              not returned; if it fails it says so and still prints
+                              nothing, because a zero the app supplied is
+                              indistinguishable on the page from a zero it counted —
+                              and that substitution is the exact bug the deleted
+                              mcp_status columns shipped for the life of an install. */}
+                          <td className="r mono">
+                            {use.v.s === 'loading' ? <span className="faint">reading…</span>
+                              : use.v.s === 'err' ? <span className="faint">unreadable</span>
+                                : <>
+                                    {num(u?.toolCalls ?? 0)}
+                                    {(u?.failures ?? 0) > 0 && (
+                                      <div className="faint set-sub-line">
+                                        {/* Not a .mark: a mark is a verdict with a tone,
+                                            and this is a count. The glyph is aria-hidden
+                                            because the words beside it already say it. */}
+                                        <span className="glyph" aria-hidden="true">✕</span> {num(u?.failures)} came back an error
+                                      </div>
+                                    )}
+                                  </>}
+                          </td>
+                          <td className="r faint mono">
+                            {use.v.s === 'loading' ? 'reading…'
+                              : use.v.s === 'err' ? 'unreadable'
+                                : u?.lastUsedAt ? ago(u.lastUsedAt) : 'no call on record'}
+                          </td>
                           <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                             <button className="set-mini" onClick={() => setDraft({
                               id: s.id, name: s.name, projectId: s.projectId ?? '', transport: s.transport,
@@ -3454,7 +4075,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                         </tr>
                         {confirmRemove === s.id && (
                           <tr key={`${s.id}-confirm`}>
-                            <td colSpan={5}>
+                            <td colSpan={7}>
                               <ConfirmNote
                                 what={<>Remove “{s.name}”? New sessions lose its tools; a session already running keeps it until it ends.</>}
                                 verb="Remove" onRun={() => remove(s)} onCancel={() => setConfirmRemove(null)} />
@@ -3463,7 +4084,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                         )}
                         {reviewing === s.id && (
                           <tr>
-                            <td colSpan={5} style={{ padding: 0 }}>
+                            <td colSpan={7} style={{ padding: 0 }}>
                               <McpEnableReview
                                 server={s} scopeName={projectName(s.projectId)} scopePath={scopePath}
                                 template={line.template} resolved={line.resolved}
@@ -3483,10 +4104,29 @@ function Mcp({ projects, prefs, pending, setFlag }: {
           );
         }}
       </Frame>
+      {useColumnsShown && use.v.s === 'err' && (
+        <div className="set-use-note">
+          <Note tone="warn" action={{ label: 'Retry', run: () => use.reload() }}>
+            Wanigan could not read the call record, so the two use columns read <em>unreadable</em>
+            rather than zero — a zero here would be a claim nothing established. The server list
+            above came back from its own separate read, so what it shows is unaffected.{' '}
+            <span className="mono">{use.v.e}</span>
+          </Note>
+        </div>
+      )}
+      {useColumnsShown && (
+        <p className="set-caption">
+          Counted from the hook bus, so this is a floor and not a total: a session run with hooks
+          switched off reports nothing, Codex is handed no hook settings at all, and events are pruned
+          on the retention schedule. Zero means no call is on record — never that the server does not
+          work.
+        </p>
+      )}
       <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, lineHeight: 1.5 }}>
         Wanigan writes these into the config of each session it launches and does not watch them
         afterwards. Whether a server answered is between the agent and that server, and this page will
-        not guess: it reports what was handed out, not what connected.
+        not guess: it reports what was handed out and what the agents called through it, never what
+        connected.
       </p>
       <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 6, lineHeight: 1.5 }}>
         Enabling a stdio server requires a recorded approval of that exact command, arguments and
@@ -4416,17 +5056,6 @@ function Backup() {
   );
 }
 
-/* ════════════════════════════════════════════════════════════════════════
-   Styles
-
-   Settings owns no feature stylesheet: index.css belongs to the shell and each
-   styles/*.css belongs to the phase that made it. So the rules this surface
-   needs, and only this surface needs, live here, scoped to .set. Not one colour
-   is declared — every value is a token from index.css.
-   ════════════════════════════════════════════════════════════════════════ */
-
-
-
 /* ── demo mode ────────────────────────────────────────────────────────────
    For screenshots. Masking happens in the main process at the IPC boundary,
    so this panel only turns it on and shows what it is doing — a mapping you
@@ -4434,17 +5063,23 @@ function Backup() {
    ──────────────────────────────────────────────────────────────────────── */
 
 function DemoPanel() {
-  const [state, setState] = useState<{ on: boolean; map: { real: string; fake: string }[] }>({ on: false, map: [] });
-  const [blur, setBlur] = useState(() => {
-    try { return localStorage.getItem('wanigan.demo.blurTerminal') === '1'; } catch { return false; }
-  });
+  const [state, setState] = useState<{ on: boolean; blurTerminals: boolean; map: { real: string; fake: string }[] }>(
+    { on: false, blurTerminals: false, map: [] });
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { window.wanigan.demo.state().then(setState).catch(() => {}); }, []);
+  // App applies this at start-up from the same stored answer; this keeps the
+  // page honest between ticking the box and the next launch.
   useEffect(() => {
-    document.documentElement.toggleAttribute('data-demo-blur', blur && state.on);
-    try { localStorage.setItem('wanigan.demo.blurTerminal', blur ? '1' : '0'); } catch { /* blocked */ }
-  }, [blur, state.on]);
+    document.documentElement.toggleAttribute('data-demo-blur', state.on && state.blurTerminals);
+  }, [state]);
+
+  async function toggleBlur(next: boolean) {
+    // No reload and no optimistic flip: on a failed write the checkbox stays
+    // where it was, because state was never updated.
+    try { setState(await window.wanigan.demo.setBlur(next)); }
+    catch { /* the checkbox stays where it was: state was not updated */ }
+  }
 
   async function toggle() {
     setBusy(true);
@@ -4472,7 +5107,8 @@ function DemoPanel() {
         <>
           <div style={{ marginTop: 10 }}>
             <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', fontSize: 'var(--t-small)' }}>
-              <input type="checkbox" checked={blur} onChange={(e) => setBlur(e.target.checked)} style={{ marginTop: 3 }} />
+              <input type="checkbox" checked={state.blurTerminals}
+                     onChange={(e) => void toggleBlur(e.target.checked)} style={{ marginTop: 3 }} />
               <span>
                 <strong>Blur terminals too.</strong> A live terminal draws raw bytes from the agent, so nothing in the
                 app can rewrite what it already printed. Masking cannot reach it — blurring can.

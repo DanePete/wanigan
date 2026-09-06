@@ -123,6 +123,8 @@ const NEED_MARK: Record<string, { glyph: string; tone: string; phrase: (n: numbe
 const shape = (l: Session[]) => l.map((s) => `${s.id}:${s.status}:${s.projectId}`).join('|');
 /** Likewise for the ranked attention list: identity, kind and when it began. */
 const attentionShape = (l: Attention[]) => l.map((a) => `${a.sessionId}:${a.kind}:${a.since}`).join('|');
+/** Likewise for the shared project list: identity, name, path and branch. */
+const projectShape = (l: Project[]) => l.map((p) => `${p.id}:${p.name}:${p.path}:${p.branch}`).join('|');
 
 /**
  * The palette's Recent group: the last five keys run from it, per machine.
@@ -178,7 +180,12 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [hasKey, setHasKey] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [activeRuns, setActiveRuns] = useState(0);
+  // Runs still in flight, counted by main rather than derived here from 200
+  // whole run rows. `null` means no read has returned yet, which is a different
+  // claim from "nothing is in flight": the badge stays off the screen until a
+  // read says so, and a failed refresh holds the last number that was actually
+  // observed rather than printing a zero nobody measured.
+  const [runsInFlight, setRunsInFlight] = useState<number | null>(null);
   // Requests returned out of requests submitted, across every run still in
   // flight. The nav bar advances on this and nothing else.
   const [batchWork, setBatchWork] = useState<{ done: number; total: number } | null>(null);
@@ -342,12 +349,15 @@ export default function App() {
 
   // ── nav counts ─────────────────────────────────────────────────────
   // Badges are polled centrally so a blocked agent or a running batch is
-  // visible from whichever view you happen to be in. A failing endpoint zeroes
-  // its own badge rather than blanking the others.
+  // visible from whichever view you happen to be in. A failing endpoint moves
+  // its own badge and no other; the batch badge additionally holds its last
+  // observed value rather than reporting a zero it never read.
   const tick = useCallback(async () => {
-    const [ss, runs, att] = await Promise.all([
+    const [ss, flight, att] = await Promise.all([
       window.wanigan.sessions.list().catch(() => [] as Session[]),
-      window.wanigan.batch.runs().catch(() => [] as { status: string }[]),
+      // null, not an empty read: a badge is a claim about what is running, and
+      // a call that failed has observed nothing to claim it from.
+      window.wanigan.batch.runsInFlight().catch(() => null),
       window.wanigan.attention.list().catch(() => [] as Attention[]),
     ]);
     // Poll results are only allowed to re-render the app when they actually
@@ -355,22 +365,20 @@ export default function App() {
     // the terminals for nothing.
     setSessions((prev) => (shape(prev) === shape(ss) ? prev : ss));
 
-    type RunRow = { status: string; succeeded?: number; failed?: number; pending?: number };
-    const flying = (runs as RunRow[]).filter((r) =>
-      ['in_progress', 'submitting', 'canceling'].includes(r.status));
-    setActiveRuns(flying.length);
-    let returned = 0, submitted = 0;
-    for (const r of flying) {
-      const ok = Number(r.succeeded) || 0, bad = Number(r.failed) || 0, wait = Number(r.pending) || 0;
-      returned += ok + bad; submitted += ok + bad + wait;
+    // A failed read updates neither the badge nor the bar. Both are statements
+    // about right now, and the last thing seen is closer to true than a zero.
+    if (flight) {
+      setRunsInFlight((prev) => (prev === flight.runs ? prev : flight.runs));
+      const returned = flight.requestsReturned;
+      const submitted = returned + flight.requestsOutstanding;
+      // Nothing to show until the API has actually accepted rows; a bar at zero
+      // width for a run that has not been submitted yet would be a guess.
+      setBatchWork((prev) => {
+        if (submitted <= 0) return prev === null ? prev : null;
+        if (prev && prev.done === returned && prev.total === submitted) return prev;
+        return { done: returned, total: submitted };
+      });
     }
-    // Nothing to show until the API has actually accepted rows; a bar at zero
-    // width for a run that has not been submitted yet would be a guess.
-    setBatchWork((prev) => {
-      if (submitted <= 0) return prev === null ? prev : null;
-      if (prev && prev.done === returned && prev.total === submitted) return prev;
-      return { done: returned, total: submitted };
-    });
 
     const live = new Set(ss.map((s) => s.id));
     const liveAttention = att.filter((a) => live.has(a.sessionId));
@@ -393,20 +401,42 @@ export default function App() {
 
   useEffect(() => {
     void tick();
-    const t = setInterval(tick, 6000);
+    const t = setInterval(() => { if (document.hidden) return; void tick(); }, 6000);
     const offBatch = window.wanigan.on.batchChanged(() => void tick());
     const offList = window.wanigan.on.sessions((list) =>
       setSessions((prev) => (shape(prev) === shape(list) ? prev : list)));
     return () => { clearInterval(t); offBatch(); offList(); };
   }, [tick]);
 
-  // Branches move constantly; keep the shared project list honest.
-  useEffect(() => {
-    const t = setInterval(() => {
-      window.wanigan.projects.refresh().then(setProjects).catch(() => {});
-    }, 30_000);
-    return () => clearInterval(t);
+  // Branches move constantly; keep the shared project list honest. Handing
+  // `setProjects` the refresh result directly installed a new array identity
+  // every thirty seconds whether or not a branch had actually moved, and
+  // `projects` is a prop of a dozen views — so compare first, the way the
+  // session and attention polls above already do.
+  const refreshProjects = useCallback(() => {
+    window.wanigan.projects.refresh()
+      .then((list) => setProjects((prev) => (projectShape(prev) === projectShape(list) ? prev : list)))
+      .catch(() => {});
   }, []);
+
+  // Both shell polls stop while the window is hidden. Chromium already
+  // throttles a hidden renderer's timers toward roughly once a minute, but only
+  // after about five minutes of hiding; the guard is what makes the first five
+  // minutes free too, and it costs nothing because the catch-up effect below
+  // re-reads the moment the window comes back.
+  useEffect(() => {
+    const t = setInterval(() => { if (document.hidden) return; refreshProjects(); }, 30_000);
+    return () => clearInterval(t);
+  }, [refreshProjects]);
+
+  // One listener for both guarded polls: returning to a window that fell behind
+  // should show current badge counts and current branches at once, not after
+  // the next six- or thirty-second beat.
+  useEffect(() => {
+    const onVisible = () => { if (document.hidden) return; void tick(); refreshProjects(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [tick, refreshProjects]);
 
   // A project added from another surface (or over IPC) must not stay invisible
   // to Context/Learning until the 30s branch tick: refresh on window focus and
@@ -733,14 +763,49 @@ export default function App() {
   // ── demo mode ───────────────────────────────────────────
   // Read once at start-up. demo:set reloads the window, so there is no state
   // to keep in sync afterwards — the next mount reads the new answer.
+  //
+  // The terminal blur is re-applied here, and only here. It used to be a
+  // localStorage flag written by a checkbox that exists only while Settings ›
+  // Demo mode is open and demo mode is already on, so the reload demo:set
+  // performs came back with masked names and an unblurred terminal — the
+  // half-masked screenshot that is worse than no masking, because it looks
+  // done. This component always mounts, so it is the only place the preference
+  // can be applied before a terminal draws.
+  //
+  // Blurred is where it starts, before the read has answered. An unblurred
+  // terminal is raw agent output on a screen someone may be sharing; a blurred
+  // one costs a caption for as long as one IPC call takes. Only an answer
+  // clears it, so a read that fails leaves the terminal covered and reports
+  // itself rather than quietly uncovering it.
   useEffect(() => {
     let mounted = true;
-    const read = () => window.wanigan.demo.state().then((s) => { if (mounted) setDemoOn(s.on); });
-    void read().catch((e) => {
-      // A silent failure here would be the one failure this app cannot take:
-      // masking on, and nothing on screen saying the names are invented.
-      if (mounted) reportError(e, { label: 'Check whether demo mode is on', run: read }, 'settings');
+    const blur = (on: boolean) => document.documentElement.toggleAttribute('data-demo-blur', on);
+    blur(true);
+    const read = () => window.wanigan.demo.state().then((s) => {
+      if (!mounted) return;
+      setDemoOn(s.on);
+      blur(s.on && s.blurTerminals);
     });
+    // One-shot, for an operator who ticked the box while it was still a browser
+    // flag. The stored setting is written first and the flag dropped second, so
+    // a failed write leaves the old preference where it is and the next launch
+    // tries again, instead of silently turning the blur off.
+    const carryOverLegacyFlag = async () => {
+      let legacy: string | null = null;
+      try { legacy = localStorage.getItem('wanigan.demo.blurTerminal'); }
+      catch { return; }  // blocked storage: there is no old preference to carry
+      if (legacy === null) return;
+      if (legacy === '1') await window.wanigan.demo.setBlur(true);
+      try { localStorage.removeItem('wanigan.demo.blurTerminal'); } catch { /* nothing to clean up */ }
+    };
+    void carryOverLegacyFlag()
+      .catch(() => { /* the read below is what reports the setting either way */ })
+      .then(read)
+      .catch((e) => {
+        // A silent failure here would be the one failure this app cannot take:
+        // masking on, and nothing on screen saying the names are invented.
+        if (mounted) reportError(e, { label: 'Check whether demo mode is on', run: read }, 'settings');
+      });
     return () => { mounted = false; };
   }, [reportError]);
 
@@ -998,7 +1063,7 @@ export default function App() {
     <AnnounceProvider onError={announceError}>
     <ViewMemoryProvider>
       {startup?.phase === 'recovery' && (
-        <section className="startup-recovery" role="alert" aria-live="assertive">
+        <section className="startup-recovery" role="alert">
           <div>
             <strong>Wanigan is open in recovery mode.</strong>
             <span>{startup.stage ?? 'Startup'}: {startup.message ?? 'Unknown local-data error.'}</span>
@@ -1126,9 +1191,9 @@ export default function App() {
                             badge={id === 'sessions' && running > 0 ? (
                               <span className="nav-badge mo-breathe" ref={runBadge}
                                     title={`${running} session${running === 1 ? '' : 's'} running`}>{running}</span>
-                            ) : id === 'batches' && activeRuns > 0 ? (
+                            ) : id === 'batches' && runsInFlight !== null && runsInFlight > 0 ? (
                               <span className="nav-badge"
-                                    title={`${activeRuns} batch run${activeRuns === 1 ? '' : 's'} in flight`}>{activeRuns}</span>
+                                    title={`${runsInFlight} run${runsInFlight === 1 ? '' : 's'} in flight — the same runs the Batches list counts as Active`}>{runsInFlight}</span>
                             ) : null}
                             progress={id === 'batches' && batchWork ? (
                               <span className="nav-progress" role="progressbar" aria-valuemin={0} aria-valuemax={batchWork.total}

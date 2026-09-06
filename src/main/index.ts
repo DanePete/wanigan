@@ -2,10 +2,9 @@ import { app, BrowserWindow, ipcMain, dialog, shell, session } from 'electron';
 import type { WebContents, WebFrameMain } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  detectProviders, effectiveProviderBackendId, providerById, providerPackRegistry, refreshProviderPacks,
+  detectProviders, effectiveProviderBackendId, launchFieldsFor, providerById, providerPackRegistry, refreshProviderPacks,
   runsClaudeCli, usesAnthropicAccount,
 } from './providers';
 import {
@@ -13,6 +12,7 @@ import {
   killSession, closeSession, scrollback, markRead, shutdownAll, sessionBaseline, interruptSession,
   pastSessions, forgetPastSession, recoverExactCodexThread, setSessionExitObserver,
   setSessionTuning, setConversationFlag, renameSession, redirectsAnthropicApiFor,
+  setFocusedSession,
 } from './sessions';
 import { listProjects, addProject, removeProject, refreshBranches, projectById } from './store';
 import * as batch from './batch';
@@ -21,15 +21,17 @@ import { getSetting, setSetting, setTheme, setUserPreference, spendCap } from '.
 import { hasKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailable, getWorkspaceId,
          hasProviderKey, setProviderKey, clearProviderKey, providerKeyFingerprint } from './keys';
 import type {
+  AwakeState,
   BackupCheck, BackupRestoreSummary, BackupSummary, DocketPlanNode,
   HeadlessRowDetail, HeadlessRowSummary, HeadlessStartRequest, HookInput,
   InteractiveSessionLoad, LaunchOptions, McpServerConfig, PluginScope,
   ProviderInfo, ProviderManifestInspection, QueueSlots, RunConfig, Session,
   SourceConfig, ThemeSetting, TrustLevel,
 } from '../shared/types';
-import { EFFORT_LEVELS } from '../shared/types';
 import { assertManagedRoot, assertOpenablePath } from './roots';
 import { installApplicationMenu } from './menu';
+import { automationRun } from './automation';
+import { adapterTrustPrompt, manifestTrustPrompt } from './pack-consent';
 
 // ── phases 1-24 ────────────────────────────────────────────────────────
 import * as otel from './otel';
@@ -46,13 +48,18 @@ import * as spend from './spend';
 import * as notify from './notify';
 import * as mobile from './mobile';
 import { mobileFleetSnapshot } from './fleet-snapshot';
+import * as tailnet from './tailnet';
+import { configureMobileLaunchPinSource, mobileLaunchProviders } from './mobile/launch-options';
+import * as awake from './awake';
+import { qrSvg } from '../shared/qr';
 import * as skills from './skills';
 import * as plugins from './plugins';
 import { glmModels, verifyGlmKey } from './glm';
+import { providerModelCatalogue } from './launch-choices';
 import { deepseekModels, verifyDeepSeekKey } from './deepseek';
 import * as gitOps from './git';
 import * as gh from './gh';
-import { demoOn, setDemo, demoMap, maskOut, unmaskIn, noteAuthors } from './demo';
+import { demoOn, setDemo, demoState, setDemoBlur, maskOut, unmaskIn, noteAuthors } from './demo';
 import * as schedule from './schedule';
 import * as observed from './observed';
 import { egressReport } from './egress';
@@ -156,6 +163,32 @@ let quitDraining = false;
 let quitReady = false;
 let stopHookEventListener: (() => void) | null = null;
 
+/**
+ * Tell awake.ts what is running, so it can hold or release the Mac.
+ *
+ * Both facts are read here rather than in awake.ts because both already live
+ * here: index.ts is the one module that sees the session list, the headless
+ * children and the phone monitor's configuration at once. Giving the power
+ * module its own opinion about what counts as a live agent would create a
+ * second answer that could disagree with the quit dialog's.
+ *
+ * Headless runs count. A detached overnight fan-out is precisely the work that
+ * "I left the laptop at home" is about, and a machine that suspends through it
+ * loses the run without reporting anything.
+ */
+function syncAwake(): AwakeState {
+  const live = listSessions().filter((s) => s.status === 'starting' || s.status === 'running').length;
+  let dashboard = false;
+  try {
+    dashboard = mobile.mobileConfig().dashboardEnabled;
+  } catch {
+    // Reading the setting opens the database, which is exactly what is broken
+    // in recovery mode. An unreadable dashboard flag is not a reason to keep a
+    // Mac awake, so it reads as off and the live-agent half still decides.
+  }
+  return awake.reconcileAwake({ sessions: live + headless.liveHeadlessCount(), dashboard });
+}
+
 function startPoller() {
   if (pollTimer) return;
   const tick = async () => {
@@ -173,6 +206,12 @@ function startPoller() {
     // monitor keep running. Phone delivery/retry cannot depend on a renderer.
     announceCurrentAttention();
     try { finalizeProviderRemovals(); } catch { /* an active profile is expected */ }
+    // The backstop for every lifecycle this file cannot see the end of. A
+    // headless row finishing writes no IPC message and a PTY that dies with the
+    // exit observer detached reports to nobody, so a reconcile that is cheap
+    // when nothing changed is what stops a released hold from being missed —
+    // and what starts one in the daemon, which has no window and no handlers.
+    try { syncAwake(); } catch { /* power management is never worth a dead poll */ }
   };
   pollTimer = setInterval(tick, 10_000);
   void tick();
@@ -223,7 +262,7 @@ const SCHEDULED_BUDGET_USD = 2;
 const SCHEDULED_TIMEOUT_MS = 15 * 60_000;
 
 let win: BrowserWindow | null = null;
-/** Slower than the dispatcher: a docket becomes eligible when work finishes. */
+/** Slower than the dispatcher: a goal becomes eligible when work finishes. */
 const AUTOPILOT_SWEEP_MS = 10_000;
 let autopilotTimer: NodeJS.Timeout | null = null;
 let uiInitialized = false;
@@ -418,155 +457,6 @@ function marketplaceSource(value: unknown): string {
   return source;
 }
 
-type ModelChoice = { value: string; label: string };
-
-/**
- * Model aliases each built-in backend publishes.
- *
- * Keyed on the BACKEND, never on the profile. Which models exist is a property
- * of the service being called: 'anthropic' answers for any profile pointed at
- * Anthropic no matter what that profile is named, and a pack that points the
- * same harness somewhere else does not inherit the list by accident. spend.ts
- * already draws this line in the same place and for the same reason.
- *
- * It is the last resort, not the rule — see providerModelChoices.
- */
-/** Bounds for the Codex model probe — it runs while a picker is rendering. */
-const CODEX_MODELS_TIMEOUT_MS = 4_000;
-const CODEX_MODELS_MAX_BYTES = 512 * 1024;
-
-const PUBLISHED_BACKEND_MODELS: Record<string, ModelChoice[]> = {
-  anthropic: [
-    { value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' },
-    { value: 'haiku', label: 'Haiku' }, { value: 'fable', label: 'Fable' },
-  ],
-  openai: [
-    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
-    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
-    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
-  ],
-};
-
-/**
- * Backends Wanigan can ask for a live catalogue, because it holds the
- * credential that call needs — the same two ids managedProviderCredentialId
- * governs, keyed the same way.
- */
-const LIVE_BACKEND_MODELS: Record<string, (provider: ProviderInfo) => Promise<ModelChoice[]>> = {
-  zai: async () => (await glmModels()).models.map((m) => ({ value: m.id, label: m.label })),
-  deepseek: async () => (await deepseekModels()).models.map((m) => ({ value: m.id, label: m.label })),
-  openai: (provider) => codexModels(provider),
-};
-
-/**
- * Ask the installed Codex CLI what it can run, rather than shipping a list that
- * is wrong the day OpenAI names a new model.
- *
- * `codex app-server` speaks JSON-RPC over stdio and answers `model/list` with
- * the ids, display names and per-model reasoning efforts the binary actually
- * accepts. That is the authority: a model this build has never heard of is a
- * launch failure no matter what Wanigan offers, and a model it gained this
- * morning works without anyone editing this file.
- *
- * Bounded on every axis, because it runs on the launch path: no credential is
- * passed, output is capped, and the child is killed on the timeout, on a parse
- * failure and on the success path alike — an unbounded probe that spawns a
- * process per picker render is worse than a stale list.
- */
-async function codexModels(provider: ProviderInfo): Promise<ModelChoice[]> {
-  const bin = provider.path;
-  if (!bin) return [];
-  return new Promise<ModelChoice[]>((resolve) => {
-    let child: ReturnType<typeof spawn> | null = null;
-    let out = '';
-    let settled = false;
-    const finish = (models: ModelChoice[]) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      // Terminate on every path, not just the error one: a probe that leaves an
-      // app-server behind on success leaks one process per refresh.
-      try { child?.kill('SIGKILL'); } catch { /* already gone is the outcome we wanted */ }
-      resolve(models);
-    };
-    const timer = setTimeout(() => finish([]), CODEX_MODELS_TIMEOUT_MS);
-    try {
-      child = spawn(bin, ['app-server'], { stdio: ['pipe', 'pipe', 'ignore'] });
-    } catch { return finish([]); }
-    child.on('error', () => finish([]));
-    child.on('exit', () => finish([]));
-    child.stdout?.on('data', (chunk: Buffer) => {
-      out += chunk.toString('utf8');
-      if (out.length > CODEX_MODELS_MAX_BYTES) return finish([]);
-      for (const line of out.split('\n')) {
-        if (!line.trim()) continue;
-        let msg: { id?: unknown; result?: { data?: unknown } };
-        try { msg = JSON.parse(line); } catch { continue; }
-        if (msg.id !== 2) continue;
-        const rows = Array.isArray(msg.result?.data) ? msg.result.data : [];
-        finish(rows
-          .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object')
-          // `hidden` is the CLI's own word for a model it lists but does not
-          // want offered; honour it rather than second-guessing it.
-          .filter((row) => row.hidden !== true)
-          .map((row) => ({
-            value: String(row.id ?? row.model ?? ''),
-            label: String(row.displayName ?? row.id ?? ''),
-          }))
-          .filter((choice) => choice.value !== ''));
-        return;
-      }
-    });
-    child.stdin?.on('error', () => finish([]));
-    child.stdin?.write(JSON.stringify({
-      jsonrpc: '2.0', id: 1, method: 'initialize',
-      params: { clientInfo: { name: 'wanigan', version: app.getVersion() } },
-    }) + '\n');
-    child.stdin?.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'model/list', params: {} }) + '\n');
-  });
-}
-
-/** The choices a profile's own launch field declares, which is the manifest's
- *  existing mechanism for saying what a profile accepts. */
-function declaredChoices(provider: ProviderInfo, fieldId: string): ModelChoice[] {
-  const field = provider.launchFields?.find((value) => value.id === fieldId);
-  return (field?.options ?? []).map((option) => ({ value: option.value, label: option.label }));
-}
-
-/**
- * What to offer for a provider's model, in the order Wanigan can vouch for it.
- *
- * This used to be a table keyed on four hardcoded profile ids, which is the
- * shape CLAUDE.md forbids: a pack declaring its own models got an empty picker,
- * a renamed built-in got somebody else's list, and neither could be fixed
- * without editing this file. The manifest wins, then the backend Wanigan can
- * ask, then what that backend publishes.
- */
-async function providerModelChoices(provider: ProviderInfo): Promise<ModelChoice[]> {
-  const declared = declaredChoices(provider, 'model');
-  if (declared.length) return declared;
-  const live = provider.backendId ? LIVE_BACKEND_MODELS[provider.backendId] : undefined;
-  if (live) {
-    // One backend that will not answer must not empty the whole picker, and a
-    // stale cached list is better than claiming the provider has no models.
-    try { return await live(provider); } catch { return []; }
-  }
-  return (provider.backendId ? PUBLISHED_BACKEND_MODELS[provider.backendId] : undefined) ?? [];
-}
-
-/**
- * Effort values the profile itself declares.
- *
- * The previous list appended 'ultra' whenever the id read 'codex' — a value no
- * manifest declares, so picking it produced an argv entry the profile's own
- * select rejects. EFFORT_LEVELS stands in only for a legacy definition that
- * carries no launch fields at all.
- */
-function providerEffortChoices(provider: ProviderInfo): string[] {
-  if (!provider.supports.effort) return [];
-  const declared = declaredChoices(provider, 'effort').map((choice) => choice.value);
-  return declared.length ? declared : [...EFFORT_LEVELS];
-}
 
 /**
  * Which provider an unattended run uses when the request did not name one.
@@ -844,6 +734,12 @@ app.on('before-quit', (event) => {
   stopServices();
   void Promise.allSettled([shutdownAll(), headless.shutdownHeadless()]).finally(() => {
     quitReady = true;
+    // Released here rather than at the top of the drain: the machine should
+    // stay up long enough for Codex to flush its rollout and node-pty to
+    // observe the exits. This is the one path every quit passes through, and a
+    // blocker is process-scoped, so leaving without giving it back is the
+    // difference between a Mac that sleeps tonight and one that does not.
+    try { awake.reconcileAwake(null); } catch { /* nothing may block the quit */ }
     app.quit();
   });
 });
@@ -1054,7 +950,7 @@ async function startServices() {
   queue.registerRunner('node', async (payload) => {
     const nodeId = (payload as { nodeId?: unknown } | null)?.nodeId;
     if (typeof nodeId !== 'string' || !nodeId) {
-      throw new Error('This autopilot queue item names no Goal task. Remove it and re-enable autopilot on the docket.');
+      throw new Error('This autopilot queue item names no Goal task. Remove it and re-enable autopilot on the goal.');
     }
     await control.startQueuedNode(nodeId);
   });
@@ -1063,7 +959,7 @@ async function startServices() {
     if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
   });
   // The sweep only writes queue rows; the dispatcher above still decides when
-  // one may start. It runs on its own slower interval because a docket becomes
+  // one may start. It runs on its own slower interval because a goal becomes
   // eligible through work finishing, not through the queue moving.
   //
   // Guarded against smoke as defence in depth. The suite returns before
@@ -1108,12 +1004,12 @@ async function startServices() {
 
   // Worktrees survive a crash; a stale one costs disk forever, so surface them.
   void worktrees.reconcileWorktrees().catch(() => {});
-  // A docket task left 'running' by a crash describes an agent that no longer
+  // A goal task left 'running' by a crash describes an agent that no longer
   // exists — and holds path claims nobody can release until it is reopened.
   try {
     const reopened = control.reconcileRunningNodes();
-    if (reopened) console.warn(`[wanigan] reopened ${reopened} docket task(s) whose session did not survive the last run`);
-  } catch (e) { console.warn('[wanigan] docket reconciliation skipped:', e); }
+    if (reopened) console.warn(`[wanigan] reopened ${reopened} goal task(s) whose session did not survive the last run`);
+  } catch (e) { console.warn('[wanigan] goal reconciliation skipped:', e); }
   // Deterministic consolidation runs only while the app or its launchd daemon
   // is alive. The service checks the visible controls on every pass.
   learning.startConsolidator();
@@ -1131,18 +1027,27 @@ function configureMobileSources(): void {
       otel.usageForMany(sessions.map((value) => value.id)),
     );
   });
+  // Which projects have an agent running, and nothing else about them. The pin
+  // screen states in the past tense how many sessions were already running when
+  // a repository's login changed, and that number has to be counted at the
+  // moment of the write rather than read off a cached page. sessions.ts cannot
+  // be imported from ./mobile — it reaches notify.ts, which imports the mobile
+  // facade — so the answer is handed in, and an unwired seam answers null
+  // rather than an honest-looking zero.
+  configureMobileLaunchPinSource({
+    liveProjectIds: () => listSessions()
+      .filter((session) => session.status !== 'exited')
+      .map((session) => session.projectId),
+  });
   mobile.configureMobileControlSource({
     projects: async () => listProjects().map((project) => ({ id: project.id, name: project.name, branch: project.branch })),
-    providers: async () => {
-      const providers = await detectProviders();
-      return Promise.all(providers.map(async (provider) => ({
-        id: provider.id, label: provider.label, available: Boolean(provider.path),
-        models: await providerModelChoices(provider),
-        efforts: providerEffortChoices(provider),
-      })));
-    },
-    launch: async ({ projectId, providerId, model, effort, prompt }) => {
-      const session = await createSession({ providerId, projectId, model, effort, initialPrompt: prompt });
+    providers: async () => mobileLaunchProviders(await detectProviders()),
+    launch: async ({ projectId, providerId, model, effort, accountId, prompt }) => {
+      // Which login the phone chose, already checked against the real account
+      // list in mobile/control.ts. null is the absence of a choice and resolves
+      // exactly as a desktop launch with no account picked: the project's pin
+      // first, then the default.
+      const session = await createSession({ providerId, projectId, model, effort, accountId, initialPrompt: prompt });
       return { id: session.id, title: session.title };
     },
     prompt: async (sessionId, prompt) => {
@@ -1150,12 +1055,75 @@ function configureMobileSources(): void {
       if (!session) throw new Error('That session is no longer running.');
       writeSession(sessionId, `${prompt}\r`);
     },
+    key: async (sessionId, sequence) => {
+      // The sequence came out of mobile/control.ts's closed list, so it is not
+      // rechecked here; what is left is the same liveness question `prompt`
+      // asks, for the same reason. A key written into an exited session is a
+      // keystroke into nothing that the phone would see reported as sent.
+      const session = listSessions().find((value) => value.id === sessionId && value.status !== 'exited');
+      if (!session) throw new Error('That session is no longer running.');
+      writeSession(sessionId, sequence);
+    },
     interrupt: async (sessionId) => interruptSession(sessionId),
     terminal: async (sessionId) => {
       const session = listSessions().find((value) => value.id === sessionId);
       if (!session) throw new Error('That session is no longer available.');
       return { title: session.title, running: session.status !== 'exited', text: scrollback(sessionId) };
     },
+  });
+
+  // Firing an installed skill into a live session. Three narrow capabilities and
+  // no more: read the catalogue for the project a session is open on, ask
+  // ../skills whether typing into that session is something Wanigan has actually
+  // verified, and write already-decided text. The phone holds an opaque id and
+  // never the command, and no directory crosses the HTTP boundary.
+  mobile.configureMobileSkillsSource({
+    read: async (sessionId) => {
+      const live = listSessions().find((value) => value.id === sessionId) ?? null;
+      const catalogue = skills.discoverSkills(live?.projectId ?? undefined);
+      // Asked of ../skills rather than answered here. An empty command can never
+      // match a row, so what comes back is the part of the decision that is about
+      // the SESSION — none chosen, exited, or a harness whose invocation form
+      // Wanigan has not verified — and 'unknown-skill' is that check having
+      // passed. If the order inside skillSendDecision ever changes, this reports
+      // no banner rather than a wrong one, and the tap still refuses with the
+      // real reason.
+      const gate = skills.skillSendDecision(live, '');
+      return {
+        skills: catalogue.skills,
+        agentSkillCount: catalogue.agentSkills.length,
+        builtinNote: catalogue.roots.find((root) => root.source === 'builtin')?.note ?? null,
+        blocked: gate.ok || gate.code === 'unknown-skill' ? null : gate.reason,
+      };
+    },
+    decide: async (sessionId, invoke) =>
+      skills.skillSendDecision(listSessions().find((value) => value.id === sessionId) ?? null, invoke),
+    type: async (sessionId, text) => {
+      // The same liveness question ./mobile/control.ts's prompt and key ask, for
+      // the same reason: text written into an exited session is typing into
+      // nothing that the phone would see reported as typed.
+      const session = listSessions().find((value) => value.id === sessionId && value.status !== 'exited');
+      if (!session) throw new Error('That session is no longer running.');
+      writeSession(sessionId, text);
+    },
+  });
+
+  // The Explore seam: what each account has left, what the fleet spent, and
+  // which lines either of those has crossed. Never forced — usage.snapshot()
+  // without `force` reuses the reading the Mac already had, because a phone
+  // polled while it is open must not be a second, silent trigger for a real
+  // CLI probe. The budgets are a second call because they are a second
+  // question, and mobile/explore.ts holds a failure of that one apart from a
+  // budget that is fine.
+  mobile.configureMobileExploreSource({
+    spend: ({ days }) => usage.snapshot({ days }),
+    budgets: () => ({
+      breached: spend.budgetBreached(),
+      // A budget of 0 tracks spend without capping it and cannot be breached,
+      // so it is not counted. The count is what stops the phone printing "no
+      // budget is over" at an operator who has never set one.
+      capped: spend.budgets().filter((row) => row.monthlyUsd > 0).length,
+    }),
   });
 }
 
@@ -1175,7 +1143,13 @@ async function startAttendedServices(): Promise<StartupState> {
   const attempt = (async () => {
     try {
       initSessions(() => win);
-      setSessionExitObserver((value) => notify.announceAttention(attention.attentionOf(value)));
+      setSessionExitObserver((value) => {
+        notify.announceAttention(attention.attentionOf(value));
+        // The last agent exiting is the moment the Mac should be allowed to
+        // sleep again, and waiting up to a poll interval for that is ten
+        // seconds of battery spent on nothing.
+        syncAwake();
+      });
       // Clicking a banner already raises the window; this is the half that was
       // missing. Without a route the operator lands on whichever tab happened
       // to be open and still has to hunt for the agent they were told about.
@@ -1264,6 +1238,26 @@ function forgetDemoMasking(): void {
   demoModeCheckedAt = 0;
 }
 
+/**
+ * Which port a tailnet action is allowed to touch: the one the phone monitor is
+ * configured to listen on, read here in main. The renderer may send its number
+ * along, but it is only ever checked against this one — a mismatch is a screen
+ * working from stale configuration, and publishing the port it asked for would
+ * put a proxy in front of something Wanigan is not listening on.
+ */
+function servedPort(requested?: number): number {
+  const port = mobile.mobileConfig().port;
+  if (requested !== undefined && requested !== port) {
+    throw new Error(`Wanigan can only serve the port its phone monitor listens on (${port}).`);
+  }
+  return port;
+}
+
+/** Same URL, ignoring the trailing slash the settings normaliser strips. */
+function sameUrl(a: string, b: string): boolean {
+  return a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
+}
+
 function registerIpc() {
   const handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => {
     ipcMain.handle(channel, async (event, ...args) => {
@@ -1292,14 +1286,36 @@ function registerIpc() {
   handle('startup:status', () => startupSnapshot());
   handle('startup:retry', () => startAttendedServices());
 
-  handle('demo:state', () => ({ on: demoOn(), map: demoMap() }));
+  handle('demo:state', () => demoState());
   handle('demo:set', (on: boolean) => {
     setDemo(on);
     forgetDemoMasking();
-    return { on: demoOn(), map: demoMap() };
+    return demoState();
+  });
+  // setDemoBlur does its own validation: the renderer is untrusted here, and a
+  // stored value that is neither on nor off reads back as off.
+  handle('demo:setBlur', (on: boolean) => {
+    setDemoBlur(on);
+    return demoState();
   });
 
   handle('providers:list', () => detectProviders());
+  /*
+   * The catalogue for one profile's model field.
+   *
+   * providerById reads the frozen pack SNAPSHOT. detectProviders() would call
+   * refreshProviderPacks() and re-probe the version and capabilities of every
+   * installed CLI, which is far too much work to hang off a picker opening.
+   */
+  handle('providers:modelCatalogue', async (providerId: unknown) => {
+    const def = providerById(String(providerId));
+    if (!def) throw new Error('That provider profile is not loaded.');
+    return providerModelCatalogue({
+      backendId: def.backendId,
+      supports: def.supports,
+      launchFields: launchFieldsFor(def),
+    });
+  });
   handle('providerPacks:list', (includeRemoved?: boolean) =>
     publicProviderPacks(includeRemoved === true));
   handle('providerPacks:inspectManifest', (packId: string): ProviderManifestInspection => {
@@ -1395,7 +1411,40 @@ function registerIpc() {
     providerPackRegistry.setEnabled(packId, enabled);
     refreshProviderPacks(); return publicProviderPacks();
   });
-  handle('providerPacks:trustManifest', (packId: string, sha256: string) => {
+  // Recording a trusted digest is the durable, on-disk grant that lets a local
+  // pack choose the argv and the entire environment of an already-installed CLI,
+  // and agentEnv assigns a pack's environment after it sets PATH, so a pack that
+  // names PATH wins. It was a bare pass-through, and the only place a human was
+  // asked was a page the renderer draws — which is not a trust boundary, because
+  // a compromised renderer can decline to draw it. plugins:marketAdd states the
+  // rule for the smaller of the two grants; this is the larger one.
+  //
+  // The registry's own refusals are re-checked before the dialog rather than
+  // after it, so the operator is never asked to approve something trustManifest
+  // would reject a moment later. The manifest and the adapter stay two separate
+  // questions: trusting one must not trust the other.
+  handle('providerPacks:trustManifest', async (packId: unknown, sha256: unknown) => {
+    if (typeof packId !== 'string' || !packId.trim()) throw new Error('That provider pack is not installed.');
+    if (typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sha256)) throw new Error('A digest to trust is required.');
+    const pack = providerPackRegistry.listPacks({ includeRemoved: true })
+      .find((entry) => entry.id === packId && entry.source === 'local');
+    if (!pack) throw new Error('That provider pack is not installed.');
+    if (!pack.manifest || !pack.manifestSha256) throw new Error('That provider pack has no inspectable manifest.');
+    if (pack.manifestSha256 !== sha256) {
+      throw new Error('The provider manifest changed after inspection. Review the new digest before trusting it.');
+    }
+    const w = win;
+    if (!w || w.isDestroyed()) {
+      throw new Error('Trusting a provider pack needs the Wanigan window open to confirm it.');
+    }
+    const answer = await dialog.showMessageBox(w, {
+      type: 'warning',
+      buttons: ['Cancel', 'Trust this manifest digest'],
+      defaultId: 0,
+      cancelId: 0,
+      ...manifestTrustPrompt(pack),
+    });
+    if (answer.response !== 1) throw new Error('Cancelled. Nothing was trusted and nothing was enabled.');
     providerPackRegistry.trustManifest(packId, sha256);
     refreshProviderPacks(); return publicProviderPacks();
   });
@@ -1414,7 +1463,31 @@ function registerIpc() {
         : 'This provider pack has no executable adapter to inspect.',
     };
   });
-  handle('providerPacks:trustAdapter', (packId: string, sha256: string) => {
+  handle('providerPacks:trustAdapter', async (packId: unknown, sha256: unknown) => {
+    if (typeof packId !== 'string' || !packId.trim()) throw new Error('That provider pack is not installed.');
+    if (typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sha256)) throw new Error('A digest to trust is required.');
+    const pack = providerPackRegistry.listPacks({ includeRemoved: true })
+      .find((entry) => entry.id === packId && entry.source === 'local');
+    if (!pack) throw new Error('That provider pack is not installed.');
+    // inspectAdapter hashes the file on disk, so the digest in the dialog is the
+    // main process's own reading and not a number the caller supplied.
+    const inspected = providerPackRegistry.inspectAdapter(packId);
+    if (!inspected) throw new Error('That provider pack has no executable adapter to trust.');
+    if (inspected.sha256 !== sha256) {
+      throw new Error('The adapter changed after it was inspected. Review the new digest before trusting it.');
+    }
+    const w = win;
+    if (!w || w.isDestroyed()) {
+      throw new Error('Trusting a provider pack needs the Wanigan window open to confirm it.');
+    }
+    const answer = await dialog.showMessageBox(w, {
+      type: 'warning',
+      buttons: ['Cancel', 'Trust this adapter digest'],
+      defaultId: 0,
+      cancelId: 0,
+      ...adapterTrustPrompt(pack, inspected),
+    });
+    if (answer.response !== 1) throw new Error('Cancelled. The adapter was not trusted.');
     providerPackRegistry.trustAdapter(packId, sha256);
     refreshProviderPacks(); return publicProviderPacks();
   });
@@ -1452,25 +1525,37 @@ function registerIpc() {
    * again. projects:pick, which sources its path from a main-process dialog,
    * needs no second confirmation and does not get one.
    */
-  handle('projects:add', async (dir: unknown) => {
-    if (typeof dir !== 'string' || !dir.trim()) throw new Error('A project path is required.');
-    const resolved = path.resolve(dir);
-    const w = win;
-    if (!w || w.isDestroyed()) {
-      throw new Error('Adding a project needs the Wanigan window open to confirm it.');
+   /*
+   * A registered project is the seed of the allowlist every other guard leans
+   * on: roots.ts builds managedRoots() from exactly this table, and its header
+   * states the premise — "Both come from this process's own records, never from
+   * the caller." This channel broke that. It took a bare path from the renderer
+   * and inserted it, and addProject's only refusal is assertWholeRepo, which
+   * rejects a *subdirectory* of a repo and passes any other directory. One call
+   * naming a home directory registered a root, and from then on assertManagedRoot
+   * succeeded for everything under it: code:read on ~/.ssh, browse:open handing
+   * a file to LaunchServices, and — if the directory happened to be a repo —
+   * git:discard and git:checkout writing to it.
+   *
+   * The renderer no longer decides. It may ask; this process decides, and the
+   * decision needs a person: projects:pick opens the main-process folder
+   * picker, which names the exact directory before a row is written, and is
+   * the only route in a normal run. Because its path comes from that dialog it
+   * needs no second confirmation and does not get one.
+   *
+   * The raw-path form survives for one caller. scripts/shots.mjs drives the
+   * built app headlessly to capture every view, and it cannot click a native
+   * picker — a window-modal sheet with nobody to dismiss it hangs the run
+   * rather than failing it. So this channel answers only an automation run:
+   * see src/main/automation.ts, which also refuses the marker outright in a
+   * packaged build. A page cannot put a flag on argv.
+   */
+  handle('projects:add', (dir: unknown) => {
+    if (!automationRun()) {
+      throw new Error('Wanigan registers a project from its own folder picker, not from a path the interface names. Use Add project.');
     }
-    const answer = await dialog.showMessageBox(w, {
-      type: 'warning',
-      buttons: ['Cancel', 'Add this project'],
-      defaultId: 0,
-      cancelId: 0,
-      title: 'Add this directory as a project?',
-      message: resolved,
-      detail: 'A project is a directory Wanigan is allowed to read, open, and run git in. '
-        + 'Everything below it becomes reachable to the agents you start here.',
-    });
-    if (answer.response !== 1) throw new Error('Cancelled. No project was added.');
-    return addProject(resolved);
+    if (typeof dir !== 'string' || !dir.trim()) throw new Error('A project path is required.');
+    return addProject(path.resolve(dir));
   });
   handle('projects:remove', (id: string) => { removeProject(id); return listProjects(); });
   handle('projects:pick', async () => {
@@ -1494,7 +1579,14 @@ function registerIpc() {
     live: listSessions().filter((value) => value.status !== 'exited').length,
     limit: queue.slots().session,
   }));
-  handle('sessions:create', (opts: LaunchOptions) => createSession(opts));
+  handle('sessions:create', async (opts: LaunchOptions) => {
+    const created = await createSession(opts);
+    // The first live agent is what takes the power-save blocker. Doing it here
+    // rather than waiting for the poller means the Mac is already held before
+    // the operator has finished closing the lid.
+    syncAwake();
+    return created;
+  });
   // Separate from sessions:create: only the exact UUID + selected project
   // cross this boundary, so arbitrary launch flags cannot turn recovery into a
   // broad Codex picker or a second writer.
@@ -1565,6 +1657,7 @@ function registerIpc() {
   handle('batch:estimate', (config: RunConfig, observedOut?: number) => batch.estimateRun(config, observedOut));
   handle('batch:dryRun', (config: RunConfig, rowIndex?: number) => batch.dryRunOne(config, rowIndex));
   handle('batch:runs', () => batch.listRuns());
+  handle('batch:runsInFlight', () => batch.runsInFlight());
   handle('batch:run', (id: string) => batch.runDetail(id));
   handle('batch:results', (id: string, status: string, q: string, offset: number) =>
     batch.runResults(id, status, q, offset));
@@ -1703,10 +1796,20 @@ function registerIpc() {
   // and ran git in it, which is the one rule this file states most often —
   // renderer input is untrusted until main has validated it. Reading is a
   // smaller grant than removing a tree, and it is still a grant.
+  //
+  // No String() on the way in: assertManagedRoot is typed (root: unknown) and
+  // answers a non-string with "That repository is not a folder Wanigan can act
+  // on", whereas String(Symbol()) throws a TypeError that names nothing and
+  // String(undefined) manufactures the path "undefined" for it to refuse.
+  //
+  // One honest caveat: listWorktrees returns paths straight from `git worktree
+  // list --porcelain`, which can name a worktree outside every managed root, so
+  // a future UI that lists those and then asks about one gets a refusal from
+  // worktrees:status rather than a status.
   handle('worktrees:list', (repoRoot: unknown) =>
-    worktrees.listWorktrees(assertManagedRoot(String(repoRoot), 'That repository')));
+    worktrees.listWorktrees(assertManagedRoot(repoRoot, 'That repository')));
   handle('worktrees:status', (p: unknown) =>
-    worktrees.worktreeStatus(assertManagedRoot(String(p), 'That worktree')));
+    worktrees.worktreeStatus(assertManagedRoot(p, 'That worktree')));
   // removeWorktree already refuses a directory git does not call a worktree,
   // but that leaves every worktree on the machine in range of a channel name.
   // Confining the base first means Wanigan only deletes trees inside the
@@ -1724,7 +1827,14 @@ function registerIpc() {
   handle('worktrees:forSession', (id: string) => worktrees.worktreeForSession(id));
 
   // ══ phase 10 · headless fan-out ═════════════════════════════════════
-  handle('headless:start', (cfg: HeadlessStartRequest) => headless.startHeadlessRun(cfg));
+  handle('headless:start', async (cfg: HeadlessStartRequest) => {
+    const started = await headless.startHeadlessRun(cfg);
+    // startHeadlessRun returns once the children are spawned, not when the
+    // fan-out finishes, so this reconcile happens with the run genuinely live.
+    // Its completion has no IPC boundary at all — the poller releases it.
+    syncAwake();
+    return started;
+  });
   // Status without the transcript. The run view refires this every three
   // seconds and renders none of the agent's stdout in the list, so the text
   // stays in SQLite until a row is expanded — see HeadlessRowSummary.
@@ -1791,6 +1901,12 @@ function registerIpc() {
   // switch notifications off.
   handle('notify:setWatchedSession', (sessionId: string | null) => {
     notify.setWatchedSession(sessionId);
+    // The same fact answers a second question. "Which session is on screen" is
+    // what decides whether output should raise an unread badge, and the
+    // renderer already reports it here on every tab and selection change —
+    // null whenever the operator is anywhere but Sessions, which is exactly
+    // when the badge is the only way to learn an agent said something.
+    setFocusedSession(sessionId);
     // Switching tabs/sessions can reveal that an alert previously suppressed
     // on the Mac is no longer on screen. Run after this IPC answer rather than
     // making renderer navigation wait on database reads and notification APIs.
@@ -1808,6 +1924,10 @@ function registerIpc() {
     // another lifecycle transition (or up to one poll interval) to be useful.
     if (deliveryChanged) notify.resetMobileAttentionDelivery();
     if (deliveryChanged && status.config.pushEnabled) queueMicrotask(announceCurrentAttention);
+    // Switching the phone dashboard on is a promise that this Mac will answer a
+    // device that is not in the room, which it cannot keep while suspended;
+    // switching it off is one of the two ways the hold is released.
+    if (before.dashboardEnabled !== status.config.dashboardEnabled) syncAwake();
     return status;
   });
   handle('mobile:regenerateToken', () => mobile.regenerateMobileToken());
@@ -1826,6 +1946,78 @@ function registerIpc() {
         : result.error ?? (result.skipped ? 'Phone alerts are disabled.' : 'ntfy did not accept the test alert.'),
     };
   });
+
+  // ── the private transport in front of that loopback listener ─────────
+  //
+  // Settings used to print a `tailscale serve` command to copy into a terminal
+  // and then ask for the URL back. These three drive the CLI instead, so the
+  // panel reports a transport it can observe rather than describing one it
+  // cannot.
+  handle('tailnet:status', (port?: number) => tailnet.tailnetStatus(servedPort(port)));
+  handle('tailnet:serve', async (port?: number) => {
+    const status = await tailnet.tailnetServe(servedPort(port));
+    if (status.state !== 'serving') return status;
+    if (sameUrl(mobile.mobileConfig().dashboardUrl, status.url)) return status;
+    try {
+      // The other half of removing the paste step: deep links in phone alerts
+      // read this setting, so a URL Wanigan just watched Tailscale print is a
+      // fact it should record rather than ask for.
+      await mobile.setMobileConfig({ dashboardUrl: status.url });
+    } catch (e) {
+      // Serving succeeded and only the bookkeeping failed. Reporting a bare
+      // failure would deny what the operator just watched happen, so the reply
+      // carries both facts and names the one that still needs a hand.
+      throw new Error(`Tailscale is serving ${status.url}, but Wanigan could not save it as the dashboard URL: `
+        + `${e instanceof Error ? e.message : String(e)}`);
+    }
+    return status;
+  });
+  /**
+   * The pairing QR, rendered in main from main's own pairing URL.
+   *
+   * The renderer never supplies the text. It could — the URL is on screen
+   * beside the code — but then an SVG built from renderer input would be
+   * injected into the settings panel, and the one thing that makes that
+   * injection safe is that nothing outside this process chose what it encodes.
+   * The renderer asks for "the QR for pairing"; it does not get to say what
+   * the camera will read.
+   */
+  handle('tailnet:qr', () => {
+    const status = mobile.mobileStatus();
+    if (!status.config.dashboardEnabled) {
+      throw new Error('The phone dashboard is off, so there is no address to pair against yet.');
+    }
+    return qrSvg(status.pairingUrl);
+  });
+
+  handle('tailnet:unserve', async (port?: number) => {
+    const wanted = servedPort(port);
+    // Read first: after the mapping is gone there is no URL left to compare the
+    // stored dashboard URL against, and clearing one Wanigan did not publish
+    // would throw away an operator's own proxy.
+    const before = await tailnet.tailnetStatus(wanted);
+    const status = await tailnet.tailnetUnserve(wanted);
+    if (status.state !== 'ready' || before.state !== 'serving') return status;
+    if (!sameUrl(mobile.mobileConfig().dashboardUrl, before.url)) return status;
+    try {
+      await mobile.setMobileConfig({ dashboardUrl: '' });
+    } catch (e) {
+      throw new Error(`Tailscale is no longer serving ${before.url}, but Wanigan could not clear the dashboard URL: `
+        + `${e instanceof Error ? e.message : String(e)}`);
+    }
+    return status;
+  });
+
+  /**
+   * Whether Wanigan is keeping this Mac awake, and why.
+   *
+   * A read, not a switch: there is no channel here for the renderer to demand a
+   * hold, because the only things allowed to cause one are a live agent and the
+   * dashboard toggle, and both of those are already observed in main. Reading
+   * reconciles rather than returning a remembered answer, so the panel cannot
+   * show a hold that was released between polls.
+   */
+  handle('awake:state', () => syncAwake());
 
   // ══ phase 19 · trust and the ledger ═════════════════════════════════
   handle('policy:trust', (projectId: string | null) => policy.trustFor(projectId));
@@ -1999,6 +2191,12 @@ function registerIpc() {
     control.completeNode(nodeId, input ?? {}));
   handle('control:setAutopilot', (docketId: string, input: { enabled: boolean; providerId?: string; model?: string | null }) =>
     control.setAutopilot(docketId, input));
+  // Budget is a separate call rather than a field on setAutopilot: arming and
+  // capping are two decisions, and a goal created without a cap needs a way to
+  // get one before it can ever be armed. The value stays untrusted until
+  // setDocketBudget bounds it in the main process.
+  handle('control:setBudget', (docketId: string, budgetUsd: number | null) =>
+    control.setDocketBudget(docketId, budgetUsd));
   handle('control:outcomes', (projectId?: string | null) => control.outcomes(projectId));
   handle('control:events', (status?: 'new' | 'triaged' | 'dismissed' | 'all', limit?: number) => control.listEvents(status ?? 'all', limit));
   handle('control:addEvent', (input: { projectId?: string | null; source: string; kind: string; summary: string }) => control.addEvent(input));

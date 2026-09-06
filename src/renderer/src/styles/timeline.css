@@ -78,13 +78,18 @@
 .tl-live-idle { color: var(--text-faint); }
 
 .tl-filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.tl-search { flex: 1 1 150px; min-width: 0; padding: 5px 8px; font-size: 12px; }
+/* Compound on purpose: index.css @imports this sheet above its own rules, so
+   a bare .tl-search lost `padding` and `font-size` to .field and the filter box
+   sat at full body size beside 11px chips. Do not collapse the selector. */
+.field.tl-search { flex: 1 1 150px; min-width: 0; padding: 5px var(--s-2); font-size: var(--t-small); }
 .tl-chips { display: flex; gap: 3px; flex-wrap: wrap; }
 .tl-chip {
   padding: 3px 8px; border-radius: 999px;
   border: 1px solid var(--line); background: var(--bg);
   font-size: 11px; font-weight: 500; color: var(--text-dim);
-  transition: background .12s, border-color .12s, color .12s;
+  /* Tokens, not a literal: a filter chip's fade obeys data-motion='off' and
+     the OS preference the way the rest of the timeline does. */
+  transition: background var(--mo-state) var(--mo-ease), border-color var(--mo-state) var(--mo-ease), color var(--mo-state) var(--mo-ease);
 }
 .tl-chip:hover { background: var(--bg-sunk); color: var(--text); }
 .tl-chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
@@ -221,7 +226,3 @@
    ancestry per level reads as a tree, two read as a mistake. */
 .tl-turnbody { margin-left: 10px; padding-left: 4px; }
 .tl-turnbody::before { display: none; }
-
-@media (prefers-reduced-motion: reduce) {
-  .tl-chip, .tl-row-open { transition: none; }
-}

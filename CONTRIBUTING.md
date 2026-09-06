@@ -83,6 +83,11 @@ preference:
   `src/preload/`. Never widen that surface with a generic passthrough.
 - Everything arriving from the renderer is untrusted until the main process has
   validated it. Validate in main, not in the renderer that sent it.
+- The renderer cannot widen the set of directories Wanigan will act on.
+  `managedRoots()` in `src/main/roots.ts` is the validated allow-list every
+  other guard reads, and it is seeded by the projects table; registering a
+  root therefore takes a person choosing the directory in the main-process
+  folder picker (`projects:pick`). The renderer may ask; main decides.
 
 The same posture applies to data read from disk: a provider pack manifest, a
 plugin listing or an adapter response is untrusted input, validated in main
@@ -99,8 +104,11 @@ before anything acts on it. See [docs/provider-packs.md](docs/provider-packs.md)
   Do not present a guess as measurement anywhere in the UI or in these docs.
 - A UI change ships with before-and-after screenshots. `npm run build && node
   scripts/shots.mjs` writes every view from the real app into `docs/shots/`
-  (seeded through the IPC surface, throwaway user-data directory); attach the
-  pair for each view you touched. Motion changes include a short recording.
+  (seeded through the IPC surface, throwaway user-data directory; it launches
+  with `--wanigan-automation`, the only mode in which the raw `projects:add`
+  channel answers at all, and an installed build refuses that flag); attach
+  the pair for each view you touched. Motion changes include a short
+  recording.
   If that script times out waiting for a window — it happens on some machines,
   and it is the Electron harness rather than the app — fall back to `node
   scripts/shots-browser.mjs`, which renders the same build in Chromium behind a

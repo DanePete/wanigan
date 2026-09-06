@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GhPr, GhStatusReport, Project } from '@shared/types';
-import { ConfirmNote, Note, ago } from '../components/bits';
+import { ConfirmNote, EmptyState, Note, PageHead, ago } from '../components/bits';
 import ReviewGate from '../components/ReviewGate';
+import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 
 type GFile = { path: string; index: string; work: string; staged: boolean; untracked: boolean; conflicted: boolean };
 type Status = {
@@ -16,6 +17,13 @@ type Commit = {
 };
 type Branch = { name: string; current: boolean; remote: boolean; upstream: string | null; ahead: number; behind: number; at: number | null; subject: string | null };
 type Stash = { index: number; label: string; at: number | null; subject: string };
+/** What the detail pane is showing. It is named at module level because two
+    places have to agree on it now: the click that opens a diff, and the
+    reconcile that runs after a git action has moved the file underneath it. */
+type Sel =
+  | { kind: 'commit'; hash: string }
+  | { kind: 'file'; path: string; staged: boolean }
+  | null;
 
 const LANE_C = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--series-4)', 'var(--accent)', 'var(--claude)'];
 const ROW = 34, LANE_W = 13, X0 = 12;
@@ -106,8 +114,34 @@ function Diff({ text }: { text: string }) {
   );
 }
 
+/** Unstaged, untracked and conflicted read as one side: everything git knows
+    about that is not in the index. */
+function workingSide(status: Status): GFile[] {
+  return [...status.unstaged, ...status.untracked, ...status.conflicted];
+}
+
+/** Where a path sits in a freshly read status, or nothing when git no longer
+    lists it anywhere — which is what a commit or a discard does to it, and is
+    the case that has to empty the pane instead of leaving a patch up for a
+    file that is gone. */
+function findFile(status: Status, path: string): { file: GFile; staged: boolean } | null {
+  const staged = status.staged.find((f) => f.path === path);
+  if (staged) return { file: staged, staged: true };
+  const work = workingSide(status).find((f) => f.path === path);
+  return work ? { file: work, staged: false } : null;
+}
+
 export default function Git({ projects }: { projects: Project[] }) {
-  const [projectId, setProjectId] = useState(projects[0]?.id ?? '');
+  // Six things here are view memory rather than component state: the
+  // repository, the right-hand pane, the commit filter, the selected row, the
+  // all-branches toggle and the commit message. Every one of them is a place
+  // an operator was, and every button in the frame unmounts this view. The
+  // message box is the plainest case — a sentence typed about these staged
+  // changes, lost because they went to read the session that made them before
+  // pressing Commit. Remembering it does not weaken the rule below it: the
+  // draft still belongs to one repository and is still cleared when the
+  // selected project changes.
+  const [projectId, setProjectId] = useViewMemory('projectId', projects[0]?.id ?? '');
   // A folder picked from the empty state below. The shell owns the project list
   // and re-reads it on window focus; merging it here as well is what makes this
   // view usable in the frame after the dialog closes rather than one refresh later.
@@ -123,17 +157,17 @@ export default function Git({ projects }: { projects: Project[] }) {
   const [commits, setCommits] = useState<Commit[]>([]);
   const [brs, setBrs] = useState<Branch[]>([]);
   const [stash, setStash] = useState<Stash[]>([]);
-  const [sel, setSel] = useState<{ kind: 'commit'; hash: string } | { kind: 'file'; path: string; staged: boolean } | null>(null);
+  const [sel, setSel] = useViewMemory<Sel>('sel', null);
   // A filter over the commits already in memory: no new gh or git process
   // runs for a keystroke, and the footer says how many rows it searched.
-  const [commitFilter, setCommitFilter] = useState('');
+  const [commitFilter, setCommitFilter] = useViewMemory('commitFilter', '');
   const [detail, setDetail] = useState<{ title: string; patch: string } | null>(null);
-  const [msg, setMsg] = useState('');
+  const [msg, setMsg] = useViewMemory('commitMsg', '');
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(true);
-  const [pane, setPane] = useState<'changes' | 'branches' | 'stash'>('changes');
+  const [showAll, setShowAll] = useViewMemory('showAll', true);
+  const [pane, setPane] = useViewMemory<'changes' | 'branches' | 'stash'>('pane', 'changes');
   // Five acts share this one confirm — push, discard all, merge, delete branch,
   // drop stash — so it carries the verb as well as the sentence. It used to
   // render a single button reading “Do it”, which is the T2 tier's own failure
@@ -145,12 +179,43 @@ export default function Git({ projects }: { projects: Project[] }) {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ title: '', body: '', draft: false, base: '' });
 
-  const load = useCallback(async () => {
-    if (!root) return;
+  // Four elements carry .gt-scroll, not one: the log on the left, and the pane
+  // on the right that changes, branches and stash take turns filling. A single
+  // remembered offset would put the log's position onto a three-row stash list
+  // and drop the reader somewhere they had never been, so the right-hand key
+  // carries the open pane. That the hook's cleanup writes nothing is what makes
+  // a keyed scroller safe: the outgoing element detaches in the same commit
+  // that changes the key, and a save at that moment would store the detached
+  // node's 0 over the offset being left behind.
+  const logRef = useRememberedScrollRef('log');
+  const paneRef = useRememberedScrollRef(`pane:${pane}`);
+
+  // A remembered project can be gone by the time this view is opened again,
+  // removed from the list while another tab was on screen. `project` above
+  // already falls back to the first option so the pane reads a real
+  // repository, but projectId kept the dead id: the picker matched no option
+  // of its own and named one repository while everything below it read
+  // another. Rewriting the id puts the two back in agreement. The draft and
+  // the selection go with it for the reason the picker's own onChange gives —
+  // a message written about the removed repository's changes must not be left
+  // waiting over a different tree.
+  useEffect(() => {
+    if (!project || project.id === projectId) return;
+    const hadProject = projectId !== '';
+    setProjectId(project.id);
+    if (hadProject) { setSel(null); setDetail(null); setMsg(''); }
+  }, [project, projectId, setProjectId, setSel, setMsg]);
+
+  // Hands the status back as well as storing it. A caller that has just run a
+  // git action has to read the result in the same tick to reconcile the diff
+  // pane against it: `st` in that caller's closure is still the status from
+  // before the action, and a setState does not arrive in time to help.
+  const load = useCallback(async (): Promise<Status | null> => {
+    if (!root) return null;
     try {
-      const s = await window.wanigan.git.status(root);
+      const s: Status = await window.wanigan.git.status(root);
       setSt(s);
-      if (!s.isRepo) { setCommits([]); setBrs([]); setStash([]); return; }
+      if (!s.isRepo) { setCommits([]); setBrs([]); setStash([]); return s; }
       const [l, b, sh] = await Promise.all([
         window.wanigan.git.log(s.root, { limit: 150, all: showAll }),
         window.wanigan.git.branches(s.root),
@@ -158,7 +223,8 @@ export default function Git({ projects }: { projects: Project[] }) {
       ]);
       setCommits(l as Commit[]); setBrs(b as Branch[]); setStash(sh as Stash[]);
       setErr(null);
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+      return s;
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); return null; }
   }, [root, showAll]);
 
   useEffect(() => { void load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [load]);
@@ -178,7 +244,7 @@ export default function Git({ projects }: { projects: Project[] }) {
     try {
       const r = await fn();
       setOk(note ?? (typeof r === 'string' && r ? r : `${label} done.`));
-      await load();
+      await syncSelection(await load());
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(null); }
   }
@@ -191,14 +257,63 @@ export default function Git({ projects }: { projects: Project[] }) {
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }
 
-  async function openFile(f: GFile, staged: boolean) {
+  // The repository root is a parameter because the reconcile below runs the
+  // instant a git action returns, holding the root from the status that action
+  // produced, while `st` in this closure is still the one read before it. It is
+  // deliberately not called `root`: that name is the selected project's path in
+  // this scope, and shadowing it here would be invisible at the call sites.
+  async function openFile(f: GFile, staged: boolean, repoRoot: string = st?.root ?? '') {
+    if (!repoRoot) return;
     setSel({ kind: 'file', path: f.path, staged });
     if (f.untracked) { setDetail({ title: f.path, patch: 'Untracked — this file is not in git yet, so there is nothing to diff against.' }); return; }
     try {
-      const d = await window.wanigan.git.fileDiff(st!.root, f.path, staged);
+      const d = await window.wanigan.git.fileDiff(repoRoot, f.path, staged);
       setDetail({ title: f.path, patch: d || 'No textual diff (binary, or a mode change only).' });
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }
+
+  // A git action changes the tree under whatever the diff pane is showing, so
+  // the selection is re-resolved against the status that action produced. A
+  // file changes sides when it is staged or unstaged and leaves the status
+  // entirely when it is committed or discarded; in both cases the pane was
+  // left holding a patch for a state the repository is no longer in.
+  async function syncSelection(status: Status | null) {
+    if (!status || sel?.kind !== 'file') return;
+    // The side it was already on wins while the path is still listed on both:
+    // a file can be staged and then edited again, and staging some other file
+    // should not silently swap which half of this one is being read.
+    const stillThere = (sel.staged ? status.staged : workingSide(status)).find((f) => f.path === sel.path);
+    const hit = stillThere ? { file: stillThere, staged: sel.staged } : findFile(status, sel.path);
+    if (!hit) { setSel(null); setDetail(null); return; }
+    await openFile(hit.file, hit.staged, status.root);
+  }
+
+  // The patch itself is deliberately not remembered: a diff is a read of the
+  // repository, and one held across a tab swap can be minutes stale by the time
+  // it is shown again. The selection is remembered and the diff re-fetched for
+  // it here, once per mount. Without this the view came back with a row
+  // highlighted over an empty pane, which reads as a file with no changes
+  // rather than a diff nobody had asked for yet.
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current || !st?.isRepo) return;
+    // A remembered commit waits for the log. `load` stores the status one await
+    // before the commits, so the first pass through here would search an empty
+    // list and discard a selection that is about to be on screen.
+    if (sel?.kind === 'commit' && commits.length === 0) return;
+    restored.current = true;
+    if (!sel) return;
+    if (sel.kind === 'commit') {
+      const c = commits.find((x) => x.hash === sel.hash);
+      if (c) void openCommit(c);
+      else { setSel(null); setDetail(null); }
+      return;
+    }
+    // The same resolution a git action gets: the side it was left on wins, a
+    // path that moved is followed, and a path git no longer lists is dropped.
+    void syncSelection(st);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [st, commits, sel]);
 
   async function createPr() {
     if (!st?.isRepo) return;
@@ -223,23 +338,32 @@ export default function Git({ projects }: { projects: Project[] }) {
     finally { setAdding(false); }
   }
 
+  // Git was the only .pane route that never named itself: three states, no h1,
+  // and the rail was the sole thing on screen saying which view you were in.
+  // The same head opens all three so the answer does not depend on whether the
+  // selected project happens to be a repository. Compact, because what sits
+  // under it is a dense working surface rather than a page of prose.
+  const head = (
+    <PageHead
+      compact
+      title="Git"
+      lead="One project's repository: history, working tree, branches, stashes and the review gate. Wanigan only reads it until you press a button here." />
+  );
+
   if (!options.length) {
     return (
-      <div className="pane">
-        {err && <div style={{ padding: '8px 12px' }}><Note tone="error">{err}</Note></div>}
-        <div className="empty">
-          <div>
-            <h1 style={{ fontSize: 'var(--t-title)', fontWeight: 600 }}>No project to read git from</h1>
-            <p className="dim" style={{ marginTop: 6, maxWidth: 460, lineHeight: 1.55 }}>
-              This view reads one project's repository: history, working tree, branches, stashes and its
-              review gate. Add a folder and it opens on that repository — nothing is written until you press
-              a button here.
-            </p>
-          </div>
-          <button className="btn btn-primary" disabled={adding} onClick={() => void addProject()}>
-            {adding ? 'Choosing…' : 'Add your first project'}
-          </button>
-        </div>
+      <div className="pane gt-view">
+        {head}
+        {err && <div className="gt-notice"><Note tone="error">{err}</Note></div>}
+        <EmptyState
+          posture="nothing-yet"
+          title="No project to read git from"
+          cue="Add a folder and this opens on that repository."
+          action={(
+            <button className="btn btn-primary" disabled={adding} onClick={() => void addProject()}>
+              {adding ? 'Choosing…' : 'Add your first project'}
+            </button>
+          )} />
       </div>
     );
   }
@@ -247,7 +371,12 @@ export default function Git({ projects }: { projects: Project[] }) {
   const bar = (
     <div className="gt-bar">
       <select className="field" style={{ width: 'auto', fontSize: 'var(--t-small)' }} value={projectId}
-              onChange={(e) => { setProjectId(e.target.value); setSel(null); setDetail(null); }}>
+              onChange={(e) => {
+                // The message box is a draft about this repository's changes;
+                // carrying it to another project offers to commit the wrong
+                // sentence against the wrong tree.
+                setProjectId(e.target.value); setSel(null); setDetail(null); setMsg('');
+              }}>
         {options.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
       {st?.isRepo && (
@@ -299,15 +428,16 @@ export default function Git({ projects }: { projects: Project[] }) {
 
   if (st && !st.isRepo) {
     return (
-      <div className="pane">
+      <div className="pane gt-view">
+        {head}
         {bar}
-        <div className="empty"><div>
-          <h1 style={{ fontSize: 'var(--t-title)', fontWeight: 600 }}>Not a git repository</h1>
-          <p className="dim" style={{ marginTop: 6, maxWidth: '52ch', lineHeight: 1.55 }}>
+        <EmptyState
+          posture="nothing-in-scope"
+          title="Not a git repository"
+          cue={<>
             {project?.path} has no <span className="mono">.git</span>. Wanigan reads and writes git for projects that
             are repositories; everything else in the app works either way.
-          </p>
-        </div></div>
+          </>} />
       </div>
     );
   }
@@ -318,10 +448,11 @@ export default function Git({ projects }: { projects: Project[] }) {
     : commits.filter((c) => c.subject.toLowerCase().includes(commitNeedle) || c.author.toLowerCase().includes(commitNeedle));
 
   return (
-    <div className="pane" style={{ padding: 0, display: 'flex', flexDirection: 'column' }}>
+    <div className="pane gt-view">
+      {head}
       {bar}
-      {err && <div style={{ padding: '8px 12px' }}><Note tone="error">{err}</Note></div>}
-      {ok && <div style={{ padding: '8px 12px' }}><Note tone="ok">{ok}</Note></div>}
+      {err && <div className="gt-notice"><Note tone="error">{err}</Note></div>}
+      {ok && <div className="gt-notice"><Note tone="ok">{ok}</Note></div>}
       {confirm && (
         <div className="gt-confirm">
           <ConfirmNote tone="warn" what={confirm.what} verb={confirm.verb} busy={!!busy}
@@ -330,7 +461,7 @@ export default function Git({ projects }: { projects: Project[] }) {
         </div>
       )}
       {creating && st?.isRepo && (
-        <div style={{ padding: '8px 12px' }}>
+        <div className="gt-notice">
           <Note tone="warn">
             Open a pull request for <span className="mono">{st.branch}</span> through gh. Creating it publishes on your GitHub host — this leaves your machine.
             <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
@@ -377,7 +508,7 @@ export default function Git({ projects }: { projects: Project[] }) {
           {/* Arrow keys move through the loaded log and Enter opens the
               highlighted commit; opening is an IPC round trip, so movement
               alone never fetches a diff. */}
-          <div className="gt-scroll" onKeyDown={(e) => {
+          <div className="gt-scroll" ref={logRef} onKeyDown={(e) => {
             if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
             e.preventDefault();
             const rows = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button.gt-row'));
@@ -445,7 +576,7 @@ export default function Git({ projects }: { projects: Project[] }) {
           </div>
 
           {pane === 'changes' && st && (
-            <div className="gt-scroll">
+            <div className="gt-scroll" ref={paneRef}>
               {st.conflicted.length > 0 && (
                 <div className="gt-sec">
                   <div className="gt-sec-h"><span className="t" style={{ color: 'var(--bad)' }}>Conflicted</span><span className="c">{st.conflicted.length}</span></div>
@@ -544,7 +675,7 @@ export default function Git({ projects }: { projects: Project[] }) {
           )}
 
           {pane === 'branches' && st && (
-            <div className="gt-scroll">
+            <div className="gt-scroll" ref={paneRef}>
               {brs.map((b) => (
                 <div key={b.name} className="gt-file" style={{ cursor: 'default' }}>
                   <span className="st" style={{ color: b.current ? 'var(--good)' : 'var(--text-faint)' }}>
@@ -583,7 +714,7 @@ export default function Git({ projects }: { projects: Project[] }) {
           )}
 
           {pane === 'stash' && st && (
-            <div className="gt-scroll">
+            <div className="gt-scroll" ref={paneRef}>
               {stash.map((s) => (
                 <div key={s.index} className="gt-file" style={{ cursor: 'default' }}>
                   <span className="st">≡</span>

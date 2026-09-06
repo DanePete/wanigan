@@ -62,6 +62,59 @@ function forbiddenProviderEnvironment(name: string): boolean {
     normalized.startsWith('VSCODE_');
 }
 
+/**
+ * Names a manifest may not read *out of* Wanigan's own process environment.
+ *
+ * `source: 'process'` exists so an operator can export configuration for a
+ * pack — the shipped GLM and DeepSeek packs pick up WANIGAN_GLM_BASE_URL and
+ * their model overrides that way. It is not a channel for reaching into
+ * Wanigan for a secret and re-emitting it under a destination name of the
+ * pack's choosing. The agent already inherits Wanigan's environment, so the
+ * leak here is not the presence of a key: it is the rename. A manifest that
+ * reads ANTHROPIC_API_KEY and writes it as ANTHROPIC_AUTH_TOKEN beside its own
+ * ANTHROPIC_BASE_URL hands the operator's Anthropic credential to whatever
+ * host the pack chose, and one that reads OPENAI_API_KEY or GITHUB_TOKEN does
+ * the same through a CLI that never touches Anthropic at all.
+ *
+ * sessions.ts already drops ambient Anthropic credentials by value at launch,
+ * but only from a profile that redirects the Anthropic API — every other
+ * provider's key, and every profile that reaches its host some other way, is
+ * outside that strip. This refuses the read itself, at validation, for all of
+ * them. Provider secrets have a supported path: `source: 'credential'` reads
+ * the per-pack value from the OS keychain, and consent shows that destination
+ * with the value redacted.
+ *
+ * Like the launcher denylist above, this refuses known shapes. It is not proof
+ * that every other name is free of secrets.
+ */
+const AMBIENT_CREDENTIAL_ENV = new Set([
+  'ANTHROPIC_API_KEY', 'ANTHROPIC_ADMIN_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN',
+  'OPENAI_API_KEY', 'AZURE_OPENAI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY',
+  'GOOGLE_APPLICATION_CREDENTIALS', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN',
+  'GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN', 'NPM_TOKEN', 'HF_TOKEN',
+]);
+
+/**
+ * The shape rule that covers the names nobody listed, matched on whole
+ * underscore-separated words so MONKEY and KEYBOARD_LAYOUT are not caught by a
+ * bare "ends in KEY".
+ *
+ * This is also how a WANIGAN_*_API_KEY is refused. The WANIGAN_ prefix cannot
+ * be refused wholesale for a *source* the way forbiddenProviderEnvironment
+ * refuses it for a destination: the shipped GLM and DeepSeek packs read
+ * WANIGAN_GLM_BASE_URL, WANIGAN_GLM_MODEL and their DeepSeek equivalents, one
+ * validation error invalidates an entire manifest, and an invalid built-in is
+ * dropped — so a blanket prefix rule would quietly remove both shipped packs
+ * from the launcher.
+ */
+const SECRET_SHAPED_ENV =
+  /(?:^|_)(?:KEYS?|APIKEYS?|TOKENS?|SECRETS?|PASSWORDS?|PASSWD|PASSPHRASES?|CREDENTIALS?)$/;
+
+function ambientCredentialEnvironmentSource(name: string): boolean {
+  const normalized = name.toUpperCase();
+  return AMBIENT_CREDENTIAL_ENV.has(normalized) || SECRET_SHAPED_ENV.test(normalized);
+}
+
 export type ProviderHarnessId = 'claude-code' | 'codex' | 'generic-cli';
 export type ProviderCapabilityState = 'supported' | 'unsupported' | 'probe' | 'unknown';
 export type ProviderCapabilityDeclaration = Record<string, ProviderCapabilityState>;
@@ -458,6 +511,14 @@ function parseEnvironment(raw: unknown, where: string, errors: string[]): Record
     } else if (source === 'process') {
       const envName = safeString(own(value, 'name'), `${where}.${name}.name`, errors, { required: true, max: 200 });
       if (envName && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(envName)) errors.push(`${where}.${name}.name is invalid.`);
+      if (envName && ambientCredentialEnvironmentSource(envName)) {
+        errors.push(
+          `${where}.${name} reads ${envName} out of Wanigan's own environment, which is refused: a pack ` +
+          'cannot forward an ambient credential to a destination of its choosing. Declare ' +
+          '{ "source": "credential" } and store the value in Wanigan instead.'
+        );
+        continue;
+      }
       const fallback = own(value, 'fallback');
       const safeFallback = fallback === undefined
         ? undefined
@@ -874,6 +935,12 @@ function editorExtensionRoots(homeDir: string): string[] {
 }
 
 function expandFallbacks(profile: ProviderProfile, homeDir: string): string[] {
+  // A local manifest never chooses an executable by filesystem path. Discovery
+  // already refuses both fallbackPaths and editorExtensions, so a local profile
+  // that reaches here has either been compiled ad hoc — bypassing the registry
+  // — or carries a field discovery would have rejected. Either way the honest
+  // answer is no candidates: `bin` must resolve on PATH or the launch fails.
+  if (profile.source === 'local') return [];
   const variables = {
     home: homeDir,
     packDir: profile.packDir ?? '',
@@ -899,14 +966,7 @@ function expandFallbacks(profile: ProviderProfile, homeDir: string): string[] {
     }
   }
   for (const entry of profile.command.fallbackPaths ?? []) {
-    const expanded = substitute(entry, variables);
-    if (profile.source === 'local') {
-      // Local fallback executables are refused during discovery; retain the
-      // fail-closed behavior if a caller compiles an ad-hoc profile directly.
-      continue;
-    } else {
-      out.push(expanded);
-    }
+    out.push(substitute(entry, variables));
   }
   return [...new Set(out.filter(Boolean))];
 }
@@ -1287,6 +1347,17 @@ export class ProviderPackRegistry {
         if (profile.command.fallbackPaths?.length) {
           errors.push(
             `${profile.id}: local packs cannot declare executable fallbackPaths. ` +
+            'Install the dedicated provider CLI on PATH instead.'
+          );
+        }
+        // editorExtensions is the same grant wearing a different name: it names
+        // a directory prefix under the operator's editor extension roots and a
+        // path inside it, so a manifest that declared one could still point the
+        // launch at an executable of its choosing after `bin` failed to resolve
+        // on PATH. Refusing only fallbackPaths left that route open.
+        if (profile.command.editorExtensions?.length) {
+          errors.push(
+            `${profile.id}: local packs cannot select an executable by editor-extension path. ` +
             'Install the dedicated provider CLI on PATH instead.'
           );
         }

@@ -17,6 +17,8 @@ import {
   CODEX_ARTIFACT_COMPILER,
   DEFAULT_AUTOMATION_POLICY,
   KNOWLEDGE_KINDS,
+  MACHINE_KNOWLEDGE_TTL_MS,
+  SIGNAL_DETAIL_MAX_BYTES,
   applyProjection,
   automationDecision,
   buildBriefing,
@@ -29,6 +31,7 @@ import {
   recordMetric,
   recordSessionBriefing,
   recordTranscriptCitations,
+  refreshDeliveredKnowledgeTtl,
   sessionLearningLedger,
   compileCandidateProjection,
   completeExperiment,
@@ -57,6 +60,7 @@ import {
   recordSignal,
   reviewCandidate,
   searchKnowledge,
+  signalDetailBytes,
   startExperiment,
   summarizeArtifactRoi,
   undoProjection,
@@ -273,8 +277,22 @@ export function teach(input: TeachWaniganInput): KnowledgeCandidate {
   if (Buffer.byteLength(title, 'utf8') > 500) {
     throw new Error('Teaching titles are limited to 500 bytes; move the detail into the knowledge text.');
   }
-  if (Buffer.byteLength(text, 'utf8') > 128 * 1024) {
-    throw new Error('Taught knowledge is limited to 128 KiB; store a citation instead of raw content.');
+  // The ceiling this box states has to be the ceiling that applies. A teaching
+  // between the 128 KiB once promised here and the 32 KB the signal row has
+  // always enforced was accepted by this check and then refused inside
+  // recordSignal, in a message naming 'Signal detail' — an object the user has
+  // never seen — and a smaller number than the one they had just been given.
+  // The detail is weighed serialised, exactly as it will be stored: JSON
+  // escaping expands the text after any check on its raw bytes, so a pasted
+  // procedure full of newlines and quotes is larger stored than typed.
+  const detail = { explicit: true, outcome: input.outcome ?? 'preference', text };
+  const detailBytes = signalDetailBytes(detail);
+  if (detailBytes > SIGNAL_DETAIL_MAX_BYTES) {
+    throw new Error(
+      `Taught knowledge is limited to ${SIGNAL_DETAIL_MAX_BYTES / 1024} KB as stored, and this is about `
+      + `${Math.ceil(detailBytes / 1024)} KB. Stored size counts escaped newlines and quotes, so it can `
+      + 'exceed the text you typed; store a citation instead of raw content.',
+    );
   }
   if (input.scope !== 'personal' && !input.projectId) throw new Error('Project and path teaching needs a selected project.');
   if (input.scope === 'path' && !input.pathScope?.trim()) throw new Error('Path-scoped teaching needs a path selector.');
@@ -304,7 +322,7 @@ export function teach(input: TeachWaniganInput): KnowledgeCandidate {
     projectPath: input.projectPath ?? (input.projectId ? projectById(input.projectId)?.path ?? null : null),
     pathScope: input.pathScope ?? null,
     summary: title,
-    detail: { explicit: true, outcome: input.outcome ?? 'preference', text },
+    detail,
     // Unknown backends are never relabelled as provider-neutral semantic data.
     // Direct teaching and legacy sessions both fail this gate closed.
     semanticEligible: cfg.contentMode === 'local-same-provider' && providerId !== null && backendId !== null,
@@ -673,42 +691,18 @@ function ruleDerivedConfidence(taskCount: number): number {
 const MACHINE_DERIVED_RATIONALE = 'Rule-derived from repeated observations.';
 
 /**
- * Derived knowledge expires; human teaching does not. knowledge_items has
- * carried expires_at, and staleness.ts has honoured it, since the schema
- * landed — but no production path ever set it, so a derived claim stayed
- * canonical no matter how stale the pattern behind it became. The clock is
- * pushed forward whenever the item is actually delivered to a session.
+ * knowledge_items has carried expires_at, and staleness.ts has honoured it,
+ * since the schema landed — but no production path ever set it, so a derived
+ * claim stayed canonical no matter how stale the pattern behind it became.
+ * Promotion stamps the clock here; the launch paths push it forward through
+ * the ledger's refreshDeliveredKnowledgeTtl, which owns the length itself.
  */
-const MACHINE_KNOWLEDGE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
-
 function isMachineDerived(candidate: KnowledgeCandidate): boolean {
   return candidate.rationale.startsWith(MACHINE_DERIVED_RATIONALE);
 }
 
 function machineExpiry(candidate: KnowledgeCandidate, at = Date.now()): number | null {
   return isMachineDerived(candidate) ? at + MACHINE_KNOWLEDGE_TTL_MS : null;
-}
-
-/**
- * Refresh the TTL of derived knowledge a session actually received. Expiry
- * exists to collect claims nothing uses; an artifact that keeps earning its
- * place in a briefing must not age out on schedule. This only ever extends,
- * and only rows that already carry an expiry: human teaching has none and
- * never acquires one here.
- */
-function refreshDeliveredKnowledgeTtl(entries: { itemId: string }[], at = Date.now()): void {
-  if (!entries.length) return;
-  const next = at + MACHINE_KNOWLEDGE_TTL_MS;
-  try {
-    const statement = db().prepare(
-      "UPDATE knowledge_items SET expires_at=? WHERE id=? AND expires_at IS NOT NULL AND expires_at < ? AND status='active'",
-    );
-    db().transaction(() => {
-      for (const entry of entries) statement.run(next, entry.itemId, next);
-    })();
-  } catch (error) {
-    console.warn('[wanigan] delivered knowledge TTL not refreshed:', error);
-  }
 }
 
 /**
@@ -1190,28 +1184,6 @@ export async function briefingForContext(context: {
     }
   }
   return value.text || null;
-}
-
-/**
- * Record a briefing that a launch site already computed and injected. Kept
- * separate from buildBriefing so recording remains a plain fact about what
- * happened, and a recording failure can never become a launch failure.
- */
-export function recordBriefingDelivery(input: {
-  sessionId: string;
-  delivery: 'argv' | 'hook';
-  providerId: string | null;
-  projectId: string | null;
-  briefing: Awaited<ReturnType<typeof buildBriefing>>;
-  maxTokens: number;
-}): void {
-  refreshDeliveredKnowledgeTtl(input.briefing.entries);
-  try {
-    recordSessionBriefing(input);
-    emitLearningChanged();
-  } catch (error) {
-    console.warn('[wanigan] briefing delivery not recorded:', error);
-  }
 }
 
 /** Everything recorded about one session's learning: briefing, signals, reach. */

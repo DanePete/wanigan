@@ -1,8 +1,14 @@
-/* Control sits on the shared .pane frame (index.css) so the gutter, the h1 and
-   the compact shelves come from one place; the old private padding and 28px
-   title were the visible half of "Control at 18px while .pane was at 24".
-   Only the centred maximum width is Control's own. */
-.control-view { max-width: 1500px; margin: 0 auto; display: grid; gap: 18px; }
+/* Control sits on the shared .pane frame (index.css) so the gutter, the h1, the
+   measure and the compact shelves all come from one place; the old private
+   padding and 28px title were the visible half of "Control at 18px while .pane
+   was at 24". The last private rule capped and centred the scroll container
+   itself at 1500px, which did two wrong things: Control was the only view whose
+   content floated in the middle of a wide window while the list beside it
+   stayed left, and the cap counted the two 24px gutters, so the content column
+   it was meant to protect never got past 1452px. index.css caps Control's
+   children instead, at --page-wide, through .pane.control-view > * — which is
+   why the control-view class on the view still earns its keep even though no
+   rule in this sheet reads it any more. Remove it there and the cap goes too. */
 .control-card-head, .control-inline, .control-launch, .control-evidence, .control-node, .control-review-actions { display: flex; gap: 14px; }
 .control-docket small, .control-table small, .control-evidence small { color: var(--text-faint); font-size: var(--t-micro); }
 .control-guide-body { display: grid; grid-template-columns: minmax(220px, .65fr) minmax(360px, 1fr) minmax(300px, .9fr); gap: 20px; align-items: start; }
@@ -19,7 +25,15 @@
 /* Size comes from the h2 rule in index.css; only the leading is Control's. */
 .control-create h2, .control-list h2, .control-detail h2, .control-lower h2 { margin: 2px 0 6px; }
 .control-create label, .control-launch label { display: grid; gap: 5px; }
-.control-textarea { min-height: 76px; resize: vertical; font: inherit; }
+/* Compound on purpose: control.css is @imported above index.css's own rules,
+   so `min-height` lost to .field's --control-h, which at 32px sits below the
+   height a textarea already takes from its two default rows. The objective,
+   acceptance, plan-instruction and event boxes have therefore been opening at
+   the browser's two-row height rather than the four this asks for, and nothing
+   in the cascade could give it to them. Do not collapse the selector.
+   `font: inherit` rises with it and resolves to the same --t-body it already
+   computed to, because nothing between these textareas and body sets a size. */
+.field.control-textarea { min-height: 76px; resize: vertical; font: inherit; }
 .control-inline { align-items: end; }
 .control-inline > label { flex: 1; display: grid; gap: 5px; }
 .control-card-head { justify-content: space-between; align-items: start; }
@@ -43,11 +57,27 @@
 .control-acceptance { margin: 0; padding-left: 20px; color: var(--text-dim); display: grid; gap: 4px; }
 .control-launch { align-items: end; padding: 12px; border-radius: 8px; background: var(--bg-sunk); }
 .control-launch label { flex: 1; }
+/* Unattended dispatch sits on the same sunk plate as the launch row directly
+   above it, because arming freezes exactly the provider and model chosen
+   there — two controls on one surface is the visual claim that they are one
+   decision. The cap field is narrowed rather than left to .control-inline's
+   flex:1, which would stretch a five-character dollar amount across the whole
+   goal card and read as the most important field on it. */
+.control-autopilot { display: grid; gap: var(--s-2); padding: var(--s-3); border-radius: var(--r-md); background: var(--bg-sunk); }
+.control-autopilot > p { margin: 0; color: var(--text-dim); }
+.control-autopilot-facts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); }
+.control-autopilot-cap { max-width: 360px; }
+.control-autopilot-act { display: grid; gap: var(--s-2); justify-items: start; }
 .control-nodes { display: grid; gap: 9px; }
 .control-node { justify-content: space-between; align-items: start; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg-raised); }
 .control-node > div:first-child { min-width: 0; flex: 1; }
 .control-node h3 { margin: 5px 0; }
 .control-node p { color: var(--text-dim); margin: 0 0 9px; font-size: 13px; white-space: pre-wrap; }
+/* The prerequisite line sits between the title and the instructions. It is
+   generated prose rather than an agent's own text, so it wraps normally
+   instead of inheriting the pre-wrap the instructions need, and it sits one
+   step tighter to the title than the paragraph below it. */
+.control-node-waits { margin: 0 0 var(--s-2); white-space: normal; }
 .control-node-actions { width: min(340px, 44%); display: grid; gap: 7px; }
 .control-node-actions .field { min-width: 0; }
 .control-review-actions { flex-wrap: wrap; }
@@ -68,15 +98,43 @@
 .control-table th { text-align: left; color: var(--text-faint); font: 700 10px var(--mono); text-transform: uppercase; }
 .control-table td, .control-table th { padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .control-table small { display: block; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.btn-small { padding: 3px 7px; font-size: 11px; }
 /* Prose inside the create card — the empty-state route and the stated reason
    the Create button is disabled — is not a labelled field, so it sits tight to
    the control it explains instead of taking a full 11px grid step. */
 .control-create .control-hint { margin: -5px 0 0; font-size: 12px; line-height: 1.45; }
 .control-create > .btn:not(.btn-primary) { justify-self: start; }
-/* Control is not a .pane, so compact.css never reached it and it kept its own
+/* Control was not a .pane, so compact.css never reached it and it kept its own
    1100/900 shelves — the visible result was Control at 18px padding beside a
    document surface still at 16px. Both queries now sit on the named ladder in
-   index.css (wide 1180, medium 980) and the padding uses the shared step. */
+   index.css (wide 1180, medium 980), and the padding step at 980 is compact.css
+   stepping .pane like every other surface. Only the grid collapses are here. */
 @media (max-width: 1180px) { .control-guide { grid-template-columns: 1fr 1fr; } .control-example { grid-column: 1 / -1; } }
-@media (max-width: 980px) { .control-view { padding: var(--s-4); } .control-grid, .control-guide { grid-template-columns: 1fr; } .control-example { grid-column: auto; } .control-node { display: grid; } .control-node-actions { width: 100%; } .control-evidence { grid-template-columns: 1fr; } }
+@media (max-width: 980px) { .control-grid, .control-guide { grid-template-columns: 1fr; } .control-example { grid-column: auto; } .control-node { display: grid; } .control-node-actions { width: 100%; } .control-evidence { grid-template-columns: 1fr; } }
+
+/* The task-graph editor in the create card.
+   Rows sit on the sunk plate the launch and autopilot rows already use, so the
+   graph reads as one nested object rather than as four more fields in the same
+   column as Title and Objective — the create card is a grid, and without the
+   plate an eight-row graph looked like the form had grown eight sections. Every
+   size here is a token: control.css carries eleven px font literals from before
+   the scale existed and the gate only lets that number fall.
+   A problem line is red *behind* a ✕ and a full sentence, never the colour
+   alone, because the whole point of stating a refusal before the button is that
+   it can be read and acted on. */
+.control-plan { display: grid; gap: var(--s-2); }
+.control-plan-lead { margin: 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.45; }
+.control-plan-rows { display: grid; gap: var(--s-2); }
+.control-plan-row { display: grid; gap: var(--s-2); padding: var(--s-3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); }
+.control-plan-top { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); flex-wrap: wrap; }
+.control-plan-actions, .control-plan-add { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+/* Kind is a four-word enum next to a free-text title, so it takes what it needs
+   instead of .control-inline's flex:1 half of the row. */
+.control-plan-row .control-inline > label:first-child { flex: 0 0 132px; }
+.control-plan-deps { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1); }
+.control-plan-parallel { color: var(--text-faint); font-size: var(--t-small); }
+.control-plan-problem { display: flex; gap: var(--s-1); margin: 0; color: var(--bad); font-size: var(--t-small); line-height: 1.45; }
+/* Closed, the graph still says what it holds: a field nobody opened is not a
+   field nobody submitted. */
+.control-plan-open { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); }
+.control-plan-state { margin: 2px 0 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.4; }
+.control-plan-slot:empty { display: none; }

@@ -1,6 +1,6 @@
 import { db } from '../db';
 import type {
-  LearningSignal, LearningSignalKind, RecordSignalInput,
+  JsonObject, LearningSignal, LearningSignalKind, RecordSignalInput,
   SemanticEligibility, SemanticEligibilityInput,
 } from './types';
 import { learningId, nonEmpty, optionalText, parseObject, sha256, stableJson, uniqueStrings } from './util';
@@ -34,6 +34,25 @@ function fromRow(row: SignalRow): LearningSignal {
 }
 
 /**
+ * The ceiling on one signal's structured evidence. It is exported alongside its
+ * measurer because a caller that assembles a detail from what a user typed has
+ * to be able to refuse an oversized one in that box's own words: a caller which
+ * advertises its own, larger limit accepts a teaching that this rule then
+ * rejects deeper down, naming an object the user has never seen.
+ */
+export const SIGNAL_DETAIL_MAX_BYTES = 32 * 1024;
+
+/**
+ * Weighs the serialised detail, which is what the row actually stores. JSON
+ * escaping expands a string after any check on its raw byte length — every
+ * newline and quote in a pasted procedure becomes two bytes — so a caller that
+ * measured the raw text would under-count by however much of it needs escaping.
+ */
+export function signalDetailBytes(detail: JsonObject | null | undefined): number {
+  return Buffer.byteLength(stableJson(detail ?? {}), 'utf8');
+}
+
+/**
  * Records a bounded summary and structured evidence, never a transcript. The
  * caller must opt semantic content in; operational signals default to false.
  */
@@ -41,8 +60,10 @@ export function recordSignal(input: RecordSignalInput): LearningSignal {
   const kind = nonEmpty(String(input.kind), 'Signal kind', 100);
   const summary = nonEmpty(input.summary, 'Signal summary', 4 * 1024);
   const detailJson = stableJson(input.detail ?? {});
-  if (Buffer.byteLength(detailJson, 'utf8') > 32 * 1024) {
-    throw new Error('Signal detail is too large (maximum 32 KB). Store a citation instead of raw content.');
+  // Measured through the shared helper rather than re-spelling the arithmetic,
+  // so this gate and a caller's own pre-flight check cannot drift apart.
+  if (signalDetailBytes(input.detail) > SIGNAL_DETAIL_MAX_BYTES) {
+    throw new Error(`Signal detail is too large (maximum ${SIGNAL_DETAIL_MAX_BYTES / 1024} KB). Store a citation instead of raw content.`);
   }
 
   const providerId = optionalText(input.providerId, 200);

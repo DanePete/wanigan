@@ -7,8 +7,21 @@
    A view that needs a variant adds a modifier here or a one-line override in
    its own sheet — never a second family with a new name. */
 
-/* An input that sits in a line of text: rename-in-place, small filters. */
-.field-inline { width: auto; min-width: 160px; padding: 2px 6px; font-size: var(--t-small); }
+/* An input that sits in a line of text: rename-in-place, small filters.
+   The selector is compound on purpose. index.css @imports this sheet above its
+   own rules, so at equal specificity .field wins on source order, and three of
+   the four declarations below were dead — .field declares width, padding and a
+   body font size of its own, so the account select in Settings > Projects took
+   .field's full-width sizing at body size, which is the opposite of what the
+   modifier's name asks for. The fourth, min-width, was applying all along,
+   because .field declares none — it is the one declaration here that was never
+   shadowed. How wide that floor actually bites depends on the row it sits in;
+   both call sites are flex rows, so the rendered width is not read off these
+   two declarations alone. `.field.field-inline` is the fix, not a redundant
+   token — do not simplify it back to one class.
+   Height is left to .field, so compact.css's 44px coarse-pointer target still
+   reaches this control. */
+.field.field-inline { width: auto; min-width: 160px; padding: 2px 6px; font-size: var(--t-small); }
 
 /* ── page and section heads ─────────────────────────────────────────── */
 

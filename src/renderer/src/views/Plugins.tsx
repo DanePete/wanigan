@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Explainer, Note, Stat, ago, num } from '../components/bits';
+import { useDialog } from '../components/useDialog';
 
 /* Shapes mirror src/main/plugins.ts; the renderer cannot import from main. */
 type Component = { kind: 'skill' | 'command' | 'agent'; name: string; path: string };
@@ -10,8 +11,9 @@ type Installed = {
   skills: Component[]; commands: Component[]; agents: Component[];
   hookEvents: string[]; mcpServers: string[]; hasReadme: boolean; present: boolean; bytes: number;
 };
-type Available = { id: string; name: string; marketplace: string; description: string | null; installed: boolean; path: string };
-type CatalogItem = { id: string; name: string; marketplace: string; description: string; installed: boolean; enabled: boolean; source: string | null };
+type Src = { kind: string; origin: string; local: boolean; subpath: string | null; pinned: string | null };
+type Available = { id: string; name: string; marketplace: string; description: string | null; installed: boolean; path: string; source: Src | null };
+type CatalogItem = { id: string; name: string; marketplace: string; description: string; installed: boolean; enabled: boolean; source: Src | null };
 type Action = { ok: boolean; output: string; error: string | null };
 type Market = { name: string; source: string; installLocation: string; lastUpdated: number | null; present: boolean };
 type State = {
@@ -20,6 +22,31 @@ type State = {
 };
 
 const kb = (b: number) => (b < 1024 ? `${b} B` : b < 1048576 ? `${Math.round(b / 1024)} KB` : `${(b / 1048576).toFixed(1)} MB`);
+
+/**
+ * Where an offered plugin's code comes from, said at the moment of consent.
+ *
+ * The catalog is a list of offers, and accepting one runs code on this machine,
+ * so the dialog that answers the CLI on your behalf has to name the origin.
+ * The marketplace records it per plugin and Wanigan repeats that field; nothing
+ * here is derived. Three things this must not do: go blank when no source is
+ * recorded, put the marketplace's own address there instead — the catalog's
+ * address is not the plugin's — or call any of it checked, contained or safe.
+ * Naming an origin is not a judgement about one.
+ */
+function origin(s: Src | null, marketplace: string) {
+  if (!s) {
+    return <>Nothing in the <span className="mono">{marketplace}</span> manifest records where this
+      plugin comes from, so Wanigan cannot name what installing it will fetch.</>;
+  }
+  if (s.local) {
+    return <>Recorded source: <span className="mono">{s.origin}</span> — a path inside the{' '}
+      <span className="mono">{marketplace}</span> checkout, not a remote of its own.</>;
+  }
+  return <>Recorded source: <span className="mono">{s.origin}</span>
+    {s.subpath && <>, directory <span className="mono">{s.subpath}</span></>}
+    {s.pinned && <>, pinned at <span className="mono">{s.pinned}</span></>}.</>;
+}
 
 /**
  * What is known about whether Claude Code currently has a plugin switched on.
@@ -148,7 +175,7 @@ export default function Plugins() {
     const s = q.trim().toLowerCase();
     const rows: CatalogItem[] = cat ?? (st?.available ?? []).map((a) => ({
       id: a.id, name: a.name, marketplace: a.marketplace,
-      description: a.description ?? '', installed: a.installed, enabled: false, source: null,
+      description: a.description ?? '', installed: a.installed, enabled: false, source: a.source,
     }));
     if (!s) return rows;
     return rows.filter((a) => a.name.toLowerCase().includes(s) || a.description.toLowerCase().includes(s));
@@ -466,8 +493,10 @@ export default function Plugins() {
               <div style={{ marginBottom: 10 }}>
                 <Note tone="warn">
                   <strong>Install {confirming.name}?</strong> A plugin can ship hooks, an MCP server or an LSP —
-                  code that runs on this machine. Wanigan has no terminal to answer the CLI's own prompt, so it
-                  passes <span className="mono">-y</span>, which accepts the marketplace-declared install command
+                  code that runs on this machine.
+                  <br />{origin(confirming.source, confirming.marketplace)}
+                  <br />Wanigan has no terminal to answer the CLI's own prompt, so it passes{' '}
+                  <span className="mono">-y</span>, which accepts the marketplace-declared install command
                   on your behalf. This dialog is that prompt.
                   <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
                     <button className="btn btn-primary" disabled={!!working}
@@ -540,18 +569,47 @@ export default function Plugins() {
       </div>
 
       {reading && (
-        <div className="pg-reader" role="dialog" aria-modal="true" aria-label={reading.title}
-             onMouseDown={(e) => { if (e.target === e.currentTarget) setReading(null); }}>
-          <div className="pg-reader-in">
-            <div className="pg-reader-h">
-              <strong style={{ fontSize: 'var(--t-lead)' }}>{reading.title}</strong>
-              {reading.truncated && <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>truncated at 200 KB</span>}
-              <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setReading(null)}>Close</button>
-            </div>
-            <div className="pg-reader-b">{reading.text}</div>
-          </div>
-        </div>
+        <ReaderDialog title={reading.title} text={reading.text} truncated={reading.truncated}
+                      onClose={() => setReading(null)} />
       )}
     </div>
+  );
+}
+
+/**
+ * The file this view opens when you click a skill, a command or a Readme.
+ *
+ * It is a component of its own because useDialog cannot be called from
+ * Plugins(): the hook raises the shell's modal flag on mount, so an
+ * unconditional call would switch off the digit chords, ⌘K and ? for as long as
+ * this view is on screen — while the reader itself answered no key at all, not
+ * even Escape. Mounted only when there is something to read, the flag matches
+ * what is actually over the page, and the markup keeps the promise its
+ * aria-modal was already making: Escape closes it, Tab stays inside it, focus
+ * starts on Close and goes back to the button that opened it.
+ */
+function ReaderDialog({ title, text, truncated, onClose }: {
+  title: string; text: string; truncated: boolean; onClose: () => void;
+}) {
+  // 'least-destructive' lands on Close. The hook also portals this out of
+  // .body, whose view-transition name is a stacking context that used to paint
+  // the reader under the header.
+  const { portal, backdropProps, dialogProps } = useDialog<HTMLDivElement>({ onClose, initialFocus: 'least-destructive' });
+
+  return portal(
+    <div {...backdropProps} className="overlay-backdrop pg-reader">
+      <div {...dialogProps} className="pg-reader-in" aria-label={title}>
+        <div className="pg-reader-h">
+          <strong style={{ fontSize: 'var(--t-lead)' }}>{title}</strong>
+          {truncated && <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>truncated at 200 KB</span>}
+          <button className="btn" style={{ marginLeft: 'auto' }} onClick={onClose}>Close</button>
+        </div>
+        {/* A SKILL.md is longer than the box. Without a tab stop of its own the
+            scroller is unreachable from the keyboard, and the Tab trap — which
+            wraps around the focusable elements it can find — would have nothing
+            to wrap around but the Close button. */}
+        <div className="pg-reader-b" tabIndex={0}>{text}</div>
+      </div>
+    </div>,
   );
 }

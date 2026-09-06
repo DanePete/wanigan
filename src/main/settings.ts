@@ -56,7 +56,30 @@ export function flags() {
     mcpServerEnabled: bool('mcp_server', false),
     // Off by default: the first screenshot anyone takes should be the tool.
     pet: bool('pet', false),
+    mobileRepositoryReview: mobileRepositoryReview(),
   };
+}
+
+/**
+ * Whether a paired phone or iPad may read this Mac's working trees, run a
+ * project's saved review gate, and commit what git already tracks.
+ *
+ * Every other route the phone monitor serves keeps the promise stated at the
+ * top of mobile/snapshot.ts: no filesystem path, pid, worktree or transcript
+ * crosses that wire, enforced by rebuilding every response from an allow-list.
+ * A repository review cannot keep it — a changed-file list is made of paths —
+ * so it is a decision of its own rather than something the phone monitor or the
+ * agent console quietly includes. Turning either of those on does not turn this
+ * on, and it is off on every install and every upgrade.
+ *
+ * mobile/git.ts is the only module behind this scope. Its five routes carry the
+ * dispatcher's 'repo' scope — three reads and two writes — so they answer 403
+ * until this is true; the paths they send are relative to the project rather
+ * than to the disk, the writes never add an untracked file, and none of them
+ * pushes.
+ */
+export function mobileRepositoryReview(): boolean {
+  return bool('mobile_repository_review', false);
 }
 
 export function motion(): MotionSetting {
@@ -119,6 +142,12 @@ export function setUserPreference(key: unknown, value: unknown): WaniganSettings
     case 'notifications':
     case 'pet':
     case 'mcp_server':
+    // The one preference here that widens what leaves this machine. It is a
+    // plain 0/1 like the rest because the enforcement is not in this validator
+    // — mobile/dispatch.ts refuses the routes outright while it is off — but it
+    // is listed apart so nobody adds it to a "turn everything on" sweep by
+    // reading the group above as a set of harmless switches.
+    case 'mobile_repository_review':
       if (preferenceValue !== '0' && preferenceValue !== '1') {
         throw new Error(`${preferenceKey} must be enabled or disabled.`);
       }
@@ -221,6 +250,7 @@ export function allSettings(): WaniganSettings {
     notifications: f.notifications,
     mcpServerEnabled: f.mcpServerEnabled,
     pet: f.pet,
+    mobileRepositoryReview: f.mobileRepositoryReview,
     slots: slotsSetting(),
     eventRetentionDays: eventRetentionDays(),
     defaultTrust: (getSetting('default_trust', 'project') as TrustLevel),

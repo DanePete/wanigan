@@ -42,3 +42,9 @@
 .bx-expiring { margin: var(--s-2) 0 0; padding-left: var(--s-4); }
 .bx-expiring li { margin-top: var(--s-1); }
 .bx-expiring-run { text-decoration: underline; }
+
+/* The golden arm of the dataset picker. It stacks a label, a select and one
+   line of prose; every other arm is a grid of fields, which is why this one
+   owns a rule instead of borrowing .row2. */
+.bx-golden { display: flex; flex-direction: column; gap: var(--s-2); min-width: 0; }
+.bx-golden-line { font-size: var(--t-small); line-height: 1.55; }

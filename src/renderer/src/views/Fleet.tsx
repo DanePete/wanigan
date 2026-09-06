@@ -3,7 +3,10 @@ import type {
   Attention, AttentionKind, Project, ProviderId, Session, SessionUsage, TrustLevel,
 } from '@shared/types';
 import { ATTENTION_ORDER, EMPTY_USAGE, trustCopy, trustGlyph } from '@shared/types';
+import { providerTint } from '@shared/provider-status';
 import { EmptyState, Note, PageHead, Segmented, Stat, ago, num, usd } from '../components/bits';
+import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
+import ObservedBand from '../components/ObservedBand';
 import TeamPanel from '../components/TeamPanel';
 
 /**
@@ -20,7 +23,6 @@ import TeamPanel from '../components/TeamPanel';
  *    blocked waiting for you" is the one signal that must never go invisible.
  */
 
-const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)', glm: 'var(--glm)' };
 const PROVIDER: Record<ProviderId, string> = { claude: 'Claude', codex: 'Codex', glm: 'GLM' };
 
 /**
@@ -137,8 +139,16 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
   const [usage, setUsage] = useState<Record<string, SessionUsage>>({});
   const [spark, setSpark] = useState<Record<string, number[]>>({});
   const [defaultTrust, setDefaultTrust] = useState<TrustLevel>('project');
-  const [sort, setSort] = useState<SortKey>('attention');
-  const [only, setOnly] = useState<AttentionKind | 'all'>('all');
+  // Sort and filter are view memory rather than component state, because this
+  // view's whole purpose is to send the operator somewhere else. Narrow to
+  // "Asking", open the one agent that is blocked, come back — App unmounted
+  // Fleet to show the terminal, so the segmented control had snapped back to
+  // attention and the chips to All. Nothing announced that, so it read as the
+  // fleet having changed while they were away rather than the screen having
+  // forgotten what they asked it for. The memory is per window and in memory
+  // only: a relaunch still opens on the defaults.
+  const [sort, setSort] = useViewMemory<SortKey>('sort', 'attention');
+  const [only, setOnly] = useViewMemory<AttentionKind | 'all'>('only', 'all');
   const [ready, setReady] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState(0);
@@ -151,6 +161,15 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
   // the second after it is drawn, and the poll alone would only refresh the
   // ones whose numbers happened to change.
   const [, setTick] = useState(0);
+
+  // And the scroll offset with them: remembering the filter but not the
+  // position still loses the card the operator was reading, which on a fleet of
+  // eight is most of the screen. The scroller is the pane — .fleet-grid grows,
+  // it does not scroll — so the offset is remembered on the element that
+  // actually owns a scrollTop. A callback ref rather than a ref object because
+  // this pane only mounts once the first read returns, which is after the
+  // effect a plain ref would have run.
+  const paneRef = useRememberedScrollRef('pane');
 
   const alive = useRef(true);
   const busy = useRef(false);
@@ -281,6 +300,15 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
     }
     return c;
   }, [sessions, attention]);
+
+  /**
+   * The sessions the rail's "n need you" mark counts and this screen's blocked
+   * banner does not: an agent that failed, and an agent that finished and is
+   * waiting to be read. Both are work for the operator; neither is a process
+   * halted mid-turn. Naming the remainder is what keeps the two numbers from
+   * looking like a disagreement when they are seen side by side.
+   */
+  const reviewable = (counts.error ?? 0) + (counts.finished ?? 0);
 
   const totals = useMemo(() => {
     let cost = 0, requests = 0, added = 0, removed = 0, commits = 0, running = 0, costUnavailable = false;
@@ -426,17 +454,24 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
             watching rather than starting is the thing people get wrong — and
             the telemetry caveat moved to the table footer where the numbers
             it qualifies actually appear. */}
-        <EmptyState posture="nothing-yet" title="No agents are running"
+        <EmptyState posture="nothing-yet" title="No agents Wanigan started are running"
                     cue={<>Fleet watches sessions that already exist; it does not start them. A new session appears here within three seconds.</>}
                     action={onNewSession
                       ? <button className="btn btn-primary" onClick={onNewSession}>New session <kbd className="fleet-kbd">⌘T</kbd></button>
                       : undefined} />
+        {/* This is the branch where "nothing is running" is most likely to be
+            wrong — none of Wanigan's own, and three Claude processes started
+            from a terminal — so the title above now says whose absence it is
+            reporting, and the band answers for the rest. Separately, and never
+            by filling the count above: Wanigan did not start these and cannot
+            say much about them. */}
+        <ObservedBand />
       </div>
     );
   }
 
   return (
-    <div className="pane">
+    <div className="pane" ref={paneRef}>
       {head}
       <TeamPanel />
 
@@ -488,15 +523,29 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
               sub={`${num(totals.exited)} exited · ${num(sessions.length)} cards`}
               pressed={only === 'all'} onSelect={() => setOnly('all')}
               title="Show every session" />
-        <Stat label="Needs you"
+        {/* Labelled "Needs you", this tile counted only the agents blocked on a
+            permission prompt, while the rail's "n need you" mark counts those
+            plus the failed and the finished. Two numbers under the same words,
+            visible at once, disagreeing — and the tile was the one that could
+            not be believed. The count stays as it is, because pressing this
+            tile filters to `permission` and a tile that counts rows its own
+            click will not show is worse than one that is narrow; the label is
+            what changes, and the sub-line names where the rest of the rail's
+            total went. */}
+        <Stat label="Asking permission"
               value={<>{blocked.length > 0 && <span aria-hidden="true">? </span>}{num(blocked.length)}</>}
               tone={blocked.length ? 'var(--critical)' : undefined}
               sub={blocked.length
                 ? `longest wait ${dur(Date.now() - (attention[blocked[0].id]?.since ?? Date.now()))}`
-                : 'nobody is blocked'}
+                  + (reviewable ? ` · ${num(reviewable)} failed or finished` : '')
+                : reviewable ? `nobody is blocked · ${num(reviewable)} failed or finished`
+                  : 'nobody is blocked'}
               pressed={only === 'permission'}
               onSelect={blocked.length ? () => setOnly(only === 'permission' ? 'all' : 'permission') : undefined}
-              title={blocked.length ? 'Show only the sessions waiting on a permission prompt' : undefined} />
+              title={blocked.length
+                ? 'Show only the sessions waiting on a permission prompt. Failed and finished sessions '
+                  + 'also need you and are counted by the rail, not here; their chips are below.'
+                : undefined} />
         {/* A fleet total that mixes billed dollars with a flat-rate backend's
             own arithmetic is not a bill, so the whole total inherits the
             weaker label rather than averaging the two claims into one. */}
@@ -552,6 +601,11 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
 
       <FleetTable rows={shown} att={attention} usageOf={usageOf} spark={spark}
                   defaultTrust={defaultTrust} onOpen={onOpenSession} />
+
+      {/* Last, and outside every count above it: the stats, chips and cards on
+          this page are Wanigan's own sessions, and a foreign process must never
+          be added to them. */}
+      <ObservedBand />
     </div>
   );
 }
@@ -597,16 +651,21 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onContr
         <span className="faint fleet-since">
           {kind === 'permission' ? 'waiting ' : 'for '}{dur(Date.now() - (att?.since ?? s.createdAt))}
         </span>
+        {/* "unread" was a promise this number never made: it counts seconds
+            in which output arrived while the session was off screen, not
+            messages waiting to be read. "new" is what it can honestly claim,
+            and the title says the rest. */}
         {s.unread > 0 && (
-          <span className="pill" style={{ marginLeft: 'auto', background: 'var(--accent-soft)', color: 'var(--accent)' }}>
-            {s.unread > 99 ? '99+' : s.unread} unread
+          <span className="pill" style={{ marginLeft: 'auto', background: 'var(--accent-soft)', color: 'var(--accent)' }}
+                title={`Output arrived ${s.unread} times while this session was not on screen`}>
+            {s.unread > 99 ? '99+' : s.unread} new
           </span>
         )}
       </div>
 
       <div className="fleet-row fleet-title">
         <span className="fleet-name">{s.projectName}</span>
-        <span className="pill fleet-prov" style={{ color: TINT[s.providerId] }}>
+        <span className="pill fleet-prov" style={{ color: providerTint(s.providerId) }}>
           {providerName(s.providerId)}
         </span>
       </div>
@@ -859,7 +918,7 @@ function FleetTable({ rows, att, usageOf, spark, defaultTrust, onOpen }: {
                     <button className="fleet-rowbtn" onClick={(e) => { e.stopPropagation(); onOpen(s.id); }}>
                       {s.projectName}
                     </button>
-                    <span className="faint" style={{ marginLeft: 6, color: TINT[s.providerId] }}>
+                    <span className="faint" style={{ marginLeft: 6, color: providerTint(s.providerId) }}>
                       {providerName(s.providerId)}
                     </span>
                   </td>

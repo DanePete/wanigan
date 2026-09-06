@@ -2,9 +2,13 @@
 
 /* .sc-wrap was a private copy of .pane — its own padding, its own scroll, its
    own head — which is why Schedules had a different gutter, a different title
-   size and no sticky head. It is .pane now; only the baseline alignment of the
-   count beside the title is Schedules' own. */
-.sc-head { align-items: baseline; }
+   size and no sticky head. It is .pane now, head included: the count beside the
+   title aligns the way .pane-head aligns every other head. A private
+   `align-items: baseline` sat here and never applied, because index.css
+   @imports this sheet above its own .pane-head rule; it is deleted rather than
+   won back, because compact.css re-aligns .pane-head at 720px at one class of
+   specificity and a compound override would have made Schedules the one head
+   that ignores that step. Only .sc-head .n below is Schedules' own. */
 /* The page title is the page title everywhere: index.css sets it. Schedules
    printed its own at 19px, Plugins at 19px and Runs at 20px, which is why three
    adjacent screens looked like three products. */

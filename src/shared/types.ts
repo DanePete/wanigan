@@ -125,6 +125,30 @@ export type ProviderManifestInspection = {
   warning: string;
 };
 
+/** One offerable model. `efforts` is null when nothing said which the model takes. */
+export type LaunchModelRow = {
+  value: string;
+  label: string;
+  description: string | null;
+  efforts: string[] | null;
+};
+
+/**
+ * What a model picker may honestly offer, and where it came from.
+ *
+ * `source` is the provenance of `rows`, and it is never rounded up:
+ * `declared` — the profile's own manifest said so; `live` — the backend was
+ * asked and answered; `published` — Wanigan's own list, because the backend
+ * cannot be asked or would not answer, and `note` says so; `none` — nothing
+ * could be established, which is not the same as "this profile has no models".
+ */
+export type LaunchModelCatalogue = {
+  rows: LaunchModelRow[];
+  source: 'declared' | 'live' | 'published' | 'none';
+  /** Why this list is what it is, when that is not obvious. Shown to the operator. */
+  note: string | null;
+};
+
 export type ProviderLaunchField = {
   id: string;
   label: string;
@@ -133,6 +157,13 @@ export type ProviderLaunchField = {
   description?: string;
   options?: { value: string; label: string }[];
   defaultValue?: string | boolean;
+  /**
+   * Whether a select accepts a value it did not list. The manifest schema has
+   * carried this since packs landed and the launch compiler already enforces
+   * it; it simply never reached the renderer, so a picker had no way to tell a
+   * closed set from a suggested one and rendered every select as closed.
+   */
+  allowCustom?: boolean;
 };
 
 /** Effort levels the Claude Code CLI accepts. */
@@ -163,7 +194,14 @@ export type Session = {
   exitCode: number | null;
   createdAt: number;
   endedAt: number | null;
-  /** Bumped on output while the session is not focused. */
+  /**
+   * Owned by the main process. Incremented at most once a second while the
+   * session is producing output and is not the one on screen — so it counts
+   * SECONDS IN WHICH OUTPUT ARRIVED, not messages and not chunks. Zeroed when
+   * the session becomes the focused one, and on `sessions:markRead`. The two
+   * surfaces that render it say so in words, because a bare integer beside a
+   * chat-shaped list is read as a message count.
+   */
   unread: number;
   model?: string;
   effort?: string;
@@ -225,7 +263,7 @@ export type LaunchOptions = {
   projectId: string;
   /** Model alias ('opus', 'sonnet', 'fable') or a full id. Empty = the CLI default. */
   model?: string;
-  /** low | medium | high | xhigh | max. Empty = the CLI default (high). */
+  /** low | medium | high | xhigh | max. Empty = no --effort is passed, so the CLI's own default runs; Wanigan does not read what that default is. */
   effort?: string;
   /** acceptEdits | auto | bypassPermissions | manual | dontAsk | plan */
   permissionMode?: string;
@@ -679,6 +717,16 @@ export type FleetCard = {
 export type MobileFleetSession = {
   /** Opaque rendering key only; no remote action accepts it. */
   id: string;
+  /**
+   * Which login this session is signed in as, so an operator with a work and a
+   * personal Claude account can tell them apart from the phone. An identity and
+   * nothing more: `id` is opaque and `label` is the same word the desktop
+   * prints. The account's config directory — the thing that actually selects
+   * the login, and the only part worth stealing — deliberately never crosses.
+   * `id: null` means no account applied, which is different from an account
+   * that has since been removed.
+   */
+  account?: { id: string | null; label: string };
   projectName: string;
   title: string;
   providerId: ProviderId;
@@ -741,6 +789,81 @@ export type MobileMonitorStatus = {
   error: string | null;
   lastPushAt: number | null;
   lastPushError: string | null;
+};
+
+/**
+ * What Wanigan observed about Tailscale for the loopback port the phone monitor
+ * listens on. Five states because each one is a different next action — install
+ * Tailscale, sign in to Tailscale, start serving, open this URL, and read what
+ * went wrong — and a boolean plus a message would let the panel offer the wrong
+ * one. Nothing here is inferred from a path existing: every state is the result
+ * of a probe that exited.
+ */
+export type TailnetStatus = { port: number; checkedAt: number } & (
+  /** No tailscale CLI at any known location or on PATH. */
+  | { state: 'absent' }
+  /**
+   * The CLI answered but the daemon is not connected, so Serve cannot run. The
+   * raw BackendState travels with the sentence: 'waiting for admin approval' is
+   * not 'not signed in', and sending one operator to the other's fix wastes the
+   * only move they have.
+   */
+  | { state: 'logged-out'; backendState: string; message: string }
+  /** Connected, with nothing serving our port yet. Wanigan can start it. */
+  | { state: 'ready'; magicDnsName: string | null }
+  | {
+    state: 'serving';
+    /** Read back from the serve configuration, never assembled from a hostname. */
+    url: string;
+    magicDnsName: string | null;
+    /** True means Funnel is on for this mount: the URL is public, not tailnet-only. */
+    funnel: boolean;
+    /** False when a foreground `tailscale serve` owns it, which Wanigan cannot stop. */
+    background: boolean;
+  }
+  /** The probe itself failed; the message is the CLI's, never a guess. */
+  | { state: 'error'; message: string }
+);
+
+/**
+ * Why Wanigan is holding this Mac awake. Both conditions can be true at once
+ * and they stop being true independently, so 'both' is a state of its own: a
+ * panel that collapsed it would announce a release when only half the reason
+ * went away.
+ */
+export type AwakeReason = 'sessions' | 'dashboard' | 'both';
+
+/**
+ * What Wanigan is doing to this Mac's power management right now.
+ *
+ * Reported rather than assumed, because an app that quietly keeps a laptop
+ * awake drains a battery its owner believes is idle. `held` is read back from
+ * the blocker Electron actually holds, never set from the fact that one was
+ * requested, and `reason` and `since` are null whenever `held` is false — so no
+ * screen can describe a hold that did not happen. `error` carries why a wanted
+ * hold could not be taken.
+ *
+ * `onBattery` is the one thing software cannot fix and the reason it travels
+ * here at all. A power-save blocker stops the machine idling to sleep; it does
+ * not stop a closed lid on battery from suspending. A screen that promises
+ * overnight work has to say which of those two situations the operator is in.
+ * False is also what an unreadable power source reports: warning someone about
+ * a battery Wanigan could not actually ask about would be inventing the one
+ * fact they are most likely to act on.
+ */
+export type AwakeState = {
+  /** True only while Electron still reports the blocker started. */
+  held: boolean;
+  /** Non-null only while `held` — see the note above. */
+  reason: AwakeReason | null;
+  /** Live agents at the last reconcile: interactive PTYs plus headless rows. */
+  sessions: number;
+  /** When the current hold began, or null when nothing is held. */
+  since: number | null;
+  /** True only when Wanigan read the power source and it said battery. */
+  onBattery: boolean;
+  /** Bounded reason a wanted hold could not be taken, or null. */
+  error: string | null;
 };
 
 /* ── P9 · worktrees ─────────────────────────────────────────────────── */
@@ -907,6 +1030,18 @@ export type DocketAutopilot = {
   budgetUsd: number | null;
   spendUsd: number;
   spendStatus: 'reported' | 'partial' | 'unreported' | 'none';
+  /**
+   * Why the last automatic halt happened, with the halt prefix already
+   * removed, or null if this docket has never stopped itself. It is a typed
+   * field rather than a summary string so no surface has to parse a sentence
+   * to find out whether the cap, a missing provider or a missing budget ended
+   * the run. It outlives the halt on purpose: re-arming does not erase the
+   * evidence, so `enabled` says what is running now and this says what last
+   * stopped, which is the pair an operator needs to decide whether to re-arm.
+   */
+  haltedReason: string | null;
+  /** When that halt was recorded, or null if there has never been one. */
+  haltedAt: number | null;
 };
 
 /**
@@ -925,6 +1060,43 @@ export type DocketPlanNode = {
   /** Project-relative path this node intends to own while it runs. */
   claimPath?: string | null;
 };
+
+/**
+ * The four task kinds, as a runtime list beside the union.
+ *
+ * Validation in the main process interpolates this array straight into the
+ * refusal a planner reads, so the order is part of the message. Anything that
+ * offers the choice reads the same four words from here rather than retyping
+ * them and quietly gaining a fifth.
+ */
+export const DOCKET_NODE_KINDS: readonly DocketNodeKind[] = ['plan', 'implement', 'verify', 'review'];
+
+/** A docket is one reviewable contract. Past this, split it. */
+export const MAX_DOCKET_PLAN_NODES = 40;
+export const MAX_DOCKET_NODE_DEPENDENCIES = 16;
+
+/**
+ * The shape a docket gets when nobody proposed a graph.
+ *
+ * It is the same four phases Control always created, expressed as a plan so
+ * there is exactly one code path that writes nodes. A planner that proposes
+ * something richer is validated by the same rules this passes trivially.
+ *
+ * It sits in shared rather than in the main process because the renderer's
+ * plan editor seeds a new graph from this same array. A second copy of the
+ * instruction text would read as identical and then drift, and the operator
+ * would be editing phases that are not the ones main would have written.
+ */
+export const DEFAULT_DOCKET_PLAN: readonly DocketPlanNode[] = [
+  { kind: 'plan', title: 'Plan and identify risks', dependsOn: [],
+    instructions: 'Produce an implementation plan, identify affected areas, unknowns, and evidence needed for acceptance. Do not make changes until the plan is accepted.' },
+  { kind: 'implement', title: 'Implement in an isolated worktree', dependsOn: [0],
+    instructions: 'Make the smallest changes that satisfy the accepted plan and the docket acceptance checks. Keep the worktree reviewable and report intentional trade-offs.' },
+  { kind: 'verify', title: 'Verify the change', dependsOn: [1],
+    instructions: 'Run the project review gate and targeted checks in the implementation worktree. Record failures as evidence; do not claim success without command results.' },
+  { kind: 'review', title: 'Independent review and decision', dependsOn: [2],
+    instructions: 'Review the diff, the acceptance checks, and the recorded evidence. Approve only with a passed verification proof; otherwise request changes or reject.' },
+];
 
 export type DocketNode = {
   id: string;
@@ -1048,6 +1220,39 @@ export type McpTaskRecord = {
   status: 'working' | 'input_required' | 'completed' | 'failed' | 'cancelled';
   createdAt: number;
   updatedAt: number;
+};
+
+/**
+ * What `cancelMcpTask` actually did, so a surface can state it rather than
+ * infer it.
+ *
+ * Cancel returned a bare boolean, and Control announced one sentence for every
+ * path through the function: an id that names no record, a record that had
+ * already closed, a record marked cancelled over a task that had already
+ * ended, and a task really stopped mid-run. The four are separate branches in
+ * control.ts, so they are separate outcomes here.
+ *
+ * `nodeStatus` is the task's stored status, not the status Control shows: the
+ * graph presents a stored 'pending' as 'ready' or 'blocked' depending on what
+ * it waits for, and neither of those words is ever written down.
+ */
+export type McpTaskCancelReceipt = {
+  /**
+   * 'not_found'      no record has that id; nothing was read or written.
+   * 'already_closed' the record was completed, failed or cancelled already.
+   * 'record_only'    the record is now cancelled; the task had already ended,
+   *                  so no session was stopped and no claim was released.
+   * 'task_canceled'  the record and the task are both cancelled.
+   */
+  outcome: 'not_found' | 'already_closed' | 'record_only' | 'task_canceled';
+  /** The record's status when the call began, before any write. */
+  recordStatus: McpTaskRecord['status'] | null;
+  /** The task's stored status when the call began; null when none was read. */
+  nodeStatus: 'pending' | 'running' | 'completed' | 'failed' | 'canceled' | null;
+  /** True only when a session the main process still held was killed here. */
+  sessionStopped: boolean;
+  /** Claim rows this call moved to released — a count, not an intention. */
+  claimsReleased: number;
 };
 
 /** A restart/recovery decision for a Goal task, based on durable facts only. */
@@ -1494,6 +1699,80 @@ export function trustGlyph(level: string): string {
 }
 
 /**
+ * The words for a permission mode, and an honest label for one this build has
+ * never seen.
+ *
+ * A permission mode is the same kind of value as a trust level: a nullable
+ * string persisted on the session row and declarable by any provider pack, not
+ * a member of a union the compiler checks. Indexing a copy table with it
+ * directly is the bug `trustCopy` above exists to fix — `PERMISSION_MODE_COPY[
+ * mode]` is `undefined` for a mode a pack declared or a later build added, and
+ * the next `.label` takes the New session dialog into its error boundary.
+ *
+ * So the table stays module-private and this returns `known` instead. A caller
+ * that cannot reach the table cannot quietly relabel a mode Wanigan has never
+ * verified as one of the six the reader already trusts — which matters most
+ * here, because this is the value that decides how much an agent may do without
+ * asking. Prettifying an unrecognised `foo_bar` into "Foo bar" would invent a
+ * meaning for a permission; the honest render names it as declared and says
+ * Wanigan does not know what it allows.
+ *
+ * The table is split by what this repository can actually vouch for. `claude
+ * --help` lists the six choices and describes none of them, so the three
+ * sentences that state behaviour are sourced from Wanigan's own recorded
+ * reasoning in headless.ts (`gateFor`), and the three with no source here say
+ * plainly that Wanigan has not verified them rather than offering a plausible
+ * description Wanigan cannot support.
+ */
+const PERMISSION_MODE_COPY: Record<string, { label: string; detail: string }> = {
+  acceptEdits: {
+    label: 'Accept edits',
+    // headless.ts gateFor(): the mode chosen for 'project' trust, because it
+    // auto-approves edits under the working directory and prompts for anything
+    // outside it.
+    detail: 'Edits under the working directory go ahead; anything outside it asks. This is the mode Wanigan itself uses to hold an unattended run to Project trust.',
+  },
+  bypassPermissions: {
+    label: 'Ask for nothing',
+    // headless.ts gateFor(): the mode chosen for 'trusted', where nothing is
+    // denied and there is nothing to hold the CLI to.
+    detail: 'Nothing is held for approval. This is the mode Wanigan uses only for a project set to Trusted.',
+  },
+  plan: {
+    label: 'Plan first',
+    // headless.ts gateFor() pairs 'plan' with --disallowedTools for read-only
+    // runs, and records why: --allowedTools is a pre-approval list, not an
+    // exclusive one. Saying "the agent cannot write in plan mode" would be a
+    // claim this repository's own comment contradicts.
+    detail: 'The agent proposes a plan before acting. Wanigan does not rely on this mode alone to prevent writes — its own read-only runs pair it with an explicit tool denial list.',
+  },
+  manual: {
+    label: 'Ask every time',
+    detail: 'Wanigan passes this through unchanged and has not verified what the CLI approves in it.',
+  },
+  auto: {
+    label: 'Automatic',
+    detail: 'Wanigan passes this through unchanged and has not verified what the CLI approves in it.',
+  },
+  dontAsk: {
+    label: 'Stop asking',
+    detail: 'Wanigan passes this through unchanged and has not verified what this still asks about. Treat it as unrestricted until you have checked.',
+  },
+};
+
+/** The copy for a permission mode, or an honest unknown. See PERMISSION_MODE_COPY. */
+export function permissionModeCopy(mode: string): { label: string; detail: string; known: boolean } {
+  const known = PERMISSION_MODE_COPY[mode];
+  if (known) return { ...known, known: true };
+  return {
+    label: mode || 'unknown',
+    detail: `Wanigan does not recognise the permission mode “${mode || 'unknown'}”, so it cannot say `
+      + 'what it allows. The agent CLI decides what it means.',
+    known: false,
+  };
+}
+
+/**
  * The name to print for a harness id.
  *
  * Once accounts from more than one agent share a surface, two rows both labelled
@@ -1560,6 +1839,14 @@ export type WaniganSettings = {
   defaultTrust: TrustLevel;
   mcpServerEnabled: boolean;
   pet: boolean;
+  /**
+   * Whether a paired phone may read this Mac's working trees, run a project's
+   * saved review gate, and commit what git already tracks. Off by default and
+   * separate from every other mobile switch: it is the one setting that widens
+   * the promise mobile/snapshot.ts states, because a changed-file list is made
+   * of paths. See settings.ts's mobileRepositoryReview().
+   */
+  mobileRepositoryReview: boolean;
   learning: LearningSettings;
 };
 
@@ -2049,7 +2336,25 @@ export type LearningPipelineStats = {
   signalsAllTime: number;
   eligibleSignals: number;
   candidatesCreated: number;
+  /**
+   * Candidates created in the window that nobody has decided on yet: a COUNT
+   * over knowledge_candidates still sitting at 'pending' or 'snoozed'. It is
+   * deliberately not candidatesCreated minus autoPromoted. autoPromoted counts
+   * knowledge items rather than candidates, so that subtraction mixed units,
+   * and nothing in it ever removed a candidate a person approved or rejected —
+   * a fully reviewed Inbox still reported a backlog.
+   */
+  awaitingDecision: number;
   autoPromoted: number;
+  /**
+   * Candidates a person decided inside the window: a COUNT over the statuses
+   * in DECIDED_CANDIDATE_STATUSES, timed by reviewed_at because that is when
+   * the decision was taken. It is deliberately not "reviewed_at is set" — a
+   * snooze stamps reviewed_at too, so that predicate counted a deferred
+   * proposal here while awaitingDecision counted the same row as still open.
+   * A candidate automation promoted without review has no reviewed_at and is
+   * not counted here; autoPromoted is the figure for those.
+   */
   reviewed: number;
   itemsPromoted: number;
   projectionsApplied: number;

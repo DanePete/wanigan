@@ -1,0 +1,75 @@
+/* Usage — the daily consumption chart and the day-by-day table beneath it.
+
+   These rules were eleven inline style objects inside DailyChart. A sheet is
+   where they belong: the gate counts inline objects because a style spelled in
+   TSX cannot be themed, cannot be overridden by a compact breakpoint, and is
+   re-created on every render. Only the one value the chart computes — a
+   segment's height as a share of the peak — is still written in the component,
+   because it is data, not style.
+
+   Nothing here spells a colour, a font size or a duration: the series hues are
+   the four themed --series-* tokens from index.css, which have a light value
+   and a dark one, and the type comes from the same scale as every other view. */
+
+.u-chart {
+  /* Chart geometry, named once. The height is the plot box every column shares
+     so one scale covers them all; the minimum column width is what keeps a
+     90-day window scrollable instead of shaving each day to a hairline. */
+  --u-plot-h: 116px;
+  --u-col-min: 14px;
+  display: grid;
+  gap: var(--s-2);
+}
+
+.u-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s-1);
+  height: var(--u-plot-h);
+  overflow-x: auto;
+}
+
+.u-col {
+  flex: 1 0 var(--u-col-min);
+  min-width: var(--u-col-min);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+/* The two dates and the peak reading, pinned to the ends and the middle of the
+   plot they describe. */
+.u-axis { display: flex; justify-content: space-between; }
+.u-axis span { font-size: var(--t-micro); }
+
+.u-empty { margin: 0; font-size: var(--t-small); }
+
+/* One class per series token, worn by both the bar segment and its legend
+   swatch, so a model's hue has a single definition and neither place needs a
+   computed background written into the TSX. */
+.u-s1 { background: var(--series-1); }
+.u-s2 { background: var(--series-2); }
+.u-s3 { background: var(--series-3); }
+.u-s4 { background: var(--series-4); }
+
+.u-days > summary { cursor: pointer; color: var(--text-faint); font-size: var(--t-micro); }
+.u-days > summary:hover { color: var(--text); }
+
+/* A model column per day makes this table wider than the pane on a long
+   window; it scrolls inside itself rather than pushing the page sideways. */
+.u-scroll { overflow-x: auto; }
+
+/* .viz-table th in index.css is (0,1,1) and aligns left, so a bare .u-th-r
+   would lose to it. Two classes and the element beat it — the same reason
+   Insights writes .insights .viz-table th.ins-th-r. */
+.viz-table th.u-th-r { text-align: right; }
+
+.u-cap {
+  caption-side: top;
+  text-align: left;
+  padding-bottom: var(--s-1);
+  color: var(--text-faint);
+  font-size: var(--t-micro);
+  line-height: 1.45;
+}

@@ -25,10 +25,11 @@ import { slots } from './queue';
 import { budgetBreached } from './spend';
 import { cleanupMcpConfig, writeMcpConfig } from './mcp/registry';
 import { noteOutput, forgetSession } from './attention';
+import { shouldBumpUnread } from '../shared/unread';
 import { flags, learningSettings } from './settings';
 import { attachmentsDir, cleanupSessionAttachments, markSessionAttachmentsSent, prepareAttachmentDir } from './attachments';
 import { redactCredentials } from './redact';
-import { buildBriefing, recordSessionBriefing } from './learning';
+import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } from './learning';
 import {
   assertCodexThreadWriterUnlocked, backfillCodexThreadIds, captureNewCodexThreadId,
   codexThreadIdForSession, discoverCodexThreadId, normalizeCodexThreadId, validateExactCodexThread,
@@ -183,6 +184,54 @@ export function redirectsAnthropicApiFor(def: { env?: () => Record<string, strin
 }
 
 /**
+ * Drops the operator's own ambient Anthropic credential from an environment a
+ * provider profile has aimed at some other host.
+ *
+ * Both launch paths call this. The attended path has stripped the ambient key
+ * since the redirect guard was written; a headless run inherits the same shell
+ * and reaches the same host.
+ */
+export function stripAmbientAnthropicCredentials(
+  out: Record<string, string | undefined>, providerEnv: Record<string, string>,
+): void {
+  // A provider pack chooses this host, and a pack is untrusted data. Consent
+  // is otherwise the only control on where it points, and a consent dialog
+  // can be padded off-screen by a large manifest — so an ambient Anthropic
+  // key must not be along for the ride when the operator scrolls past.
+  if (!redirectsAnthropicApi(providerEnv)) return;
+
+  // Only the *inherited* value is dropped. GLM and DeepSeek supply their own
+  // credential through this same providerEnv (as ANTHROPIC_AUTH_TOKEN), and a
+  // profile that deliberately declares one of these names keeps it: that
+  // value was declared and consented to, not borrowed from the shell.
+  for (const key of ANTHROPIC_AMBIENT_KEYS) {
+    if (!(key in providerEnv)) delete out[key];
+  }
+  // The name test above is not enough on its own, and the gap is not a
+  // rename: a manifest can declare `{ source: 'process', name:
+  // 'ANTHROPIC_API_KEY' }` under *any* destination — including
+  // ANTHROPIC_API_KEY itself — and the resolved value lands in providerEnv.
+  // The exemption then reads "the profile declared this name, so keep it" and
+  // hands the operator's own Anthropic credential to the redirected host,
+  // which is exactly what the strip exists to prevent.
+  //
+  // So the value decides, not the name. GLM and DeepSeek are untouched:
+  // their ANTHROPIC_AUTH_TOKEN carries their own credential, which is not the
+  // ambient Anthropic key. A pack that hard-codes the operator's key as a
+  // literal is dropped too, and should be.
+  const ambient = new Set(
+    ANTHROPIC_AMBIENT_KEYS
+      .map((key) => process.env[key]?.trim())
+      .filter((value): value is string => value !== undefined && value.length > 0),
+  );
+  if (ambient.size === 0) return;
+  for (const [key, value] of Object.entries(out)) {
+    if (value === undefined) continue;
+    if (ambient.has(value.trim())) delete out[key];
+  }
+}
+
+/**
  * Telemetry and hooks are how Wanigan knows anything about a running agent, and
  * both are set here rather than asked of the user, because Wanigan spawns the
  * CLI and therefore owns its environment. Content logging stays off: prompt and
@@ -225,42 +274,7 @@ function agentEnv(
   // beats an inherited CLAUDE_CONFIG_DIR from the operator's shell, so the
   // account shown at launch is the one the session actually uses.
   Object.assign(out, accountEnv);
-  if (redirectsAnthropicApi(providerEnv)) {
-    // A provider pack chooses this host, and a pack is untrusted data. Consent
-    // is otherwise the only control on where it points, and a consent dialog
-    // can be padded off-screen by a large manifest — so an ambient Anthropic
-    // key must not be along for the ride when the operator scrolls past.
-    //
-    // Only the *inherited* value is dropped. GLM and DeepSeek supply their own
-    // credential through this same providerEnv (as ANTHROPIC_AUTH_TOKEN), and a
-    // profile that deliberately declares one of these names keeps it: that
-    // value was declared and consented to, not borrowed from the shell.
-    for (const key of ANTHROPIC_AMBIENT_KEYS) {
-      if (!(key in providerEnv)) delete out[key];
-    }
-    // The name test above is not enough on its own, and the gap is not a
-    // rename: a manifest can declare `{ source: 'process', name:
-    // 'ANTHROPIC_API_KEY' }` under *any* destination — including
-    // ANTHROPIC_API_KEY itself — and the resolved value lands in providerEnv.
-    // The exemption then reads "the profile declared this name, so keep it" and
-    // hands the operator's own Anthropic credential to the redirected host,
-    // which is exactly what the strip exists to prevent.
-    //
-    // So the value decides, not the name. GLM and DeepSeek are untouched:
-    // their ANTHROPIC_AUTH_TOKEN carries their own credential, which is not the
-    // ambient Anthropic key. A pack that hard-codes the operator's key as a
-    // literal is dropped too, and should be.
-    const ambient = new Set(
-      ANTHROPIC_AMBIENT_KEYS
-        .map((key) => process.env[key]?.trim())
-        .filter((value): value is string => value !== undefined && value.length > 0),
-    );
-    if (ambient.size > 0) {
-      for (const [key, value] of Object.entries(out)) {
-        if (ambient.has(value.trim())) delete out[key];
-      }
-    }
-  }
+  stripAmbientAnthropicCredentials(out, providerEnv);
   return out;
 }
 
@@ -470,10 +484,12 @@ export function listSessions(): Session[] {
  *
  * `baseline.dirty` holds one string per file that was already modified when a
  * session started — 84 in this repository, thousands in a monorepo — and this
- * module pushes the whole list again on every launch, exit, close, rename,
- * unread change and Codex identity discovery. Nothing in the list renders a
- * path; the code panel asks `sessions:baseline` for one session's worth when
- * it actually needs them.
+ * module pushes the whole list again on every launch, exit, close, rename and
+ * Codex identity discovery. An unread change is no longer one of them: it
+ * moves one number on one session, so it goes out on `session:unread` as the
+ * counts that changed. Nothing in the list renders a path; the code panel
+ * asks `sessions:baseline` for one session's worth when it actually needs
+ * them.
  *
  * Exported because index.ts answers the poll for the same list. Two
  * projections would eventually disagree about what a session row contains,
@@ -532,6 +548,43 @@ function queueSessionData(live: Live, data: string): void {
     live.pendingTimer = null;
     flushSessionData(live);
   }, DATA_FLUSH_MS);
+}
+
+/**
+ * How long an unread bump waits for company.
+ *
+ * This is the same coalescing trick DATA_FLUSH_MS plays, at a far coarser
+ * grain because nobody reads a badge the way they read a terminal. A bump can
+ * only happen once a second per session (the OUTPUT_NOTE_MS throttle on the
+ * hot path gates it), so a one-second window collapses a fleet of talking
+ * agents into one small message a second instead of one push per session per
+ * second — and the message carries only the counts that moved, never the
+ * whole session list.
+ */
+const UNREAD_FLUSH_MS = 1_000;
+/** Sessions whose count has moved since the last flush. */
+const unreadDirty = new Set<string>();
+let unreadTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Send the counts that moved, and stop the timer if one is running. */
+function flushUnread(): void {
+  if (unreadTimer) { clearTimeout(unreadTimer); unreadTimer = null; }
+  if (!unreadDirty.size) return;
+  const counts: Record<string, number> = {};
+  // Read the count now rather than at queue time: a session read or closed
+  // inside the window must publish what it ended at, not what it passed
+  // through. A session gone from the map reads 0, which is what the renderer
+  // should show for a row it is about to lose anyway.
+  for (const id of unreadDirty) counts[id] = sessions.get(id)?.meta.unread ?? 0;
+  unreadDirty.clear();
+  broadcast('session:unread', counts);
+}
+
+/** Mark a session's count dirty, starting the one-shot timer if none is running. */
+function queueUnread(sessionId: string): void {
+  unreadDirty.add(sessionId);
+  if (unreadTimer) return;
+  unreadTimer = setTimeout(() => { unreadTimer = null; flushUnread(); }, UNREAD_FLUSH_MS);
 }
 
 const OSC9_PREFIX = '\x1b]9;';
@@ -1041,6 +1094,9 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   // AGENTS.md / CLAUDE.md / provider-owned generated memory untouched.
   const instructionChannel = harnessProven && (def.harness === 'codex' || def.harness === 'claude-code');
   let learnedText = '';
+  // Held for the spawn below, not used here: which derived items this launch
+  // delivers can only be settled once something actually runs with them.
+  let learnedEntries: { itemId: string }[] = [];
   if (instructionChannel && learningSettings().enabled) {
     try {
       const learned = await buildBriefing({
@@ -1052,6 +1108,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
         projectRoot: project.path, allowedEvidenceRoots: [project.path],
       });
       learnedText = learned.text;
+      learnedEntries = learned.entries;
       // Record what was actually delivered — entries, estimated tokens, and
       // what retrieval held back — so "this session received briefing X" is a
       // stored fact, not a guess. An empty result is recorded too: "retrieval
@@ -1290,6 +1347,14 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   meta.baseline = baseline;
   meta.conversationId = conversationId;
 
+  // The briefing is in a live process's arguments now, so the derived items it
+  // carried have earned another TTL. Deliberately here and not beside the
+  // record above: everything between the two can still refuse the launch — a
+  // provider disabled mid-preparation, a taken session slot, a Codex writer
+  // lock, a binary that will not start — and knowledge assembled into argv
+  // that nobody ever ran has not been used by anything.
+  refreshDeliveredKnowledgeTtl(learnedEntries);
+
   // `bin` is the binary that actually ran, resolved path and all. provider_id
   // cannot answer "which CLI produced this" on its own now that claude and glm
   // are the same program, and a reader six months from now has only this row.
@@ -1482,6 +1547,11 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     if (now - live.notedAt >= OUTPUT_NOTE_MS) {
       live.notedAt = now;
       noteOutput(id, now);
+      // Inside the same throttle, so the badge costs one map lookup a second
+      // per session rather than one per chunk. It also fixes what the number
+      // means: one increment is one second in which output arrived, not one
+      // message and not one chunk — the renderer says so in as many words.
+      bumpUnread(id);
     }
     if (live.meta.harnessId === 'codex') {
       const scanned = scanCodexNotifications(live.providerControl, data);
@@ -2040,14 +2110,43 @@ export function closeSession(sessionId: string) {
   broadcast('session:list', sessionListEntries());
 }
 
+/**
+ * The session on screen, as the renderer last reported it through
+ * `notify:setWatchedSession`. Null whenever the operator is on another tab —
+ * which is not an edge case here but the whole point: that is when a badge is
+ * the only way to learn an agent said something.
+ */
+let focusedSessionId: string | null = null;
+
+/**
+ * Tell main which session the operator is looking at.
+ *
+ * Selecting one is also reading it, so the count is cleared on the way in.
+ * Without that, switching to a session whose badge stood would leave the
+ * badge on the tab now filling the screen.
+ */
+export function setFocusedSession(sessionId: string | null): void {
+  focusedSessionId = sessionId;
+  if (sessionId) markRead(sessionId);
+}
+
 export function markRead(sessionId: string) {
   const s = sessions.get(sessionId);
-  if (s && s.meta.unread) { s.meta.unread = 0; broadcast('session:list', sessionListEntries()); }
+  if (!s || !s.meta.unread) return;
+  s.meta.unread = 0;
+  unreadDirty.add(sessionId);
+  // Flushed now rather than queued. Marking read is a deliberate act on a tab
+  // that is already on screen; leaving it in the one-second window lets an
+  // unrelated flush put the old number back and blink a badge onto the
+  // session being read.
+  flushUnread();
 }
 
 export function bumpUnread(sessionId: string) {
   const s = sessions.get(sessionId);
-  if (s) s.meta.unread++;
+  if (!s || !shouldBumpUnread({ sessionId, focusedSessionId, status: s.meta.status })) return;
+  s.meta.unread++;
+  queueUnread(sessionId);
 }
 
 /** Kill everything on quit so no orphaned agent keeps running headless. */

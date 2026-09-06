@@ -4,13 +4,15 @@
  * Renderer style gate. Runs in `npm test` between typecheck and the package
  * hooks, and reads source only — it never renders the app.
  *
- * Four checks, each a ratchet against a baseline written into this file:
+ * Five checks, each a ratchet against a baseline written into this file:
  *   1. inline `style={{` objects per renderer .tsx, keyed by path,
  *   2. `<style` tags in any renderer .tsx,
  *   3. literal px font sizes in styles/*.css (index.css owns the type scale and
  *      is the one sheet allowed to spell a size in px),
  *   4. literal transition/animation durations anywhere but styles/motion.css,
- *      which owns --mo-state / --mo-view.
+ *      which owns --mo-state / --mo-view,
+ *   5. declarations in a sheet index.css @imports that a rule in index.css
+ *      overrides at the same or higher specificity, per sheet.
  *
  * A baseline entry is a debt, not a permit. It records what the tree carried
  * the day the gate landed so the gate could pass that day; the only allowed
@@ -59,17 +61,17 @@ const INLINE_STYLE_BASELINE = {
   'views/Context.tsx': 115,
   'views/Control.tsx': 0,
   'views/Fleet.tsx': 29,
-  'views/Git.tsx': 41,
+  'views/Git.tsx': 32,
   'views/HeadlessRuns.tsx': 0,
   'views/ImprovementScout.tsx': 1,
   'views/Insights.tsx': 62,
   'views/Learning.tsx': 9,
   'views/Plugins.tsx': 38,
-  'views/Schedules.tsx': 25,
+  'views/Schedules.tsx': 23,
   'views/Sessions.tsx': 126,
   'views/Settings.tsx': 269,
   'views/Skills.tsx': 39,
-  'views/Usage.tsx': 56,
+  'views/Usage.tsx': 45,
 };
 
 // 2. Renderer files still carrying a stylesheet as a template string. Empty,
@@ -89,9 +91,9 @@ const STYLE_TAG_BASELINE = new Set([]);
 const FONT_PX_BASELINE = {
   'attention.css': 11,
   'batches.css': 0,
-  'control.css': 12,
+  'control.css': 11,
   'insights.css': 17,
-  'evals.css': 21, 'skills.css': 21,
+  'evals.css': 19, 'skills.css': 19,
   'fleet.css': 15,
   'git.css': 13,
   'learning.css': 2,
@@ -100,21 +102,126 @@ const FONT_PX_BASELINE = {
   'queue.css': 15, 'plugins.css': 15,
   'schedule.css': 8,
   'session-learning.css': 1,
-  'settings.css': 28,
+  'settings.css': 27,
   'sessions.css': 2,
-  'timeline.css': 26,
+  'timeline.css': 25,
 };
 
 // 4. Declarations with a literal duration, per file, relative to src/renderer/src.
-const DURATION_BASELINE = {
-  'styles/attention.css': 2,
-  'styles/evals.css': 1, 'styles/skills.css': 1,
-  'styles/fleet.css': 2,
-  'styles/learning.css': 2,
-  'styles/pet.css': 0,
-  'styles/sessions.css': 2,
-  'styles/timeline.css': 1,
-  'views/Settings.tsx': 3, 'styles/settings.css': 3,
+//    Empty, and it stays empty. Every literal duration in the renderer is now
+//    a --mo-state / --mo-view token, so Settings > Motion = off and the OS
+//    reduced-motion preference reach all of them; a sheet that spells its own
+//    140ms or .12s silently opts that one element out of both, which is how a
+//    session rail kept sliding beside a live terminal after the operator asked
+//    it to stop. motion.css is the one file exempt, because it owns the tokens.
+const DURATION_BASELINE = {};
+
+// 5. Declarations in a sheet index.css @imports that a rule in index.css
+//    overrides at the same or higher specificity, per sheet basename.
+//
+//    The cascade here is read, not assumed. src/renderer/src/main.tsx loads
+//    ./index.css and then ./styles/compact.css; index.css opens with fifteen
+//    @import statements — xterm plus the fourteen local sheets below — and its
+//    own first rule begins after the last of them. @import is required to
+//    precede every other rule in a sheet, so a sheet index.css imports can
+//    never sit below index.css's own declarations, and at equal specificity
+//    index.css wins. A private modifier written in a feature sheet therefore
+//    loses to the base class it was written to modify, and loses silently.
+//    This repository has been bitten by that shape three times: .control-view's
+//    `display` and `gap` were dead from the day they were written; .btn-small
+//    in control.css and .skills-btn-sm in evals.css promised nine buttons a
+//    smaller size they never got; and .control-view's and .set-hero's
+//    media-query padding each lost to compact.css. Only the first two are the
+//    case this check scores — compact.css loads after index.css, so it wins
+//    rather than loses, and its half of the family is out of scope below. All
+//    three were found by a person reading CSS, which is not a strategy.
+//
+//    What the check compares: a top-level rule in an imported sheet whose
+//    selector is nothing but class tokens, against a top-level rule of the
+//    same shape in index.css, when the sheet's selector carries no more
+//    classes than index.css's (so `.pane.gt-view` over `.pane` is left alone —
+//    it genuinely wins) and some className in a .tsx puts every class of both
+//    selectors on one element. One count per distinct (sheet selector,
+//    index.css selector, property). A declaration marked !important is not
+//    counted, because it beats a later rule that is not.
+//
+//    What it cannot see, so a pass here is not proof:
+//      - anything inside @media, @supports, @container or @layer, on either
+//        side. Two of the three bugs above were media-query paddings; deciding
+//        whether one condition shadows another means comparing the conditions,
+//        which a regex reader cannot do honestly.
+//      - selectors carrying a combinator, element, id, attribute or
+//        pseudo-class, :has()/:is()/:where() included. index.css uses :has();
+//        a rule of that shape is skipped rather than mis-scored.
+//      - shorthand against longhand: `padding` in a sheet and `padding-inline`
+//        in index.css read as two unrelated properties.
+//      - class names a component assembles at runtime. The combo reader strips
+//        ${...} out of a template literal, which under-counts — the safe
+//        direction for a gate.
+//      - the ten sheets a view imports from its own .tsx instead of from
+//        index.css — batches, improvement-scout, insights, learning, observed,
+//        runs, session-learning, sessions, settings and usage. Where those land
+//        relative to index.css is decided by the bundler's module graph, not by
+//        a rule of CSS, so they are reviewed by hand and not gated here.
+//        compact.css is excluded for the opposite reason: main.tsx loads it
+//        after index.css, so it wins.
+//
+//    Run with --print-shadowed for the selector, property and line behind every
+//    count below. None of these is a permitted exception — each one is a
+//    declaration that does nothing today, so every number here should fall.
+//
+//    Every number has now fallen. The sixteen this check found when it landed
+//    were each read against the base rule and answered one of two ways:
+//      - the value differed from the base, so someone wanted something they
+//        never got, and the selector was made compound to give it to them.
+//        .field.field-inline, .field.tl-search, .field.skills-search,
+//        .field.gt-filter and .field.control-textarea are those; each carries a
+//        comment saying the second class is required, because a compound
+//        selector reads as redundant to anyone who has not traced the cascade.
+//      - the value equalled the base, or the frame owns the decision, so the
+//        declaration was deleted: .fleet-prov's padding and .pg-ver's font
+//        family were copies of .pill and .mono, and .pg-head's and .sc-head's
+//        `align-items: baseline` would have had to beat compact.css's 720px
+//        .pane-head step to apply, which would have left two heads alone in
+//        ignoring it.
+//    Raising specificity is not free: two classes beat a one-class rule inside
+//    a @media block as well, so a compound modifier silently opts its element
+//    out of compact.css's breakpoint ladder and its (pointer: coarse) touch
+//    targets. .gt-filter's min-height was dropped for exactly that reason.
+//    A zero here is not a permit to add a sixteenth; it is the floor.
+//
+//    runs.css was swept by hand in the same pass, and this check scores none of
+//    it: HeadlessRuns.tsx imports that sheet, so it is one of the ten in the
+//    blind-spot list above. Read against index.css and compact.css it held six
+//    shadowed declarations in two selectors — three times what this check would
+//    have reported had runs.css been in its scope, because four of the six sit
+//    inside @media, which it does not read.
+//      - .hr-stats lost grid-template-columns twice: to .stat-grid's four
+//        columns at full width, and to compact.css's two-column .stat-grid at
+//        720px. Both rules now read .stat-grid.hr-stats, so three stats get
+//        three columns and the row no longer paints an empty fourth cell.
+//      - .hr-view lost four: a gap in its base rule and another at 720px, and a
+//        padding at 980 and at 720. All four were deleted. .hr-view is a .pane,
+//        and .pane plus compact.css's two .pane steps were already painting the
+//        surface — in the padding cases with byte-identical values.
+//    Six is a reading of one sheet on one day, not a number this check keeps.
+//    Nothing here re-reads runs.css, or the other nine sheets a view imports
+//    for itself, when one of them grows a new modifier tomorrow.
+const SHADOWED_MODIFIER_BASELINE = {
+  'attention.css': 0,
+  'composer.css': 0,
+  'control.css': 0,
+  'evals.css': 0,
+  'fleet.css': 0,
+  'git.css': 0,
+  'motion.css': 0,
+  'pet.css': 0,
+  'policy.css': 0,
+  'queue.css': 0,
+  'schedule.css': 0,
+  'shell.css': 0,
+  'timeline.css': 0,
+  'ui.css': 0,
 };
 
 const INLINE_STYLE = /style=\{\{/g;
@@ -135,6 +242,140 @@ function walk(dir, out = []) {
 
 const count = (text, re) => (text.match(re) || []).length;
 const rel = (file) => path.relative(RENDERER, file).split(path.sep).join('/');
+
+// --- check 5: modifiers an imported sheet declares and index.css overrides ---
+
+// A selector made of class tokens and nothing else. Its specificity is
+// (0, n, 0), so the count of tokens is the whole comparison; anything with a
+// combinator, element, id, attribute or pseudo-class fails this and is skipped
+// rather than scored wrongly.
+const CLASS_ONLY_SELECTOR = /^(?:\.[a-z][a-z0-9-]*)+$/;
+const CLASS_TOKEN = /\.[a-z][a-z0-9-]*/g;
+const RENDERED_CLASS = /^[a-z][a-z0-9-]*$/;
+// className="a b", className={`a ${x}`}, className={'a b'}, className={"a b"}.
+const CLASS_NAME_ATTR = /className=(?:"([^"]*)"|\{`([^`]*)`\}|\{'([^']*)'\}|\{"([^"]*)"\})/g;
+const AT_RULE_BLOCK = /@(?:media|supports|container|layer|scope|keyframes|font-face|property)\b/g;
+
+// Everything a conditioned or nested context puts out of reach, removed before
+// the rule reader runs. The @import/@charset/@namespace statements go first:
+// leave them in and the reader treats the first real rule of every sheet as
+// part of an at-rule and drops it, which is how index.css's opening block went
+// missing from the hand analysis that preceded this check.
+function topLevelCss(source) {
+  const noComments = source.replace(/\/\*[\s\S]*?\*\//g, '');
+  const noStatements = noComments.replace(/@(?:import|charset|namespace)\b[^;]*;/g, '');
+  let out = '';
+  let i = 0;
+  while (i < noStatements.length) {
+    AT_RULE_BLOCK.lastIndex = i;
+    const at = AT_RULE_BLOCK.exec(noStatements);
+    if (!at) { out += noStatements.slice(i); break; }
+    out += noStatements.slice(i, at.index);
+    let j = noStatements.indexOf('{', at.index);
+    if (j < 0) break;
+    let depth = 0;
+    for (; j < noStatements.length; j++) {
+      if (noStatements[j] === '{') depth++;
+      else if (noStatements[j] === '}' && --depth === 0) { j++; break; }
+    }
+    i = j;
+  }
+  return out;
+}
+
+// One entry per class-only selector in a comma list, carrying the property
+// names it declares. A comma list is n rules that happen to share a body, so
+// splitting it loses nothing.
+function classRules(source) {
+  const rules = [];
+  const RULE = /([^{}@;]+)\{([^{}]*)\}/g;
+  let m;
+  while ((m = RULE.exec(topLevelCss(source)))) {
+    const props = [];
+    for (const decl of m[2].split(';')) {
+      const colon = decl.indexOf(':');
+      if (colon < 0) continue;
+      const prop = decl.slice(0, colon).trim().toLowerCase();
+      if (!/^[a-z-]+$/.test(prop)) continue;
+      props.push({ prop, important: /!\s*important/i.test(decl) });
+    }
+    if (!props.length) continue;
+    for (const part of m[1].split(',')) {
+      const sel = part.trim();
+      if (!CLASS_ONLY_SELECTOR.test(sel)) continue;
+      rules.push({ sel, classes: sel.match(CLASS_TOKEN).map((c) => c.slice(1)), props });
+    }
+  }
+  return rules;
+}
+
+// Every set of two or more class names a .tsx puts on one element. Runtime
+// interpolations are removed, so a class assembled from a variable is invisible
+// here and its rule is never flagged.
+function renderedCombos(tsxFiles, read) {
+  const combos = [];
+  for (const file of tsxFiles) {
+    let m;
+    CLASS_NAME_ATTR.lastIndex = 0;
+    const src = read(file);
+    while ((m = CLASS_NAME_ATTR.exec(src))) {
+      const text = (m[1] ?? m[2] ?? m[3] ?? m[4]).replace(/\$\{[^}]*\}/g, ' ');
+      const tokens = text.split(/\s+/).filter((t) => RENDERED_CLASS.test(t));
+      if (tokens.length >= 2) combos.push(new Set(tokens));
+    }
+  }
+  return combos;
+}
+
+function firstLineOf(source, selector) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = new RegExp(`(^|[\\s,}])(${escaped})\\s*[,{]`, 'm').exec(source);
+  if (!m) return 0;
+  return source.slice(0, m.index + m[1].length).split('\n').length;
+}
+
+// The sheets index.css @imports, in the order it imports them. Only these are
+// provably below index.css's own rules; nothing else is scored.
+function importedSheets(indexSource) {
+  return [...indexSource.replace(/\/\*[\s\S]*?\*\//g, '')
+    .matchAll(/@import\s+['"]\.\/styles\/([a-z0-9-]+\.css)['"]/g)].map((m) => m[1]);
+}
+
+function shadowedModifiers(read, tsxFiles) {
+  const indexSource = read(path.join(RENDERER, 'index.css'));
+  const sheets = importedSheets(indexSource);
+  const base = classRules(indexSource);
+  const combos = renderedCombos(tsxFiles, read);
+  const coRendered = (union) =>
+    union.length <= 1 || combos.some((c) => union.every((cls) => c.has(cls)));
+
+  const counts = {};
+  const findings = [];
+  for (const sheet of sheets) {
+    const file = path.join(RENDERER, 'styles', sheet);
+    counts[sheet] = 0;
+    if (!fs.existsSync(file)) continue;
+    const source = read(file);
+    const seen = new Set();
+    for (const rule of classRules(source)) {
+      for (const winner of base) {
+        // A sheet selector with more classes outranks index.css and is fine.
+        if (rule.classes.length > winner.classes.length) continue;
+        if (!coRendered([...new Set([...rule.classes, ...winner.classes])])) continue;
+        for (const { prop, important } of rule.props) {
+          if (important) continue;
+          if (!winner.props.some((p) => p.prop === prop)) continue;
+          const key = `${rule.sel}|${winner.sel}|${prop}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          counts[sheet] += 1;
+          findings.push({ sheet, line: firstLineOf(source, rule.sel), sel: rule.sel, prop, winner: winner.sel });
+        }
+      }
+    }
+  }
+  return { sheets, counts, findings };
+}
 
 function measure() {
   const files = walk(RENDERER);
@@ -160,7 +401,9 @@ function measure() {
     if (n > 0) durations[r] = n;
   }
 
-  return { inline, styleTags, fontPx, durations };
+  const shadowed = shadowedModifiers(read, tsx);
+
+  return { inline, styleTags, fontPx, durations, shadowed };
 }
 
 function ratchet(label, current, baseline, failures) {
@@ -175,6 +418,14 @@ function ratchet(label, current, baseline, failures) {
 function main() {
   const m = measure();
 
+  if (process.argv.includes('--print-shadowed')) {
+    if (!m.shadowed.findings.length) console.log('no shadowed modifiers found in the sheets index.css imports');
+    for (const f of m.shadowed.findings) {
+      console.log(`styles/${f.sheet}:${f.line}  ${f.sel} { ${f.prop} }  is overridden by index.css ${f.winner}`);
+    }
+    return;
+  }
+
   if (process.argv.includes('--print-baseline')) {
     const sorted = (o) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)));
     console.log(JSON.stringify({
@@ -182,6 +433,7 @@ function main() {
       STYLE_TAG_BASELINE: m.styleTags,
       FONT_PX_BASELINE: sorted(m.fontPx),
       DURATION_BASELINE: sorted(m.durations),
+      SHADOWED_MODIFIER_BASELINE: sorted(m.shadowed.counts),
     }, null, 2));
     return;
   }
@@ -194,17 +446,32 @@ function main() {
   ratchet('px font sizes outside index.css', m.fontPx, FONT_PX_BASELINE, failures);
   ratchet('literal durations outside motion.css', m.durations, DURATION_BASELINE, failures);
 
+  const shadowFailures = [];
+  ratchet('modifier shadowed by a base rule', m.shadowed.counts, SHADOWED_MODIFIER_BASELINE, shadowFailures);
+  if (!m.shadowed.sheets.length) {
+    shadowFailures.push('modifier shadowed by a base rule: no @import of ./styles/*.css found in index.css, so check 5 measured nothing');
+  }
+  for (const line of shadowFailures) {
+    failures.push(line);
+    const sheet = line.split(': ')[1]?.split(' ')[0];
+    for (const f of m.shadowed.findings.filter((x) => x.sheet === sheet)) {
+      failures.push(`    styles/${f.sheet}:${f.line} — ${f.sel} { ${f.prop} } is overridden by index.css ${f.winner}`);
+    }
+  }
+
   const totals = [
     `${Object.values(m.inline).reduce((a, b) => a + b, 0)} inline style objects across ${Object.keys(m.inline).length} renderer files`,
     `${m.styleTags.length} TSX files with <style>`,
     `${Object.values(m.fontPx).reduce((a, b) => a + b, 0)} px font sizes in styles/`,
     `${Object.values(m.durations).reduce((a, b) => a + b, 0)} literal durations outside motion.css`,
+    `${m.shadowed.findings.length} shadowed modifier declarations in the ${m.shadowed.sheets.length} sheets index.css imports`,
   ];
 
   if (failures.length) {
     console.error('renderer style gate failed:');
     for (const f of failures) console.error(`  - ${f}`);
     console.error('New views use .pane and the bits.tsx primitives; sizes, paddings and durations come from the tokens in index.css and motion.css.');
+    console.error('A rule in a sheet index.css imports always loses to index.css at equal specificity; run --print-shadowed for the full list.');
     process.exitCode = 1;
     return;
   }

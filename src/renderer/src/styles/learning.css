@@ -372,12 +372,14 @@
   appearance: none; -webkit-appearance: none; flex: none; position: relative;
   width: 34px; height: 20px; margin: 0; border: 1px solid var(--line);
   border-radius: var(--r-pill); background: var(--bg-sunk); cursor: pointer;
-  transition: background .15s ease, border-color .15s ease;
+  /* Through the motion tokens: the switch is the control that reports a
+     setting, so its own movement has to obey the motion setting too. */
+  transition: background var(--mo-state) var(--mo-ease), border-color var(--mo-state) var(--mo-ease);
 }
 .learning-switch::after {
   content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
   border-radius: 50%; background: var(--text-faint);
-  transition: transform .15s ease, background .15s ease;
+  transition: transform var(--mo-state) var(--mo-ease), background var(--mo-state) var(--mo-ease);
 }
 .learning-switch:checked { border-color: var(--accent); background: var(--accent); }
 .learning-switch:checked::after { transform: translateX(14px); background: var(--accent-ink); }

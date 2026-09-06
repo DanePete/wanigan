@@ -4,6 +4,7 @@ import type {
 import { estimateTokens } from '@shared/tokens';
 import { Pill, Bar, ConfirmNote, Reading, Stat, Note, Section, num, usd, ago, until } from '../components/bits';
 import { useDialog } from '../components/useDialog';
+import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import '../styles/batches.css';
 
 type Preset = { id: string; label: string; blurb: string; config: Omit<RunConfig, 'name'> };
@@ -20,6 +21,14 @@ type Run = {
   expires_at: number | null; parent_run_id: string | null; project_name: string | null;
 };
 
+/**
+ * Which of the three screens Batches is showing. It is remembered across a tab
+ * swap, so a detail page can come back naming a run that has since been
+ * deleted — RunDetail's own "Could not read this run" state says so, which is
+ * the honest landing for it.
+ */
+type Page = { page: 'list' } | { page: 'new' } | { page: 'detail'; id: string };
+
 /** Which tab of the run detail is open. Refusals appears only when there are any. */
 type DetailTab = 'results' | 'refusals' | 'evals' | 'batches' | 'events' | 'config';
 
@@ -33,6 +42,14 @@ type RescueChild = { id: string; name: string; status: string; model: string };
  * once here beats casting at every call site.
  */
 type UploadableSource = SourceConfig & { upload?: boolean };
+
+/**
+ * The arms of the dataset picker: every SourceConfig kind, plus one that is not
+ * a kind. A pinned golden set comes back from evals.goldenSource() as a jsonl
+ * source — recorded bytes are the whole point of pinning — so which arm the
+ * operator is standing in cannot be read back off cfg.source.kind.
+ */
+type SourceTab = SourceConfig['kind'] | 'golden';
 
 /**
  * Categorical slots in fixed order, exactly as Insights assigns them. The order
@@ -118,10 +135,19 @@ export default function Batches({ projects, hasKey, onNeedKey, seed, onSeedConsu
   seed?: { projectId: string; root: string; paths: string[] } | null;
   onSeedConsumed?: () => void;
 }) {
-  const [view, setView] = useState<{ page: 'list' } | { page: 'new' } | { page: 'detail'; id: string }>({ page: 'list' });
+  /**
+   * Batches is three screens behind one tab, and every tab swap unmounts the
+   * lot. Leaving a half-built run to check the session it was going to review
+   * came back to the run list, with no sign that the builder had ever been
+   * open — the page it was on is remembered now, and the builder below
+   * remembers what was typed into it.
+   */
+  const [view, setView] = useViewMemory<Page>('page', { page: 'list' });
 
-  // A session handing over its changed files opens the builder directly.
-  useEffect(() => { if (seed) setView({ page: 'new' }); }, [seed]);
+  // A session handing over its changed files opens the builder directly, and
+  // outranks whatever page was remembered: a handed-over file list is an
+  // explicit request for the builder, not a return to where you left off.
+  useEffect(() => { if (seed) setView({ page: 'new' }); }, [seed, setView]);
   const page =
     view.page === 'new'
       ? <NewRun projects={projects} hasKey={hasKey} onNeedKey={onNeedKey}
@@ -146,7 +172,16 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
    * build your first batch over the top of runs the database still holds.
    */
   const [err, setErr] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useViewMemory('expanded', false);
+
+  /**
+   * .pane is this view's scroll container, and the run list is the one table
+   * here you read by scrolling: opening a run from row 140 and pressing back
+   * returned to the top of the list, with the row you were reading somewhere
+   * below the fold. Drawing all 200 and then losing the position was the worse
+   * half of the same problem, which is why `expanded` is remembered with it.
+   */
+  const paneRef = useRememberedScrollRef('runs');
 
   /**
    * Runs whose results stop being downloadable soon. Main has computed this
@@ -211,7 +246,7 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
   }
 
   return (
-    <div className="pane">
+    <div className="pane" ref={paneRef}>
       {head}
 
       {err && (
@@ -353,7 +388,17 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   /** The recipes and the model list, without which there is no form to show. */
   const [bootErr, setBootErr] = useState<string | null>(null);
   const [bootAttempt, setBootAttempt] = useState(0);
-  const [cfg, setCfg] = useState<RunConfig | null>(null);
+  /**
+   * The half-built run, remembered across a tab swap. A builder is minutes of
+   * typing — a name, two prompts, a schema, a dataset — and switching to
+   * Sessions to look at the thing being reviewed unmounted every keystroke of
+   * it. Everything below priced off that config is deliberately NOT
+   * remembered: the preview, the estimate and the dry run each read the world
+   * at one moment, and a cost that came back with the form would be a
+   * measurement of a dataset nobody had looked at since. They start empty, so
+   * the blockers ask for them again before this run can be submitted.
+   */
+  const [cfg, setCfg] = useViewMemory<RunConfig | null>('newRunCfg', null);
   const [preview, setPreview] = useState<any>(null);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
@@ -364,6 +409,40 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   const [drying, setDrying] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitErr, setSubmitErr] = useState<string | null>(null);
+  /**
+   * The golden arm of the dataset picker. `fromGolden` is held rather than
+   * derived because loading a set rewrites cfg.source to jsonl: derived, the
+   * picker would jump to JSONL the instant a set was chosen and the operator
+   * would lose the one fact worth keeping — that this dataset is pinned.
+   *
+   * It travels with cfg into view memory for that same reason. Restoring the
+   * source alone would bring the pinned bytes back as an anonymous JSONL blob,
+   * which is exactly the drift a golden set exists to prevent, one tab swap
+   * later.
+   */
+  const [fromGolden, setFromGolden] = useViewMemory('fromGolden', false);
+  const [golden, setGolden] = useState<GoldenSet[] | null>(null);
+  const [goldenErr, setGoldenErr] = useState<string | null>(null);
+  const [goldenId, setGoldenId] = useViewMemory('goldenId', '');
+  const [goldenBusy, setGoldenBusy] = useState(false);
+
+  // Read the sets when the builder opens, not when the arm is clicked: the
+  // option has to be able to say "nothing pinned yet" before it is chosen. A
+  // select you must open to discover is empty teaches the operator nothing.
+  useEffect(() => {
+    window.wanigan.evals.golden()
+      .then((g) => {
+        setGolden(g); setGoldenErr(null);
+        // A remembered selection can name a set that was deleted while the
+        // operator was on another tab. Dropping it restores the "choose a
+        // pinned set" blocker rather than leaving a blank picker above rows
+        // the screen can no longer put a name to.
+        setGoldenId((id) => (id && !g.some((set) => set.id === id) ? '' : id));
+      })
+      // Left null on purpose. An empty list means "none pinned"; a failed read
+      // means "we do not know", and the two must not render as the same screen.
+      .catch((e) => setGoldenErr(msg(e)));
+  }, [setGoldenId]);
 
   const projectId = cfg?.projectId ?? projects[0]?.id;
 
@@ -385,6 +464,9 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           projectId: seed.projectId,
           source: { kind: 'files', root: seed.root, paths: seed.paths, maxBytes: 120_000 },
         });
+        // The hand-over owns the dataset now; leaving the golden arm selected
+        // would show a pinned-set picker above a list of session files.
+        setFromGolden(false); setGoldenId('');
         onSeedConsumed?.();
       } else {
         // Only ever INITIALIZE. This effect re-runs whenever the shared project
@@ -419,11 +501,24 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   const patch = (p: Partial<RunConfig>) => setCfg((c) => (c ? { ...c, ...p } : c));
   const invalidate = () => { setEst(null); setDry(null); };
 
+  /**
+   * The draft is spent — abandoned by the back button, or submitted and now a
+   * run of its own. Either way it has to be dropped, because it outlives a tab
+   * swap: without this, "← Batches" would quietly mean "hide this until I come
+   * back", and the next New run would open on the config of a batch that has
+   * already been sent. The golden arm goes with it, since a remembered arm
+   * over a freshly initialised config would show the pinned-set picker above a
+   * preset's dataset.
+   */
+  const forget = () => { setCfg(null); setFromGolden(false); setGoldenId(''); };
+  const leave = () => { forget(); onCancel(); };
+
   async function applyPreset(id: string) {
     const d = await window.wanigan.batch.presets(projectId);
     const p = (d.presets as Preset[]).find((x) => x.id === id);
     if (!p) return;
     setCfg({ name: cfg?.name || '', projectId, ...p.config });
+    setFromGolden(false); setGoldenId('');
     setPresets(d.presets); setPreview(null); setPreviewErr(null); invalidate();
   }
 
@@ -433,7 +528,47 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
     setPresets(d.presets);
     const p = (d.presets as Preset[]).find((x) => x.id === cfg?.preset);
     setCfg((c) => (c ? { ...c, projectId: id, ...(p ? { source: p.config.source } : {}) } : c));
+    if (p) { setFromGolden(false); setGoldenId(''); }
     setPreview(null); invalidate();
+  }
+
+  /**
+   * Switching arms throws the old source away rather than carrying it across.
+   * Keeping it meant "Load dataset" would read the previous glob while the
+   * picker said Golden set — a run built from a dataset the screen was not
+   * showing, which is the exact drift a golden set exists to prevent.
+   */
+  function selectSource(k: SourceTab) {
+    setGoldenErr(null); setGoldenId('');
+    if (k === 'golden') {
+      setFromGolden(true);
+      patch({ source: { kind: 'jsonl', text: '' } });
+    } else {
+      setFromGolden(false);
+      patch({ source: defaultSource(k) });
+    }
+    setPreview(null); setPreviewErr(null); invalidate();
+  }
+
+  /**
+   * evals.goldenSource() hands back the pinned rows as a jsonl source, so from
+   * here the run is built from bytes recorded at submit time: no tree is walked
+   * again and there is nothing left to drift between one run and the next.
+   */
+  async function pickGolden(id: string) {
+    setGoldenId(id); setGoldenErr(null);
+    setPreview(null); setPreviewErr(null); invalidate();
+    if (!id) { patch({ source: { kind: 'jsonl', text: '' } }); return; }
+    setGoldenBusy(true);
+    try {
+      patch({ source: await window.wanigan.evals.goldenSource(id) });
+    } catch (e) {
+      // The set was deleted, or its stored rows no longer parse. Leaving the
+      // previous source in place under the chosen set's name would submit one
+      // dataset wearing another's label, so the selection is dropped with it.
+      setGoldenErr(msg(e)); setGoldenId('');
+      patch({ source: { kind: 'jsonl', text: '' } });
+    } finally { setGoldenBusy(false); }
   }
 
   async function loadPreview() {
@@ -481,11 +616,19 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
         // quantities in one column, which skewed estimate accuracy.
         input: est.totalInputTokens, output: est.worstCaseOutputTokens, cost: est.costHighUsd,
       });
+      forget();
       onDone(r.runId);
     } catch (e) { setSubmitErr(e instanceof Error ? e.message : String(e)); setSubmitting(false); }
   }
 
-  if (!cfg) {
+  // The recipe grid and every capability line below are written against the
+  // two tables read on mount: `presets` for the recipes, `models` for the
+  // context window, the effort row and the max-tokens cap. A cfg used to
+  // arrive only in the commit that set them, so the form could not render
+  // ahead of them; a remembered draft arrives first. Rendering on it would
+  // show an empty recipe grid, a blank model select and a "cap 0" hint —
+  // claims about a table nobody had read yet — for as long as the read takes.
+  if (!cfg || !presets.length) {
     // Loading and failed-to-load are different states: the second one has to
     // say so, or the builder sits on "Loading…" for the rest of the session.
     if (bootErr) {
@@ -493,7 +636,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
         <div className="pane">
           <div className="pane-head">
             <div>
-              <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={onCancel}>← Batches</button>
+              <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={leave}>← Batches</button>
               <h1 style={{ marginTop: 2 }}>New run</h1>
             </div>
           </div>
@@ -510,8 +653,12 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   }
 
   const dryFailed = dry?.result && !dry.result.ok;
+  const sourceTab: SourceTab = fromGolden ? 'golden' : cfg.source.kind;
   const blockers: string[] = [];
   if (!cfg.name.trim()) blockers.push('name the run');
+  // "load the dataset" is true but unhelpful while the golden arm is empty:
+  // there is nothing to load until a set is picked.
+  if (fromGolden && !goldenId) blockers.push('choose a pinned set');
   if (!preview) blockers.push('load the dataset');
   if (preview && !preview.rowCount) blockers.push('dataset is empty');
   if (preview?.missingSlots?.length) blockers.push('fix unresolved slots');
@@ -523,7 +670,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
       <div className="builder-main">
         <div className="pane-head">
           <div>
-            <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={onCancel}>← Batches</button>
+            <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={leave}>← Batches</button>
             <h1 style={{ marginTop: 2 }}>New run</h1>
             <p className="dim">Dataset in, one prompt across every row, results back at half price.</p>
           </div>
@@ -561,15 +708,20 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
                  right={<button className="btn" onClick={loadPreview} disabled={loadingPreview}>
                    {loadingPreview ? 'Loading…' : preview ? 'Reload' : 'Load dataset'}</button>}>
           <div style={{ display: 'flex', gap: 6, marginBottom: 11, flexWrap: 'wrap' }}>
-            {(cfg.source.kind === 'files' ? (['files'] as const) : (['csv', 'jsonl', 'glob', 'command'] as const)).map((k) => (
-              <button key={k} className="pill" onClick={() => { patch({ source: defaultSource(k) }); setPreview(null); invalidate(); }}
-                      style={cfg.source.kind === k ? { background: 'var(--accent)', color: 'var(--bg)' }
-                                                   : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
-                {({ csv: 'CSV', jsonl: 'JSONL', glob: 'Files', command: 'Command', files: 'From session' } as const)[k]}
+            {(cfg.source.kind === 'files' ? (['files'] as const) : (['csv', 'jsonl', 'glob', 'command', 'golden'] as const)).map((k) => (
+              <button key={k} className="pill" aria-pressed={sourceTab === k} onClick={() => selectSource(k)}
+                      style={sourceTab === k ? { background: 'var(--accent)', color: 'var(--bg)' }
+                                             : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
+                {({ csv: 'CSV', jsonl: 'JSONL', glob: 'Files', command: 'Command', files: 'From session',
+                    golden: 'Golden set' } as const)[k]}
               </button>
             ))}
           </div>
-          <SourceEditor source={cfg.source} onChange={(s) => { patch({ source: s }); setPreview(null); invalidate(); }} />
+          {sourceTab === 'golden'
+            ? <GoldenSource sets={golden} selected={goldenId} busy={goldenBusy} err={goldenErr}
+                            loadedRows={typeof preview?.rowCount === 'number' ? preview.rowCount : null}
+                            onPick={(id) => void pickGolden(id)} />
+            : <SourceEditor source={cfg.source} onChange={(s) => { patch({ source: s }); setPreview(null); invalidate(); }} />}
           {previewErr && <div style={{ marginTop: 11 }}><Note tone="error">{previewErr}</Note></div>}
           {preview && (
             <div style={{ marginTop: 11 }}>
@@ -848,6 +1000,69 @@ function defaultSource(kind: SourceConfig['kind']): SourceConfig {
     case 'command': return { kind: 'command', cwd: '', command: '', format: 'jsonl' };
     case 'files':   return { kind: 'files', root: '', paths: [], maxBytes: 120_000 };
   }
+}
+
+/**
+ * The golden arm of the dataset picker, and the only reader of
+ * evals.goldenSource(). Sets could be pinned from a finished run long before
+ * this existed, and the Evals tab told the operator to pin them — but nothing
+ * could read one back, so the advice led nowhere.
+ *
+ * A failed read and an empty list say different things and get different
+ * screens: `sets` stays null when the read failed, because "we could not look"
+ * must never render as "you have pinned nothing".
+ */
+function GoldenSource({ sets, selected, busy, err, loadedRows, onPick }: {
+  sets: GoldenSet[] | null; selected: string; busy: boolean; err: string | null;
+  loadedRows: number | null; onPick: (id: string) => void;
+}) {
+  const selectId = useId();
+  const chosen = sets?.find((g) => g.id === selected) ?? null;
+  return (
+    <div className="bx-golden">
+      {err && <Note tone="error">{err}</Note>}
+      {!sets && !err && <Reading what="the pinned sets" />}
+      {sets && sets.length === 0 && (
+        <div className="bx-state">
+          <h4>Nothing pinned yet</h4>
+          <p>
+            A golden set is the rows a finished run actually saw. Open a run, and pin them under
+            Evals → Golden sets; the snapshot is then selectable here as a dataset that cannot re-read
+            the world at submit time.
+          </p>
+        </div>
+      )}
+      {sets && sets.length > 0 && (
+        <>
+          <label className="label" htmlFor={selectId}>Pinned set</label>
+          <select id={selectId} className="field bx-f" value={selected} disabled={busy}
+                  onChange={(e) => onPick(e.target.value)}>
+            <option value="">Choose a pinned set…</option>
+            {sets.map((g) => (
+              <option key={g.id} value={g.id}>{g.name} — {num(g.rows)} rows · pinned {ago(g.createdAt)}</option>
+            ))}
+          </select>
+          <p className="dim bx-golden-line">
+            {busy
+              ? 'Reading the pinned rows…'
+              : chosen
+                ? <>
+                    {num(chosen.rows)} rows{chosen.sourceRunId ? <> as run <span className="mono">{chosen.sourceRunId}</span> saw them</> : ' as pinned'},
+                    loaded as JSONL. The bytes were recorded at submit time, so this run reads no tree and
+                    parses no command — the one source that cannot drift.
+                  </>
+                : 'Every other source re-reads the world when the run is submitted. A pinned set is the one that cannot.'}
+          </p>
+          {chosen && !busy && loadedRows !== null && loadedRows !== chosen.rows && (
+            <Note tone="warn">
+              The dataset loaded {num(loadedRows)} rows, but this set was pinned with {num(chosen.rows)}.
+              The snapshot did not come back whole, so this run would not be the comparison you pinned it for.
+            </Note>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 function SourceEditor({ source, onChange }: { source: UploadableSource; onChange: (s: UploadableSource) => void }) {

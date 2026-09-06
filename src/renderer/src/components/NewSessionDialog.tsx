@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AccountResolution, AgentAccount, LaunchOptions, Project, ProviderId, ProviderInfo, TrustLevel } from '@shared/types';
-import { EFFORT_LEVELS, PERMISSION_MODES, TRUST_LEVELS, trustCopy, trustGlyph } from '@shared/types';
+import type { AccountResolution, AgentAccount, LaunchModelCatalogue, LaunchOptions, Project, ProviderId, ProviderInfo, TrustLevel } from '@shared/types';
+import { TRUST_LEVELS, permissionModeCopy, trustCopy, trustGlyph } from '@shared/types';
+import { intersectChoices, launchFieldChoices, type LaunchChoice } from '@shared/launch-fields';
+import { providerTint } from '@shared/provider-status';
+import { Hint, Note } from './bits';
 import { useDialog } from './useDialog';
-
-const TINT: Record<ProviderId, string> = { claude: 'var(--claude)', codex: 'var(--codex)', glm: 'var(--glm)', deepseek: 'var(--series-4)' };
 
 /** Same filled progression the session header uses: ◇ → ◈ → ◆ reads in greyscale. */
 
@@ -42,6 +43,36 @@ function FocusBtn({ style, onFocus, onBlur, children, ...rest }: React.ButtonHTM
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * A launch field the profile leaves open: free text, with whatever it did name
+ * offered as suggestions rather than as the whole set.
+ *
+ * A manifest select that sets `allowCustom` is saying its list is a starting
+ * point, not a contract — the launch compiler only rejects an unlisted value
+ * when `allowCustom` is false. Rendering it as a closed picker made the pack's
+ * own escape hatch unreachable. A native datalist keeps the suggestions
+ * without adding a second control to tab through.
+ */
+function OpenField({ id, value, choices, placeholder, onChange }: {
+  id: string;
+  value: string;
+  choices: LaunchChoice[];
+  placeholder?: string;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <>
+      <input className="field mono" style={{ margin: '6px 0 14px' }} value={value} placeholder={placeholder}
+             list={choices.length ? id : undefined} onChange={(e) => onChange(e.target.value)} />
+      {choices.length > 0 && (
+        <datalist id={id}>
+          {choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+        </datalist>
+      )}
+    </>
   );
 }
 
@@ -105,19 +136,32 @@ export default function NewSessionDialog({
   const [accountId, setAccountId] = useState<string | null>(null);
   const [accountList, setAccountList] = useState<AgentAccount[]>([]);
   const [accountRes, setAccountRes] = useState<AccountResolution | null>(null);
+  /*
+   * What this launch would use if nothing were chosen here, resolved on its own.
+   * `accountRes` follows the CURRENT selection, so the moment you pick an
+   * account its source is 'explicit' — and the follow option was reading that
+   * resolution back out and calling your deliberate choice "the default", for an
+   * account that may not be the default at all. Which account a project is
+   * pinned to is a main-process fact, so the honest answer costs a second ask.
+   */
+  const [followRes, setFollowRes] = useState<AccountResolution | null>(null);
   const [trust, setTrust] = useState<TrustLevel | null>(null);
   const [trustDefault, setTrustDefault] = useState<TrustLevel | null>(null);
   const [trustErr, setTrustErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [codexModels, setCodexModels] = useState([
-    { value: '', label: 'Auto (default)', description: 'Codex current default', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
-    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', description: 'Latest frontier agentic coding model', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
-    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', description: 'Balanced agentic coding model', efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
-    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', description: 'Fast, affordable agentic coding model', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
-    { value: 'gpt-5.5', label: 'GPT-5.5', description: null, efforts: ['low', 'medium', 'high', 'xhigh'] },
-    { value: 'gpt-5.4', label: 'GPT-5.4', description: null, efforts: ['low', 'medium', 'high', 'xhigh'] },
-  ]);
+  /*
+   * What the selected profile can actually launch, read once from main.
+   *
+   * This dialog used to hold four hardcoded model tables — Codex, GLM, DeepSeek
+   * and Claude — chosen by branching on harness and profile ids, which is the
+   * shape CLAUDE.md forbids and one a provider pack could never join. Two of
+   * those backends already had live fetchers in main that nothing here called.
+   * `null` is "not read yet", which is a different thing from an empty list,
+   * and the two states say different words below.
+   */
+  const [catalogue, setCatalogue] = useState<LaunchModelCatalogue | null>(null);
+  const [catalogueErr, setCatalogueErr] = useState<string | null>(null);
 
   const options = useMemo(() => {
     const seen = new Set(projects.map((p) => p.id));
@@ -154,20 +198,24 @@ export default function NewSessionDialog({
    */
   useEffect(() => {
     let live = true;
-    if (!providerId) { setAccountList([]); setAccountRes(null); return; }
+    if (!providerId) { setAccountList([]); setAccountRes(null); setFollowRes(null); return; }
     void (async () => {
       try {
-        const [rows, resolution] = await Promise.all([
+        const [rows, resolution, follow] = await Promise.all([
           window.wanigan.accounts.listForProvider(providerId),
           window.wanigan.accounts.resolveForLaunch(providerId, projectId || null, accountId),
+          // With nothing chosen the two questions have the same answer, so only
+          // an explicit choice pays for the extra round trip.
+          accountId ? window.wanigan.accounts.resolveForLaunch(providerId, projectId || null, null) : null,
         ]);
         if (!live) return;
         setAccountList(rows);
         setAccountRes(resolution);
+        setFollowRes(follow ?? resolution);
       } catch {
         // A removed account or an uninstalled provider: show no picker rather
         // than a stale one naming a login this launch would not use.
-        if (live) { setAccountList([]); setAccountRes(null); }
+        if (live) { setAccountList([]); setAccountRes(null); setFollowRes(null); }
       }
     })();
     return () => { live = false; };
@@ -177,27 +225,51 @@ export default function NewSessionDialog({
   // harness, and carrying it across would submit an id the launch must refuse.
   useEffect(() => { setAccountId(null); }, [providerId]);
 
-  // Codex's Auto/default route; its live /model picker offers the full dynamic
-  // catalog and reasoning choices once the session is running.
+  // Only the Codex explainer below reads this now; the model and effort
+  // pickers route by what the profile declares and what its backend reports,
+  // never by a harness or profile id.
   const codexHarness = provider?.harnessId === 'codex' || providerId === 'codex';
-  const genericHarness = provider?.harnessId === 'generic-cli';
-  const zaiBackend = provider?.backendId === 'zai' || providerId === 'glm';
-  const deepseekBackend = provider?.backendId === 'deepseek' || providerId === 'deepseek';
-  const manifestModelField = provider?.launchFields?.find((field) => field.id === 'model');
-  const modelChoices = genericHarness
-    ? (manifestModelField?.options ?? [])
-    : codexHarness
-    ? codexModels
-    : zaiBackend
-      ? [{ value: 'glm-5.3', label: 'GLM 5.3' }, { value: 'glm-5.3-flash', label: 'GLM 5.3 Flash' }, { value: 'glm-5.2', label: 'GLM 5.2' }, { value: '', label: 'Provider default' }]
-      : deepseekBackend
-        ? [{ value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' }, { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' }, { value: '', label: 'Provider default' }]
-    : [{ value: '', label: 'default' }, { value: 'opus', label: 'opus' }, { value: 'sonnet', label: 'sonnet' }, { value: 'haiku', label: 'haiku' }, { value: 'fable', label: 'fable' }];
+  const modelField = launchFieldChoices(provider, 'model');
+  const effortField = launchFieldChoices(provider, 'effort');
+  const permissionField = launchFieldChoices(provider, 'permissionMode');
+  /*
+   * main already intersected the profile's declaration with its backend's
+   * catalogue, so these rows are the whole offer and this component adds no
+   * list of its own. A closed declared set arrives already narrowed; an open
+   * one arrives as whatever the backend reported.
+   */
+  const modelChoices: LaunchChoice[] = (catalogue?.rows ?? [])
+    .map((row) => ({ value: row.value, label: row.label, description: row.description }));
+  /*
+   * Free text only where there is nothing to offer and the profile accepts a
+   * value it never listed. Where rows exist they are what Wanigan can vouch
+   * for, and typing past them would be a promise nobody made.
+   */
+  const modelOpen = modelField.custom && modelChoices.length === 0;
+  /*
+   * A free-text control appears only where the profile's own declaration is
+   * the whole story: it declared a list and opened it with `allowCustom`, or
+   * it named nothing and Wanigan has no list to stand in with. Where the
+   * choices below are Wanigan's fallback, the picker is what Wanigan can
+   * actually vouch for and typing past it would be a promise nobody made.
+   */
+  const openField = (field: typeof modelField) =>
+    field.custom && (field.declared || field.choices.length === 0);
 
+  /*
+   * A provider switch re-seeds these three from the new profile's own declared
+   * defaults. They used to be carried across untouched — the model alias was
+   * dropped only when the new list did not contain it, effort only for Codex,
+   * and the permission mode never at all, so a Claude `plan` followed you onto
+   * a profile that had never heard of it. `defaultValue` is a manifest field
+   * the Headless page already honours and this dialog ignored.
+   */
   useEffect(() => {
-    setModel((current) => modelChoices.some((choice) => choice.value === current) ? current : '');
-  // A provider switch is the only event that can make an otherwise valid
-  // model alias invalid; modelChoices is derived wholly from it.
+    setModel(modelField.defaultValue);
+    setEffort(effortField.defaultValue);
+    setPermissionMode(permissionField.defaultValue);
+  // Derived wholly from the selected profile. The three field objects are
+  // rebuilt on every render, so naming them here would restart this each time.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerId]);
 
@@ -210,27 +282,47 @@ export default function NewSessionDialog({
     setProviderOptions(next);
   }, [providerId, provider?.launchFields]);
 
+  /*
+   * One read per selected profile, for every backend rather than only Codex.
+   * Nothing else on this form waits on it: effort, permission mode and Start
+   * render immediately, because the Codex catalogue is read through a CLI probe
+   * that main allows twelve seconds to answer. Both pieces of state reset
+   * first, so switching profiles never shows the previous profile's models.
+   */
   useEffect(() => {
-    if (!codexHarness) return;
+    setCatalogue(null);
+    setCatalogueErr(null);
+    if (!providerId) return;
     let live = true;
-    window.wanigan.codex.models().then((catalog) => {
-      if (!live || !catalog.models.length) return;
-      setCodexModels([
-        { value: '', label: 'Auto (default)', description: 'Codex current default', efforts: catalog.models.find((m) => m.isDefault)?.reasoningEfforts ?? ['low', 'medium', 'high', 'xhigh', 'max'] },
-        ...catalog.models.map((m) => ({ value: m.id, label: m.label, description: m.description, efforts: m.reasoningEfforts })),
-      ]);
-    }).catch(() => { /* static current-model fallback remains usable */ });
+    window.wanigan.providers.modelCatalogue(providerId)
+      .then((next) => { if (live) setCatalogue(next); })
+      .catch((e) => { if (live) setCatalogueErr(e instanceof Error ? e.message : String(e)); });
     return () => { live = false; };
-  }, [codexHarness]);
+  }, [providerId]);
 
-  const effortChoices = useMemo(() => codexHarness
-    ? (codexModels.find((choice) => choice.value === model)?.efforts ?? ['low', 'medium', 'high', 'xhigh', 'max'])
-    : [...EFFORT_LEVELS], [codexHarness, model, codexModels]);
+  /*
+   * Two claims about one launch, so the offer is where they agree: the profile
+   * says which efforts it will compile, and the backend's catalogue says which
+   * ones the chosen model accepts. Reading only the catalogue is how 'ultra'
+   * reached this picker for a profile that declares low…max, and the launch it
+   * armed died in the compiler with "unsupported value". The intersection now
+   * runs for every profile whose catalogue reports a per-model range, not only
+   * for Codex — it can only ever narrow the declared contract, never widen it.
+   */
+  const effortChoices = useMemo(
+    () => intersectChoices(
+      launchFieldChoices(provider, 'effort').choices,
+      catalogue?.rows.find((row) => row.value === model)?.efforts ?? null,
+    ),
+    [provider, catalogue, model],
+  );
 
+  // An effort the current offer no longer contains cannot be launched, so it is
+  // dropped rather than sent: moving Codex to a model with a narrower reasoning
+  // range used to leave the wider level selected and armed.
   useEffect(() => {
-    if (!codexHarness) return;
-    setEffort((current) => effortChoices.includes(current) ? current : '');
-  }, [codexHarness, model, codexModels]);
+    setEffort((current) => (!current || effortChoices.some((choice) => choice.value === current) ? current : ''));
+  }, [effortChoices]);
 
   // ⌘↵ submits from anywhere in the form. Everything else this listener used to
   // do — Escape, the Tab trap, restoring focus to the opener — is useDialog's,
@@ -324,12 +416,12 @@ export default function NewSessionDialog({
                 className="btn"
                 style={{
                   flex: 1, flexDirection: 'column', alignItems: 'flex-start', gap: 2, padding: '9px 11px',
-                  borderColor: on ? (TINT[p.id] ?? 'var(--accent)') : 'var(--line)',
+                  borderColor: on ? providerTint(p.id) : 'var(--line)',
                   background: on ? 'var(--bg-sunk)' : 'var(--bg-soft)',
                 }}
                 title={p.path ?? `${p.bin} was not found on the PATH Wanigan resolved`}
               >
-                <span style={{ fontWeight: 600, color: on ? (TINT[p.id] ?? 'var(--accent)') : undefined }}>{p.label}</span>
+                <span style={{ fontWeight: 600, color: on ? providerTint(p.id) : undefined }}>{p.label}</span>
                 {/* The reason a button is disabled is on the button, not in a
                     title: a tooltip is unreachable by keyboard and touch, and
                     this is the sentence a first run turns on. */}
@@ -443,15 +535,26 @@ export default function NewSessionDialog({
           )}
         </div>
 
-        {provider?.supports.model && <>
-          <div className="label">Model <span style={{ textTransform: 'none' }}>— {codexHarness ? 'Auto uses Codex’s current default' : 'blank uses the CLI default'}</span></div>
-          {genericHarness && manifestModelField?.kind !== 'select' ? (
-            <input className="field mono" style={{ margin: '6px 0 14px' }} value={model}
-                   placeholder={manifestModelField?.required ? 'Required by provider' : 'Provider default'}
-                   onChange={(e) => setModel(e.target.value)} />
+        {modelField.supported && <>
+          <div className="label">{modelField.label} <span style={{ textTransform: 'none' }}>— blank leaves the model to the CLI</span></div>
+          {/* "Not read yet" and "read, and there is nothing" are different
+              facts, and only the second one may be stated as an absence. */}
+          {catalogue === null && catalogueErr === null && (
+            <p className="faint">Reading what {provider?.label ?? 'this profile'} offers…</p>
+          )}
+          {catalogueErr !== null && (
+            <Note tone="warn">Wanigan could not read what models this profile offers, so type one or leave it blank for the CLI’s own default.</Note>
+          )}
+          {modelOpen ? (
+            <OpenField id="new-session-model" value={model} choices={modelChoices}
+                       placeholder={modelField.required ? 'Required by provider' : 'Provider default'}
+                       onChange={setModel} />
           ) : (
             <div style={{ display: 'flex', gap: 5, margin: '6px 0 14px', flexWrap: 'wrap' }}>
-              {!manifestModelField?.required && genericHarness && (
+              {/* A declared list that never names the empty value has no way
+                  back to the CLI default; the built-in profiles carry one of
+                  their own, so this appears only for a pack that does not. */}
+              {!modelField.required && !modelChoices.some((choice) => choice.value === '') && (
                 <FocusBtn className="pill" onClick={() => setModel('')} aria-pressed={model === ''}
                           style={model === '' ? { background: 'var(--accent)', color: 'var(--accent-ink)' } : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
                   Provider default
@@ -462,26 +565,58 @@ export default function NewSessionDialog({
                           aria-pressed={model === choice.value}
                           style={model === choice.value ? { background: 'var(--accent)', color: 'var(--accent-ink)' }
                                              : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
-                  <span title={(choice as { description?: string | null }).description ?? undefined}>{choice.label}</span>
+                  <span title={choice.description ?? undefined}>{choice.label}</span>
                 </FocusBtn>
               ))}
             </div>
           )}
+          {/* Both live fetchers answer with Wanigan's local list and a note
+              when the service cannot be reached. The note is the difference
+              between a catalogue and a guess, so it is shown, not dropped. */}
+          {catalogue?.note && <p className="faint">{catalogue.note}</p>}
         </>}
 
-        {provider?.supports.effort && (
+        {effortField.supported && (
           <>
-            <div className="label">Effort <span style={{ textTransform: 'none' }}>— governs thinking depth, tool calls and length</span></div>
-            <div style={{ display: 'flex', gap: 5, margin: '6px 0 14px', flexWrap: 'wrap' }}>
-              {['', ...effortChoices].map((l) => (
-                <FocusBtn key={l || 'default'} className="pill" onClick={() => setEffort(l)}
-                          aria-pressed={effort === l}
-                          style={effort === l ? { background: 'var(--accent)', color: 'var(--accent-ink)' }
-                                              : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
-                  {l || 'default'}
-                </FocusBtn>
-              ))}
-            </div>
+            <div className="label">{effortField.label} <span style={{ textTransform: 'none' }}>— governs thinking depth, tool calls and length</span></div>
+            {openField(effortField) ? (
+              <OpenField id="new-session-effort" value={effort} choices={effortChoices}
+                         placeholder={effortField.required ? 'Required by provider' : 'Provider default'}
+                         onChange={setEffort} />
+            ) : (
+              <div style={{ display: 'flex', gap: 5, margin: '6px 0 14px', flexWrap: 'wrap' }}>
+                {/*
+                  * A profile may declare this field required, and for that one
+                  * "default" is not a value at all: the launch compiler throws
+                  * "… is required." on an empty string. Offering the row anyway
+                  * is the same defect as offering a reasoning level the profile
+                  * never declared — a control whose value the profile has no
+                  * way to accept, which go() then refuses before the launch.
+                  * The model picker above guards its own default row for
+                  * exactly this reason.
+                  */}
+                {[
+                  ...(effortField.required ? [] : [{ value: '', label: 'default' }]),
+                  ...effortChoices.filter((choice) => choice.value !== ''),
+                ].map((choice) => (
+                  <FocusBtn key={choice.value || 'default'} className="pill" onClick={() => setEffort(choice.value)}
+                            aria-pressed={effort === choice.value}
+                            style={effort === choice.value ? { background: 'var(--accent)', color: 'var(--accent-ink)' }
+                                                : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
+                    {choice.label}
+                  </FocusBtn>
+                ))}
+              </div>
+            )}
+            {/*
+              * Symmetry with the permission block below, and for the same
+              * reason: with the default row gone there is nothing selected and
+              * nothing on screen saying why. A fact about this form, not a
+              * claim about the profile.
+              */}
+            {effortField.required && effort === '' && (
+              <Hint>This profile requires an effort level, and nothing is chosen yet.</Hint>
+            )}
           </>
         )}
 
@@ -493,24 +628,136 @@ export default function NewSessionDialog({
               {' '}and <span className="mono">Plan mode</span> directly above the terminal. The first opens Codex’s own
               picker, including its Auto choices and reasoning levels.
             </p>
+            {/*
+              * This line used to read "Claude permission and effort fields do
+              * not apply to it", which stopped being true the day the effort
+              * picker started reading the profile: the shipped Codex profile
+              * declares an effort field, so that picker renders directly above
+              * this box and the reader has just used it.
+              *
+              * Each clause reads both facts its own picker renders from —
+              * whether the profile takes the field at all, and whether what the
+              * control offers is the profile's declaration or Wanigan's
+              * fallback list. Those are different facts: `supports.effort` can
+              * be true for a field that names no levels, and the pills above
+              * are then Wanigan's fallback set, so a clause gated on support
+              * alone told a pack profile its own declaration was on screen
+              * when it was not.
+              *
+              * Neither clause says the value reaches Codex. `argv` is optional
+              * on a launch field and fieldArgs compiles `(field.argv ?? [])`,
+              * and the renderer is never handed it — launchFieldsFor() in
+              * providers.ts projects no argv — so delivery is not a fact this
+              * surface holds. Provenance is, and provenance is what it states.
+              *
+              * Both sentences also stand alone. "So is the permission mode
+              * below." rendered as an orphan for a codex-harness profile that
+              * declares a permission mode and no effort field: the clause it
+              * pointed back to was never on screen.
+              */}
             <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 5, lineHeight: 1.4 }}>
-              Codex uses its own controls — Claude permission and effort fields do not apply to it.
+              {effortField.supported && (effortField.declared
+                ? 'The effort control above comes from this profile’s own declaration. '
+                : 'This profile takes an effort level but declares no levels of its own, so the control above comes from Wanigan’s fallback list rather than from this profile. ')}
+              {permissionField.supported
+                ? (permissionField.declared
+                  ? 'The permission mode below comes from this profile’s own declaration.'
+                  : 'This profile takes a permission mode but declares no modes of its own, so the list below comes from Wanigan’s fallback set of Claude modes.')
+                : 'A permission mode is a Claude flag, and this profile declares none, so Wanigan offers no picker for one.'}
             </p>
           </div>
         )}
 
-        {provider?.supports.permissionMode && (
+        {permissionField.supported && (
           <>
-            <div className="label">Permission mode</div>
-            <select className="field" style={{ margin: '6px 0 14px' }} value={permissionMode}
-                    onChange={(e) => setPermissionMode(e.target.value)}>
-              <option value="">default</option>
-              {PERMISSION_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
+            <div className="label">{permissionField.label}</div>
+            {openField(permissionField) ? (
+              <OpenField id="new-session-permission-mode" value={permissionMode} choices={permissionField.choices}
+                         placeholder={permissionField.required ? 'Required by provider' : 'Provider default'}
+                         onChange={setPermissionMode} />
+            ) : (
+              <select className="field" style={{ margin: '6px 0 5px' }} value={permissionMode}
+                      onChange={(e) => setPermissionMode(e.target.value)}>
+                {/*
+                  * The guard the effort pills above already keep, one field
+                  * over: a profile that declares this field required has no
+                  * default to fall back on, so "default" is not a row it may
+                  * offer — choosing it only earns a refusal. This dialog gives
+                  * that refusal itself, before anything is launched: go() walks
+                  * the profile's required launch fields and stops on the first
+                  * one still empty, naming it. fieldArgs would refuse it too,
+                  * but nothing from this surface reaches it. The row becomes a
+                  * disabled placeholder rather than disappearing, because a
+                  * select holding a value no row matches has nothing to draw
+                  * and renders blank; the Hint below says what the placeholder
+                  * means: nothing chosen yet.
+                  */}
+                {permissionField.required
+                  ? <option value="" disabled>Required by provider</option>
+                  : <option value="">default</option>}
+                {permissionField.choices.filter((choice) => choice.value !== '').map((choice) => {
+                  /*
+                   * The words belong to the mode, not to whichever profile
+                   * declared it. Every built-in profile builds these choices as
+                   * `[...].map((value) => ({ value, label: value }))`, so what
+                   * arrives here is the raw identifier — and an identifier is
+                   * not a word for the one control that decides how much an
+                   * agent may do without asking.
+                   *
+                   * Relabelled here rather than in the manifest on purpose:
+                   * fingerprint() hashes the whole profile object, so editing
+                   * those labels would change every built-in profile's
+                   * profileFingerprint and make a fan-out queued before the
+                   * update fail with "… changed after this fan-out was
+                   * queued". Nothing about the launch changes; only the word.
+                   *
+                   * A mode this build has never seen keeps whatever the profile
+                   * called it. Prettifying `foo_bar` into "Foo bar" would be
+                   * inventing a meaning for a permission.
+                   */
+                  const copy = permissionModeCopy(choice.value);
+                  return (
+                    <option key={choice.value} value={choice.value}>
+                      {copy.known ? copy.label : choice.label}
+                    </option>
+                  );
+                })}
+              </select>
+            )}
+            {/*
+              * What the mode permits, said before it is chosen rather than
+              * discovered afterwards — the same shape the Trust block above
+              * uses. The blank option is not a mode: permissionModeCopy('')
+              * correctly reports one it does not recognise, and printing that
+              * over 'default' would accuse the CLI's own default of being
+              * something Wanigan cannot describe.
+              */}
+            <Hint>
+              {permissionMode !== ''
+                ? permissionModeCopy(permissionMode).detail
+                : permissionField.required
+                  // A profile may declare this field required with no default,
+                  // and for that one the blank row is not a default at all —
+                  // the launch compiler refuses it. Saying "the CLI's own
+                  // default applies" there would be the false half of the same
+                  // sentence.
+                  ? 'This profile requires a permission mode, and nothing is chosen yet.'
+                  : 'Wanigan passes no permission flag, so the CLI’s own default applies.'}
+            </Hint>
             {(permissionMode === 'bypassPermissions' || permissionMode === 'dontAsk') && (
-              <p style={{ color: 'var(--warn)', fontSize: 'var(--t-micro)', marginTop: -8, marginBottom: 12, lineHeight: 1.45 }}>
-                This session will not ask before running commands or editing files. Only use it in a
-                repo you can throw away or fully revert.
+              <p style={{ color: 'var(--warn)', fontSize: 'var(--t-micro)', marginTop: 5, marginBottom: 12, lineHeight: 1.45 }}>
+                <span aria-hidden="true">⚠ </span>
+                {/* One sentence for two modes said the same strong thing about
+                    both. It is only established for one of them: headless.ts
+                    reaches for bypassPermissions where nothing is denied, and
+                    nothing in this repository establishes what dontAsk still
+                    holds back. So the mode Wanigan can vouch for keeps the
+                    strong sentence, and the one it cannot says exactly that. */}
+                {permissionMode === 'bypassPermissions'
+                  ? 'This session will not ask before running commands or editing files. Only use it in a '
+                    + 'repo you can throw away or fully revert.'
+                  : 'Wanigan has not verified what this mode still asks about, so treat it as unrestricted: '
+                    + 'only use it in a repo you can throw away or fully revert.'}
               </p>
             )}
           </>
@@ -526,16 +773,33 @@ export default function NewSessionDialog({
                        onChange={(e) => setProviderOptions((old) => ({ ...old, [field.id]: e.target.checked }))} />
                 {providerOptions[field.id] === true ? 'Enabled' : 'Disabled'}
               </span>
-            ) : field.kind === 'select' ? (
+            ) : field.kind === 'select' && !field.allowCustom ? (
               <select className="field" value={String(providerOptions[field.id] ?? '')}
                       onChange={(e) => setProviderOptions((old) => ({ ...old, [field.id]: e.target.value }))}>
-                {!field.required && <option value="">Provider default</option>}
+                {/* Same shape as the permission select above, for the same
+                    reason: a required field has no default to offer, and a
+                    select holding a value no row matches renders blank rather
+                    than showing what it holds. The placeholder is disabled, so
+                    it names the empty state without being choosable. */}
+                {field.required
+                  ? <option value="" disabled>Required by provider</option>
+                  : <option value="">Provider default</option>}
                 {(field.options ?? []).map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
               </select>
             ) : (
-              <input className="field mono" type={field.kind === 'secret' ? 'password' : 'text'}
-                     value={String(providerOptions[field.id] ?? '')}
-                     onChange={(e) => setProviderOptions((old) => ({ ...old, [field.id]: e.target.value }))} />
+              // A select the manifest opened is a suggestion list, not a set;
+              // its options stay reachable through the datalist.
+              <>
+                <input className="field mono" type={field.kind === 'secret' ? 'password' : 'text'}
+                       list={field.options?.length ? `new-session-field-${field.id}` : undefined}
+                       value={String(providerOptions[field.id] ?? '')}
+                       onChange={(e) => setProviderOptions((old) => ({ ...old, [field.id]: e.target.value }))} />
+                {!!field.options?.length && (
+                  <datalist id={`new-session-field-${field.id}`}>
+                    {field.options.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+                  </datalist>
+                )}
+              </>
             )}
           </label>
         ))}
@@ -547,10 +811,14 @@ export default function NewSessionDialog({
             <select className="field" value={accountId ?? ''}
                     onChange={(e) => setAccountId(e.target.value || null)}
                     style={{ marginBottom: 6 }}>
+              {/* This option is the absence of a choice, so it describes the
+                  fallback and never the row above it: naming whatever the
+                  project or the app default currently resolves to, so choosing
+                  an account tells you what you are leaving behind. */}
               <option value="">
-                {accountRes?.account
-                  ? `Follow ${accountRes.source === 'project' ? 'this project' : 'the default'} — ${accountRes.account.label}`
-                  : 'Follow this project'}
+                {followRes?.account
+                  ? `Follow ${followRes.source === 'project' ? 'this project' : 'your default'} — ${followRes.account.label}`
+                  : 'Follow this project or your default'}
               </option>
               {accountList.map((row) => (
                 <option key={row.id} value={row.id}>

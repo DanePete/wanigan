@@ -504,6 +504,23 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
     });
   }, [query, sort, status, suggestions]);
 
+  /**
+   * The queue's one announced line.
+   *
+   * The results list used to be the live region, so a first load, a broadened
+   * filter, a reorder and every status change read up to 150 proposals aloud in
+   * filing order — title, summary, four reason codes and five button labels
+   * each. A reader who moved a single proposal to "reviewed" was told about the
+   * other hundred. What actually changed is a count, and a count belongs beside
+   * the controls that change it, in one sentence.
+   */
+  const filterStatus = useMemo(() => {
+    if (loading) return 'Reading local Scout records…';
+    if (suggestions.length === 0) return 'Nothing proposed yet.';
+    if (filteredSuggestions.length === 0) return 'No proposal matches these filters.';
+    return `Showing ${filteredSuggestions.length} of ${suggestions.length}.`;
+  }, [filteredSuggestions.length, loading, suggestions.length]);
+
   return (
     <div className="scout-view">
       <header className="scout-head">
@@ -638,7 +655,15 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
           </section>
 
           <section className="card scout-filterbar" aria-label="Filter Scout proposals">
-            <div className="scout-filter-copy"><span className="label">Review queue</span><h3>{filteredSuggestions.length} proposal{filteredSuggestions.length === 1 ? '' : 's'}</h3><p>The order here is a filing order, not a ranking — a proposal is a suggestion, never a claim that the change suits your setup.</p></div>
+            <div className="scout-filter-copy">
+              <span className="label">Review queue</span>
+              {/* The heading carries the total, which only a scan changes, so it stays
+                  an ordinary heading. The line under it is this page’s one announced
+                  channel, and it sits beside the controls that change it. */}
+              <h3>{suggestions.length} proposal{suggestions.length === 1 ? '' : 's'}</h3>
+              <p className="scout-filter-status" role="status">{filterStatus}</p>
+              <p>The order here is a filing order, not a ranking — a proposal is a suggestion, never a claim that the change suits your setup.</p>
+            </div>
             <div className="scout-filter-controls">
               <label><span className="label">Status</span><select className="field" value={status} onChange={(event) => setStatus(event.target.value)}>{statuses.map((item) => <option value={item} key={item}>{item === 'all' ? 'All statuses' : displayStatus(item)}</option>)}</select></label>
               <label><span className="label">Order</span><select className="field" value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="newest">Newest first</option><option value="effort">Smallest effort first · unestimated last</option></select></label>
@@ -646,7 +671,12 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
             </div>
           </section>
 
-          <section className="scout-results" aria-live="polite">
+          {/* A list, not an announcement. This section was the live region, so a
+              first load, a broadened filter, a reorder and every status change read
+              the whole queue aloud — each proposal’s title, summary, four reason
+              codes and five button labels. The count sentence in the filter bar is
+              the announced channel now. */}
+          <section className="scout-results">
             {loading && <div className="scout-empty"><span aria-hidden="true">◌</span><div><h3>Reading local Scout records…</h3><p>Nothing is being scanned while this dashboard loads.</p></div></div>}
             {!loading && filteredSuggestions.length === 0 && <div className="scout-empty"><span aria-hidden="true">⌕</span><div><h3>{suggestions.length ? 'No proposal matches these filters' : 'No proposals yet'}</h3><p>{suggestions.length ? 'Clear a filter or try another search.' : 'Enable sources, then run a visible preview or schedule a weekly scan. Scout will never apply an update by itself.'}</p></div></div>}
             {filteredSuggestions.map((suggestion) => {

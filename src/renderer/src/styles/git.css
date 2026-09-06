@@ -1,5 +1,22 @@
 /* git — tokens come from index.css; no colour declared here. */
 
+/* Git is a workbench, not a document, so it opts out of the measure index.css
+   holds every document view to. --page-max is right for a column of prose and
+   wrong here: it stopped the toolbar rule, the divider between the two columns
+   and the diff a third of the way across a wide window while the scrollbar sat
+   out at the edge, so the surface read as a narrow card floating in the tab.
+   `max-width: none` rather than className="pane wide" — .pane.wide only raises
+   the cap to --page-wide, which no breakpoint lifts, so the same truncation
+   would come back above ~1708px.
+   The pane keeps no gutter of its own, which is how this view has always sat
+   on the window edge, so the head supplies one. Both selectors outrank the
+   index.css rules they replace (and the compact.css ladder) on specificity
+   alone, which matters: git.css is @imported at the top of index.css and so
+   loses every tie on source order. */
+.pane.gt-view { padding: 0; }
+.pane.gt-view > * { max-width: none; }
+.pane.gt-view > .pane-head:first-child { padding: var(--s-3); }
+
 .gt { display: grid; grid-template-columns: minmax(0,1fr) minmax(320px, 38%);
       width: 100%; min-height: 0; }
 .gt-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -66,10 +83,22 @@
 .gt-chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 
 /* The history filter runs over the commits already loaded; the note under the
-   list says so, so a short result is never mistaken for a short history. */
-.gt-filter { width: 190px; min-height: var(--control-h-sm); padding: 2px 7px; font-size: var(--t-small); }
+   list says so, so a short result is never mistaken for a short history.
+   The selector is compound on purpose: index.css @imports this sheet above its
+   own rules, so a bare .gt-filter lost all four of its declarations to .field —
+   the box fell back to the width an <input> takes on its own rather than 190px,
+   and to body size and the full field padding, in a row of 11px chips. Do not
+   collapse it.
+   The `min-height: var(--control-h-sm)` that used to sit here is deleted rather
+   than raised with the rest. Two classes of specificity also beat compact.css's
+   `@media (pointer: coarse) { .btn, .field { min-height: 44px } }`, so winning
+   that 26px back would have shrunk a control a finger has to hit; the shared
+   height is the right answer for a box that takes typing. */
+.field.gt-filter { width: 190px; padding: 2px 7px; font-size: var(--t-small); }
 .gt-filter-note { padding: 8px 12px; font-size: var(--t-micro); line-height: 1.5; }
 
 /* The one confirmation this view shares between push, discard, merge, delete
-   branch and drop stash. Inset to the same gutter as the panes it interrupts. */
+   branch and drop stash, and the error/result notices that appear either side
+   of it. Inset to the same gutter as the panes they interrupt. */
+.gt-notice,
 .gt-confirm { padding: var(--s-2) var(--s-3); }

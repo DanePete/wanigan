@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
-import type { ProviderCapabilities, ProviderId, ProviderInfo } from '../shared/types';
+import type { ProviderCapabilities, ProviderId, ProviderInfo, ProviderLaunchField } from '../shared/types';
 import { getProviderKey } from './keys';
 import { probeProviderAdapter } from './provider-adapter';
 import {
@@ -714,6 +714,30 @@ async function which(def: ProviderDef): Promise<string | null> {
   return onPath ?? firstExecutable(def.fallbacks());
 }
 
+/**
+ * One profile's launch fields, in the shape a renderer reads.
+ *
+ * This mapping lived inside detectProviders(), which meant the only way to
+ * learn what a profile declares was to re-run `which`, re-probe the version and
+ * re-inspect the help text of every installed CLI. Asking "what does this one
+ * profile say it accepts for `model`?" is a question about the frozen
+ * declaration, not about the machine, and a model picker must not pay a full
+ * capability sweep to answer it. The schema's `choices` becomes the renderer's
+ * `options`; nothing else is renamed.
+ */
+export function launchFieldsFor(def: ProviderDef): ProviderLaunchField[] {
+  return def.launchFields.map((field) => ({
+    id: field.id,
+    label: field.label,
+    kind: field.kind,
+    required: field.required,
+    description: field.description,
+    options: field.choices,
+    defaultValue: field.defaultValue,
+    allowCustom: field.allowCustom,
+  }));
+}
+
 export async function detectProviders(): Promise<ProviderInfo[]> {
   refreshProviderPacks();
   const p = await shellPath();
@@ -735,15 +759,7 @@ export async function detectProviders(): Promise<ProviderInfo[]> {
         profileFingerprint: def.profileFingerprint,
         harnessId: def.harness,
         backendId: def.backendId,
-        launchFields: def.launchFields.map((field) => ({
-          id: field.id,
-          label: field.label,
-          kind: field.kind,
-          required: field.required,
-          description: field.description,
-          options: field.choices,
-          defaultValue: field.defaultValue,
-        })),
+        launchFields: launchFieldsFor(def),
       };
     })
   );

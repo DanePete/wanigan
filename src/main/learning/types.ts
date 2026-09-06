@@ -34,6 +34,35 @@ export type ExperimentStatus = 'draft' | 'running' | 'completed' | 'cancelled' |
 export type EvidenceLevel = 'estimate' | 'correlation' | 'causal';
 export type RelationKind = 'supports' | 'contradicts' | 'supersedes' | 'duplicates';
 
+/**
+ * The statuses a candidate is in once it is no longer waiting on anyone.
+ * Hand-mirrored with DECIDED_STATUSES in src/renderer/src/views/Learning.tsx,
+ * which is the Inbox's "Decided" filter: the pipeline's decided figure opens
+ * that filter on click, so the two have to name the same statuses.
+ *
+ * The list alone does not establish that a PERSON decided — 'promoted' is also
+ * where the auto-apply lane leaves a candidate, and promoteCandidate writes no
+ * reviewed_at. Only the count's reviewed_at predicate carries that, which is
+ * why the figure and this list do not select the same rows even at the same
+ * moment. Nor is the relation between them a clean containment: the figure is
+ * scoped by artifactWhere and the list by project_id, and those two do not
+ * agree about a personal candidate under a project scope. They overlap; do not
+ * describe one as a subset of the other.
+ *
+ * 'snoozed' is absent deliberately. reviewCandidate stamps reviewed_at for a
+ * snooze as well as for an approve or a reject, so any count keyed on that
+ * timestamp alone reads a deferral as a decision. 'pending' is absent because
+ * nobody has decided on it yet. 'failed' is absent despite usually carrying a
+ * decision: its only writer is markCandidateFailed on the skill-forge path
+ * (learning-service.ts), where the approve succeeded and the promotion then
+ * threw, so the row holds a stamped reviewed_at from that approve. It is left
+ * out because the work is not finished — the Inbox lists 'failed' under "Needs
+ * a decision", and counting it here would report as settled a proposal the
+ * operator still has to retry or abandon.
+ */
+export const DECIDED_CANDIDATE_STATUSES: readonly CandidateStatus[] =
+  ['approved', 'rejected', 'promoted', 'applied', 'superseded'];
+
 export type JsonObject = Record<string, unknown>;
 
 export interface LearningSignal {
@@ -544,7 +573,25 @@ export interface LearningPipelineStats {
   signalsAllTime: number;
   eligibleSignals: number;
   candidatesCreated: number;
+  /**
+   * Candidates created in the window that nobody has decided on yet: a COUNT
+   * over knowledge_candidates still sitting at 'pending' or 'snoozed'. It is
+   * deliberately not candidatesCreated minus autoPromoted. autoPromoted counts
+   * knowledge items rather than candidates, so that subtraction mixed units,
+   * and nothing in it ever removed a candidate a person approved or rejected —
+   * a fully reviewed Inbox still reported a backlog.
+   */
+  awaitingDecision: number;
   autoPromoted: number;
+  /**
+   * Candidates a person decided inside the window: a COUNT over the statuses
+   * in DECIDED_CANDIDATE_STATUSES, timed by reviewed_at because that is when
+   * the decision was taken. It is deliberately not "reviewed_at is set" — a
+   * snooze stamps reviewed_at too, so that predicate counted a deferred
+   * proposal here while awaitingDecision counted the same row as still open.
+   * A candidate automation promoted without review has no reviewed_at and is
+   * not counted here; autoPromoted is the figure for those.
+   */
   reviewed: number;
   itemsPromoted: number;
   projectionsApplied: number;

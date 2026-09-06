@@ -48,7 +48,12 @@ const binary = process.platform === 'darwin'
   ? path.join(REPO, 'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron')
   : path.join(REPO, 'node_modules/electron/dist/electron');
 
-const app = await electron.launch({ executablePath: binary, args: ['.', `--user-data-dir=${udd}`], cwd: REPO, env, timeout: 120_000 });
+// `--wanigan-automation` is the launch marker src/main/automation.ts reads.
+// It is the only mode in which the raw projects:add channel answers: a
+// headless run cannot click the folder picker that registers a root for a
+// person, and the marker cannot be reached from the page, only from argv.
+// An installed build refuses it outright (app.isPackaged).
+const app = await electron.launch({ executablePath: binary, args: ['.', `--user-data-dir=${udd}`, '--wanigan-automation'], cwd: REPO, env, timeout: 120_000 });
 const page = await app.firstWindow({ timeout: 120_000 });
 page.on('console', (m) => { if (['error', 'warning'].includes(m.type())) log(`[console.${m.type()}] ${m.text()}`); });
 page.on('pageerror', (e) => log(`[pageerror] ${e.message}`));
@@ -56,7 +61,8 @@ await page.waitForSelector('.nav-tabs, .sidebar, nav', { timeout: 120_000 });
 await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.setSize(1440, 900); w.show(); });
 await page.waitForTimeout(800);
 
-// Seed through the real IPC surface, then reload so the shell's project list refreshes.
+// Seed through the real IPC surface, then reload so the shell's project list
+// refreshes. projects.add answers here only because of the launch marker above.
 const seed = await page.evaluate(async (repo) => {
   const out = {};
   try {

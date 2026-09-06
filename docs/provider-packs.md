@@ -94,7 +94,7 @@ inherit the built-in Claude backend's semantic memory.
 | `versionArgs` | ≤ 20; defaults to `["--version"]` |
 | `helpArgs` | ≤ 20; defaults to `["--help"]`. Wanigan runs it automatically during discovery, as it does `versionArgs` |
 | `fallbackPaths` | ≤ 100. **Refused for local packs** — declaring any makes the pack `invalid`. Built-ins use it for things like `{home}/.claude/local/claude` |
-| `editorExtensions` | ≤ 20 × `{ prefix, executablePaths }` (≤ 20 paths each) |
+| `editorExtensions` | ≤ 20 × `{ prefix, executablePaths }` (≤ 20 paths each). **Refused for local packs** on the same terms as `fallbackPaths`. Built-ins use it to find the Claude and Codex binaries shipped inside an editor extension |
 
 The command-name denylist is defense in depth, not proof that an unfamiliar
 executable is safe. It stops a manifest turning a general-purpose interpreter
@@ -106,8 +106,17 @@ than on `PATH`. Wanigan scans the `extensions` directory under `~/.vscode`,
 starting with `prefix`, newest-first, and resolves each `executablePaths` entry
 inside the matched directory. A path that resolves outside it is dropped.
 
+`fallbackPaths` and `editorExtensions` are the only two ways a manifest can name
+an executable by filesystem path, and **a local pack may declare neither**.
+Together with the `bin` rules that is the whole boundary: a local manifest picks
+its agent by naming an installed command, and nothing else. Declaring either
+field makes the pack `invalid`, and a local profile expands no path candidates
+even when something compiles it outside discovery, so `bin` must resolve on
+`PATH` or the launch fails.
+
 Both `executablePaths` and `fallbackPaths` substitute `{home}`, `{packDir}`,
-`{arch}` and `{platform}`.
+`{arch}` and `{platform}`. Since only built-ins expand them and a built-in has
+no pack directory, `{packDir}` resolves to the empty string today.
 
 ## `launchFields`
 
@@ -156,7 +165,7 @@ A map from the destination variable name to one source.
 | `source` | Shape | Value |
 |---|---|---|
 | `literal` | `{ "source": "literal", "value": "…" }` | the literal string, ≤ 4,096 characters |
-| `process` | `{ "source": "process", "name": "VAR", "fallback": "…" }` | Wanigan's own process environment, else `fallback` |
+| `process` | `{ "source": "process", "name": "VAR", "fallback": "…" }` | Wanigan's own process environment, else `fallback`. Credential-shaped source names are refused — see below |
 | `credential` | `{ "source": "credential", "id": "…" }` | Wanigan's OS-keychain provider credential store; `id` defaults to the profile id |
 
 Rules that matter:
@@ -169,6 +178,29 @@ Rules that matter:
   `LD_`, `DYLD_`, `NIX_LD`, `CORECLR_`, `COR_`, `WANIGAN_`, `OTEL_`,
   `ELECTRON_`, `CHROME_` or `VSCODE_`. Declaring one is a validation error, not
   a silent drop.
+- **Refused sources.** A `process` source may read configuration out of
+  Wanigan's environment — a base URL, a model name — but not a secret. The
+  agent already inherits that environment, so the leak is not the presence of a
+  key: it is the rename. Reading `ANTHROPIC_API_KEY` and writing it as
+  `ANTHROPIC_AUTH_TOKEN` beside your own `ANTHROPIC_BASE_URL` sends the
+  operator's Anthropic credential to the host *you* chose, and reading
+  `OPENAI_API_KEY` or `GITHUB_TOKEN` does the same through a CLI that never
+  touches Anthropic. So a `process` source name is refused when it is a known
+  ambient credential (`ANTHROPIC_API_KEY`, `ANTHROPIC_ADMIN_KEY`,
+  `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`,
+  `AZURE_OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`,
+  `GOOGLE_APPLICATION_CREDENTIALS`, `AWS_ACCESS_KEY_ID`,
+  `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`,
+  `GITLAB_TOKEN`, `NPM_TOKEN`, `HF_TOKEN`) or when its last
+  underscore-separated word is `KEY`, `APIKEY`, `TOKEN`, `SECRET`, `PASSWORD`,
+  `PASSPHRASE` or `CREDENTIAL` — singular or plural, plus `PASSWD`. That covers
+  `MY_VENDOR_API_KEY` and `WANIGAN_GLM_API_KEY`. `MONKEY` and
+  `KEYBOARD_LAYOUT` are not caught, and neither are `WANIGAN_GLM_BASE_URL` or `WANIGAN_GLM_MODEL`: the
+  whole `WANIGAN_` prefix is refused as a *destination* but not as a source,
+  because the shipped GLM and DeepSeek packs read their own overrides that way.
+  Declaring a refused source is a validation error, not a silent drop, and a
+  secret has a supported path — use `credential`. This refuses known shapes; it
+  is not proof that every other name is free of secrets.
 - **A missing credential empties the whole map.** If any `credential` source
   resolves to nothing, the profile contributes `{}` rather than a partial
   environment — a base URL and its token are one atomic configuration, and
@@ -287,10 +319,10 @@ Discovery is not installation consent.
 
 1. A newly seen or newly changed local manifest is `needs-trust` and cannot
    launch anything.
-2. `trustManifest` records the **exact** manifest SHA-256 you reviewed, and
-   leaves the pack disabled.
+2. `trustManifest` records the **exact** manifest SHA-256 you reviewed, after a
+   main-process confirmation, and leaves the pack disabled.
 3. If the pack has an adapter, `trustAdapter` records the adapter's digest
-   separately. Trusting one never trusts the other.
+   separately, behind its own confirmation. Trusting one never trusts the other.
 4. Only then does enabling succeed, and only while both digests still match.
 
 Editing one byte of an enabled manifest returns it to `needs-trust`, which is
@@ -300,6 +332,27 @@ environment destination, source, literal and fallback before you approve it.
 Automatic version and help probes run with a minimal credential-free
 environment. Upgrading the external CLI a pack names is a separate trust class
 that Wanigan does not observe.
+
+Both digests are confirmed in the **main process**, not on the page. A
+confirmation the renderer draws is not a trust boundary, because a compromised
+renderer can simply decline to draw it, so `trustManifest` and `trustAdapter`
+each open a system dialog before anything is recorded — the same way
+`plugins:marketAdd` confirms a marketplace. They are two separate questions
+with two separate buttons: approving one never approves the other, and neither
+enables the pack. Cancelling records nothing and enables nothing.
+
+That dialog builds its own summary rather than displaying text the renderer
+handed it, and every field in it is length-capped. A manifest is untrusted
+data, and one declaring a hundred profiles, or environment destinations with
+very long names, could otherwise pad the question off the screen and leave only
+the buttons. When the summary has to elide anything it says so, and it keeps
+the digest, the true destination count, the redirect warning and the note that
+the adapter is a separate grant — those are never the part that gets cut. It
+then names the manifest file on disk, deliberately rather than the Settings
+page, since the page is the surface this dialog exists to survive. The complete
+argv and environment listing required above stays on the Providers page, fed by
+`inspectManifest`, and the dialog always names the file that is the
+authoritative record of it.
 
 Statuses a pack can hold: `enabled`, `disabled`, `needs-trust`,
 `pending-removal`, `invalid`, `removed`.
@@ -318,6 +371,8 @@ Be clear-eyed about what a third-party pack reaches today.
   what the manifest says. The declaration cannot turn a claim into support.
 - A local pack that is not `generic-cli` is `invalid` without an adapter, and
   an adapter needs its own digest approval.
+- A local pack cannot choose its executable by path: `bin` is an installed
+  command name, and both `fallbackPaths` and `editorExtensions` are refused.
 - `hooks`, `mcp`, `policy` and `transcript` additionally require harness
   `claude-code` — the wiring is Claude-shaped, and a probe cannot widen it.
 - So a manifest-only third-party pack today is **a well-configured terminal**:

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  AwakeState,
   ExpiringResults,
   LaunchOptions, PastSession, Project, ProviderInfo, Session, RunConfig, SourceConfig,
   SessionUsage, ApiEvent, SessionEvent, Attention, TranscriptHit, TranscriptTurn,
@@ -11,10 +12,10 @@ import type {
   McpServerConfig, McpServerStatus, BudgetState, Reconciliation, TrustLevel, LedgerEntry,
   WaniganSettings, ThemeSetting, UploadedFile, EvalPair, GoldenSet,
   EgressReport, ObservedSession, ObservedState,
-  MobileMonitorConfig, MobileMonitorStatus,
+  MobileMonitorConfig, MobileMonitorStatus, TailnetStatus,
   ReviewRecipe, ReviewRun,
   ArtifactRoiSummary, CandidateExplanation, ForgedSkill, FreshnessReport,
-  KnowledgeBriefing, KnowledgeCandidate,
+  BriefingPreview, KnowledgeCandidate,
   KnowledgeEvidence, KnowledgeItem, KnowledgeProjection, KnowledgeRelation, KnowledgeVersion,
   SkillInstallResult,
   LearningExperiment, LearningOverview, LearningPipelineStats, LearningSettings, LearningSignal,
@@ -24,8 +25,7 @@ import type {
   ImprovementScoutGoal, ImprovementScoutOverview, ImprovementScoutRun,
   ImprovementScoutSettings, ImprovementScoutSource, ImprovementScoutSuggestion, ImprovementScoutSuggestionStatus,
   AccountResolution, AgentAccount, ControlEvent, UsageSnapshot, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode, DocketPlanNode, DocketProof,
-  DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskRecord, ModelOutcome, WorkDocket,
-} from '../shared/types';
+  DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, WorkDocket, LaunchModelCatalogue,} from '../shared/types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -46,6 +46,8 @@ const api = {
   },
   providers: {
     list: () => call<ProviderInfo[]>('providers:list'),
+    modelCatalogue: (providerId: string) =>
+      call<LaunchModelCatalogue>('providers:modelCatalogue', providerId),
   },
   providerPacks: {
     list: (includeRemoved?: boolean) => call<ProviderPackInfo[]>('providerPacks:list', includeRemoved),
@@ -71,6 +73,9 @@ const api = {
   projects: {
     list: () => call<Project[]>('projects:list'),
     refresh: () => call<Project[]>('projects:refresh'),
+    // Answered only by an automation run (scripts/shots.mjs), and never in a
+    // packaged build. In a normal build the folder picker below is the only way
+    // to register a root; this type is a convenience, never the check.
     add: (dir: string) => call<Project>('projects:add', dir),
     pick: () => call<Project | null>('projects:pick'),
     remove: (id: string) => call<Project[]>('projects:remove', id),
@@ -125,6 +130,7 @@ const api = {
     estimate: (config: RunConfig, observed?: number) => call<any>('batch:estimate', config, observed),
     dryRun: (config: RunConfig, rowIndex?: number) => call<any>('batch:dryRun', config, rowIndex),
     runs: () => call<any[]>('batch:runs'),
+    runsInFlight: () => call<{ readAt: number; runs: number; requestsReturned: number; requestsOutstanding: number }>('batch:runsInFlight'),
     run: (id: string) => call<any>('batch:run', id),
     results: (id: string, status: string, q: string, offset: number) =>
       call<any>('batch:results', id, status, q, offset),
@@ -294,6 +300,26 @@ const api = {
     regenerateTopic: () => call<MobileMonitorStatus>('mobile:regenerateTopic'),
     testPush: () => call<{ ok: boolean; detail: string }>('mobile:testPush'),
   },
+  // ── the private HTTPS transport in front of that loopback listener ───
+  // The port is optional and advisory: main serves the port the phone monitor
+  // is actually listening on and refuses a number that disagrees with it, so a
+  // stale screen cannot publish the wrong one.
+  tailnet: {
+    status: (port?: number) => call<TailnetStatus>('tailnet:status', port),
+    serve: (port?: number) => call<TailnetStatus>('tailnet:serve', port),
+    unserve: (port?: number) => call<TailnetStatus>('tailnet:unserve', port),
+    /** The pairing QR as an SVG string. Main chooses what it encodes, never the
+     *  renderer — see the handler for why that is the whole safety property. */
+    qrSvg: () => call<string>('tailnet:qr'),
+  },
+  // ── keeping the Mac awake for the agents on the other end of that ────
+  // Read-only on purpose. The renderer cannot ask for a hold: the conditions
+  // are a live agent and the dashboard toggle, main observes both, and a
+  // screen that could pin a laptop awake by itself is a battery nobody can
+  // account for.
+  awake: {
+    state: () => call<AwakeState>('awake:state'),
+  },
   // ── phase 19 · trust and the ledger ──────────────────────────────────
   policy: {
     trust: (projectId: string | null) => call<TrustLevel>('policy:trust', projectId),
@@ -312,8 +338,9 @@ const api = {
     send: (sessionId: string, invoke: string) => call<boolean>('skills:send', sessionId, invoke),
   },
   demo: {
-    state: () => call<{ on: boolean; map: { real: string; fake: string }[] }>('demo:state'),
-    set: (on: boolean) => call<{ on: boolean; map: { real: string; fake: string }[] }>('demo:set', on),
+    state: () => call<{ on: boolean; blurTerminals: boolean; map: { real: string; fake: string }[] }>('demo:state'),
+    set: (on: boolean) => call<{ on: boolean; blurTerminals: boolean; map: { real: string; fake: string }[] }>('demo:set', on),
+    setBlur: (on: boolean) => call<{ on: boolean; blurTerminals: boolean; map: { real: string; fake: string }[] }>('demo:setBlur', on),
   },
   // ── phase 28 · git ───────────────────────────────────────────────────
   git: {
@@ -415,6 +442,8 @@ const api = {
     retry: (nodeId: string) => call<DocketNode>('control:retry', nodeId),
     setAutopilot: (docketId: string, input: { enabled: boolean; providerId?: string; model?: string | null }) =>
       call<DocketDetail>('control:setAutopilot', docketId, input),
+    setBudget: (docketId: string, budgetUsd: number | null) =>
+      call<DocketDetail>('control:setBudget', docketId, budgetUsd),
     checkpoint: (nodeId: string, note: string) => call<DocketCheckpoint>('control:checkpoint', nodeId, note),
     runProof: (nodeId: string) => call<DocketProof>('control:runProof', nodeId),
     complete: (nodeId: string, input?: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }) =>
@@ -425,7 +454,7 @@ const api = {
     triageEvent: (id: string, input?: { title?: string; acceptance?: string[]; risk?: DocketRisk }) => call<DocketDetail>('control:triageEvent', id, input ?? {}),
     dismissEvent: (id: string) => call<boolean>('control:dismissEvent', id),
     mcpTasks: (docketId?: string) => call<McpTaskRecord[]>('control:mcpTasks', docketId),
-    cancelMcpTask: (id: string) => call<boolean>('control:cancelMcpTask', id),
+    cancelMcpTask: (id: string) => call<McpTaskCancelReceipt>('control:cancelMcpTask', id),
     resumeReceipts: (docketId: string) => call<GoalResumeReceipt[]>('control:resumeReceipts', docketId),
     traces: (docketId: string, limit?: number) => call<GoalTraceEvent[]>('control:traces', docketId, limit),
   },
@@ -570,8 +599,14 @@ const api = {
     // stay, and the reason is recorded as an operational signal. The reason is
     // required: main rejects an empty one.
     retireItem: (id: string, reason: string) => call<KnowledgeItem>('learning:retireItem', id, reason),
+    // Main answers this channel with BriefingPreview: the capsule plus the
+    // launch state around it — whether learning was on, the profile's declared
+    // harness, how a launch would deliver the text, and what proof that
+    // delivery needs. Typing it as the narrower KnowledgeBriefing erased
+    // exactly the field that tells "the engine was off" from "retrieval ran and
+    // matched nothing", and both previews then said the second.
     briefing: (input: { query: string; providerId: string; projectId?: string | null; path?: string | null; maxTokens?: number }) =>
-      call<KnowledgeBriefing>('learning:briefing', input),
+      call<BriefingPreview>('learning:briefing', input),
     projections: (filter?: { itemId?: string; candidateId?: string; status?: string; limit?: number }) =>
       call<KnowledgeProjection[]>('learning:projections', filter),
     undoProjection: (id: string) => call<KnowledgeProjection>('learning:undoProjection', id),
@@ -672,6 +707,11 @@ const api = {
       const h = (_e: unknown, s: Session[]) => cb(s);
       ipcRenderer.on('session:list', h);
       return () => ipcRenderer.removeListener('session:list', h);
+    },
+    unread: (cb: (counts: Record<string, number>) => void) => {
+      const h = (_e: unknown, counts: Record<string, number>) => cb(counts);
+      ipcRenderer.on('session:unread', h);
+      return () => ipcRenderer.removeListener('session:unread', h);
     },
     // A clicked notification. Main has already raised the window; this says
     // which session or run the banner was about, so the operator lands on it
