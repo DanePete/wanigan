@@ -1,0 +1,188 @@
+/* ui — the shared primitives in components/bits.tsx. Tokens come from index.css;
+   no colour, size or radius is declared here as a literal.
+
+   One class per primitive, one place to change it. Before this sheet the
+   primitive layer was five functions styled with sixteen inline objects, and
+   every view grew its own chip, head, empty and status family beside them.
+   A view that needs a variant adds a modifier here or a one-line override in
+   its own sheet — never a second family with a new name. */
+
+/* An input that sits in a line of text: rename-in-place, small filters. */
+.field-inline { width: auto; min-width: 160px; padding: 2px 6px; font-size: var(--t-small); }
+
+/* ── page and section heads ─────────────────────────────────────────── */
+
+/* PageHead renders .pane-head (index.css). Only the action slot is new. */
+.pane-actions { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+
+.sec-head { display: flex; align-items: baseline; gap: var(--s-2); min-width: 0; }
+.sec-head .label { color: var(--text-dim); }
+.sec-count { font-size: var(--t-small); color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.sec-right { display: flex; align-items: center; gap: var(--s-2); margin-left: auto; flex-wrap: wrap; }
+
+/* ── chip: one filter, one toggle ───────────────────────────────────── */
+
+/* Pressed is a fill, not the accent; a chip whose count is zero stays pressable
+   but goes faint and dashed so it never reads as an active filter. */
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  min-height: var(--control-h-sm); padding: 0 10px;
+  border: 1px solid var(--line); border-radius: var(--r-pill);
+  background: transparent; color: var(--text-dim);
+  font-size: var(--t-small); font-weight: 500; white-space: nowrap;
+  transition: background var(--mo-state) var(--mo-ease), border-color var(--mo-state) var(--mo-ease), color var(--mo-state) var(--mo-ease);
+}
+.chip:hover:not(:disabled) { border-color: var(--text-faint); color: var(--text); }
+.chip[aria-pressed='true'] { background: var(--bg-selected); border-color: var(--text-faint); color: var(--text); }
+.chip .chip-n { font-size: var(--t-micro); color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.chip[aria-pressed='true'] .chip-n { color: var(--text-dim); }
+.chip.zero { color: var(--text-faint); border-style: dashed; }
+.chip:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ── segmented: one choice among a few ──────────────────────────────── */
+.seg {
+  display: inline-flex; align-items: stretch; gap: 2px; padding: 2px;
+  border: 1px solid var(--line-soft); border-radius: var(--r-sm); background: var(--bg-sunk);
+}
+.seg button {
+  min-height: calc(var(--control-h-sm) - 4px); padding: 0 10px; border-radius: var(--r-xs);
+  color: var(--text-dim); font-size: var(--t-small); font-weight: 500; white-space: nowrap;
+  transition: background var(--mo-state) var(--mo-ease), color var(--mo-state) var(--mo-ease);
+}
+.seg button:hover { color: var(--text); }
+.seg button[aria-pressed='true'] { background: var(--bg-selected); color: var(--text); font-weight: 600; }
+
+/* ── mark: glyph plus word ──────────────────────────────────────────── */
+
+/* No fill. The glyph carries the shape, the word carries the state, the tone
+   only reinforces. Tones follow the pill's set so one table serves both. */
+.mark { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; white-space: nowrap; color: var(--text-dim); }
+.mark.tone-ok      { color: var(--good); }
+.mark.tone-warn    { color: var(--warning); }
+.mark.tone-bad     { color: var(--critical); }
+.mark.tone-serious { color: var(--serious); }
+.mark.tone-dead    { color: var(--dead); }
+.mark.tone-accent  { color: var(--accent); }
+.mark.tone-quiet   { color: var(--text-dim); }
+
+/* ── stat tile ──────────────────────────────────────────────────────── */
+.stat-tile { display: block; width: 100%; padding: var(--card-pad-tight); text-align: left; }
+.stat-value { margin-top: 3px; font-size: var(--t-title); font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat-sub { margin-top: 1px; font-size: var(--t-micro); color: var(--text-faint); }
+button.stat-tile { transition: border-color var(--mo-state) var(--mo-ease), background var(--mo-state) var(--mo-ease); }
+button.stat-tile:hover { border-color: var(--text-faint); }
+
+/* A pressed tile is a filter that is on: the selected fill plus the same
+   plate-red edge the list idiom uses, so "chosen" looks like one thing. */
+button.stat-tile[aria-pressed='true'] { background: var(--bg-selected); box-shadow: inset 3px 0 0 var(--plate-red); }
+
+/* ── bar ────────────────────────────────────────────────────────────── */
+.bar { display: flex; height: 5px; border-radius: var(--r-pill); overflow: hidden; background: var(--bg-sunk); }
+.bar-ok { background: var(--ok); }
+
+/* Hatched, not just red: the split survives greyscale. */
+.bar-bad { background: repeating-linear-gradient(135deg, var(--bad) 0 2px, var(--bad-soft) 2px 4px); }
+
+/* ── note ───────────────────────────────────────────────────────────── */
+.note {
+  display: flex; align-items: flex-start; gap: var(--s-2); flex-wrap: wrap;
+  padding: 7px 11px; border-left: 2px solid var(--line); border-radius: var(--r-sm);
+  background: var(--bg-sunk); color: var(--text-dim);
+  font-size: var(--t-small); line-height: 1.45;
+}
+.note-body { flex: 1 1 24ch; min-width: 0; }
+.note-actions { display: flex; align-items: center; gap: 6px; flex: none; margin-left: auto; }
+.note.tone-ok    { background: var(--ok-soft);   color: var(--ok);   border-color: var(--ok); }
+.note.tone-warn  { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+.note.tone-error { background: var(--bad-soft);  color: var(--bad);  border-color: var(--bad); }
+
+/* A confirm is a note that asks: the sentence names the object and the count,
+   the verb button says what will happen, Cancel keeps things as they are. */
+.confirm-note .note-actions .btn { color: var(--text); }
+.confirm-note .note-actions .btn-primary { color: var(--accent-ink); }
+
+/* ── empty state ────────────────────────────────────────────────────── */
+
+/* .empty itself is in index.css: a centred column with one gap. The three
+   postures only change the glyph and the heading size; the text says the rest. */
+.empty-glyph { font-size: var(--t-title); color: var(--text-faint); line-height: 1; }
+.empty.could-not-read .empty-glyph { color: var(--bad); }
+.empty-title { font-size: var(--t-lead); font-weight: 600; }
+.empty.nothing-yet .empty-title { font-size: var(--t-title); }
+.empty-cue { margin-top: 4px; max-width: 46ch; color: var(--text-dim); line-height: 1.5; }
+
+/* ── reading (loading is not empty) ─────────────────────────────────── */
+
+/* The frame the data will fill is rendered by the caller as children; this
+   only adds the one sentence and the busy flag. No spinner, no row shapes. */
+.reading { display: grid; gap: var(--s-2); min-height: 72px; align-content: start; }
+.reading-line { color: var(--text-dim); font-size: var(--t-small); }
+.reading:only-child .reading-line, .reading > .reading-line:only-child { align-self: center; justify-self: center; padding: var(--s-4) 0; }
+
+/* ── explainer (teaching prose, behind a remembered disclosure) ─────── */
+.explainer {
+  display: grid; gap: 6px; padding: 2px 0 2px var(--s-3);
+  border-left: 2px solid var(--line-soft);
+  color: var(--text-dim); font-size: var(--t-small); line-height: 1.5;
+}
+.explainer-head { display: flex; align-items: baseline; gap: var(--s-2); }
+.explainer-title { font-size: var(--t-small); font-weight: 600; color: var(--text); }
+.explainer-toggle {
+  margin-left: auto; color: var(--text-faint); font-size: var(--t-micro);
+  text-decoration: underline; text-underline-offset: 2px; white-space: nowrap;
+}
+.explainer-toggle:hover { color: var(--text); }
+.explainer-body { max-width: 72ch; }
+.explainer-body > p + p, .explainer-body > p + ul, .explainer-body > ul + p { margin-top: 6px; }
+.explainer-reopen { font-size: var(--t-micro); }
+.explainer-reopen .explainer-toggle { margin-left: 0; }
+/* The one-line shape: the sentence and its dismissal on one baseline, for a
+   lesson that lives in permanent chrome rather than at the top of a document. */
+.explainer-compact { display: flex; align-items: baseline; gap: var(--s-3); }
+.explainer-compact .explainer-body { flex: 1; min-width: 0; }
+
+/* ── hint: one sentence beside the thing it qualifies ───────────────── */
+.hint { max-width: 64ch; color: var(--text-dim); font-size: var(--t-small); line-height: 1.45; }
+
+/* ── icon: a small affordance glyph, always beside a word ───────────── */
+.icon { width: 16px; height: 16px; flex: none; vertical-align: -3px; }
+
+/* ── overlay root ───────────────────────────────────────────────────── */
+
+/* Dialogs portal here, a sibling of .shell, so the body's view-transition name
+   (a stacking context) can no longer trap a modal under the header. The root
+   is a stacking context above the toast; each backdrop is fixed inside it. */
+.overlay-root { position: relative; z-index: var(--z-overlay); }
+.overlay-root:empty { display: none; }
+.overlay-backdrop {
+  position: fixed; inset: 0; display: grid; place-items: center; padding: var(--s-5);
+  background: var(--scrim);
+}
+
+/* Blur is opt-in per dialog. A live terminal under a blurred scrim costs the
+   compositor on every repaint; the plain scrim is the default for that reason. */
+.overlay-backdrop.blur { background: var(--scrim-strong); backdrop-filter: blur(3px); }
+
+/* ── screen-reader-only text ────────────────────────────────────────── */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ── section (bits.tsx Section) ─────────────────────────────────────── */
+.section { padding: var(--card-pad); }
+.section-head { display: flex; gap: 10px; margin-bottom: 11px; }
+.section-n {
+  flex: none; display: grid; place-items: center; width: 19px; height: 19px; margin-top: 1px;
+  border-radius: var(--r-pill); background: var(--bg-sunk); color: var(--text-dim);
+  font-size: var(--t-micro); font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.section-title { min-width: 0; }
+.section-title h2 { font-size: var(--t-body); font-weight: 600; }
+.section-hint { margin-top: 2px; font-size: var(--t-small); line-height: 1.45; }
+.section-right { margin-left: auto; flex: none; }
+
+/* Usage · the cross-account relief line. One sentence per exhausted window,
+   then how to act on it. */
+.us-relief-line { display: block; }
+.us-relief-how { display: block; margin-top: var(--s-1); font-size: var(--t-micro); }
