@@ -3,7 +3,7 @@
 **Status file. Update the checkboxes as waves land.** This exists so the work can be
 picked up by someone (or something) with none of the originating context.
 
-Last updated: 2026-09-06 overnight, running autonomously. 923 smoke assertions at last commit.
+Last updated: 2026-09-06 ~00:40, overnight run. 979 smoke assertions, all pushed.
 
 ---
 
@@ -341,6 +341,23 @@ Phases:
 5. **Hold the Mac awake while work is live** — new `src/main/awake.ts` + IPC. Blocked until the
    tailnet phase releases `src/main/index.ts`, `src/preload/index.ts` and `src/shared/types.ts`.
 6. **The readiness check panel** — `Settings.tsx`. Blocked until the QR-panel phase releases it.
+
+
+### Install is pending, deliberately
+
+The last `npm run dist:mac:arm64:install` refused: "Wanigan is running (PID 37835) and
+declined the graceful Quit request. No files were changed." That is the installer working
+correctly — it will not clobber a live app.
+
+I did NOT force-quit it. No agent PTYs were running (only Electron's own helpers), so it
+would probably have been safe, but the app declining a quit is a signal to respect rather
+than override while the operator is asleep. Everything is committed and pushed, so nothing
+is lost by waiting.
+
+**To pick this up:** quit Wanigan from its own menu, then `npm run dist:mac:arm64:install`.
+Waves 1–4 of the iPad programme are in the repo but NOT yet in the installed bundle — the
+running app is from 00:33 and carries the navigation but not Git, Spend, Manage or the
+offline shell.
 
 
 ## Known traps
