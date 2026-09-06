@@ -1,6 +1,6 @@
 import { db } from './db';
 import * as accounts from './accounts';
-import { allLimits } from './claude-limits';
+import { allAccountLimits } from './limits';
 import type { ConsumptionPoint, ModelConsumption, UsageSnapshot } from '../shared/types';
 
 /**
@@ -98,6 +98,6 @@ export function daily(days = DEFAULT_DAYS): ConsumptionPoint[] {
  */
 export async function snapshot(input?: { days?: number; force?: boolean }): Promise<UsageSnapshot> {
   const days = clampDays(input?.days);
-  const limits = await allLimits(input?.force === true);
+  const limits = await allAccountLimits(input?.force === true);
   return { limits, consumption: consumption(days), daily: daily(days), days };
 }

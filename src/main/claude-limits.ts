@@ -45,8 +45,16 @@ const cache = new Map<string, Cached>();
  * `Current session: 5% used · resets Sep 4 at 1:29pm (America/Chicago)`
  * `Current week (all models): 79% used · resets Sep 6 at 8:59pm (America/Chicago)`
  * `Current week (Fable): 100% used · resets Sep 6 at 8:59pm (America/Chicago)`
+ * `Current session: 0% used`
+ *
+ * The reset clause is optional, and that is not a tolerance — it is a shape the
+ * agent actually prints. A window with nothing used yet has no reset to
+ * announce, so every line comes back bare. Requiring the clause made a second,
+ * unused account read as "Wanigan could not read a limit window out of the
+ * agent's reply", which is a false report of a broken format and points at
+ * exactly the wrong thing: the account was fine, and the answer was 0%.
  */
-const WINDOW_LINE = /^Current\s+(\w+)(?:\s*\(([^)]+)\))?:\s*(\d+(?:\.\d+)?)%\s+used\s*·\s*resets\s+(.+?)\s*$/;
+const WINDOW_LINE = /^Current\s+(\w+)(?:\s*\(([^)]+)\))?:\s*(\d+(?:\.\d+)?)%\s+used(?:\s*·\s*resets\s+(.+?))?\s*$/;
 const PERIOD_LINE = /^Last\s+(\S+)\s*·\s*([\d,]+)\s+requests?\s*·\s*([\d,]+)\s+sessions?\s*$/;
 const SIGNED_OUT = /(not logged in|please run \/login|login expired|invalid api key)/i;
 
@@ -108,8 +116,8 @@ export function parseUsage(text: string, now = Date.now()): { windows: LimitWind
         // "all models" is the absence of a model scope, not a model named that.
         scope: !scope || /^all models$/i.test(scope) ? null : scope,
         usedPercent: Math.max(0, Math.min(100, Number(windowMatch[3]))),
-        resetsAtText: windowMatch[4],
-        resetsAt: parseResetAt(windowMatch[4], now),
+        resetsAtText: windowMatch[4] ?? null,
+        resetsAt: windowMatch[4] ? parseResetAt(windowMatch[4], now) : null,
       });
       continue;
     }

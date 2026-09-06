@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { db } from './db';
+import * as accounts from './accounts';
+import type { CodexAgentsChain } from '../shared/types';
 
 const MATCH_WINDOW_MS = 5_000;
 const FIRST_LINE_CAP = 2 * 1024 * 1024;
@@ -38,6 +40,8 @@ export type ExactCodexThread = {
   /** Canonical directory from both state_5.sqlite and session_meta. */
   cwd: string;
   rolloutPath: string;
+  /** The Codex home whose state index and rollout proved the thread; resume must run under it. */
+  codexHome: string;
 };
 
 type SessionRow = {
@@ -51,8 +55,24 @@ type SessionRow = {
   harness_id: string | null;
 };
 
+/** The directory a by-hand `codex` would use right now: the ambient variable, else ~/.codex. */
 function codexHome(): string {
   return process.env.CODEX_HOME?.trim() || path.join(os.homedir(), '.codex');
+}
+
+/**
+ * Every Codex home a reader should look in. Accounts are labelled CODEX_HOME
+ * directories, and a thread written under a second account's home is invisible
+ * from the first — so the readers below scan the union of the known accounts
+ * and the ambient/default home, exactly as the Claude transcript readers scan
+ * every CLAUDE_CONFIG_DIR. Reading is not a decision; launching is, and a
+ * launch pins one home through the account it was resolved to.
+ */
+function codexHomes(): string[] {
+  let roots: string[] = [];
+  try { roots = accounts.readRoots('codex'); } catch { /* accounts table unavailable: fall through */ }
+  const ambient = codexHome();
+  return [...new Set([...roots, ambient].map((root) => path.resolve(root)))];
 }
 
 /** A recovery id is data, never a CLI fragment. */
@@ -117,7 +137,15 @@ export function validateExactCodexThread(threadId: unknown, selectedProjectPath:
   const projectCwd = canonicalExistingPath(selectedProjectPath);
   if (!projectCwd) throw new Error('The selected project folder no longer exists. Choose its current folder first.');
 
-  const candidate = stateThreadByExactId(id);
+  // The first home whose state index knows the id decides; the rollout must
+  // then live under that same home, so a thread cannot be proven by one
+  // account's index and resumed under another's directory.
+  let candidate: CodexThreadCandidate | null = null;
+  let home = codexHome();
+  for (const root of codexHomes()) {
+    candidate = stateThreadByExactId(root, id);
+    if (candidate) { home = root; break; }
+  }
   if (!candidate?.rolloutPath) {
     throw new Error('Codex did not confirm that UUID in its local state index. Wanigan did not open a different conversation.');
   }
@@ -125,7 +153,7 @@ export function validateExactCodexThread(threadId: unknown, selectedProjectPath:
   if (!stateCwd) {
     throw new Error('Codex recorded a folder for that conversation which is no longer available. Wanigan did not resume it elsewhere.');
   }
-  const sessionsRoot = canonicalExistingPath(path.join(codexHome(), 'sessions'));
+  const sessionsRoot = canonicalExistingPath(path.join(home, 'sessions'));
   const rolloutPath = canonicalExistingPath(candidate.rolloutPath);
   if (!sessionsRoot || !rolloutPath || !isInside(sessionsRoot, rolloutPath)) {
     throw new Error('Codex provided an invalid local rollout for that conversation. Wanigan left it untouched.');
@@ -142,7 +170,7 @@ export function validateExactCodexThread(threadId: unknown, selectedProjectPath:
   if (stateCwd !== projectCwd) {
     throw new Error('That Codex conversation belongs to a different folder. Select its exact project folder before recovering it.');
   }
-  return { id, cwd: stateCwd, rolloutPath };
+  return { id, cwd: stateCwd, rolloutPath, codexHome: home };
 }
 
 /**
@@ -154,8 +182,12 @@ export function validateExactCodexThread(threadId: unknown, selectedProjectPath:
 export function assertCodexThreadWriterUnlocked(threadId: unknown): void {
   const id = normalizeCodexThreadId(threadId);
   if (!id) throw new Error('The Codex conversation UUID is invalid.');
-  const lock = path.join(codexHome(), 'thread-writer-locks', `${id}.lock`);
-  if (!fs.existsSync(lock)) return;
+  // Every known home is checked: a lock for this id can only exist where the
+  // thread lives, and finding one anywhere is enough to refuse a second writer.
+  const lock = codexHomes()
+    .map((root) => path.join(root, 'thread-writer-locks', `${id}.lock`))
+    .find((candidate) => fs.existsSync(candidate));
+  if (!lock) return;
   const lsof = process.platform === 'darwin' ? '/usr/sbin/lsof' : '/usr/bin/lsof';
   if (!fs.existsSync(lsof)) {
     throw new Error('Wanigan could not verify Codex’s writer lock, so it did not start a second writer.');
@@ -241,8 +273,21 @@ export function matchCodexThreads(
   return out;
 }
 
+/** The union of every known home's index; null only when no home had a readable one. */
 function stateThreads(): CodexThreadCandidate[] | null {
-  const file = path.join(codexHome(), 'state_5.sqlite');
+  let any = false;
+  const out = new Map<string, CodexThreadCandidate>();
+  for (const root of codexHomes()) {
+    const threads = stateThreadsIn(root);
+    if (!threads) continue;
+    any = true;
+    for (const thread of threads) if (!out.has(thread.id)) out.set(thread.id, thread);
+  }
+  return any ? [...out.values()] : null;
+}
+
+function stateThreadsIn(home: string): CodexThreadCandidate[] | null {
+  const file = path.join(home, 'state_5.sqlite');
   let state: Database.Database | null = null;
   try {
     state = new Database(file, { readonly: true, fileMustExist: true, timeout: 1000 });
@@ -285,8 +330,8 @@ function stateThreads(): CodexThreadCandidate[] | null {
  * requested id from state_5, requires a top-level user thread, and then makes
  * the rollout session_meta prove the same id and CWD below.
  */
-function stateThreadByExactId(id: string): CodexThreadCandidate | null {
-  const file = path.join(codexHome(), 'state_5.sqlite');
+function stateThreadByExactId(home: string, id: string): CodexThreadCandidate | null {
+  const file = path.join(home, 'state_5.sqlite');
   let state: Database.Database | null = null;
   try {
     state = new Database(file, { readonly: true, fileMustExist: true, timeout: 1000 });
@@ -329,12 +374,12 @@ export function codexRolloutPaths(ids: readonly string[]): Map<string, string> {
   return out;
 }
 
-function localDateDir(at: number): string {
+function localDateDir(home: string, at: number): string {
   const d = new Date(at);
   const y = String(d.getFullYear());
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
-  return path.join(codexHome(), 'sessions', y, m, day);
+  return path.join(home, 'sessions', y, m, day);
 }
 
 function firstLine(file: string): string | null {
@@ -363,10 +408,12 @@ function firstLine(file: string): string | null {
 
 function rolloutThreads(around: number[]): CodexThreadCandidate[] {
   const dirs = new Set<string>();
-  for (const at of around) {
-    dirs.add(localDateDir(at - 86_400_000));
-    dirs.add(localDateDir(at));
-    dirs.add(localDateDir(at + 86_400_000));
+  for (const home of codexHomes()) {
+    for (const at of around) {
+      dirs.add(localDateDir(home, at - 86_400_000));
+      dirs.add(localDateDir(home, at));
+      dirs.add(localDateDir(home, at + 86_400_000));
+    }
   }
   const out = new Map<string, CodexThreadCandidate>();
   for (const dir of dirs) {
@@ -598,4 +645,63 @@ export function discoverCodexThreadId(
   });
   discoveryQueue = run.then(() => {}, () => {});
   return run.then(() => answer);
+}
+
+/* ── the AGENTS.md files Wanigan's Codex compiler writes to ──────────── */
+
+/**
+ * Read-only: which AGENTS.md files exist for this project and which of them an
+ * applied Wanigan projection manages. The three places mirror exactly what the
+ * Codex compiler targets (learning/compilers.ts, codexCompile): the personal
+ * file in the Codex home, the project root file, and a nested `<dir>/AGENTS.md`
+ * per path-scoped instruction. Nested files are listed from the projections
+ * table rather than by walking the tree, because walking would present every
+ * hand-written nested AGENTS.md as something Wanigan wrote.
+ *
+ * What is deliberately not here: a prediction of which files Codex loads or in
+ * what order. Codex's loader was not consulted, and the heading the UI gives
+ * this list says "files Wanigan's Codex compiler writes to", not "what Codex
+ * reads".
+ */
+export function agentsChain(projectId: string | null, projectRoot: string, home?: string | null): CodexAgentsChain {
+  const root = path.resolve(projectRoot);
+  const codexHomeDir = path.resolve(home?.trim() || codexHome());
+  const compilerPersonal = path.join(os.homedir(), '.codex', 'AGENTS.md');
+  const projections = (db().prepare(`
+    SELECT id, target_path FROM knowledge_projections
+    WHERE adapter_id = 'codex' AND target_format = 'codex-agents' AND status = 'applied'
+      AND (project_id IS NULL OR project_id = ?)
+    ORDER BY applied_at DESC
+  `).all(projectId) as { id: string; target_path: string }[])
+    .map((row) => ({ id: row.id, target: path.resolve(row.target_path) }));
+  const managedBy = (file: string) => projections.find((row) => row.target === file)?.id ?? null;
+  const stat = (file: string): { exists: boolean; bytes: number | null } => {
+    try { const st = fs.statSync(file); return st.isFile() ? { exists: true, bytes: st.size } : { exists: false, bytes: null }; }
+    catch { return { exists: false, bytes: null }; }
+  };
+  const entry = (file: string, scope: 'home' | 'project' | 'nested') => {
+    const projectionId = managedBy(file);
+    return { path: file, scope, ...stat(file), managed: projectionId !== null, projectionId };
+  };
+  const homeFile = path.join(codexHomeDir, 'AGENTS.md');
+  const rootFile = path.join(root, 'AGENTS.md');
+  const nested = projections
+    .map((row) => row.target)
+    .filter((target) => target !== rootFile && target !== homeFile
+      && target.startsWith(root + path.sep) && path.basename(target) === 'AGENTS.md')
+    .filter((target, index, all) => all.indexOf(target) === index)
+    .sort()
+    .map((target) => entry(target, 'nested'));
+  const notes = [
+    'Load order is not predicted: Codex’s loader was not consulted, and nested files may or may not apply to work outside their directory.',
+  ];
+  if (compilerPersonal !== homeFile) {
+    notes.push(`The compiler writes personal-scope instructions to ${compilerPersonal}, which this account’s Codex home (${codexHomeDir}) does not read.`);
+  }
+  return {
+    projectRoot: root,
+    codexHome: codexHomeDir,
+    files: [entry(homeFile, 'home'), entry(rootFile, 'project'), ...nested],
+    note: notes.join(' '),
+  };
 }
