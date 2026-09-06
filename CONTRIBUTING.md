@@ -97,3 +97,21 @@ before anything acts on it. See [docs/provider-packs.md](docs/provider-packs.md)
   user data has to keep working.
 - Observed numbers render plain; an estimate carries `~` and the word *est.*
   Do not present a guess as measurement anywhere in the UI or in these docs.
+- A UI change ships with before-and-after screenshots. `npm run build && node
+  scripts/shots.mjs` writes every view from the real app into `docs/shots/`
+  (seeded through the IPC surface, throwaway user-data directory); attach the
+  pair for each view you touched. Motion changes include a short recording.
+  If that script times out waiting for a window — it happens on some machines,
+  and it is the Electron harness rather than the app — fall back to `node
+  scripts/shots-browser.mjs`, which renders the same build in Chromium behind a
+  stubbed preload bridge. Say which one produced the shots: the browser run
+  proves layout and both themes and nothing at all about IPC, and is never a
+  reason to skip `npm test`.
+- A change to a keyboard chord ships with `npm run build && npm run probe:chords`.
+  It presses every chord in `src/renderer/src/bindings.ts` in the running
+  renderer and reports the ones that did not do what the cheat sheet says. That
+  file states the rule — "a chord the sheet prints is a chord that works" — and
+  before this script existed the session tabs printed ⌘1 / ⌘2 / ⌘3 for a
+  handler the shell had already taken in the capture phase. Reading the two
+  files did not show it. A new binding with no probe fails the run, so the sheet
+  cannot grow a claim nobody pressed.

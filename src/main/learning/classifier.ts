@@ -81,6 +81,13 @@ export function automationDecision(
   if (candidate.conflicts.length) {
     return { decision: 'blocked', reason: 'Candidate conflicts with existing knowledge.' };
   }
+  // A snooze is a person's decision to look again later. A wake appends new
+  // observations and recomputes the counts, and those counts could now clear
+  // every threshold below — so without this check the act of waking could
+  // apply what the person deferred. Anything ever snoozed stays in review.
+  if (candidate.snoozedAt != null) {
+    return { decision: 'review', reason: 'A person snoozed this candidate; once snoozed it wakes into review, never into auto-apply.' };
+  }
   if (candidate.scope !== 'personal') {
     return { decision: 'review', reason: 'Project and path-scoped artifacts always require approval.' };
   }

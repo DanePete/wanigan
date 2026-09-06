@@ -1,4 +1,4 @@
-# Wanigan — Claude Code guide
+# Wanigan — Codex guide
 
 Wanigan is a local-first Electron control surface for coding agents. It starts
 real CLI sessions, records their operational evidence, and lets one operator
@@ -17,19 +17,16 @@ as observed fact.
   documentation and UI changes too.
 - Renderer UI is built from the shared frame and primitives, and the style gate
   (`scripts/check-renderer-style.cjs`) enforces it. A new view roots on `.pane`
-  with `PageHead`, and composes `SectionHead`, `Chip`, `Segmented`, `Mark`,
-  `Pill`, `Stat`, `Note`, `EmptyState`, `Reading`, `Explainer` and `Hint` from
+  with `PageHead`, and composes the primitives in
   `src/renderer/src/components/bits.tsx` rather than adding a new `*-card`,
   `*-head` or `*-chip` class family. No `<style>` in TSX: rules go in
   `src/renderer/src/styles/<surface>.css`, which declares no colour and spells no
-  font size, padding or duration as a literal — those come from the tokens in
-  `index.css` and `motion.css`. The gate's baselines are debts that only ratchet
-  down. A UI change ships with before and after screenshots of the affected view
-  in both themes.
+  font size, padding or duration as a literal. The gate's baselines are debts
+  that only ratchet down.
 - Keep Electron's trust boundary intact: privileged work belongs in
   `src/main/`, the renderer reaches it only through typed preload APIs, and all
   renderer input is untrusted until validated in the main process.
-- Do not write generated Claude settings, hooks, MCP configuration, or memory
+- Do not write generated Codex settings, hooks, MCP configuration, or memory
   into a user's repository just to make a session work. Wanigan owns and
   injects its runtime configuration from its user-data directory.
 - Preserve existing working-tree changes. Inspect the diff before editing and
@@ -44,7 +41,7 @@ ground for project facts.
    already available and follow its `SKILL.md` in full.
 2. Create a project skill only when a workflow recurs, needs ordered safety
    checks, or has supporting templates/scripts. Put it in
-   `.claude/skills/<skill-name>/SKILL.md` with a short frontmatter description,
+   `.Codex/skills/<skill-name>/SKILL.md` with a short frontmatter description,
    explicit trigger, inputs, safe steps, verification, and boundaries.
 3. Keep a skill narrow and composable. Prefer links to authoritative project
    docs or helper files over copying a large manual into `SKILL.md`.
@@ -64,7 +61,7 @@ project. Treat it as a compact index, not a transcript.
   commands, and user preferences that will materially improve a later task.
 - Do **not** remember secrets, API keys, tokens, private attachment contents,
   raw logs, temporary task status, unverified claims, or speculative TODOs.
-- Keep `MEMORY.md` as concise pointers to topic files. Claude Code loads only
+- Keep `MEMORY.md` as concise pointers to topic files. Codex loads only
   its first **200 lines or 25 KiB**, whichever limit comes first; anything past
   that is silently absent from a new session.
 - Put substantial durable detail in focused topic files and link it from the
@@ -107,11 +104,11 @@ project. Treat it as a compact index, not a transcript.
   auto-promote. Project/path artifacts, skills, instructions, rules, gates,
   settings and global procedures always go through the review inbox.
 - Compile one approved candidate independently for each requested provider.
-  Claude project skills live under `.claude/skills/`; Codex/Agent Skills under
+  Codex project skills live under `.Codex/skills/`; Codex/Agent Skills under
   `.agents/skills/`. Personal skills use those provider directories below the
   real home directory. Do not make one provider's generated artifact the input
   to another provider's compiler.
-- Claude instructions project to `CLAUDE.md` or `.claude/rules/`; Codex
+- Codex instructions project to `AGENTS.md` or `.Codex/rules/`; Codex
   instructions project to `AGENTS.md` or a nested directory `AGENTS.md`. If a
   scope has no faithful mapping, return `unsupported` instead of broadening it.
   Provider-generated/native memory is read-only.
@@ -130,7 +127,7 @@ project. Treat it as a compact index, not a transcript.
 
 - A provider profile is the composition of a harness, model backend and launch
   configuration. Route behavior by declared harness/headless/capabilities, not
-  by hardcoded profile ids such as `claude`, `codex`, or `glm`.
+  by hardcoded profile ids such as `Codex`, `codex`, or `glm`.
 - Manifests are untrusted data. Validate size, ids, paths, fields and capability
   declarations in the main process, and compile launch values to `argv` entries
   without invoking a shell. Local manifests may name a dedicated installed CLI,
@@ -151,7 +148,7 @@ project. Treat it as a compact index, not a transcript.
   adapters are self-contained probes and do not choose the session executable.
 - Namespace local backend identities by pack id. A local pack cannot inherit a
   built-in or another pack's semantic memory by reusing its declared backend id.
-  Local Claude/Codex harness claims require a separately trusted adapter; a
+  Local Codex/Codex harness claims require a separately trusted adapter; a
   manifest without one is generic-terminal only.
 - Disabling or uninstalling a pack blocks new launches but does not reinterpret
   a live session. Keep the frozen pack/profile/backend/harness snapshot until it

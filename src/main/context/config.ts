@@ -4,6 +4,7 @@ import os from 'node:os';
 import { MODELS, DEFAULT_MODEL, modelFor } from '../batch/pricing';
 import { isServablePath, managedPolicyDir } from './instructions';
 import { estimateTokens } from '../../shared/tokens';
+import type { SkillOverrideEntry } from '../../shared/types';
 
 /**
  * Everything a project injects into an agent *besides* its CLAUDE.md: the
@@ -404,6 +405,53 @@ function readPermissions(layers: LayerFile[], notes: string[]): ProjectConfig['p
     if (extra.length) {
       notes.push(`${l.layer} settings grant access to ${extra.length} director${extra.length === 1 ? 'y' : 'ies'} outside the project (permissions.additionalDirectories in ${l.path}).`);
     }
+  }
+  return out;
+}
+
+/* ── skill overrides ─────────────────────────────────────────────────── */
+
+/**
+ * `skillOverrides`, resolved per skill name through the same layer order as
+ * every other key. The documented values are on, name-only,
+ * user-invocable-only and off (docs/en/skills; the CLI changelog has the key
+ * working since 2.1.129), and a skill absent from every layer is `on`, so
+ * only named skills are returned. Whether the CLI merges the map across layers
+ * per key or lets the highest layer's map replace the lower ones is not
+ * documented, and nobody has probed it, so when two layers name the same skill
+ * the higher layer is reported as the winner AND the lower ones stay listed in
+ * `shadowed` — the panel shows the ambiguity rather than settling it. With no
+ * project path only the user and managed layers are read; the project and
+ * local files are a project's own.
+ */
+export function skillOverrides(projectPath: string | null): SkillOverrideEntry[] {
+  const layers = projectPath
+    ? layerFiles(path.resolve(projectPath))
+    : LAYER_ORDER.filter((layer) => layer === 'user' || layer === 'managed').map((layer) => {
+        const file = LAYER_PATHS[layer]('');
+        return { layer, path: file, read: readJsonFile(file) };
+      });
+  // Highest precedence first, so the first layer naming a skill is the winner.
+  const ranked = [...layers].reverse();
+  const maps = ranked
+    .map((l) => ({ layer: l.layer, path: l.path, map: l.read.value?.skillOverrides }))
+    .filter((l): l is { layer: SettingsLayer; path: string; map: Record<string, unknown> } => isRecord(l.map));
+
+  const names = new Set<string>();
+  for (const l of maps) for (const k of Object.keys(l.map)) names.add(k);
+
+  const asValue = (v: unknown): string => (typeof v === 'string' ? v.trim() : JSON.stringify(v));
+  const out: SkillOverrideEntry[] = [];
+  for (const skill of [...names].sort()) {
+    const holders = maps.filter((l) => skill in l.map);
+    if (!holders.length) continue;
+    out.push({
+      skill,
+      value: asValue(holders[0].map[skill]),
+      from: holders[0].layer,
+      path: holders[0].path,
+      shadowed: holders.slice(1).map((l) => ({ from: l.layer, value: asValue(l.map[skill]), path: l.path })),
+    });
   }
   return out;
 }

@@ -9,7 +9,11 @@ import {
   CLAUDE_ARTIFACT_COMPILER,
   CODEX_ARTIFACT_COMPILER,
   DEFAULT_AUTOMATION_POLICY,
+  INJECTABLE_KINDS,
+  KNOWLEDGE_KINDS,
   addEvidence,
+  briefingFrame,
+  estimateTokens,
   applyProjection,
   automationDecision,
   buildBriefing,
@@ -51,9 +55,9 @@ import {
   type ProviderPackManifest,
 } from './provider-packs';
 import { probeProviderAdapter } from './provider-adapter';
-import { headlessArgs, headlessEnv, resolveBin, runOneRepo } from './headless';
+import { headlessArgs, headlessEnv, headlessRows, headlessRuns, parseCliOutput, resolveBin, runOneRepo } from './headless';
 import { effectiveProviderBackendId, type ProviderDef } from './providers';
-import type { Session } from '../shared/types';
+import { kindDelivery, type Session } from '../shared/types';
 import * as compound from './learning-service';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
@@ -325,6 +329,9 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     });
     check(freshBrief.entries.some((entry) => entry.itemId === cited.item.id),
       'fresh cited knowledge enters the session briefing');
+    check(getKnowledgeItem(cited.item.id)?.lastValidatedAt != null
+      && freshBrief.entries.find((entry) => entry.itemId === cited.item.id)?.checked === 1,
+      'a re-hashed file citation stamps last_validated_at and the entry reports one citation checked');
     fs.writeFileSync(factPath, 'beta\n');
     const staleBrief = await buildBriefing({
       query: 'citadel zaffre', providerId: 'claude', projectId: project.id,
@@ -353,6 +360,26 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     check(bounded.estimatedTokens <= 128, 'briefing stays inside its explicit token budget', bounded.estimatedTokens);
     check(bounded.omitted === bounded.omittedStale + bounded.omittedBudget,
       'briefing omissions split stale from over-budget and still sum');
+    // The header frames what each line is — approved instruction, recorded
+    // observation, provenance tag — and names only the kinds present. The old
+    // literal called everything "verified context", which memory is not.
+    check(bounded.text.startsWith('Wanigan context.') && !bounded.text.includes('verified context')
+      && bounded.text.includes('[memory]:') && !bounded.text.includes('[instruction]')
+      && bounded.text.includes('wanigan:<id> is a provenance tag, not a tool or file'),
+    'the briefing frame names only the kinds present and calls wanigan:<id> a provenance tag, not a tool or file',
+    bounded.text.split('\n')[0]);
+    check(estimateTokens(briefingFrame(['memory'])) <= 40 && estimateTokens(briefingFrame(INJECTABLE_KINDS)) <= 60
+      && briefingFrame(['memory']).length < briefingFrame(INJECTABLE_KINDS).length,
+    'the frame is costed at its longest for the kinds ranked and stays short', {
+      memory: estimateTokens(briefingFrame(['memory'])), all: estimateTokens(briefingFrame(INJECTABLE_KINDS)),
+    });
+    check(bounded.entries.some((entry) => entry.itemId === budgetItem.item.id && entry.checked === 0 && entry.skipped >= 1),
+      'an entry says how many citations were re-hashed and how many were carried with nothing checkable');
+    check(getKnowledgeItem(budgetItem.item.id)?.lastValidatedAt === null,
+      'an item that passed with zero checkable citations is not stamped as validated');
+    check(KNOWLEDGE_KINDS.every((kind) => (kindDelivery(kind).briefed === 'never') === !INJECTABLE_KINDS.includes(kind))
+      && kindDelivery('mission').briefed === 'standing' && kindDelivery('project-map').briefed === 'never',
+    'the shared kind-delivery table agrees with the injector about which kinds can be briefed');
 
     say('── compound · legibility ledger');
     const ledgerSessionId = `session-ledger-${tag}`;
@@ -363,6 +390,44 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     const ledgerBriefings = listSessionBriefings(ledgerSessionId);
     check(ledgerBriefings.length === 1 && ledgerBriefings[0].entries.length === bounded.entries.length,
       'briefing delivery is recorded per session with its served entries');
+    check(ledgerBriefings[0].omittedUnsynthesized === bounded.omittedUnsynthesized
+      && ledgerBriefings[0].omittedUnverified === bounded.omittedUnverified
+      && ledgerBriefings[0].entries.every((entry) => typeof entry.checked === 'number' && typeof entry.skipped === 'number'),
+    'all four held-back counters and the per-entry citation counts persist with the delivery');
+    // A row written before the two newer columns existed reads "not recorded",
+    // never 0: a session held for the check quota must not read as "nothing matched".
+    const legacySessionId = `session-legacy-${tag}`;
+    db().prepare(`
+      INSERT INTO session_briefings
+        (session_id,at,delivery,provider_id,project_id,entries_json,estimated_tokens,max_tokens,omitted_stale,omitted_budget)
+      VALUES (?,?,?,?,?,?,?,?,?,?)
+    `).run(legacySessionId, Date.now(), 'argv', 'codex', null,
+      JSON.stringify([{ itemId: budgetItem.item.id, versionId: null, kind: 'memory', title: 'legacy', estimatedTokens: 12 }]), 12, 128, 0, 0);
+    const legacyBriefing = listSessionBriefings(legacySessionId)[0];
+    check(legacyBriefing?.omittedUnsynthesized === null && legacyBriefing.omittedUnverified === null
+      && legacyBriefing.entries[0]?.checked === null && legacyBriefing.entries[0]?.skipped === null,
+    'a legacy briefing row reads its unrecorded counters as null, not as zero');
+    // A hook delivery answers a SessionStart; the ledger pairs them by time so
+    // the timeline can place the recorded capsule without a row of its own.
+    const hookSessionId = `session-hook-${tag}`;
+    const hookAt = Date.now();
+    db().prepare('INSERT INTO session_events (session_id, at, event, tool_name, summary, duration_ms, ok, paths_json) VALUES (?,?,?,?,?,?,?,?)')
+      .run(hookSessionId, hookAt - 3_000, 'SessionStart', null, null, null, null, null);
+    db().prepare('INSERT INTO session_events (session_id, at, event, tool_name, summary, duration_ms, ok, paths_json) VALUES (?,?,?,?,?,?,?,?)')
+      .run(hookSessionId, hookAt + 1_000, 'PostToolUse', 'Skill', 'release-lock', 40, 1, null);
+    db().prepare('INSERT INTO session_events (session_id, at, event, tool_name, summary, duration_ms, ok, paths_json) VALUES (?,?,?,?,?,?,?,?)')
+      .run(hookSessionId, hookAt + 2_000, 'PostToolUse', 'Skill', null, 40, 1, null);
+    recordSessionBriefing({
+      sessionId: hookSessionId, delivery: 'hook', providerId: 'claude',
+      projectId: null, briefing: bounded, maxTokens: 128, at: hookAt,
+    });
+    const hookLedger = sessionLearningLedger(hookSessionId);
+    check(hookLedger.briefings[0]?.sessionStartAt === hookAt - 3_000 && ledgerBriefings[0].sessionStartAt === null,
+      'a hook-delivered briefing is paired to its SessionStart by time; an argv delivery stays unpaired');
+    check(hookLedger.skillToolCalls.observed === 2 && hookLedger.skillToolCalls.unrecorded === 1
+      && hookLedger.skillToolCalls.identifiers.join() === 'release-lock',
+    'the ledger counts hook-observed Skill tool calls and keeps unrecorded identifiers as a count, not a drop',
+    JSON.stringify(hookLedger.skillToolCalls));
     const loadedMetrics = listMetrics({ sessionId: ledgerSessionId, metric: 'tokens_loaded' });
     check(loadedMetrics.length === bounded.entries.length
       && loadedMetrics.every((metric) => metric.evidenceLevel === 'estimate'),
@@ -428,6 +493,43 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     check(!!poisonCandidate && Buffer.byteLength(poisonCandidate.title, 'utf8') <= 500,
       'multibyte summaries consolidate with byte-safe candidate titles', JSON.stringify(hardPass));
     check(!!healthyCandidate, 'every qualifying group in a pass consolidates independently');
+    // Snooze, then observe the pattern again. The same task seen twice is not
+    // a reason to interrupt the person; a new independent task is, and it
+    // wakes the candidate into review with a reason code — never past it.
+    check(!!healthyCandidate && healthyCandidate.clusterKey !== null && healthyCandidate.snoozedAt === null,
+      'a consolidation candidate stores the cluster key it was derived from');
+    if (healthyCandidate) {
+      reviewCandidate(healthyCandidate.id, 'snooze', 'Ask me again later.');
+      const snoozedRow = compound.candidates({ projectId: project.id, limit: 500 }).find((c) => c.id === healthyCandidate.id);
+      check(snoozedRow?.status === 'snoozed' && snoozedRow.snoozedAt !== null,
+        'snoozing records when a person deferred the candidate');
+      const sameTask = mkHardSig(`${healthySummary} again`, `s-healthy-a-${tag}`, `t-healthy-a-${tag}`, hardBase + 4);
+      const sameTaskPass = compound.consolidate(project.id);
+      const stillSnoozed = compound.candidates({ projectId: project.id, limit: 500 }).find((c) => c.id === healthyCandidate.id);
+      check(sameTaskPass.woken === 0 && stillSnoozed?.status === 'snoozed' && getSignal(sameTask.id)?.processedAt === null,
+        'the same task observed again does not wake a snoozed candidate, and the signal waits for a real second task',
+        JSON.stringify(sameTaskPass));
+      const newTask = mkHardSig(healthySummary, `s-healthy-c-${tag}`, `t-healthy-c-${tag}`, hardBase + 5);
+      const wakePass = compound.consolidate(project.id);
+      const woken = compound.candidates({ projectId: project.id, limit: 500 }).find((c) => c.id === healthyCandidate.id);
+      check(wakePass.woken >= 1 && woken?.status === 'pending' && woken.wake?.code === 'observed-again'
+        && woken.wake.newTasks === 1 && woken.wake.newSignals === 2
+        && woken.signalIds.includes(newTask.id) && woken.signalIds.includes(sameTask.id)
+        && woken.taskCount === (snoozedRow?.taskCount ?? 0) + 1
+        && woken.reviewerNote === 'Ask me again later.' && woken.snoozedAt === snoozedRow?.snoozedAt,
+      'a new independent observation wakes the snoozed candidate into review with a reason code and leaves the operator note untouched',
+      woken && { status: woken.status, wake: woken.wake, tasks: woken.taskCount, note: woken.reviewerNote });
+      check(!compound.candidates({ projectId: project.id, limit: 500 })
+        .some((c) => c.id !== healthyCandidate.id && c.signalIds.includes(newTask.id)),
+      'the new observation joined the woken candidate instead of filing a duplicate');
+      if (woken) {
+        const strong = automationDecision({ ...woken, scope: 'personal', targetKind: 'memory', confidence: 0.99, evidenceCount: 9, taskCount: 9, conflicts: [] });
+        check(strong.decision === 'review' && /snoozed/.test(strong.reason),
+          'a candidate that was ever snoozed never auto-applies, whatever its counts', strong);
+        check(explainCandidate(woken.id).checks.some((entry) => entry.label === 'Never snoozed by a person' && !entry.ok),
+          'and the gate explanation names the snooze as the failing check');
+      }
+    }
     check(getSignal(ancient.id)?.processedAt != null,
       'never-consolidated signals age out after 45 days instead of growing the backlog forever');
     const oversizeTeach = thrown(() => compound.teach({
@@ -599,6 +701,11 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     });
     check(widened.entries.length === 0,
       'and a caller asking exclusively for those kinds gets an empty briefing, never an unfiltered one');
+    const mapCompile = compileCandidate(mapCandidate.id, CODEX_ARTIFACT_COMPILER, {
+      providerId: 'codex', projectRoot, homeDir: fakeHome,
+    });
+    check(!mapCompile.supported && mapCompile.mode === 'unsupported' && /never briefed/.test(mapCompile.reason),
+      'a project map reports no delivery at all instead of a briefing that never happens', mapCompile.reason);
     check(searchKnowledge({ query: 'kindline', kinds: ['eval', 'project-map'], projectId: project.id, limit: 20 })
       .length === 2,
     'both remain retrievable and inspectable through the app’s own search');
@@ -855,6 +962,64 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
       'redaction covers non-http connection strings, colon-form env names, and underscore token shapes',
       connSignal?.summary);
 
+    // A hook-observed Skill call resolves through the applied SKILL.md
+    // projection to its knowledge item; that row is what the optimizer's
+    // "no observed use" rule reads. A skill Wanigan never installed is nothing
+    // it can account for, and a typed `/name` never arrives here at all.
+    const installedSkillItem = secondInstall[0]?.projection?.itemId ?? null;
+    const skillEvent = {
+      id: 5, sessionId: learningSession.id, at: Date.now() + 4, event: 'PostToolUse',
+      toolName: 'Skill', summary: reSkill.name, durationMs: 40, ok: true, paths: [],
+    };
+    compound.observeSessionEvent(skillEvent, learningSession);
+    compound.observeSessionEvent({ ...skillEvent, id: 6, at: Date.now() + 5, summary: `not-installed-${tag}` }, learningSession);
+    const invocations = listMetrics({ sessionId: learningSession.id, metric: 'invocation' });
+    check(installedSkillItem !== null && invocations.length === 1 && invocations[0].itemId === installedSkillItem
+      && invocations[0].evidenceLevel === 'correlation' && invocations[0].attrs.skill === reSkill.name,
+    'a hook-observed Skill tool call resolves through its applied projection and records one observed invocation; an uninstalled skill records nothing',
+    JSON.stringify(invocations.map((metric) => ({ item: metric.itemId, level: metric.evidenceLevel, attrs: metric.attrs }))));
+
+    // Transcript citations: counts of `wanigan:<id>` in archived assistant
+    // turns, Claude harness only, correlation-level, replaced on rescan. Zero
+    // is a count and never evidence of disuse.
+    const citeSessionId = `session-cite-${tag}`;
+    db().prepare(`
+      INSERT INTO session_log (id,provider_id,project_id,project_path,project_name,started_at,backend_id,harness_id)
+      VALUES (?,?,?,?,?,?,?,?)
+    `).run(citeSessionId, 'claude', project.id, projectRoot, project.name, Date.now(), 'anthropic', 'claude-code');
+    db().prepare(`
+      INSERT INTO transcripts (session_id, source_path, stored_path, bytes, turns, parsed, archived_at, note)
+      VALUES (?,?,?,?,?,?,?,?)
+    `).run(citeSessionId, '/dev/null', '/dev/null', 10, 2, 1, Date.now(), 'Archived 10 bytes.');
+    const citedItemId = promotedMemory.item.id;
+    const ftsInsert = db().prepare('INSERT INTO transcript_fts (session_id, role, at, text) VALUES (?,?,?,?)');
+    ftsInsert.run(citeSessionId, 'assistant', Date.now(),
+      `Per wanigan:${citedItemId} I verified the lock; wanigan:${citedItemId} again, and wanigan:know_00000000000000000000 is unknown.`);
+    ftsInsert.run(citeSessionId, 'user', Date.now(), `please follow wanigan:${citedItemId}`);
+    const scan = compound.recordTranscriptCitations(citeSessionId);
+    const citedMetrics = listMetrics({ sessionId: citeSessionId, metric: 'cited' });
+    check(scan.status === 'scanned' && scan.total === 2 && !scan.truncated
+      && scan.items.length === 1 && scan.items[0].itemId === citedItemId && scan.items[0].n === 2
+      && citedMetrics.length === 1 && citedMetrics[0].evidenceLevel === 'correlation',
+    'a transcript scan counts wanigan:<id> tags in assistant turns only, resolves them to items, and records correlation-level counts',
+    JSON.stringify(scan));
+    compound.recordTranscriptCitations(citeSessionId);
+    check(listMetrics({ sessionId: citeSessionId, metric: 'cited' }).length === 1
+      && listMetrics({ sessionId: citeSessionId, metric: 'transcript_scan' }).length === 1,
+    'rescanning a session replaces its previous scan instead of appending to it');
+    const citeLedger = sessionLearningLedger(citeSessionId).transcriptCitations;
+    check(citeLedger.status === 'scanned' && citeLedger.total === 2 && citeLedger.items[0]?.itemId === citedItemId,
+      'the session ledger reports the recorded scan', JSON.stringify(citeLedger));
+    const codexCiteSessionId = `session-cite-codex-${tag}`;
+    db().prepare(`
+      INSERT INTO session_log (id,provider_id,project_id,project_path,project_name,started_at,backend_id,harness_id)
+      VALUES (?,?,?,?,?,?,?,?)
+    `).run(codexCiteSessionId, 'codex', project.id, projectRoot, project.name, Date.now(), 'openai', 'codex');
+    check(compound.recordTranscriptCitations(codexCiteSessionId).status === 'unsupported'
+      && sessionLearningLedger(codexCiteSessionId).transcriptCitations.status === 'unsupported'
+      && sessionLearningLedger(learningSession.id).transcriptCitations.status === 'not-scanned',
+    'a Codex-harness session reports no transcript archive, and an unscanned session reports not-scanned — neither reads as zero');
+
     const serviceCandidate = compound.teach({
       providerId: 'claude', projectId: project.id, projectPath: projectRoot,
       kind: 'instruction', scope: 'project', title: `Service boundary ${tag}`,
@@ -877,6 +1042,22 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     check(claudeServiceBrief.entries.some((entry) => entry.itemId === serviceApply.item.id)
       && !codexServiceBrief.entries.some((entry) => entry.itemId === serviceApply.item.id),
     'service briefing enforces the same-backend semantic boundary');
+    check(claudeServiceBrief.learningEnabled && claudeServiceBrief.launchDelivery === 'append-system-prompt'
+      && codexServiceBrief.launchDelivery === 'developer-instructions' && claudeServiceBrief.harnessProof === 'builtin',
+    'the preview says how a launch would deliver the capsule for each harness and what proof the launch requires');
+    // A disabled engine is its own state with the full counter shape, not an
+    // empty stub a dialog would read as "retrieval ran and matched nothing".
+    const priorEnabled = compound.settings().enabled;
+    try {
+      compound.updateSettings({ enabled: false });
+      const offBrief = await compound.briefing({ query: 'servicebound', providerId: 'claude', projectId: project.id });
+      check(!offBrief.learningEnabled && offBrief.entries.length === 0 && offBrief.omitted === 0
+        && offBrief.omittedUnverified === 0 && offBrief.omittedUnsynthesized === 0 && offBrief.queryProvided
+        && offBrief.launchDelivery === 'append-system-prompt',
+      'a preview with learning off is a distinct state carrying every counter, never an indistinguishable empty stub');
+    } finally {
+      compound.updateSettings({ enabled: priorEnabled });
+    }
     const serviceUndo = compound.undo(serviceApply.projection.id);
     check(serviceUndo.status === 'undone' && !fs.existsSync(serviceUndo.targetPath),
       'service undo restores the exact project-file snapshot');
@@ -1102,6 +1283,24 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
       check(mergedEnv.WANIGAN_PROVIDER_ENV_SMOKE === 'from-provider'
         && mergedEnv.NO_COLOR === '1' && mergedEnv.TERM === 'dumb',
       'headless provider environment is merged while JSON-safe terminal controls remain enforced');
+      const accountEnv = headlessEnv('/smoke/path', { CLAUDE_CONFIG_DIR: '/pack/chosen' }, { CLAUDE_CONFIG_DIR: '/account/chosen' });
+      check(accountEnv.CLAUDE_CONFIG_DIR === '/account/chosen',
+        'the account’s config directory is applied after the provider pack, so a manifest cannot redirect a run’s login');
+      // The CLI's own statement of each model's window travels out of the
+      // result; a zero placeholder and a malformed entry are not windows.
+      const reported = parseCliOutput(JSON.stringify({
+        type: 'result', total_cost_usd: 0.42, usage: { input_tokens: 10, output_tokens: 5 },
+        modelUsage: {
+          'claude-opus-5[1m]': { inputTokens: 10, outputTokens: 5, costUSD: 0.42, contextWindow: 1_000_000 },
+          'claude-haiku-4-5': { inputTokens: 1, outputTokens: 1, costUSD: 0, contextWindow: 0 },
+          'not-a-record': 'nope',
+        },
+      }));
+      check(reported.costUsd === 0.42 && reported.modelUsage.length === 1
+        && reported.modelUsage[0].model === 'claude-opus-5[1m]' && reported.modelUsage[0].contextWindow === 1_000_000,
+      'a headless result yields the CLI-reported context window per model, dropping zero placeholders and malformed entries', reported);
+      check(parseCliOutput('{"type":"result","total_cost_usd":0.1}').modelUsage.length === 0,
+        'a result without modelUsage reports no window rather than inventing one');
     }
 
     const headlessProject = await addProject(projectRoot);
@@ -1145,6 +1344,49 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
       'queued headless rows refuse a different provider fingerprint before launch',
       frozenRow?.error,
     );
+
+    /* ── a cost of zero is not the same as no cost ────────────────────
+     * The Runs screen used to print the sum of both under the words
+     * "CLI-reported; never estimated", so a fan-out over a provider that
+     * reports nothing read as a free run. cost_usd cannot tell them apart —
+     * both are 0 — which is why cost_reported is written beside it. */
+    const costRunId = `${frozenRunId}-cost`;
+    db().prepare(`
+      INSERT INTO runs (id, name, preset, project_id, model, status, config_json, kind,
+                        total_requests, created_at)
+      VALUES (?, 'cost provenance', NULL, NULL, 'test', 'ended', '{}', 'headless', 3, ?)
+    `).run(costRunId, Date.now());
+    const seedCostRow = db().prepare(`
+      INSERT INTO headless_rows (run_id, project_id, project_name, project_path, status,
+                                 cost_usd, cost_reported)
+      VALUES (?, ?, ?, '/tmp/x', ?, ?, ?)
+    `);
+    // Priced at zero, unpriced, and priced — plus a blocked row, which never
+    // had an agent to report anything and must not count as a gap.
+    seedCostRow.run(costRunId, 'p-free', 'free', 'succeeded', 0, 1);
+    seedCostRow.run(costRunId, 'p-silent', 'silent', 'succeeded', 0, 0);
+    seedCostRow.run(costRunId, 'p-priced', 'priced', 'succeeded', 0.25, 1);
+    seedCostRow.run(costRunId, 'p-blocked', 'blocked', 'blocked', 0, null);
+    const costRows = headlessRows(costRunId);
+    const byProject = new Map(costRows.map((r) => [r.projectId, r]));
+    check(byProject.get('p-free')?.costReported === true
+      && byProject.get('p-silent')?.costReported === false
+      && byProject.get('p-priced')?.costReported === true,
+      'a row that reported $0.00 and a row that reported nothing both store 0 and stay distinguishable');
+    const costRun = headlessRuns(50).find((r) => r.id === costRunId);
+    check(costRun?.costStatus === 'partial',
+      'one silent repository among priced ones makes the run total a floor, not a measurement',
+      costRun?.costStatus);
+    db().prepare('UPDATE headless_rows SET cost_reported=1 WHERE run_id=? AND project_id=?')
+      .run(costRunId, 'p-silent');
+    check(headlessRuns(50).find((r) => r.id === costRunId)?.costStatus === 'reported',
+      'and once every repository that ran has named a figure, the total is reported outright');
+    db().prepare('UPDATE headless_rows SET cost_reported=NULL WHERE run_id=?').run(costRunId);
+    check(headlessRuns(50).find((r) => r.id === costRunId)?.costStatus === 'unreported'
+      && headlessRows(costRunId).every((r) => r.costReported === null),
+      'rows written before the column existed read as unknown, never as reported');
+    db().prepare('DELETE FROM headless_rows WHERE run_id=?').run(costRunId);
+    db().prepare('DELETE FROM runs WHERE id=?').run(costRunId);
 
     registry.requestUninstall('orbit.pack', ['orbit-vortex-v9']);
     check(registry.listPacks()[0]?.status === 'pending-removal' && fs.existsSync(packDir),

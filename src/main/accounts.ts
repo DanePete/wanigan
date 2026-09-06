@@ -3,7 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { dataDir, db } from './db';
-import type { AccountResolution, AgentAccount } from '../shared/types';
+import { usesAnthropicAccount } from './providers';
+import type { AccountResolution, AgentAccount, NativeMemoryWrites } from '../shared/types';
 
 /**
  * One operator, several agent accounts.
@@ -15,13 +16,21 @@ import type { AccountResolution, AgentAccount } from '../shared/types';
  * perform the browser sign-in: it creates the directory and points a session at
  * it, and the operator runs `/login` there once.
  *
- * Everything here is harness-scoped rather than Claude-specific, because the
- * shape already fits Codex's `CODEX_HOME`. Only Claude Code is mapped today.
+ * Everything here is harness-scoped rather than Claude-specific. Codex keeps
+ * its login (`auth.json`), config, skills, sessions and state index under
+ * `CODEX_HOME`, so the same labelled-directory shape maps onto it; a harness
+ * with no mapping simply has no accounts.
+ *
+ * What a Codex account is not: a shadow home. A directory Wanigan creates for
+ * Codex starts with no `config.toml` (and therefore no MCP servers or model
+ * defaults), no skills and no login until the operator signs in there; see
+ * `startsWithout()` for the sentence the UI shows.
  */
 
 /** The environment variable each harness reads for its config directory. */
 const HARNESS_CONFIG_ENV: Record<string, string> = {
   'claude-code': 'CLAUDE_CONFIG_DIR',
+  codex: 'CODEX_HOME',
 };
 
 /**
@@ -51,7 +60,9 @@ export function configEnvVar(harness: string): string | null {
 
 /** Where a harness keeps its configuration when the variable is not set. */
 function platformDefaultDir(harness: string): string | null {
-  return harness === 'claude-code' ? path.join(os.homedir(), '.claude') : null;
+  if (harness === 'claude-code') return path.join(os.homedir(), '.claude');
+  if (harness === 'codex') return path.join(os.homedir(), '.codex');
+  return null;
 }
 
 /** True when this harness has a config directory Wanigan knows how to point. */
@@ -82,12 +93,17 @@ function exists(dir: string): boolean {
  * so rather than report a logged-in account as logged out. Existence is not
  * proof of a *valid* login either: expiry is inside the credential.
  */
-function signedIn(dir: string): AgentAccount['signedIn'] {
-  const candidates = [
-    path.join(dir, '.credentials.json'),
-    `${dir}.json`,
-    path.join(dir, '.claude.json'),
-  ];
+function signedIn(harness: string, dir: string): AgentAccount['signedIn'] {
+  const candidates = harness === 'codex'
+    // Codex writes its login to `<dir>/auth.json`. It can also be told to use
+    // the OS credential store instead (`cli_auth_credentials_store`), in which
+    // case nothing is on disk here — so absence is again absence of evidence.
+    ? [path.join(dir, 'auth.json')]
+    : [
+      path.join(dir, '.credentials.json'),
+      `${dir}.json`,
+      path.join(dir, '.claude.json'),
+    ];
   for (const candidate of candidates) {
     try { if (fs.statSync(candidate).size > 0) return 'yes'; } catch { /* absent */ }
   }
@@ -99,7 +115,7 @@ function map(row: Row): AgentAccount {
   return {
     id: row.id, harness: row.harness, label: row.label, configDir: row.config_dir,
     adopted: row.adopted === 1, isDefault: row.is_default === 1,
-    present, signedIn: present ? signedIn(row.config_dir) : 'unknown',
+    present, signedIn: present ? signedIn(row.harness, row.config_dir) : 'unknown',
     createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
@@ -116,14 +132,20 @@ function map(row: Row): AgentAccount {
  * at all. Adopting the path they actually use makes "Personal" their real
  * account; adopting ~/.claude would create an empty one beside it and point
  * every reader at a directory their own CLI never touches.
+ *
+ * The same rule seeds Codex from `CODEX_HOME` or `~/.codex`: sessions.ts and
+ * headless.ts already retain that variable through their environment scrub for
+ * exactly this reason, so adopting it changes nothing about what a session
+ * launched before accounts existed would have used.
  */
 function seed(harness: string): void {
-  if (harness !== 'claude-code') return;
+  const fallback = platformDefaultDir(harness);
+  if (!supportsAccounts(harness) || !fallback) return;
   const count = db().prepare('SELECT COUNT(*) n FROM agent_accounts WHERE harness=?').get(harness) as { n: number };
   if (count.n > 0) return;
   const ambientVar = configEnvVar(harness);
   const ambient = ambientVar ? process.env[ambientVar]?.trim() : '';
-  const dir = ambient ? path.resolve(ambient) : path.join(os.homedir(), '.claude');
+  const dir = ambient ? path.resolve(ambient) : fallback;
   const at = now();
   db().prepare(`INSERT OR IGNORE INTO agent_accounts (id,harness,label,config_dir,adopted,is_default,created_at,updated_at)
     VALUES (?,?,?,?,1,1,?,?)`).run(uid(), harness, 'Personal', dir, at, at);
@@ -133,6 +155,20 @@ export function list(harness: string): AgentAccount[] {
   seed(harness);
   const rows = db().prepare('SELECT * FROM agent_accounts WHERE harness=? ORDER BY is_default DESC, created_at')
     .all(harness) as Row[];
+  return rows.map(map);
+}
+
+/**
+ * Every account across every harness, grouped by harness.
+ *
+ * No seeding: this is the reader for surfaces that ask "who is signed in
+ * anywhere", and seeding a harness the operator has never used would invent a
+ * Personal account for an agent that is not installed. `list(harness)` is still
+ * the call for a surface that is about one agent.
+ */
+export function listAll(): AgentAccount[] {
+  const rows = db().prepare('SELECT * FROM agent_accounts ORDER BY harness, is_default DESC, created_at')
+    .all() as Row[];
   return rows.map(map);
 }
 
@@ -198,12 +234,36 @@ function cleanDir(raw: unknown): string {
  *
  * Copied rather than linked, so deleting one account cannot follow a link into
  * the other, and editing one account's skills cannot silently edit the other's.
+ *
+ * Codex is narrower still. `config.toml` is authored configuration too, but its
+ * `[mcp_servers.*.env]` blocks are where people put API keys, so copying it is
+ * copying a credential by another name; a new Codex directory therefore starts
+ * without MCP servers or model defaults, and the UI says so. `sessions/`,
+ * `history.jsonl` and `state_5.sqlite` are the conversation record and stay
+ * out for the same reason `projects/` does above.
  */
-const SEEDABLE = ['settings.json', 'skills', 'commands', 'agents'];
+const SEEDABLE: Record<string, string[]> = {
+  'claude-code': ['settings.json', 'skills', 'commands', 'agents'],
+  codex: ['skills', 'AGENTS.md'],
+};
 
-function seedFrom(source: string, target: string): string[] {
+/**
+ * What a directory Wanigan creates for this harness will not have until the
+ * operator puts it there. Shown at creation so nobody discovers it mid-session.
+ */
+export function startsWithout(harness: string): string[] {
+  if (harness === 'codex') {
+    return ['a login (run `codex login` in a session started under it)', 'config.toml — model defaults, approval policy and MCP servers', 'skills, unless copied from another account'];
+  }
+  if (harness === 'claude-code') {
+    return ['a login (run /login in a session started under it)', 'plugins and MCP servers', 'settings, skills, commands and subagents, unless copied from another account'];
+  }
+  return [];
+}
+
+function seedFrom(harness: string, source: string, target: string): string[] {
   const copied: string[] = [];
-  for (const name of SEEDABLE) {
+  for (const name of SEEDABLE[harness] ?? []) {
     const from = path.join(source, name);
     const to = path.join(target, name);
     try {
@@ -239,7 +299,7 @@ export function create(input: { harness: string; label: string; configDir: strin
     const source = byId(input.seedFromAccountId);
     if (!source) throw new Error('The account to copy configuration from no longer exists.');
     if (source.harness !== harness) throw new Error('Configuration can only be copied from an account for the same harness.');
-    seedFrom(source.configDir, dir);
+    seedFrom(harness, source.configDir, dir);
   }
   const at = now();
   const id = uid();
@@ -364,8 +424,36 @@ export function launchEnv(account: AgentAccount | null): Record<string, string> 
   // with the account's email and plan; set to ~/.claude reports loggedIn false.
   // So the account that *is* the default contributes no variable at all, which
   // reproduces exactly what running the CLI by hand does.
+  //
+  // Codex has not been probed for the same quirk (no Codex binary was on the
+  // machine that wrote this). The guard is kept for it anyway because setting
+  // nothing is the one choice that cannot differ from the by-hand CLI; probe
+  // `CODEX_HOME=~/.codex codex login status` before relaxing it.
   if (account.configDir === platformDefaultDir(account.harness)) return {};
   return { [key]: account.configDir };
+}
+
+/**
+ * Whether an account decision applies to this profile at all, or nothing when
+ * the harness has no vendor-specific test and `supportsAccounts` alone decides.
+ *
+ * The Claude harness needs the test: GLM and DeepSeek run the same binary but
+ * authenticate with another vendor's credential, so a Claude account would name
+ * a login the session never uses. `redirected` is the caller's answer to
+ * whether the resolved provider environment aims the Anthropic API elsewhere —
+ * sessions.ts owns how that environment is built, so it is passed in rather
+ * than reproduced here. Codex profiles have no such split today: the directory
+ * is where the login, config and history live whatever the model backend.
+ */
+export function appliesTo(def: { harness: string; backendId?: string | null }, redirected: boolean): boolean | undefined {
+  if (def.harness === 'claude-code') return usesAnthropicAccount({ harness: def.harness, backendId: def.backendId ?? '' }) && !redirected;
+  return undefined;
+}
+
+/** The account recorded for a directory, when Wanigan knows it as one. */
+export function byConfigDir(harness: string, dir: string): AgentAccount | null {
+  const wanted = path.resolve(dir);
+  return list(harness).find((account) => path.resolve(account.configDir) === wanted) ?? null;
 }
 
 /** The directory a recorded session used, for the readers that follow it. */
@@ -403,4 +491,80 @@ export function readRoots(harness: string): string[] {
   const ambient = ambientVar ? process.env[ambientVar]?.trim() : '';
   if (ambient) roots.push(path.resolve(ambient));
   return [...new Set(roots)];
+}
+
+/* ── native auto-memory, per session ─────────────────────────────────── */
+
+/** Claude Code's slug for a working directory: every non-alphanumeric to '-'. */
+function claudeProjectSlug(cwd: string): string {
+  return path.resolve(cwd).replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+/**
+ * Hook-observed writes into Claude Code's own auto-memory directory for one
+ * recorded session — paths only, never a byte of what was written.
+ *
+ * The directory is `<config dir>/projects/<slug of cwd>/memory`, and the
+ * config dir is the session's frozen account, not the default: a second
+ * account's saves land under its own directory, and resolving from ~/.claude
+ * would report an honest-looking zero for every one of them. When the row
+ * predates account recording, every known directory for the harness is
+ * checked and the answer says the account was unknown.
+ *
+ * Probed on this machine before writing this (CLI 2.1.261, 2026-09-05): 38
+ * PostToolUse Write/Edit rows carried paths inside `.../projects/<slug>/memory/`,
+ * so the saves are hook-visible. The same probe also matched a repository's
+ * `vendor/.../memory/` files with a loose substring, which is why the count
+ * below is a prefix match on the exact resolved directory and nothing wider.
+ *
+ * Both the worktree and the project path are slugged: which one Claude Code
+ * keys the memory to for a linked worktree has not been verified, so both
+ * candidate directories are reported and either counts.
+ */
+export function nativeMemoryWrites(sessionId: string): NativeMemoryWrites | null {
+  const row = db().prepare(`
+    SELECT harness_id, provider_id, account_id, project_path, worktree FROM session_log WHERE id = ?
+  `).get(sessionId) as {
+    harness_id: string | null; provider_id: string; account_id: string | null;
+    project_path: string; worktree: string | null;
+  } | undefined;
+  if (!row) return null;
+  const harness = row.harness_id ?? (row.provider_id === 'claude' || row.provider_id === 'glm' ? 'claude-code' : null);
+  if (harness !== 'claude-code') {
+    return { harness, memoryDirs: [], accountKnown: false, count: 0, files: [], note: 'Only the claude-code harness has a hook-visible auto-memory directory Wanigan knows how to locate.' };
+  }
+  const account = row.account_id ? byId(row.account_id) : null;
+  const roots = account ? [account.configDir] : readRoots(harness);
+  const cwds = [...new Set([row.worktree, row.project_path].filter((value): value is string => Boolean(value)))];
+  const memoryDirs = [...new Set(roots.flatMap((root) =>
+    cwds.map((cwd) => path.join(root, 'projects', claudeProjectSlug(cwd), 'memory'))))];
+  const events = db().prepare(`
+    SELECT paths_json FROM session_events
+    WHERE session_id = ? AND event = 'PostToolUse' AND paths_json IS NOT NULL
+      AND tool_name IN ('Write','Edit','MultiEdit','NotebookEdit')
+  `).all(sessionId) as { paths_json: string }[];
+  const files = new Set<string>();
+  let count = 0;
+  for (const event of events) {
+    let paths: unknown;
+    try { paths = JSON.parse(event.paths_json); } catch { continue; }
+    if (!Array.isArray(paths)) continue;
+    const hit = paths.find((candidate): candidate is string => typeof candidate === 'string'
+      && memoryDirs.some((dir) => candidate === dir || candidate.startsWith(dir + path.sep)));
+    if (!hit) continue;
+    count++;
+    if (files.size < 50) files.add(path.basename(hit));
+  }
+  return {
+    harness,
+    memoryDirs,
+    accountKnown: account !== null,
+    count,
+    files: [...files],
+    note: account
+      ? null
+      : row.account_id
+        ? 'The account this session launched under has since been removed; every known directory was checked.'
+        : 'Account at launch unknown (recorded before Wanigan tracked accounts); every known directory was checked.',
+  };
 }

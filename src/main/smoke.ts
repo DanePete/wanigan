@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import * as batch from './batch';
+import { db } from './db';
 import { addProject, listProjects } from './store';
 import type { RunConfig } from '../shared/types';
 
@@ -178,7 +179,19 @@ export async function runSmoke(): Promise<void> {
   say('── deletion safety');
   const live = await batch.createAndSubmitRun(cfg({ name: 'smoke delete guard' }));
   await expectThrow(async () => batch.deleteRun(live.runId),
-    'Cancel the run before deleting', 'in-flight run cannot be silently deleted');
+    'Cancel the run and let it finish stopping', 'in-flight run cannot be silently deleted');
+  // 'canceling' is the window the guard used to leave open: cancelRun sets it
+  // while the remote batches wind down, so the run is still spending at the API
+  // even though the operator has already asked for it to stop. Deleting the
+  // local row there loses the only record of a run that is still costing money.
+  db().prepare("UPDATE runs SET status='canceling' WHERE id=?").run(live.runId);
+  await expectThrow(async () => batch.deleteRun(live.runId),
+    'Cancel the run and let it finish stopping',
+    'a run still winding down after cancel cannot be deleted either');
+  db().prepare("UPDATE runs SET status='ended' WHERE id=?").run(live.runId);
+  batch.deleteRun(live.runId);
+  check(batch.listRuns().every((r) => (r as { id: string }).id !== live.runId),
+    'and once it has actually ended, deleting it removes it');
 
   // Everything above is the batch pipeline. Phases 1-24 are exercised here,
   // in the same real main process, because compiling is not working.

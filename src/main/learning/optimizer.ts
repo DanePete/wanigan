@@ -50,9 +50,13 @@ export function diagnoseKnowledge(options: OptimizerOptions = {}): OptimizerDiag
     });
   }
 
+  // Positive evidence of use: a hook-observed Skill call resolved to the item,
+  // a recorded outcome, or a `wanigan:<id>` tag quoted in an archived
+  // transcript. Its absence proves nothing — an agent acts on a briefed fact
+  // without quoting the id — so the finding below stays informational.
   const useStmt = db().prepare(`
     SELECT COUNT(*) AS n,MAX(at) AS last_at FROM artifact_metrics
-    WHERE item_id=? AND metric IN ('invocation','use_success','use_failure')
+    WHERE item_id=? AND metric IN ('invocation','use_success','use_failure','cited')
   `);
   for (const item of items) {
     const tokens = estimateTokens(item.canonicalText);
@@ -86,8 +90,9 @@ export function diagnoseKnowledge(options: OptimizerOptions = {}): OptimizerDiag
     const use = useStmt.get(item.id) as { n: number; last_at: number | null };
     if (item.createdAt < unusedBefore && (!use.n || (use.last_at ?? 0) < unusedBefore)) {
       out.push({
-        kind: 'unused', severity: 'info', itemIds: [item.id], title: `Unused knowledge: ${item.title}`,
-        detail: `No observed use in the last ${options.unusedDays ?? 45} days. Propose retirement or narrower routing.`,
+        kind: 'unused', severity: 'info', itemIds: [item.id], title: `No observed use: ${item.title}`,
+        detail: `No skill call, recorded outcome or transcript citation reached this item in the last ${options.unusedDays ?? 45} days. `
+          + 'Agents act on briefed facts without quoting ids, so this is a prompt to look, not evidence of disuse: check its briefing deliveries before retiring or narrowing it.',
         estimatedTokenDelta: -tokens,
       });
     }
