@@ -733,6 +733,35 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !/onClick=\{onCancel\}/.test(batchesViewSrc),
     'Cancel means cancel: both back buttons and a successful submit drop the remembered draft, so the next New run opens blank rather than on an abandoned or already-submitted one');
 
+  // React matches hooks by call order, so a hook below an early return is
+  // called on the render that has data and skipped on the render that does not.
+  // Run detail shipped with `actErr` and `confirmDelete` below
+  // `if (!d) { … return <Reading/> }`, and `d` arrives from an async read: the
+  // first render ran two hooks fewer than the second, React threw "Rendered
+  // more hooks than during the previous render", and the ErrorBoundary caught
+  // it — opening any run showed an error card where the run should be. There is
+  // no ESLint here to carry react-hooks/rules-of-hooks and no renderer in this
+  // process, so this is a source contract: every hook call in RunDetail sits
+  // above the guard, and a rename of `d` fails this loudly rather than passing
+  // on a guard it can no longer find.
+  const runDetailStart = batchesViewSrc.indexOf('function RunDetail(');
+  const runDetailEnd = batchesViewSrc.indexOf('\n}\n', runDetailStart);
+  const runDetailBody = runDetailStart < 0 ? ''
+    : batchesViewSrc.slice(runDetailStart, runDetailEnd < 0 ? batchesViewSrc.length : runDetailEnd);
+  const runDetailGuard = runDetailBody.indexOf('\n  if (!d) {');
+  // Body-level lines only (two spaces, then code), and the generic in
+  // `useState<string | null>(` is why the <…> is optional rather than absent:
+  // without it this misses one of the two calls that caused the crash.
+  const hooksBelowGuard: string[] = runDetailGuard < 0 ? []
+    : runDetailBody.slice(runDetailGuard).split('\n')
+        .filter((l) => /^  \S/.test(l) && /(?:^|[^\w.$])use[A-Z]\w*\s*(?:<[^;{}=]*>\s*)?\(/.test(l))
+        .map((l) => l.trim());
+  check(runDetailGuard > 0 && hooksBelowGuard.length === 0,
+    'every hook in Batches’ run detail is called above the `if (!d)` early return, so the render that is still reading and the render that has the run call the same hooks in the same order',
+    runDetailGuard > 0
+      ? `hooks below the guard: ${hooksBelowGuard.join(' · ') || 'none'}`
+      : 'RunDetail or its `if (!d)` guard was not found in Batches.tsx');
+
   // A <tr> takes no focus, and neither of these rows held a child that did, so
   // run detail, results, the refusal lane and the evals tab were all reachable
   // by pointer only. The row click stays for pointers; the identifying cell

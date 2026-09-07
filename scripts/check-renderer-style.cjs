@@ -4,7 +4,7 @@
  * Renderer style gate. Runs in `npm test` between typecheck and the package
  * hooks, and reads source only — it never renders the app.
  *
- * Five checks, each a ratchet against a baseline written into this file:
+ * Seven checks, each a ratchet against a baseline written into this file:
  *   1. inline `style={{` objects per renderer .tsx, keyed by path,
  *   2. `<style` tags in any renderer .tsx,
  *   3. literal px font sizes in styles/*.css (index.css owns the type scale and
@@ -14,7 +14,9 @@
  *   5. declarations in a sheet index.css @imports that a rule in index.css
  *      overrides at the same or higher specificity, per sheet,
  *   6. <input>/<select>/<textarea> in a renderer .tsx that reach a screen
- *      reader with no name at all.
+ *      reader with no name at all,
+ *   7. hook calls below an early return in a renderer component, which make a
+ *      render that has data run more hooks than one that does not.
  *
  * A baseline entry is a debt, not a permit. It records what the tree carried
  * the day the gate landed so the gate could pass that day; the only allowed
@@ -439,6 +441,72 @@ function unnamedControls(src) {
   return out.length;
 }
 
+// 7. Hook calls a component reaches only on some renders.
+//
+//    React matches hooks by call order, so a useState below an early return is
+//    called on the render that has data and skipped on the render that does
+//    not. The second render then runs more hooks than the first, React throws
+//    "Rendered more hooks than during the previous render", and ErrorBoundary
+//    catches it — the view does not paint at all, so the symptom is an error
+//    card rather than a wrong pixel. Batches' run detail shipped that way for
+//    one commit: `actErr` and `confirmDelete` sat under `if (!d) return
+//    <Reading/>`, and `d` arrives from an async read, so opening any run
+//    faulted. There is no ESLint in this repository to carry
+//    react-hooks/rules-of-hooks and nothing in `npm test` renders React, so
+//    this is the cheapest honest guard.
+//
+//    What it reads: inside a top-level function or component-shaped const whose
+//    name is capitalised, the first body-level (two-space) `return`, or the
+//    first body-level if/for/while/switch/try block that contains one; every
+//    body-level hook call below that is a finding.
+//
+//    What it cannot see, so a pass is not proof: a hook inside a nested
+//    callback or a conditional at any deeper indentation, a component whose
+//    body is not two-space indented, a hook reached through a helper that is
+//    itself called conditionally, and a component written as a one-line arrow.
+//
+//    Empty, and it stays empty. This is not a debt list: a file listed here is
+//    a file whose view throws on its second render.
+const HOOK_AFTER_GUARD_BASELINE = {};
+
+// `useState<string | null>(` puts its generic between the name and the paren,
+// so the optional <…> is load-bearing rather than decoration: without it this
+// misses one of the two calls that caused the crash the check exists for.
+const HOOK_CALL = /(?:^|[^\w.$])use[A-Z]\w*\s*(?:<[^;{}=]*>\s*)?\(/;
+
+function hooksAfterGuard(src) {
+  const lines = src.split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const open = /^(?:export default |export )?function ([A-Z]\w*)|^(?:export )?const ([A-Z]\w*)\s*=\s*(?:React\.)?(?:forwardRef|memo|function\b|\(|<)/.exec(lines[i]);
+    if (!open) continue;
+    const name = open[1] || open[2];
+    // The component ends at the first line that starts a brace at column zero —
+    // `}`, `};` and `});` all qualify, a body-level `  }` never does. Stop at
+    // the wrong one and the next component's hooks read as this one's: matching
+    // only a bare `}` ran FocusBtn in Sessions.tsx on into the whole Sessions
+    // component and reported 37 findings that were not there.
+    let end = lines.length;
+    for (let j = i + 1; j < lines.length; j++) if (/^\}/.test(lines[j])) { end = j; break; }
+    let guard = -1;
+    for (let j = i + 1; j < end && guard < 0; j++) {
+      if (/^  return\b/.test(lines[j])) { guard = j; break; }
+      if (!/^  (?:if|for|while|switch|try)\b.*\{\s*$/.test(lines[j])) continue;
+      for (let k = j + 1; k < end; k++) {
+        if (/^  \}/.test(lines[k])) break;
+        if (/^\s+return\b/.test(lines[k])) { guard = j; break; }
+      }
+    }
+    if (guard < 0) continue;
+    for (let j = guard + 1; j < end; j++) {
+      if (!/^  \S/.test(lines[j])) continue;
+      if (/^  (?:\/\/|\/\*|\*)/.test(lines[j])) continue;
+      if (HOOK_CALL.test(lines[j])) out.push({ component: name, line: j + 1, text: lines[j].trim() });
+    }
+  }
+  return out;
+}
+
 function measure() {
   const files = walk(RENDERER);
   const tsx = files.filter((f) => f.endsWith('.tsx'));
@@ -471,7 +539,16 @@ function measure() {
     if (n > 0) unnamed[rel(f)] = n;
   }
 
-  return { inline, styleTags, fontPx, durations, shadowed, unnamed };
+  const hookOrder = {};
+  const hookFindings = [];
+  for (const f of tsx) {
+    const hits = hooksAfterGuard(read(f));
+    if (!hits.length) continue;
+    hookOrder[rel(f)] = hits.length;
+    for (const h of hits) hookFindings.push({ file: rel(f), ...h });
+  }
+
+  return { inline, styleTags, fontPx, durations, shadowed, unnamed, hookOrder, hookFindings };
 }
 
 function ratchet(label, current, baseline, failures) {
@@ -503,6 +580,7 @@ function main() {
       DURATION_BASELINE: sorted(m.durations),
       SHADOWED_MODIFIER_BASELINE: sorted(m.shadowed.counts),
       NO_ACCESSIBLE_NAME_BASELINE: sorted(m.unnamed),
+      HOOK_AFTER_GUARD_BASELINE: sorted(m.hookOrder),
     }, null, 2));
     return;
   }
@@ -529,6 +607,16 @@ function main() {
     }
   }
 
+  const hookFailures = [];
+  ratchet('hook called below an early return', m.hookOrder, HOOK_AFTER_GUARD_BASELINE, hookFailures);
+  for (const line of hookFailures) {
+    failures.push(line);
+    const file = line.split(': ')[1]?.split(' ')[0];
+    for (const h of m.hookFindings.filter((x) => x.file === file)) {
+      failures.push(`    ${h.file}:${h.line} — ${h.component} calls ${h.text} on only some renders`);
+    }
+  }
+
   const totals = [
     `${Object.values(m.inline).reduce((a, b) => a + b, 0)} inline style objects across ${Object.keys(m.inline).length} renderer files`,
     `${m.styleTags.length} TSX files with <style>`,
@@ -536,6 +624,7 @@ function main() {
     `${Object.values(m.durations).reduce((a, b) => a + b, 0)} literal durations outside motion.css`,
     `${m.shadowed.findings.length} shadowed modifier declarations in the ${m.shadowed.sheets.length} sheets index.css imports`,
     `${Object.values(m.unnamed).reduce((a, b) => a + b, 0)} form controls with no accessible name`,
+    `${m.hookFindings.length} hooks called below an early return`,
   ];
 
   if (failures.length) {

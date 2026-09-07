@@ -1167,6 +1167,16 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
   const [detailErr, setDetailErr] = useState<string | null>(null);
   const [rowsErr, setRowsErr] = useState<string | null>(null);
   const [exportNote, setExportNote] = useState<{ tone: 'ok' | 'info' | 'error'; text: string } | null>(null);
+  // A failed cancel or retry lands beside the buttons that caused it, and a
+  // delete asks first; a native alert() steals focus from the window and leaves
+  // no trace once dismissed. Both belong up here with the rest of the state.
+  // React matches hooks by call order, and these two sat below the `if (!d)`
+  // return: the render that was still reading the run ran two hooks fewer than
+  // the render that had it, which is "Rendered more hooks than during the
+  // previous render" — every run detail faulted into the ErrorBoundary instead
+  // of painting.
+  const [actErr, setActErr] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const loadDetail = useCallback(async () => {
     // A run that cannot be read is not a run that is still loading. Swallowing
@@ -1245,10 +1255,6 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
   // Merging the last rescue can retire the refusals tab underneath the user.
   const activeTab: DetailTab = tabs.includes(tab) ? tab : 'results';
 
-  // A failed cancel or retry lands beside the buttons that caused it; a native
-  // alert() steals focus from the window and leaves no trace once dismissed.
-  const [actErr, setActErr] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   async function act(fn: () => Promise<any>, label: string) {
     setBusy(label); setActErr(null);
     try {
