@@ -33,7 +33,7 @@ const OK = 0;
 const FAILED = 1;
 const USAGE = 2;
 
-const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'learn-probe', 'learn-phrase', 'learn-sweep', 'help'] as const;
+const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'learn-probe', 'learn-phrase', 'learn-sweep', 'learn-consolidate', 'help'] as const;
 type Command = (typeof COMMANDS)[number];
 
 // Scout rows are created only by the fixed weekly schedule. Keeping this
@@ -376,6 +376,8 @@ function cmdHelp(): number {
                                waiting for the five-minute pass
   learn-sweep [--apply]        count, or clear, the pending nominations a
                                repeated success can never resolve
+  learn-consolidate            run one consolidation pass now, and report how
+                               much of the queue it reached
   help                         this
 
 Runs against the same database the app uses, so anything queued here is
@@ -534,6 +536,21 @@ async function cmdLearnSweep(args: string[]): Promise<number> {
   return failed ? FAILED : OK;
 }
 
+/**
+ * One consolidation pass, now. The timer runs it every five minutes while
+ * Wanigan is open; this is the same pass from a terminal, and it reports its
+ * own coverage so a partial read can never look like a finished one.
+ */
+async function cmdLearnConsolidate(): Promise<number> {
+  const learning = await import('./learning-service');
+  const r = learning.consolidate(undefined, 'manual');
+  if (!r.ran) { err(`Nothing ran: ${r.reason}.`); return FAILED; }
+  out(`  candidates ${r.candidates} · auto-applied ${r.autoApplied} · woken ${r.woken}`);
+  out(`  examined ${r.examined} of ${r.pending} waiting signal(s) · `
+    + `${r.partitionsRead} of ${r.partitionsTotal} cluster partitions · consumed ${r.processed}`);
+  return OK;
+}
+
 /* ── entry ───────────────────────────────────────────────────────────── */
 
 /**
@@ -569,6 +586,7 @@ export async function runCli(argv: string[]): Promise<number> {
       case 'learn-probe': return await cmdLearnProbe(rest);
       case 'learn-phrase': return await cmdLearnPhrase(rest);
       case 'learn-sweep': return await cmdLearnSweep(rest);
+      case 'learn-consolidate': return await cmdLearnConsolidate();
     }
     return USAGE;
   } catch (e) {
