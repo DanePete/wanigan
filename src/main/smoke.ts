@@ -232,7 +232,8 @@ export async function runSmoke(): Promise<void> {
   // and 660 was still here at 1148, which would have let two thirds of the
   // suite vanish and still reported a pass. The margin is the same ~25 the
   // 1125/1148 pair carried; widening it is how a floor goes stale again.
-  const MIN_ASSERTIONS = 1212;
+  // Observed 1291 when this was last raised.
+  const MIN_ASSERTIONS = 1268;
   const ran = pass + fail;
   check(ran >= MIN_ASSERTIONS,
     `at least ${MIN_ASSERTIONS} assertions ran, so a suite that stopped early cannot pass by running almost nothing`,
