@@ -12,6 +12,7 @@ import type {
   BriefingPreview, CandidateStatus, ForgedSkill, KnowledgeKind, LearningPhrasingOutcome,
   LearningSettings, Session, SessionEvent, TeachWaniganInput, ReviewRun,
 } from '../shared/types';
+import { PROJECTABLE_KINDS } from '../shared/types';
 import {
   ARTIFACT_SCOPES,
   CLAUDE_ARTIFACT_COMPILER,
@@ -610,11 +611,29 @@ interface KnowledgeTemplate {
   id: string;
   matches(cluster: SignalCluster): boolean;
   claim(cluster: SignalCluster): { title: string; text: string };
+  /**
+   * What the sentence this template writes actually is.
+   *
+   * The pipeline used to classify a cluster by `classifySignal(first)` -- the
+   * raw signal's kind -- discarding what the template that had just authored
+   * the sentence knew about it. `command-failure` writes "Run it and fix what
+   * it reports before handing work back": an imperative addressed to the agent,
+   * which is an instruction. It arrived as `gate-failed`, was filed as `eval`,
+   * and died there. The engine was writing instructions and filing them by
+   * signal kind, which is why 90 candidates produced 87 memories, 3 evals and
+   * not one projectable row.
+   *
+   * A template is hand-authored, so it knows. It is the only thing that does.
+   */
+  targetKind: KnowledgeKind;
 }
 
 const KNOWLEDGE_TEMPLATES: KnowledgeTemplate[] = [
   {
     id: 'permission-denied-path',
+    // Not a gate: Wanigan has no gate engine, and the sentence addresses the
+    // operator ('settle the standing answer'), not the agent.
+    targetKind: 'memory',
     matches: (c) => c.signals[0].kind === 'permission-denied' && !!c.facets.pathPrefix,
     claim: (c) => ({
       title: `Permission prompts under ${c.facets.pathPrefix}`,
@@ -625,7 +644,12 @@ const KNOWLEDGE_TEMPLATES: KnowledgeTemplate[] = [
   },
   {
     id: 'tool-failure-path',
-    matches: (c) => c.signals[0].kind === 'tool-failure' && !!c.facets.toolName && !!c.facets.pathPrefix,
+    targetKind: 'rule',
+    matches: (c) => c.signals[0].kind === 'tool-failure' && !!c.facets.toolName && !!c.facets.pathPrefix
+      // A rule reaches a file. Without an error class it would say only "it
+      // failed here sometimes"; a classless cluster still reaches a person
+      // through nominate.
+      && !!c.facets.errorClass,
     claim: (c) => ({
       title: `${c.facets.toolName} fails under ${c.facets.pathPrefix}`,
       text: `\`${c.facets.toolName}\` failed ${times(c.observations)} under \`${c.facets.pathPrefix}\` across `
@@ -635,6 +659,7 @@ const KNOWLEDGE_TEMPLATES: KnowledgeTemplate[] = [
   },
   {
     id: 'command-failure',
+    targetKind: 'instruction',
     matches: (c) => !!c.facets.command,
     claim: (c) => ({
       title: `\`${c.facets.command}\` keeps failing`,
@@ -644,6 +669,9 @@ const KNOWLEDGE_TEMPLATES: KnowledgeTemplate[] = [
   },
   {
     id: 'review-gate-failure',
+    // Not an eval: it names no observed specific. `command-failure` is the
+    // version that does, and it matches first.
+    targetKind: 'memory',
     matches: (c) => c.signals[0].kind === 'gate-failed',
     claim: (c) => ({
       title: 'The review gate fails repeatedly here',
@@ -653,6 +681,7 @@ const KNOWLEDGE_TEMPLATES: KnowledgeTemplate[] = [
   },
   {
     id: 'repeated-reference-read',
+    targetKind: 'memory',
     matches: (c) => toolLike(c.facets.toolName, READ_TOOL_MARKERS) && !!c.sharedFile && c.facets.outcome !== 'failed',
     claim: (c) => ({
       title: `${c.sharedFile} is re-read across tasks`,
@@ -662,6 +691,7 @@ const KNOWLEDGE_TEMPLATES: KnowledgeTemplate[] = [
   },
   {
     id: 'repeated-module-edit',
+    targetKind: 'memory',
     matches: (c) => toolLike(c.facets.toolName, WRITE_TOOL_MARKERS) && !!c.facets.pathPrefix && c.facets.outcome !== 'failed',
     claim: (c) => ({
       title: `${c.facets.pathPrefix} is an active work area`,
@@ -1040,13 +1070,15 @@ export function consolidate(
         claimless++;
         continue;
       }
-      const classification = classifySignal(first);
+      const classification = routeCluster(cluster, template);
       const claim = template ? template.claim(cluster) : nominate(cluster);
       const candidate = createCandidate({
         targetKind: classification.targetKind,
         scope: classification.scope,
         providerId: first.providerId,
-        projectId: first.projectId,
+        // Matches updateCandidate's own normalisation: a personal candidate
+        // holds no project.
+        projectId: classification.scope === 'personal' ? null : first.projectId,
         pathScope: classification.pathScope,
         title: truncateUtf8Bytes(claim.title, 480),
         proposedText: claim.text,
@@ -1274,6 +1306,75 @@ export function phrasingEligibility(signals: LearningSignal[]): PhrasingEligibil
     return { ok: false, reason: 'semantic-opt-out' };
   }
   return claimPossible(signals) ? { ok: true } : { ok: false, reason: 'no-claim-possible' };
+}
+
+/**
+ * A path selector derived from an observed prefix, or null.
+ *
+ * `${prefix}/**` with two or three clean segments is the one shape both
+ * compilers accept -- a valid Claude `paths:` selector and what
+ * codexDirectoryScope will take. One segment is refused on purpose: `src/**`
+ * is the whole tree wearing a scope.
+ */
+const SAFE_PATH_PREFIX = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
+
+function derivedSelector(prefix: string | null): string | null {
+  if (!prefix) return null;
+  const segments = prefix.split('/').filter(Boolean);
+  if (segments.length < 2 || segments.length > PATH_PREFIX_DEPTH) return null;
+  if (segments.some((segment) => segment === '.' || segment === '..')) return null;
+  if (!SAFE_PATH_PREFIX.test(prefix)) return null;
+  return `${prefix}/**`;
+}
+
+/**
+ * Where a consolidated cluster should go, decided by the template that phrased
+ * it rather than by the kind of the first signal underneath it.
+ *
+ * Three refusals, and each one DEMOTES to memory rather than broadening. A
+ * memory is briefed and reversible; a wrong instruction is a line written into
+ * someone's CLAUDE.md. When the route is uncertain the cheap outcome is chosen
+ * every time.
+ */
+function routeCluster(
+  cluster: SignalCluster,
+  template: KnowledgeTemplate | undefined,
+): { targetKind: KnowledgeKind; scope: ArtifactScope; pathScope: string | null; reasons: string[] } {
+  const first = cluster.signals[0];
+  const fallback = classifySignal(first);
+  if (!template) return fallback;
+
+  const reasons: string[] = [`Template ${template.id} declares ${template.targetKind}.`];
+  let kind = template.targetKind;
+
+  // 1. The same predicate that decides what a model is paid to phrase now also
+  //    decides what may touch disk. It is load-bearing, not decorative:
+  //    `command-failure` matches on facets.command regardless of signal kind,
+  //    and a passing gate that retried a failing command populates that facet
+  //    too -- so a success would otherwise route an instruction to a file.
+  if (PROJECTABLE_KINDS.includes(kind) && !claimPossible(cluster.signals)) {
+    reasons.push('Nothing here failed, so it is briefed rather than written to a file.');
+    kind = 'memory';
+  }
+  // 2. Observed project behaviour must never compile into a personal
+  //    ~/.claude/CLAUDE.md, which is where a project-less candidate lands.
+  if (PROJECTABLE_KINDS.includes(kind) && !first.projectId) {
+    reasons.push('No project to write into, so it is briefed instead.');
+    kind = 'memory';
+  }
+  // 3. A rule without a selector is a rule over everything.
+  const selector = derivedSelector(cluster.facets.pathPrefix);
+  if (kind === 'rule' && !selector) {
+    reasons.push('No usable path selector was observed, so it is briefed rather than scoped.');
+    kind = 'memory';
+  }
+
+  return {
+    targetKind: kind,
+    scope: kind === 'rule' ? 'path' : first.projectId ? 'project' : 'personal',
+    pathScope: kind === 'rule' ? selector : null,
+    reasons,
+  };
 }
 
 /**

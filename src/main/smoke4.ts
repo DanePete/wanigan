@@ -947,6 +947,88 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
       'a proposal decided before the window opened drops out of the decided figure while the same row stays inside candidates-created, so "last 7d" on that figure means the window the decision was taken in and not the window the candidate was written in',
       JSON.stringify({ decided: afterAging.reviewed, was: afterUndefer.reviewed, created: afterAging.candidatesCreated }));
 
+    say('── compound · declared routing: the template says what it wrote');
+    // Before this, consolidation classified a cluster by classifySignal(first)
+    // -- the raw signal's kind -- and threw away what the template that had
+    // just authored the sentence knew. `command-failure` writes an imperative
+    // addressed to the agent; it arrived as gate-failed, was filed as `eval`,
+    // and died there. 90 real candidates produced 87 memories, 3 evals and not
+    // one projectable row, so knowledge_projections had never held one.
+    const routeTag = `route-${tag}`;
+    const mkRoute = (kind: string, detail: Record<string, unknown>, n: number, project: string | null) =>
+      recordSignal({
+        kind, providerId: 'claude', backendId: 'anthropic',
+        sessionId: `${routeTag}-s${n}`, taskHash: `${routeTag}-t${n}`,
+        projectId: project, projectPath: project ? projectRoot : null,
+        summary: `${kind} ${routeTag} ${n}`, semanticEligible: false, detail,
+      });
+
+    const cmdDetail = { commands: [{ command: `npm test ${routeTag}`, exitCode: 1 }] };
+    const cmdA = mkRoute('gate-failed', cmdDetail, 1, project.id);
+    const cmdB = mkRoute('gate-failed', cmdDetail, 2, project.id);
+    compound.consolidate(project.id);
+    const instruction = compound.candidates({ projectId: project.id, limit: 500 })
+      .find((c) => c.signalIds.includes(cmdA.id) && c.signalIds.includes(cmdB.id));
+    check(!!instruction && instruction.targetKind === 'instruction' && instruction.scope === 'project',
+      'a repeated command failure becomes an instruction, because that is what the template wrote — not an eval, which is what its signal kind used to make it',
+      instruction && `${instruction.targetKind}/${instruction.scope}`);
+    if (instruction) {
+      const toClaude = compileCandidate(instruction.id, CLAUDE_ARTIFACT_COMPILER,
+        { providerId: 'claude', projectRoot, homeDir: fakeHome });
+      const toCodex = compileCandidate(instruction.id, CODEX_ARTIFACT_COMPILER,
+        { providerId: 'codex', projectRoot, homeDir: fakeHome });
+      check(toClaude.mode === 'file' && toClaude.targetPath === path.join(projectRoot, 'CLAUDE.md')
+        && toCodex.mode === 'file' && toCodex.targetPath === path.join(projectRoot, 'AGENTS.md'),
+        'and it compiles to a real file on both providers — the first projection this pipeline can produce from an observation rather than from something a person typed',
+        `${toClaude.mode}:${toClaude.targetPath} · ${toCodex.mode}:${toCodex.targetPath}`);
+    }
+
+    // Facets are derived, not declared: the prefix comes from detail.paths and
+    // the error class is matched against the summary, so the fixture has to
+    // look like a real signal rather than name the facets it wants.
+    const failDetail = { toolName: 'Edit', ok: false,
+      paths: [path.join(projectRoot, 'src', 'main', 'learning', 'ledger.ts')] };
+    const denied = `Edit denied: permission denied writing ledger.ts ${routeTag}`;
+    const ruleA = recordSignal({
+      kind: 'tool-failure', providerId: 'claude', backendId: 'anthropic',
+      sessionId: `${routeTag}-s3`, taskHash: `${routeTag}-t3`,
+      projectId: project.id, projectPath: projectRoot,
+      summary: denied, semanticEligible: false, detail: failDetail,
+    });
+    const ruleB = recordSignal({
+      kind: 'tool-failure', providerId: 'claude', backendId: 'anthropic',
+      sessionId: `${routeTag}-s4`, taskHash: `${routeTag}-t4`,
+      projectId: project.id, projectPath: projectRoot,
+      summary: `${denied} again`, semanticEligible: false, detail: failDetail,
+    });
+    compound.consolidate(project.id);
+    const rule = compound.candidates({ projectId: project.id, limit: 500 })
+      .find((c) => c.signalIds.includes(ruleA.id) && c.signalIds.includes(ruleB.id));
+    check(!!rule && rule.targetKind === 'rule' && rule.pathScope === 'src/main/learning/**',
+      'a classed tool failure under a directory becomes a rule scoped to that directory — never the single file, never an absolute path',
+      rule && `${rule.targetKind}/${rule.pathScope}`);
+
+    // Refusal 1: nothing failed, so nothing may reach a file.
+    const okDetail = { toolName: 'Read', outcome: 'ok', files: ['docs/reference.md'] };
+    const okA = mkRoute('tool-success', okDetail, 5, project.id);
+    const okB = mkRoute('tool-success', okDetail, 6, project.id);
+    compound.consolidate(project.id);
+    const success = compound.candidates({ projectId: project.id, limit: 500 })
+      .find((c) => c.signalIds.includes(okA.id) && c.signalIds.includes(okB.id));
+    check(!success || !(['instruction', 'rule', 'skill'] as string[]).includes(success.targetKind),
+      'and a repeated success never reaches a projectable kind, whatever template phrased it: claimPossible decides what touches disk as well as what a model is paid to phrase',
+      success && success.targetKind);
+
+    // Refusal 2: no project means no project file to write into.
+    const homelessA = mkRoute('gate-failed', cmdDetail, 7, null);
+    const homelessB = mkRoute('gate-failed', cmdDetail, 8, null);
+    compound.consolidate(null);
+    const homeless = compound.candidates({ projectId: null, limit: 500 })
+      .find((c) => c.signalIds.includes(homelessA.id) && c.signalIds.includes(homelessB.id));
+    check(!homeless || homeless.targetKind === 'memory',
+      'observed behaviour with no project is briefed rather than written, so it can never compile into a personal ~/.claude/CLAUDE.md',
+      homeless && homeless.targetKind);
+
     say('── compound · sweep hardening');
     // Failure-shaped on purpose. Consolidation no longer nominates a repeated
     // success -- there is no claim in one, and a nomination nobody can action
