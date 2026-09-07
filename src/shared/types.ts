@@ -2145,8 +2145,11 @@ export type KnowledgeKindDelivery =
 
 const NEVER_BRIEFED_COMPILES_TO: Record<string, string> = {
   skill: 'a provider skill file (SKILL.md) per harness',
-  gate: 'a Wanigan review gate',
-  eval: 'a Wanigan evaluation case',
+  // Retired routing targets. Wanigan has no gate engine and no eval runner:
+  // neither kind is briefed, neither compiles to a file, and both used to be
+  // described here as though they were delivered somewhere.
+  gate: 'nothing yet — a retired routing target Wanigan has no engine for',
+  eval: 'nothing yet — a retired routing target Wanigan has no runner for',
   'project-map': 'nothing yet — retrievable in Wanigan only, no provider file',
 };
 

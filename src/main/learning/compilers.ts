@@ -118,12 +118,16 @@ function internalDelivery(
       'A project map is never briefed and has no provider file; it stays retrievable in Wanigan only.',
     );
   }
-  if (candidate.targetKind === 'gate') {
-    return result(candidate, context, adapterId, 'wanigan-gate', 'Compile through Wanigan policy/review gates, not a guessed provider file.');
-  }
-  if (candidate.targetKind === 'eval') {
-    return result(candidate, context, adapterId, 'wanigan-eval', 'Store as a Wanigan golden case/evaluation shared by providers.');
-  }
+  // `gate` and `eval` used to return 'wanigan-gate' and 'wanigan-eval' with a
+  // sentence about compiling through Wanigan's policy gates and golden cases.
+  // Both strings had zero consumers anywhere in the tree: neither kind is in
+  // INJECTABLE_KINDS, so neither is ever briefed, and applyCandidateToProvider
+  // throws on both -- so a claim routed here reached nothing at all, silently,
+  // while the UI told the operator it had compiled to a review gate. There is
+  // no gate engine and no eval runner. Falling through to the kind guards below
+  // returns 'unsupported' with a reason, which is the truth, and the item stays
+  // readable in Wanigan's own views. The kinds themselves survive in
+  // KNOWLEDGE_KINDS so existing rows still read and list.
   return null;
 }
 

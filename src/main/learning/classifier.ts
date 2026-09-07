@@ -26,24 +26,21 @@ export function classifySignal(signal: LearningSignal, hints: ClassificationHint
     targetKind = hints.targetKind;
     confidence = 0.95;
     reasons.push('An explicit target was supplied.');
-  } else if (hints.hardSafetyRequirement || signal.kind === 'permission-denied') {
-    targetKind = 'gate'; confidence = 0.83;
-    reasons.push('Hard safety and permission requirements belong in an enforceable gate.');
-  } else if (hints.regression || signal.kind === 'rejected-review' || signal.kind === 'revert') {
-    targetKind = 'eval'; confidence = 0.78;
-    reasons.push('A rejected or reverted outcome should become repeatable regression evidence.');
-  } else if (hints.repeatedProcedure || signal.detail.repeatedProcedure === true) {
-    targetKind = 'skill'; confidence = 0.86;
-    reasons.push('A repeatable ordered workflow should be loaded as a skill on demand.');
-  } else if (signal.kind === 'gate-failed' || signal.kind === 'tool-failure' || signal.kind === 'session-failure') {
-    targetKind = 'eval'; confidence = 0.7;
-    reasons.push('A failure is preserved as an evaluation until a stable rule is demonstrated.');
-  } else if (signal.kind === 'file-change') {
-    targetKind = 'project-map'; confidence = 0.72;
-    reasons.push('File topology belongs in the incrementally refreshed project map.');
-  } else if (hints.alwaysOn) {
-    targetKind = signal.pathScope || hints.pathScope ? 'rule' : 'instruction'; confidence = 0.84;
-    reasons.push('An always-on invariant is routed to scoped instructions.');
+  // Six branches used to sit here, routing to gate, eval, skill and
+  // project-map. Every one of them was a destination with no delivery: gate and
+  // eval are retired routing targets with no engine behind them, project-map
+  // compiles to 'unsupported', and the skill branch keyed on
+  // `detail.repeatedProcedure`, which no producer has ever written. Together
+  // they are why 90 real candidates produced 87 memories and 3 evals and
+  // nothing that could reach a file.
+  //
+  // Three of them additionally read hints -- alwaysOn, repeatedProcedure,
+  // hardSafetyRequirement -- that no caller in the tree has ever set.
+  //
+  // What a cluster becomes is now decided by the template that phrased it
+  // (routeCluster in learning-service.ts), which is the only thing that knows
+  // what sentence it wrote. This classifier keeps the two paths a person
+  // drives: an explicit target, and human teaching.
   } else if (signal.kind === 'correction' || signal.kind === 'accepted-review' || signal.kind === 'explicit-teach') {
     targetKind = signal.pathScope || hints.pathScope ? 'rule' : 'memory'; confidence = 0.75;
     reasons.push('Human teaching starts as recall unless it is explicitly path-scoped.');

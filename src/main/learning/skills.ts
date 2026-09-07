@@ -93,36 +93,22 @@ function titleCase(name: string): string {
   return name.split('-').map((part) => part[0]?.toUpperCase() + part.slice(1)).join(' ');
 }
 
-function stepsFromDetail(value: unknown): SkillStep[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((raw): SkillStep[] => {
-    if (!raw || typeof raw !== 'object') return [];
-    const step = raw as Record<string, unknown>;
-    const instruction = typeof step.instruction === 'string' ? step.instruction
-      : typeof step.summary === 'string' ? step.summary : '';
-    if (!instruction.trim()) return [];
-    return [{
-      title: typeof step.title === 'string' && step.title.trim() ? step.title : `Step ${step.index ?? ''}`.trim(),
-      instruction,
-      tool: typeof step.tool === 'string' ? step.tool : null,
-    }];
-  });
-}
-
-/** Forge only from repeated successful traces; one lucky run is not a skill. */
-export function forgeSkillFromSignals(
-  signals: LearningSignal[],
-  input: Omit<ForgeSkillInput, 'steps'> & { steps?: SkillStep[] },
-): ForgedSkill {
-  const successful = signals.filter((signal) => signal.kind === 'tool-success' || signal.kind === 'session-success' || signal.kind === 'gate-passed');
-  const tasks = new Set(successful.map((signal) => signal.taskHash ?? signal.sessionId).filter(Boolean));
-  if (successful.length < 2 || tasks.size < 2) {
-    throw new Error('Skill Forge needs successful evidence from at least two independent tasks or sessions.');
-  }
-  const steps = input.steps?.length ? input.steps : successful.flatMap((signal) => stepsFromDetail(signal.detail.steps));
-  if (!steps.length) throw new Error('The successful signals do not contain a reusable ordered trace.');
-  return forgeSkill({ ...input, steps });
-}
+/**
+ * `stepsFromDetail` and `forgeSkillFromSignals` used to live here: mine a skill
+ * out of repeated successful traces. Both had zero callers, and were never
+ * going to have one, for two independent reasons.
+ *
+ * They select the exact class of observation `claimPossible` exists to exclude
+ * -- a repeated success carries no claim, and asking anything to phrase one
+ * buys confident invention rather than a lesson. And they read
+ * `signal.detail.steps`, an ordered trace of what the agent did, which is a
+ * transcript: the thing `learning_signals` is specified to hold bounded
+ * summaries and citations instead of. No producer ever wrote that field, so the
+ * function would have thrown on the first call it never received.
+ *
+ * A skill still reaches disk two ways, and both start with a person: the Skill
+ * Forge in the Skills view, and Teach Wanigan with Kind = Skill seed.
+ */
 
 function frontmatter(skillMd: string): { values: Record<string, string>; endLine: number } {
   if (!skillMd.startsWith('---\n')) return { values: {}, endLine: 0 };

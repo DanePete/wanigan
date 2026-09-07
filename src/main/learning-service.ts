@@ -400,11 +400,15 @@ export function teach(input: TeachWaniganInput): KnowledgeCandidate {
     // Direct teaching and legacy sessions both fail this gate closed.
     semanticEligible: cfg.contentMode === 'local-same-provider' && providerId !== null && backendId !== null,
   });
+  // A failed teach with no stated kind used to default to `eval`, which is a
+  // retired routing target: never briefed, never projectable, and refused by
+  // apply. The teaching a person just typed became a row nothing could deliver.
+  // With no kind stated it falls through to the classifier's memory default,
+  // which is retrievable.
   const classified = classifySignal(signal, {
-    targetKind: input.kind ?? (input.outcome === 'failed' ? 'eval' : undefined),
+    targetKind: input.kind,
     scope: input.scope,
     pathScope: input.pathScope ?? null,
-    regression: input.outcome === 'failed',
   });
   const candidate = createCandidate({
     targetKind: classified.targetKind,
@@ -1577,6 +1581,22 @@ export function applyCandidateToProvider(id: string, providerId: string) {
   if (!compiled.supported) throw new Error(compiled.reason);
   if (compiled.mode !== 'file' || !projection) {
     throw new Error(`${candidate.targetKind} is delivered through ${compiled.mode}; it does not write a provider-owned file.`);
+  }
+  // The same gate installSkill applies, on the other path to the same file.
+  // Writing a skill from the Skills view runs the Skill Doctor and refuses on
+  // any error; applying a Skill-seed candidate from the Inbox reached
+  // skillBody() and wrote whatever prose the candidate held -- which, having no
+  // "## Verification" heading, is a `missing-verification` error the Skills
+  // view would have refused. Two doors to one directory, one of them unlocked.
+  // Checked on the bytes about to be written, and it can only refuse.
+  if (candidate.targetKind === 'skill') {
+    const errors = doctorSkill(projection.proposedContent).filter((d) => d.severity === 'error');
+    if (errors.length) {
+      throw new Error(
+        `Skill Doctor refused this projection: ${errors.map((d) => d.message).join(' ')} `
+        + 'Edit the proposal so it reads as a skill, or apply it as an instruction instead.',
+      );
+    }
   }
   const applied = applyProjection(projection.id, safety);
   const item = applied.itemId ? getKnowledgeItem(applied.itemId) : null;

@@ -319,7 +319,7 @@ export interface ProjectionValidation {
 }
 
 export type ArtifactDeliveryMode =
-  | 'file' | 'briefing' | 'wanigan-gate' | 'wanigan-eval' | 'unsupported';
+  | 'file' | 'briefing' | 'unsupported';
 
 export interface ArtifactCompilation {
   supported: boolean;
@@ -350,14 +350,19 @@ export interface ProviderArtifactCompiler {
   compile(candidate: KnowledgeCandidate, context: ArtifactCompilerContext): ArtifactCompilation;
 }
 
+/**
+ * What a person supplies when they teach Wanigan directly.
+ *
+ * Four more fields lived here -- repeatedProcedure, hardSafetyRequirement,
+ * regression, alwaysOn -- read by the classifier and set by nobody, in the
+ * whole tree, ever. They were the reserved shape of an inference nothing
+ * performed, and the branches reading them routed to destinations with no
+ * delivery. A cluster's kind now comes from the template that phrased it.
+ */
 export interface ClassificationHints {
   targetKind?: KnowledgeKind;
   scope?: ArtifactScope;
   pathScope?: string | null;
-  repeatedProcedure?: boolean;
-  hardSafetyRequirement?: boolean;
-  regression?: boolean;
-  alwaysOn?: boolean;
 }
 
 export interface ClassificationResult {
