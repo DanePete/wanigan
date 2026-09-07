@@ -12,7 +12,9 @@
  *   4. literal transition/animation durations anywhere but styles/motion.css,
  *      which owns --mo-state / --mo-view,
  *   5. declarations in a sheet index.css @imports that a rule in index.css
- *      overrides at the same or higher specificity, per sheet.
+ *      overrides at the same or higher specificity, per sheet,
+ *   6. <input>/<select>/<textarea> in a renderer .tsx that reach a screen
+ *      reader with no name at all.
  *
  * A baseline entry is a debt, not a permit. It records what the tree carried
  * the day the gate landed so the gate could pass that day; the only allowed
@@ -58,7 +60,7 @@ const INLINE_STYLE_BASELINE = {
   'components/Timeline.tsx': 8,
   'main.tsx': 0,
   'views/Batches.tsx': 206,
-  'views/Context.tsx': 115,
+  'views/Context.tsx': 113,
   'views/Control.tsx': 0,
   'views/Fleet.tsx': 29,
   'views/Git.tsx': 32,
@@ -224,6 +226,24 @@ const SHADOWED_MODIFIER_BASELINE = {
   'ui.css': 0,
 };
 
+// 6. A form control with no accessible name. A sighted operator reads the
+//    <span className="label"> sitting above the box; a screen reader gets
+//    nothing, because that span is not a <label> and carries no `for`. The
+//    sweep that seeded this baseline found 55 across ten files — every field in
+//    the Schedules editor, the commit message box, the batch configuration
+//    form, the repository picker in Git — and a pass over the built renderer in
+//    Chromium confirmed ten of them present on screen, the rest sitting behind
+//    a tab or a conditional the sweep did not open.
+//
+//    A control counts as named by `aria-label`, by `aria-labelledby`, by an
+//    `id` a <label for> can point at, or by sitting inside a <label>. Checkbox
+//    and radio inputs are exempt: this codebase writes those inside their
+//    <label>, and the wrapping test below already clears them.
+//
+//    Everything is at zero, so this one is not a debt list — it is the shape
+//    the tree is in. A file added to it is a file that regressed.
+const NO_ACCESSIBLE_NAME_BASELINE = {};
+
 const INLINE_STYLE = /style=\{\{/g;
 const STYLE_TAG = /<style[\s>]/;
 const FONT_PX = /\bfont(?:-size)?:\s*[^;{}]*?(?<![\w.-])[0-9]*\.?[0-9]+px\b/g;
@@ -377,6 +397,48 @@ function shadowedModifiers(read, tsxFiles) {
   return { sheets, counts, findings };
 }
 
+/**
+ * Controls in one file that reach a screen reader with no name.
+ *
+ * Attribute text cannot be matched with one regex here: every other attribute
+ * may hold a JSX expression, and `onChange={(e) => ...}` puts a `>` inside the
+ * tag. The scan walks forward from the tag name tracking brace depth and quotes
+ * so the tag ends at the `>` that actually closes it — a plain
+ * /<input[^>]*>/ stops at the arrow and reports a labelled control as bare.
+ *
+ * Comments are stripped first: Usage.tsx explains a <select> bug in prose, and
+ * a check that reads the explanation as the defect teaches people to write
+ * fewer explanations.
+ */
+function unnamedControls(src) {
+  const bare = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const open = /<(input|select|textarea)(?=[\s/>])/g;
+  const out = [];
+  for (let m = open.exec(bare); m; m = open.exec(bare)) {
+    let depth = 0, quote = null, end = bare.length;
+    for (let i = m.index; i < bare.length; i++) {
+      const c = bare[i];
+      if (quote) { if (c === quote) quote = null; continue; }
+      if (c === '"' || c === "'") quote = c;
+      else if (c === '{') depth++;
+      else if (c === '}') depth--;
+      else if (c === '>' && depth === 0) { end = i + 1; break; }
+    }
+    const attrs = bare.slice(m.index, end);
+    if (/aria-label(?:ledby)?[=\s]/.test(attrs)) continue;
+    if (/type=(["'])(?:checkbox|radio|hidden)\1/.test(attrs)) continue;
+    if (/\sid=/.test(attrs)) continue;
+    // Inside a <label>? Compare the nearest opener with the nearest closer
+    // rather than counting every tag in the file: a running total carries any
+    // imbalance above it — a `<label` inside a string, a stray tag — forward
+    // over every later control in that file and silently stops reporting them.
+    const before = bare.slice(0, m.index);
+    if (before.lastIndexOf('<label') > before.lastIndexOf('</label>')) continue;
+    out.push(m.index);
+  }
+  return out.length;
+}
+
 function measure() {
   const files = walk(RENDERER);
   const tsx = files.filter((f) => f.endsWith('.tsx'));
@@ -403,7 +465,13 @@ function measure() {
 
   const shadowed = shadowedModifiers(read, tsx);
 
-  return { inline, styleTags, fontPx, durations, shadowed };
+  const unnamed = {};
+  for (const f of tsx) {
+    const n = unnamedControls(read(f));
+    if (n > 0) unnamed[rel(f)] = n;
+  }
+
+  return { inline, styleTags, fontPx, durations, shadowed, unnamed };
 }
 
 function ratchet(label, current, baseline, failures) {
@@ -434,6 +502,7 @@ function main() {
       FONT_PX_BASELINE: sorted(m.fontPx),
       DURATION_BASELINE: sorted(m.durations),
       SHADOWED_MODIFIER_BASELINE: sorted(m.shadowed.counts),
+      NO_ACCESSIBLE_NAME_BASELINE: sorted(m.unnamed),
     }, null, 2));
     return;
   }
@@ -445,6 +514,7 @@ function main() {
   }
   ratchet('px font sizes outside index.css', m.fontPx, FONT_PX_BASELINE, failures);
   ratchet('literal durations outside motion.css', m.durations, DURATION_BASELINE, failures);
+  ratchet('form control with no accessible name', m.unnamed, NO_ACCESSIBLE_NAME_BASELINE, failures);
 
   const shadowFailures = [];
   ratchet('modifier shadowed by a base rule', m.shadowed.counts, SHADOWED_MODIFIER_BASELINE, shadowFailures);
@@ -465,6 +535,7 @@ function main() {
     `${Object.values(m.fontPx).reduce((a, b) => a + b, 0)} px font sizes in styles/`,
     `${Object.values(m.durations).reduce((a, b) => a + b, 0)} literal durations outside motion.css`,
     `${m.shadowed.findings.length} shadowed modifier declarations in the ${m.shadowed.sheets.length} sheets index.css imports`,
+    `${Object.values(m.unnamed).reduce((a, b) => a + b, 0)} form controls with no accessible name`,
   ];
 
   if (failures.length) {

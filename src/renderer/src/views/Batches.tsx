@@ -703,13 +703,13 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           <div className="row2" style={{ marginTop: 14 }}>
             <div>
               <label className="label">Run name</label>
-              <input className="field" style={{ marginTop: 4 }} value={cfg.name}
+              <input className="field" aria-label="Run name" style={{ marginTop: 4 }} value={cfg.name}
                      placeholder="e.g. Normalise venue names — August export"
                      onChange={(e) => patch({ name: e.target.value })} />
             </div>
             <div>
               <label className="label">Project</label>
-              <select className="field" style={{ marginTop: 4 }} value={cfg.projectId ?? ''}
+              <select className="field" aria-label="Project" style={{ marginTop: 4 }} value={cfg.projectId ?? ''}
                       onChange={(e) => void changeProject(e.target.value)}>
                 {projects.map((p) => <option key={p.id} value={p.id}>{p.name}{p.branch ? ` — ${p.branch}` : ''}</option>)}
               </select>
@@ -772,7 +772,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
                   cache this block
                 </label>
               </div>
-              <textarea className="field mono" rows={b.cache ? 8 : 4} value={b.text}
+              <textarea className="field mono" aria-label="System prompt block" rows={b.cache ? 8 : 4} value={b.text}
                         placeholder="Instructions identical for every row."
                         onChange={(e) => { const s = [...cfg.system]; s[i] = { ...b, text: e.target.value }; patch({ system: s }); invalidate(); }} />
             </div>
@@ -782,7 +782,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
             <span className="label">User template</span>
             <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>{'{{column}}'} binds to dataset columns</span>
           </div>
-          <textarea className="field mono" rows={5} value={cfg.userTemplate}
+          <textarea className="field mono" aria-label="User template" rows={5} value={cfg.userTemplate}
                     onChange={(e) => { patch({ userTemplate: e.target.value }); invalidate(); }} />
           {preview && (
             <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 7 }}>
@@ -822,7 +822,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           <div className="row3">
             <div>
               <label className="label">Model</label>
-              <select className="field" style={{ marginTop: 4 }} value={cfg.model}
+              <select className="field" aria-label="Model" style={{ marginTop: 4 }} value={cfg.model}
                       onChange={(e) => { patch({ model: e.target.value }); invalidate(); }}>
                 {models.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -838,13 +838,13 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
             </div>
             <div>
               <label className="label">Max tokens</label>
-              <input type="number" min={1} className="field" style={{ marginTop: 4 }} value={cfg.maxTokens}
+              <input type="number" min={1} className="field" aria-label="Max tokens" style={{ marginTop: 4 }} value={cfg.maxTokens}
                      onChange={(e) => { patch({ maxTokens: Number(e.target.value) }); invalidate(); }} />
               <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 3 }}>cap {num(cfg.extendedOutput ? 300000 : model?.maxTokens ?? 0)}</p>
             </div>
             <div>
               <label className="label">Cache TTL</label>
-              <select className="field" style={{ marginTop: 4 }} value={cfg.cacheTtl}
+              <select className="field" aria-label="Cache TTL" style={{ marginTop: 4 }} value={cfg.cacheTtl}
                       onChange={(e) => { patch({ cacheTtl: e.target.value as '5m' | '1h' }); invalidate(); }}>
                 <option value="1h">1 hour — right for batches</option>
                 <option value="5m">5 minutes</option>
@@ -906,7 +906,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
               <span className="mono">additionalProperties: false</span> and a{' '}
               <span className="mono">required</span> list, or the API rejects the batch.
             </p>
-            <textarea className="field mono" rows={7} style={{ marginTop: 6 }} value={cfg.schemaJson ?? ''}
+            <textarea className="field mono" aria-label="Response schema JSON" rows={7} style={{ marginTop: 6 }} value={cfg.schemaJson ?? ''}
                       onChange={(e) => { patch({ schemaJson: e.target.value }); invalidate(); }} />
           </details>
         </Section>
@@ -1082,7 +1082,7 @@ function SourceEditor({ source, onChange }: { source: UploadableSource; onChange
   if (source.kind === 'csv' || source.kind === 'jsonl') {
     return (
       <>
-        <textarea className="field mono" rows={6} value={source.text}
+        <textarea className="field mono" aria-label="Dataset rows" rows={6} value={source.text}
                   placeholder={source.kind === 'csv' ? 'nid,title,body\n12,"Winterland","…"' : '{"nid":"12","title":"Winterland"}'}
                   onChange={(e) => onChange({ ...source, text: e.target.value })} />
         <label className="btn" style={{ marginTop: 7 }}>
@@ -1115,13 +1115,13 @@ function SourceEditor({ source, onChange }: { source: UploadableSource; onChange
       <>
         <div className="row3">
           <div><label className="label">Root directory</label>
-            <input className="field mono" style={{ marginTop: 4 }} value={source.root}
+            <input className="field mono" aria-label="Root directory" style={{ marginTop: 4 }} value={source.root}
                    onChange={(e) => onChange({ ...source, root: e.target.value })} /></div>
           <div><label className="label">Pattern</label>
-            <input className="field mono" style={{ marginTop: 4 }} value={source.pattern}
+            <input className="field mono" aria-label="Pattern" style={{ marginTop: 4 }} value={source.pattern}
                    onChange={(e) => onChange({ ...source, pattern: e.target.value })} /></div>
           <div><label className="label">Max chars</label>
-            <input type="number" className="field mono" style={{ marginTop: 4 }} value={source.maxBytes ?? 120000}
+            <input type="number" className="field mono" aria-label="Max chars" style={{ marginTop: 4 }} value={source.maxBytes ?? 120000}
                    onChange={(e) => onChange({ ...source, maxBytes: Number(e.target.value) })} /></div>
         </div>
         <UploadToggle source={source} onChange={onChange} />
@@ -1132,16 +1132,16 @@ function SourceEditor({ source, onChange }: { source: UploadableSource; onChange
     <>
       <div className="row2">
         <div><label className="label">Working directory</label>
-          <input className="field mono" style={{ marginTop: 4 }} value={source.cwd}
+          <input className="field mono" aria-label="Working directory" style={{ marginTop: 4 }} value={source.cwd}
                  onChange={(e) => onChange({ ...source, cwd: e.target.value })} /></div>
         <div><label className="label">Output format</label>
-          <select className="field" style={{ marginTop: 4 }} value={source.format}
+          <select className="field" aria-label="Output format" style={{ marginTop: 4 }} value={source.format}
                   onChange={(e) => onChange({ ...source, format: e.target.value as 'csv' | 'jsonl' })}>
             <option value="jsonl">JSONL</option><option value="csv">CSV / TSV</option>
           </select></div>
       </div>
       <label className="label" style={{ display: 'block', marginTop: 9 }}>Command</label>
-      <textarea className="field mono" rows={4} style={{ marginTop: 4 }} value={source.command}
+      <textarea className="field mono" aria-label="Command" rows={4} style={{ marginTop: 4 }} value={source.command}
                 placeholder='drush sql:query --extra=-B "SELECT nid, title FROM node_field_data"'
                 onChange={(e) => onChange({ ...source, command: e.target.value })} />
       <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 4 }}>
@@ -1378,7 +1378,7 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
                       style={filter === f ? { background: 'var(--accent)', color: 'var(--bg)' }
                                           : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>{f}</button>
             ))}
-            <input className="field" style={{ marginLeft: 'auto', maxWidth: 260 }} placeholder="Search prompts, output, errors…"
+            <input className="field" aria-label="Search results" style={{ marginLeft: 'auto', maxWidth: 260 }} placeholder="Search prompts, output, errors…"
                    value={q} onChange={(e) => { setQ(e.target.value); setOffset(0); }} />
           </div>
           {rowsErr && (
@@ -2439,7 +2439,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
               and skipping the un-swap is how a randomised judge silently becomes a coin flip.
             </p>
             <div style={{ display: 'flex', gap: 7 }}>
-              <input className="field mono bx-f" placeholder="run_…" value={judgeRun}
+              <input className="field mono bx-f" aria-label="Run id to judge" placeholder="run_…" value={judgeRun}
                      onChange={(e) => setJudgeRun(e.target.value)} />
               <button className="btn bx-f" disabled={!judgeRun.trim()} onClick={() => void ingest()}>Ingest scores</button>
             </div>

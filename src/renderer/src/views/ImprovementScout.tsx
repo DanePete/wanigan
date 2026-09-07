@@ -339,6 +339,14 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
   const [overview, setOverview] = useState<ScoutOverview>(EMPTY_OVERVIEW);
   const [settings, setSettings] = useState<ScoutSettings>(EMPTY_SETTINGS);
   const [sources, setSources] = useState<ScoutSource[]>([]);
+
+  /**
+   * Scout has not been set up: it is switched off, or no source is allow-listed.
+   *
+   * Either way it cannot research anything, which is why this decides the order
+   * of the page below rather than only the copy on it.
+   */
+  const needsSetup = !settings.enabled || sources.every((source) => !source.enabled);
   const [suggestions, setSuggestions] = useState<ScoutSuggestion[]>([]);
   const [loading, setLoading] = useState(true);
   /**
@@ -574,45 +582,14 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
                         )} />
           ) : (
           <>
-          <section className="scout-stat-grid" aria-label="Improvement Scout summary">
-            <article className="card scout-stat"><span className="label">New to review</span><strong>{overview.pendingSuggestions.toLocaleString()}</strong><small>source-backed proposals</small></article>
-            <article className="card scout-stat"><span className="label">Research sources</span><strong>{overview.enabledSourceCount}/{overview.sourceCount}</strong><small>enabled for the next scan</small></article>
-            {/* The timestamp alone said a scan started, never whether it got
-                anywhere: a weekly watch that has been blocked by a consent gate
-                for a month looked exactly like one running cleanly. Glyph and
-                word, per the house rule, and the error underneath when there
-                is one. */}
-            <article className="card scout-stat"><span className="label">Last scan</span><strong className="scout-date">{formatWhen(overview.lastRunAt)}</strong>
-              <small>{overview.latestRun === null ? 'local run history' : (
-                <span className={`scout-run-outcome ${overview.latestRun.status}`}>
-                  <span aria-hidden="true">{RUN_GLYPH[overview.latestRun.status]}</span>{' '}
-                  {overview.latestRun.status === 'completed'
-                    ? `completed · ${overview.latestRun.suggestionCount} ${overview.latestRun.suggestionCount === 1 ? 'proposal' : 'proposals'}`
-                    : overview.latestRun.status === 'running' ? 'still running'
-                    : overview.latestRun.error ?? overview.latestRun.status}
-                </span>
-              )}</small></article>
-            <article className="card scout-stat"><span className="label">Next review</span><strong className="scout-date">{settings.weeklyEnabled && settings.enabled && settings.networkEnabled ? formatWhen(overview.nextRunAt) : 'not scheduled'}</strong><small>{settings.weeklyEnabled ? overview.cadenceLabel : 'enable a weekly watch below'}</small></article>
-          </section>
-
-          {/* The boundary is worth reading once and worth reaching again; it
-              is not the page. Hidden only by the operator, and the four claims
-              stay verbatim because each one is a promise about what Scout will
-              not do. */}
-          <Explainer id="scout-safety" title="Ideas are not updates">
-            <div className="scout-guide-body">
-            <div>
-              <p>This build uses local deterministic matching rules over allowed sources; it does not send source text to a provider model. Scout can collect release notes and trusted source metadata on a schedule, but it cannot modify Wanigan, install anything, change your provider, deploy code, or start an agent. A proposal becomes work only when you create a Goal and then choose to start its task.</p>
-            </div>
-            <ul className="scout-safety-list">
-              <li><span aria-hidden="true">✓</span><span>Scheduled online research stays off until you explicitly allow it.</span></li>
-              <li><span aria-hidden="true">✓</span><span>The current analyzer is deterministic; no source text is sent to an AI model.</span></li>
-              <li><span aria-hidden="true">✓</span><span>Each proposal retains its source evidence and uncertainty.</span></li>
-              <li><span aria-hidden="true">✓</span><span>Creating a Goal preserves the evidence; it does not launch work.</span></li>
-            </ul>
-            </div>
-          </Explainer>
-
+          {/* Order follows what the operator can actually do. Until Scout is
+              switched on and given a source it can read, the four numbers above
+              are a report on a feature that has never run, and the setup below is
+              the only thing on the page that does anything — so when that is the
+              state, the setup goes first and the report follows it. Once Scout is
+              configured the reading is the point and the original order returns. */}
+          {needsSetup ? (
+            <>
           <section className="scout-grid">
             <article className="card scout-card">
               <div className="scout-card-head"><div><span className="label">Schedule and consent</span><h3>Choose when research can run</h3><p>Weekly scans use only the sources enabled in the adjacent list. Local preview never contacts a source; “Run scout now” is a one-time, visible allow-listed online check and never enables the weekly schedule.</p></div></div>
@@ -653,6 +630,109 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
               </div>
             </article>
           </section>
+          <section className="scout-stat-grid" aria-label="Improvement Scout summary">
+            <article className="card scout-stat"><span className="label">New to review</span><strong>{overview.pendingSuggestions.toLocaleString()}</strong><small>source-backed proposals</small></article>
+            <article className="card scout-stat"><span className="label">Research sources</span><strong>{overview.enabledSourceCount}/{overview.sourceCount}</strong><small>enabled for the next scan</small></article>
+            {/* The timestamp alone said a scan started, never whether it got
+                anywhere: a weekly watch that has been blocked by a consent gate
+                for a month looked exactly like one running cleanly. Glyph and
+                word, per the house rule, and the error underneath when there
+                is one. */}
+            <article className="card scout-stat"><span className="label">Last scan</span><strong className="scout-date">{formatWhen(overview.lastRunAt)}</strong>
+              <small>{overview.latestRun === null ? 'local run history' : (
+                <span className={`scout-run-outcome ${overview.latestRun.status}`}>
+                  <span aria-hidden="true">{RUN_GLYPH[overview.latestRun.status]}</span>{' '}
+                  {overview.latestRun.status === 'completed'
+                    ? `completed · ${overview.latestRun.suggestionCount} ${overview.latestRun.suggestionCount === 1 ? 'proposal' : 'proposals'}`
+                    : overview.latestRun.status === 'running' ? 'still running'
+                    : overview.latestRun.error ?? overview.latestRun.status}
+                </span>
+              )}</small></article>
+            <article className="card scout-stat"><span className="label">Next review</span><strong className="scout-date">{settings.weeklyEnabled && settings.enabled && settings.networkEnabled ? formatWhen(overview.nextRunAt) : 'not scheduled'}</strong><small>{settings.weeklyEnabled ? overview.cadenceLabel : 'enable a weekly watch below'}</small></article>
+          </section>
+            </>
+          ) : (
+            <>
+          <section className="scout-stat-grid" aria-label="Improvement Scout summary">
+            <article className="card scout-stat"><span className="label">New to review</span><strong>{overview.pendingSuggestions.toLocaleString()}</strong><small>source-backed proposals</small></article>
+            <article className="card scout-stat"><span className="label">Research sources</span><strong>{overview.enabledSourceCount}/{overview.sourceCount}</strong><small>enabled for the next scan</small></article>
+            {/* The timestamp alone said a scan started, never whether it got
+                anywhere: a weekly watch that has been blocked by a consent gate
+                for a month looked exactly like one running cleanly. Glyph and
+                word, per the house rule, and the error underneath when there
+                is one. */}
+            <article className="card scout-stat"><span className="label">Last scan</span><strong className="scout-date">{formatWhen(overview.lastRunAt)}</strong>
+              <small>{overview.latestRun === null ? 'local run history' : (
+                <span className={`scout-run-outcome ${overview.latestRun.status}`}>
+                  <span aria-hidden="true">{RUN_GLYPH[overview.latestRun.status]}</span>{' '}
+                  {overview.latestRun.status === 'completed'
+                    ? `completed · ${overview.latestRun.suggestionCount} ${overview.latestRun.suggestionCount === 1 ? 'proposal' : 'proposals'}`
+                    : overview.latestRun.status === 'running' ? 'still running'
+                    : overview.latestRun.error ?? overview.latestRun.status}
+                </span>
+              )}</small></article>
+            <article className="card scout-stat"><span className="label">Next review</span><strong className="scout-date">{settings.weeklyEnabled && settings.enabled && settings.networkEnabled ? formatWhen(overview.nextRunAt) : 'not scheduled'}</strong><small>{settings.weeklyEnabled ? overview.cadenceLabel : 'enable a weekly watch below'}</small></article>
+          </section>
+          <section className="scout-grid">
+            <article className="card scout-card">
+              <div className="scout-card-head"><div><span className="label">Schedule and consent</span><h3>Choose when research can run</h3><p>Weekly scans use only the sources enabled in the adjacent list. Local preview never contacts a source; “Run scout now” is a one-time, visible allow-listed online check and never enables the weekly schedule.</p></div></div>
+              <div className="scout-setting-grid">
+                <label className="scout-toggle">
+                  <input type="checkbox" checked={settings.enabled} disabled={busy !== null}
+                         onChange={(event) => void patchSettings({ enabled: event.target.checked }, event.target.checked ? 'Scout workspace enabled. Online checks remain off until you explicitly allow them.' : 'Scout workspace paused. Existing proposals stay available for review.')} />
+                  <span><strong>Enable Scout workspace</strong><small>Controls the local research inbox and its schedule.</small></span>
+                </label>
+                <label className="scout-toggle">
+                  <input type="checkbox" checked={settings.networkEnabled} disabled={busy !== null || !settings.enabled}
+                         onChange={(event) => void patchSettings({ networkEnabled: event.target.checked }, event.target.checked ? 'Online source checks are permitted for your selected allow-list.' : 'Online source checks are blocked. You can still review existing local proposals.')} />
+                  <span><strong>Allow unattended official-source checks</strong><small>Explicitly permits your source allow-list on the weekly watch.</small></span>
+                </label>
+                <label className="scout-toggle">
+                  <input type="checkbox" checked={settings.weeklyEnabled} disabled={busy !== null || !settings.enabled || !settings.networkEnabled}
+                         onChange={(event) => void patchSettings({ weeklyEnabled: event.target.checked }, event.target.checked ? 'Weekly watch enabled.' : 'Weekly watch paused.')} />
+                  <span><strong>Weekly watch</strong><small>Runs only when research is allowed.</small></span>
+                </label>
+                <label><span className="label">Local time</span><select className="field" value={settings.hour} disabled={busy !== null || !settings.enabled} onChange={(event) => void patchSettings({ hour: Number(event.target.value) }, 'Weekly scan time updated.')}>
+                  {Array.from({ length: 24 }, (_, hour) => <option value={hour} key={hour}>{new Date(2000, 0, 1, hour).toLocaleTimeString(undefined, { hour: 'numeric' })}</option>)}
+                </select></label>
+                <label><span className="label">Day</span><select className="field" value={settings.weekday} disabled={busy !== null || !settings.enabled} onChange={(event) => void patchSettings({ weekday: Number(event.target.value) }, 'Weekly scan day updated.')}>
+                  {WEEKDAYS.map((day, index) => <option value={index} key={day}>{day}</option>)}
+                </select></label>
+              </div>
+            </article>
+
+            <article className="card scout-card sources">
+              <div className="scout-card-head"><div><span className="label">Source allow-list</span><h3>What Scout can read</h3><p>Only switch on sources you want checked. Each link opens the source itself, not a Wanigan summary.</p></div><span className="scout-state muted">{sources.filter((source) => source.enabled).length} enabled</span></div>
+              <div className="scout-sources">
+                {sources.length === 0 && <p className="scout-no-evidence">No sources are configured yet. Scout cannot research until a trusted source is available.</p>}
+                {sources.map((source) => <label className={`scout-source ${source.enabled ? '' : 'disabled'}`} key={source.id}>
+                  <input type="checkbox" checked={source.enabled} disabled={busy !== null} onChange={(event) => void toggleSource(source, event.target.checked)} aria-label={`Include ${source.label} in Scout research`} />
+                  <span className="scout-source-copy"><strong>{source.label}</strong><small>{source.description}</small></span>
+                  {source.url && <a href={source.url} target="_blank" rel="noreferrer">Source ↗</a>}
+                </label>)}
+              </div>
+            </article>
+          </section>
+            </>
+          )}
+
+          {/* The boundary is worth reading once and worth reaching again; it
+              is not the page. Hidden only by the operator, and the four claims
+              stay verbatim because each one is a promise about what Scout will
+              not do. */}
+          <Explainer id="scout-safety" title="Ideas are not updates" defaultHidden={needsSetup}>
+            <div className="scout-guide-body">
+            <div>
+              <p>This build uses local deterministic matching rules over allowed sources; it does not send source text to a provider model. Scout can collect release notes and trusted source metadata on a schedule, but it cannot modify Wanigan, install anything, change your provider, deploy code, or start an agent. A proposal becomes work only when you create a Goal and then choose to start its task.</p>
+            </div>
+            <ul className="scout-safety-list">
+              <li><span aria-hidden="true">✓</span><span>Scheduled online research stays off until you explicitly allow it.</span></li>
+              <li><span aria-hidden="true">✓</span><span>The current analyzer is deterministic; no source text is sent to an AI model.</span></li>
+              <li><span aria-hidden="true">✓</span><span>Each proposal retains its source evidence and uncertainty.</span></li>
+              <li><span aria-hidden="true">✓</span><span>Creating a Goal preserves the evidence; it does not launch work.</span></li>
+            </ul>
+            </div>
+          </Explainer>
 
           <section className="card scout-filterbar" aria-label="Filter Scout proposals">
             <div className="scout-filter-copy">

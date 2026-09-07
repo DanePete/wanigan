@@ -2030,6 +2030,17 @@ export function writeSession(sessionId: string, data: string): boolean {
 }
 
 /**
+ * One model id: 'fable', 'glm-5.3', a full dotted id.
+ *
+ * Both writers below name this constant so they cannot drift. The shape is set
+ * by the stricter of the two — `setSessionTuning` types its value into a real
+ * terminal, so anything that is not a single shell-safe token has no business
+ * being accepted there — and `recordObservedModel` reuses it rather than
+ * inventing a second, looser idea of what a model id looks like.
+ */
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,63}$/;
+
+/**
  * `/model` and `/effort` change the running CLI, but the CLI answers in its
  * own terminal — nothing flows back into this session's record. A remounted
  * control bar seeds from that record, so without this write-back it shows the
@@ -2041,9 +2052,7 @@ export function setSessionTuning(sessionId: unknown, field: unknown, value: unkn
   if (field !== 'model' && field !== 'effort') return false;
   if (typeof value !== 'string' || value.length === 0) return false;
   if (field === 'effort' && !(EFFORT_LEVELS as readonly string[]).includes(value)) return false;
-  // A model id is one shell-safe token ('fable', 'glm-5.3', a full dotted id);
-  // anything else does not belong in a slash command typed into a terminal.
-  if (field === 'model' && !/^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,63}$/.test(value)) return false;
+  if (field === 'model' && !MODEL_ID.test(value)) return false;
   const s = sessions.get(sessionId);
   if (!s || s.meta.status !== 'running' || s.meta.harnessId === 'codex') return false;
   if (!writeSession(sessionId, `/${field} ${value}\r`)) return false;
@@ -2054,6 +2063,39 @@ export function setSessionTuning(sessionId: unknown, field: unknown, value: unkn
     db().prepare(`UPDATE session_log SET ${field === 'model' ? 'model' : 'effort'} = ? WHERE id = ?`)
       .run(value, sessionId);
   } catch { /* the row can be absent when the launch insert itself failed */ }
+  broadcast('session:list', sessionListEntries());
+  return true;
+}
+
+/**
+ * Correct the recorded model from a change Wanigan did not make.
+ *
+ * `setSessionTuning` above only knows about switches Wanigan itself typed into
+ * the PTY, and that is not most of them: the session is a real terminal, so the
+ * operator can type `/model` into it directly, and the CLI can move on its own —
+ * a fallback off a rate-limited model is the common one. In both cases the
+ * record kept saying whatever the launch argv said, and every surface reading it
+ * — the control bar, Insights, the model column beside a cost — named a model
+ * the session had stopped running. That is a guess presented as an observation.
+ *
+ * PostModelSwitch is the CLI reporting the change itself, which is why this
+ * writes nothing to the terminal: the switch has already happened, and echoing a
+ * `/model` back would be Wanigan arguing with the session about what it is.
+ * Returns false when there is nothing to correct, so the caller can tell "no
+ * change" from "changed".
+ */
+export function recordObservedModel(sessionId: unknown, model: unknown): boolean {
+  if (typeof sessionId !== 'string' || typeof model !== 'string') return false;
+  if (!MODEL_ID.test(model)) return false;
+  const s = sessions.get(sessionId);
+  // An exited session's model is a historical fact, not a live one. A late
+  // PostModelSwitch arriving after the PTY closed must not rewrite it.
+  if (!s || s.meta.status !== 'running') return false;
+  if (s.meta.model === model) return false;
+  s.meta.model = model;
+  try {
+    db().prepare('UPDATE session_log SET model = ? WHERE id = ?').run(model, sessionId);
+  } catch { /* same as above: the live record matters more than the history row */ }
   broadcast('session:list', sessionListEntries());
   return true;
 }

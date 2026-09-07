@@ -462,7 +462,17 @@ export default function Settings({
     if (st.workspaceId) { setWorkspaceId(st.workspaceId); setShowWorkspace(true); }
   });
   useEffect(() => {
-    void load();
+    // `void` marks a promise as deliberately unawaited; it does not handle a
+    // rejection. This one had no catch while the three reads under it do, so a
+    // key.status that failed became an unhandled rejection — and the panel then
+    // rendered its `status?.present ? … : …` else-branch, offering "Paste your
+    // key" as though Wanigan had asked and been told there was none. load()
+    // itself must keep rejecting: the two callers that `await` it report the
+    // failure through this same Note.
+    void load().catch((e) => setMsg({
+      tone: 'error',
+      text: `Wanigan could not read whether a key is installed: ${msg(e)}. What this panel shows below is not an answer about your key.`,
+    }));
     void window.wanigan.key.provider('glm').then(setGlmStatus).catch(() => {});
     void window.wanigan.key.provider('deepseek').then(setDeepseekStatus).catch(() => {});
     window.wanigan.settings.get().then((s) => setCap(s.spendCapUsd.toFixed(2))).catch(() => {});
@@ -3395,9 +3405,9 @@ function Accounts() {
 
           <div className="label">Add an account</div>
           <div style={{ display: 'grid', gap: 7, marginBottom: 8 }}>
-            <input className="field" placeholder="Label, such as Work" value={label}
+            <input className="field" aria-label="Account label" placeholder="Label, such as Work" value={label}
                    onChange={(e) => setLabel(e.target.value)} />
-            <input className="field mono" placeholder="~/.claude-work" value={dir}
+            <input className="field mono" aria-label="Account configuration directory" placeholder="~/.claude-work" value={dir}
                    onChange={(e) => setDir(e.target.value)} />
             {defaultAccount && (
               <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 'var(--t-small)', lineHeight: 1.45 }}>

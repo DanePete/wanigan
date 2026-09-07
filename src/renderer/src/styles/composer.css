@@ -89,15 +89,6 @@
   font-size: var(--t-micro);
 }
 
-/* Read aloud, never drawn: the skill menu's count and the changed meaning of
-   Enter. Same clip as .skills-sr — display:none would take it out of the
-   accessibility tree with it. */
-.composer-sr {
-  position: absolute; width: 1px; height: 1px;
-  margin: -1px; padding: 0; border: 0;
-  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
-}
-
 .composer-stash-pop {
   border: 1px solid var(--line); border-radius: var(--r-md);
   background: var(--bg-sunk); padding: 6px;

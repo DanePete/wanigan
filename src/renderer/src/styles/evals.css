@@ -21,14 +21,6 @@
 }
 .skills-view .field:focus-visible { outline-offset: -1px; }
 
-/* Screen-reader-only status text: the typeahead's match count is announced,
-   never painted. */
-.skills-sr {
-  position: absolute; width: 1px; height: 1px;
-  margin: -1px; padding: 0; border: 0;
-  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
-}
-
 /* ── search + typeahead ──────────────────────────────────────────────── */
 .skills-search-wrap { position: relative; }
 /* Compound on purpose. The magnifier sits at left 9px and Clear at right 6px,

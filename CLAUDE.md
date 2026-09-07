@@ -24,8 +24,11 @@ as observed fact.
   `src/renderer/src/styles/<surface>.css`, which declares no colour and spells no
   font size, padding or duration as a literal — those come from the tokens in
   `index.css` and `motion.css`. The gate's baselines are debts that only ratchet
-  down. A UI change ships with before and after screenshots of the affected view
-  in both themes.
+  down. Every `<input>`, `<select>` and `<textarea>` carries an accessible
+  name — `aria-label`, an `id` a `<label for>` points at, or the `<label>` it
+  sits inside; a `<span className="label">` above the box names it for sighted
+  readers only, and the gate holds that count at zero. A UI change ships with
+  before and after screenshots of the affected view in both themes.
 - Keep Electron's trust boundary intact: privileged work belongs in
   `src/main/`, the renderer reaches it only through typed preload APIs, and all
   renderer input is untrusted until validated in the main process.

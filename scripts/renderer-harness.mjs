@@ -43,9 +43,9 @@ const STUB = `
     { id: 'p2', name: 'platform', path: '/example/platform', branch: 'feature/rail' },
   ];
   const sessions = [
-    { id: 's1', projectId: 'p1', projectName: 'storefront', providerId: 'claude', status: 'running', pid: 4021, exitCode: null, unread: 3, title: 'claude · storefront', worktree: null, label: 'Checkout bug', accountLabel: 'work', startedAt: now - 900000 },
-    { id: 's2', projectId: 'p2', projectName: 'platform', providerId: 'codex', status: 'running', pid: 4088, exitCode: null, unread: 0, title: 'codex · platform', worktree: 'fix/rail', label: null, accountLabel: 'personal', startedAt: now - 300000 },
-    { id: 's3', projectId: 'p2', projectName: 'platform', providerId: 'claude', status: 'exited', pid: 3900, exitCode: 0, unread: 0, title: 'claude · platform', worktree: null, label: null, accountLabel: 'work', startedAt: now - 5400000 },
+    { id: 's1', projectId: 'p1', projectName: 'storefront', providerId: 'claude', status: 'running', pid: 4021, exitCode: null, unread: 3, title: 'claude · storefront', worktree: null, label: 'Checkout bug', accountLabel: 'work', createdAt: now - 900000, endedAt: null },
+    { id: 's2', projectId: 'p2', projectName: 'platform', providerId: 'codex', status: 'running', pid: 4088, exitCode: null, unread: 0, title: 'codex · platform', worktree: 'fix/rail', label: null, accountLabel: 'personal', createdAt: now - 300000, endedAt: null },
+    { id: 's3', projectId: 'p2', projectName: 'platform', providerId: 'claude', status: 'exited', pid: 3900, exitCode: 0, unread: 0, title: 'claude · platform', worktree: null, label: null, accountLabel: 'work', createdAt: now - 5400000, endedAt: now - 60000 },
   ];
   // Full ProviderInfo. The supports object is not optional in the type and the
   // launch dialog reads through it without a guard, so a fixture missing it
@@ -99,11 +99,143 @@ const STUB = `
     ],
     consumption: [], daily: [],
   };
+  // One session's timeline, covering every event family the Timeline draws a
+  // word for — including the lifecycle events that have no tool name, which is
+  // the half that used to render as its own lower-cased identifier. Without
+  // these three entries the stub answers with anything(), the rows are
+  // meaningless, and a shot of this pane shows nothing worth reviewing.
+  // (Deliberately generic: this file is committed.)
+  const ev = (n, event, over) => Object.assign(
+    { id: n, sessionId: 's1', at: now - (40 - n) * 9000, event,
+      toolName: null, summary: null, durationMs: null, ok: null, paths: [] }, over);
+  const timeline = [
+    ev(1, 'SessionStart'),
+    ev(2, 'InstructionsLoaded', { summary: 'Project \u00b7 session_start \u2014 CLAUDE.md', paths: ['/example/storefront/CLAUDE.md'] }),
+    ev(3, 'UserPromptSubmit'),
+    ev(4, 'PreToolUse', { toolName: 'Bash', summary: 'npm test' }),
+    ev(5, 'PostToolUse', { toolName: 'Bash', summary: 'npm test', durationMs: 41200, ok: true }),
+    ev(6, 'SubagentStart', { summary: 'Explore' }),
+    ev(7, 'SubagentStart', { summary: 'general-purpose' }),
+    ev(8, 'SubagentStop', { summary: 'general-purpose', durationMs: 18400, ok: true }),
+    ev(9, 'SubagentStop', { summary: 'Explore', durationMs: 33900, ok: true }),
+    ev(10, 'PostModelSwitch', { summary: 'claude-opus-5 \u2192 claude-sonnet-5 \u00b7 auto' }),
+    ev(11, 'CwdChanged', { summary: 'storefront \u2014 storefront/web', paths: ['/example/storefront/web'] }),
+    ev(12, 'DirectoryAdded', { summary: 'slash_command \u2014 shared-ui', paths: ['/example/shared-ui'] }),
+    ev(13, 'ConfigChange', { summary: 'project_settings \u2014 settings.json', paths: ['/example/storefront/.claude/settings.json'] }),
+    ev(14, 'WorktreeCreate', { summary: 'agent-checkout-fix' }),
+    ev(15, 'TaskCreated', { summary: 'reviewer \u2014 Check the discount rounding' }),
+    ev(16, 'TaskCompleted', { summary: 'reviewer \u2014 Check the discount rounding' }),
+    ev(17, 'PermissionRequest', { toolName: 'Edit', summary: 'src/Checkout.php' }),
+    ev(18, 'PermissionDenied', { toolName: 'Edit', summary: 'src/Checkout.php', ok: false }),
+    ev(19, 'PostToolUseFailure', { toolName: 'Bash', summary: 'php artisan migrate', durationMs: 2600, ok: false }),
+    ev(20, 'PreCompact'),
+    ev(21, 'PostCompact', { ok: true }),
+    ev(22, 'TeammateIdle', { summary: 'reviewer' }),
+    ev(23, 'ElicitationResult', { summary: 'github \u2014 accept', ok: true }),
+    ev(24, 'Elicitation', { summary: 'github \u2014 Approve pushing to origin/main?' }),
+  ];
+  const toolStats = [
+    { toolName: 'Bash', calls: 12, totalMs: 74200, failures: 1 },
+    { toolName: 'Edit', calls: 9, totalMs: 4100, failures: 0 },
+    { toolName: 'Read', calls: 31, totalMs: 2600, failures: 0 },
+  ];
+  // Fleet reads usage.many and usage.throughput for every card, the whole stat
+  // row and every column of its table. Neither had a fixture, so all of it came
+  // from anything() and every cost, token and line count on the busiest view in
+  // the app was fabricated by the proxy — which is how a sweep came back
+  // reporting "forty zeros on Fleet" as if it were a product finding.
+  // s2 is deliberately costStatus 'unavailable': Codex on a ChatGPT plan
+  // reports token counters but no per-thread invoice, and a zero there has to
+  // render as "not reported" rather than as $0.00. That is the one distinction
+  // this view most has to get right, so the fixture has to contain it.
+  const usageFor = (id, over) => Object.assign({
+    sessionId: id, costUsd: 0, costStatus: 'reported', inTokens: 0, outTokens: 0,
+    cacheRead: 0, cacheWrite: 0, linesAdded: 0, linesRemoved: 0, commits: 0,
+    pullRequests: 0, activeSeconds: 0, requests: 0, errors: 0, refusals: 0,
+    lastAt: null, models: [],
+  }, over);
+  const usageMany = {
+    s1: usageFor('s1', { costUsd: 4.82, inTokens: 128400, outTokens: 19200, cacheRead: 91000,
+      cacheWrite: 4200, linesAdded: 214, linesRemoved: 63, commits: 3, requests: 41,
+      activeSeconds: 900, lastAt: now - 12000, models: ['claude-opus-5'] }),
+    s2: usageFor('s2', { costStatus: 'unavailable', inTokens: 41200, outTokens: 7300,
+      linesAdded: 38, linesRemoved: 12, requests: 11, activeSeconds: 300,
+      lastAt: now - 45000, models: ['gpt-5-codex'] }),
+    s3: usageFor('s3', { costUsd: 0.94, inTokens: 22100, outTokens: 3100, commits: 1,
+      requests: 9, activeSeconds: 5400, lastAt: now - 3600000, models: ['claude-sonnet-5'] }),
+  };
+  const throughput = [0, 2, 9, 14, 22, 31, 27, 18, 24, 33, 41, 36, 29, 17, 11, 6, 14, 25, 38, 44, 31, 20, 12, 5];
+  // Context is the one view anything() cannot fake: every slot's "is this
+  // filled" reads through a proxy, so all seven compute as filled, the
+  // unfilled list comes back empty and the setup card — the thing the page is mostly about —
+  // never renders at all. A sweep of this view was green and meaningless.
+  //
+  // Shaped as a realistic PARTIAL project on purpose: AGENTS.md and memory
+  // present, the CLAUDE.md chain and rules absent. That is the ordinary state
+  // of most repositories, and the one where the numbered slots start at 3.
+  const ctxInstructions = {
+    files: [], atLaunch: [], onDemand: [], notes: [],
+  };
+  const ctxMemory = {
+    dir: '/example/platform/.memory', derivedFrom: 'git-repo', exists: true, notes: [],
+    index: { name: 'MEMORY.md', path: '/example/platform/.memory/MEMORY.md', kind: 'index',
+             description: 'Index of what is remembered for this project.', bytes: 1807, lines: 11,
+             modified: now - 86400000, modifiedFrontmatter: null, links: [], isIndex: true },
+    indexBudget: { lines: 11, lineLimit: 200, bytes: 1807, byteLimit: 25600, loadedLines: 11,
+                   droppedLines: 0, overBudget: false,
+                   note: 'MEMORY.md fits: all 11 lines load (11/200 lines, 1.8 KB/25 KB).' },
+    files: [
+      { name: 'MEMORY.md', path: '/example/platform/.memory/MEMORY.md', kind: 'index',
+        description: 'Index of what is remembered for this project.', bytes: 1807, lines: 11,
+        modified: now - 86400000, modifiedFrontmatter: null, links: [], isIndex: true },
+      { name: 'release-checklist', path: '/example/platform/.memory/release-checklist.md', kind: 'memory',
+        description: 'The order the release steps have to run in, and why.', bytes: 2214, lines: 38,
+        modified: now - 172800000, modifiedFrontmatter: null, links: [], isIndex: false },
+    ],
+    counts: { instruction: 0, memory: 1, reference: 0, index: 1 },
+    danglingLinks: [], orphans: [], enabled: true,
+  };
+  const ctxConfig = {
+    layers: [
+      { layer: 'user', file: '/example/home/.claude/settings.json', exists: false },
+      { layer: 'project', file: '/example/platform/.claude/settings.json', exists: false },
+      { layer: 'project local', file: '/example/platform/.claude/settings.local.json', exists: false },
+    ],
+    settings: [], hooks: [], mcp: [], agents: [], commands: [], notes: [],
+  };
+  const ctxAgents = { present: true, imported: true, symlinked: false,
+                      note: 'AGENTS.md is imported by CLAUDE.md, so it reaches context.' };
+  const ctxBudget = { files: [], totalTokens: 0, totalCostUsd: 0, model: null, note: null };
   const FIXED = {
     'usage.snapshot': usageSnapshot,
+    'context.instructions': ctxInstructions, 'context.memory': ctxMemory,
+    'context.config': ctxConfig, 'context.agentsMd': ctxAgents, 'context.budget': ctxBudget,
+    'usage.many': usageMany, 'usage.throughput': throughput,
+    'events.session': timeline, 'events.tools': toolStats,
+    'events.live': { tool: null, since: now - 12000, blocked: true, lastAt: now - 12000 },
+    'checkpoints.list': [],
     'projects.list': projects, 'sessions.list': sessions, 'providers.list': providers,
     'attention.list': attention, 'sessions.past': [], 'batch.runsInFlight': { readAt: now, runs: 2, requestsReturned: 1400, requestsOutstanding: 600 },
     'keys.has': true,
+    // Two views read a bare scalar out of a record and then call a string or
+    // number method on it. anything() answers those with a Proxy, which is
+    // truthy, so the view sailed past its own fallback and died one line later
+    // — Fleet on trustCopy(trust).label.toLowerCase(), Settings on
+    // config.pushServer.trim(). Both were silent: the error boundary paints a
+    // card, and a sweep that only counts screenshots still wrote a PNG. A
+    // harness that renders 13 of 15 views is a harness that reviews 13.
+    'policy.defaultTrust': 'project',
+    'mobile.status': {
+      config: { dashboardEnabled: false, remoteControlEnabled: false, port: 47831,
+                dashboardUrl: '', pushEnabled: false, pushServer: 'https://ntfy.sh', pushTopic: '' },
+      running: false, localUrl: 'http://127.0.0.1:47831', pairingUrl: '', pairingCode: '',
+      tokenFingerprint: '', error: null, lastPushAt: null, lastPushError: null,
+    },
+    // DemoState.map is a list, but 'map' is also on Array.prototype, so the
+    // empty-array target answered state.map with Array.prototype.map itself
+    // and state.map.slice(0, 12) read .slice off a function. A field named
+    // after an array method is the one shape anything() cannot fake.
+    'demo.state': { on: false, blurTerminals: false, map: [] },
   };
   const settings = {
     spendCapUsd: 1, motion: 'auto', navSidebar: 'open', telemetry: true, hooks: true,
@@ -182,6 +314,8 @@ const server = http.createServer((req, res) => {
   fs.createReadStream(file).pipe(res);
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
+// Never the reason a probe process stays alive after its last renderer closes.
+server.unref();
 const PORT = server.address().port;
 
 export async function openRenderer({ theme = 'dark', width = 1440, height = 900, onError, instrument } = {}) {
@@ -203,5 +337,12 @@ page.on('console', (m) => { if (m.type() === 'error' && onError) onError(m.text(
   const url = `http://127.0.0.1:${PORT}/index.html`;
   await page.goto(url);
   await page.waitForTimeout(2200);
-  return { browser, page, close: async () => { await browser.close(); server.close(); } };
+  // close() takes down the browser only. The static server is module-level and
+  // shared, and closing it there made one openRenderer call per process the
+  // only supported shape: a second call — a both-themes sweep, a before/after
+  // comparison — failed at goto with ERR_CONNECTION_REFUSED, from a stack that
+  // named the navigation rather than the server that was no longer listening.
+  // The socket is unref'd at listen instead, so it never holds the process open
+  // and never has to be closed to let one exit.
+  return { browser, page, close: async () => { await browser.close(); } };
 }

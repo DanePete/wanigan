@@ -490,7 +490,7 @@ export default function Git({ projects, projectsRead }: {
 
   const bar = (
     <div className="gt-bar">
-      <select className="field" style={{ width: 'auto', fontSize: 'var(--t-small)' }} value={projectId}
+      <select className="field" aria-label="Repository" style={{ width: 'auto', fontSize: 'var(--t-small)' }} value={projectId}
               onChange={(e) => {
                 // The message box is a draft about this repository's changes;
                 // carrying it to another project offers to commit the wrong
@@ -585,9 +585,9 @@ export default function Git({ projects, projectsRead }: {
           <Note tone="warn">
             Open a pull request for <span className="mono">{st.branch}</span> through gh. Creating it publishes on your GitHub host — this leaves your machine.
             <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
-              <input className="field" placeholder="Title" maxLength={300} value={form.title}
+              <input className="field" aria-label="Pull request title" placeholder="Title" maxLength={300} value={form.title}
                      onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} />
-              <textarea className="field" placeholder="Body (optional)" rows={4} value={form.body}
+              <textarea className="field" aria-label="Pull request body" placeholder="Body (optional)" rows={4} value={form.body}
                         onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))} />
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                 <label style={{ display: 'flex', gap: 5, alignItems: 'center', fontSize: 'var(--t-small)' }}>
@@ -595,7 +595,7 @@ export default function Git({ projects, projectsRead }: {
                          onChange={(e) => setForm((f) => ({ ...f, draft: e.target.checked }))} />
                   draft
                 </label>
-                <input className="field" style={{ width: 200 }} placeholder="Base (repo default if empty)" value={form.base}
+                <input className="field" aria-label="Base branch" style={{ width: 200 }} placeholder="Base (repo default if empty)" value={form.base}
                        onChange={(e) => setForm((f) => ({ ...f, base: e.target.value }))} />
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                   <button className="btn btn-primary" disabled={!!busy || !form.title.trim()} onClick={() => void createPr()}>
@@ -781,7 +781,7 @@ export default function Git({ projects, projectsRead }: {
               </div>
 
               <div className="gt-commit">
-                <textarea value={msg} placeholder="Commit message" onChange={(e) => setMsg(e.target.value)} />
+                <textarea value={msg} aria-label="Commit message" placeholder="Commit message" onChange={(e) => setMsg(e.target.value)} />
                 <div style={{ display: 'flex', gap: 6 }}>
                   <button className="btn btn-primary" disabled={!!busy || !msg.trim() || !st.staged.length}
                           onClick={() => void act('Commit', async () => {
@@ -908,7 +908,7 @@ function NewBranch({ busy, onCreate }: { busy: boolean; onCreate: (name: string)
   const [name, setName] = useState('');
   return (
     <div style={{ display: 'flex', gap: 6 }}>
-      <input className="field" style={{ flex: 1 }} value={name} placeholder="new-branch-name"
+      <input className="field" aria-label="New branch name" style={{ flex: 1 }} value={name} placeholder="new-branch-name"
              onChange={(e) => setName(e.target.value)} />
       <button className="btn" disabled={busy || !name.trim()}
               onClick={() => { onCreate(name.trim()); setName(''); }}>Create &amp; switch</button>

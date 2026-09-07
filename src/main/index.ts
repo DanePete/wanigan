@@ -12,7 +12,7 @@ import {
   killSession, closeSession, scrollback, markRead, shutdownAll, sessionBaseline, interruptSession,
   pastSessions, forgetPastSession, recoverExactCodexThread, setSessionExitObserver,
   setSessionTuning, setConversationFlag, renameSession, redirectsAnthropicApiFor,
-  setFocusedSession,
+  setFocusedSession, recordObservedModel,
 } from './sessions';
 import { listProjects, addProject, removeProject, refreshBranches, projectById } from './store';
 import * as batch from './batch';
@@ -765,6 +765,11 @@ async function startServices() {
     ? learning.briefingForContext(context, { sessionId, delivery: 'hook' })
     : null);
 
+  // A model switch the operator typed into the terminal, or the CLI made on its
+  // own, is still a fact about this session. Registered here so the record is
+  // corrected by the same bus that recorded the switch.
+  hooks.setModelSwitchHook((sessionId, model) => { recordObservedModel(sessionId, model); });
+
   // Background learning activity (a signal from a live session, a timer
   // consolidation pass) pushes one debounced event so the Learning view can
   // refresh without polling. User-initiated mutations reload via their own
@@ -1195,6 +1200,7 @@ function stopServices() {
   learning.stopConsolidator();
   learning.setLearningChangedNotifier(null);
   hooks.setLearningBriefingHook(null);
+  hooks.setModelSwitchHook(null);
   try { schedule.stopScheduler(); } catch { /* already down */ }
   try { queue.stopDispatcher(); } catch { /* already down */ }
   if (autopilotTimer) { clearInterval(autopilotTimer); autopilotTimer = null; }

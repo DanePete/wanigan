@@ -56,8 +56,11 @@ function FocusBtn({ style, onFocus, onBlur, children, ...rest }: React.ButtonHTM
  * own escape hatch unreachable. A native datalist keeps the suggestions
  * without adding a second control to tab through.
  */
-function OpenField({ id, value, choices, placeholder, onChange }: {
+function OpenField({ id, label, value, choices, placeholder, onChange }: {
   id: string;
+  /** The field's own name. `id` above names the datalist, not the input, so
+   *  without this the control reached a screen reader as an unlabelled box. */
+  label: string;
   value: string;
   choices: LaunchChoice[];
   placeholder?: string;
@@ -65,7 +68,7 @@ function OpenField({ id, value, choices, placeholder, onChange }: {
 }) {
   return (
     <>
-      <input className="field mono" style={{ margin: '6px 0 14px' }} value={value} placeholder={placeholder}
+      <input className="field mono" aria-label={label} style={{ margin: '6px 0 14px' }} value={value} placeholder={placeholder}
              list={choices.length ? id : undefined} onChange={(e) => onChange(e.target.value)} />
       {choices.length > 0 && (
         <datalist id={id}>
@@ -492,7 +495,7 @@ export default function NewSessionDialog({
         </div>
         {options.length ? (
           <div style={{ display: 'flex', gap: 6, margin: '6px 0 14px' }}>
-            <select className="field" style={{ flex: 1, minWidth: 0 }}
+            <select className="field" aria-label="Project" style={{ flex: 1, minWidth: 0 }}
                     value={projectId} onChange={(e) => setProjectId(e.target.value)}>
               {options.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -581,7 +584,7 @@ export default function NewSessionDialog({
             <Note tone="warn">Wanigan could not read what models this profile offers, so type one or leave it blank for the CLI’s own default.</Note>
           )}
           {modelOpen ? (
-            <OpenField id="new-session-model" value={model} choices={modelChoices}
+            <OpenField id="new-session-model" label={modelField.label} value={model} choices={modelChoices}
                        placeholder={modelField.required ? 'Required by provider' : 'Provider default'}
                        onChange={setModel} />
           ) : (
@@ -615,7 +618,7 @@ export default function NewSessionDialog({
           <>
             <div className="label">{effortField.label} <span style={{ textTransform: 'none' }}>— governs thinking depth, tool calls and length</span></div>
             {openField(effortField) ? (
-              <OpenField id="new-session-effort" value={effort} choices={effortChoices}
+              <OpenField id="new-session-effort" label={effortField.label} value={effort} choices={effortChoices}
                          placeholder={effortField.required ? 'Required by provider' : 'Provider default'}
                          onChange={setEffort} />
             ) : (
@@ -707,11 +710,11 @@ export default function NewSessionDialog({
           <>
             <div className="label">{permissionField.label}</div>
             {openField(permissionField) ? (
-              <OpenField id="new-session-permission-mode" value={permissionMode} choices={permissionField.choices}
+              <OpenField id="new-session-permission-mode" label={permissionField.label} value={permissionMode} choices={permissionField.choices}
                          placeholder={permissionField.required ? 'Required by provider' : 'Provider default'}
                          onChange={setPermissionMode} />
             ) : (
-              <select className="field" style={{ margin: '6px 0 5px' }} value={permissionMode}
+              <select className="field" aria-label={permissionField.label} style={{ margin: '6px 0 5px' }} value={permissionMode}
                       onChange={(e) => setPermissionMode(e.target.value)}>
                 {/*
                   * The guard the effort pills above already keep, one field
@@ -843,7 +846,7 @@ export default function NewSessionDialog({
         {accountList.length > 0 && (
           <>
             <div className="label">Account</div>
-            <select className="field" value={accountId ?? ''}
+            <select className="field" aria-label="Account" value={accountId ?? ''}
                     onChange={(e) => setAccountId(e.target.value || null)}
                     style={{ marginBottom: 6 }}>
               {/* This option is the absence of a choice, so it describes the
@@ -935,13 +938,13 @@ export default function NewSessionDialog({
         </label>
 
         <div className="label">First message <span style={{ textTransform: 'none' }}>(optional)</span></div>
-        <textarea className="field mono" rows={3} style={{ margin: '6px 0 4px', resize: 'vertical' }}
+        <textarea className="field mono" aria-label="First message" rows={3} style={{ margin: '6px 0 4px', resize: 'vertical' }}
                   placeholder="Typed into the session once it is up."
                   value={initialPrompt} onChange={(e) => setInitialPrompt(e.target.value)} />
 
         <details style={{ margin: '10px 0 4px' }}>
           <summary className="faint" style={{ cursor: 'pointer', fontSize: 'var(--t-small)' }}>Extra CLI flags</summary>
-          <input className="field mono" style={{ marginTop: 6 }}
+          <input className="field mono" aria-label="Extra CLI flags" style={{ marginTop: 6 }}
                  placeholder="--resume    --permission-mode plan"
                  value={extraArgs} onChange={(e) => setExtraArgs(e.target.value)} />
         </details>

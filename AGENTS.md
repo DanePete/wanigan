@@ -22,7 +22,10 @@ as observed fact.
   `*-head` or `*-chip` class family. No `<style>` in TSX: rules go in
   `src/renderer/src/styles/<surface>.css`, which declares no colour and spells no
   font size, padding or duration as a literal. The gate's baselines are debts
-  that only ratchet down.
+  that only ratchet down. Every `<input>`, `<select>` and `<textarea>` carries
+  an accessible name — `aria-label`, an `id` a `<label for>` points at, or the
+  `<label>` it sits inside; a `<span className="label">` above the box names it
+  for sighted readers only, and the gate holds that count at zero.
 - Keep Electron's trust boundary intact: privileged work belongs in
   `src/main/`, the renderer reaches it only through typed preload APIs, and all
   renderer input is untrusted until validated in the main process.

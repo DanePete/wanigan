@@ -68,8 +68,16 @@ const rank = (k: AttentionKind | undefined) => {
   return i < 0 ? ATTENTION_ORDER.length : i;
 };
 
-/** "3m 12s" — a bare integer is a puzzle. */
+/**
+ * "3m 12s" — a bare integer is a puzzle.
+ *
+ * The finite guard is the same one bits.ts's `dur` carries, and it is here for
+ * the same reason: every caller subtracts a timestamp that can be absent, and
+ * `Math.max(0, NaN)` is NaN, which walks through the whole function and reaches
+ * the card as the string "NaNh". An unknown duration is an em dash.
+ */
 function dur(ms: number): string {
+  if (!Number.isFinite(ms)) return '—';
   const s = Math.max(0, Math.round(ms / 1000));
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);

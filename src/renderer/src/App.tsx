@@ -1286,7 +1286,7 @@ export default function App() {
             <Skills projectId={projectId} providers={providers} activeSessionId={activeSessionId} />
           )}
           {tab === 'context' && (
-            <Context projectId={projectId} projects={projects}
+            <Context projectId={projectId} projects={projects} projectsRead={projectsRead}
                      onReloadProjects={loadShell} onOpenLearning={openLearning} />
           )}
           {tab === 'plugins' && <Plugins />}

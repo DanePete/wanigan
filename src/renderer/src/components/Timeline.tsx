@@ -646,12 +646,46 @@ function markFor(r: Row): Mark {
       return { glyph: '⌥', word: 'subagent started', tone: 'var(--accent)' };
     case 'SubagentStop':
       return { glyph: '⌥', word: 'subagent ended', tone: 'var(--text-faint)' };
+    case 'PostModelSwitch':
+      return { glyph: '⇄', word: 'model switched', tone: 'var(--accent)' };
+    // Asked for since the CLI gained it, and drawn as "instructionsloaded"
+    // until the coverage check below went looking. The row's own summary
+    // already reads "Project · session_start — CLAUDE.md"; this only had to
+    // stop printing the identifier in front of it.
+    case 'InstructionsLoaded':
+      return { glyph: '≡', word: 'instructions loaded', tone: 'var(--text-dim)' };
+    // An MCP server's question is a stopped run, and it is drawn as the same
+    // interruption a permission prompt is rather than as a quieter cousin.
+    case 'Elicitation':
+      return { glyph: '⏸', word: 'server asked you', tone: 'var(--warning)', soft: 'var(--warning-soft)', loud: true };
+    case 'ElicitationResult':
+      return { glyph: '↩', word: 'you answered', tone: 'var(--text-dim)' };
+    // Reach: where the session is allowed to work, changing mid-run.
+    case 'CwdChanged':
+      return { glyph: '⇥', word: 'changed directory', tone: 'var(--accent)' };
+    case 'DirectoryAdded':
+      return { glyph: '⊕', word: 'directory added', tone: 'var(--warning)', soft: 'var(--warning-soft)', loud: true };
+    case 'ConfigChange':
+      return { glyph: '⚙', word: 'settings changed', tone: 'var(--accent)' };
+    case 'WorktreeCreate':
+      return { glyph: '⑂', word: 'worktree created', tone: 'var(--accent)' };
+    case 'WorktreeRemove':
+      return { glyph: '⑂', word: 'worktree removed', tone: 'var(--text-faint)' };
+    case 'TeammateIdle':
+      return { glyph: '◇', word: 'teammate idle', tone: 'var(--text-dim)' };
+    case 'TaskCreated':
+      return { glyph: '⊞', word: 'task created', tone: 'var(--text-dim)' };
+    case 'TaskCompleted':
+      return { glyph: '☑', word: 'task completed', tone: 'var(--text-faint)' };
     case 'Notification':
       if (REFUSED.test(e.summary ?? ''))
         return { glyph: '⊘', word: 'refused', tone: 'var(--serious)', soft: 'var(--serious-soft)', loud: true };
       if (WAITING.test(e.summary ?? ''))
         return { glyph: '⏸', word: 'needs you', tone: 'var(--warning)', soft: 'var(--warning-soft)', loud: true };
       return { glyph: '◆', word: 'notice', tone: 'var(--text-dim)' };
+    // Reached only by an event Wanigan never asked for — a provider-synthesised
+    // name, or one a newer CLI sent unbidden. Every event in the settings file
+    // has an arm above, and a smoke check holds that true as the list grows.
     default:
       return { glyph: '·', word: e.event.toLowerCase(), tone: 'var(--text-faint)' };
   }

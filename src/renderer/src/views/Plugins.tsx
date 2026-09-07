@@ -465,7 +465,7 @@ export default function Plugins() {
         {showCatalog && (
           <>
             <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
-              <input className="field" style={{ flex: 1, minWidth: 220 }} value={q} type="text"
+              <input className="field" aria-label="Search plugins" style={{ flex: 1, minWidth: 220 }} value={q} type="text"
                      placeholder={catBusy ? 'Reading the catalog…' : `Search ${catalog.length} plugins…`}
                      onChange={(e) => setQ(e.target.value)} />
               <button className="btn" disabled={catBusy} onClick={() => void loadCatalog()}>
@@ -477,7 +477,7 @@ export default function Plugins() {
               </button>
             </div>
             <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-              <input className="field" style={{ flex: 1 }} value={market} type="text"
+              <input className="field" aria-label="Marketplace to add" style={{ flex: 1 }} value={market} type="text"
                      placeholder="Add a marketplace — a GitHub repo, URL or path"
                      onChange={(e) => setMarket(e.target.value)} />
               <button className="btn" disabled={!market.trim() || !!working}

@@ -294,8 +294,14 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .btn-primary:hover:not(:disabled) { filter: brightness(1.1); background: var(--accent); }
 /* Faded accent + accent-ink falls below 4.5:1 in the light palette; a disabled
-   primary reads on the same neutral pair every other disabled control uses. */
-.btn-primary:disabled { background: var(--bg-sunk); border-color: var(--line); color: var(--text-dim); opacity: 1; }
+   primary reads on the same neutral pair every other disabled control uses.
+   The weight has to go with the colour. Keeping 600 left a dead button as the
+   boldest thing on the page — measured on Scout, whose "Run scout now" is
+   disabled until a source is allow-listed and still out-shouted the enabled
+   controls beside it, because opacity stays 1 here for the contrast reason
+   above while a disabled secondary drops to .4. Same neutral pair, same
+   weight as every other disabled control: nothing about it says "press me". */
+.btn-primary:disabled { background: var(--bg-sunk); border-color: var(--line); color: var(--text-dim); opacity: 1; font-weight: 400; }
 .btn-danger { color: var(--bad); }
 .btn-danger:hover:not(:disabled) { background: var(--bad-soft); border-color: var(--bad); }
 

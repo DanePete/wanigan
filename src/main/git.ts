@@ -669,15 +669,42 @@ export async function stashSave(dir: string, message: string) {
   if (!r.ok) fail(r.err);
   return r.out.trim();
 }
+/**
+ * A stash position, checked before it becomes part of a revision.
+ *
+ * `stash@{<n>}` is not an index expression — it is a reflog expression, and git
+ * only reads the braces as a position when they hold an integer. Anything else
+ * is parsed as a *date*: `stash@{1.5}` resolves to whatever the stash reflog
+ * held at that time, which on a three-entry list is the oldest entry, not the
+ * second (checked against git 2.50.1, which answers it with a `log for 'stash'
+ * only goes back to …` warning and a hash). So a non-integer here does not
+ * fail loudly the way a bad ref does; `apply` and `pop` quietly act on a stash
+ * the operator never picked, and pop then drops it.
+ *
+ * The renderer derives this from the position in `stashes()` and so always
+ * sends a whole number today. That is exactly the argument that was made for
+ * the ref strings above until a branch named `-f` reverted a working tree:
+ * main validates renderer input because main is where the guarantee has to
+ * live, not because the current caller is suspect.
+ */
+function stashArg(index: unknown, what: string): string {
+  if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
+    fail(`${what} needs a whole stash position; git reads anything else as a date and would act on a different stash.`);
+  }
+  return 'stash@{' + String(index) + '}';
+}
+
 export async function stashApply(dir: string, index: number, drop: boolean) {
+  const at = stashArg(index, drop ? 'Popping a stash' : 'Applying a stash');
   const { repoRoot } = await acting(dir, drop ? 'pop a stash' : 'apply a stash');
-  const r = await git(repoRoot, ['stash', drop ? 'pop' : 'apply', 'stash@{' + String(index) + '}']);
+  const r = await git(repoRoot, ['stash', drop ? 'pop' : 'apply', at]);
   if (!r.ok) fail(r.err);
   return r.out.trim();
 }
 export async function stashDrop(dir: string, index: number) {
+  const at = stashArg(index, 'Dropping a stash');
   const { repoRoot } = await acting(dir, 'drop a stash');
-  const r = await git(repoRoot, ['stash', 'drop', 'stash@{' + String(index) + '}']);
+  const r = await git(repoRoot, ['stash', 'drop', at]);
   if (!r.ok) fail(r.err);
   return true;
 }

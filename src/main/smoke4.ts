@@ -221,6 +221,38 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     });
     check(!doctorSkill(forged.skillMd).some((diagnostic) => diagnostic.severity === 'error'),
       'Skill Forge output passes Skill Doctor');
+    // The trigger has to reach the frontmatter, not only the body. `when_to_use`
+    // is appended to `description` in the skill listing, which is the text an
+    // agent reads while deciding whether to load the skill at all; a trigger
+    // that lives only under "## When to use" is read after that decision, which
+    // is too late to have informed it.
+    const forgedFm = forged.skillMd.slice(0, forged.skillMd.indexOf('\n---', 3));
+    check(/\nwhen_to_use: "/.test(forgedFm) && forgedFm.includes('after code review'),
+      'a forged skill carries its trigger as when_to_use frontmatter, where it can be read before the skill is loaded',
+      forgedFm.split('\n').filter((l) => l.startsWith('when_to_use')).join(''));
+    check(forged.skillMd.includes('## When to use'),
+      'and still as prose in the body, for whoever opens the file');
+    // Only name/description/when_to_use — every one of them a documented field.
+    // A key the CLI does not know is a key that teaches people this tool writes
+    // files their agent cannot read.
+    const fmKeys = forgedFm.split('\n').slice(1).map((l) => l.split(':')[0]).filter(Boolean);
+    check(fmKeys.every((k) => ['name', 'description', 'when_to_use'].includes(k)),
+      'and no frontmatter key outside the published Agent Skills spec', JSON.stringify(fmKeys));
+    // description + when_to_use are truncated together at 1,536 characters in
+    // the listing, so the pair must be written inside that budget rather than
+    // discovering the cut on the far side of it.
+    const longTrigger = forgeSkill({
+      name: 'listing-budget-smoke',
+      description: 'x'.repeat(1_000),
+      trigger: 'y'.repeat(1_000),
+      scope: 'project',
+      steps: [{ title: 'Step', instruction: 'Do the thing.' }],
+      verification: ['It worked.'],
+    });
+    const listed = /\ndescription: "([^"]*)"[\s\S]*?\nwhen_to_use: "([^"]*)"/.exec(longTrigger.skillMd);
+    check(!!listed && listed[1].length + listed[2].length <= 1_536,
+      'a long description leaves the trigger only the room the listing budget has left, rather than being cut where nobody can see it',
+      JSON.stringify({ description: listed?.[1].length, whenToUse: listed?.[2].length }));
     const unsafeSkill = [
       '---', 'name: unsafe-smoke', 'description: Use when testing unsafe instructions.', '---', '',
       '# Unsafe', '', 'sudo rm -rf /tmp/example', '', '## Verification', '', '- Hope it worked.', '',

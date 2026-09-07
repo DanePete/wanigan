@@ -4863,6 +4863,41 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
 
   say('── model catalogue · the profile is the contract, the backend is the catalogue');
   const { resolveModelCatalogue } = await import('./launch-choices');
+
+  // A backend with no catalogue endpoint used to offer four bare aliases and a
+  // sentence beginning "Wanigan cannot ask". It cannot — but it is not ignorant
+  // either: every session it launched recorded the id that session resolved to,
+  // and PostModelSwitch records it again on every change. Those ids belong on
+  // the list, marked as seen rather than offered.
+  const { providerModelCatalogue } = await import('./launch-choices');
+  const anthropicProfile = { backendId: 'anthropic', supports: { model: true }, launchFields: [] };
+  const before = await providerModelCatalogue(anthropicProfile as never);
+  db().prepare(`INSERT INTO session_log (id, conversation_id, provider_id, harness_id, backend_id, model, project_path, project_name, started_at)
+                VALUES (?,?,?,?,?,?,?,?,?)`)
+    .run('mc-1', 'mc-1', 'claude', 'claude-code', 'anthropic', 'claude-opus-4-6-20260115', '/tmp/mc', 'mc', Date.now() - 5000);
+  // Same alias the published list already offers, differently cased: one row.
+  db().prepare(`INSERT INTO session_log (id, conversation_id, provider_id, harness_id, backend_id, model, project_path, project_name, started_at)
+                VALUES (?,?,?,?,?,?,?,?,?)`)
+    .run('mc-2', 'mc-2', 'claude', 'claude-code', 'anthropic', 'Opus', '/tmp/mc', 'mc', Date.now() - 4000);
+  // A different backend's id must not leak into this one's picker.
+  db().prepare(`INSERT INTO session_log (id, conversation_id, provider_id, harness_id, backend_id, model, project_path, project_name, started_at)
+                VALUES (?,?,?,?,?,?,?,?,?)`)
+    .run('mc-3', 'mc-3', 'glm', 'claude-code', 'zai', 'glm-5.3', '/tmp/mc', 'mc', Date.now() - 3000);
+  const after = await providerModelCatalogue(anthropicProfile as never);
+  const values = after.rows.map((r) => r.value);
+  check(before.rows.length === 4 && values.length === 5 && values.includes('claude-opus-4-6-20260115'),
+    'a resolved id a session actually ran on this backend joins the published aliases',
+    JSON.stringify(values));
+  check(values.filter((v) => v.toLowerCase() === 'opus').length === 1,
+    'and an id that only re-spells an alias it already offers does not become a second row');
+  check(!values.includes('glm-5.3'),
+    'and another backend’s ids stay out of this backend’s picker');
+  check(after.rows.find((r) => r.value === 'claude-opus-4-6-20260115')?.description === 'seen on this backend'
+    && after.source === 'published',
+    'the observed rows say they were seen rather than offered, and the catalogue still calls itself published');
+  check(/actually seen run here/.test(after.note ?? '') && !/actually seen run here/.test(before.note ?? ''),
+    'the note stops at “these are the aliases it publishes” only while there is nothing observed to add',
+    after.note ?? 'null');
   const openModelField = { supported: true, label: 'Model', required: false, choices: [],
     declared: false, custom: true, defaultValue: '' };
   const liveRows = { rows: [{ value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', description: 'frontier',
@@ -5683,6 +5718,14 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // so the id they name always resolves.
   const composerSrc = sourceOf('src/renderer/src/components/Composer.tsx');
   const composerCssSrc = sourceOf('src/renderer/src/styles/composer.css');
+  // The live region below is hidden by .sr-only, which is a shared primitive in
+  // ui.css rather than a per-surface copy. composer.css used to carry its own
+  // .composer-sr with a byte-equivalent body, and evals.css a third under
+  // .skills-sr; one hiding technique defined in three places is three places to
+  // fix when it changes. The check still proves the class the element names is
+  // really defined somewhere — a live region hidden by a class that does not
+  // exist is a visible paragraph.
+  const uiCssSrc = sourceOf('src/renderer/src/styles/ui.css');
   const composerMenuBlock = composerSrc.slice(
     composerSrc.indexOf('<ul id="composer-skill-menu"'),
     composerSrc.indexOf('</ul>'),
@@ -5703,10 +5746,11 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && composerMenuBlock.includes('onMouseDown={(e) => e.preventDefault()}')
     && composerMenuBlock.includes('onClick={() => insertSkill(option)}')
     // The count and the changed Enter, which no ARIA attribute carries.
-    && composerSrc.includes('<p className="composer-sr" role="status">')
+    && composerSrc.includes('<p className="sr-only" role="status">')
     && composerSrc.includes("`${menuOptions.length} skill${menuOptions.length === 1 ? '' : 's'} match")
     && composerCssSrc.includes('.composer-menu[hidden] { display: none; }')
-    && composerCssSrc.includes('.composer-sr {'),
+    && uiCssSrc.includes('.sr-only {')
+    && !composerCssSrc.includes('.composer-sr {'),
   'the composer announces its skill menu: textbox-legal aria-controls and aria-activedescendant over a list that is always in the DOM, options owned directly by the listbox with focus kept in the textarea, and a live region for the count and the changed meaning of Enter');
 
   // Two accounts is the whole point of the accounts feature, and an exhausted
@@ -6082,6 +6126,110 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !gitViewSrc.includes('setInterval(load, 8000)'),
   'Git’s eight-second repository poll stops while the window is hidden and catches up the moment it comes back, the way both of the shell’s own polls already do, rather than spawning four git reads a beat behind a window nobody is looking at',
   JSON.stringify({ unguardedIntervalGone: !gitViewSrc.includes('setInterval(load, 8000)') }));
+
+  // The three polls the sweep above missed. Each is the same defect Fleet, the
+  // shell, Runs, Batches and Git were already fixed for — a timer that keeps
+  // asking the main process questions on behalf of a window nobody is reading —
+  // and each is asserted here rather than left to the next person to notice.
+  check(composerSrc.includes('const t = window.setInterval(() => { if (document.hidden) return; read(); }, QUEUE_POLL_MS);')
+    && composerSrc.includes('const onVisible = () => { if (!document.hidden) read(); };')
+    && composerSrc.includes("document.addEventListener('visibilitychange', onVisible);")
+    && composerSrc.includes("document.removeEventListener('visibilitychange', onVisible);")
+    && !composerSrc.includes('window.setInterval(read, QUEUE_POLL_MS)'),
+  'the Composer’s attention poll stops while the window is hidden and re-reads on return — it is the same attention.list() call, on the same two-second beat, that AttentionQueue already guards for exactly this reason',
+  JSON.stringify({ unguardedIntervalGone: !composerSrc.includes('window.setInterval(read, QUEUE_POLL_MS)') }));
+
+  const observedSrc = sourceOf('src/renderer/src/components/ObservedBand.tsx');
+  check(observedSrc.includes('const timer = window.setInterval(() => { if (document.hidden) return; void read(); }, POLL_MS);')
+    && observedSrc.includes('const wake = () => { if (!document.hidden) void read(); };')
+    && !observedSrc.includes('const timer = window.setInterval(() => { void read(); }, POLL_MS);'),
+  'the observed-sessions band stops scanning behind a hidden window, and its wake handler fires on the visible half of visibilitychange rather than on both',
+  JSON.stringify({ unguardedIntervalGone: !observedSrc.includes('const timer = window.setInterval(() => { void read(); }, POLL_MS);') }));
+
+  check(schedulesSrc.includes('const t = setInterval(() => { if (document.hidden) return; void load(); }, 15_000);')
+    && schedulesSrc.includes('const onVisible = () => { if (!document.hidden) void load(); };')
+    && !schedulesSrc.includes('setInterval(load, 15_000)'),
+  'the Schedules poll — two IPC reads a beat for a table one tab away — stops while the window is hidden, because the scheduler keeps its own time either way and this poll only decides how fresh the screen is',
+  JSON.stringify({ unguardedIntervalGone: !schedulesSrc.includes('setInterval(load, 15_000)') }));
+
+  // git.ts opens by calling itself "the one place this process runs git", and
+  // that sentence is worth only as much as a check behind it. context/memory.ts
+  // had its own execFileSync for a year: bounded at four seconds so it could
+  // not hang, but spawned with the app's environment, so asking "is this a
+  // repository" could reach a credential helper or raise an askpass dialog for
+  // a directory the operator had merely opened a panel on. The hardening that
+  // stops that lives in gitEnv(), which only the wrapper sets.
+  const mainTs = filesUnder(path.join(appRoot(), 'src/main'))
+    .filter((f) => f.endsWith('.ts') && !/\/(?:git|smoke\d*)\.ts$/.test(f));
+  const bareGit = mainTs.filter((f) => {
+    const src = fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    return /(?:execFileSync|execFile|spawnSync|spawn)\(\s*['"]git['"]/.test(src);
+  }).map((f) => path.relative(appRoot(), f));
+  check(mainTs.length > 40 && bareGit.length === 0,
+    'no module outside git.ts spawns git itself, so every git this process runs is the one with GIT_TERMINAL_PROMPT=0 and both askpass variables emptied',
+    JSON.stringify({ scanned: mainTs.length, offenders: bareGit }));
+  const memorySrc = sourceOf('src/main/context/memory.ts');
+  check(memorySrc.includes("import { runGitSync } from '../git';")
+    && !memorySrc.includes("from 'node:child_process'"),
+  'the memory panel asks git through the hardened runner rather than importing a child process of its own');
+
+  // A model switch Wanigan did not make now reaches the record, so the Timeline
+  // has to be able to draw it. Without this arm the row falls to the default
+  // and prints the raw event name in lower case.
+  const timelineSrc = sourceOf('src/renderer/src/components/Timeline.tsx');
+  check(timelineSrc.includes("case 'PostModelSwitch':")
+    && /case 'PostModelSwitch':\s*\n\s*return \{ glyph: '⇄', word: 'model switched'/.test(timelineSrc),
+  'the Timeline names a model switch rather than falling through to the raw event name');
+
+  // A view with nothing in it yet opens on its next action, not on an essay
+  // about the thing that has not happened. Control put its first interactive
+  // control 686px down the page and Schedules 596px, both behind a guide that
+  // is the right reading only once there is something to read it against.
+  check(/<Explainer id="control-guide"[^>]*defaultHidden=\{ready && dockets\.length === 0\}/.test(controlViewSrc),
+    'Control folds its guide only once a read has returned and found no goals, so a slow read never hides it from someone who has some');
+  check(/<Explainer id="schedules-guide"[^>]*defaultHidden=\{list\.length === 0\}/.test(schedulesSrc),
+    'Schedules folds its guide while nothing is scheduled');
+
+  // Context numbers its seven slots as stable identities, so a repo that owns
+  // only the third and fourth opens on a section headed 3 with nothing above it
+  // saying why — and the card that names what is missing and offers /init sat
+  // below all seven. The numbers stay; the card moves up whenever most of the
+  // list is still empty. `nothing` already led with it; this is the ordinary
+  // case in between, which is most repositories.
+  //
+  // Asserted here rather than in the browser harness because that harness
+  // answers every context.* read with a shape-agnostic proxy, so every slot
+  // computes as filled and `unfilled` is empty — it cannot reach this path at
+  // all, and a green sweep says nothing about it.
+  const contextViewSrc = sourceOf('src/renderer/src/views/Context.tsx');
+  const setupBefore = contextViewSrc.indexOf('{setupLeads && unfilled.length > 0 && (');
+  const firstSection = contextViewSrc.indexOf('<Section n={1} title="Instructions"');
+  const setupAfter = contextViewSrc.indexOf('{!setupLeads && unfilled.length > 0 && (');
+  check(contextViewSrc.includes('const setupLeads = unfilled.length > SLOTS.length / 2;')
+    && setupBefore > 0 && firstSection > setupBefore && setupAfter > firstSection,
+  'Context puts its setup card above the numbered slots while most of them are still empty, and below them once they are not',
+  JSON.stringify({ setupBefore, firstSection, setupAfter }));
+
+  // The flag has to keep following the data until something says otherwise.
+  // Read once in the useState initialiser it was decided while the view was
+  // still loading — which is exactly when "is this empty" is at its least true —
+  // and a populated view kept the folded state it was given at zero rows.
+  const bitsSrc = sourceOf('src/renderer/src/components/bits.tsx');
+  check(bitsSrc.includes('const decided = useRef(false);')
+    && /useEffect\(\(\) => \{\s*\n\s*if \(!decided\.current\) setHidden\(defaultHidden === true\);\s*\n\s*\}, \[defaultHidden\]\);/.test(bitsSrc)
+    && /decided\.current = true; setHidden\(v === 'hidden'\)/.test(bitsSrc)
+    && /const set = \(next: boolean\) => \{\s*\n\s*decided\.current = true;/.test(bitsSrc),
+  'an explainer keeps following defaultHidden until a stored choice or a click decides it, and never re-folds one the reader has opened');
+
+  // The general form of the check above. Asking for an event and then drawing
+  // it as its own lower-cased identifier is how "postmodelswitch" would have
+  // reached a screen; this fails the moment a new name is added to the settings
+  // file without a word for it.
+  const asked = hooks.hookEventsFor('2.1.263 (Claude Code)');
+  const undrawn = asked.filter((e) => !timelineSrc.includes(`case '${e}':`));
+  check(asked.length >= 24 && undrawn.length === 0,
+    'every hook event Wanigan asks a current CLI for has a word and a glyph in the Timeline, so none of them reaches the operator as a raw identifier',
+    JSON.stringify({ asked: asked.length, undrawn }));
 
   // The shell seeds its project list empty and surfaces a failed read as a banner, so `length === 0`
   // was two different facts and this pane printed only one of them.
