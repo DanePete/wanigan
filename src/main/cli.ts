@@ -33,7 +33,7 @@ const OK = 0;
 const FAILED = 1;
 const USAGE = 2;
 
-const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'learn-probe', 'learn-phrase', 'help'] as const;
+const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'learn-probe', 'learn-phrase', 'learn-sweep', 'help'] as const;
 type Command = (typeof COMMANDS)[number];
 
 // Scout rows are created only by the fixed weekly schedule. Keeping this
@@ -374,6 +374,8 @@ function cmdHelp(): number {
   learn-phrase [--limit N] [--enable]
                                phrase pending nominations now instead of
                                waiting for the five-minute pass
+  learn-sweep [--apply]        count, or clear, the pending nominations a
+                               repeated success can never resolve
   help                         this
 
 Runs against the same database the app uses, so anything queued here is
@@ -512,6 +514,26 @@ async function cmdLearnPhrase(args: string[]): Promise<number> {
   return outcome.phrased > 0 ? OK : FAILED;
 }
 
+/**
+ * Count, or clear, the inbox rows no decision can resolve. Counting is the
+ * default: a command that empties part of an inbox should have to be asked
+ * twice, and the count is the sentence that makes the second ask informed.
+ */
+async function cmdLearnSweep(args: string[]): Promise<number> {
+  const learning = await import('./learning-service');
+  const n = learning.unactionableCount();
+  if (!args.includes('--apply')) {
+    out(n === 0
+      ? 'No pending nomination is unactionable.'
+      : `${n} pending nomination${n === 1 ? '' : 's'} carry no possible claim.\n`
+        + 'Re-run with --apply to reject them. Their observations stay recorded and queryable.');
+    return OK;
+  }
+  const { swept, failed } = learning.sweepUnactionable();
+  out(`  swept ${swept}${failed ? ` · failed ${failed}` : ''}`);
+  return failed ? FAILED : OK;
+}
+
 /* ── entry ───────────────────────────────────────────────────────────── */
 
 /**
@@ -546,6 +568,7 @@ export async function runCli(argv: string[]): Promise<number> {
       case 'sessions': return cmdSessions(rest);
       case 'learn-probe': return await cmdLearnProbe(rest);
       case 'learn-phrase': return await cmdLearnPhrase(rest);
+      case 'learn-sweep': return await cmdLearnSweep(rest);
     }
     return USAGE;
   } catch (e) {

@@ -584,6 +584,12 @@ const api = {
     modelAssistWithdraw: () => call<void>('learning:modelAssistWithdraw'),
     phrase: (projectId?: string | null, limit?: number) =>
       call<LearningPhrasingOutcome>('learning:phrase', projectId, limit),
+    // The inbox sweep: a count first, so the button can say how many rows it
+    // would clear before it clears them.
+    unactionableCount: (projectId?: string | null) =>
+      call<number>('learning:unactionableCount', projectId),
+    sweepUnactionable: (projectId?: string | null) =>
+      call<{ swept: number; failed: number }>('learning:sweepUnactionable', projectId),
     signals: (filter?: {
       projectId?: string | null; providerId?: string | null; sessionId?: string | null;
       kinds?: string[]; processed?: boolean; limit?: number;

@@ -867,6 +867,7 @@ export function consolidate(
   let woken = 0;
   let failedGroups = 0;
   let boundaries = 0;
+  let claimless = 0;
   for (const cluster of clusterSignals(signals)) {
     const signalIds = cluster.signals.map((signal) => signal.id);
     // A snoozed candidate is a person's "not now, ask again when there is more".
@@ -913,6 +914,23 @@ export function consolidate(
       if (!template && isBoundaryOnly(cluster)) {
         processed += markSignalsProcessed(signalIds);
         boundaries++;
+        continue;
+      }
+      // A cluster with facets but no possible claim is the other half of the
+      // same problem, and it is by far the larger half. Measured on a real
+      // database: 42 of 66 pending candidates were nominations, every one of
+      // them a `tool-success` repetition -- "Unexplained repetition: read",
+      // six times over -- which no person and no model can author into
+      // knowledge. Nominating them fills the inbox with rows whose only
+      // possible outcome is dismissal, and an inbox nobody can empty is one
+      // nobody reads.
+      //
+      // Consumed, not lost, exactly as a boundary is: the signals stay stored
+      // and queryable, they just stop occupying the window and stop demanding
+      // a decision nobody can make.
+      if (!template && !claimPossible(cluster.signals)) {
+        processed += markSignalsProcessed(signalIds);
+        claimless++;
         continue;
       }
       const classification = classifySignal(first);
@@ -967,6 +985,9 @@ export function consolidate(
   if (boundaries > 0) {
     console.log(`[wanigan] ${boundaries} consolidation cluster(s) repeated a session or gate boundary and nothing else; their signals were marked processed`);
   }
+  if (claimless > 0) {
+    console.log(`[wanigan] ${claimless} consolidation cluster(s) repeated ordinary successful work and carried no claim; their signals were marked processed rather than nominated`);
+  }
   if (woken > 0) {
     console.log(`[wanigan] ${woken} snoozed candidate(s) woke into review: their pattern was observed again in a new independent task`);
   }
@@ -985,6 +1006,59 @@ export function consolidate(
   }
   if (candidates > 0 || autoApplied > 0 || woken > 0) emitLearningChanged();
   return { ran: true, processed, candidates, autoApplied, woken };
+}
+
+/**
+ * The pending nominations no decision can resolve.
+ *
+ * `claimPossible` now stops these being created, but a database that has been
+ * recording for a while is already full of them -- 42 of 66 pending rows on the
+ * one this was measured against, every one a repeated success. Making those
+ * cheap to clear is the difference between an inbox a person empties and one
+ * they stop opening.
+ *
+ * Deliberately narrow: only rows that are still unauthored nominations, whose
+ * own evidence says no claim was ever possible. A candidate a person has
+ * edited, or one carrying a failure, is never swept -- if there is a judgement
+ * to make, the sweep does not make it.
+ */
+function unactionableNominations(projectId?: string | null): KnowledgeCandidate[] {
+  return candidates({ projectId, status: 'pending' }).filter((candidate) => {
+    if (!isUnauthoredNomination(candidate)) return false;
+    const signals = candidate.signalIds
+      .map((id) => getSignal(id))
+      .filter((value): value is LearningSignal => !!value);
+    // No evidence left is not the same as no claim possible: an aged-out
+    // candidate is a judgement call, so it stays for a person.
+    return signals.length > 0 && !claimPossible(signals);
+  });
+}
+
+export function unactionableCount(projectId?: string | null): number {
+  return unactionableNominations(projectId).length;
+}
+
+/**
+ * Rejects every one of them in a single action, with a reason on each row so a
+ * later reader can tell a swept nomination from one a person judged.
+ */
+export function sweepUnactionable(projectId?: string | null): { swept: number; failed: number } {
+  const rows = unactionableNominations(projectId);
+  let swept = 0;
+  let failed = 0;
+  for (const candidate of rows) {
+    try {
+      reviewCandidate(candidate.id, 'reject',
+        'Swept: a repeated success carries no claim, so no review of it could reach one. '
+        + 'Its observations remain recorded and queryable.');
+      swept++;
+    } catch (error) {
+      failed++;
+      console.warn(`[wanigan] could not sweep candidate ${candidate.id}:`, error);
+    }
+  }
+  if (swept > 0) emitLearningChanged();
+  return { swept, failed };
 }
 
 export type PhrasingOutcome = LearningPhrasingOutcome;
@@ -1010,6 +1084,25 @@ export function factsFor(signals: LearningSignal[]): modelAssist.ClusterFacts {
     observations: signals.length,
     independentTasks: independentTasks(signals),
   };
+}
+
+/**
+ * Whether a repetition could carry a claim at all.
+ *
+ * Something failed, was denied, or carries an error class -- otherwise what
+ * repeated is ordinary work. "The Read tool succeeded 31 times across 2
+ * independent tasks" is telemetry, and neither a model nor a person can turn a
+ * success counter into a lesson without inventing one.
+ *
+ * One predicate, two consumers, deliberately: it decides both what Wanigan will
+ * pay a model to phrase and what it will interrupt a person to review. Those
+ * should never be able to drift apart -- an inbox row nobody can action is the
+ * same defect as a billed call nobody can use.
+ */
+export function claimPossible(signals: LearningSignal[]): boolean {
+  if (!signals.length) return false;
+  return !!facetsOf(signals[0]).facets.errorClass
+    || signals.some((signal) => FAILURE_SIGNAL_KINDS.has(String(signal.kind)));
 }
 
 export type PhrasingEligibility =
@@ -1069,10 +1162,7 @@ export function phrasingEligibility(signals: LearningSignal[]): PhrasingEligibil
     }).eligible)) {
     return { ok: false, reason: 'semantic-opt-out' };
   }
-  const errorClass = facetsOf(first).facets.errorClass;
-  const claimPossible = !!errorClass
-    || signals.some((signal) => FAILURE_SIGNAL_KINDS.has(String(signal.kind)));
-  return claimPossible ? { ok: true } : { ok: false, reason: 'no-claim-possible' };
+  return claimPossible(signals) ? { ok: true } : { ok: false, reason: 'no-claim-possible' };
 }
 
 /**

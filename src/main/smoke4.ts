@@ -318,6 +318,42 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
       check(!mixed.ok && mixed.reason === 'mixed-attribution',
         'a cluster whose signals disagree about provider or backend is refused outright rather than routed to whichever one happened to be first',
         mixed);
+
+      // The same predicate governs what a person is interrupted for. An inbox
+      // row nobody can action is the same defect as a billed call nobody can
+      // use, so they must not be able to drift apart.
+      const claimless = createCandidate({
+        targetKind: 'memory', scope: 'personal', providerId: first.providerId,
+        title: `Unexplained repetition: mooncalf read ${tag}`,
+        proposedText: `NEEDS AUTHORING — Observed 2 times across 2 independent tasks ${tag}.`,
+        rationale: 'Rule-derived from repeated observations. No template matched.',
+        confidence: 0.5, signalIds: [first.id, second.id],
+      });
+      const authored = createCandidate({
+        targetKind: 'memory', scope: 'personal', providerId: first.providerId,
+        title: `A person wrote this one ${tag}`,
+        proposedText: 'This sentence was authored, so no sweep may touch it.',
+        rationale: 'Taught explicitly.', confidence: 0.9, signalIds: [first.id, second.id],
+      });
+      const actionable = createCandidate({
+        targetKind: 'memory', scope: 'personal', providerId: 'orbit.profile-v9',
+        title: `Unexplained repetition: Edit denied ${tag}`,
+        proposedText: `NEEDS AUTHORING — Observed 2 times across 2 independent tasks ${tag}.`,
+        rationale: 'Rule-derived from repeated observations. No template matched.',
+        confidence: 0.5, signalIds: [failA.id, failB.id],
+      });
+      const sweepable = compound.unactionableCount();
+      check(sweepable >= 1, 'the sweep counts the nominations a repeated success can never resolve', sweepable);
+      const { swept } = compound.sweepUnactionable();
+      check(swept >= 1, 'and clears them in one action', swept);
+      check(getCandidate(claimless.id)?.status === 'rejected',
+        'a repeated-success nomination is swept');
+      check(/^Swept:/.test(getCandidate(claimless.id)?.reviewerNote ?? ''),
+        'and keeps a reason on the row, so a swept nomination is never mistaken for one a person judged');
+      check(getCandidate(authored.id)?.status === 'pending',
+        'a candidate a person authored is never swept, whatever its evidence looks like');
+      check(getCandidate(actionable.id)?.status === 'pending',
+        'and a nomination carrying a real failure stays for a person: the sweep clears what cannot be decided, not what has not been');
     } finally {
       setSetting('learning_model_assistance', priorSwitch);
       setSetting('learning_model_assist_consent', priorConsent);
@@ -912,10 +948,15 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
       JSON.stringify({ decided: afterAging.reviewed, was: afterUndefer.reviewed, created: afterAging.candidatesCreated }));
 
     say('── compound · sweep hardening');
+    // Failure-shaped on purpose. Consolidation no longer nominates a repeated
+    // success -- there is no claim in one, and a nomination nobody can action
+    // is inbox noise -- so a fixture that wants to reach a candidate has to
+    // carry what a candidate can be made of.
     const mkHardSig = (summary: string, session: string, task: string, at: number) => recordSignal({
-      kind: 'tool-success', providerId: 'claude', backendId: 'anthropic',
+      kind: 'tool-failure', providerId: 'claude', backendId: 'anthropic',
       sessionId: session, taskHash: task, projectId: project.id, projectPath: projectRoot,
       summary, semanticEligible: false, createdAt: at,
+      detail: { outcome: 'failed', errorClass: 'lint' },
     });
     const hardBase = Date.now() - 60_000;
     const ancient = recordSignal({

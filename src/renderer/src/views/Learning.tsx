@@ -1454,6 +1454,19 @@ function Inbox({ candidates, signals, providers, busy, act, initialStatus, read,
 }) {
   const [status, setStatus] = useState(initialStatus?.status ?? 'open');
   useEffect(() => { if (initialStatus) setStatus(initialStatus.status); }, [initialStatus]);
+
+  // The rows no decision can resolve. Counted rather than assumed, and offered
+  // as one action: on the database this was measured against, 42 of 66 pending
+  // proposals were repeated successes — "Unexplained repetition: read", six
+  // times over — whose only possible outcome was dismissal. Clearing them one
+  // by one is what turns an inbox into something a person stops opening.
+  const [unactionable, setUnactionable] = useState(0);
+  const countUnactionable = useCallback(() => {
+    void window.wanigan.learning.unactionableCount()
+      .then(setUnactionable)
+      .catch(() => setUnactionable(0));
+  }, []);
+  useEffect(() => { countUnactionable(); }, [countUnactionable, candidates]);
   const visible = candidates.filter((c) => status === 'all'
     || (status === 'open' ? ['pending', 'approved', 'snoozed', 'failed'].includes(c.status)
       : status === 'decided' ? DECIDED_STATUSES.includes(c.status)
@@ -1524,6 +1537,20 @@ function Inbox({ candidates, signals, providers, busy, act, initialStatus, read,
             : read.phase === 'error' ? '— proposals, not read' : '… reading proposals'}
         </strong></div>
         {historyLine && <small className="inbox-history-line" title="Counted from stored candidate decisions. A snoozed proposal is not one.">{historyLine}</small>}
+        {unactionable > 0 && (
+          <small className="inbox-history-line">
+            {unactionable} unauthored nomination{pl(unactionable)} record a repeated success, so no
+            review of {unactionable === 1 ? 'it' : 'them'} could reach a claim.{' '}
+            <button className="learning-link" disabled={!!busy} onClick={() => {
+              void act('inbox-sweep',
+                () => window.wanigan.learning.sweepUnactionable(),
+                (result) => {
+                  const swept = (result as { swept: number }).swept;
+                  return `${swept} proposal${pl(swept)} cleared. Their observations stay recorded and queryable.`;
+                }).then(countUnactionable);
+            }}>Clear {unactionable === 1 ? 'it' : 'them'}</button>
+          </small>
+        )}
         <label><span className="label">Status</span><select className="field" value={status} onChange={(e) => setStatus(e.target.value)}><option value="open">Needs a decision</option><option value="decided">Decided</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="snoozed">Snoozed</option><option value="rejected">Rejected</option><option value="promoted">Promoted</option><option value="applied">Applied</option><option value="all">All</option></select></label>
       </section>
       <Define term="Candidate">

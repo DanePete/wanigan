@@ -247,6 +247,11 @@ const STUB = `
     // a truthy Proxy and the governor card drew itself switched on beside its
     // own "nothing has been approved" sentence. A boolean a card branches on is
     // the same trap as a scalar it formats.
+    // The inbox sweep row renders only when the count is above zero, and
+    // anything() answers a bare number with a Proxy whose toPrimitive is 0 --
+    // so without this the affordance is invisible to every sweep. Same class
+    // of trap as the booleans above.
+    'learning.unactionableCount': 7,
     'learning.settings': {
       enabled: true, contentMode: 'local-same-provider', automation: 'hybrid',
       allowModelAssistance: false, monthlyBudgetUsd: 0, briefingMaxTokens: 1200,

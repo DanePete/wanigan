@@ -2398,6 +2398,10 @@ function registerIpc() {
   handle('learning:modelAssistWithdraw', () => learning.withdrawModelAssistConsent());
   handle('learning:phrase', (projectId?: string | null, limit?: number) =>
     learning.phrasePendingNominations({ projectId, limit }));
+  handle('learning:unactionableCount', (projectId?: string | null) =>
+    learning.unactionableCount(projectId));
+  handle('learning:sweepUnactionable', (projectId?: string | null) =>
+    learning.sweepUnactionable(projectId));
   handle('learning:signals', (filter?: Parameters<typeof learning.listSignals>[0]) =>
     learning.listSignals(filter));
   handle('learning:candidates', (filter?: Parameters<typeof learning.candidates>[0]) =>
