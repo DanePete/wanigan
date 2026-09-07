@@ -444,13 +444,37 @@ export default function Settings({
   const [showWorkspace, setShowWorkspace] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msgState, setMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
-  const [cap, setCap] = useState('1.00');
+  /**
+   * The saved spend cap, or null while it is unread. Never a number until one
+   * has been observed.
+   *
+   * Seeded with '1.00' this held a figure nobody set: a settings read that had
+   * not landed, or had failed into a bare catch, drew $1.00 in the box, and
+   * Save then wrote that invention over the operator's real cap — including a
+   * deliberate 0, which is how the cap is switched off. Absence must not render
+   * as a plausible number, and it must not be saveable.
+   */
+  const [cap, setCap] = useState<string | null>(null);
+  /** Why the cap could not be read. Set only by a rejected read. */
+  const [capError, setCapError] = useState<string | null>(null);
+  /**
+   * `Number('')` is 0 and `Number('abc') || 0` is 0, and 0 is not an error
+   * value here — it is the value that disables the cap. `Number(cap) || 0`
+   * therefore turned a cleared box and a typo into a deliberate-looking "cap
+   * off". Save is refused instead of guessing which was meant.
+   */
+  const capNumber = cap === null || cap.trim() === '' ? NaN : Number(cap);
+  const capUsable = Number.isFinite(capNumber) && capNumber >= 0;
   const [glmKey, setGlmKey] = useState('');
   const [glmStatus, setGlmStatus] = useState<ProviderKeyStatus | null>(null);
+  /** Why the Z.ai key status could not be read; null means the read stands. */
+  const [glmStatusError, setGlmStatusError] = useState<string | null>(null);
   const [glmBusy, setGlmBusy] = useState(false);
   const [glmMsg, setGlmMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [deepseekKey, setDeepseekKey] = useState('');
   const [deepseekStatus, setDeepseekStatus] = useState<ProviderKeyStatus | null>(null);
+  /** Why the DeepSeek key status could not be read; null means the read stands. */
+  const [deepseekStatusError, setDeepseekStatusError] = useState<string | null>(null);
   const [deepseekBusy, setDeepseekBusy] = useState(false);
   const [deepseekMsg, setDeepseekMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>(savedSettingsTab);
@@ -473,12 +497,27 @@ export default function Settings({
       tone: 'error',
       text: `Wanigan could not read whether a key is installed: ${msg(e)}. What this panel shows below is not an answer about your key.`,
     }));
-    void window.wanigan.key.provider('glm').then(setGlmStatus).catch(() => {});
-    void window.wanigan.key.provider('deepseek').then(setDeepseekStatus).catch(() => {});
-    window.wanigan.settings.get().then((s) => setCap(s.spendCapUsd.toFixed(2))).catch(() => {});
+    // The same bug class the comment above describes, three more times. A bare
+    // catch left glmStatus and deepseekStatus at null, which the panels below
+    // render as "No … key stored" — Wanigan asserting an answer it never got —
+    // and left `cap` sitting on a seed value the operator never chose. Each
+    // read now records why it failed, and each surface renders the failure
+    // rather than a confident absence.
+    void window.wanigan.key.provider('glm')
+      .then((st) => { setGlmStatus(st); setGlmStatusError(null); })
+      .catch((e) => setGlmStatusError(msg(e)));
+    void window.wanigan.key.provider('deepseek')
+      .then((st) => { setDeepseekStatus(st); setDeepseekStatusError(null); })
+      .catch((e) => setDeepseekStatusError(msg(e)));
+    void window.wanigan.settings.get()
+      .then((s) => { setCap(s.spendCapUsd.toFixed(2)); setCapError(null); })
+      .catch((e) => setCapError(msg(e)));
   }, []);
 
-  const loadGlm = () => window.wanigan.key.provider('glm').then(setGlmStatus);
+  // Clears the error on success so a retry that works stops reporting a failure
+  // that is over. Keeps rejecting: saveGlm() awaits it and reports through glmMsg.
+  const loadGlm = () => window.wanigan.key.provider('glm')
+    .then((st) => { setGlmStatus(st); setGlmStatusError(null); });
   async function saveGlm() {
     setGlmBusy(true); setGlmMsg(null);
     try {
@@ -503,7 +542,8 @@ export default function Settings({
     finally { setGlmBusy(false); }
   }
 
-  const loadDeepseek = () => window.wanigan.key.provider('deepseek').then(setDeepseekStatus);
+  const loadDeepseek = () => window.wanigan.key.provider('deepseek')
+    .then((st) => { setDeepseekStatus(st); setDeepseekStatusError(null); });
   async function saveDeepseek() {
     setDeepseekBusy(true); setDeepseekMsg(null);
     try {
@@ -780,7 +820,15 @@ export default function Settings({
 
             <Section title="GLM Coding Plan"
                      hint="Runs GLM through the installed Claude Code runtime, with the Z.ai Coding Plan endpoint and Wanigan’s normal sessions, attachments, code review, worktrees, MCP configuration and headless runs.">
-              {glmStatus?.present ? (
+              {/* Four states, not two. "No key stored" is a real answer about
+                  your Keychain; a read that never landed or that threw is not,
+                  and drawing the second as the first is how this panel offered
+                  "paste a key" to someone who already had one. */}
+              {glmStatusError ? (
+                <Note tone="error">Wanigan could not read whether a Z.ai Coding Plan key is installed: {glmStatusError}. This is not an answer about your key — it is a report that Wanigan could not ask.</Note>
+              ) : !glmStatus ? (
+                <Reading what="the stored Z.ai Coding Plan key" />
+              ) : glmStatus.present ? (
                 <div className="set-key-status">
                   <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>Coding Plan key installed</span>
                   <span className="mono faint">{glmStatus.fingerprint}</span>
@@ -788,7 +836,10 @@ export default function Settings({
                   <button className="btn btn-danger" onClick={() => void clearGlm()} disabled={glmBusy}>Remove</button>
                 </div>
               ) : <Note tone="warn">No Z.ai Coding Plan key stored. GLM sessions cannot authenticate until you add one.</Note>}
-              <label className="label" htmlFor="glm-api-key" style={{ marginTop: 11 }}>{glmStatus?.present ? 'Replace Z.ai key' : 'Paste Z.ai Coding Plan API key'}</label>
+              {/* Never empty: this label is the input's accessible name. "Paste"
+                  is dropped while the status is unread, because it implies an
+                  answer about the stored key that has not come back. */}
+              <label className="label" htmlFor="glm-api-key" style={{ marginTop: 11 }}>{glmStatus?.present ? 'Replace Z.ai key' : glmStatus ? 'Paste Z.ai Coding Plan API key' : 'Z.ai Coding Plan API key'}</label>
               <div className="set-field-action">
                 <input id="glm-api-key" className="field mono" type="password" placeholder="Z.ai API key" value={glmKey} autoComplete="off" spellCheck={false}
                        onChange={(e) => setGlmKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && glmKey.trim()) void saveGlm(); }} />
@@ -802,7 +853,11 @@ export default function Settings({
 
             <Section title="DeepSeek"
                      hint="Runs DeepSeek through the installed Claude Code runtime using DeepSeek’s Anthropic-compatible endpoint. It gets the same Wanigan terminal, review, policy, worktree and headless-run controls as Claude and GLM.">
-              {deepseekStatus?.present ? (
+              {deepseekStatusError ? (
+                <Note tone="error">Wanigan could not read whether a DeepSeek key is installed: {deepseekStatusError}. This is not an answer about your key — it is a report that Wanigan could not ask.</Note>
+              ) : !deepseekStatus ? (
+                <Reading what="the stored DeepSeek key" />
+              ) : deepseekStatus.present ? (
                 <div className="set-key-status">
                   <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>DeepSeek key installed</span>
                   <span className="mono faint">{deepseekStatus.fingerprint}</span>
@@ -810,7 +865,7 @@ export default function Settings({
                   <button className="btn btn-danger" onClick={() => void clearDeepseek()} disabled={deepseekBusy}>Remove</button>
                 </div>
               ) : <Note tone="warn">No DeepSeek key stored. DeepSeek sessions cannot authenticate until you add one.</Note>}
-              <label className="label" htmlFor="deepseek-api-key" style={{ marginTop: 11 }}>{deepseekStatus?.present ? 'Replace DeepSeek key' : 'Paste DeepSeek API key'}</label>
+              <label className="label" htmlFor="deepseek-api-key" style={{ marginTop: 11 }}>{deepseekStatus?.present ? 'Replace DeepSeek key' : deepseekStatus ? 'Paste DeepSeek API key' : 'DeepSeek API key'}</label>
               <div className="set-field-action">
                 <input id="deepseek-api-key" className="field mono" type="password" placeholder="DeepSeek API key" value={deepseekKey} autoComplete="off" spellCheck={false}
                        onChange={(e) => setDeepseekKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && deepseekKey.trim()) void saveDeepseek(); }} />
@@ -851,16 +906,40 @@ export default function Settings({
           <SettingsTabPanel tab={settingsTabInfo('automation')} active={settingsTab === 'automation'}>
             <Section title="Spending"
                      hint="A batch cannot be un-submitted. The cap is checked against the estimate at submit time — the last moment anything is preventable.">
-              <label className="label" htmlFor="spend-cap">Maximum estimated cost per run (USD)</label>
-              <div className="set-field-action" style={{ maxWidth: 320 }}>
-                <input id="spend-cap" className="field mono" type="number" min={0} step="0.25" value={cap}
-                       onChange={(e) => setCap(e.target.value)} />
-                <button className="btn" onClick={async () => {
-                  const v = await window.wanigan.settings.setSpendCap(Number(cap) || 0);
-                  setCap(v.toFixed(2));
-                  setMsg({ tone: 'ok', text: v > 0 ? `Runs estimated above $${v.toFixed(2)} will be blocked.` : 'Spend cap disabled.' });
-                }}>Save</button>
-              </div>
+              {/* The box does not exist until a real cap has been observed, so
+                  Save cannot write a number this panel invented over the one
+                  the operator set — including a deliberate 0, which is how the
+                  cap is switched off and which no placeholder can be told
+                  apart from "unread". */}
+              {capError ? (
+                <Note tone="error">
+                  Wanigan could not read the saved spend cap: {capError}. The field is withheld rather than
+                  filled with a guess, because saving a number this panel invented would overwrite the cap
+                  you set. Reopen Settings to try the read again.
+                </Note>
+              ) : cap === null ? (
+                <Reading what="the saved spend cap" />
+              ) : (
+                <>
+                  <label className="label" htmlFor="spend-cap">Maximum estimated cost per run (USD)</label>
+                  <div className="set-field-action" style={{ maxWidth: 320 }}>
+                    <input id="spend-cap" className="field mono" type="number" min={0} step="0.25" value={cap}
+                           onChange={(e) => setCap(e.target.value)} />
+                    <button className="btn" disabled={!capUsable}
+                            title={capUsable ? undefined : 'Enter a cap of 0 or more. 0 disables the cap.'}
+                            onClick={async () => {
+                      if (!capUsable) return;
+                      try {
+                        const v = await window.wanigan.settings.setSpendCap(capNumber);
+                        setCap(v.toFixed(2));
+                        setMsg({ tone: 'ok', text: v > 0 ? `Runs estimated above $${v.toFixed(2)} will be blocked.` : 'Spend cap disabled.' });
+                      } catch (e) {
+                        setMsg({ tone: 'error', text: `Wanigan could not save the spend cap: ${msg(e)}. The saved cap is unchanged.` });
+                      }
+                    }}>Save</button>
+                  </div>
+                </>
+              )}
               <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 5, lineHeight: 1.45 }}>
                 0 disables the cap. The estimate is a low-end figure that assumes caching engages, so
                 leave headroom — the builder shows the upper bound beside it.

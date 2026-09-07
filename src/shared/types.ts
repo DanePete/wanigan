@@ -473,7 +473,11 @@ export const EMPTY_USAGE: Omit<SessionUsage, 'sessionId'> = {
   activeSeconds: 0, requests: 0, errors: 0, refusals: 0, lastAt: null, models: [],
 };
 
-/** One `claude_code.api_request` event — the per-turn cost record. */
+/**
+ * One api_request log event — the per-turn cost record. The CLI spells the name
+ * `api_request` in the record's `event.name` attribute and
+ * `claude_code.api_request` in its body; otel.ts accepts both.
+ */
 export type ApiEvent = {
   sessionId: string;
   at: number;

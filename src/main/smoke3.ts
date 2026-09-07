@@ -5891,6 +5891,35 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && settingsSrc.includes('e.target.value || null'),
   'a project can be pinned to a Claude account from Settings › Projects, cleared back to the default, and the picker is hidden when there is only one account');
 
+  // The same bug class as pinErr, three panels further up, and it was worse:
+  // the spend cap was seeded with a literal '1.00' and its read swallowed its
+  // own rejection, so an unread cap rendered as a real one and Save wrote that
+  // invention over the stored value — including a deliberate 0, which is how
+  // the cap is switched off. `Number(cap) || 0` mapped a cleared or mistyped
+  // box onto that same 0, so a typo read as a decision.
+  check(settingsSrc.includes("const [cap, setCap] = useState<string | null>(null)")
+    && !settingsSrc.includes("useState('1.00')")
+    && settingsSrc.includes('const [capError, setCapError]')
+    && settingsSrc.includes('const capUsable = Number.isFinite(capNumber) && capNumber >= 0')
+    // The old coercion, matched as code rather than as text: the sentence
+    // above capNumber explains why `Number(cap) || 0` was wrong, and a check
+    // that forbids the string anywhere would forbid its own explanation.
+    && !settingsSrc.includes('setSpendCap(Number(cap) || 0)')
+    && settingsSrc.includes('setSpendCap(capNumber)')
+    && settingsSrc.includes('disabled={!capUsable}')
+    && settingsSrc.includes('<Reading what="the saved spend cap" />'),
+    'an unread spend cap renders as unread rather than as $1.00, and there is no Save button to press until a real cap has come back from main');
+
+  // A swallowed key-status read left the panel rendering "No … key stored",
+  // which is a real and different answer — and one the operator acts on by
+  // pasting a second key over a first that was there all along.
+  check(!/key\.provider\('(glm|deepseek)'\)\.then\(set\w+\)\.catch\(\(\) => \{\}\)/.test(settingsSrc)
+    && settingsSrc.includes('const [glmStatusError, setGlmStatusError]')
+    && settingsSrc.includes('const [deepseekStatusError, setDeepseekStatusError]')
+    && settingsSrc.includes('<Reading what="the stored Z.ai Coding Plan key" />')
+    && settingsSrc.includes('<Reading what="the stored DeepSeek key" />'),
+    'a provider key status that could not be read says so, instead of rendering as "no key stored"');
+
   // Fleet's second tile said "Needs you" and counted only the agents blocked on
   // a permission prompt, while the rail's "n need you" mark counts those plus
   // the failed and the finished. Both numbers were right and they were on

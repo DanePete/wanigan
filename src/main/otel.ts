@@ -52,11 +52,36 @@ const TRACKED_METRICS: Record<string, string[]> = {
   'claude_code.session.count': [],
 };
 
+/**
+ * The three log events Wanigan banks, keyed by the *bare* event name — the
+ * spelling the record's `event.name` attribute carries. Not
+ * `claude_code.api_request`: that is the spelling the record *body* carries,
+ * and keying only on it is what emptied session_api_events on every install
+ * while session_metrics filled normally.
+ *
+ * Read out of the 2.1.263 binary rather than the docs. Claude Code has one log
+ * emitter and it builds every record as
+ *
+ *   { body: `claude_code.${e}`, attributes: { 'event.name': e, ... } }
+ *
+ * called as bo('api_request', ...), bo('api_error', ...),
+ * bo('api_refusal', ...). So one record spells its own name two different ways,
+ * and never sets the OTLP `eventName` field at all. logKindOf() accepts every
+ * one of the three, so a build that changes which it uses cannot empty this
+ * table again.
+ *
+ * `claude_code.llm_request` and `claude_code.tool` are NOT candidates: they are
+ * tracing span names in the CLAUDE_CODE_ENHANCED_TELEMETRY_BETA module, and
+ * otelEnv() pins OTEL_TRACES_EXPORTER to 'none'.
+ */
 const LOG_KINDS: Record<string, ApiEvent['kind']> = {
-  'claude_code.api_request': 'request',
-  'claude_code.api_error': 'error',
-  'claude_code.api_refusal': 'refusal',
+  api_request: 'request',
+  api_error: 'error',
+  api_refusal: 'refusal',
 };
+
+/** What the record body prepends and the `event.name` attribute does not. */
+const LOG_NAME_PREFIX = 'claude_code.';
 
 /* ── server ──────────────────────────────────────────────────────────── */
 
@@ -446,6 +471,59 @@ type EventDelta = {
   cacheRead: number; cacheWrite: number; effort: string | null; detail: string | null;
 };
 
+/**
+ * The name a log record calls itself, in the order the spellings are worth
+ * trusting: the OTLP `eventName` field first (first-class, and what a later SDK
+ * build would set), then the `event.name` attribute, then the body.
+ *
+ * All three, because Claude Code writes the name twice in two spellings and
+ * reading only one of them is the bug this replaces.
+ */
+function eventNameOf(rec: Record<string, unknown>, attrs: Record<string, string>): string {
+  const raw = (typeof rec.eventName === 'string' ? rec.eventName : '')
+    || attrs['event.name']
+    || scalarOf(rec.body)
+    || '';
+  return raw.trim();
+}
+
+/** Accepts a name spelled bare or `claude_code.`-prefixed; both arrive. */
+function logKindOf(name: string): ApiEvent['kind'] | undefined {
+  const bare = name.startsWith(LOG_NAME_PREFIX) ? name.slice(LOG_NAME_PREFIX.length) : name;
+  return LOG_KINDS[bare];
+}
+
+/**
+ * Log event names that arrived with no mapping, named once each.
+ *
+ * The unmapped-name guard is the one failure this receiver cannot feel: the
+ * export is answered 200 either way, metrics keep accruing, and the only
+ * symptom is an api-events table that never grows. That is exactly how the
+ * prefixed-key bug survived to a real install with 654 metric rows and zero
+ * event rows. A rename now costs a console line and a smoke-visible entry
+ * instead of a silently empty timeline.
+ *
+ * Bounded, because the key comes from outside this process: an exporter that
+ * invents a name per record must not be able to grow this set without limit.
+ */
+const UNMAPPED_LOG_CAP = 32;
+const unmappedLogNames = new Set<string>();
+
+function noteUnmappedEvent(name: string): void {
+  const key = name || '(record carried no event name)';
+  if (unmappedLogNames.has(key) || unmappedLogNames.size >= UNMAPPED_LOG_CAP) return;
+  unmappedLogNames.add(key);
+  console.warn(`[wanigan] telemetry log record dropped, no mapping for event: ${key}`);
+}
+
+/**
+ * Event names seen on a dropped log record, first seen first. Empty is the
+ * healthy state; anything in here is a name the mapping above has not learned.
+ */
+export function unmappedLogEvents(): string[] {
+  return [...unmappedLogNames];
+}
+
 function parseLogs(payload: unknown): EventDelta[] {
   const out: EventDelta[] = [];
   if (!isRecord(payload)) return out;
@@ -460,12 +538,14 @@ function parseLogs(payload: unknown): EventDelta[] {
       for (const rec of asArray(sl.logRecords)) {
         if (!isRecord(rec)) continue;
         const a = attrsToObject(rec.attributes);
-        // The event name lives in the body for Claude Code and in an
-        // `event.name` attribute for the OTel events convention. Both are read
-        // so a change of convention does not empty the timeline.
-        const name = a['event.name'] ?? scalarOf(rec.body) ?? '';
-        const kind = LOG_KINDS[name];
-        if (!kind) continue;
+        // Both spellings, and neither by preference. `a['event.name'] ??
+        // scalarOf(rec.body)` looked like it read both, but `??` falls through
+        // only on null/undefined and the attribute is always a non-empty
+        // string — so the body was never reached, and every record missed a map
+        // keyed on the body's spelling.
+        const name = eventNameOf(rec, a);
+        const kind = logKindOf(name);
+        if (!kind) { noteUnmappedEvent(name); continue; }
 
         const at = millisOf(rec.timeUnixNano) ?? millisOf(rec.observedTimeUnixNano) ?? Date.now();
         out.push({

@@ -192,6 +192,68 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   const junk = await post('{"resourceMetrics":"nope"}');
   check(junk.ok, 'malformed telemetry is survived, not thrown');
 
+  // Logs, not just metrics. Claude Code writes an event's name twice on one
+  // record — bare in the `event.name` attribute, `claude_code.`-prefixed in the
+  // body — and the parser read the attribute first while the map was keyed on
+  // the body's spelling. Nothing matched, the receiver kept answering 200, and
+  // session_api_events stayed empty for the life of an install while
+  // session_metrics filled. Both spellings are asserted, separately, because a
+  // fix that reads only one of them is the same bug facing the other way.
+  const logNs = String(Date.now() * 1_000_000);
+  const logRecord = (where: 'attribute' | 'body', name: string) => ({
+    timeUnixNano: logNs,
+    // The attribute case deliberately carries a body the map cannot match, so
+    // it can only pass by reading the attribute — and vice versa.
+    body: { stringValue: where === 'body' ? name : 'claude_code.not_the_name' },
+    attributes: [
+      ...(where === 'attribute' ? [{ key: 'event.name', value: { stringValue: name } }] : []),
+      { key: 'model', value: { stringValue: 'claude-opus-5' } },
+      { key: 'input_tokens', value: { stringValue: '100' } },
+      { key: 'output_tokens', value: { stringValue: '20' } },
+      { key: 'cost_usd', value: { stringValue: '0.5' } },
+      { key: 'duration_ms', value: { stringValue: '1200' } },
+    ],
+  });
+  const postLogs = (records: unknown[]) => fetch(`http://127.0.0.1:${port}/v1/logs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-wanigan-token': tok },
+    body: JSON.stringify({
+      resourceLogs: [{
+        resource: { attributes: [{ key: 'wanigan.session.id', value: { stringValue: SID } }] },
+        scopeLogs: [{ logRecords: records }],
+      }],
+    }),
+  });
+
+  const logsRes = await postLogs([
+    logRecord('attribute', 'api_request'),            // what the CLI puts in event.name
+    logRecord('body', 'claude_code.api_request'),     // what the CLI puts in the body
+    logRecord('attribute', 'api_error'),
+    logRecord('attribute', 'api_refusal'),
+  ]);
+  check(logsRes.ok, 'collector accepted an OTLP logs export');
+
+  const logged = otel.usageFor(SID);
+  check(logged.requests === 2,
+    'both spellings of api_request are banked — the bare name from the event.name attribute and the claude_code.-prefixed one from the record body',
+    logged.requests);
+  check(logged.errors === 1 && logged.refusals === 1,
+    'api_error and api_refusal are banked too', `${logged.errors}/${logged.refusals}`);
+  check(otel.apiEvents(SID, 8).some((e) => e.kind === 'request' && Math.abs(e.costUsd - 0.5) < 1e-9
+      && e.inTokens === 100 && e.outTokens === 20 && e.durationMs === 1200 && e.model === 'claude-opus-5'),
+    'a banked request carries the cost, token, duration and model attributes off the record',
+    JSON.stringify(otel.apiEvents(SID, 1)));
+
+  // A dropped record is the failure this receiver cannot feel. It has to leave
+  // a name behind, or the next rename empties the timeline in silence again.
+  check(otel.unmappedLogEvents().length === 0,
+    'nothing the CLI actually emits is landing in the unmapped list',
+    JSON.stringify(otel.unmappedLogEvents()));
+  await postLogs([logRecord('attribute', 'api_renamed_by_a_later_build')]);
+  check(otel.unmappedLogEvents().includes('api_renamed_by_a_later_build'),
+    'a log event with no mapping is recorded by name rather than dropped in silence',
+    JSON.stringify(otel.unmappedLogEvents()));
+
   /* ── phase 2 · the hook bus ────────────────────────────────────────── */
   say('── phase 2 · hook bus');
   const hs = await hooks.startHookServer();
