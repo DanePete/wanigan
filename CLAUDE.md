@@ -102,9 +102,19 @@ project. Treat it as a compact index, not a transcript.
   may inspect content only through the same backend that first processed it,
   and only when the signal opted in. Cross-provider operational counts are fine;
   cross-backend semantic content is not.
-- Model-assisted consolidation is not connected yet. Do not expose an enabled
-  switch, spend a learning budget, or imply that a model ran until consent,
-  provider routing and usage metering are implemented end to end.
+- Model-assisted consolidation is connected, and its three gates are the
+  contract: consent pinned to a profile fingerprint, routing to the backend
+  that produced the signals on a declared protocol, and metering read from
+  recorded runs. A harness that reports no usage is proven unmetered by its own
+  call and refused by name; an unpriced call is recorded as unpriced and never
+  totalled as spend. `learningSettings().allowModelAssistance` is stored intent
+  only -- `learning-service.settings()` ANDs it with those gates, and that is
+  the accessor every surface must read. It phrases nothing but unauthored
+  nominations, and only where a claim can exist.
+- `claimPossible()` decides both what Wanigan will pay a model to phrase and
+  what it will interrupt a person to review. Keep it one predicate: an inbox row
+  nobody can action is the same defect as a billed call nobody can use. A
+  repeated success carries no claim, so it is consumed rather than nominated.
 - Preserve the hybrid automation boundary: only reversible personal `memory`
   with high confidence and at least two independent evidence sources/tasks may
   auto-promote. Project/path artifacts, skills, instructions, rules, gates,
