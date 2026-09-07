@@ -33,7 +33,7 @@ const OK = 0;
 const FAILED = 1;
 const USAGE = 2;
 
-const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'help'] as const;
+const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'learn-probe', 'learn-phrase', 'learn-sweep', 'help'] as const;
 type Command = (typeof COMMANDS)[number];
 
 // Scout rows are created only by the fixed weekly schedule. Keeping this
@@ -367,11 +367,171 @@ function cmdHelp(): number {
   export <runId> <file>        results to .csv or .jsonl (extension decides)
   queue <kind> <label> [json]  queue work: kind is session, headless or batch
   sessions [limit]             recent agent sessions
+  learn-probe <profile> [--approve] [--budget USD] [--model ID]
+                               one real model-assisted phrasing call against
+                               invented facts, to find out whether a profile
+                               reports what it spends
+  learn-phrase [--limit N] [--enable]
+                               phrase pending nominations now instead of
+                               waiting for the five-minute pass
+  learn-sweep [--apply]        count, or clear, the pending nominations a
+                               repeated success can never resolve
   help                         this
 
 Runs against the same database the app uses, so anything queued here is
 waiting in Wanigan the next time you open it.`);
   return OK;
+}
+
+/**
+ * The metering probe, from a terminal.
+ *
+ * Model-assisted phrasing refuses any profile whose harness does not report
+ * usage, and a profile cannot be known to report usage until it has been asked
+ * once. That is the call this makes: one real invocation, billed, against
+ * PROBE_FACTS — invented observations, so nothing about this machine's actual
+ * work is disclosed by finding out.
+ *
+ * It prints the same approval detail the settings screen shows before it will
+ * run, because a call that spends money should never be the first thing a
+ * command does.
+ */
+async function cmdLearnProbe(args: string[]): Promise<number> {
+  const { learningSettings } = await import('./settings');
+  const assist = await import('./learning-model-assist');
+  const providerId = args.find((a) => !a.startsWith('--'));
+  if (!providerId) {
+    err('Usage: learn-probe <profile-id> [--approve] [--budget USD] [--model ID]');
+    const { detectProviders } = await import('./providers');
+    const installed = (await detectProviders()).filter((p) => p.path && p.capabilities.headlessJson);
+    out(installed.length
+      ? `Profiles that declare a non-interactive protocol:\n${installed.map((p) => `  ${p.id}  (${p.label})`).join('\n')}`
+      : 'No installed profile declares a non-interactive protocol.');
+    return USAGE;
+  }
+
+  const modelArg = args.includes('--model') ? args[args.indexOf('--model') + 1] ?? null : null;
+  const preview = assist.consentPreview(providerId, modelArg);
+  if (!preview) {
+    err(`${providerId} is not installed, is disabled, or declares no non-interactive protocol.`);
+    return FAILED;
+  }
+
+  // The CLI has no settings screen, and the budget gate refuses at $0. This is
+  // the same value the governor card writes, validated by the same setter.
+  const budgetArg = args[args.indexOf('--budget') + 1];
+  if (args.includes('--budget')) {
+    const { updateSettings } = await import('./learning-service');
+    updateSettings({ monthlyBudgetUsd: Number(budgetArg) });
+    out(`Monthly learning budget set to $${Number(budgetArg).toFixed(2)}.`);
+  }
+
+  const consent = assist.readConsent();
+  const approving = args.includes('--approve');
+  if (consent?.providerId !== providerId || consent.fingerprint !== preview.fingerprint
+      || consent.model !== preview.model) {
+    out(`${approving ? 'Approving' : 'Approval needed for'} ${preview.label}.
+
+  command        ${[preview.argv[0], ...preview.argv.slice(1)].join(' ')}
+  tools denied   ${preview.deniedTools.join(', ')}
+  fields sent    ${preview.payloadFields.join(', ')}
+  env names      ${preview.envDestinations.join(', ') || 'none'}
+  fingerprint    ${preview.fingerprint}
+  model          ${preview.supportsModel ? preview.model ?? 'harness default' : 'not supported by this profile'}
+  metering       ${preview.metering}
+${approving ? '' : '\nRe-run with --approve to record this approval and make one billed call.'}`);
+    if (!approving) return USAGE;
+    assist.acceptConsent(providerId, preview.model);
+    out('Approval recorded.');
+  }
+
+  out(`Probing ${preview.label}…`);
+  const report = await assist.probe(providerId, learningSettings().monthlyBudgetUsd);
+  if (report.refusal) {
+    err(`Refused (${report.refusal.reason}): ${report.refusal.detail}`);
+    return FAILED;
+  }
+  const run = report.invocation;
+  out(`
+  binary         ${run?.bin ?? '—'}
+  argv           ${run ? run.argv.map((a) => (a.length > 60 ? `${a.slice(0, 57)}…` : a)).join(' ') : '—'}
+  duration       ${run?.durationMs ?? 0} ms
+  failure        ${run?.failure ?? 'none'}
+  harness error  ${run?.harnessError ? 'yes' : 'no'}
+  reply bytes    ${run?.replyBytes ?? 0}
+  cost reported  ${run?.reportedCostUsd === null || run?.reportedCostUsd === undefined
+    ? 'NOTHING REPORTED' : `$${run.reportedCostUsd.toFixed(4)}`}
+  tokens         in ${run?.inTokens ?? 0} · out ${run?.outTokens ?? 0}
+  metering       ${report.meteringBefore} → ${report.meteringAfter}
+  month to date  $${report.monthToDateUsd.toFixed(4)}
+
+  claim title    ${run?.claim?.title ?? '— no usable claim —'}
+  claim text     ${run?.claim?.text ?? '—'}`);
+
+  if (report.meteringAfter === 'unmetered') {
+    err('This profile reports no usage, so its spend cannot be recorded. Model-assisted phrasing stays off for it.');
+    return FAILED;
+  }
+  return report.ok && run?.claim ? OK : FAILED;
+}
+
+/**
+ * Run the phrasing pass now.
+ *
+ * The timer runs it every five minutes; an operator who has just approved a
+ * profile should not have to wait, and one working through a backlog wants to
+ * spend in deliberate batches rather than in the background. `--limit` is the
+ * spend control: each call is billed, and the pass stops early anyway when the
+ * month's recorded spend reaches the budget.
+ */
+async function cmdLearnPhrase(args: string[]): Promise<number> {
+  const learning = await import('./learning-service');
+  // Same reason --budget exists on learn-probe: there is no settings screen
+  // here, and the switch is validated by the same setter the card calls, so an
+  // unapproved or unmetered profile is refused with its own sentence.
+  if (args.includes('--enable')) {
+    try {
+      learning.updateSettings({ allowModelAssistance: true });
+      out('Model-assisted phrasing switched on.');
+    } catch (error) {
+      err(error instanceof Error ? error.message : String(error));
+      return FAILED;
+    }
+  }
+  const limitArg = args.includes('--limit') ? Number(args[args.indexOf('--limit') + 1]) : 5;
+  const before = learning.candidates({ status: 'pending' }).length;
+  const outcome = await learning.phrasePendingNominations({ limit: limitArg });
+  if (!outcome.ran) {
+    err(`Nothing ran: ${outcome.reason}.`);
+    const status = learning.modelAssistStatus();
+    if (!status.routing.ok) err(status.routing.detail);
+    return FAILED;
+  }
+  const status = learning.modelAssistStatus();
+  out(`  phrased ${outcome.phrased} · refused ${outcome.refused} · skipped ${outcome.skipped}`);
+  out(`  pending candidates ${before} · month to date $${status.monthToDateUsd.toFixed(4)}`
+    + `${status.averageCostUsd === null ? '' : ` · averaging $${status.averageCostUsd.toFixed(4)} a call`}`);
+  return outcome.phrased > 0 ? OK : FAILED;
+}
+
+/**
+ * Count, or clear, the inbox rows no decision can resolve. Counting is the
+ * default: a command that empties part of an inbox should have to be asked
+ * twice, and the count is the sentence that makes the second ask informed.
+ */
+async function cmdLearnSweep(args: string[]): Promise<number> {
+  const learning = await import('./learning-service');
+  const n = learning.unactionableCount();
+  if (!args.includes('--apply')) {
+    out(n === 0
+      ? 'No pending nomination is unactionable.'
+      : `${n} pending nomination${n === 1 ? '' : 's'} carry no possible claim.\n`
+        + 'Re-run with --apply to reject them. Their observations stay recorded and queryable.');
+    return OK;
+  }
+  const { swept, failed } = learning.sweepUnactionable();
+  out(`  swept ${swept}${failed ? ` · failed ${failed}` : ''}`);
+  return failed ? FAILED : OK;
 }
 
 /* ── entry ───────────────────────────────────────────────────────────── */
@@ -406,6 +566,9 @@ export async function runCli(argv: string[]): Promise<number> {
       case 'export': return cmdExport(rest);
       case 'queue': return cmdQueue(rest);
       case 'sessions': return cmdSessions(rest);
+      case 'learn-probe': return await cmdLearnProbe(rest);
+      case 'learn-phrase': return await cmdLearnPhrase(rest);
+      case 'learn-sweep': return await cmdLearnSweep(rest);
     }
     return USAGE;
   } catch (e) {

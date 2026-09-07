@@ -2076,6 +2076,103 @@ export type LearningSettings = {
   consolidationEnabled: boolean;
 };
 
+/**
+ * Model-assisted phrasing, as the renderer sees it.
+ *
+ * `LearningSettings.allowModelAssistance` is the *effective* value: the stored
+ * switch ANDed with consent, routing and metering. These types carry the reason
+ * it is off, so the settings screen can name the blocker rather than showing a
+ * dead control. See src/main/learning-model-assist.ts.
+ */
+export type ModelAssistRefusal =
+  | 'switched-off'
+  | 'no-attribution'
+  | 'unknown-provider'
+  | 'profile-changed'
+  | 'no-headless-protocol'
+  | 'not-consented'
+  | 'no-budget-set'
+  | 'budget-exhausted'
+  | 'unmetered-harness';
+
+/** 'unproven' until a first call establishes whether the harness reports usage. */
+export type ModelAssistMetering = 'unproven' | 'metered' | 'unmetered';
+
+export type ModelAssistRouting =
+  | {
+      ok: true;
+      providerId: string;
+      backendId: string | null;
+      label: string;
+      protocol: string;
+      fingerprint: string;
+      metering: ModelAssistMetering;
+    }
+  | { ok: false; reason: ModelAssistRefusal; detail: string };
+
+export type ModelAssistConsent = {
+  providerId: string;
+  backendId: string | null;
+  fingerprint: string;
+  acceptedAt: number;
+  /**
+   * The model the approved profile should phrase with, or null for whatever the
+   * harness defaults to. Phrasing rewrites nine counters into two sentences, and
+   * a profile's default is often its most expensive model — an observed 12.9¢ a
+   * call on Claude Code — so this is the cost lever, and it is part of the
+   * approval because it changes the argv a person agreed to.
+   */
+  model: string | null;
+};
+
+/** Everything a person approves, rendered from the definition that will run. */
+export type ModelAssistConsentPreview = {
+  providerId: string;
+  backendId: string | null;
+  label: string;
+  protocol: string;
+  fingerprint: string;
+  /** The exact argv, with the per-cluster prompt body described rather than shown. */
+  argv: string[];
+  /** Destination names only, never values. */
+  envDestinations: string[];
+  payloadFields: readonly string[];
+  deniedTools: string[];
+  metering: ModelAssistMetering;
+  probeRequired: boolean;
+  /** False when the profile takes no model flag; the picker is hidden then. */
+  supportsModel: boolean;
+  model: string | null;
+};
+
+export type ModelAssistRun = {
+  at: number;
+  providerId: string;
+  status: string;
+  costUsd: number;
+  /** False when the harness returned no usage figures; the cost is not a guess. */
+  costReported: boolean;
+};
+
+export type ModelAssistStatus = {
+  switchedOn: boolean;
+  effective: boolean;
+  consent: ModelAssistConsent | null;
+  routing: ModelAssistRouting;
+  monthToDateUsd: number;
+  runs: ModelAssistRun[];
+  /**
+   * Mean cost of the priced calls on record, or null when none has been priced.
+   * Observed, never modelled: it is the arithmetic mean of what harnesses
+   * actually reported, so it is absent rather than zero before the first one.
+   */
+  averageCostUsd: number | null;
+};
+
+export type LearningPhrasingOutcome =
+  | { ran: false; reason: 'learning-disabled' | 'model-assist-unavailable' }
+  | { ran: true; phrased: number; refused: number; skipped: number };
+
 export type LearningSignal = {
   id: string;
   kind: string;

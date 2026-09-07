@@ -18,7 +18,8 @@ import type {
   BriefingPreview, KnowledgeCandidate,
   KnowledgeEvidence, KnowledgeItem, KnowledgeProjection, KnowledgeRelation, KnowledgeVersion,
   SkillInstallResult,
-  LearningExperiment, LearningOverview, LearningPipelineStats, LearningSettings, LearningSignal,
+  LearningExperiment, LearningOverview, LearningPhrasingOutcome, LearningPipelineStats,
+  LearningSettings, LearningSignal, ModelAssistConsent, ModelAssistConsentPreview, ModelAssistStatus,
   SessionLearningLedger,
   OptimizerDiagnostic, ProviderManifestInspection, ProviderPackInfo, ProviderProfileInfo, SkillDiagnostic,
   TeachWaniganInput,
@@ -572,6 +573,23 @@ const api = {
     // cannot read counts off a pass that never started.
     consolidate: (projectId?: string | null) =>
       call<ConsolidationOutcome>('learning:consolidate', projectId),
+    // Model-assisted phrasing. The status carries the refusal reason so the
+    // settings screen can say why the switch is off rather than showing a
+    // control that silently does nothing.
+    modelAssistStatus: () => call<ModelAssistStatus>('learning:modelAssistStatus'),
+    modelAssistPreview: (providerId: string, model?: string | null) =>
+      call<ModelAssistConsentPreview | null>('learning:modelAssistPreview', providerId, model),
+    modelAssistAccept: (providerId: string, model?: string | null) =>
+      call<ModelAssistConsent>('learning:modelAssistAccept', providerId, model),
+    modelAssistWithdraw: () => call<void>('learning:modelAssistWithdraw'),
+    phrase: (projectId?: string | null, limit?: number) =>
+      call<LearningPhrasingOutcome>('learning:phrase', projectId, limit),
+    // The inbox sweep: a count first, so the button can say how many rows it
+    // would clear before it clears them.
+    unactionableCount: (projectId?: string | null) =>
+      call<number>('learning:unactionableCount', projectId),
+    sweepUnactionable: (projectId?: string | null) =>
+      call<{ swept: number; failed: number }>('learning:sweepUnactionable', projectId),
     signals: (filter?: {
       projectId?: string | null; providerId?: string | null; sessionId?: string | null;
       kinds?: string[]; processed?: boolean; limit?: number;

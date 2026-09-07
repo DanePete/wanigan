@@ -210,9 +210,12 @@ export function learningSettings(): LearningSettings {
     enabled: bool('learning_enabled', true),
     contentMode: content === 'operational-only' ? 'operational-only' : 'local-same-provider',
     automation: automation === 'review-only' ? 'review-only' : 'hybrid',
-    // Reserved for a metered provider-specific consolidator. Until that path
-    // exists end to end, reporting this as enabled would be a false control.
-    allowModelAssistance: false,
+    // The operator's stored intent only. Whether a phrasing call can actually
+    // be made also depends on consent, routing and metering, which live in
+    // learning-model-assist.ts -- and that module reads this one, so it cannot
+    // be consulted from here. learning-service.settings() computes the
+    // effective value, and that is the accessor IPC and the renderer read.
+    allowModelAssistance: bool('learning_model_assistance', false),
     monthlyBudgetUsd: Number.isFinite(budget) && budget >= 0 ? budget : 0,
     briefingMaxTokens: Number.isFinite(briefing)
       ? Math.min(8_000, Math.max(200, Math.round(briefing)))

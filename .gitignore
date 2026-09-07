@@ -6,6 +6,11 @@ release/
 .DS_Store
 *.tsbuildinfo
 /index-*.js
+# The bundled main-process output. package.json main is out/main/index.js; a
+# copy at the root is a stray build artifact, and 1.3MB of one was tracked
+# from "Split the phone surface into modules behind one gated dispatcher"
+# until it was noticed.
+/index.js
 
 # Worktree history rail — local scratch, can reach gigabytes.
 .wt-history-rail/

@@ -853,6 +853,34 @@ function migrateLearning(d: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_consolidation_runs_at
       ON consolidation_runs(at DESC);
 
+    /*
+     * Every model-assisted phrasing call, whether it produced a claim or not.
+     *
+     * This is the metering ledger, so it is written before the switch that
+     * spends against it is allowed on: cost_reported is 0 when the harness
+     * returned no usage numbers, which is how a profile is proven unmetered
+     * rather than assumed priced. Nothing here stores the phrasing itself --
+     * that lands on the candidate, which carries its own provenance.
+     */
+    CREATE TABLE IF NOT EXISTS learning_model_runs (
+      id            TEXT PRIMARY KEY,
+      at            INTEGER NOT NULL,
+      provider_id   TEXT NOT NULL,
+      backend_id    TEXT,
+      cluster_key   TEXT,
+      status        TEXT NOT NULL,
+      cost_usd      REAL NOT NULL DEFAULT 0,
+      cost_reported INTEGER NOT NULL DEFAULT 0,
+      in_tokens     INTEGER NOT NULL DEFAULT 0,
+      out_tokens    INTEGER NOT NULL DEFAULT 0,
+      duration_ms   INTEGER NOT NULL DEFAULT 0,
+      error         TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_learning_model_runs_at
+      ON learning_model_runs(at DESC);
+    CREATE INDEX IF NOT EXISTS idx_learning_model_runs_provider
+      ON learning_model_runs(provider_id, at DESC);
+
     CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
       item_id UNINDEXED, title, canonical_text, path_scope
     );

@@ -1,5 +1,6 @@
 import type http from 'node:http';
 import { learningSettings } from '../settings';
+import { settings as effectiveLearningSettings } from '../learning-service';
 import { projectById } from '../store';
 import { listCandidates, reviewCandidate } from '../learning/repository';
 import { getSignal } from '../learning/signals';
@@ -39,11 +40,13 @@ import { safeString } from './snapshot';
  * allowance of its own.
  *
  * Nothing here — on the wire or on the page — may suggest that a model read a
- * proposal. Model-assisted consolidation is not connected in this build:
- * `learningSettings().allowModelAssistance` is a hardcoded false reserving the
- * boundary for a consolidator that would need consent, provider routing and
- * usage metering first. Consolidation is deterministic clustering and template
- * phrasing over signals this Mac recorded, and the page says that in words.
+ * proposal when none did. Consolidation itself is always deterministic
+ * clustering and template phrasing over signals this Mac recorded. A model can
+ * now phrase the patterns no template claims, but only behind consent, routing
+ * and metering, so `modelAssisted` is read from learning-service's *effective*
+ * settings rather than the stored switch: the raw setting is an operator's
+ * intent, and reporting it here would tell the phone a model is involved on a
+ * Mac where routing, approval or metering is refusing every call.
  *
  * Approving is deliberately only half of what the desktop's Approve button
  * does. The desktop reviews and then promotes in one action; this route records
@@ -384,7 +387,7 @@ function readInbox(): { rows: KnowledgeCandidate[]; floor: boolean } {
 }
 
 function composeInbox(): MobileLearningInbox {
-  const settings = learningSettings();
+  const settings = effectiveLearningSettings();
   if (!settings.enabled) {
     // Nothing is read at all: with the switch off, consolidation is not running
     // and the queue behind it is not a live reading of anything. The page draws

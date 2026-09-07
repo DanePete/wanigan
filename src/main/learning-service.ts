@@ -7,9 +7,10 @@ import { projectById } from './store';
 import { listSessions } from './sessions';
 import { providerById } from './providers';
 import { redactCredentials } from './redact';
+import * as modelAssist from './learning-model-assist';
 import type {
-  BriefingPreview, CandidateStatus, ForgedSkill, KnowledgeKind, LearningSettings, Session,
-  SessionEvent, TeachWaniganInput, ReviewRun,
+  BriefingPreview, CandidateStatus, ForgedSkill, KnowledgeKind, LearningPhrasingOutcome,
+  LearningSettings, Session, SessionEvent, TeachWaniganInput, ReviewRun,
 } from '../shared/types';
 import {
   ARTIFACT_SCOPES,
@@ -29,6 +30,7 @@ import {
   listRelations,
   pipelineStats,
   recordConsolidationRun,
+  recordModelPhrasing,
   recordMetric,
   recordSessionBriefing,
   recordTranscriptCitations,
@@ -61,6 +63,7 @@ import {
   recordSignal,
   reviewCandidate,
   searchKnowledge,
+  semanticExtractionEligibility,
   signalDetailBytes,
   startExperiment,
   summarizeArtifactRoi,
@@ -108,8 +111,39 @@ function emitLearningChanged(): void {
   changedTimer.unref?.();
 }
 
+/**
+ * The effective learning settings, which is what IPC and the renderer read.
+ *
+ * settings.ts can only return the stored intent for allowModelAssistance: the
+ * router that decides whether a call is actually possible reads settings.ts, so
+ * it cannot be read from there. The AND happens here. Reporting the switch as
+ * on while consent, routing or metering refuses it is exactly the false control
+ * the guardrails forbid, so the two values are reconciled in one place.
+ */
 export function settings(): LearningSettings {
-  return learningSettings();
+  const stored = learningSettings();
+  return {
+    ...stored,
+    allowModelAssistance: stored.allowModelAssistance
+      && modelAssist.isEffective(stored.monthlyBudgetUsd),
+  };
+}
+
+/** The full model-assist picture for the settings screen: consent, routing, spend. */
+export function modelAssistStatus(): ReturnType<typeof modelAssist.status> {
+  return modelAssist.status(learningSettings().monthlyBudgetUsd);
+}
+
+export function modelAssistConsentPreview(providerId: string, model?: string | null) {
+  return modelAssist.consentPreview(providerId, model);
+}
+
+export function acceptModelAssistConsent(providerId: string, model?: string | null) {
+  return modelAssist.acceptConsent(providerId, model);
+}
+
+export function withdrawModelAssistConsent(): void {
+  modelAssist.withdrawConsent();
 }
 
 export function updateSettings(patch: Partial<LearningSettings>): LearningSettings {
@@ -126,16 +160,30 @@ export function updateSettings(patch: Partial<LearningSettings>): LearningSettin
     }
     setSetting('learning_automation', patch.automation);
   }
-  if (patch.allowModelAssistance !== undefined) {
-    if (patch.allowModelAssistance) {
-      throw new Error('Model-assisted consolidation is not connected in this build; deterministic learning remains active.');
-    }
-    setSetting('learning_model_assistance', '0');
-  }
   if (patch.monthlyBudgetUsd !== undefined) {
     const value = Number(patch.monthlyBudgetUsd);
     if (!Number.isFinite(value) || value < 0 || value > 10_000) throw new Error('Learning budget must be between $0 and $10,000.');
     setSetting('learning_monthly_budget_usd', String(value));
+  }
+  // After the budget, deliberately: a caller that raises the ceiling and turns
+  // the switch on in one patch must be judged against the ceiling it just set,
+  // not the one it is replacing.
+  if (patch.allowModelAssistance !== undefined) {
+    if (patch.allowModelAssistance) {
+      const consent = modelAssist.readConsent();
+      // ignoreSwitch, because the switch is what this call is trying to set:
+      // asking with it still off would report itself as the blocker.
+      const verdict = modelAssist.assessRouting(
+        consent?.providerId ?? null,
+        consent?.backendId ?? null,
+        learningSettings().monthlyBudgetUsd,
+        { ignoreSwitch: true },
+      );
+      if (!verdict.ok) throw new Error(verdict.detail);
+      setSetting('learning_model_assistance', '1');
+    } else {
+      setSetting('learning_model_assistance', '0');
+    }
   }
   if (patch.briefingMaxTokens !== undefined) {
     const value = Math.round(Number(patch.briefingMaxTokens));
@@ -693,6 +741,19 @@ function ruleDerivedConfidence(taskCount: number): number {
 const MACHINE_DERIVED_RATIONALE = 'Rule-derived from repeated observations.';
 
 /**
+ * The provenance prefix a model-phrased candidate carries instead. It names the
+ * profile that wrote the sentence, because "a model phrased this" is a fact a
+ * reviewer needs and cannot recover from the text.
+ *
+ * A phrased candidate is still machine-derived — isMachineDerived below counts
+ * both — so it inherits every existing lock unchanged: the confidence ceiling,
+ * the TTL that expires a derived claim, and the automatic-promotion refusal.
+ * Phrasing only ever replaces a nomination, and auto-apply requires a matched
+ * template, so a phrased candidate cannot reach memory without a person.
+ */
+const MODEL_ASSISTED_RATIONALE = 'Model-assisted from repeated observations.';
+
+/**
  * knowledge_items has carried expires_at, and staleness.ts has honoured it,
  * since the schema landed — but no production path ever set it, so a derived
  * claim stayed canonical no matter how stale the pattern behind it became.
@@ -700,7 +761,8 @@ const MACHINE_DERIVED_RATIONALE = 'Rule-derived from repeated observations.';
  * the ledger's refreshDeliveredKnowledgeTtl, which owns the length itself.
  */
 function isMachineDerived(candidate: KnowledgeCandidate): boolean {
-  return candidate.rationale.startsWith(MACHINE_DERIVED_RATIONALE);
+  return candidate.rationale.startsWith(MACHINE_DERIVED_RATIONALE)
+    || candidate.rationale.startsWith(MODEL_ASSISTED_RATIONALE);
 }
 
 function machineExpiry(candidate: KnowledgeCandidate, at = Date.now()): number | null {
@@ -805,6 +867,7 @@ export function consolidate(
   let woken = 0;
   let failedGroups = 0;
   let boundaries = 0;
+  let claimless = 0;
   for (const cluster of clusterSignals(signals)) {
     const signalIds = cluster.signals.map((signal) => signal.id);
     // A snoozed candidate is a person's "not now, ask again when there is more".
@@ -851,6 +914,23 @@ export function consolidate(
       if (!template && isBoundaryOnly(cluster)) {
         processed += markSignalsProcessed(signalIds);
         boundaries++;
+        continue;
+      }
+      // A cluster with facets but no possible claim is the other half of the
+      // same problem, and it is by far the larger half. Measured on a real
+      // database: 42 of 66 pending candidates were nominations, every one of
+      // them a `tool-success` repetition -- "Unexplained repetition: read",
+      // six times over -- which no person and no model can author into
+      // knowledge. Nominating them fills the inbox with rows whose only
+      // possible outcome is dismissal, and an inbox nobody can empty is one
+      // nobody reads.
+      //
+      // Consumed, not lost, exactly as a boundary is: the signals stay stored
+      // and queryable, they just stop occupying the window and stop demanding
+      // a decision nobody can make.
+      if (!template && !claimPossible(cluster.signals)) {
+        processed += markSignalsProcessed(signalIds);
+        claimless++;
         continue;
       }
       const classification = classifySignal(first);
@@ -905,6 +985,9 @@ export function consolidate(
   if (boundaries > 0) {
     console.log(`[wanigan] ${boundaries} consolidation cluster(s) repeated a session or gate boundary and nothing else; their signals were marked processed`);
   }
+  if (claimless > 0) {
+    console.log(`[wanigan] ${claimless} consolidation cluster(s) repeated ordinary successful work and carried no claim; their signals were marked processed rather than nominated`);
+  }
   if (woken > 0) {
     console.log(`[wanigan] ${woken} snoozed candidate(s) woke into review: their pattern was observed again in a new independent task`);
   }
@@ -923,6 +1006,244 @@ export function consolidate(
   }
   if (candidates > 0 || autoApplied > 0 || woken > 0) emitLearningChanged();
   return { ran: true, processed, candidates, autoApplied, woken };
+}
+
+/**
+ * The pending nominations no decision can resolve.
+ *
+ * `claimPossible` now stops these being created, but a database that has been
+ * recording for a while is already full of them -- 42 of 66 pending rows on the
+ * one this was measured against, every one a repeated success. Making those
+ * cheap to clear is the difference between an inbox a person empties and one
+ * they stop opening.
+ *
+ * Deliberately narrow: only rows that are still unauthored nominations, whose
+ * own evidence says no claim was ever possible. A candidate a person has
+ * edited, or one carrying a failure, is never swept -- if there is a judgement
+ * to make, the sweep does not make it.
+ */
+function unactionableNominations(projectId?: string | null): KnowledgeCandidate[] {
+  return candidates({ projectId, status: 'pending' }).filter((candidate) => {
+    if (!isUnauthoredNomination(candidate)) return false;
+    const signals = candidate.signalIds
+      .map((id) => getSignal(id))
+      .filter((value): value is LearningSignal => !!value);
+    // No evidence left is not the same as no claim possible: an aged-out
+    // candidate is a judgement call, so it stays for a person.
+    return signals.length > 0 && !claimPossible(signals);
+  });
+}
+
+export function unactionableCount(projectId?: string | null): number {
+  return unactionableNominations(projectId).length;
+}
+
+/**
+ * Rejects every one of them in a single action, with a reason on each row so a
+ * later reader can tell a swept nomination from one a person judged.
+ */
+export function sweepUnactionable(projectId?: string | null): { swept: number; failed: number } {
+  const rows = unactionableNominations(projectId);
+  let swept = 0;
+  let failed = 0;
+  for (const candidate of rows) {
+    try {
+      reviewCandidate(candidate.id, 'reject',
+        'Swept: a repeated success carries no claim, so no review of it could reach one. '
+        + 'Its observations remain recorded and queryable.');
+      swept++;
+    } catch (error) {
+      failed++;
+      console.warn(`[wanigan] could not sweep candidate ${candidate.id}:`, error);
+    }
+  }
+  if (swept > 0) emitLearningChanged();
+  return { swept, failed };
+}
+
+export type PhrasingOutcome = LearningPhrasingOutcome;
+
+/**
+ * Rebuilds the cluster facts for a candidate from its own evidence, using the
+ * same helpers that derived them during consolidation. Reading them back from
+ * the signals rather than parsing the stored cluster key means the payload
+ * cannot drift from the key format, and the two counts stay the counts the
+ * candidate was actually built from.
+ */
+export function factsFor(signals: LearningSignal[]): modelAssist.ClusterFacts {
+  const derived = signals.map((signal) => facetsOf(signal));
+  const facets = derived[0].facets;
+  return {
+    signalKind: String(signals[0].kind),
+    toolName: facets.toolName ?? null,
+    outcome: facets.outcome ?? null,
+    errorClass: facets.errorClass ?? null,
+    command: facets.command ?? null,
+    pathPrefix: facets.pathPrefix ?? null,
+    sharedFile: sharedFileOf(derived.map((entry) => entry.paths)),
+    observations: signals.length,
+    independentTasks: independentTasks(signals),
+  };
+}
+
+/**
+ * Whether a repetition could carry a claim at all.
+ *
+ * Something failed, was denied, or carries an error class -- otherwise what
+ * repeated is ordinary work. "The Read tool succeeded 31 times across 2
+ * independent tasks" is telemetry, and neither a model nor a person can turn a
+ * success counter into a lesson without inventing one.
+ *
+ * One predicate, two consumers, deliberately: it decides both what Wanigan will
+ * pay a model to phrase and what it will interrupt a person to review. Those
+ * should never be able to drift apart -- an inbox row nobody can action is the
+ * same defect as a billed call nobody can use.
+ */
+export function claimPossible(signals: LearningSignal[]): boolean {
+  if (!signals.length) return false;
+  return !!facetsOf(signals[0]).facets.errorClass
+    || signals.some((signal) => FAILURE_SIGNAL_KINDS.has(String(signal.kind)));
+}
+
+export type PhrasingEligibility =
+  | { ok: true }
+  | { ok: false; reason: 'no-claim-possible' | 'mixed-attribution' | 'semantic-opt-out' };
+
+/**
+ * Whether a cluster is worth paying a model to phrase, and whether it may be
+ * sent at all. Separate from the pass so both rules can be tested without a
+ * database, a provider or a billed call.
+ *
+ * A repeated success is not a lesson, and no amount of phrasing makes it one.
+ * Measured against a real database: every pending nomination in it was a
+ * `tool-success` cluster, and phrasing three of them produced "the Read tool
+ * succeeded 31 times across 2 independent tasks", "10 websearch invocations ...
+ * suggests potential redundancy" and advice to batch file sends to "reduce
+ * chattiness". Fluent, confident, and invented -- the counters cannot
+ * distinguish a habit worth changing from normal work, so asking guarantees the
+ * model fills the gap.
+ *
+ * That is strictly worse than the nomination it replaced: a NEEDS AUTHORING
+ * marker is visibly unfinished and cannot be promoted, while a phrased claim
+ * looks reviewed. So the money is only spent where a claim is possible --
+ * something failed, was denied, or carries an error class. The nomination still
+ * stands for a person either way; this only decides what Wanigan will pay a
+ * model to attempt.
+ */
+export function phrasingEligibility(signals: LearningSignal[]): PhrasingEligibility {
+  if (!signals.length) return { ok: false, reason: 'no-claim-possible' };
+  const first = signals[0];
+
+  // The payload is operational: the nine facets in PAYLOAD_FIELDS and two
+  // counts, and a test asserts no signal summary rides along -- a summary is
+  // prose the agent produced, and that is the line. "Cross-provider operational
+  // counts are fine; cross-backend semantic content is not," so requiring every
+  // signal to have opted into *semantic* learning was the wrong gate for this
+  // payload: it refused every real cluster, because operational signals default
+  // to semanticEligible = false and that is correct for them.
+  //
+  // What must still hold is that a cluster reaching one backend came from that
+  // backend. Clustering already keys on provider and backend, so this is an
+  // assertion rather than a filter -- and it is written down because a future
+  // signal source that clustered more loosely would otherwise send one
+  // provider's observations to another's model with nothing complaining.
+  if (signals.some((signal) =>
+    signal.providerId !== first.providerId || signal.backendId !== first.backendId)) {
+    return { ok: false, reason: 'mixed-attribution' };
+  }
+  // Where a signal *did* opt into semantic learning, the designed gate still
+  // applies: that signal's content may only be inspected through the backend
+  // that first processed it.
+  if (signals.some((signal) => signal.semanticEligible
+    && !semanticExtractionEligibility(signal, {
+      allowModelAssistance: true,
+      extractionProviderId: first.providerId,
+      extractionBackendId: first.backendId,
+    }).eligible)) {
+    return { ok: false, reason: 'semantic-opt-out' };
+  }
+  return claimPossible(signals) ? { ok: true } : { ok: false, reason: 'no-claim-possible' };
+}
+
+/**
+ * The second consolidation pass, and the only one that can spend money.
+ *
+ * It runs after `consolidate()` rather than inside it for three reasons: the
+ * deterministic pass is synchronous and stays that way, a phrasing call that
+ * the budget refuses today should be retried tomorrow rather than lost, and a
+ * candidate that is never phrased is still a perfectly good nomination — which
+ * is exactly what this build produced before the pass existed.
+ *
+ * Every refusal is silent and costs nothing. The only thing that changes on
+ * success is one candidate's title, text and rationale; its evidence, scope,
+ * confidence and status are untouched, so a phrased candidate still faces the
+ * same review a nominated one does.
+ */
+export async function phrasePendingNominations(
+  opts: { projectId?: string | null; limit?: number } = {},
+): Promise<PhrasingOutcome> {
+  // The effective settings, not the stored ones: this is the accessor that
+  // ANDs the switch with consent, routing and metering.
+  const cfg = settings();
+  if (!cfg.enabled) return { ran: false, reason: 'learning-disabled' };
+  if (!cfg.allowModelAssistance) return { ran: false, reason: 'model-assist-unavailable' };
+
+  const limit = Math.min(20, Math.max(1, Math.round(opts.limit ?? 5)));
+  const nominations = listCandidates({ projectId: opts.projectId, status: ['pending'], limit: 200 })
+    .filter(isUnauthoredNomination)
+    .slice(0, limit);
+
+  let phrased = 0;
+  let refused = 0;
+  let skipped = 0;
+
+  for (const candidate of nominations) {
+    const signals = candidate.signalIds
+      .map((id) => getSignal(id))
+      .filter((value): value is LearningSignal => !!value);
+    // Evidence aged out from under the candidate. Phrasing it would describe
+    // observations nobody can now cite, which is worse than leaving it.
+    if (!signals.length) { skipped++; continue; }
+
+    const facts = factsFor(signals);
+    const eligible = phrasingEligibility(signals);
+    if (!eligible.ok) {
+      // "no-claim-possible" is a skip, not a refusal: nothing was wrong with the
+      // cluster, there is simply no claim in it to buy.
+      if (eligible.reason === 'no-claim-possible') skipped++; else refused++;
+      continue;
+    }
+    const first = signals[0];
+
+    let claim: Awaited<ReturnType<typeof modelAssist.phraseCluster>> = null;
+    try {
+      claim = await modelAssist.phraseCluster({
+        providerId: first.providerId,
+        backendId: first.backendId,
+        clusterKey: candidate.clusterKey ?? null,
+        facts,
+        budgetUsd: cfg.monthlyBudgetUsd,
+      });
+    } catch (error) {
+      // phraseCluster is written not to throw; if it ever does, one candidate
+      // must not end the pass for the rest.
+      console.warn(`[wanigan] phrasing failed for candidate ${candidate.id}:`, error);
+    }
+    if (!claim) { refused++; continue; }
+
+    const updated = recordModelPhrasing(candidate.id, {
+      title: truncateUtf8Bytes(claim.title, 480),
+      proposedText: claim.text,
+      rationale: `${MODEL_ASSISTED_RATIONALE} Phrased by ${claim.label} (${claim.providerId}) from `
+        + `${signals.length} observation(s) across ${independentTasks(signals)} independent task(s). `
+        + 'The observations are Wanigan\'s; the sentence is the model\'s, and neither is a review.',
+      onlyIfTextStartsWith: NOMINATION_MARKER,
+    });
+    if (updated) phrased++; else skipped++;
+  }
+
+  if (phrased > 0) emitLearningChanged();
+  return { ran: true, phrased, refused, skipped };
 }
 
 function privacyMetadata(candidate: KnowledgeCandidate, providerIds?: string[]): Record<string, unknown> {
@@ -1431,6 +1752,13 @@ export function startConsolidator(): void {
   if (consolidationTimer) return;
   consolidationTimer = setInterval(() => {
     try { consolidate(undefined, 'timer'); } catch (error) { console.warn('[wanigan] learning consolidation skipped:', error); }
+    // Phrasing follows the deterministic pass and never blocks it: it is async,
+    // it may spend money, and it returns immediately when the switch, consent,
+    // routing or metering refuses. A rejection here is a bug in a path written
+    // not to throw, so it is logged rather than swallowed.
+    void phrasePendingNominations().catch((error) => {
+      console.warn('[wanigan] learning phrasing pass skipped:', error);
+    });
   }, CONSOLIDATION_INTERVAL_MS);
   consolidationTimer.unref?.();
 }
