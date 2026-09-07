@@ -2437,6 +2437,22 @@ export type ConsolidationCounts = {
   candidates: number;
   autoApplied: number;
   woken: number;
+  /**
+   * How much of the queue this pass actually looked at.
+   *
+   * A pass takes whole cluster partitions until a memory budget is met, so
+   * `examined < pending` is ordinary rather than a fault -- the ring resumes
+   * where it stopped and reaches every partition within one lap. But a caller
+   * that reports "nothing repeated across enough independent sessions yet"
+   * from a partial read is asserting a conclusion about a queue it did not
+   * finish, which is the lie the fixed 1,000-row window told for 1,189
+   * consecutive passes. Anything phrasing a whole-queue verdict reads these
+   * first.
+   */
+  examined: number;
+  pending: number;
+  partitionsRead: number;
+  partitionsTotal: number;
 };
 
 /**

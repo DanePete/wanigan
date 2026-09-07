@@ -1132,9 +1132,20 @@ function Heartbeat({ runs, storedTotal, settings, scopeParam, busy, act }: {
                     ? 'Nothing ran: consolidation is switched off. Turn it on above and press this again.'
                     : 'Nothing ran: the learning engine is switched off.';
                 }
+                // A pass takes whole cluster partitions until a memory budget
+                // is met, so it may have read part of the queue. "Nothing
+                // repeated yet" is a claim about the whole queue, and only a
+                // pass that finished one lap is entitled to make it.
+                const partial = r.partitionsRead < r.partitionsTotal;
+                const scope = partial
+                  ? ` — ${r.examined} of ${r.pending} waiting signal${pl(r.pending)} read this pass `
+                    + `(${r.partitionsRead} of ${r.partitionsTotal} groups); the next pass resumes after them`
+                  : '';
                 return r.candidates > 0
-                  ? `Consolidation finished: ${r.candidates} candidate${pl(r.candidates)} from ${r.processed} consumed signal${pl(r.processed)}, ${r.autoApplied} auto-applied.`
-                  : 'Consolidation finished: no new candidates — nothing repeated across enough independent sessions yet.';
+                  ? `Consolidation finished: ${r.candidates} candidate${pl(r.candidates)} from ${r.processed} consumed signal${pl(r.processed)}, ${r.autoApplied} auto-applied.${scope}`
+                  : partial
+                    ? `Consolidation finished: no new candidates in what it read${scope}.`
+                    : 'Consolidation finished: no new candidates — nothing repeated across enough independent sessions yet.';
               })}>
       {busy === 'consolidate' ? 'Consolidating…' : 'Consolidate now'}
     </button>

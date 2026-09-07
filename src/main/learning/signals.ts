@@ -124,6 +124,98 @@ export function listSignals(filter: SignalFilter = {}): LearningSignal[] {
   return (db().prepare(sql).all(...args) as SignalRow[]).map(fromRow);
 }
 
+/**
+ * The five stored columns a consolidation cluster key opens with. Two signals
+ * can only ever land in the same cluster when all five agree -- the rest of the
+ * key is derived from detail the database cannot group on -- so a partition
+ * boundary never splits a cluster. That is what lets a pass bound itself by
+ * whole partitions instead of by a row window: a row cursor would cut a
+ * slow-forming pattern in half and neither half would ever reach the
+ * two-observation threshold.
+ */
+export interface SignalPartition {
+  kind: string;
+  providerId: string | null;
+  backendId: string | null;
+  projectId: string | null;
+  pathScope: string | null;
+  /** Unprocessed rows in this partition at the moment it was counted. */
+  pending: number;
+  /** Stable ring position, and the cursor a later pass resumes after. */
+  key: string;
+}
+
+type PartitionRow = {
+  kind: string; provider_id: string | null; backend_id: string | null;
+  project_id: string | null; path_scope: string | null; pending: number;
+};
+
+const partitionKey = (row: PartitionRow): string => JSON.stringify(
+  [row.kind, row.provider_id, row.backend_id, row.project_id, row.path_scope],
+);
+
+/**
+ * Every partition that still holds an unprocessed signal, in a stable order.
+ * One aggregate row per distinct tuple, so the result stays small even when the
+ * queue does not: a measured database with 2,864 unprocessed signals had 30
+ * partitions. The cost is the grouped scan, which
+ * idx_learning_signals_unprocessed_partition serves index-only.
+ */
+export function listUnprocessedPartitions(projectId?: string | null): SignalPartition[] {
+  const scoped = projectId !== undefined;
+  const rows = db().prepare(`
+    SELECT kind, provider_id, backend_id, project_id, path_scope, COUNT(*) AS pending
+      FROM learning_signals
+     WHERE processed_at IS NULL${scoped ? ' AND project_id IS ?' : ''}
+     GROUP BY kind, provider_id, backend_id, project_id, path_scope
+  `).all(...(scoped ? [projectId] : [])) as PartitionRow[];
+  return rows
+    .map((row) => ({
+      kind: row.kind,
+      providerId: row.provider_id,
+      backendId: row.backend_id,
+      projectId: row.project_id,
+      pathScope: row.path_scope,
+      pending: row.pending,
+      key: partitionKey(row),
+    }))
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+/**
+ * Every unprocessed signal in one partition, oldest first. `limit` is a memory
+ * ceiling and not a page: a partition read short has had a cluster cut in half,
+ * so the caller is expected to notice and say so rather than report a clean
+ * pass.
+ */
+/**
+ * Every unprocessed signal in one cluster partition, whole.
+ *
+ * Deliberately unbounded. A partition is the atomic unit of consolidation
+ * because the partition tuple is a true prefix of the cluster key, so two
+ * signals that could cluster are always in the same partition -- and a short
+ * read would cut a cluster in half. Worse, the read is oldest-first, so it
+ * would cut at the undrainable head, which is precisely how the fixed
+ * 1,000-row window made newer signals unreachable in the first place. The
+ * caller's memory budget decides how many partitions a pass takes; it never
+ * decides how much of one.
+ */
+export function listUnprocessedSignalsInPartition(
+  partition: SignalPartition,
+): LearningSignal[] {
+  const rows = db().prepare(`
+    SELECT * FROM learning_signals
+     WHERE processed_at IS NULL
+       AND kind IS ? AND provider_id IS ? AND backend_id IS ?
+       AND project_id IS ? AND path_scope IS ?
+     ORDER BY created_at ASC
+  `).all(
+    partition.kind, partition.providerId, partition.backendId,
+    partition.projectId, partition.pathScope,
+  ) as SignalRow[];
+  return rows.map(fromRow);
+}
+
 export function getSignal(id: string): LearningSignal | null {
   const row = db().prepare('SELECT * FROM learning_signals WHERE id=?').get(id) as SignalRow | undefined;
   return row ? fromRow(row) : null;

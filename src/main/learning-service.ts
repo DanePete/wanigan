@@ -2,7 +2,7 @@ import { app } from 'electron';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { db } from './db';
-import { learningSettings, setSetting } from './settings';
+import { getSetting, learningSettings, setSetting } from './settings';
 import { projectById } from './store';
 import { listSessions } from './sessions';
 import { providerById } from './providers';
@@ -57,6 +57,8 @@ import {
   listKnowledgeVersions,
   listProjections,
   listSignals,
+  listUnprocessedPartitions,
+  listUnprocessedSignalsInPartition,
   markCandidateFailed,
   markSignalsProcessed,
   promoteCandidate,
@@ -83,6 +85,26 @@ import {
 import { truncateUtf8Bytes } from './learning/util';
 
 const CONSOLIDATION_INTERVAL_MS = 5 * 60_000;
+/**
+ * How many unprocessed signals one pass will hold in memory. It is a budget,
+ * not a window: the pass takes whole cluster partitions until the budget is
+ * met and resumes at the next partition on the following pass, so every
+ * partition is reached within one lap of the ring however long the queue gets.
+ *
+ * The fixed 1,000-row oldest-first window this replaces was not a budget but a
+ * wall. A cluster below the two-observation threshold is deliberately left
+ * unprocessed so tomorrow's repeat can still join it, which means the head of
+ * the queue never drains and a window anchored there stops moving. Measured on
+ * a real database: 2,864 unprocessed signals whose oldest 1,000 ended four
+ * days in the past, 1,864 signals newer than that unreachable, and 1,189
+ * consecutive passes recording processed=0 while the heartbeat kept writing.
+ *
+ * 10,000 signals is ~2.3 MB of stored text at the 227-byte mean measured
+ * there, and covers that whole database in a single pass.
+ */
+const CONSOLIDATION_SIGNAL_BUDGET = 10_000;
+/** Settings key holding the ring position the previous pass finished on. */
+const CONSOLIDATION_CURSOR_KEY = 'learning_consolidation_cursor';
 let consolidationTimer: NodeJS.Timeout | null = null;
 
 const bool = (value: boolean) => value ? '1' : '0';
@@ -809,6 +831,71 @@ function automationScopeViolation(candidate: KnowledgeCandidate, signals: Learni
 }
 
 /**
+ * A project-scoped pass and the global timer pass walk different rings, so they
+ * cannot share a position: a manual press scoped to one project would
+ * otherwise advance the timer's cursor past partitions the timer never read.
+ */
+function consolidationCursorKey(projectId?: string | null): string {
+  if (projectId === undefined) return CONSOLIDATION_CURSOR_KEY;
+  return `${CONSOLIDATION_CURSOR_KEY}:${projectId ?? 'none'}`;
+}
+
+/**
+ * The slice of the unprocessed queue this pass will cluster: whole partitions,
+ * starting after the one the last pass finished on and wrapping, until the
+ * budget is met. At least one partition is always taken, so a partition larger
+ * than the entire budget still makes progress instead of deadlocking the ring.
+ *
+ * Partitions, not rows, because clustering happens in memory over whatever the
+ * pass fetched and the cluster key opens with exactly these five stored
+ * columns. Two signals that could cluster are always in the same partition, so
+ * a partition boundary cannot separate them -- which is the whole reason a row
+ * cursor or an offset page is not an option here: either one would put an
+ * observation on one page and its repeat on the next, and a slow-forming
+ * pattern would be quietly destroyed rather than merely delayed.
+ *
+ * Returns what it could not reach alongside what it did, so the pass can say
+ * how much of the queue it actually saw instead of implying it saw all of it.
+ */
+function consolidationSlice(projectId?: string | null): {
+  signals: LearningSignal[];
+  pendingTotal: number;
+  partitionsRead: number;
+  partitionsTotal: number;
+  cursor: string | null;
+} {
+  const partitions = listUnprocessedPartitions(projectId);
+  const pendingTotal = partitions.reduce((sum, partition) => sum + partition.pending, 0);
+  if (!partitions.length) {
+    return { signals: [], pendingTotal: 0, partitionsRead: 0, partitionsTotal: 0, cursor: null };
+  }
+  const previous = getSetting(consolidationCursorKey(projectId), '');
+  // Resume after the partition the last pass finished on. One that has drained
+  // away since is simply not found, and the ring restarts at its first
+  // partition rather than skipping everything that followed the missing one.
+  const resumeAt = previous ? partitions.findIndex((partition) => partition.key > previous) : 0;
+  const start = resumeAt < 0 ? 0 : resumeAt;
+  const signals: LearningSignal[] = [];
+  let partitionsRead = 0;
+  let cursor: string | null = null;
+  for (let step = 0; step < partitions.length; step++) {
+    const partition = partitions[(start + step) % partitions.length];
+    // Stop before a partition that would blow the budget -- but only if this
+    // pass already has something. A single partition larger than the whole
+    // budget is still taken whole, because the alternative is reading it short,
+    // and a short oldest-first read cuts a cluster at the undrainable head.
+    // Exceeding a memory estimate is recoverable; silently splitting evidence
+    // is the defect this whole change exists to remove.
+    if (signals.length && signals.length + partition.pending > CONSOLIDATION_SIGNAL_BUDGET) break;
+    signals.push(...listUnprocessedSignalsInPartition(partition));
+    partitionsRead++;
+    cursor = partition.key;
+    if (signals.length >= CONSOLIDATION_SIGNAL_BUDGET) break;
+  }
+  return { signals, pendingTotal, partitionsRead, partitionsTotal: partitions.length, cursor };
+}
+
+/**
  * Deterministic consolidation: repeated observations become reviewable
  * candidates, and new observations of a pattern a person snoozed wake that
  * candidate back into the inbox with a reason code.
@@ -855,12 +942,32 @@ export function consolidate(
   if (drained.changes > 0) {
     console.log(`[wanigan] ${drained.changes} learning signal(s) that can never consolidate left the queue`);
   }
-  // Oldest first: a newest-first page of 1,000 would starve the oldest
-  // unprocessed signals forever once the backlog exceeds one page.
-  const signals = listSignals({ projectId, processed: false, limit: 1_000, order: 'asc' })
+  // Whole cluster partitions, not a row window. A cluster that has not yet
+  // reached two observations in two independent tasks is left unprocessed on
+  // purpose -- that is how a pattern observed once today is still here to be
+  // joined by its repeat tomorrow -- so the head of this queue never drains,
+  // and an oldest-first row window anchored there reads the same rows forever.
+  // The ring reaches every partition within one lap while keeping every member
+  // of a cluster inside the same pass.
+  const slice = consolidationSlice(projectId);
+  const signals = slice.signals
     // Ingest retires these now. The filter still runs for rows recorded before
     // it did, and for any future signal source that forgets to.
     .filter((signal) => !permanentlyIneligible(signal));
+  // Stored before the clustering below rather than after it: a cluster that
+  // throws is caught per-cluster, but a crash mid-pass must not cost the ring
+  // its position and replay the same partitions on every restart.
+  if (slice.cursor !== null) {
+    try { setSetting(consolidationCursorKey(projectId), slice.cursor); }
+    catch (error) { console.warn('[wanigan] consolidation ring position not stored:', error); }
+  }
+  if (slice.partitionsRead < slice.partitionsTotal) {
+    console.log(
+      `[wanigan] consolidation read ${slice.signals.length} of ${slice.pendingTotal} unprocessed signal(s) `
+      + `(${slice.partitionsRead} of ${slice.partitionsTotal} cluster partitions); `
+      + 'the next pass resumes at the partition after this one',
+    );
+  }
   let processed = 0;
   let candidates = 0;
   let autoApplied = 0;
@@ -1005,7 +1112,11 @@ export function consolidate(
     console.warn('[wanigan] consolidation heartbeat not recorded:', error);
   }
   if (candidates > 0 || autoApplied > 0 || woken > 0) emitLearningChanged();
-  return { ran: true, processed, candidates, autoApplied, woken };
+  return {
+    ran: true, processed, candidates, autoApplied, woken,
+    examined: signals.length, pending: slice.pendingTotal,
+    partitionsRead: slice.partitionsRead, partitionsTotal: slice.partitionsTotal,
+  };
 }
 
 /**

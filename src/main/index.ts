@@ -2386,7 +2386,11 @@ function registerIpc() {
   handle('learning:setSettings', (patch: Parameters<typeof learning.updateSettings>[0]) =>
     learning.updateSettings(patch));
   handle('learning:teach', (input: Parameters<typeof learning.teach>[0]) => learning.teach(input));
-  handle('learning:consolidate', (projectId?: string | null) => learning.consolidate(projectId));
+  // Coerced like every sibling below. consolidate() derives a settings
+  // primary key from this value to store its ring position, so an
+  // unvalidated renderer string would grow that table without bound.
+  handle('learning:consolidate', (projectId?: string | null) =>
+    learning.consolidate(projectId == null ? projectId : String(projectId).slice(0, 300)));
   // Model-assisted phrasing. Every one of these is a main-process decision:
   // the renderer may ask for a preview and record an approval, but it never
   // decides whether a call is allowed — assessRouting does, on every path.

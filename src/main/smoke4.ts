@@ -1044,6 +1044,66 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     check(fitting.title === fittingTitle && fitting.proposedText.length === 20_000,
       'and a long teaching that still fits the stored ceiling is accepted whole, so the guard is a limit and not a wall');
 
+    // A below-threshold cluster is deliberately left unprocessed so tomorrow's
+    // repeat can still join it, which means the head of the unprocessed queue
+    // never drains. A fixed oldest-first row window anchored there therefore
+    // stops moving: measured on a real database, 2,864 unprocessed signals
+    // whose oldest 1,000 ended four days in the past, and 1,189 consecutive
+    // passes recording processed=0 while the five-minute heartbeat kept
+    // writing. The pass now takes whole cluster partitions, so a queue longer
+    // than one window cannot hide a newer signal -- and a lone observation
+    // still waits in the queue for its repeat.
+    const starveRoot = path.join(tmp, 'starve');
+    fs.mkdirSync(starveRoot, { recursive: true });
+    const starveProject = await addProject(starveRoot);
+    const starveBase = Date.now() - 7 * 24 * 3600 * 1000;
+    const filler: string[] = [];
+    db().transaction(() => {
+      for (let i = 0; i < 1_050; i++) {
+        filler.push(recordSignal({
+          kind: 'tool-success', providerId: 'claude', backendId: 'anthropic',
+          sessionId: `s-filler-${i}-${tag}`, taskHash: `t-filler-${i}-${tag}`,
+          projectId: starveProject.id, projectPath: starveRoot,
+          summary: `Filler ${i} ${tag}`, semanticEligible: false,
+          createdAt: starveBase + i,
+          // A distinct tool name per row is a distinct cluster key, so each of
+          // these is a singleton the pass must read past without consuming.
+          detail: { toolName: `filler-tool-${i}-${tag}`, ok: true },
+        }).id);
+      }
+    })();
+    const mkBuried = (session: string, task: string, at: number) => recordSignal({
+      kind: 'tool-failure', providerId: 'claude', backendId: 'anthropic',
+      sessionId: `${session}-${tag}`, taskHash: `${task}-${tag}`,
+      projectId: starveProject.id, projectPath: starveRoot,
+      summary: `Buriedline ${tag} lint passes with the pinned config.`,
+      semanticEligible: false, createdAt: at,
+      detail: { outcome: 'failed', errorClass: 'lint' },
+    });
+    const buriedA = mkBuried('s-buried-a', 't-buried-a', starveBase + 2_000);
+    const buriedB = mkBuried('s-buried-b', 't-buried-b', starveBase + 2_001);
+    const starvePass = compound.consolidate(starveProject.id);
+    const buriedCandidate = compound.candidates({ projectId: starveProject.id, limit: 500 })
+      .find((c) => c.signalIds.includes(buriedA.id) && c.signalIds.includes(buriedB.id));
+    check(!!buriedCandidate,
+      'a qualifying pair recorded behind more than one window of below-threshold signals is reached by the same pass, so a backlog longer than one window cannot freeze consolidation on an old one',
+      JSON.stringify(starvePass));
+    check(filler.every((id) => getSignal(id)?.processedAt === null),
+      'and every below-threshold signal it read past is still unprocessed, so making the pass move was not paid for by marking them consumed');
+    // The slow-forming case, stated as a test: one observation, then a repeat
+    // in a new independent task days later. The first was never consumed, so
+    // the second clusters with it and the pair leaves the queue together.
+    const slowRepeat = recordSignal({
+      kind: 'tool-success', providerId: 'claude', backendId: 'anthropic',
+      sessionId: `s-slow-${tag}`, taskHash: `t-slow-${tag}`,
+      projectId: starveProject.id, projectPath: starveRoot,
+      summary: `Filler 0 ${tag}`, semanticEligible: false,
+      detail: { toolName: `filler-tool-0-${tag}`, ok: true },
+    });
+    compound.consolidate(starveProject.id);
+    check(getSignal(filler[0])?.processedAt !== null && getSignal(slowRepeat.id)?.processedAt !== null,
+      'a signal that was the only one of its kind for days consolidates with its repeat when that repeat finally arrives, three days of passes later');
+
     const dupTitle = `Conflictline ${tag}`;
     const confSigA = recordSignal({ kind: 'explicit-teach', summary: dupTitle, taskHash: `t-conf-a-${tag}`, semanticEligible: false });
     const confSigB = recordSignal({ kind: 'explicit-teach', summary: dupTitle, taskHash: `t-conf-b-${tag}`, semanticEligible: false });

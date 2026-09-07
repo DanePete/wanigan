@@ -658,6 +658,15 @@ function migrateLearning(d: Database.Database) {
     -- backlog rather than to the history.
     CREATE INDEX IF NOT EXISTS idx_learning_signals_unprocessed
       ON learning_signals(created_at) WHERE processed_at IS NULL;
+    -- The same pass now takes its work in whole cluster partitions rather than
+    -- a row window, because a below-threshold cluster is left unprocessed on
+    -- purpose and a window anchored at the head of the queue therefore stops
+    -- moving. This index is the five stored columns a cluster key opens with,
+    -- so both the grouped partition count and the per-partition read are
+    -- served without touching the table.
+    CREATE INDEX IF NOT EXISTS idx_learning_signals_unprocessed_partition
+      ON learning_signals(kind, provider_id, backend_id, project_id, path_scope, created_at)
+      WHERE processed_at IS NULL;
 
     CREATE TABLE IF NOT EXISTS knowledge_items (
       id                TEXT PRIMARY KEY,
