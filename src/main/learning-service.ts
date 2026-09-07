@@ -1012,6 +1012,69 @@ export function factsFor(signals: LearningSignal[]): modelAssist.ClusterFacts {
   };
 }
 
+export type PhrasingEligibility =
+  | { ok: true }
+  | { ok: false; reason: 'no-claim-possible' | 'mixed-attribution' | 'semantic-opt-out' };
+
+/**
+ * Whether a cluster is worth paying a model to phrase, and whether it may be
+ * sent at all. Separate from the pass so both rules can be tested without a
+ * database, a provider or a billed call.
+ *
+ * A repeated success is not a lesson, and no amount of phrasing makes it one.
+ * Measured against a real database: every pending nomination in it was a
+ * `tool-success` cluster, and phrasing three of them produced "the Read tool
+ * succeeded 31 times across 2 independent tasks", "10 websearch invocations ...
+ * suggests potential redundancy" and advice to batch file sends to "reduce
+ * chattiness". Fluent, confident, and invented -- the counters cannot
+ * distinguish a habit worth changing from normal work, so asking guarantees the
+ * model fills the gap.
+ *
+ * That is strictly worse than the nomination it replaced: a NEEDS AUTHORING
+ * marker is visibly unfinished and cannot be promoted, while a phrased claim
+ * looks reviewed. So the money is only spent where a claim is possible --
+ * something failed, was denied, or carries an error class. The nomination still
+ * stands for a person either way; this only decides what Wanigan will pay a
+ * model to attempt.
+ */
+export function phrasingEligibility(signals: LearningSignal[]): PhrasingEligibility {
+  if (!signals.length) return { ok: false, reason: 'no-claim-possible' };
+  const first = signals[0];
+
+  // The payload is operational: the nine facets in PAYLOAD_FIELDS and two
+  // counts, and a test asserts no signal summary rides along -- a summary is
+  // prose the agent produced, and that is the line. "Cross-provider operational
+  // counts are fine; cross-backend semantic content is not," so requiring every
+  // signal to have opted into *semantic* learning was the wrong gate for this
+  // payload: it refused every real cluster, because operational signals default
+  // to semanticEligible = false and that is correct for them.
+  //
+  // What must still hold is that a cluster reaching one backend came from that
+  // backend. Clustering already keys on provider and backend, so this is an
+  // assertion rather than a filter -- and it is written down because a future
+  // signal source that clustered more loosely would otherwise send one
+  // provider's observations to another's model with nothing complaining.
+  if (signals.some((signal) =>
+    signal.providerId !== first.providerId || signal.backendId !== first.backendId)) {
+    return { ok: false, reason: 'mixed-attribution' };
+  }
+  // Where a signal *did* opt into semantic learning, the designed gate still
+  // applies: that signal's content may only be inspected through the backend
+  // that first processed it.
+  if (signals.some((signal) => signal.semanticEligible
+    && !semanticExtractionEligibility(signal, {
+      allowModelAssistance: true,
+      extractionProviderId: first.providerId,
+      extractionBackendId: first.backendId,
+    }).eligible)) {
+    return { ok: false, reason: 'semantic-opt-out' };
+  }
+  const errorClass = facetsOf(first).facets.errorClass;
+  const claimPossible = !!errorClass
+    || signals.some((signal) => FAILURE_SIGNAL_KINDS.has(String(signal.kind)));
+  return claimPossible ? { ok: true } : { ok: false, reason: 'no-claim-possible' };
+}
+
 /**
  * The second consolidation pass, and the only one that can spend money.
  *
@@ -1052,16 +1115,15 @@ export async function phrasePendingNominations(
     // observations nobody can now cite, which is worse than leaving it.
     if (!signals.length) { skipped++; continue; }
 
+    const facts = factsFor(signals);
+    const eligible = phrasingEligibility(signals);
+    if (!eligible.ok) {
+      // "no-claim-possible" is a skip, not a refusal: nothing was wrong with the
+      // cluster, there is simply no claim in it to buy.
+      if (eligible.reason === 'no-claim-possible') skipped++; else refused++;
+      continue;
+    }
     const first = signals[0];
-    // The designed gate, not a second copy of its reasoning: content may be
-    // inspected only through the backend that first processed it, and only for
-    // signals that opted in. One ineligible signal refuses the whole cluster.
-    const blocked = signals.some((signal) => !semanticExtractionEligibility(signal, {
-      allowModelAssistance: true,
-      extractionProviderId: first.providerId,
-      extractionBackendId: first.backendId,
-    }).eligible);
-    if (blocked) { refused++; continue; }
 
     let claim: Awaited<ReturnType<typeof modelAssist.phraseCluster>> = null;
     try {
@@ -1069,7 +1131,7 @@ export async function phrasePendingNominations(
         providerId: first.providerId,
         backendId: first.backendId,
         clusterKey: candidate.clusterKey ?? null,
-        facts: factsFor(signals),
+        facts,
         budgetUsd: cfg.monthlyBudgetUsd,
       });
     } catch (error) {

@@ -286,6 +286,38 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
       check(!Object.values(facts).some((value) =>
         typeof value === 'string' && /Mooncalf protocol|second independent success/.test(value)),
         'and no signal summary rides along in the payload: a summary is prose the agent produced, and the contract is counters and identifiers');
+
+      // What is worth paying for. Measured against a real database: all 39 of
+      // its pending nominations were tool-success clusters, and phrasing three
+      // produced confident invention ("the Read tool succeeded 31 times ...",
+      // advice to batch file sends to "reduce chattiness"). A phrased non-claim
+      // is worse than the nomination it replaced, because a NEEDS AUTHORING
+      // marker is visibly unfinished and a phrased sentence looks reviewed.
+      const success = compound.phrasingEligibility([first, second]);
+      check(!success.ok && success.reason === 'no-claim-possible',
+        'a repeated success is skipped rather than phrased: the counters cannot tell a habit worth changing from normal work, so asking would only buy invention',
+        success);
+
+      const failureInput = {
+        kind: 'tool-failure' as const, providerId: 'orbit.profile-v9', backendId: 'orbit.backend-v9',
+        summary: `Edit refused ${tag}`,
+        detail: { toolName: 'Edit', outcome: 'denied', errorClass: 'permission', pathPrefix: 'src/main' },
+      };
+      const failA = recordSignal({ ...failureInput, sessionId: `fail-a-${tag}`, taskHash: `ftask-a-${tag}` });
+      const failB = recordSignal({ ...failureInput, sessionId: `fail-b-${tag}`, taskHash: `ftask-b-${tag}`,
+        summary: `Edit refused again ${tag}` });
+      check(compound.phrasingEligibility([failA, failB]).ok,
+        'and something that failed, was denied, or carries an error class is worth phrasing — that is the shape a claim can exist in');
+
+      // Clustering keys on provider and backend, so a mixed cluster should be
+      // impossible. Asserted rather than assumed: a looser future signal source
+      // would otherwise send one provider's observations to another's model.
+      const foreign = recordSignal({ ...failureInput, providerId: 'other.profile', backendId: 'other.backend',
+        sessionId: `fail-c-${tag}`, taskHash: `ftask-c-${tag}`, summary: `Edit refused elsewhere ${tag}` });
+      const mixed = compound.phrasingEligibility([failA, foreign]);
+      check(!mixed.ok && mixed.reason === 'mixed-attribution',
+        'a cluster whose signals disagree about provider or backend is refused outright rather than routed to whichever one happened to be first',
+        mixed);
     } finally {
       setSetting('learning_model_assistance', priorSwitch);
       setSetting('learning_model_assist_consent', priorConsent);

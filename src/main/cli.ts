@@ -33,7 +33,7 @@ const OK = 0;
 const FAILED = 1;
 const USAGE = 2;
 
-const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'learn-probe', 'help'] as const;
+const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'learn-probe', 'learn-phrase', 'help'] as const;
 type Command = (typeof COMMANDS)[number];
 
 // Scout rows are created only by the fixed weekly schedule. Keeping this
@@ -371,6 +371,9 @@ function cmdHelp(): number {
                                one real model-assisted phrasing call against
                                invented facts, to find out whether a profile
                                reports what it spends
+  learn-phrase [--limit N] [--enable]
+                               phrase pending nominations now instead of
+                               waiting for the five-minute pass
   help                         this
 
 Runs against the same database the app uses, so anything queued here is
@@ -470,6 +473,45 @@ ${approving ? '' : '\nRe-run with --approve to record this approval and make one
   return report.ok && run?.claim ? OK : FAILED;
 }
 
+/**
+ * Run the phrasing pass now.
+ *
+ * The timer runs it every five minutes; an operator who has just approved a
+ * profile should not have to wait, and one working through a backlog wants to
+ * spend in deliberate batches rather than in the background. `--limit` is the
+ * spend control: each call is billed, and the pass stops early anyway when the
+ * month's recorded spend reaches the budget.
+ */
+async function cmdLearnPhrase(args: string[]): Promise<number> {
+  const learning = await import('./learning-service');
+  // Same reason --budget exists on learn-probe: there is no settings screen
+  // here, and the switch is validated by the same setter the card calls, so an
+  // unapproved or unmetered profile is refused with its own sentence.
+  if (args.includes('--enable')) {
+    try {
+      learning.updateSettings({ allowModelAssistance: true });
+      out('Model-assisted phrasing switched on.');
+    } catch (error) {
+      err(error instanceof Error ? error.message : String(error));
+      return FAILED;
+    }
+  }
+  const limitArg = args.includes('--limit') ? Number(args[args.indexOf('--limit') + 1]) : 5;
+  const before = learning.candidates({ status: 'pending' }).length;
+  const outcome = await learning.phrasePendingNominations({ limit: limitArg });
+  if (!outcome.ran) {
+    err(`Nothing ran: ${outcome.reason}.`);
+    const status = learning.modelAssistStatus();
+    if (!status.routing.ok) err(status.routing.detail);
+    return FAILED;
+  }
+  const status = learning.modelAssistStatus();
+  out(`  phrased ${outcome.phrased} · refused ${outcome.refused} · skipped ${outcome.skipped}`);
+  out(`  pending candidates ${before} · month to date $${status.monthToDateUsd.toFixed(4)}`
+    + `${status.averageCostUsd === null ? '' : ` · averaging $${status.averageCostUsd.toFixed(4)} a call`}`);
+  return outcome.phrased > 0 ? OK : FAILED;
+}
+
 /* ── entry ───────────────────────────────────────────────────────────── */
 
 /**
@@ -503,6 +545,7 @@ export async function runCli(argv: string[]): Promise<number> {
       case 'queue': return cmdQueue(rest);
       case 'sessions': return cmdSessions(rest);
       case 'learn-probe': return await cmdLearnProbe(rest);
+      case 'learn-phrase': return await cmdLearnPhrase(rest);
     }
     return USAGE;
   } catch (e) {
