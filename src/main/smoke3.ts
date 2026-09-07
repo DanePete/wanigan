@@ -6365,7 +6365,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // The five stations are nowrap inside an overflow-x strip, so prose on one of
   // them pushes the last stage off the right edge behind a scrollbar. Briefed is
   // the stage the whole pipeline exists to reach.
-  check(/note: pipeline && pipeline\.projectionsApplied === 0 \? 'optional' : undefined,/.test(learningSrc),
+  check(/note: pipeline && pipeline\.projectionsApplied === 0 \? 'no files yet' : undefined,/.test(learningSrc),
     'and the optional-stage note is one word, so the fifth station is not pushed off the end of the spine');
 
   // A view with nothing in it yet opens on its next action, not on an essay

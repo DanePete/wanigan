@@ -8,6 +8,7 @@ import type {
   KnowledgeBriefing,
   KnowledgeCandidate,
   KnowledgeItem,
+  KnowledgeKind,
   KnowledgeRelation,
   KnowledgeStatus,
   LearningExperiment,
@@ -21,7 +22,7 @@ import type {
   Project,
   ProviderInfo,
 } from '@shared/types';
-import { EFFORT_LEVELS } from '@shared/types';
+import { EFFORT_LEVELS, PROJECTABLE_KINDS } from '@shared/types';
 import { Explainer, ago } from '../components/bits';
 import { useDialog } from '../components/useDialog';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
@@ -670,9 +671,9 @@ function PipelineSpine({ overview, pipeline, pipelineBusy, read, windowDays, onN
       // the right edge behind a scrollbar at 1440px. The reason survives in the
       // station's own title and in full under "the four tabs are the four
       // stages"; what the strip has to carry is that the zero is not a failure.
-      note: pipeline && pipeline.projectionsApplied === 0 ? 'optional' : undefined,
+      note: pipeline && pipeline.projectionsApplied === 0 ? 'no files yet' : undefined,
       go: () => onNavigate('knowledge'),
-      title: 'Open Knowledge — projections are listed on each item. A zero here is not a fault: a briefing is delivered at launch and needs no file write.' },
+      title: 'Open Knowledge — projections are listed on each item. Only an instruction, rule or skill writes a file; a memory is delivered as a briefing and needs none.' },
     { key: 'briefed', label: 'Briefed', value: flow(pipeline?.briefingsServed), sub: `served · last ${windowDays}d`,
       go: () => onNavigate('context'), title: 'Open Context — the briefing inspector previews one' },
   ];
@@ -908,10 +909,10 @@ function HowItWorks({ pipeline, windowDays, onNavigate }: {
       tab: 'knowledge', label: 'Knowledge',
       body: <>An approved candidate becomes a versioned <strong>knowledge item</strong> carrying its
         evidence. Its text is what retrieval may inject. Writing an item into a provider file is a
-        separate, reversible step, and an optional one.</>,
+        separate, reversible step, and only an instruction, rule or skill takes it.</>,
       stats: [
         { n: p.itemsPromoted, text: `items created · ${w}`, go: () => onNavigate('knowledge'), title: 'Open Knowledge' },
-        { n: p.projectionsApplied, text: `projections written · ${w} · optional`, go: () => onNavigate('knowledge'), title: 'Open Knowledge — projections are listed on each item' },
+        { n: p.projectionsApplied, text: `projections written · ${w}`, go: () => onNavigate('knowledge'), title: 'Open Knowledge — only an instruction, rule or skill writes a file; a memory is briefed instead' },
       ],
     },
     {
@@ -957,7 +958,7 @@ function HowItWorks({ pipeline, windowDays, onNavigate }: {
       </ol>
       <p className="faint">
         Every figure is a count over stored rows for this window and this scope. A zero under
-        “projections written” is not a fault: a briefing is delivered at launch and needs no file write.
+        “projections written” counts only the kinds that write a file — instruction, rule and skill. A memory is delivered as a briefing instead.
       </p>
     </Explainer>
   );
@@ -1622,6 +1623,12 @@ function CandidateCard({ candidate, providers, busy, act }: {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(candidate.title);
   const [text, setText] = useState(candidate.proposedText);
+  // What the proposal should become. Consolidation routes a cluster by what its
+  // template wrote, but a template cannot read a repository — a person can, and
+  // until now could not say so: updateCandidate has always accepted targetKind,
+  // scope and pathScope, and the editor only ever sent the title and the text.
+  const [kind, setKind] = useState<KnowledgeKind>(candidate.targetKind);
+  const [selector, setSelector] = useState(candidate.pathScope ?? '');
   const [target, setTarget] = useState(candidate.providerId ?? providers[0]?.id ?? 'claude');
   const [whyOpen, setWhyOpen] = useState(false);
   const [why, setWhy] = useState<CandidateExplanation | null>(null);
@@ -1665,7 +1672,18 @@ function CandidateCard({ candidate, providers, busy, act }: {
     await window.wanigan.learning.reviewCandidate(candidate.id, 'approve');
     await window.wanigan.learning.promoteCandidate(candidate.id);
   }, 'Approved into canonical knowledge. Provider files are still unchanged.');
-  const save = () => act(key, () => window.wanigan.learning.updateCandidate(candidate.id, { title: title.trim(), proposedText: text.trim() }), 'Proposal updated; its evidence and review history were preserved.');
+  // A rule is the one kind that needs a selector, and repository.ts refuses one
+  // without it -- so the button is refused here rather than letting main throw.
+  const retargetReady = kind !== 'rule' || selector.trim().length > 0;
+  const save = () => act(key, () => window.wanigan.learning.updateCandidate(candidate.id, {
+    title: title.trim(),
+    proposedText: text.trim(),
+    targetKind: kind,
+    // 'path' is what a selector means; anything else drops back off it, and a
+    // personal candidate keeps its scope because it has no project to hold.
+    scope: kind === 'rule' ? 'path' : candidate.scope === 'path' ? 'project' : candidate.scope,
+    pathScope: kind === 'rule' ? selector.trim() : null,
+  }), 'Proposal updated; its evidence and review history were preserved.');
   return (
     <article className={`card candidate-card status-${candidate.status}`}>
       <div className="candidate-top">
@@ -1736,13 +1754,34 @@ function CandidateCard({ candidate, providers, busy, act }: {
       {candidate.conflicts.length > 0 && <div className="candidate-conflicts"><strong>Conflicts to resolve</strong>{candidate.conflicts.map((c) => <p key={`${c.itemId}-${c.relation}`}>{c.relation}: {c.title} — {c.reason}</p>)}</div>}
       <div className="candidate-targets">
         <div><span className="label">Provider targets</span><select className="field" aria-label="Provider target" value={target} onChange={(e) => setTarget(e.target.value)}>{providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select></div>
+        {editing && (
+          <div>
+            <label><span className="label">Kind</span>
+              <select className="field" value={kind} onChange={(e) => setKind(e.target.value as KnowledgeKind)}>
+                <option value="memory">Memory — briefed, no file</option>
+                <option value="instruction">Instruction — writes to the provider file</option>
+                <option value="rule">Rule — writes to the provider file, for one path</option>
+                <option value="skill">Skill seed — writes a SKILL.md</option>
+                <option value="project-map">Project map</option>
+                {!['memory', 'instruction', 'rule', 'skill', 'project-map'].includes(candidate.targetKind)
+                  && <option value={candidate.targetKind}>{candidate.targetKind}</option>}
+              </select>
+            </label>
+            {kind === 'rule' && (
+              <label><span className="label">Path selector</span>
+                <input className="field" value={selector} placeholder="src/main/learning/**"
+                       onChange={(e) => setSelector(e.target.value)} />
+              </label>
+            )}
+          </div>
+        )}
         <p><span className="label">Activation</span><br />Canonical after approval; written to the selected provider only after Apply. New sessions see it after validation.</p>
       </div>
       <div className="learning-actions">
-        {editing ? <><button className="btn btn-primary" disabled={busy !== null || !title.trim() || !text.trim()} onClick={() => void save()}>Save edit</button><button className="btn" onClick={() => setEditing(false)}>Cancel</button></>
+        {editing ? <><button className="btn btn-primary" disabled={busy !== null || !title.trim() || !text.trim() || !retargetReady} title={retargetReady ? undefined : 'A rule needs a path selector, such as src/main/learning/**'} onClick={() => void save()}>Save edit</button><button className="btn" onClick={() => setEditing(false)}>Cancel</button></>
           : <button className="btn" disabled={busy !== null || !undecided} onClick={() => setEditing(true)}>Edit</button>}
         {candidate.status !== 'promoted' && candidate.status !== 'applied' && <button className="btn btn-primary" disabled={busy !== null || candidate.conflicts.length > 0} onClick={() => void approve()}>{busy === key ? 'Working…' : 'Approve to knowledge'}</button>}
-        {['instruction', 'rule', 'skill'].includes(candidate.targetKind) && ['approved', 'promoted'].includes(candidate.status) && <button className="btn btn-primary" disabled={busy !== null || !target} onClick={() => void act(key, () => window.wanigan.learning.applyCandidate(candidate.id, target), 'Validated and applied. The exact prior content is available for Undo.')}>Apply to {providers.find((p) => p.id === target)?.label ?? target}</button>}
+        {PROJECTABLE_KINDS.includes(candidate.targetKind) && ['approved', 'promoted'].includes(candidate.status) && <button className="btn btn-primary" disabled={busy !== null || !target} onClick={() => void act(key, () => window.wanigan.learning.applyCandidate(candidate.id, target), 'Validated and applied. The exact prior content is available for Undo.')}>Apply to {providers.find((p) => p.id === target)?.label ?? target}</button>}
         <button className="btn" disabled={busy !== null || candidate.status === 'snoozed'} onClick={() => void act(key, () => window.wanigan.learning.reviewCandidate(candidate.id, 'snooze'), 'Proposal snoozed; its evidence remains.')}>Snooze</button>
         <button className="btn btn-danger" disabled={busy !== null || candidate.status === 'rejected'} onClick={() => void act(key, () => window.wanigan.learning.reviewCandidate(candidate.id, 'reject'), 'Proposal rejected; the decision remains in its audit history.')}>Reject</button>
         {['rejected', 'snoozed'].includes(candidate.status) && (

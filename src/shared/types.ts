@@ -2123,6 +2123,17 @@ export const INJECTABLE_KINDS: readonly KnowledgeKind[] = ['mission', 'instructi
 export const STANDING_KINDS: readonly KnowledgeKind[] = ['mission'];
 
 /**
+ * The only kinds that compile to a provider-owned file. Everything else is
+ * delivered inside Wanigan, as a briefing.
+ *
+ * Written down once because three places enforce it and two of them used to
+ * spell it themselves: the compilers' internal-delivery short-circuit, the
+ * routing refusals in consolidation, and the Inbox's Apply button. A list
+ * copied into three files is a list that disagrees with itself eventually.
+ */
+export const PROJECTABLE_KINDS: readonly KnowledgeKind[] = ['instruction', 'rule', 'skill'];
+
+/**
  * How a kind reaches an agent — a property of the kind, never a score. 'never'
  * carries what the kind compiles to instead, so a row can say "never briefed —
  * compiles to a Wanigan review gate" rather than looking like a broken item.
