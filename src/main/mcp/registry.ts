@@ -4,7 +4,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { db, dataDir, ensurePrivateDir, ensurePrivateFile } from '../db';
 import { projectById } from '../store';
 import { issueMcpSessionCapability, revokeMcpSessionCapabilities } from './server';
-import type { McpServerConfig, McpServerStatus } from '../../shared/types';
+import type {
+  McpApprovedCommand, McpServerClassification, McpServerConfig, McpServerReview,
+  McpServerStatus, McpServerTrustState,
+} from '../../shared/types';
+
+// Re-exported so existing main-process importers keep one name for these.
+export type { McpApprovedCommand, McpServerClassification, McpServerReview, McpServerTrustState };
 
 /**
  * The inbound half of MCP: which servers a project's agents get, and how much
@@ -92,26 +98,12 @@ export function listServers(projectId?: string | null): McpServerConfig[] {
 const TRUST_STATE_FILE = '.mcp-server-trust.json';
 const MAX_TRUST_STATE_BYTES = 4 * 1024 * 1024;
 
-/** Exactly what the user was shown. Kept as the durable record of the grant. */
-export type McpApprovedCommand = {
-  name: string;
-  transport: 'stdio' | 'http';
-  scope: 'global' | 'project';
-  projectId: string | null;
-  command: string;
-  args: string;
-};
+// McpApprovedCommand — exactly what the user was shown, and the durable record
+// of the grant — and McpServerTrustState now live in src/shared/types.ts, so
+// the Settings page can render the state instead of guessing at it.
 
 type TrustRecord = { sha256: string; trustedAt: number; approved: McpApprovedCommand };
 type TrustState = { schemaVersion: 1; servers: Record<string, TrustRecord> };
-
-export type McpServerTrustState =
-  /** The current command line matches one the user approved. */
-  | 'trusted'
-  /** Nothing local is executed, so there is nothing to approve. */
-  | 'not-required'
-  /** Never approved, or approved as something else. */
-  | 'needs-trust';
 
 function trustStateFile(): string {
   return path.join(dataDir(), TRUST_STATE_FILE);
@@ -237,26 +229,7 @@ function toolOf(toolName: string, server: string): string | null {
   return name.startsWith(`${server}_`) ? name.slice(server.length + 1) : name;
 }
 
-export type McpServerClassification = {
-  /**
-   * How read-vs-write is decided for this server's tools. There is only one
-   * value today, and that is the point of recording it: nothing observes what
-   * an MCP tool actually did, so the gate tests the tool's *name* against a
-   * verb list. A server that calls a mutating tool `get_everything` is allowed
-   * without asking at read-only trust. A reviewer needs to be able to tell that
-   * apart from an allow backed by evidence.
-   */
-  basis: 'tool-name';
-  /** Distinct tools of this server that have completed a call on record. */
-  toolsSeen: number;
-  /** Of those, the ones the name test reads as reads. */
-  nameDerivedReadTools: string[];
-  /** Completed calls on record for those tools. Counted, not estimated. */
-  nameDerivedReadCalls: number;
-  /** The rest — the ones that would be put to the user at read-only trust. */
-  askedTools: string[];
-  note: string;
-};
+// McpServerClassification is declared in src/shared/types.ts.
 
 const CLASSIFICATION_NOTE =
   'Read and write are derived from each tool’s name, never from what the call did. ' +
@@ -304,34 +277,8 @@ export function serverClassification(name: string): McpServerClassification {
 
 /* ── the consent view ────────────────────────────────────────────────── */
 
-export type McpServerReview = {
-  id: string;
-  name: string;
-  transport: 'stdio' | 'http';
-  scope: 'global' | 'project';
-  projectId: string | null;
-  /** argv[0], as stored. Null for an HTTP server. */
-  command: string | null;
-  /** argv[1..], split the way writeMcpConfig splits them. */
-  args: string[];
-  url: string | null;
-  /** True when {{PROJECT_PATH}} appears, so the argv differs per repository. */
-  resolvesPerProject: boolean;
-  /**
-   * The concrete argv for one project, when the scope names one. A global
-   * server using the placeholder has no single answer, and none is invented.
-   */
-  resolvedFor: { projectPath: string; command: string; args: string[] } | null;
-  /** The digest a caller passes back to trustServer. */
-  sha256: string;
-  trust: McpServerTrustState;
-  /** What was approved, if anything ever was. */
-  approved: McpApprovedCommand | null;
-  trustedSha256: string | null;
-  trustedAt: number | null;
-  enabled: boolean;
-  classification: McpServerClassification;
-};
+// McpServerReview is declared in src/shared/types.ts, because mcp:review hands
+// it to the renderer whole.
 
 function reviewOf(row: Row, state: TrustState): McpServerReview {
   const shape = approvedShape(row);
@@ -349,6 +296,10 @@ function reviewOf(row: Row, state: TrustState): McpServerReview {
     projectId: row.project_id,
     command,
     args: args ? splitArgs(args) : [],
+    // The raw string as well as the split argv. The edit form round-trips this
+    // one: re-joining the split argv on spaces would unquote "/a path/x" into
+    // two arguments and save a different command than the one displayed.
+    argsRaw: args,
     url: row.url ?? null,
     resolvesPerProject: template.includes(PROJECT_PATH_SLOT),
     resolvedFor: command && projectPath
@@ -708,11 +659,21 @@ export function writeMcpConfig(projectId: string | null, projectPath: string, se
   const fill = (v: string) => v.split(PROJECT_PATH_SLOT).join(projectPath);
   const entries: Record<string, StdioEntry | HttpEntry> = {};
 
-  // Second check, not a duplicate one. upsertServer refuses to enable an
-  // unapproved command, but a database written before that gate existed is full
-  // of enabled rows nobody ever approved, and this is the last point before the
-  // command reaches a process. Leaving one out is visible: it reads as
-  // needs-trust in Settings, and untrustedEnabledServers() lists it.
+  // Second check, not a duplicate one. upsertServer and setServerEnabled both
+  // refuse to enable an unapproved command, but a database written before that
+  // gate existed is full of enabled rows nobody ever approved, and this is the
+  // last point before the command reaches a process.
+  //
+  // Leaving one out must not be silent, and for a while it was: this comment
+  // claimed Settings showed a needs-trust state that did not exist, because the
+  // only channel the page had was mcp:servers and McpServerConfig carries no
+  // trust field. The claim is now true and here is what makes it true — the
+  // mcp:review channel in index.ts hands reviewServers() to the page, the Given
+  // out column renders a withheld row as withheld rather than as "on", and the
+  // page reads untrustedEnabledServers()'s condition to raise a standing note
+  // naming every server in this state. If any of those three go away, this
+  // console.warn goes back to being the only record and this comment goes back
+  // to being false.
   const trust = readTrust();
   for (const s of listServers(projectId)) {
     if (!s.enabled) continue;
@@ -724,7 +685,12 @@ export function writeMcpConfig(projectId: string | null, projectPath: string, se
         projectId: s.projectId, command: s.command, args: s.args ?? '',
       };
       if (trustStateFor(s.id, shape, trust).trust !== 'trusted') {
-        console.warn(`[wanigan] MCP server "${s.name}" was left out of this session: its command is not trusted.`);
+        // A breadcrumb, not the record. The record an operator sees is the
+        // withheld state in Settings; see the note above.
+        console.warn(
+          `[wanigan] MCP server "${s.name}" was left out of this session: its command is not approved. ` +
+          'Settings → Connections → MCP servers shows it as withheld.'
+        );
         continue;
       }
       entries[s.name] = { command: fill(s.command), args: s.args ? splitArgs(fill(s.args)) : [] };

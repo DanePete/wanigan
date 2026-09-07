@@ -42,6 +42,7 @@ import { redactCredentials } from './redact';
 import * as providers from './providers';
 import * as plugins from './plugins';
 import { adapterTrustPrompt, manifestTrustPrompt } from './pack-consent';
+import { mcpTrustPrompt } from './mcp/consent';
 import * as batch from './batch';
 import { egressReport } from './egress';
 import { mobileFleetSnapshot } from './fleet-snapshot';
@@ -3199,6 +3200,69 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
 
   const mcpReview = mcpRegistry.reviewServers(null).find((x) => x.id === srv.id);
   check(Boolean(mcpReview?.sha256), 'the review names the exact digest a person would be approving');
+
+  // The gate above is only honest if there is somewhere to do the approving.
+  // trustServer had no caller outside this file: Settings could refuse an
+  // enable and nothing in the shipped app could record an approval, so every
+  // stdio MCP server ever added was permanently unusable and the review panel
+  // described a step that did not exist. Presence is asserted the way the
+  // provider-pack pair is, and the negative forbids the old renderer-side
+  // enable, which round-tripped the whole row through upsert.
+  const mcpMainSrc = sourceOf('src/main/index.ts');
+  const mcpPreloadSrc = sourceOf('src/preload/index.ts');
+  const mcpSettingsSrc = sourceOf('src/renderer/src/views/Settings.tsx');
+  check(mcpMainSrc.includes("handle('mcp:trust', async (id: unknown, sha256: unknown) => {")
+    && mcpMainSrc.includes('...mcpTrustPrompt(review),')
+    && mcpMainSrc.includes("if (answer.response !== 1) throw new Error('Cancelled. Nothing was trusted and nothing was enabled.');")
+    && mcpMainSrc.includes("handle('mcp:review'")
+    && mcpMainSrc.includes("handle('mcp:setEnabled'")
+    && mcpMainSrc.includes("handle('mcp:revokeTrust'")
+    && mcpPreloadSrc.includes("call<McpServerReview>('mcp:trust', id, sha256)")
+    && mcpPreloadSrc.includes("call<McpServerReview[]>('mcp:review', projectId)")
+    && mcpPreloadSrc.includes("call<McpServerReview>('mcp:setEnabled', id, enabled)")
+    && mcpSettingsSrc.includes('window.wanigan.mcp.trust(s.id, s.sha256)')
+    && mcpSettingsSrc.includes('window.wanigan.mcp.review()')
+    && !mcpSettingsSrc.includes('await window.wanigan.mcp.upsert({ ...s, enabled: on });'),
+    'an stdio MCP server can actually be approved: the digest is recorded behind a confirmation the main process raises, the renderer reaches it through a typed preload binding, and enabling is a narrow toggle rather than a round-trip of the whole row — so the enable gate is a step and not a dead end');
+
+  // The consent text is built in main and bounded there, because a server row
+  // is renderer-supplied data: forty three-thousand-character arguments are the
+  // padding attack pack-consent.ts already warns about, in the other surface
+  // that grants local execution.
+  const padArgs = Array.from({ length: 40 }, (_v, i) => `${'z'.repeat(3000)}${i}`);
+  const hostileServer = {
+    id: 'mcp_pad', name: 'pad', transport: 'stdio' as const, scope: 'global' as const, projectId: null,
+    command: '/usr/bin/env', args: padArgs, argsRaw: padArgs.join(' '), url: null,
+    resolvesPerProject: false, resolvedFor: null,
+    sha256: 'b'.repeat(64), trust: 'needs-trust' as const,
+    approved: null, trustedSha256: null, trustedAt: null, enabled: false,
+    classification: {
+      basis: 'tool-name' as const, toolsSeen: 0, nameDerivedReadTools: [],
+      nameDerivedReadCalls: 0, askedTools: [], note: '',
+    },
+  };
+  const padPrompt = mcpTrustPrompt(hostileServer);
+  check(padPrompt.detail.length <= 2000
+    && padPrompt.detail.includes('b'.repeat(64))
+    && padPrompt.detail.includes('argv[0] /usr/bin/env')
+    && padPrompt.detail.includes('40 argument(s)')
+    && !padPrompt.detail.includes('z'.repeat(200))
+    && padPrompt.detail.includes('Scope: every session Wanigan launches, in every repository')
+    && padPrompt.detail.includes('Trusting does not enable')
+    && padPrompt.detail.endsWith('Approve only a command you would run by hand.'),
+    'the MCP trust dialog builds its own bounded summary — it states the true argument count, never joins two arguments into one line, and keeps the scope, the digest and the closing when the list has to be elided',
+    padPrompt.detail.length);
+
+  const httpPrompt = mcpTrustPrompt({
+    ...hostileServer, transport: 'http' as const, command: null, args: [], argsRaw: '',
+    url: 'https://example.com/mcp', trust: 'not-required' as const,
+  });
+  check(httpPrompt.detail.includes('runs no local command')
+    && httpPrompt.detail.includes('Nothing was trusted.')
+    && !httpPrompt.detail.includes('SHA-256')
+    && !httpPrompt.detail.includes('argv['),
+    'and an HTTP server, which executes nothing locally, is told it has nothing to approve rather than shown an empty command list');
+
   mcpRegistry.trustServer(srv.id, mcpReview!.sha256);
   mcpRegistry.setServerEnabled(srv.id, true);
   check(mcpRegistry.reviewServers(null).find((x) => x.id === srv.id)?.enabled === true,
@@ -3250,6 +3314,35 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(idleUse?.toolCalls === 0 && idleUse?.lastUsedAt === null,
     'a server nobody has called reads as unused, which is not the same as broken');
   mcpRegistry.removeServer(idle.id);
+
+  // A row switched on whose command is not approved is withheld from every
+  // config Wanigan writes. That used to be a console.warn and nothing else,
+  // while Settings printed a plain "on" beside it, so the server had silently
+  // stopped being handed out and the page said the opposite.
+  const legacy = mcpRegistry.upsertServer({
+    projectId: null, name: 'smoke-legacy', transport: 'stdio',
+    command: 'echo', args: 'legacy', enabled: false,
+  });
+  const legacyReview = mcpRegistry.reviewServers(null).find((x) => x.id === legacy.id);
+  mcpRegistry.trustServer(legacy.id, legacyReview!.sha256);
+  mcpRegistry.setServerEnabled(legacy.id, true);
+  // Changed underneath the approval, which is the shape a database written
+  // before this gate existed is full of: enabled, and approved for nothing.
+  db().prepare('UPDATE mcp_servers SET args = ? WHERE id = ?').run('legacy --write', legacy.id);
+  const nowWithheld = mcpRegistry.reviewServers(null).find((x) => x.id === legacy.id);
+  check(nowWithheld?.enabled === true && nowWithheld?.trust === 'needs-trust'
+    && nowWithheld?.approved?.args === 'legacy'
+    && mcpRegistry.untrustedEnabledServers(null).some((x) => x.id === legacy.id),
+    'a server switched on whose command no longer matches its approval reads as enabled-and-unapproved and still names the line that was approved, so the page can say what changed rather than only that something did');
+  const legacyCfg = mcpRegistry.writeMcpConfig(null, tmp);
+  const legacyEntries = legacyCfg ? (JSON.parse(fs.readFileSync(legacyCfg, 'utf8')) as { mcpServers: Record<string, unknown> }).mcpServers : {};
+  check(!('smoke-legacy' in legacyEntries) && 'smoke-fs' in legacyEntries,
+    'and it is left out of the generated config while the approved server beside it is written, so an unapproved command is never spawned');
+  check(mcpSettingsSrc.includes("s.trust === 'needs-trust' ? WITHHELD : ON")
+    && mcpSettingsSrc.includes('left out of every config until this command is approved')
+    && mcpSettingsSrc.includes("s.enabled && s.trust === 'needs-trust'"),
+    'and Settings renders that row as withheld with a standing note naming it, rather than as a plain "on" beside a server nothing is receiving');
+  mcpRegistry.removeServer(legacy.id);
 
   mcpRegistry.removeServer(srv.id);
   check(!mcpRegistry.listServers(null).some((x) => x.id === srv.id), 'it can be removed again');
@@ -7360,7 +7453,18 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // Independent loads, not one folded read. Folding use into the server list
   // would mean a failed status read blanks the configured servers, and would
   // collapse "could not read" and "nothing was called" into one empty cell.
-  check(settingsSrc.includes('const servers = useLoad(() => window.wanigan.mcp.servers(), [tick]);')
+  // The list read is mcp:review rather than mcp:servers because McpServerConfig
+  // carries no trust field, so a page reading it cannot tell a server being
+  // handed to sessions from one switched on and withheld from every one.
+  // A row that is switched on but never approved is the case the standing note
+  // describes. Without this branch the only click available on it is a plain
+  // switch-off, and the sentence offering to read and approve its command names
+  // an act the page does not perform.
+  check(settingsSrc.includes("if (!on && s.enabled && s.transport === 'stdio' && s.trust === 'needs-trust')")
+    && settingsSrc.includes('onDisable={() => void toggleServer(s, false)}'),
+    'a row that is switched on and withheld opens its command for reading rather than only switching off, and the reading panel offers the switch-off it intercepted');
+
+  check(settingsSrc.includes('const servers = useLoad(() => window.wanigan.mcp.review(), [tick]);')
     && settingsSrc.includes('const use = useLoad(() => window.wanigan.mcp.status(), [tick]);')
     && settingsSrc.includes('const useOf = (id: string) => (use.v.s === \'ok\' ? use.v.d.find((u) => u.id === id) ?? null : null);'),
     'the MCP server list and the MCP call record are two independent reads, so a failed use read cannot blank the servers and cannot be mistaken for a server that was never called',

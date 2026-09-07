@@ -73,6 +73,7 @@ import * as browse from './browse';
 import * as attachments from './attachments';
 import * as mcpRegistry from './mcp/registry';
 import * as mcpServer from './mcp/server';
+import { mcpTrustPrompt } from './mcp/consent';
 import * as refusal from './batch/refusal';
 import * as cachediag from './batch/cachediag';
 import * as evals from './batch/evals';
@@ -1880,6 +1881,58 @@ function registerIpc() {
   handle('mcp:upsert', (cfg: Omit<McpServerConfig, 'id'> & { id?: string }) => mcpRegistry.upsertServer(cfg));
   handle('mcp:remove', (id: string) => { mcpRegistry.removeServer(id); return true; });
   handle('mcp:status', () => mcpRegistry.serverStatuses());
+  // Everything the Settings page needs to tell an enabled server from an
+  // enabled server that is being withheld: the trust state, the digest, and
+  // what was approved if anything ever was. mcp:servers cannot carry it —
+  // McpServerConfig has no trust field — which is why an untrusted row read as
+  // plainly "on" while writeMcpConfig left it out of every session.
+  handle('mcp:review', (projectId?: string | null) => mcpRegistry.reviewServers(projectId));
+  // The narrow toggle. Enabling still refuses without an approval; the point of
+  // having it is that it cannot rewrite the command on the way through, which
+  // round-tripping the whole row through mcp:upsert could.
+  handle('mcp:setEnabled', (id: unknown, enabled: unknown) => {
+    if (typeof id !== 'string' || !id.trim()) throw new Error('That MCP server is not registered.');
+    if (typeof enabled !== 'boolean') throw new Error('Enable or disable is required.');
+    return mcpRegistry.setServerEnabled(id, enabled);
+  });
+  // Recording a trusted digest is the durable, on-disk grant that lets the
+  // agent's CLI spawn a local command at every launch in this scope, unattended,
+  // for as long as the row exists. It is the same class of grant as
+  // providerPacks:trustManifest above, and it is asked the same way: the
+  // question is raised here, so it is not a step a compromised renderer can
+  // decline to render, and the digest in the dialog is re-derived from the row
+  // rather than taken from the caller. trustServer re-checks it a third time and
+  // deliberately leaves the server switched off — approving and enabling are two
+  // acts, and a single click that does both is the thing this gate exists for.
+  handle('mcp:trust', async (id: unknown, sha256: unknown) => {
+    if (typeof id !== 'string' || !id.trim()) throw new Error('That MCP server is not registered.');
+    if (typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sha256)) throw new Error('A digest to trust is required.');
+    const review = mcpRegistry.reviewServer(id);
+    if (!review) throw new Error('That MCP server is not registered.');
+    if (review.transport !== 'stdio') {
+      throw new Error(`"${review.name}" is an HTTP server: it runs no local command, so there is nothing to trust.`);
+    }
+    if (review.sha256 !== sha256) {
+      throw new Error('This server changed after it was reviewed. Read the new command, arguments and scope before trusting them.');
+    }
+    const w = win;
+    if (!w || w.isDestroyed()) {
+      throw new Error('Trusting an MCP server command needs the Wanigan window open to confirm it.');
+    }
+    const answer = await dialog.showMessageBox(w, {
+      type: 'warning',
+      buttons: ['Cancel', 'Trust this command'],
+      defaultId: 0,
+      cancelId: 0,
+      ...mcpTrustPrompt(review),
+    });
+    if (answer.response !== 1) throw new Error('Cancelled. Nothing was trusted and nothing was enabled.');
+    return mcpRegistry.trustServer(id, sha256);
+  });
+  handle('mcp:revokeTrust', (id: unknown) => {
+    if (typeof id !== 'string' || !id.trim()) throw new Error('That MCP server is not registered.');
+    return mcpRegistry.revokeServerTrust(id);
+  });
   handle('mcp:server', () => mcpServer.mcpServerInfo());
   handle('mcp:pending', () => mcpServer.pendingConfirmations());
 

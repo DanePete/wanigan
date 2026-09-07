@@ -3,7 +3,7 @@ import type { KeyboardEvent } from 'react';
 import type {
   AgentAccount,
   WaniganSettings, BackupCheck, BackupRestoreSummary, BackupSummary,
-  EgressHost, LedgerEntry, McpServerConfig, MotionSetting, ThemeSetting,
+  EgressHost, LedgerEntry, McpServerConfig, McpServerReview, MotionSetting, ThemeSetting,
   MobileMonitorConfig, MobileMonitorStatus, Project, ProviderInfo, ProviderManifestInspection,
   ProviderPackInfo, ProviderProfileInfo, QueueItem, QueueSlots, QueueState,
   TranscriptHit, TranscriptTurn, TrustLevel, UploadedFile, WorktreeInfo,
@@ -220,6 +220,11 @@ function Mark({ glyph, word, color }: MarkSpec) {
 
 const ON: MarkSpec = { glyph: '✓', word: 'on', color: 'var(--good)' };
 const OFF: MarkSpec = { glyph: '○', word: 'off', color: 'var(--text-faint)' };
+/* Switched on and still not handed to a single session, because the command it
+   would run is not approved. "on" was the wrong word for that row: it claimed a
+   server was being given out while writeMcpConfig was leaving it out of every
+   config it wrote. */
+const WITHHELD: MarkSpec = { glyph: '⊘', word: 'on, withheld', color: 'var(--warning)' };
 
 const QUEUE_STATE: Record<QueueState, MarkSpec> = {
   waiting:  { glyph: '⋯', word: 'waiting',  color: 'var(--text-dim)' },
@@ -3750,15 +3755,16 @@ const PROJECT_PATH_SLOT = '{{PROJECT_PATH}}';
  * that argv genuinely has no single answer, and inventing one for the review
  * step would approve a line that is never actually run.
  */
-function resolvedCommand(s: { transport: 'stdio' | 'http'; command?: string; args?: string; url?: string },
-                         projectPath: string | null): { template: string; resolved: string | null } {
+function commandLines(s: McpServerReview): { template: string; resolved: string | null } {
   const template = s.transport === 'stdio'
-    ? `${s.command ?? ''} ${s.args ?? ''}`.trim()
+    ? `${s.command ?? ''} ${s.argsRaw}`.trim()
     : (s.url ?? '');
-  if (!template.includes(PROJECT_PATH_SLOT)) return { template, resolved: template };
+  if (!s.resolvesPerProject) return { template, resolved: template };
   return {
     template,
-    resolved: projectPath ? template.split(PROJECT_PATH_SLOT).join(projectPath) : null,
+    resolved: s.resolvedFor
+      ? [s.resolvedFor.command, ...s.resolvedFor.args].join(' ').trim()
+      : null,
   };
 }
 
@@ -3772,12 +3778,15 @@ function resolvedCommand(s: { transport: 'stdio' | 'http'; command?: string; arg
  * makes that kind of grant against a SHA-256 the operator was shown. This is
  * the reading half of the same idea, on the surface that actually has one.
  */
-function McpEnableReview({ server, scopeName, scopePath, template, resolved, read, onRead, onCancel, onEnable }: {
-  server: McpServerConfig; scopeName: string; scopePath: string | null;
+function McpEnableReview({ server, scopeName, scopePath, template, resolved, read, onRead, busy, onCancel, onTrust, onEnable, onRevoke, onDisable }: {
+  server: McpServerReview; scopeName: string; scopePath: string | null;
   template: string; resolved: string | null;
-  read: boolean; onRead: (next: boolean) => void;
-  onCancel: () => void; onEnable: () => void;
+  read: boolean; onRead: (next: boolean) => void; busy: boolean;
+  onCancel: () => void; onTrust: () => void; onEnable: () => void; onRevoke: () => void;
+  /** The switch-off requestEnable intercepts for a withheld row that is on. */
+  onDisable: () => void;
 }) {
+  const trusted = server.trust === 'trusted';
   return (
     <div className="set-review" role="group" aria-label={`Review ${server.name} before enabling it`}>
       <Callout level="warning" title={`Enabling “${server.name}” lets the agent’s CLI run this command at every launch.`}>
@@ -3813,8 +3822,27 @@ function McpEnableReview({ server, scopeName, scopePath, template, resolved, rea
           </dd>
         </div>
         <div>
-          <dt>Arguments</dt>
-          <dd className="set-path set-wrap">{server.args?.trim() || <span className="dim" style={{ fontFamily: 'inherit' }}>none</span>}</dd>
+          <dt>Arguments, one per line</dt>
+          {/* Never joined for display. A single argument containing a space
+              reads as two when it is joined, and telling those apart is the
+              whole job of reading a command line before approving it. */}
+          <dd className="set-path set-wrap">
+            {server.args.length === 0
+              ? <span className="dim" style={{ fontFamily: 'inherit' }}>none</span>
+              : server.args.map((a, i) => <div key={`${i}-${a}`}>{a}</div>)}
+          </dd>
+        </div>
+        <div>
+          <dt>Approval</dt>
+          <dd>
+            {trusted ? (
+              <>Approved {ago(server.trustedAt)} for this exact command, arguments and scope.
+                <div className="faint set-path set-wrap">{server.trustedSha256}</div></>
+            ) : server.approved ? (
+              <>This is <strong>not</strong> the line that was approved. What was approved:
+                <div className="faint set-path set-wrap">{`${server.approved.command} ${server.approved.args}`.trim()}</div></>
+            ) : 'Never approved. Wanigan leaves this server out of every config it writes until it is.'}
+          </dd>
         </div>
       </dl>
 
@@ -3828,26 +3856,39 @@ function McpEnableReview({ server, scopeName, scopePath, template, resolved, rea
         </Callout>
       </div>
 
-      <label className="set-read-check">
-        <input type="checkbox" checked={read} onChange={(e) => onRead(e.target.checked)} />
-        <span>
-          I have read the command, arguments and scope above and want them run at every session
-          launch in this scope.
-        </span>
-      </label>
+      {!trusted && (
+        <label className="set-read-check">
+          <input type="checkbox" checked={read} onChange={(e) => onRead(e.target.checked)} />
+          <span>
+            I have read the command, arguments and scope above and want them run at every session
+            launch in this scope.
+          </span>
+        </label>
+      )}
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 11, flexWrap: 'wrap' }}>
-        <button className="btn btn-primary" disabled={!read} onClick={onEnable}>
-          Enable {server.name}
-        </button>
+        {trusted ? (
+          <>
+            <button className="btn btn-primary" disabled={busy} onClick={onEnable}>
+              Enable {server.name}
+            </button>
+            <button className="btn" disabled={busy} onClick={onRevoke}>Withdraw approval</button>
+          </>
+        ) : (
+          <button className="btn btn-primary" disabled={!read || busy} onClick={onTrust}>
+            Approve this command…
+          </button>
+        )}
+        {server.enabled && (
+          <button className="btn" disabled={busy} onClick={onDisable}>Switch it off</button>
+        )}
         <button className="btn" onClick={onCancel}>Leave it off</button>
       </div>
 
       <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 9, lineHeight: 1.55 }}>
-        Reading is not the same act as approving. Wanigan records approval of an exact command line
-        separately — bound to a digest of the command, arguments and scope, so editing a server drops
-        its approval rather than silently changing what gets spawned. If the enable is refused below,
-        that record is what is missing, and the refusal names it.
+        {trusted
+          ? 'Approving and enabling are two acts, so approving left this server switched off. Enabling it is the second one, and it can be switched off again without withdrawing the approval.'
+          : 'Approve this command… raises a confirmation Wanigan draws itself, outside this page, showing the same digest, command, arguments and scope. That question is asked by the main process on purpose: a page the renderer draws is a page a compromised renderer can decline to draw. Approving records the grant against that exact line and leaves the server off; editing the server afterwards drops the approval rather than silently changing what gets spawned.'}
       </p>
     </div>
   );
@@ -3867,7 +3908,11 @@ function Mcp({ projects, prefs, pending, setFlag }: {
   const [read, setRead] = useState(false);
 
   const own = useLoad(() => window.wanigan.mcp.server(), [prefs?.mcpServerEnabled]);
-  const servers = useLoad(() => window.wanigan.mcp.servers(), [tick]);
+  // reviewServers(), not listServers(): McpServerConfig has no trust field, so
+  // a page reading it cannot tell a server being handed to sessions from one
+  // switched on and withheld from every one of them.
+  const servers = useLoad(() => window.wanigan.mcp.review(), [tick]);
+  const [busy, setBusy] = useState<string | null>(null);
   // Use, and only use. There were Connection and Calls columns here once, reading
   // an mcp_status table nothing in the app ever wrote, so every server read “not
   // seen yet” with zero calls for the life of the install — a false negative
@@ -3919,19 +3964,34 @@ function Mcp({ projects, prefs, pending, setFlag }: {
         command: draft.transport === 'stdio' ? draft.command.trim() : undefined,
         args: draft.transport === 'stdio' ? draft.args.trim() : undefined,
         url: draft.transport === 'http' ? draft.url.trim() : undefined,
-        enabled: draft.enabled,
+        // Any edit to a stdio server changes the line that would be spawned, so
+        // the approval bound to the old line does not carry over — and sending
+        // enabled:true would make upsertServer refuse the whole save, which is
+        // how an enabled stdio server became uneditable as well as unusable.
+        // Saving switches it off and says so; approving the new line is the next
+        // step, in the list below.
+        enabled: draft.transport === 'stdio' ? false : draft.enabled,
       };
       const r = await window.wanigan.mcp.upsert(cfg);
       setDraft(null);
       setTick((t) => t + 1);
-      setSaved({ tone: 'ok', text: `“${r.name}” saved for ${projectName(r.projectId)}. New sessions there get it; sessions already running keep the config they launched with.` });
+      setSaved({
+        tone: 'ok',
+        text: r.transport === 'stdio'
+          ? `“${r.name}” saved for ${projectName(r.projectId)} and left switched off: a saved command is not an approved one. Open it in the list below, read the command, approve it, then enable it.`
+          : `“${r.name}” saved for ${projectName(r.projectId)}. New sessions there get it; sessions already running keep the config they launched with.`,
+      });
     } catch (e) { setSaved({ tone: 'error', text: msg(e) }); }
   }
 
-  async function toggleServer(s: McpServerConfig, on: boolean) {
+  // mcp:setEnabled, not mcp:upsert. Round-tripping the whole row through upsert
+  // to flip one bit meant the renderer restated the command on every toggle,
+  // and any drift in that copy would have been saved as the command.
+  async function toggleServer(s: McpServerReview, on: boolean) {
     setSaved(null);
+    setBusy(s.id);
     try {
-      await window.wanigan.mcp.upsert({ ...s, enabled: on });
+      await window.wanigan.mcp.setEnabled(s.id, on);
       setTick((t) => t + 1);
       setReviewing(null);
       setSaved({
@@ -3941,11 +4001,52 @@ function Mcp({ projects, prefs, pending, setFlag }: {
           : `“${s.name}” is disabled. It is left out of every config Wanigan writes from now on; a session already running keeps it until it ends.`,
       });
     } catch (e) { setSaved({ tone: 'error', text: msg(e) }); }
+    finally { setBusy(null); }
   }
 
-  /** Disabling is always allowed. Enabling a local command is read first. */
-  function requestEnable(s: McpServerConfig, on: boolean) {
+  /**
+   * Approve one exact command line. The confirmation is raised by the main
+   * process against a digest it re-derives, so this call resolves only if a
+   * person answered it there. The panel stays open afterwards: approving left
+   * the server off, and enabling it is the separate second act.
+   */
+  async function trustServer(s: McpServerReview) {
     setSaved(null);
+    setBusy(s.id);
+    try {
+      await window.wanigan.mcp.trust(s.id, s.sha256);
+      setTick((t) => t + 1);
+      setRead(false);
+      setSaved({ tone: 'ok', text: `“${s.name}” is approved for that exact command, arguments and scope, and is still switched off. Enabling it is the second act.` });
+    } catch (e) { setSaved({ tone: 'error', text: msg(e) }); }
+    finally { setBusy(null); }
+  }
+
+  async function revokeTrust(s: McpServerReview) {
+    setSaved(null);
+    setBusy(s.id);
+    try {
+      await window.wanigan.mcp.revokeTrust(s.id);
+      setTick((t) => t + 1);
+      setSaved({ tone: 'ok', text: `The approval for “${s.name}” is withdrawn and it is switched off. A session already running keeps the config it launched with.` });
+    } catch (e) { setSaved({ tone: 'error', text: msg(e) }); }
+    finally { setBusy(null); }
+  }
+
+  /**
+   * Disabling is always allowed. Enabling a local command is read first — and
+   * so is a row that is already switched on but withheld: its command has never
+   * been approved, so the click that would otherwise only switch it off opens
+   * the same reading panel instead. Without this the standing note below names
+   * an act the page does not offer.
+   */
+  function requestEnable(s: McpServerReview, on: boolean) {
+    setSaved(null);
+    if (!on && s.enabled && s.transport === 'stdio' && s.trust === 'needs-trust') {
+      setRead(false);
+      setReviewing(reviewing === s.id ? null : s.id);
+      return;
+    }
     if (!on || s.transport !== 'stdio') { void toggleServer(s, on); return; }
     setRead(false);
     setReviewing(reviewing === s.id ? null : s.id);
@@ -3954,7 +4055,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
   // Removing a server takes a tool away from every future session. It names
   // the server and waits, like every other record-losing act.
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
-  async function remove(s: McpServerConfig) {
+  async function remove(s: McpServerReview) {
     setSaved(null);
     setConfirmRemove(null);
     try {
@@ -4105,6 +4206,16 @@ function Mcp({ projects, prefs, pending, setFlag }: {
         </div>
       )}
 
+      {servers.v.s === 'ok' && servers.v.d.some((s) => s.enabled && s.trust === 'needs-trust') && (
+        <Note tone="warn">
+          <strong>Switched on, and not being handed to any session.</strong>{' '}
+          {servers.v.d.filter((s) => s.enabled && s.trust === 'needs-trust').map((s) => s.name).join(', ')}
+          {' '}— Wanigan leaves a stdio server out of every config it writes until that exact command,
+          arguments and scope are approved, so these read as on in the list and are absent from every
+          session it has launched. Open one below and approve the command, or switch it off.
+        </Note>
+      )}
+
       <Frame v={servers.v} what="the MCP server list" onRetry={servers.reload}>
         {(list) => {
           if (!list.length) {
@@ -4132,7 +4243,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                 <tbody>
                   {list.map((s) => {
                     const scopePath = s.projectId ? projects.find((p) => p.id === s.projectId)?.path ?? null : null;
-                    const line = resolvedCommand(s, scopePath);
+                    const line = commandLines(s);
                     const u = useOf(s.id);
                     return (
                       <Fragment key={s.id}>
@@ -4146,12 +4257,20 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                               one fact a reviewer needs, in the one place a touch
                               screen cannot reach. It wraps now. */}
                           <td className="set-path set-wrap" style={{ maxWidth: 260 }}>{line.template || '—'}</td>
+                          {/* Three states, not two. A row that is switched on
+                              and not approved is left out of every config
+                              writeMcpConfig writes, so printing "on" beside it
+                              claimed a server was being given out while nothing
+                              was receiving it. */}
                           <td>
                             <button className="set-mini" aria-pressed={s.enabled}
                                     aria-expanded={reviewing === s.id}
                                     onClick={() => requestEnable(s, !s.enabled)}>
-                              <Mark {...(s.enabled ? ON : OFF)} />
+                              <Mark {...(s.enabled ? (s.trust === 'needs-trust' ? WITHHELD : ON) : OFF)} />
                             </button>
+                            {s.enabled && s.trust === 'needs-trust' && (
+                              <div className="faint set-sub-line">left out of every config until this command is approved</div>
+                            )}
                           </td>
                           {/* Three states, three renderings, and a number in only
                               one of them. Before the read returns this says it has
@@ -4183,7 +4302,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                           <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                             <button className="set-mini" onClick={() => setDraft({
                               id: s.id, name: s.name, projectId: s.projectId ?? '', transport: s.transport,
-                              command: s.command ?? '', args: s.args ?? '', url: s.url ?? '', enabled: s.enabled,
+                              command: s.command ?? '', args: s.argsRaw, url: s.url ?? '', enabled: s.enabled,
                             })}>edit</button>
                             <button className="set-mini danger" aria-expanded={confirmRemove === s.id}
                                     onClick={() => setConfirmRemove(confirmRemove === s.id ? null : s.id)}>remove…</button>
@@ -4204,9 +4323,12 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                               <McpEnableReview
                                 server={s} scopeName={projectName(s.projectId)} scopePath={scopePath}
                                 template={line.template} resolved={line.resolved}
-                                read={read} onRead={setRead}
+                                read={read} onRead={setRead} busy={busy === s.id}
                                 onCancel={() => setReviewing(null)}
+                                onTrust={() => void trustServer(s)}
                                 onEnable={() => void toggleServer(s, true)}
+                                onRevoke={() => void revokeTrust(s)}
+                                onDisable={() => void toggleServer(s, false)}
                               />
                             </td>
                           </tr>
@@ -4247,9 +4369,12 @@ function Mcp({ projects, prefs, pending, setFlag }: {
       <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 6, lineHeight: 1.5 }}>
         Enabling a stdio server requires a recorded approval of that exact command, arguments and
         scope — the same separation of <em>trusted</em> from <em>enabled</em> that provider packs use.
-        A server saved before that rule existed carries no approval, so it is left out of the configs
-        Wanigan writes until one is made; switching it on here surfaces the refusal rather than
-        failing quietly. HTTP servers run no local command and need no approval.
+        The approval is recorded from a confirmation Wanigan raises outside this page, because a page
+        the renderer draws is not a trust boundary. A server saved before that rule existed carries no
+        approval, so it is left out of the configs Wanigan writes until one is made, and it reads
+        <em> on, withheld</em> above rather than <em>on</em>. Editing a stdio server changes the line
+        that would be spawned, so it withdraws the approval and switches the server off. HTTP servers
+        run no local command and need no approval.
       </p>
 
       <Result r={saved} />

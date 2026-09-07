@@ -9,7 +9,7 @@ import type {
   BackupCheck, BackupRestoreSummary, BackupSummary,
   CheckpointDiff, CheckpointRevertPlan, CheckpointRevertResult, SessionCheckpoint,
   InteractiveSessionLoad, MenuRoute, NotificationRoute, PluginScope,
-  McpServerConfig, McpServerStatus, BudgetState, Reconciliation, TrustLevel, LedgerEntry,
+  McpServerConfig, McpServerReview, McpServerStatus, BudgetState, Reconciliation, TrustLevel, LedgerEntry,
   WaniganSettings, ThemeSetting, UploadedFile, EvalPair, GoldenSet,
   EgressReport, ObservedSession, ObservedState,
   MobileMonitorConfig, MobileMonitorStatus, TailnetStatus,
@@ -263,6 +263,14 @@ const api = {
     upsert: (cfg: Omit<McpServerConfig, 'id'> & { id?: string }) => call<McpServerConfig>('mcp:upsert', cfg),
     remove: (id: string) => call<boolean>('mcp:remove', id),
     status: () => call<McpServerStatus[]>('mcp:status'),
+    // The consent view: trust state, the digest to hand back, and what was
+    // approved before, if anything was.
+    review: (projectId?: string | null) => call<McpServerReview[]>('mcp:review', projectId),
+    setEnabled: (id: string, enabled: boolean) => call<McpServerReview>('mcp:setEnabled', id, enabled),
+    // Raises a confirmation in the main process and resolves only if it is
+    // accepted. It records the approval and leaves the server switched off.
+    trust: (id: string, sha256: string) => call<McpServerReview>('mcp:trust', id, sha256),
+    revokeTrust: (id: string) => call<McpServerReview | null>('mcp:revokeTrust', id),
     server: () => call<{ port: number; url: string } | null>('mcp:server'),
     pending: () => call<{ id: string; tool: string; summary: string; costUsd: number; at: number }[]>('mcp:pending'),
   },

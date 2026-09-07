@@ -1587,6 +1587,89 @@ export type McpServerStatus = {
   failures: number;
 };
 
+/* ── P12 · MCP stdio consent ────────────────────────────────────────── */
+
+/**
+ * These four types are the consent view of an MCP server. They live here rather
+ * than in src/main/mcp/registry.ts because the renderer has to render the trust
+ * state and hand the digest back, and the renderer never imports from main.
+ */
+
+/** Exactly what the user was shown. Kept as the durable record of the grant. */
+export type McpApprovedCommand = {
+  name: string;
+  transport: 'stdio' | 'http';
+  scope: 'global' | 'project';
+  projectId: string | null;
+  command: string;
+  args: string;
+};
+
+export type McpServerTrustState =
+  /** The current command line matches one the user approved. */
+  | 'trusted'
+  /** Nothing local is executed, so there is nothing to approve. */
+  | 'not-required'
+  /** Never approved, or approved as something else. */
+  | 'needs-trust';
+
+export type McpServerClassification = {
+  /**
+   * How read-vs-write is decided for this server's tools. There is only one
+   * value today, and that is the point of recording it: nothing observes what
+   * an MCP tool actually did, so the gate tests the tool's *name* against a
+   * verb list. A server that calls a mutating tool `get_everything` is allowed
+   * without asking at read-only trust. A reviewer needs to be able to tell that
+   * apart from an allow backed by evidence.
+   */
+  basis: 'tool-name';
+  /** Distinct tools of this server that have completed a call on record. */
+  toolsSeen: number;
+  /** Of those, the ones the name test reads as reads. */
+  nameDerivedReadTools: string[];
+  /** Completed calls on record for those tools. Counted, not estimated. */
+  nameDerivedReadCalls: number;
+  /** The rest — the ones that would be put to the user at read-only trust. */
+  askedTools: string[];
+  note: string;
+};
+
+export type McpServerReview = {
+  id: string;
+  name: string;
+  transport: 'stdio' | 'http';
+  scope: 'global' | 'project';
+  projectId: string | null;
+  /** argv[0], as stored. Null for an HTTP server. */
+  command: string | null;
+  /** argv[1..], split the way writeMcpConfig splits them. */
+  args: string[];
+  /**
+   * The arguments exactly as stored, which is exactly what the digest covers
+   * and exactly what upsertServer takes back. The edit form round-trips this
+   * and never the split array: re-joining argv on spaces would unquote a path
+   * with a space in it and silently change the command.
+   */
+  argsRaw: string;
+  url: string | null;
+  /** True when {{PROJECT_PATH}} appears, so the argv differs per repository. */
+  resolvesPerProject: boolean;
+  /**
+   * The concrete argv for one project, when the scope names one. A global
+   * server using the placeholder has no single answer, and none is invented.
+   */
+  resolvedFor: { projectPath: string; command: string; args: string[] } | null;
+  /** The digest a caller passes back to trustServer. */
+  sha256: string;
+  trust: McpServerTrustState;
+  /** What was approved, if anything ever was. */
+  approved: McpApprovedCommand | null;
+  trustedSha256: string | null;
+  trustedAt: number | null;
+  enabled: boolean;
+  classification: McpServerClassification;
+};
+
 /* ── P13 · uploaded rows ────────────────────────────────────────────── */
 
 export type UploadedFile = {
