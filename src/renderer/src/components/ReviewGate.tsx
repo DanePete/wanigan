@@ -36,7 +36,7 @@ export default function ReviewGate({ projectId }: { projectId: string }) {
   return <section className="sunk" style={{ margin: '8px 12px', padding: '9px 11px' }}>
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}><span className="label" style={{ margin: 0 }}>Review gate</span><span className="faint">commands run in this project and stored as evidence</span></div>
     {error && <Note tone="error">{error}</Note>}
-    <textarea className="field mono" value={commands} onChange={(e) => setCommands(e.target.value)} placeholder={loading ? 'Reading this project’s recipe…' : 'npm test\ngit diff --check'} style={{ width: '100%', minHeight: 52, marginTop: 6 }} />
+    <textarea className="field mono" aria-label="Review gate commands" value={commands} onChange={(e) => setCommands(e.target.value)} placeholder={loading ? 'Reading this project’s recipe…' : 'npm test\ngit diff --check'} style={{ width: '100%', minHeight: 52, marginTop: 6 }} />
     {/* Saving before the read lands would write whatever is in the box — which
         is nothing yet — over this project's stored recipe. */}
     <div style={{ display: 'flex', gap: 6, marginTop: 6 }}><button className="btn" disabled={!!busy || loading} onClick={() => void save()}>{busy === 'save' ? 'Saving…' : 'Save recipe'}</button><button className="btn btn-primary" disabled={!!busy || loading || !commands.trim()} onClick={() => void run()}>{busy === 'run' ? 'Running…' : 'Run gate'}</button></div>

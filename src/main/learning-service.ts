@@ -18,6 +18,7 @@ import {
   DEFAULT_AUTOMATION_POLICY,
   KNOWLEDGE_KINDS,
   MACHINE_KNOWLEDGE_TTL_MS,
+  NEVER_CONSOLIDATED_KINDS,
   SIGNAL_DETAIL_MAX_BYTES,
   applyProjection,
   automationDecision,
@@ -67,6 +68,7 @@ import {
   updateCandidate,
   wakeSnoozedCandidate,
   type ArtifactScope,
+  type ConsolidationOutcome,
   type CreateExperimentInput,
   type KnowledgeCandidate,
   type KnowledgeProjection,
@@ -706,16 +708,15 @@ function machineExpiry(candidate: KnowledgeCandidate, at = Date.now()): number |
 }
 
 /**
- * Kinds consolidation can never consume: teaching became a candidate at
- * ingest, and a shell command's summary was discarded before storage. Marking
- * them processed as they arrive is what keeps the unprocessed queue a queue —
- * the oldest-first window filled with rows every pass filtered out and none
- * ever marked, so signals newer than one page were never examined at all.
+ * NEVER_CONSOLIDATED_KINDS is declared in learning/types.ts so the ledger's
+ * eligibleSignals count can apply the same two clauses this test does; the
+ * ledger sits below this module and cannot import it back. Marking those kinds
+ * processed as they arrive is what keeps the unprocessed queue a queue — the
+ * oldest-first window filled with rows every pass filtered out and none ever
+ * marked, so signals newer than one page were never examined at all.
  */
-const NEVER_CONSOLIDATED_KINDS = new Set(['explicit-teach', 'correction']);
-
 function permanentlyIneligible(signal: LearningSignal): boolean {
-  return NEVER_CONSOLIDATED_KINDS.has(String(signal.kind))
+  return NEVER_CONSOLIDATED_KINDS.includes(String(signal.kind))
     || signal.detail.learningCandidateEligible === false;
 }
 
@@ -749,14 +750,22 @@ function automationScopeViolation(candidate: KnowledgeCandidate, signals: Learni
  * Deterministic consolidation: repeated observations become reviewable
  * candidates, and new observations of a pattern a person snoozed wake that
  * candidate back into the inbox with a reason code.
+ *
+ * Returns `{ ran: false }` with a reason when the settings refuse the pass.
+ * It used to return four zeros, which a caller cannot tell apart from a pass
+ * that ran and found nothing — and the Consolidate button stays pressable
+ * while consolidationEnabled is off, so a manual press reported a finished
+ * pass that never started.
  */
 export function consolidate(
   projectId?: string | null,
   trigger: 'timer' | 'manual' = 'manual',
-): { processed: number; candidates: number; autoApplied: number; woken: number } {
+): ConsolidationOutcome {
   const cfg = learningSettings();
-  // A disabled engine records no heartbeat: the run did not happen.
-  if (!cfg.enabled || !cfg.consolidationEnabled) return { processed: 0, candidates: 0, autoApplied: 0, woken: 0 };
+  // A disabled engine records no heartbeat: the run did not happen, and the
+  // caller is told which switch refused it rather than handed empty counts.
+  if (!cfg.enabled) return { ran: false, reason: 'learning-disabled' };
+  if (!cfg.consolidationEnabled) return { ran: false, reason: 'consolidation-disabled' };
   const startedAt = Date.now();
   // A signal that found no second independent observation in 45 days will not
   // find one later; age it out so the backlog fetch below is never saturated
@@ -913,7 +922,7 @@ export function consolidate(
     console.warn('[wanigan] consolidation heartbeat not recorded:', error);
   }
   if (candidates > 0 || autoApplied > 0 || woken > 0) emitLearningChanged();
-  return { processed, candidates, autoApplied, woken };
+  return { ran: true, processed, candidates, autoApplied, woken };
 }
 
 function privacyMetadata(candidate: KnowledgeCandidate, providerIds?: string[]): Record<string, unknown> {

@@ -300,9 +300,20 @@ export default function Composer({ session, onError, onCollapse }: {
         .catch(() => {});
     };
     read();
-    const t = window.setInterval(read, QUEUE_POLL_MS);
+    // The same attention.list() call AttentionQueue makes, on the same two-second
+    // beat, and it stops for the same reason: a hidden window is a window nobody
+    // is reading, and the send button it feeds is not on screen to be honest at.
+    // Coming back re-reads at once rather than waiting for the next beat.
+    const t = window.setInterval(() => { if (document.hidden) return; read(); }, QUEUE_POLL_MS);
     const off = window.wanigan.on.sessionEvent((e) => { if (e.sessionId === sessionId) read(); });
-    return () => { alive = false; window.clearInterval(t); off(); };
+    const onVisible = () => { if (!document.hidden) read(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      alive = false;
+      window.clearInterval(t);
+      off();
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [sessionId]);
 
   useEffect(() => {
@@ -488,7 +499,7 @@ export default function Composer({ session, onError, onCollapse }: {
               says how many there are, or that Enter has stopped meaning send
               while the menu is open. Clipped rather than absent, because a
               live region only announces text that arrives after it exists. */}
-          <p className="composer-sr" role="status">
+          <p className="sr-only" role="status">
             {menu && menuOptions.length
               ? `${menuOptions.length} skill${menuOptions.length === 1 ? '' : 's'} match — arrow keys choose, Enter inserts instead of sending`
               : ''}

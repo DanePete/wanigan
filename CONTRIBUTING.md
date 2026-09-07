@@ -20,11 +20,12 @@ not. `scripts/launch.sh`, `scripts/cli.sh` and `scripts/smoke.sh` prepend the
 
 ## What `npm test` runs
 
-Four steps, in order, and all four must pass before a change is handed off:
+Five steps, in order, and all five must pass before a change is handed off:
 
 | Step | What it is |
 |---|---|
 | `npm run typecheck` | `tsconfig.node.json` (main + preload) then `tsconfig.web.json` (renderer) |
+| `npm run test:renderer-style` | the renderer ratchets: inline style objects, `<style>` in TSX, literal font sizes and durations, modifiers a base rule shadows, form controls with no accessible name |
 | `npm run test:package-hooks` | fixture checks over the electron-builder hooks: node-pty rebuild cache, Electron fuses, asar integrity, sealed-signature parsing |
 | `npm run test:local-install` | fixture checks over the local macOS installer: argument parsing, verification order, quit/stage/promote sequence |
 | `npm run smoke` | the suite inside a real Electron main process against the mock runner |
@@ -34,8 +35,9 @@ The two packaging suites build no bundle, sign nothing and never read or write
 spends nothing: `scripts/smoke.sh` sets `WANIGAN_MOCK=1` and hands Electron a
 throwaway `--user-data-dir`.
 
-CI runs the same four steps, split by what each needs from the runner:
-typecheck and smoke on Ubuntu under Xvfb, the two packaging suites on macOS.
+CI runs the same five steps, split by what each needs from the runner:
+typecheck, the style gate and smoke on Ubuntu under Xvfb, the two packaging
+suites on macOS.
 See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## Adding a smoke check

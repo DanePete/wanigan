@@ -1,5 +1,6 @@
 import type { LaunchModelCatalogue, LaunchModelRow, ProviderInfo } from '../shared/types';
 import { launchFieldChoices, type LaunchFieldChoices } from '../shared/launch-fields';
+import { db } from './db';
 import { glmModels } from './glm';
 import { deepseekModels } from './deepseek';
 import * as codexStatus from './codex-status';
@@ -39,6 +40,50 @@ import * as codexStatus from './codex-status';
 export type { LaunchModelCatalogue, LaunchModelRow } from '../shared/types';
 
 const EMPTY: LaunchModelCatalogue = { rows: [], source: 'none', note: null };
+
+/** Never fill a picker with history; the aliases are the answer, these are the evidence. */
+const MAX_OBSERVED_MODELS = 6;
+
+/**
+ * Resolved model ids Wanigan has actually seen run on one backend.
+ *
+ * Only for the published path. A live catalogue is the backend answering for
+ * itself and needs no help; a published one is a static list of aliases, and
+ * this is the one thing Wanigan holds that the list does not: what those
+ * aliases resolved to on this machine. Ordered by how recently each was seen,
+ * because the newest id is the one a published list is most likely to be
+ * missing.
+ *
+ * Anything already offered as an alias is dropped — case-insensitively, since
+ * `Opus` and `opus` launch the same thing and two rows for it would read as two
+ * choices. Failure is empty, never an exception: a picker that cannot open is
+ * worse than one without the extra rows, and this runs while a dialog is
+ * waiting on it.
+ */
+function observedBackendModels(backendId: string, published: LaunchModelRow[]): LaunchModelRow[] {
+  const already = new Set(published.map((r) => r.value.toLowerCase()));
+  try {
+    const rows = db().prepare(`
+      SELECT model, MAX(started_at) AS last_at
+      FROM session_log
+      WHERE backend_id = ? AND model IS NOT NULL AND TRIM(model) <> ''
+      GROUP BY model
+      ORDER BY last_at DESC
+      LIMIT ?
+    `).all(backendId, MAX_OBSERVED_MODELS * 3) as { model: string; last_at: number | null }[];
+    const out: LaunchModelRow[] = [];
+    for (const r of rows) {
+      const value = r.model.trim();
+      if (already.has(value.toLowerCase())) continue;
+      already.add(value.toLowerCase());
+      out.push({ value, label: value, description: 'seen on this backend', efforts: null });
+      if (out.length >= MAX_OBSERVED_MODELS) break;
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
 
 const errText = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -197,10 +242,24 @@ export async function providerModelCatalogue(
   } else {
     const published = backendId ? PUBLISHED_BACKEND_MODELS[backendId] : undefined;
     if (published) {
+      // The published rows are aliases — 'opus', 'sonnet' — which is all this
+      // list could ever be, because nothing here can be asked what it runs.
+      // But Wanigan is not actually ignorant of this backend: every session it
+      // launched recorded the resolved id it ended up on, and PostModelSwitch
+      // records the id again whenever the CLI or the operator changes it
+      // mid-run. So the ids it has genuinely seen go on the list beside the
+      // aliases, marked as observed rather than offered — which is the whole
+      // difference between a guess and a record, and the reason the note below
+      // no longer has to end at "Wanigan cannot ask".
+      const seen = backendId ? observedBackendModels(backendId, published) : [];
       catalogue = {
-        rows: published,
+        rows: [...published, ...seen],
         source: 'published',
-        note: 'Wanigan cannot ask this backend which models it runs, so these are the aliases it publishes. A newer one still launches if you type it.',
+        note: seen.length
+          ? 'Wanigan cannot ask this backend which models it runs, so the first rows are the aliases it publishes. '
+            + `Below them are ${seen.length === 1 ? 'the id' : `the ${seen.length} ids`} Wanigan has actually seen run here. `
+            + 'A newer one still launches if you type it.'
+          : 'Wanigan cannot ask this backend which models it runs, so these are the aliases it publishes. A newer one still launches if you type it.',
       };
     }
   }

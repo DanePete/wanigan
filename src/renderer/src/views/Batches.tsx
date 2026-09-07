@@ -204,8 +204,14 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
   useEffect(() => {
     void load();
     const off = window.wanigan.on.batchChanged(() => void load());
-    const t = setInterval(load, 8000);
-    return () => { off(); clearInterval(t); };
+    // A hidden window was still buying a 200-run read every eight seconds for a
+    // table nobody could see. The visibilitychange listener picks the read back
+    // up on the way in, so what is on screen is never older than the moment the
+    // window came back.
+    const t = setInterval(() => { if (!document.hidden) void load(); }, 8000);
+    const onVis = () => { if (!document.hidden) void load(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { off(); clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
   }, [load]);
 
   const active = runs.filter((r) => ['in_progress', 'submitting', 'canceling'].includes(r.status));
@@ -314,7 +320,14 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
               return (
                 <tr key={r.id} onClick={() => onOpen(r.id)} className="clickable">
                   <td>
-                    <div style={{ fontWeight: 500 }}>{r.name}</div>
+                    {/* The row click is for pointers only — a <tr> takes no focus
+                        and holds nothing that does, so run detail, results, the
+                        refusal lane and the evals tab had no keyboard route in at
+                        all. The name is the cell that identifies the run, so it is
+                        the one that becomes the button; .bx-f carries the focus
+                        ring the rest of this surface uses. */}
+                    <button className="bx-f" style={{ fontWeight: 500, textAlign: 'left' }}
+                            onClick={(e) => { e.stopPropagation(); onOpen(r.id); }}>{r.name}</button>
                     <div className="faint mono" style={{ fontSize: 'var(--t-micro)', marginTop: 2 }}>
                       {r.model}{r.project_name && ` · ${r.project_name}`}{r.parent_run_id && ' · retry'}
                     </div>
@@ -690,13 +703,13 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           <div className="row2" style={{ marginTop: 14 }}>
             <div>
               <label className="label">Run name</label>
-              <input className="field" style={{ marginTop: 4 }} value={cfg.name}
+              <input className="field" aria-label="Run name" style={{ marginTop: 4 }} value={cfg.name}
                      placeholder="e.g. Normalise venue names — August export"
                      onChange={(e) => patch({ name: e.target.value })} />
             </div>
             <div>
               <label className="label">Project</label>
-              <select className="field" style={{ marginTop: 4 }} value={cfg.projectId ?? ''}
+              <select className="field" aria-label="Project" style={{ marginTop: 4 }} value={cfg.projectId ?? ''}
                       onChange={(e) => void changeProject(e.target.value)}>
                 {projects.map((p) => <option key={p.id} value={p.id}>{p.name}{p.branch ? ` — ${p.branch}` : ''}</option>)}
               </select>
@@ -759,7 +772,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
                   cache this block
                 </label>
               </div>
-              <textarea className="field mono" rows={b.cache ? 8 : 4} value={b.text}
+              <textarea className="field mono" aria-label="System prompt block" rows={b.cache ? 8 : 4} value={b.text}
                         placeholder="Instructions identical for every row."
                         onChange={(e) => { const s = [...cfg.system]; s[i] = { ...b, text: e.target.value }; patch({ system: s }); invalidate(); }} />
             </div>
@@ -769,7 +782,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
             <span className="label">User template</span>
             <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>{'{{column}}'} binds to dataset columns</span>
           </div>
-          <textarea className="field mono" rows={5} value={cfg.userTemplate}
+          <textarea className="field mono" aria-label="User template" rows={5} value={cfg.userTemplate}
                     onChange={(e) => { patch({ userTemplate: e.target.value }); invalidate(); }} />
           {preview && (
             <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 7 }}>
@@ -809,7 +822,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           <div className="row3">
             <div>
               <label className="label">Model</label>
-              <select className="field" style={{ marginTop: 4 }} value={cfg.model}
+              <select className="field" aria-label="Model" style={{ marginTop: 4 }} value={cfg.model}
                       onChange={(e) => { patch({ model: e.target.value }); invalidate(); }}>
                 {models.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -825,13 +838,13 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
             </div>
             <div>
               <label className="label">Max tokens</label>
-              <input type="number" min={1} className="field" style={{ marginTop: 4 }} value={cfg.maxTokens}
+              <input type="number" min={1} className="field" aria-label="Max tokens" style={{ marginTop: 4 }} value={cfg.maxTokens}
                      onChange={(e) => { patch({ maxTokens: Number(e.target.value) }); invalidate(); }} />
               <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 3 }}>cap {num(cfg.extendedOutput ? 300000 : model?.maxTokens ?? 0)}</p>
             </div>
             <div>
               <label className="label">Cache TTL</label>
-              <select className="field" style={{ marginTop: 4 }} value={cfg.cacheTtl}
+              <select className="field" aria-label="Cache TTL" style={{ marginTop: 4 }} value={cfg.cacheTtl}
                       onChange={(e) => { patch({ cacheTtl: e.target.value as '5m' | '1h' }); invalidate(); }}>
                 <option value="1h">1 hour — right for batches</option>
                 <option value="5m">5 minutes</option>
@@ -893,7 +906,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
               <span className="mono">additionalProperties: false</span> and a{' '}
               <span className="mono">required</span> list, or the API rejects the batch.
             </p>
-            <textarea className="field mono" rows={7} style={{ marginTop: 6 }} value={cfg.schemaJson ?? ''}
+            <textarea className="field mono" aria-label="Response schema JSON" rows={7} style={{ marginTop: 6 }} value={cfg.schemaJson ?? ''}
                       onChange={(e) => { patch({ schemaJson: e.target.value }); invalidate(); }} />
           </details>
         </Section>
@@ -1069,7 +1082,7 @@ function SourceEditor({ source, onChange }: { source: UploadableSource; onChange
   if (source.kind === 'csv' || source.kind === 'jsonl') {
     return (
       <>
-        <textarea className="field mono" rows={6} value={source.text}
+        <textarea className="field mono" aria-label="Dataset rows" rows={6} value={source.text}
                   placeholder={source.kind === 'csv' ? 'nid,title,body\n12,"Winterland","…"' : '{"nid":"12","title":"Winterland"}'}
                   onChange={(e) => onChange({ ...source, text: e.target.value })} />
         <label className="btn" style={{ marginTop: 7 }}>
@@ -1102,13 +1115,13 @@ function SourceEditor({ source, onChange }: { source: UploadableSource; onChange
       <>
         <div className="row3">
           <div><label className="label">Root directory</label>
-            <input className="field mono" style={{ marginTop: 4 }} value={source.root}
+            <input className="field mono" aria-label="Root directory" style={{ marginTop: 4 }} value={source.root}
                    onChange={(e) => onChange({ ...source, root: e.target.value })} /></div>
           <div><label className="label">Pattern</label>
-            <input className="field mono" style={{ marginTop: 4 }} value={source.pattern}
+            <input className="field mono" aria-label="Pattern" style={{ marginTop: 4 }} value={source.pattern}
                    onChange={(e) => onChange({ ...source, pattern: e.target.value })} /></div>
           <div><label className="label">Max chars</label>
-            <input type="number" className="field mono" style={{ marginTop: 4 }} value={source.maxBytes ?? 120000}
+            <input type="number" className="field mono" aria-label="Max chars" style={{ marginTop: 4 }} value={source.maxBytes ?? 120000}
                    onChange={(e) => onChange({ ...source, maxBytes: Number(e.target.value) })} /></div>
         </div>
         <UploadToggle source={source} onChange={onChange} />
@@ -1119,16 +1132,16 @@ function SourceEditor({ source, onChange }: { source: UploadableSource; onChange
     <>
       <div className="row2">
         <div><label className="label">Working directory</label>
-          <input className="field mono" style={{ marginTop: 4 }} value={source.cwd}
+          <input className="field mono" aria-label="Working directory" style={{ marginTop: 4 }} value={source.cwd}
                  onChange={(e) => onChange({ ...source, cwd: e.target.value })} /></div>
         <div><label className="label">Output format</label>
-          <select className="field" style={{ marginTop: 4 }} value={source.format}
+          <select className="field" aria-label="Output format" style={{ marginTop: 4 }} value={source.format}
                   onChange={(e) => onChange({ ...source, format: e.target.value as 'csv' | 'jsonl' })}>
             <option value="jsonl">JSONL</option><option value="csv">CSV / TSV</option>
           </select></div>
       </div>
       <label className="label" style={{ display: 'block', marginTop: 9 }}>Command</label>
-      <textarea className="field mono" rows={4} style={{ marginTop: 4 }} value={source.command}
+      <textarea className="field mono" aria-label="Command" rows={4} style={{ marginTop: 4 }} value={source.command}
                 placeholder='drush sql:query --extra=-B "SELECT nid, title FROM node_field_data"'
                 onChange={(e) => onChange({ ...source, command: e.target.value })} />
       <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 4 }}>
@@ -1176,8 +1189,12 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
   useEffect(() => {
     if (!d) return;
     if (!['in_progress', 'submitting', 'canceling'].includes(d.run.status)) return;
-    const t = setInterval(() => { void loadDetail(); void loadRows(); }, 8000);
-    return () => clearInterval(t);
+    // Same guard as the list: a run in flight is worth polling, but only while
+    // there is someone reading it.
+    const beat = () => { if (document.hidden) return; void loadDetail(); void loadRows(); };
+    const t = setInterval(beat, 8000);
+    document.addEventListener('visibilitychange', beat);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', beat); };
   }, [d, loadDetail, loadRows]);
 
   if (!d) {
@@ -1361,7 +1378,7 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
                       style={filter === f ? { background: 'var(--accent)', color: 'var(--bg)' }
                                           : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>{f}</button>
             ))}
-            <input className="field" style={{ marginLeft: 'auto', maxWidth: 260 }} placeholder="Search prompts, output, errors…"
+            <input className="field" aria-label="Search results" style={{ marginLeft: 'auto', maxWidth: 260 }} placeholder="Search prompts, output, errors…"
                    value={q} onChange={(e) => { setQ(e.target.value); setOffset(0); }} />
           </div>
           {rowsErr && (
@@ -1380,7 +1397,12 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
                     : pending ? 'Still processing — results land as batches end.' : 'No rows match.'}</td></tr>}
                 {rows.map((r) => (
                   <tr key={r.custom_id} className="clickable" onClick={() => setOpen(r)}>
-                    <td className="mono">{r.custom_id}</td>
+                    {/* As in the run list: the row click is the pointer route and
+                        the custom_id is the keyboard one. A bare button inherits
+                        the cell's font, so this needs no style of its own. */}
+                    <td className="mono">
+                      <button className="bx-f" onClick={(e) => { e.stopPropagation(); setOpen(r); }}>{r.custom_id}</button>
+                    </td>
                     <td><Pill status={r.status} /></td>
                     <td className="dim trunc" style={{ maxWidth: 520 }}>
                       {r.status === 'succeeded' ? (r.output_text ?? '').slice(0, 200)
@@ -2124,7 +2146,15 @@ function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
  */
 function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id: string) => void }) {
   const [pairs, setPairs] = useState<EvalPair[] | null>(null);
-  const [runs, setRuns] = useState<Run[]>([]);
+  const [pairsErr, setPairsErr] = useState<string | null>(null);
+  /**
+   * The other runs this one could be paired with. `null` until a read returns:
+   * an empty array is the claim "there is exactly one run in the database", and
+   * this tab printed that claim before the read had been issued, then kept
+   * printing it after the read had failed.
+   */
+  const [runs, setRuns] = useState<Run[] | null>(null);
+  const [runsErr, setRunsErr] = useState<string | null>(null);
   const [sel, setSel] = useState<string | null>(null);
   const [diff, setDiff] = useState<any>(null);
   const [verdict, setVerdict] = useState<any>(null);
@@ -2139,27 +2169,42 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
   const [judgeNote, setJudgeNote] = useState<string | null>(null);
   const [judgeErr, setJudgeErr] = useState<string | null>(null);
   const [golden, setGolden] = useState<GoldenSet[] | null>(null);
+  /** The read's failure. `gErr` below is the *save* arm's; they are two events. */
+  const [goldenReadErr, setGoldenReadErr] = useState<string | null>(null);
   const [gName, setGName] = useState('');
   const [gErr, setGErr] = useState<string | null>(null);
   const [gOk, setGOk] = useState<string | null>(null);
   const [gBusy, setGBusy] = useState(false);
 
+  /* Each of the three reads below used to leave an empty array behind a failed
+     read, which turns "Wanigan could not read this" into "there is none of this"
+     — the one substitution the prose on this tab is written to avoid. Two of them
+     set that array in the catch; the third caught the rejection and did nothing,
+     so the array stayed the one useState had been given. The claim on screen was
+     the same either way. Each read now keeps its own message and leaves its own
+     state null, so nothing below counts a list that never came back. */
   const loadPairs = useCallback(async () => {
     try {
       const all = await window.wanigan.evals.pairs();
       const mine = all.filter((p) => p.runAId === runId || p.runBId === runId);
-      setPairs(mine);
+      setPairs(mine); setPairsErr(null);
       setSel((cur) => (cur && mine.some((p) => p.id === cur) ? cur : mine[0]?.id ?? null));
-    } catch { setPairs([]); }
+    } catch (e) { setPairsErr(msg(e)); }
   }, [runId]);
 
   const loadGolden = useCallback(async () => {
-    try { setGolden(await window.wanigan.evals.golden()); } catch { setGolden([]); }
+    try { setGolden(await window.wanigan.evals.golden()); setGoldenReadErr(null); }
+    catch (e) { setGoldenReadErr(msg(e)); }
+  }, []);
+
+  const loadRuns = useCallback(async () => {
+    try { setRuns((await window.wanigan.batch.runs()) as Run[]); setRunsErr(null); }
+    catch (e) { setRunsErr(msg(e)); }
   }, []);
 
   useEffect(() => { void loadPairs(); }, [loadPairs]);
   useEffect(() => { void loadGolden(); }, [loadGolden]);
-  useEffect(() => { window.wanigan.batch.runs().then((r) => setRuns(r as Run[])).catch(() => {}); }, []);
+  useEffect(() => { void loadRuns(); }, [loadRuns]);
 
   const loadDiff = useCallback(async (pairId: string) => {
     setDiffErr(null);
@@ -2179,7 +2224,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
     if (!other) return;
     setCreating(true); setPairErr(null);
     try {
-      const bName = runs.find((r) => r.id === other)?.name ?? other;
+      const bName = runs?.find((r) => r.id === other)?.name ?? other;
       const p = await window.wanigan.evals.createPair(name.trim() || `${run.name} vs ${bName}`, runId, other);
       setName('');
       await loadPairs();
@@ -2210,12 +2255,12 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
     finally { setGBusy(false); }
   }
 
-  const others = runs.filter((r) => r.id !== runId);
+  const others = runs ? runs.filter((r) => r.id !== runId) : null;
   const pair: EvalPair | undefined = diff?.pair;
   const rows: EvalRowDiff[] = diff?.rows ?? [];
   const sum = diff?.summary;
-  const runA = runs.find((r) => r.id === pair?.runAId);
-  const runB = runs.find((r) => r.id === pair?.runBId);
+  const runA = runs?.find((r) => r.id === pair?.runAId);
+  const runB = runs?.find((r) => r.id === pair?.runBId);
   const shown = rows.filter((r) => (
     filter === 'all' ? true : filter === 'differs' ? !r.same : r.winner === filter
   ));
@@ -2240,7 +2285,22 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
     <div className="bx-lane">
       <Section title="Pair this run with another"
                hint="Exactly one config field may differ. Two moving parts make a story, not a result.">
-        {!others.length ? (
+        {/* `&& !others` so a later failed refresh cannot take away a picker built
+            from a list that did come back. Only a first read that never landed
+            leaves nothing to show. */}
+        {runsErr && !others ? (
+          <div className="bx-state">
+            <h4>Could not read the other runs</h4>
+            <p>{runsErr}</p>
+            <p>
+              This is a failed read, not a database with one run in it. Whatever else you have submitted is
+              untouched; none of it was counted, so nothing here says how many runs there are to pair with.
+            </p>
+            <button className="btn bx-f" onClick={() => void loadRuns()}>Try again</button>
+          </div>
+        ) : !others ? (
+          <Reading what="the runs this one could be paired with" />
+        ) : !others.length ? (
           <div className="bx-state">
             <h4>Only one run exists</h4>
             <p>
@@ -2297,7 +2357,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
         )}
       </Section>
 
-      {!sel && pairs && pairs.length === 0 && others.length > 0 && (
+      {!sel && pairs && pairs.length === 0 && others !== null && others.length > 0 && (
         <div className="card bx-state">
           <h4>No comparison yet</h4>
           <p>
@@ -2305,6 +2365,14 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
             differs, so whatever the diff shows can be attributed to that field and nothing else.
           </p>
         </div>
+      )}
+
+      {pairsErr && (
+        <Note tone="error">
+          <strong>Could not read this run’s comparisons.</strong> {pairsErr} A pair may already exist —
+          none was read, so none is listed above.{' '}
+          <button className="bx-f" onClick={() => void loadPairs()}>Retry</button>
+        </Note>
       )}
 
       {diffErr && <Note tone="error"><strong>Could not read the comparison.</strong> {diffErr}</Note>}
@@ -2371,7 +2439,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
               and skipping the un-swap is how a randomised judge silently becomes a coin flip.
             </p>
             <div style={{ display: 'flex', gap: 7 }}>
-              <input className="field mono bx-f" placeholder="run_…" value={judgeRun}
+              <input className="field mono bx-f" aria-label="Run id to judge" placeholder="run_…" value={judgeRun}
                      onChange={(e) => setJudgeRun(e.target.value)} />
               <button className="btn bx-f" disabled={!judgeRun.trim()} onClick={() => void ingest()}>Ingest scores</button>
             </div>
@@ -2487,7 +2555,14 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
         {gOk && <div style={{ marginTop: 10 }}><Note tone="ok">{gOk}</Note></div>}
 
         <div style={{ marginTop: 13 }}>
-          {!golden && <p className="dim" style={{ fontSize: 'var(--t-small)' }}>Reading golden sets…</p>}
+          {goldenReadErr && (
+            <Note tone="error">
+              <strong>Could not read your golden sets.</strong> {goldenReadErr} Any set already pinned is
+              still pinned; none was read, so none is listed.{' '}
+              <button className="bx-f" onClick={() => void loadGolden()}>Retry</button>
+            </Note>
+          )}
+          {!golden && !goldenReadErr && <p className="dim" style={{ fontSize: 'var(--t-small)' }}>Reading golden sets…</p>}
           {golden && golden.length === 0 && (
             <div className="bx-state">
               <h4>No golden sets yet</h4>

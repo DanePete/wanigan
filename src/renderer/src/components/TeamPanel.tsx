@@ -2,7 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { ago, num } from './bits';
 
 type Member = { name: string; agentId: string | null; agentType: string | null; isLead: boolean };
-type Task = { id: string; title: string; status: string; assignee: string | null; dependsOn: string[]; blocked: boolean; updatedAt: number | null };
+type Task = {
+  id: string; title: string; status: string; assignee: string | null;
+  dependsOn: string[]; blocked: boolean;
+  /** Dependencies that have not completed — counted in main, where the
+   *  rule for a finished status lives. Not `dependsOn.length`. */
+  blockedBy: number;
+  updatedAt: number | null;
+};
 type Msg = { to: string; from: string | null; at: number | null; kind: string; preview: string };
 type Team = {
   name: string; configPath: string; members: Member[]; tasks: Task[]; pending: Msg[];
@@ -24,7 +31,19 @@ export default function TeamPanel() {
   const load = useCallback(async () => {
     try { setState(await window.wanigan.teams.read()); } catch { /* absent is the normal case */ }
   }, []);
-  useEffect(() => { void load(); const t = setInterval(load, 6000); return () => clearInterval(t); }, [load]);
+  useEffect(() => {
+    void load();
+    // A hidden window is a window nobody is reading, and this poll is not
+    // cheap: `teams.read` walks every account's teams and tasks directories
+    // synchronously in the main process, reading and parsing each JSON file it
+    // finds. Skipping it while hidden shows nothing stale, because the
+    // visibility handler reads once the moment the window comes back — the
+    // same guard the surrounding Fleet view puts on its own two timers.
+    const t = setInterval(() => { if (!document.hidden) void load(); }, 6000);
+    const onVisible = () => { if (!document.hidden) void load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVisible); };
+  }, [load]);
 
   // Nothing running and teams switched off: stay out of the way entirely.
   if (!state || (state.teams.length === 0 && !state.enabled)) return null;
@@ -87,10 +106,14 @@ export default function TeamPanel() {
                       {task.title}
                       {/* The single most useful thing here: a pending task whose
                           dependency has not completed cannot be claimed, and a
-                          stalled team usually has exactly one. */}
+                          stalled team usually has exactly one. So the count is
+                          the outstanding dependencies, not every dependency the
+                          task ever declared — one left of three is one task from
+                          claimable, and printing 3 buried that. */}
                       {task.blocked && (
                         <span style={{ color: 'var(--warning)', marginLeft: 7, fontSize: 'var(--t-micro)' }}>
-                          <span aria-hidden="true">⚠ </span>blocked by {task.dependsOn.length} unfinished
+                          <span aria-hidden="true">⚠ </span>
+                          {`blocked — ${task.blockedBy} of ${task.dependsOn.length} unfinished`}
                         </span>
                       )}
                     </td>

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { db, dataDir } from './db';
+import { isPickedPath, PICKED_MAX } from './browse';
 import { getSetting, setSetting } from './settings';
 import { uploadFile, isUploadable } from './batch/files';
 import { findModel, DEFAULT_MODEL } from './batch/pricing';
@@ -937,8 +938,34 @@ function stage(
   }
 }
 
+/**
+ * Copies a named file on disk into the session's attachment directory.
+ *
+ * The path is checked against browse.isPickedPath before anything is read,
+ * because the destination is not an inert folder: sessions.ts hands
+ * attachmentsDir(sessionId) to the CLI as --add-dir, so a file staged here is a
+ * file the agent is allowed to open. Refusing here rather than in the IPC
+ * handler means the rule holds for every caller of this function, not only for
+ * the one channel that exists today.
+ *
+ * What it refuses is a path no native file dialog in this app returned. It does
+ * not inspect the file's role: a person who picks a credential file in the
+ * dialog has chosen to hand it over, and it is attached.
+ *
+ * The pasted/dropped route is attachBufferToSession, which carries bytes and no
+ * path and is not gated by this — there is no path there to have been chosen.
+ */
 export function attachToSession(sessionId: string, absPath: string): Attachment {
   const abs = path.resolve(absPath);
+  if (!isPickedPath(abs)) {
+    throw new Error(
+      `Wanigan will not attach ${abs}, because no file picker in this app returned that path. ` +
+      'An attachment is copied into a directory the agent is given read access to, so the file has to be one ' +
+      'you chose in a Wanigan file dialog. Use "+ Add files" under Attachments, or drop the file onto the ' +
+      'session to send its bytes instead. ' +
+      `Wanigan remembers the last ${PICKED_MAX} paths chosen that way, so one picked long enough ago has to be picked again.`
+    );
+  }
   const check = inspect(abs);
   return stage(sessionId, path.basename(abs), check, (dest) => fs.copyFileSync(abs, dest));
 }

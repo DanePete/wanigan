@@ -220,9 +220,9 @@ function uiWiring(): string {
  * container the ten screens are composed into, and the footer — and nothing
  * else.
  *
- * Fleet, Agent, Git and Device are built; mobileViewsMarkup fills the other six
- * from the record in shared/mobile-nav.ts with a sentence naming what will be
- * there.
+ * Nine of the ten screens in shared/mobile-nav.ts are composed below.
+ * mobileViewsMarkup fills whichever ids the `built` record does not cover —
+ * Batches, today — with a sentence naming what will be there.
  */
 export function mobileShell(nonce: string, appearance: string, remoteControl: boolean): string {
   return `<!doctype html>
@@ -248,7 +248,7 @@ ${navRailMarkup()}
       <div><div id="mode-label" class="eyebrow">${remoteControl ? 'Private remote control' : 'Private fleet monitor'}</div><h1 id="host">Wanigan</h1></div>
       <div class="connection"><span id="dot" class="dot"></span><span id="connection">Connecting…</span></div>
     </header>
-    <section id="pair" class="notice hidden"><strong>This Wanigan app is not paired yet.</strong><p style="margin-top:6px">On the Mac, open Wanigan Settings → Phone monitor and type its ten-character pairing code here.</p><form id="pair-form" style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><input id="pair-token" aria-label="Pairing code" autocomplete="one-time-code" autocapitalize="characters" placeholder="Pairing code" maxlength="12" style="flex:1;min-width:220px"><button>Pair this app</button></form></section>
+    <section id="pair" class="notice hidden"><strong>This Wanigan app is not paired yet.</strong><p class="pair-note">On the Mac, open Wanigan Settings → Phone monitor and type its ten-character pairing code here.</p><form id="pair-form"><input id="pair-token" aria-label="Pairing code" autocomplete="one-time-code" autocapitalize="characters" placeholder="Pairing code" maxlength="12"><button>Pair this app</button></form></section>
     <section id="error" class="notice hidden"><strong id="error-title">Could not read Wanigan.</strong><span id="error-text">The next poll will retry.</span><p id="error-why" class="why"></p></section>
     <section id="dashboard" class="hidden">
 ${mobileViewsMarkup({ fleet: sectionMarkup('dashboard'), agent: agentView(remoteControl), git: sectionMarkup('git'), spend: sectionMarkup('spend'), runs: sectionMarkup('manage'),

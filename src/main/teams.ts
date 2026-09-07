@@ -42,7 +42,13 @@ function dirFor(dirs: string[], ...rest: string[]): string {
 export type TeamMember = { name: string; agentId: string | null; agentType: string | null; isLead: boolean };
 export type TeamTask = {
   id: string; title: string; status: string; assignee: string | null;
-  dependsOn: string[]; blocked: boolean; updatedAt: number | null;
+  dependsOn: string[]; blocked: boolean;
+  /** How many of `dependsOn` have not completed. Once some dependencies are
+   *  done this is smaller than `dependsOn.length`, and it is the number a
+   *  reader can act on. A dependency id with no task in this list counts as
+   *  unfinished: nothing that was read says it finished. */
+  blockedBy: number;
+  updatedAt: number | null;
 };
 export type TeamMessage = { to: string; from: string | null; at: number | null; kind: string; preview: string };
 export type Team = {
@@ -138,15 +144,21 @@ function readTasks(team: string): TaskRead {
         assignee: str(t.assignee) ?? str(t.owner) ?? str(t.claimedBy),
         dependsOn: deps,
         blocked: false,
+        blockedBy: 0,
         updatedAt: ts(t.updatedAt) ?? ts(t.completedAt) ?? ts(t.createdAt),
       });
     }
   }
   // A pending task whose dependency has not completed cannot be claimed — the
   // single most useful thing to show, because a stalled team usually has one.
+  // The count is what a reader needs, and it is not the number of dependencies:
+  // a task with three of which two are done is one task away from claimable.
+  // Counted here rather than in the panel because this is where the exact rule
+  // for "done" lives, and status is free text off disk.
   const done = new Set(out.filter((t) => t.status === 'completed' || t.status === 'complete').map((t) => t.id));
   for (const t of out) {
-    t.blocked = t.status === 'pending' && t.dependsOn.some((d) => !done.has(d));
+    t.blockedBy = t.dependsOn.filter((d) => !done.has(d)).length;
+    t.blocked = t.status === 'pending' && t.blockedBy > 0;
   }
   return { tasks: out.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)), partial, mtimeMs };
 }

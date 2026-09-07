@@ -524,6 +524,61 @@ export async function stashes(root: string): Promise<Stash[]> {
 
 /* -- acting ---------------------------------------------------------- */
 
+/**
+ * A ref the renderer named, checked before it becomes argv.
+ *
+ * There are two separate holes here and each one stays open when only the
+ * other is closed, which is why this check and a `--` are both present on the
+ * checkout, merge and branch-delete argv below — trailing on the first two,
+ * and before the name on `branch -d`, whose ref comes last. `push` is the one
+ * callsite that takes this check alone: what `git push` does with a `--` was
+ * not checked, so it did not get one.
+ *
+ * A branch whose name begins with a dash is creatable — `git update-ref
+ * refs/heads/-f HEAD` succeeds — and `branches()` above lists it like any
+ * other, so the checkout button beside it ran `git checkout -f`. git read
+ * that as the option: it reverted every uncommitted modification in the
+ * repository and exited 0, so the UI reported a successful branch switch. A
+ * trailing `--` does not stop it; `git checkout -f --` discards too.
+ *
+ * And `.` is a pathspec that no name check can tell apart from a ref, so
+ * `git checkout .` restored the whole working tree from the index, also at
+ * exit 0. Only the trailing `--` refuses that one: `git checkout . --` exits
+ * 128 with `invalid reference: .`, while `git checkout <branch> --` switches
+ * normally (checked against git 2.50.1).
+ *
+ * The pattern is deliberately narrow — a leading dash, whitespace, a control
+ * character, a length — because git's own ref rules are much stricter than
+ * this and git enforces them itself, so a check that guessed at them here
+ * would take legal refs away from the UI. The price of the dash rule is that
+ * a ref genuinely named `-f` becomes unreachable from Wanigan altogether,
+ * including to delete it; that one needs a terminal.
+ */
+const REF_MAX = 250;
+
+function refArg(ref: unknown, what: string): string {
+  if (typeof ref !== 'string') fail(`${what} needs a branch or commit name, and this was not text.`);
+  const name = ref.trim();
+  if (!name) fail(`${what} needs a branch or commit name.`);
+  // Quoted back into a UI string, so the control characters this refuses do not
+  // travel with it.
+  const shown = name.slice(0, 80).replace(/[\u0000-\u001f\u007f]/g, '');
+  if (name.startsWith('-')) {
+    fail(
+      `"${shown}" begins with a dash, which git reads as an option rather than a ref, ` +
+      `so Wanigan will not pass it. A branch really named that has to be renamed or ` +
+      `deleted from a terminal.`,
+    );
+  }
+  if (/\s/.test(name) || /[\u0000-\u001f\u007f]/.test(name)) {
+    fail(`"${shown}" contains a space or a control character, which a git ref cannot.`);
+  }
+  if (name.length > REF_MAX) {
+    fail(`That name is ${name.length} characters; ${REF_MAX} is the most this will pass to git.`);
+  }
+  return name;
+}
+
 export async function stage(dir: string, files: string[]) {
   const { repoRoot } = await acting(dir, 'stage files');
   const r = await git(repoRoot, ['add', '--'].concat(files));
@@ -564,20 +619,23 @@ export async function commit(dir: string, message: string, opts: { amend?: boole
   return r.out.trim();
 }
 export async function checkout(dir: string, ref: string, create = false) {
+  const name = refArg(ref, 'A checkout');
   const { repoRoot } = await acting(dir, 'check out a branch');
-  const r = await git(repoRoot, create ? ['checkout', '-b', ref] : ['checkout', ref]);
+  const r = await git(repoRoot, create ? ['checkout', '-b', name, '--'] : ['checkout', name, '--']);
   if (!r.ok) fail(r.err);
   return true;
 }
 export async function deleteBranch(dir: string, name: string, force = false) {
+  const branch = refArg(name, 'A branch delete');
   const { repoRoot } = await acting(dir, 'delete a branch');
-  const r = await git(repoRoot, ['branch', force ? '-D' : '-d', name]);
+  const r = await git(repoRoot, ['branch', force ? '-D' : '-d', '--', branch]);
   if (!r.ok) fail(r.err);
   return true;
 }
 export async function merge(dir: string, ref: string) {
+  const name = refArg(ref, 'A merge');
   const { repoRoot } = await acting(dir, 'merge');
-  const r = await git(repoRoot, ['merge', '--no-edit', ref]);
+  const r = await git(repoRoot, ['merge', '--no-edit', name, '--']);
   if (!r.ok) fail(r.err);
   return r.out.trim();
 }
@@ -598,7 +656,7 @@ export async function pull(dir: string) {
 export async function push(dir: string, opts: { setUpstream?: boolean; branch?: string } = {}) {
   const { repoRoot } = await acting(dir, 'push');
   const args = ['push'];
-  if (opts.setUpstream && opts.branch) args.push('-u', 'origin', opts.branch);
+  if (opts.setUpstream && opts.branch) args.push('-u', 'origin', refArg(opts.branch, 'A push'));
   const r = await git(repoRoot, args, 180_000);
   if (!r.ok) fail(r.err);
   return (r.err || r.out).trim() || 'Pushed.';
@@ -611,15 +669,42 @@ export async function stashSave(dir: string, message: string) {
   if (!r.ok) fail(r.err);
   return r.out.trim();
 }
+/**
+ * A stash position, checked before it becomes part of a revision.
+ *
+ * `stash@{<n>}` is not an index expression — it is a reflog expression, and git
+ * only reads the braces as a position when they hold an integer. Anything else
+ * is parsed as a *date*: `stash@{1.5}` resolves to whatever the stash reflog
+ * held at that time, which on a three-entry list is the oldest entry, not the
+ * second (checked against git 2.50.1, which answers it with a `log for 'stash'
+ * only goes back to …` warning and a hash). So a non-integer here does not
+ * fail loudly the way a bad ref does; `apply` and `pop` quietly act on a stash
+ * the operator never picked, and pop then drops it.
+ *
+ * The renderer derives this from the position in `stashes()` and so always
+ * sends a whole number today. That is exactly the argument that was made for
+ * the ref strings above until a branch named `-f` reverted a working tree:
+ * main validates renderer input because main is where the guarantee has to
+ * live, not because the current caller is suspect.
+ */
+function stashArg(index: unknown, what: string): string {
+  if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
+    fail(`${what} needs a whole stash position; git reads anything else as a date and would act on a different stash.`);
+  }
+  return 'stash@{' + String(index) + '}';
+}
+
 export async function stashApply(dir: string, index: number, drop: boolean) {
+  const at = stashArg(index, drop ? 'Popping a stash' : 'Applying a stash');
   const { repoRoot } = await acting(dir, drop ? 'pop a stash' : 'apply a stash');
-  const r = await git(repoRoot, ['stash', drop ? 'pop' : 'apply', 'stash@{' + String(index) + '}']);
+  const r = await git(repoRoot, ['stash', drop ? 'pop' : 'apply', at]);
   if (!r.ok) fail(r.err);
   return r.out.trim();
 }
 export async function stashDrop(dir: string, index: number) {
+  const at = stashArg(index, 'Dropping a stash');
   const { repoRoot } = await acting(dir, 'drop a stash');
-  const r = await git(repoRoot, ['stash', 'drop', 'stash@{' + String(index) + '}']);
+  const r = await git(repoRoot, ['stash', 'drop', at]);
   if (!r.ok) fail(r.err);
   return true;
 }

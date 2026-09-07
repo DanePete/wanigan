@@ -13,16 +13,49 @@ const sameIds = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].
 type RowDetailState = { loading: boolean; output: string | null; error: string | null; failed: string | null };
 
 /**
+ * The repository rows on screen, and the run they were read for.
+ *
+ * They used to be a bare array that was emptied only when the selection
+ * emptied. Selecting run B after `headless:rows` rejected for it therefore left
+ * run A's repositories, file counts and cost sitting under run B's name — and
+ * the Squash merge button beside them acted on run A's worktree while stamping
+ * run B's name into the squash commit, permanently, in git history. Carrying
+ * the run id the array was fetched for is what makes that unrepresentable:
+ * nothing below renders unless `runId` is the run that is selected.
+ *
+ * `rows` is null until a read for this run returned — the difference between
+ * "this run has no repositories" and "nobody has answered yet". `error` is why
+ * the last read did not return.
+ */
+type RowsState = { runId: string; rows: HeadlessRowSummary[] | null; error: string | null };
+
+/**
  * What actually changed about the selected run.
  *
- * The three-second poll replaces the `runs` array wholesale, so an effect that
- * depends on the array refires every beat whether or not the run it is watching
- * moved. Depending on the counters instead means the rows are re-read when a
- * repository finishes and at no other time.
+ * The three-second poll replaces the whole `runs` array whenever anything on
+ * the history would paint differently — another run's counters, or a relative
+ * timestamp rolling over — so an effect keyed to the array refires for reasons
+ * that have nothing to do with the run it is watching. Depending on the
+ * counters instead means a beat that changed nothing about this run does not
+ * re-read its rows.
  */
 const runSignature = (run: HeadlessRun | null): string => (run
   ? `${run.id}:${run.status}:${run.succeeded}:${run.failed}:${run.blocked}:${run.open}:${run.filesChanged}`
   : '');
+
+/**
+ * Everything the history list prints, as one string.
+ *
+ * `headless:runs` builds fresh objects on every call, so the poll handed
+ * `setRuns` a new array twenty times a minute whether or not a run had moved,
+ * and every one of those replacements re-rendered the list. The relative
+ * timestamp is part of this on purpose: it is the one thing on a finished run
+ * that keeps changing, so comparing against what was last accepted lets a quiet
+ * beat keep its array without freezing "4m ago" on screen.
+ */
+const runsFingerprint = (list: HeadlessRun[]): string => list
+  .map((r) => `${runSignature(r)}|${r.name}|${r.model}|${r.costUsd}|${r.costStatus}|${ago(r.createdAt)}`)
+  .join('\n');
 
 /**
  * One row's cost, or the honest absence of one. A row whose agent named no
@@ -43,7 +76,9 @@ function rowCost(row: HeadlessRowSummary): string {
 export default function HeadlessRuns({ projects, providers }: { projects: Project[]; providers: ProviderInfo[] }) {
   const [runs, setRuns] = useState<HeadlessRun[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [rows, setRows] = useState<HeadlessRowSummary[]>([]);
+  const [rowsState, setRowsState] = useState<RowsState | null>(null);
+  /** Bumped by the rows region's own retry, so a failed read can be asked again. */
+  const [rowsNonce, setRowsNonce] = useState(0);
   // Output and errors are fetched per row, on expand, and kept keyed by
   // project id so collapsing and reopening a row does not re-cross IPC.
   const [details, setDetails] = useState<Record<string, RowDetailState>>({});
@@ -88,6 +123,9 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   const effortField = provider?.launchFields?.find((field) => field.id === 'effort');
   const current = runs.find((r) => r.id === selected) ?? null;
   selectedRef.current = selected;
+  // The single gate every row, stat and merge button below passes through.
+  const rowsFor = rowsState && rowsState.runId === selected ? rowsState : null;
+  const readRows = rowsFor?.rows ?? null;
 
   useEffect(() => {
     setModel(typeof modelField?.defaultValue === 'string' ? modelField.defaultValue : '');
@@ -117,9 +155,18 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
     });
   }, [projects]);
 
+  /** The fingerprint of the list this screen last accepted for painting. */
+  const painted = useRef('');
+
   const load = useCallback(async () => {
     const next = await window.wanigan.headless.runs(50);
-    setRuns(next);
+    // A beat that would paint the same list keeps the array it already has.
+    // The comparison is against the fingerprint of the array in state, not
+    // against `prior` inside an updater: the updater runs after this function
+    // returns, so a ref written here would already equal the value it is
+    // supposed to be compared with and every beat would be discarded.
+    const look = runsFingerprint(next);
+    if (look !== painted.current) { painted.current = look; setRuns(next); }
     setSelected((old) => old && next.some((r) => r.id === old) ? old : (next[0]?.id ?? null));
     setLoaded(true);
     setLoadFailed(null);
@@ -127,22 +174,57 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
 
   // Every beat records its own failure rather than the first one alone. Before
   // a read has ever landed the failure is the only thing this screen can
-  // honestly show, and the three-second beat is also the automatic retry
-  // standing behind the button in the history panel.
+  // honestly show, and the three-second beat, while the window is visible, is
+  // also the automatic retry standing behind the button in the history panel.
   const reload = useCallback(() => void load().catch((e) => setLoadFailed(msg(e))), [load]);
 
-  useEffect(() => { reload(); const t = setInterval(reload, 3000); return () => clearInterval(t); }, [reload]);
+  useEffect(() => {
+    reload();
+    // A hidden window is a window nobody is reading, and this beat is not free:
+    // `headless:runs` is seven correlated subqueries per run over
+    // `headless_rows`, whose only index is its (run_id, project_id) primary
+    // key, and better-sqlite3 answers all of it synchronously on the main
+    // process's single JavaScript thread. Fleet, Pet and the attention strip
+    // already stop when the window is hidden; so does this. Coming back
+    // re-reads at once rather than waiting out the rest of the interval.
+    const t = setInterval(() => { if (document.hidden) return; reload(); }, 3000);
+    const onVisible = () => { if (!document.hidden) reload(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVisible); };
+  }, [reload]);
 
   const signature = runSignature(current);
   useEffect(() => {
     let alive = true;
-    if (!selected) { setRows([]); return; }
-    void window.wanigan.headless.rows(selected).then((r) => { if (alive) setRows(r); }).catch((e) => alive && setErr(msg(e)));
+    if (!selected) { setRowsState(null); return; }
+    const runId = selected;
+    // The previous run's rows go here, at the top, on the selection change —
+    // not when the new read returns and not only when the selection empties.
+    // This is not about a late response arriving out of order; the `alive`
+    // cleanup below has always handled that. It is about what the panel shows
+    // in the meantime, and about what it keeps showing forever if this read
+    // fails: rows belonging to a run whose name is no longer on the heading.
+    setRowsState((prior) => {
+      if (!prior || prior.runId !== runId) return { runId, rows: null, error: null };
+      // Same run, re-read because one of its repositories finished or because
+      // the rows region's Try again asked again. Its rows stay on screen, and a
+      // previous failure is dropped: with nothing read yet that leaves "Reading
+      // this run's repositories…", and with rows from an earlier read still on
+      // screen it drops the warn Note over them until this read answers.
+      return prior.error === null ? prior : { ...prior, error: null };
+    });
+    void window.wanigan.headless.rows(runId)
+      .then((r) => { if (alive) setRowsState({ runId, rows: r, error: null }); })
+      .catch((e) => {
+        if (!alive) return;
+        setRowsState((prior) => (prior && prior.runId === runId ? { ...prior, error: msg(e) } : prior));
+      });
     return () => { alive = false; };
     // Keyed to what the selected run reports about itself, not to the array the
-    // poll replaces every three seconds. `runs` is deliberately absent.
+    // poll replaces every three seconds. `runs` is deliberately absent;
+    // `rowsNonce` is the rows region's own Try again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, signature]);
+  }, [selected, signature, rowsNonce]);
 
   // Detail belongs to the run it was fetched for; switching runs must not leave
   // one repository's output hanging under another run's row of the same name.
@@ -221,11 +303,25 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   // never one click.)
   const [confirmMerge, setConfirmMerge] = useState<string | null>(null);
   const [merging, setMerging] = useState<string | null>(null);
+  // An armed confirmation belongs to the run it was armed on. It is held by
+  // project id, and two runs over the same repository share that id, so
+  // switching runs used to re-arm it on the other run's row of the same
+  // project — measured: open the confirmation on run A's row, click run B, and
+  // B's row for that repository is already expanded with its Squash merge
+  // button under the cursor. The second deliberate press is the whole
+  // protection here, so it is asked again per run.
+  useEffect(() => { setConfirmMerge(null); }, [selected]);
   async function merge(row: HeadlessRowSummary) {
     if (!row.worktree) return;
+    // The name in a squash commit is written into the project's branch and
+    // cannot be corrected by looking again, so it comes from the row's own
+    // `runId` rather than from whichever run happens to be selected. The
+    // fallback is that id, which still names one run exactly; the `'headless
+    // run'` it replaces named none.
+    const runName = runs.find((r) => r.id === row.runId)?.name ?? row.runId;
     setMerging(row.projectId);
     try {
-      const r = await window.wanigan.worktrees.merge(row.worktree, { squash: true, message: `wanigan: ${current?.name ?? 'headless run'} · ${row.projectName}` });
+      const r = await window.wanigan.worktrees.merge(row.worktree, { squash: true, message: `wanigan: ${runName} · ${row.projectName}` });
       if (!r.merged) throw new Error(r.detail);
       setConfirmMerge(null);
       await load();
@@ -233,9 +329,13 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
     finally { setMerging(null); }
   }
 
-  const totals = useMemo(() => rows.reduce((a, r) => ({
+  // Both figures below are sums over the rows, so both are null until the rows
+  // for the selected run are in hand. An unread run summing to zero prints as a
+  // confident 0 files and $0.00, which is a claim about a read that has not
+  // happened.
+  const totals = useMemo(() => (readRows === null ? null : readRows.reduce((a, r) => ({
     changed: a.changed + r.filesChanged, cost: a.cost + r.costUsd,
-  }), { changed: 0, cost: 0 }), [rows]);
+  }), { changed: 0, cost: 0 })), [readRows]);
 
   /**
    * How complete the cost total is, in the same three words the Usage screen
@@ -245,7 +345,8 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
    * unknown, counted as not reported rather than assumed good.
    */
   const costStatus = useMemo(() => {
-    const ran = rows.filter((r) => r.status === 'succeeded' || r.status === 'timeout');
+    if (readRows === null) return null;
+    const ran = readRows.filter((r) => r.status === 'succeeded' || r.status === 'timeout');
     if (ran.length === 0) return { kind: 'reported' as const, missing: 0 };
     const missing = ran.filter((r) => r.costReported !== true).length;
     return {
@@ -253,7 +354,12 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
         : missing === ran.length ? 'unreported' as const : 'partial' as const,
       missing,
     };
-  }, [rows]);
+  }, [readRows]);
+
+  /** Why Changed and Cost have no figure. Both are sums over rows not in hand. */
+  const rowsUnread = rowsFor?.error
+    ? "this run's repositories could not be read"
+    : "reading this run's repositories";
 
   return (
     <main className="pane hr-view">
@@ -391,7 +497,8 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
             </div>
             <div className="stat-grid hr-stats">
               <Stat label="Succeeded" value={num(current.succeeded)} sub={`${num(current.failed)} failed · ${num(current.blocked)} blocked`} />
-              <Stat label="Changed" value={num(totals.changed)} sub="files outside the launch baseline" />
+              <Stat label="Changed" value={totals ? num(totals.changed) : '—'}
+                    sub={totals ? 'files outside the launch baseline' : rowsUnread} />
               {/* The strongest truth claim on this screen used to sit on its
                   least complete number: a repository whose agent reported no
                   cost is stored as $0.00, so "never estimated" was true of the
@@ -399,65 +506,89 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
                   Usage screen gives, and the confident wording is kept only
                   for the case that earns it. */}
               <Stat label="Cost"
-                    value={costStatus.kind === 'unreported' ? '—' : costStatus.kind === 'partial' ? `≥ ${usd(totals.cost)}` : usd(totals.cost)}
-                    sub={costStatus.kind === 'unreported'
-                      ? 'no repository reported a cost, so there is no figure to show'
-                      : costStatus.kind === 'partial'
-                        ? `a floor · ${num(costStatus.missing)} ${costStatus.missing === 1 ? 'repository' : 'repositories'} reported no cost`
-                        : 'CLI-reported; never estimated'} />
+                    value={!totals || !costStatus ? '—'
+                      : costStatus.kind === 'unreported' ? '—' : costStatus.kind === 'partial' ? `≥ ${usd(totals.cost)}` : usd(totals.cost)}
+                    sub={!totals || !costStatus ? rowsUnread
+                      : costStatus.kind === 'unreported'
+                        ? 'no repository reported a cost, so there is no figure to show'
+                        : costStatus.kind === 'partial'
+                          ? `a floor · ${num(costStatus.missing)} ${costStatus.missing === 1 ? 'repository' : 'repositories'} reported no cost`
+                          : 'CLI-reported; never estimated'} />
             </div>
-            <div className="hr-rows">{rows.map((row) => {
-              const d = details[row.projectId];
-              const expandable = row.hasError || row.hasOutput;
-              return (
-                <article key={row.projectId} className="hr-row">
-                  <div className="hr-row-head"><div><strong>{row.projectName}</strong><span className="faint">{row.status} · {row.filesChanged} files · {rowCost(row)}</span></div>
-                    {row.worktree && row.status === 'succeeded' && (
-                      <button className="btn" aria-expanded={confirmMerge === row.projectId}
-                              onClick={() => setConfirmMerge(confirmMerge === row.projectId ? null : row.projectId)}>
-                        Squash merge…
-                      </button>
+            {/* The rows region answers for its own read. A run's repositories
+                are shown under that run's name or not at all, so "reading" and
+                "could not read" live here rather than leaving the last run's
+                table standing under this one's heading. */}
+            {readRows === null ? (
+              !rowsFor?.error
+                ? <Reading what="this run's repositories" />
+                : <EmptyState posture="could-not-read" title="Could not read this run's repositories"
+                              cue={`${rowsFor.error} · the run and its worktrees are untouched; only this read failed.`}
+                              action={<button className="btn" onClick={() => setRowsNonce((n) => n + 1)}>Try again</button>} />
+            ) : readRows.length === 0 ? (
+              <EmptyState posture="nothing-yet" title="No repositories on this run"
+                          cue="The read returned, and this run has no repository rows recorded against it." />
+            ) : <>
+              {/* Rows for this run, plus a failed re-read of the same run. They
+                  are not another run's rows, so they stay; what they cannot do
+                  is pass for the current state of the run. */}
+              {rowsFor?.error && (
+                <Note tone="warn">The last re-read of this run's repositories failed: {rowsFor.error}. The rows
+                  below are from the read that returned before it, so their status may have moved on.</Note>
+              )}
+              <div className="hr-rows">{readRows.map((row) => {
+                const d = details[row.projectId];
+                const expandable = row.hasError || row.hasOutput;
+                return (
+                  <article key={row.projectId} className="hr-row">
+                    <div className="hr-row-head"><div><strong>{row.projectName}</strong><span className="faint">{row.status} · {row.filesChanged} files · {rowCost(row)}</span></div>
+                      {row.worktree && row.status === 'succeeded' && (
+                        <button className="btn" aria-expanded={confirmMerge === row.projectId}
+                                onClick={() => setConfirmMerge(confirmMerge === row.projectId ? null : row.projectId)}>
+                          Squash merge…
+                        </button>
+                      )}
+                    </div>
+                    {confirmMerge === row.projectId && (
+                      <ConfirmNote
+                        what={<>Squash-merge {row.filesChanged === 1 ? 'the 1 changed file' : `the ${num(row.filesChanged)} changed files`} from
+                          this run's worktree into <strong>{row.projectName}</strong>'s branch? The worktree's history is squashed into one
+                          commit on the branch; this cannot be undone from here.</>}
+                        verb="Squash merge" busy={merging === row.projectId}
+                        onRun={() => merge(row)} onCancel={() => setConfirmMerge(null)} />
                     )}
-                  </div>
-                  {confirmMerge === row.projectId && (
-                    <ConfirmNote
-                      what={<>Squash-merge {row.filesChanged === 1 ? 'the 1 changed file' : `the ${num(row.filesChanged)} changed files`} from
-                        this run's worktree into <strong>{row.projectName}</strong>'s branch? The worktree's history is squashed into one
-                        commit on the branch; this cannot be undone from here.</>}
-                      verb="Squash merge" busy={merging === row.projectId}
-                      onRun={() => merge(row)} onCancel={() => setConfirmMerge(null)} />
-                  )}
-                  {/* The list channel deliberately carries no text at all, so
-                      even a one-line error is behind this expander. The summary
-                      says which of the two is waiting there, so a failed row is
-                      still findable without opening every row on the run. */}
-                  {expandable && (
-                    <details className="hr-output"
-                             onToggle={(e) => { if (e.currentTarget.open) void loadDetail(row.projectId); }}>
-                      <summary>
-                        {row.hasError && row.hasOutput ? 'Error and agent output'
-                          : row.hasError ? 'Why this repository failed' : 'Agent output'}
-                      </summary>
-                      {d?.loading && <p className="faint">Reading this row…</p>}
-                      {d?.failed && (
-                        <p className="hr-row-error">
-                          Could not read this row: {d.failed}. The run and its output are untouched —
-                          only this read failed.
-                        </p>
-                      )}
-                      {d && !d.loading && !d.failed && (
-                        <>
-                          {d.error && <p className="hr-row-error">{d.error}</p>}
-                          {d.output
-                            ? <pre>{d.output}</pre>
-                            : !d.error && <p className="faint">This row recorded no output.</p>}
-                        </>
-                      )}
-                    </details>
-                  )}
-                </article>
-              );
-            })}</div>
+                    {/* The list channel deliberately carries no text at all, so
+                        even a one-line error is behind this expander. The summary
+                        says which of the two is waiting there, so a failed row is
+                        still findable without opening every row on the run. */}
+                    {expandable && (
+                      <details className="hr-output"
+                               onToggle={(e) => { if (e.currentTarget.open) void loadDetail(row.projectId); }}>
+                        <summary>
+                          {row.hasError && row.hasOutput ? 'Error and agent output'
+                            : row.hasError ? 'Why this repository failed' : 'Agent output'}
+                        </summary>
+                        {d?.loading && <p className="faint">Reading this row…</p>}
+                        {d?.failed && (
+                          <p className="hr-row-error">
+                            Could not read this row: {d.failed}. The run and its output are untouched —
+                            only this read failed.
+                          </p>
+                        )}
+                        {d && !d.loading && !d.failed && (
+                          <>
+                            {d.error && <p className="hr-row-error">{d.error}</p>}
+                            {d.output
+                              ? <pre>{d.output}</pre>
+                              : !d.error && <p className="faint">This row recorded no output.</p>}
+                          </>
+                        )}
+                      </details>
+                    )}
+                  </article>
+                );
+              })}</div>
+            </>}
           </>}
         </section>
       </div>

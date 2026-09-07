@@ -11,10 +11,13 @@ concurrency:
   cancel-in-progress: true
 
 # The two jobs below are `npm test` split by what each step actually needs from
-# the runner, and nothing else. Together they run the same four steps in the
-# same order: typecheck, test:package-hooks, test:local-install, smoke. A CI
-# that ran a smaller set than the command contributors are told to run is how a
-# required build script stayed untracked at HEAD without anything going red.
+# the runner, and nothing else. Together they run the same five steps in the
+# same order: typecheck, test:renderer-style, test:package-hooks,
+# test:local-install, smoke. A CI that ran a smaller set than the command
+# contributors are told to run is how a required build script stayed untracked
+# at HEAD without anything going red — and then how test:renderer-style, added
+# to `npm test` but never to this file, left the renderer ratchets enforced only
+# on the machine of whoever remembered to run them.
 
 jobs:
   check:
@@ -41,6 +44,15 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      # Plain Node over the renderer sources: no Electron, no display, no
+      # install beyond what is already here. It sits on this job because it is
+      # platform-independent and because the ratchets it guards — inline styles,
+      # literal font sizes and durations, shadowed modifiers, form controls with
+      # no accessible name — are exactly the kind of regression a reviewer reads
+      # past.
+      - name: Renderer style gate
+        run: npm run test:renderer-style
 
       - name: Install Xvfb
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb

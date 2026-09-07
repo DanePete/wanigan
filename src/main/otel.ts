@@ -755,33 +755,107 @@ export function apiEvents(sessionId: string, limit = 50): ApiEvent[] {
 }
 
 /**
+ * What the table held for one session the last time its sparkline was folded.
+ * `rows` and `maxId` are read back out of the table on every call; they are not
+ * a count Wanigan keeps, because Wanigan is not the only writer.
+ */
+type ThroughputEntry = { rows: number; maxId: number; buckets: number; out: number[] };
+
+/**
+ * One entry is at most 240 numbers, but nothing here learns that a session
+ * ended, so uncapped the map would keep an entry for every session id ever
+ * asked about. Least recently written goes first; an evicted session that is
+ * still on screen simply refolds on its next poll.
+ */
+const THROUGHPUT_CACHE_MAX = 256;
+const throughputCache = new Map<string, ThroughputEntry>();
+
+/** What Fleet asks for, and what an unusable bucket count falls back to. */
+const DEFAULT_BUCKETS = 24;
+
+function rememberThroughput(id: string, entry: ThroughputEntry): void {
+  throughputCache.delete(id);
+  throughputCache.set(id, entry);
+  while (throughputCache.size > THROUGHPUT_CACHE_MAX) {
+    const oldest = throughputCache.keys().next();
+    if (oldest.done) break;
+    throughputCache.delete(oldest.value);
+  }
+}
+
+/**
  * Output tokens per second across the session's life, oldest bucket first.
  * A rate rather than a sum: a sparkline for a six-hour session and one for a
  * six-minute session have to be legible against the same axis, and summing
  * makes the long session's buckets look busy purely because they are wider.
+ *
+ * Fleet asks for every listed session's line every six seconds its window is
+ * visible, and `sessions.list()` keeps exited-but-unclosed sessions in that
+ * list, so a session that will never gain another event was re-reading its
+ * whole history on every beat, on the thread that owns every live PTY. The
+ * fold is memoised on what the table itself reports — `COUNT(*)` and the
+ * largest rowid for the session, both answered from `idx_api_events_session`
+ * without reading a table row. A counter bumped where events are recorded
+ * would be cheaper and wrong: the smoke suite INSERTs and DELETEs these rows
+ * directly, and the scheduler and CLI open the same database file on their own
+ * connections.
+ *
+ * A miss re-folds every row rather than bucketing in SQL. `GROUP BY` on the
+ * bucket expression needs a temp b-tree — `EXPLAIN QUERY PLAN` says so, with or
+ * without a covering index — and measured slower than this fold at every row
+ * count tried. It also folds from scratch rather than extending the array it
+ * already has: the entry keeps the finished line and nothing else — not the
+ * rows, and not the window they were spread across — so there is nothing to
+ * extend.
  */
-export function throughput(sessionId: string, buckets = 24): number[] {
-  const n = Math.max(1, Math.min(240, Math.floor(buckets)));
-  const out = new Array<number>(n).fill(0);
+export function throughput(sessionId: string, buckets: number = DEFAULT_BUCKETS): number[] {
+  // `buckets` reaches this function from the renderer over IPC, and this clamp
+  // is the only thing validating it: the handler in index.ts checks the sender,
+  // not the argument. Fleet passes a literal 24 and is the only caller today,
+  // so nothing has sent a bad one — but `Math.floor(NaN)` is NaN and
+  // `new Array(NaN)` throws a RangeError rather than returning a line, so a
+  // count that is not a number falls back to the documented default. A number
+  // outside the range still clamps into it.
+  const asked = Math.floor(Number(buckets));
+  const n = Number.isNaN(asked) ? DEFAULT_BUCKETS : Math.max(1, Math.min(240, asked));
+  const id = attrSafe(sessionId);
 
+  const fp = db().prepare(
+    'SELECT COUNT(*) AS n_rows, COALESCE(MAX(id), 0) AS max_id FROM session_api_events WHERE session_id = ?'
+  ).get(id) as { n_rows: number; max_id: number };
+  const seen = throughputCache.get(id);
+  // Copied out: the caller that mutates what it was handed must not rewrite the
+  // line every other caller then reads.
+  if (seen && seen.rows === fp.n_rows && seen.maxId === fp.max_id && seen.buckets === n) {
+    return seen.out.slice();
+  }
+
+  const out = new Array<number>(n).fill(0);
   const rows = db().prepare(
     'SELECT at, out_tokens FROM session_api_events WHERE session_id = ? AND out_tokens > 0 ORDER BY at'
-  ).all(attrSafe(sessionId)) as { at: number; out_tokens: number }[];
-  if (!rows.length) return out;
+  ).all(id) as { at: number; out_tokens: number }[];
 
-  const first = rows[0].at;
-  const last = rows[rows.length - 1].at;
-  // A session whose turns land milliseconds apart would divide by a near-zero
-  // window and produce one spike that flattens every other bucket to nothing.
-  // One second per bucket is the floor.
-  const span = Math.max(last - first, n * 1000);
-  const width = span / n;
+  // A session with rows but no output tokens caches its zeroes too: it is a
+  // read that returned, and repeating it every six seconds buys nothing.
+  let rates = out;
+  if (rows.length) {
+    const first = rows[0].at;
+    const last = rows[rows.length - 1].at;
+    // A session whose turns land milliseconds apart would divide by a near-zero
+    // window and produce one spike that flattens every other bucket to nothing.
+    // One second per bucket is the floor.
+    const span = Math.max(last - first, n * 1000);
+    const width = span / n;
 
-  for (const r of rows) {
-    const i = Math.min(n - 1, Math.floor((r.at - first) / width));
-    out[i] += r.out_tokens;
+    for (const r of rows) {
+      const i = Math.min(n - 1, Math.floor((r.at - first) / width));
+      out[i] += r.out_tokens;
+    }
+    rates = out.map((v) => Math.round((v / (width / 1000)) * 10) / 10);
   }
-  return out.map((v) => Math.round((v / (width / 1000)) * 10) / 10);
+
+  rememberThroughput(id, { rows: fp.n_rows, maxId: fp.max_id, buckets: n, out: rates });
+  return rates.slice();
 }
 
 function dayKey(d: Date): string {

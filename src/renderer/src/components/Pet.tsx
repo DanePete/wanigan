@@ -605,7 +605,7 @@ function PetInner() {
           <span aria-hidden="true">{open ? '▾' : '▸'}</span>
         </button>
         {renaming ? (
-          <input autoFocus value={pet.name} onChange={(e) => update((p) => ({ ...p, name: e.target.value.slice(0, 14) }))}
+          <input autoFocus aria-label="Pet name" value={pet.name} onChange={(e) => update((p) => ({ ...p, name: e.target.value.slice(0, 14) }))}
                  onBlur={() => setRenaming(false)} onKeyDown={(e) => { if (e.key === 'Enter') setRenaming(false); }} />
         ) : (
           <>

@@ -80,9 +80,20 @@ function forbiddenProviderEnvironment(name: string): boolean {
  * but only from a profile that redirects the Anthropic API — every other
  * provider's key, and every profile that reaches its host some other way, is
  * outside that strip. This refuses the read itself, at validation, for all of
- * them. Provider secrets have a supported path: `source: 'credential'` reads
- * the per-pack value from the OS keychain, and consent shows that destination
- * with the value redacted.
+ * them. Provider secrets have a declared path instead, but it is narrower than
+ * "the keychain": `source: 'credential'` resolves through keys.ts, which
+ * returns WANIGAN_<ID>_KEY out of Wanigan's own environment when that is set
+ * and otherwise decrypts provider-<id>.bin under the user-data directory with
+ * Electron safeStorage. That store is one flat id space rather than a per-pack
+ * one, and it folds an id to a file name, so the id alone is not an owner.
+ * Three checks make it one: validateProviderPackManifest refuses a credential
+ * id the declaring manifest does not own, refresh() refuses a pack whose id
+ * would read the file another pack already claims, and the resolver handed to a
+ * compiled profile answers only for its own pack's ids. Writing a credential is
+ * narrower still — index.ts stores only `glm` and `deepseek` — so a third-party
+ * pack's credential reads nothing unless the operator exports its
+ * WANIGAN_<ID>_KEY, and a profile whose credential reads nothing contributes no
+ * environment at all. Consent shows the destination and the id, never a value.
  *
  * Like the launcher denylist above, this refuses known shapes. It is not proof
  * that every other name is free of secrets.
@@ -525,6 +536,9 @@ function parseEnvironment(raw: unknown, where: string, errors: string[]): Record
         : safeArg(fallback, `${where}.${name}.fallback`, errors);
       if (envName) out[name] = { source, name: envName, ...(safeFallback !== undefined ? { fallback: safeFallback } : {}) };
     } else if (source === 'credential') {
+      // Shape only here. Whether this manifest is allowed to spend the id is
+      // decided in validateProviderPackManifest, which can see its sibling
+      // profiles; an omitted id spends the declaring profile's own id.
       const credentialId = safeString(own(value, 'id'), `${where}.${name}.id`, errors, { max: 100, pattern: ID_RE });
       out[name] = { source, ...(credentialId ? { id: credentialId } : {}) };
     } else {
@@ -692,6 +706,33 @@ function parseProfile(raw: unknown, where: string, errors: string[]): ProviderPr
   };
 }
 
+/**
+ * The ids a manifest would read stored credentials under: one per
+ * `source: 'credential'` entry, falling back to the declaring profile's own id
+ * exactly as compileProviderProfile does.
+ */
+function declaredCredentialIds(profiles: readonly ProviderProfileManifest[]): string[] {
+  const ids: string[] = [];
+  for (const profile of profiles) {
+    for (const spec of Object.values(profile.environment ?? {})) {
+      if (spec.source === 'credential') ids.push(spec.id ?? profile.id);
+    }
+  }
+  return [...new Set(ids)];
+}
+
+/**
+ * The stored credential a given id reads. keys.ts names the file by deleting
+ * every character the pattern below does not keep, so `g.l.m`, `g_l_m` and
+ * `glm` all name one file. Ownership by profile id only bounds a pack if two
+ * packs cannot land on the same name that way, which is what refresh() checks
+ * with this. The pattern is a copy of the one in keys.ts, matched the same way
+ * — if that ever changes how it names a file, change this with it.
+ */
+function storedCredentialName(id: string): string {
+  return id.replace(/[^a-z0-9-]/gi, '');
+}
+
 /** Validate and clone an untrusted JSON value into the supported manifest shape. */
 export function validateProviderPackManifest(raw: unknown): ValidationResult {
   const errors: string[] = [];
@@ -739,6 +780,22 @@ export function validateProviderPackManifest(raw: unknown): ValidationResult {
     for (const profile of profiles) {
       if (ids.has(profile.id)) errors.push(`profiles contains duplicate id "${profile.id}".`);
       ids.add(profile.id);
+    }
+    // A manifest may only spend a credential it owns. The provider key store is
+    // one flat id space with no pack namespace, so `{"source":"credential",
+    // "id":"glm"}` in any manifest at all reads the operator's Z.ai token and
+    // hands it to that manifest's command — the theft the ambient-source rule
+    // above refuses, reached through the other source. An id is owned when it is
+    // one of this manifest's own profile ids; omitting it spends the declaring
+    // profile's id, which is owned by definition.
+    for (const profile of profiles) {
+      for (const [name, spec] of Object.entries(profile.environment ?? {})) {
+        if (spec.source !== 'credential' || spec.id === undefined || ids.has(spec.id)) continue;
+        errors.push(
+          `profiles.${profile.id}.environment.${name}.id is "${spec.id}", which is not a profile in ` +
+          'this pack. A pack may only read a credential stored under one of its own profile ids.'
+        );
+      }
     }
   }
   if (errors.length || !id || !label || !version || !profiles.length) return { ok: false, errors };
@@ -1446,6 +1503,10 @@ export class ProviderPackRegistry {
 
     const profiles: ProviderProfile[] = [];
     const seenProfileIds = new Set<string>();
+    // Stored-credential name -> the pack that got there first. Built-ins are
+    // recorded above local packs, so `glm` and `deepseek` are claimed before any
+    // local manifest is considered.
+    const credentialOwners = new Map<string, string>();
     for (const record of records) {
       if (!record.manifest || record.status === 'invalid' || record.status === 'removed') continue;
       const conflict = record.manifest.profiles.find((profile) => seenProfileIds.has(profile.id));
@@ -1455,6 +1516,26 @@ export class ProviderPackRegistry {
         record.enabled = false;
         continue;
       }
+      // Ownership is checked against profile ids, and the credential store
+      // reaches a file by deleting `.` and `_` out of one, keeping `-`. A pack
+      // whose only profile is `g.l.m` therefore owns its credential id and
+      // still reads the file written for `glm`. Refuse the pack rather than the
+      // launch: an invalid pack contributes no profile, so nothing compiled
+      // from it can spend the borrowed key.
+      const declared = declaredCredentialIds(record.manifest.profiles);
+      const borrowed = declared
+        .map((credentialId) => ({ credentialId, owner: credentialOwners.get(storedCredentialName(credentialId)) }))
+        .find((entry) => entry.owner !== undefined && entry.owner !== record.id);
+      if (borrowed) {
+        record.errors.push(
+          `Credential id "${borrowed.credentialId}" reads the credential stored for provider pack ` +
+          `"${borrowed.owner}". Rename the profile so the two ids do not name one stored credential.`
+        );
+        record.status = 'invalid';
+        record.enabled = false;
+        continue;
+      }
+      for (const credentialId of declared) credentialOwners.set(storedCredentialName(credentialId), record.id);
       for (const profile of record.manifest.profiles) {
         seenProfileIds.add(profile.id);
         profiles.push(publicProfile(record.manifest, profile, record));
@@ -1493,10 +1574,26 @@ export class ProviderPackRegistry {
   runtimeById(id: string): ProviderRuntimeDefinition | undefined {
     const profile = this.profileById(id);
     return profile ? compileProviderProfile(profile, {
-      credentialResolver: this.credentialResolver,
+      credentialResolver: this.scopedCredentialResolver(profile),
       environment: this.environment,
       homeDir: this.homeDir,
     }) : undefined;
+  }
+
+  /**
+   * The credential resolver a compiled profile is given: it answers only for an
+   * id belonging to the pack that declared the profile. Validation already
+   * refuses a manifest that names another pack's id, and refresh() already
+   * refuses a pack whose id reads another pack's stored file; this repeats the
+   * ownership test where the secret is actually read, so a profile that reached
+   * compilation by some other route still cannot spend a foreign credential.
+   * A refused read is an absent credential, which empties the profile's whole
+   * environment rather than shipping a backend redirect without its token.
+   */
+  private scopedCredentialResolver(profile: ProviderProfile): (id: string) => string | null {
+    const pack = this.current.packs.find((entry) => entry.id === profile.packId);
+    const owned = new Set(pack?.manifest?.profiles.map((entry) => entry.id) ?? [profile.id]);
+    return (id: string) => (owned.has(id) ? this.credentialResolver(id) : null);
   }
 
   /**
@@ -1580,6 +1677,18 @@ export class ProviderPackRegistry {
   }
 
   revokeAdapterTrust(packId: string): ProviderPackSnapshot {
+    // This was the one mutator that wrote state without resolving a pack first,
+    // and both halves of that mattered. It wrote `enabled: false` under whatever
+    // string it was handed, so revoking a built-in id disabled a pack that never
+    // had adapter trust to revoke; and any string at all became a key in
+    // .provider-packs-state.json, where a long enough one pushes the file past
+    // MAX_MANIFEST_BYTES and the next readState ignores the whole file — every
+    // recorded trust decision with it.
+    const pack = this.current.packs.find((entry) => entry.id === packId && entry.status !== 'removed');
+    if (!pack) throw new Error(`Provider pack "${packId}" is not installed.`);
+    if (!pack.trustedAdapterSha256) {
+      throw new Error(`Provider pack "${packId}" has no trusted adapter digest to revoke.`);
+    }
     const { state } = readState(this.rootDir);
     const prior = state.packs[packId] ?? {};
     state.packs[packId] = { ...prior, trustedAdapterSha256: undefined, enabled: false };

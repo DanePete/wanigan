@@ -96,23 +96,56 @@ function mapDocket(row: DocketRow): WorkDocket {
 /**
  * What a goal has actually spent, and how much of that we can vouch for.
  *
+ * The set is the union of the sessions its tasks point at right now and the
+ * sessions `work_node_sessions` has recorded for them. It has to be a union
+ * because `work_nodes.session_id` is a live pointer and `retryNode` nulls it:
+ * read that column alone and a reopened task takes its spend back out of the
+ * cap, so a goal could be dispatched again on the strength of money it had
+ * already spent, and a goal whose tasks had all been reopened reported that no
+ * session had been launched for it at all.
+ *
  * Only reported provider cost is counted. A provider that reports nothing is
  * not treated as free — it moves `spendStatus` down so the surface, and the
  * budget refusal below, can say the cap covers part of the work rather than
- * implying it covers all of it.
+ * implying it covers all of it. The status is decided over the same union the
+ * dollars are summed over, so the two are never computed from different
+ * populations. That is not a claim of completeness for older data: a task
+ * reopened before `work_node_sessions` existed dropped its pointer with
+ * nothing recorded, and this query cannot see the session it dropped.
+ *
+ * Usage is fetched for the whole set in one call. This runs once per row of
+ * `listDockets`, and the set it reads only ever grows.
  */
 function autopilotSpend(docketId: string): Pick<DocketAutopilot, 'spendUsd' | 'spendStatus'> {
-  const sessions = (db().prepare("SELECT session_id FROM work_nodes WHERE docket_id=? AND session_id IS NOT NULL")
-    .all(docketId) as { session_id: string }[]).map((row) => row.session_id);
+  const sessions = (db().prepare(`SELECT session_id FROM work_nodes WHERE docket_id=? AND session_id IS NOT NULL
+    UNION SELECT session_id FROM work_node_sessions WHERE docket_id=?`)
+    .all(docketId, docketId) as { session_id: string }[]).map((row) => row.session_id);
   if (!sessions.length) return { spendUsd: 0, spendStatus: 'none' };
+  const usage = otel.usageForMany(sessions);
   let spendUsd = 0; let reported = 0;
   for (const id of sessions) {
-    const usage = otel.usageFor(id);
-    if (usage.costStatus === 'reported') { spendUsd += usage.costUsd; reported++; }
+    const row = usage[id];
+    if (row?.costStatus === 'reported') { spendUsd += row.costUsd; reported++; }
   }
   const spendStatus: DocketAutopilot['spendStatus'] = reported === sessions.length ? 'reported'
     : reported === 0 ? 'unreported' : 'partial';
   return { spendUsd, spendStatus };
+}
+
+/**
+ * Remember that this task ran under this session, for as long as the task
+ * exists.
+ *
+ * `work_nodes.session_id` answers "what is this task attached to now" and is
+ * nulled on reopen; `work_resume_receipts` is keyed on `node_id` and is
+ * overwritten by the next dispatch. Neither still names a session a task has
+ * been reopened away from, which is what a spend cap has to keep counting.
+ * This row is not rewritten by either event, and `autopilotSpend` reads it.
+ * Idempotent on (node, session), so a caller never has to check first.
+ */
+function recordNodeSession(nodeId: string, docketId: string, sessionId: string): void {
+  db().prepare(`INSERT INTO work_node_sessions (node_id,docket_id,session_id,at) VALUES (?,?,?,?)
+    ON CONFLICT(node_id,session_id) DO NOTHING`).run(nodeId, docketId, sessionId, now());
 }
 
 /**
@@ -533,6 +566,12 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
     if (takenClaim) releaseClaim(takenClaim.id);
     throw new Error('This task was already started by another action; the duplicate session was stopped.');
   }
+  // The durable half of the set `autopilotSpend` sums this goal's cap against.
+  // The `work_nodes` column set above is nulled on reopen, and the receipt
+  // below is keyed on `node_id` and overwritten by the next dispatch, so a
+  // session the task no longer points at has to be recorded here to stay in
+  // that sum.
+  recordNodeSession(nodeId, parent.id, session.id);
   db().prepare(`INSERT INTO work_resume_receipts
     (node_id,docket_id,session_id,conversation_id,provider_id,model,base_commit,worktree,created_at,updated_at)
     VALUES (?,?,?,?,?,?,?,?,?,?)
@@ -849,6 +888,10 @@ export function retryNode(nodeId: string): DocketNode {
     throw new Error(`Only a failed or canceled task can be reopened; this task is ${node.status}.`);
   }
   if (node.session_id) {
+    // Recorded before the statement below drops the pointer. Dispatch already
+    // wrote this pair for anything started since work_node_sessions existed;
+    // this call is what covers a task dispatched before it did.
+    recordNodeSession(nodeId, node.docket_id, node.session_id);
     try { killSession(node.session_id); } catch { /* already exited */ }
   }
   db().prepare(`UPDATE work_nodes SET status='pending',session_id=NULL,started_at=NULL,ended_at=NULL,

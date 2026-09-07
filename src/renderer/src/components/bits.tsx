@@ -380,7 +380,7 @@ export function Reading({ what, children }: { what: string; children?: React.Rea
  */
 const explainerKey = (id: string) => `explainer.${id}`;
 
-export function Explainer({ id, title, compact, children }: {
+export function Explainer({ id, title, compact, defaultHidden, children }: {
   id: string; title: string;
   /** One remembered line rather than a titled block. Same flag, same store, one
    *  family — for a lesson learned once that sits in permanent chrome, where a
@@ -388,21 +388,47 @@ export function Explainer({ id, title, compact, children }: {
    *  reopen affordance is the same in both shapes, so nothing is hidden for
    *  good. */
   compact?: boolean;
+  /**
+   * Start folded, for an explainer that sits on a page with nothing on it yet.
+   *
+   * Only the starting position: a stored choice still wins, in both directions,
+   * so a reader who opened this once keeps it open and one who closed it keeps
+   * it closed. Without the flag the only default was "expanded", which is how a
+   * view with no data came to open on several hundred words about what would be
+   * there if it had some.
+   */
+  defaultHidden?: boolean;
   children: React.ReactNode;
 }) {
-  const [hidden, setHidden] = useState<boolean>(false);
+  const [hidden, setHidden] = useState<boolean>(defaultHidden === true);
+  /**
+   * Whether anything has spoken for this explainer yet — a stored choice, or a
+   * click. Until something has, `defaultHidden` is still in charge.
+   *
+   * It has to be, because callers derive that flag from data that arrives after
+   * the first render: "is this view empty" is false-then-true, and reading the
+   * prop only in the useState initialiser meant a view that turned out to have
+   * content kept the folded state it was given while it was still loading. The
+   * reverse is the important half — a reader who opened this once must never
+   * have it folded again by a later render.
+   */
+  const decided = useRef(false);
+  useEffect(() => {
+    if (!decided.current) setHidden(defaultHidden === true);
+  }, [defaultHidden]);
   useEffect(() => {
     let live = true;
     (async () => {
       try {
         const all = await window.wanigan.prefs.all() as unknown as Record<string, unknown>;
         const v = all[explainerKey(id)];
-        if (live && (v === 'hidden' || v === 'shown')) setHidden(v === 'hidden');
+        if (live && (v === 'hidden' || v === 'shown')) { decided.current = true; setHidden(v === 'hidden'); }
       } catch { /* recovery mode: the settings bridge may be down; stay open */ }
     })();
     return () => { live = false; };
   }, [id]);
   const set = (next: boolean) => {
+    decided.current = true;
     setHidden(next);
     void window.wanigan.prefs.set(explainerKey(id), next ? 'hidden' : 'shown').catch(() => { /* recovery mode: the choice holds for this window only */ });
   };

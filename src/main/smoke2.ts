@@ -205,6 +205,47 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   const gated = (v: string | null) => hooks.hookEventsFor(v).includes('InstructionsLoaded');
   check(!gated(null) && !gated('2.1.68 (Claude Code)') && gated('2.1.69 (Claude Code)') && gated('2.1.261 (Claude Code)'),
     'InstructionsLoaded is requested only from a CLI at or past the version that added it');
+  // Same rule, same reason, for the events added since. The subagent pair is
+  // gated on 2.0.43 because that is where SubagentStart exists AND SubagentStop
+  // carries the agent_id the two are paired by; PostModelSwitch on 2.1.251.
+  const asks = (v: string | null, e: string) => hooks.hookEventsFor(v).includes(e as never);
+  check(!asks('2.0.42 (Claude Code)', 'SubagentStart') && asks('2.0.43 (Claude Code)', 'SubagentStart')
+    && !asks('2.0.42 (Claude Code)', 'SubagentStop') && asks('2.0.43 (Claude Code)', 'SubagentStop'),
+    'the subagent pair is requested only from a CLI that has both halves and an agent id');
+  check(!asks(null, 'PostModelSwitch') && !asks('2.1.250 (Claude Code)', 'PostModelSwitch')
+    && asks('2.1.251 (Claude Code)', 'PostModelSwitch'),
+    'PostModelSwitch is requested only from a CLI at or past the version that added it');
+  check(!asks('2.1.263 (Claude Code)', 'PreModelSwitch'),
+    'PreModelSwitch is never requested — a recorder that can block a switch can wedge the session');
+  // Each of the ten added since is gated on its own release, not on the newest
+  // of them: one shared floor would silently withhold ConfigChange from every
+  // CLI between 2.1.49 and 2.1.219, which is most of them.
+  const GATES: Array<[string, string, string]> = [
+    ['ConfigChange', '2.1.48', '2.1.49'],
+    ['WorktreeCreate', '2.1.49', '2.1.50'],
+    ['WorktreeRemove', '2.1.49', '2.1.50'],
+    ['Elicitation', '2.1.75', '2.1.76'],
+    ['ElicitationResult', '2.1.75', '2.1.76'],
+    ['CwdChanged', '2.1.82', '2.1.83'],
+    ['TaskCompleted', '2.1.32', '2.1.33'],
+    ['TeammateIdle', '2.1.32', '2.1.33'],
+    ['TaskCreated', '2.1.83', '2.1.84'],
+    ['DirectoryAdded', '2.1.218', '2.1.219'],
+  ];
+  const wrongGate = GATES.filter(([e, before, at]) =>
+    asks(`${before} (Claude Code)`, e) || !asks(`${at} (Claude Code)`, e) || asks(null, e));
+  check(wrongGate.length === 0,
+    'every event added since carries its own version gate, so a CLI is asked only for names its own release knows',
+    JSON.stringify(wrongGate.map(([e]) => e)));
+  // TaskCreated is the one that would have been wrong under a shared floor: it
+  // is 51 releases newer than the TaskCompleted it reads like a sibling of.
+  check(!asks('2.1.33 (Claude Code)', 'TaskCreated') && asks('2.1.33 (Claude Code)', 'TaskCompleted'),
+    'TaskCreated is not requested from the release that added TaskCompleted, which is 51 releases older');
+  const neverAsked = ['MessageDisplay', 'FileChanged', 'Setup', 'PostToolBatch', 'UserPromptExpansion']
+    .filter((e) => asks('2.1.263 (Claude Code)', e));
+  check(neverAsked.length === 0,
+    'the events with no home here stay unasked: assistant message text, a watcher with no file list, an init-only flag, and two with no changelog release to gate on',
+    JSON.stringify(neverAsked));
   if (hookFile) {
     const baseHooks = (JSON.parse(fs.readFileSync(hookFile, 'utf8')) as { hooks: Record<string, unknown> }).hooks;
     check(!('InstructionsLoaded' in baseHooks) && 'PreToolUse' in baseHooks,
@@ -288,6 +329,104 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
       const liRow = hooks.sessionEvents(SID, 10).find((e) => e.event === 'InstructionsLoaded');
       check(!!liRow && liRow.paths[0] === loadedFile && /Project · session_start — /.test(liRow.summary ?? ''),
         'the timeline row for it carries the path and a readable summary', liRow?.summary);
+
+      const post = (body: Record<string, unknown>) => fetch(callbackUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization },
+        body: JSON.stringify(body),
+      });
+
+      // Two subagents in flight at once is the ordinary case, and the whole
+      // reason the pair is keyed on agent_id: on a shared key the second start
+      // overwrites the first, the first stop to arrive closes the wrong span,
+      // and the outer subagent reports no duration at all. Start a1, start a2,
+      // then stop them in the opposite order — the crossing is the test.
+      await post({ hook_event_name: 'SubagentStart', agent_id: 'a1', agent_type: 'Explore' });
+      await new Promise((r) => setTimeout(r, 20));
+      await post({ hook_event_name: 'SubagentStart', agent_id: 'a2', agent_type: 'general-purpose' });
+      await post({
+        hook_event_name: 'SubagentStop', agent_id: 'a2', agent_type: 'general-purpose',
+        last_assistant_message: 'SENTINEL model output that must never reach the row',
+      });
+      await post({ hook_event_name: 'SubagentStop', agent_id: 'a1', agent_type: 'Explore' });
+
+      const stops = hooks.sessionEvents(SID, 50).filter((e) => e.event === 'SubagentStop');
+      const outer = stops.find((e) => e.summary === 'Explore');
+      const inner = stops.find((e) => e.summary === 'general-purpose');
+      check(!!outer && !!inner && outer.durationMs !== null && inner.durationMs !== null
+        && outer.durationMs >= inner.durationMs,
+        'each subagent stop pairs with its own start, not with whichever started first',
+        JSON.stringify({ outer: outer?.durationMs, inner: inner?.durationMs }));
+      check(hooks.sessionEvents(SID, 50).some((e) => e.event === 'SubagentStart' && e.summary === 'Explore'),
+        'a subagent start records which kind of agent it was');
+      check(!stops.some((e) => (e.summary ?? '').includes('SENTINEL')),
+        'a SubagentStop row keeps the agent type and not the last assistant message', inner?.summary);
+
+      // A /model typed into the terminal, or a fallback the CLI chose itself,
+      // reaches the record through this event and no other.
+      let switchedSession: string | null = null;
+      let switchedModel: string | null = null;
+      hooks.setModelSwitchHook((sid, m) => { switchedSession = sid; switchedModel = m; });
+      await post({ hook_event_name: 'PostModelSwitch', from_model: 'claude-opus-5', to_model: 'claude-sonnet-5' });
+      hooks.setModelSwitchHook(null);
+      const swRow = hooks.sessionEvents(SID, 50).find((e) => e.event === 'PostModelSwitch');
+      check(swRow?.summary === 'claude-opus-5 → claude-sonnet-5',
+        'a model switch row names both ends of the change', swRow?.summary);
+      check(switchedSession === SID && switchedModel === 'claude-sonnet-5',
+        'the recorded model is corrected to the model the CLI says it is now running',
+        JSON.stringify({ switchedSession, switchedModel }));
+      check(hooks.modelSwitchTarget('claude-opus-5 → claude-sonnet-5') === 'claude-sonnet-5'
+        && hooks.modelSwitchTarget('claude-sonnet-5') === 'claude-sonnet-5'
+        && hooks.modelSwitchTarget(null) === null,
+        'the target decodes back out of the row with or without a named starting model');
+
+      // Reach: the three events that say the session moved outside what roots
+      // decided at launch. Each names its path in paths_json, where every other
+      // surface already looks, rather than only inside a summary string.
+      await post({ hook_event_name: 'CwdChanged', old_cwd: `${tmp}/before`, new_cwd: `${tmp}/after` });
+      const cwdRow = hooks.sessionEvents(SID, 60).find((e) => e.event === 'CwdChanged');
+      check(cwdRow?.paths[0] === `${tmp}/after` && /before — .*after/.test(cwdRow?.summary ?? ''),
+        'a directory change records where it landed as a path and both ends in the summary',
+        JSON.stringify({ paths: cwdRow?.paths, summary: cwdRow?.summary }));
+
+      // The docs call this field directory_path. The CLI sends `directory`.
+      // This assertion is the difference between a row that names the new root
+      // and a row that names nothing at all.
+      await post({ hook_event_name: 'DirectoryAdded', directory: `${tmp}/added`, source: 'slash_command' });
+      const addedRow = hooks.sessionEvents(SID, 60).find((e) => e.event === 'DirectoryAdded');
+      check(addedRow?.paths[0] === `${tmp}/added` && (addedRow?.summary ?? '').startsWith('slash_command'),
+        'an added working directory is read from the field the CLI actually sends, and says whether a person or the SDK added it',
+        JSON.stringify({ paths: addedRow?.paths, summary: addedRow?.summary }));
+
+      await post({ hook_event_name: 'ConfigChange', source: 'project_settings', file_path: `${tmp}/.claude/settings.json` });
+      const cfgRow = hooks.sessionEvents(SID, 60).find((e) => e.event === 'ConfigChange');
+      check(cfgRow?.paths[0] === `${tmp}/.claude/settings.json` && (cfgRow?.summary ?? '').startsWith('project_settings'),
+        'a settings change names the layer that moved and the file it moved in');
+
+      // An MCP server's question is a blocked session. This is the assertion
+      // that it now ranks as one rather than as a session quietly working.
+      await post({
+        hook_event_name: 'Elicitation', mcp_server_name: 'github',
+        message: 'Approve pushing to origin/main?',
+      });
+      const asked = hooks.liveState(SID);
+      check(asked.blocked === true,
+        'an MCP elicitation puts the session in the same waiting-on-you state a permission prompt does',
+        JSON.stringify({ blocked: asked.blocked }));
+      const elRow = hooks.sessionEvents(SID, 60).find((e) => e.event === 'Elicitation');
+      check((elRow?.summary ?? '').includes('github') && (elRow?.summary ?? '').includes('Approve pushing'),
+        'the elicitation row names the server and its question');
+
+      await post({
+        hook_event_name: 'ElicitationResult', mcp_server_name: 'github',
+        action: 'decline', content: { answer: 'SENTINEL typed by the operator' },
+      });
+      const answered = hooks.liveState(SID);
+      const resRow = hooks.sessionEvents(SID, 60).find((e) => e.event === 'ElicitationResult');
+      check(answered.blocked === false && resRow?.ok === false
+        && !JSON.stringify(resRow ?? {}).includes('SENTINEL'),
+        'answering it clears the wait, a declined answer reads as a no rather than a success, and what the operator typed is never stored',
+        JSON.stringify({ blocked: answered.blocked, ok: resRow?.ok }));
 
       hooks.cleanupHookSettings(SID);
       const revoked = await fetch(callbackUrl, {
@@ -424,6 +563,25 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   const okShot = attachments.inspect(png);
   check(okShot.ok && okShot.kind === 'image', 'a real PNG is accepted');
   check(okShot.width === 1 && okShot.height === 1, 'dimensions read from the header, not the extension');
+
+  /* attach:add stages a copy into attachmentsDir(sessionId), and sessions.ts launches
+     the CLI with that directory as an additional readable root, so the path has to be
+     one a native dialog returned. Nothing in this suite opens a dialog, so the refusal
+     is the observable half here. */
+  const unpicked = path.join(tmp, 'never-picked.md');
+  fs.writeFileSync(unpicked, '# a file nobody chose\n');
+  const gateSession = `${SID}-attachment-gate`;
+  let attachRefusal = '';
+  try { attachments.attachToSession(gateSession, unpicked); }
+  catch (e) { attachRefusal = e instanceof Error ? e.message : String(e); }
+  check(attachRefusal.includes('no file picker in this app returned that path')
+    && !browse.isPickedPath(unpicked)
+    && !fs.existsSync(attachments.attachmentsDir(gateSession)),
+    'a path the renderer names but no native file dialog ever returned is refused by attachToSession before anything is read or staged, because the copy would land in the one directory the agent is launched with as an extra readable root',
+    attachRefusal);
+  check(attachments.inspect(unpicked).ok === true && attachments.inspect(unpicked).kind === 'text',
+    'the same file passes inspect() on its own merits, so the refusal above is the picker gate refusing a path nobody chose rather than an unreadable file being mistaken for one',
+    attachments.inspect(unpicked).kind);
 
   const attachmentSession = `${SID}-attachment`;
   const staged = attachments.attachBufferToSession(attachmentSession, fs.readFileSync(png), 'shot.png');
@@ -603,6 +761,27 @@ export async function runPhaseSmoke(check: Check, say: Say): Promise<void> {
   check(typeof mem.dir === 'string' && mem.dir.length > 0, 'a memory directory is resolved');
   check(mem.derivedFrom === 'git-repo' || mem.derivedFrom === 'project-root',
     'the memory directory says where it came from', mem.derivedFrom);
+
+  // A memory directory is written in kilobytes. The size note has to tell a
+  // long file apart from a file something else has been writing to, because
+  // those want opposite reactions — and the second one, reported as a scanning
+  // limit, is how a 12.6 MB memory file went unnoticed through four sessions
+  // that each read it into context.
+  const hugeNote = memory.memorySizeNote('topic.md', 12 * 1024 * 1024, false);
+  // The ceiling sits below the scan cap, so a file too big to read whole is
+  // always also too big to be a memory. That ordering is the point: it means
+  // there is no size at which this reports a scanning limit for a file that is
+  // actually corrupt. Asserted rather than assumed, because reversing the two
+  // constants would silently restore the quiet note that missed the 12.6 MB one.
+  check(/No memory file is written that large/.test(memory.memorySizeNote('topic.md', 3 * 1024 * 1024, false) ?? ''),
+    'a file too large to read whole is always reported as implausible, never as a partial read');
+  check(hugeNote !== null && /No memory file is written that large/.test(hugeNote)
+    && /appended to by something other than/.test(hugeNote) && /12\.0 MB/.test(hugeNote),
+    'a memory file past any plausible size is named as one something else wrote to, not as a scanning limit',
+    hugeNote ?? 'null');
+  check(memory.memorySizeNote('topic.md', 40 * 1024, true) === null
+    && memory.memorySizeNote('topic.md', 250 * 1024, true) === null,
+    'and a topic file of a few pages, read whole, is not remarked on at all');
 
   const cfg = config.readProjectConfig(repo);
   check(Array.isArray(cfg.layers) && cfg.layers.length >= 3, 'the settings layers are enumerated', cfg.layers.length);

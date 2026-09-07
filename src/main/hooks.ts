@@ -47,6 +47,8 @@ let info: { port: number } | null = null;
  * to return when there is a human.
  */
 let policy: ((input: HookInput) => PolicyDecision | null) | null = null;
+/** Told when a PostModelSwitch says the session is running a different model. */
+let modelSwitch: ((sessionId: string, model: string) => void) | null = null;
 /** Optional, bounded project briefing supplied by the learning engine. */
 export type LearningBriefingContext = {
   providerId: string;
@@ -163,6 +165,24 @@ const SETTINGS_EVENTS: HookEventName[] = [
  * `since` is the changelog entry; `probed` is the binary on which Wanigan
  * actually found the string, which is the fact the gate rests on. A launch
  * with no version reading gets the base set only.
+ *
+ * Every field name the summaries below read was taken off the payload schemas
+ * carried in the 2.1.263 binary rather than out of the published docs (checked
+ * 2026-09-07). That is not pedantry: the docs give DirectoryAdded a
+ * `directory_path`, and the CLI sends `directory`. Following the docs there
+ * would have written a row that named no directory at all.
+ *
+ * Deliberately still not asked for, so the absences are decisions rather than
+ * oversights:
+ *   · MessageDisplay — assistant message text. Wanigan does not put model
+ *     output on disk, and this event is nothing else.
+ *   · FileChanged — its matcher takes literal filenames, so it means "watch
+ *     these files". Wanigan has no such list, and `*` is not that event.
+ *   · Setup — fires only for --init / --init-only / --maintenance, which no
+ *     launch path here passes.
+ *   · PreModelSwitch, PostToolBatch, UserPromptExpansion — the first can block
+ *     a switch the Post half already reports; the other two carry no changelog
+ *     entry to gate on and no surface here that would read them.
  */
 export const VERSION_GATED_EVENTS: readonly { event: HookEventName; since: string; probed: string }[] = [
   {
@@ -173,6 +193,70 @@ export const VERSION_GATED_EVENTS: readonly { event: HookEventName; since: strin
     // the two were not probed; the changelog is what admits them.
     event: 'InstructionsLoaded', since: '2.1.69', probed: '2.1.261',
   },
+  {
+    // Changelog 2.0.43: "Added the `SubagentStart` hook event". The pair is
+    // gated together on that release rather than on SubagentStop's own, older
+    // one, because 2.0.42 is what "Added `agent_id` and `agent_transcript_path`
+    // fields to `SubagentStop` hooks" — and `agent_id` is the field `store`
+    // pairs a start with its stop by. A CLI that sent SubagentStop without it
+    // would report every subagent as still running.
+    //
+    // In the 2.1.263 binary installed here (checked 2026-09-07): the name sits
+    // in the CLI's own event list beside InstructionsLoaded, it dispatches
+    // through `executeSubagentStartHooks`, and `agent_id` and `agent_type` are
+    // both present.
+    event: 'SubagentStart', since: '2.0.43', probed: '2.1.263',
+  },
+  {
+    // Same binary carries "Converting Stop hook to SubagentStop for … (subagents
+    // trigger SubagentStop)", so this half runs through the Stop dispatcher
+    // rather than one of its own — which is why looking for an
+    // `executeSubagentStopHooks` finds nothing and proves nothing.
+    event: 'SubagentStop', since: '2.0.43', probed: '2.1.263',
+  },
+  {
+    // Changelog 2.1.251: "Added `PreModelSwitch` and `PostModelSwitch` hook
+    // events (block, confirm, or annotate a model switch)". Only the Post half
+    // is asked for. PreModelSwitch can block a switch, and a recorder that can
+    // block is a recorder that can wedge a session when this listener is busy.
+    //
+    // The 2.1.263 binary carries the string "PostModelSwitch hooks failed: " —
+    // the CLI reporting on hooks it ran — and `from_model` / `to_model` next to
+    // "model switch blocked by a PreModelSwitch hook". What is NOT verified
+    // end to end is a live session posting one of these to this listener; the
+    // shape below is read off the binary and the changelog, not off a run.
+    event: 'PostModelSwitch', since: '2.1.251', probed: '2.1.263',
+  },
+
+  // Where the session may reach, changing under Wanigan. These are the events
+  // the trust model was always implicitly about: `roots` decides what a session
+  // is allowed to touch at launch, and until now nothing told Wanigan when the
+  // session moved. Schemas in the 2.1.263 binary: CwdChanged {old_cwd,new_cwd},
+  // DirectoryAdded {directory,source}, ConfigChange {source,file_path?}.
+  { event: 'ConfigChange', since: '2.1.49', probed: '2.1.263' },
+  { event: 'CwdChanged', since: '2.1.83', probed: '2.1.263' },
+  { event: 'DirectoryAdded', since: '2.1.219', probed: '2.1.263' },
+
+  // An MCP server asking the operator a question. Schemas:
+  // Elicitation {mcp_server_name,message,mode?,url?,elicitation_id?} and
+  // ElicitationResult {mcp_server_name,action,elicitation_id?,mode?,content?}.
+  // `content` is the operator's typed answer and is never read here.
+  { event: 'Elicitation', since: '2.1.76', probed: '2.1.263' },
+  { event: 'ElicitationResult', since: '2.1.76', probed: '2.1.263' },
+
+  // Agent teams. TaskCompleted and TeammateIdle arrived together in 2.1.33;
+  // TaskCreated is a separate, much later release and is gated on its own, or a
+  // 2.1.33 CLI would be handed a name it does not know and drop the whole file.
+  { event: 'TaskCompleted', since: '2.1.33', probed: '2.1.263' },
+  { event: 'TeammateIdle', since: '2.1.33', probed: '2.1.263' },
+  { event: 'TaskCreated', since: '2.1.84', probed: '2.1.263' },
+
+  // Worktrees the CLI makes for itself under --worktree or background sessions,
+  // which are not the ones worktrees.ts owns. WorktreeCreate carries {name} and
+  // WorktreeRemove carries {worktree_path} — a name on one side and a path on
+  // the other, so they are summarised apart rather than through one field.
+  { event: 'WorktreeCreate', since: '2.1.50', probed: '2.1.263' },
+  { event: 'WorktreeRemove', since: '2.1.50', probed: '2.1.263' },
 ];
 
 export type HookSettingsOptions = {
@@ -500,6 +584,18 @@ export function setLearningBriefingHook(
   learningBriefing = fn;
 }
 
+/**
+ * Registers the sink that learns a session's model changed under it.
+ *
+ * A callback rather than a direct call because sessions.ts already imports this
+ * module, and the record it owns is the one that has to be corrected. The
+ * argument is the model the CLI says it is running now — an observation, not an
+ * instruction: nothing is written to the PTY on the strength of it.
+ */
+export function setModelSwitchHook(fn: ((sessionId: string, model: string) => void) | null): void {
+  modelSwitch = fn;
+}
+
 function decide(input: HookInput, sessionId: string): PolicyDecision | null {
   // A run Wanigan launched and owns the lifetime of carries its own context. The
   // headless fan-out has no pane in the live session list for the app's resolver
@@ -577,19 +673,31 @@ let insertStmt: import('better-sqlite3').Statement | null = null;
 
 function store(sessionId: string, event: string, input: HookInput, at: number): SessionEvent | null {
   const toolName = clip(str(input.tool_name), 64);
-  const key = `${sessionId}|${str(input.tool_use_id) ?? toolName ?? ''}`;
+  // A subagent pairs on its own id in its own namespace. It has to: a
+  // SubagentStart carries neither tool_use_id nor tool_name, so the tool key
+  // below collapses every one of them onto `<session>|`, and with three
+  // subagents in flight — routine now — the first stop to arrive would close
+  // the wrong span and the other two would never close at all.
+  const subagentPair = event === 'SubagentStart' || event === 'SubagentStop';
+  // No id, no pairing. Writing an unkeyed subagent into the shared tool slot is
+  // how it would start reporting durations for Bash.
+  const agentKey = subagentPair ? str(input.agent_id) : null;
+  const key = agentKey
+    ? `${sessionId}|agent:${agentKey}`
+    : `${sessionId}|${str(input.tool_use_id) ?? toolName ?? ''}`;
 
   let durationMs = typeof input.duration_ms === 'number' && Number.isFinite(input.duration_ms)
     ? Math.round(input.duration_ms)
     : null;
 
-  if (event === 'PreToolUse') {
+  if (event === 'PreToolUse' || (event === 'SubagentStart' && agentKey)) {
     if (pending.size >= MAX_PENDING) {
       const oldest = pending.keys().next();
       if (!oldest.done) pending.delete(oldest.value);
     }
     pending.set(key, { at });
-  } else if (event === 'PostToolUse' || event === 'PostToolUseFailure') {
+  } else if (event === 'PostToolUse' || event === 'PostToolUseFailure'
+    || (event === 'SubagentStop' && agentKey)) {
     const started = pending.get(key);
     pending.delete(key);
     if (durationMs === null && started) durationMs = at - started.at;
@@ -600,8 +708,8 @@ function store(sessionId: string, event: string, input: HookInput, at: number): 
   const summary = summarise(event, input);
   // An InstructionsLoaded body names its file at the top level, not under a
   // tool_input, and the path is the whole record: it is what the Context view
-  // reconciles its prediction against.
-  const paths = event === 'InstructionsLoaded' ? instructionPaths(input) : pathsOf(input.tool_input);
+  // reconciles its prediction against. Four lifecycle events since do the same.
+  const paths = eventPaths(event, input);
   const ok = okOf(event, input);
 
   try {
@@ -630,6 +738,13 @@ function store(sessionId: string, event: string, input: HookInput, at: number): 
     };
     recordGoalTrace({ sessionId, source: 'hook', kind: event, status: ok === 0 ? 'failed' : 'recorded',
       toolName, summary, durationMs, costUsd: 0, inTokens: 0, outTokens: 0, createdAt: at });
+    if (event === 'PostModelSwitch') {
+      // The row above is the evidence; this is the correction it implies. Kept
+      // inside its own try because a stale model field is a smaller wrong than
+      // an agent whose turn died on Wanigan's bookkeeping.
+      const to = modelSwitchTarget(summary);
+      if (to) { try { modelSwitch?.(sessionId, to); } catch { /* recorded either way */ } }
+    }
     return stored;
   } catch {
     // The timeline losing a row is not worth failing the agent's tool call over.
@@ -685,6 +800,44 @@ function summarise(event: string, input: HookInput): string | null {
   // UserPromptSubmit carries the prompt and nothing else worth keeping. That the
   // turn happened, and when, is the whole record.
   if (event === 'UserPromptSubmit') return null;
+  // Which kind of subagent, never what it was asked or what it answered. A
+  // SubagentStop body carries `last_assistant_message`, which is model output;
+  // reading `agent_type` and nothing else is what keeps this row a fact about
+  // the run rather than a copy of the work.
+  if (event === 'SubagentStart' || event === 'SubagentStop') {
+    return clip(str(input.agent_type), MAX_SUMMARY);
+  }
+  if (event === 'PostModelSwitch') return modelSwitchSummary(input);
+  switch (event) {
+    // Both ends, because "moved to /tmp" and "moved from the project root to
+    // /tmp" are different facts and only the second one is worth an alarm.
+    case 'CwdChanged':
+      return pair(tail(str(input.old_cwd)), tail(str(input.new_cwd)));
+    // How it was added is the half that matters: /add-dir is a person, and
+    // register_repo_root is the SDK doing it without one.
+    case 'DirectoryAdded':
+      return pair(clip(str(input.source), 32), tail(str(input.directory)));
+    // Which settings layer moved. The file path rides in `paths` below.
+    case 'ConfigChange':
+      return pair(clip(str(input.source), 32), tail(str(input.file_path)));
+    // The server's own question to the operator. Not model output and not a
+    // prompt — the same kind of text a Notification already carries.
+    case 'Elicitation':
+      return pair(clip(str(input.mcp_server_name), 40), clip(str(input.message), MAX_SUMMARY));
+    // The verdict only. `content` is what the operator typed and is not read.
+    case 'ElicitationResult':
+      return pair(clip(str(input.mcp_server_name), 40), clip(str(input.action), 16));
+    case 'TeammateIdle':
+      return clip(str(input.teammate_name), MAX_SUMMARY);
+    case 'TaskCreated':
+    case 'TaskCompleted':
+      return pair(clip(str(input.teammate_name), 40), clip(str(input.task_subject), MAX_SUMMARY));
+    // A name on one side and a path on the other; the CLI sends exactly that.
+    case 'WorktreeCreate':
+      return clip(str(input.name), MAX_SUMMARY);
+    case 'WorktreeRemove':
+      return tail(str(input.worktree_path));
+  }
 
   const ti = input.tool_input ?? {};
   switch (input.tool_name) {
@@ -741,6 +894,75 @@ function instructionPaths(input: HookInput): string[] {
   return p ? [p.slice(0, MAX_PATH)] : [];
 }
 
+/**
+ * The paths an event is about, which for most of them means the paths its tool
+ * call named.
+ *
+ * The lifecycle events below name theirs at the top level instead, each under
+ * its own key, and the path is the whole point of the row: a session that
+ * changed directory or was handed a new root has moved outside what `roots`
+ * decided at launch, and a row that recorded only *that* it moved would leave
+ * the one fact worth reconciling in a summary string. `paths_json` is where
+ * every other surface already looks for a path.
+ */
+function eventPaths(event: string, input: HookInput): string[] {
+  const one = (v: string | null | undefined) => (v && v.trim() ? [v.trim().slice(0, MAX_PATH)] : []);
+  switch (event) {
+    case 'InstructionsLoaded': return instructionPaths(input);
+    // Where it landed. The place it left is in the summary; this column is for
+    // the path a later read would have to check.
+    case 'CwdChanged': return one(input.new_cwd);
+    case 'DirectoryAdded': return one(input.directory);
+    case 'ConfigChange': return one(input.file_path);
+    case 'WorktreeRemove': return one(input.worktree_path);
+    default: return pathsOf(input.tool_input);
+  }
+}
+
+/**
+ * `<from> → <to>`, or just the new model when the CLI did not name the old one.
+ *
+ * Encoded here and decoded by `modelSwitchTarget` for the same reason
+ * loadedSummary is: the row keeps both halves without a schema change, and the
+ * side that writes the string is the side that reads it back.
+ */
+const SWITCH_SEP = ' → ';
+/**
+ * Separates the models from why they changed. Safe as a delimiter because a
+ * model id cannot contain a space — sessions.ts's MODEL_ID is the same rule the
+ * write-back validates against, so the target below can never swallow a source.
+ */
+const SWITCH_WHY = ' · ';
+const MAX_MODEL = 64;
+
+/**
+ * `<from> → <to> · <source>`.
+ *
+ * The source is the half worth having. The CLI's own wording for it is
+ * "automatic fallback or other programmatic change" for `auto` and
+ * "model restored while resuming a session" for `resume` — neither of which any
+ * operator typed, and both of which used to leave the record naming the model
+ * from the launch argv.
+ */
+function modelSwitchSummary(input: HookInput): string | null {
+  const to = clip(str(input.to_model), MAX_MODEL);
+  if (!to) return null;
+  const from = clip(str(input.from_model), MAX_MODEL);
+  const why = clip(str(input.source), 24);
+  const models = from ? `${from}${SWITCH_SEP}${to}` : to;
+  return why ? `${models}${SWITCH_WHY}${why}` : models;
+}
+
+/** The model a PostModelSwitch row says the session ended up on. */
+export function modelSwitchTarget(summary: string | null): string | null {
+  if (!summary) return null;
+  const i = summary.lastIndexOf(SWITCH_SEP);
+  const after = i === -1 ? summary : summary.slice(i + SWITCH_SEP.length);
+  const j = after.indexOf(SWITCH_WHY);
+  const to = (j === -1 ? after : after.slice(0, j)).trim();
+  return to || null;
+}
+
 const PATH_KEYS = ['file_path', 'path', 'notebook_path'] as const;
 
 function pathsOf(ti: Record<string, unknown> | undefined): string[] {
@@ -781,6 +1003,16 @@ function okOf(event: string, input: HookInput): 0 | 1 | null {
     case 'PostCompact':
     case 'SubagentStop':
       return 1;
+    // The only new event with a verdict in it. Declining or cancelling an MCP
+    // server's request is not a failure of the session, but it is the answer
+    // being no, and a timeline that drew it the same green as an accept would
+    // be hiding the more interesting of the two.
+    case 'ElicitationResult': {
+      const action = str(input.action);
+      if (action === 'accept') return 1;
+      if (action === 'decline' || action === 'cancel') return 0;
+      return null;
+    }
     default:
       return null;
   }
@@ -802,6 +1034,19 @@ function clip(v: string | null, max: number): string | null {
 function tail(v: string | null, max: number = MAX_SUMMARY): string | null {
   if (!v) return null;
   return v.length > max ? `…${v.slice(-(max - 1))}` : v;
+}
+
+/**
+ * `<a> — <b>`, or whichever half exists, or null when neither does.
+ *
+ * Every new event summarised above is two facts — a server and its question, a
+ * layer and its file, where the session was and where it went. Joining them
+ * here rather than per case means one of them going missing degrades to the
+ * other rather than to the string "null — /tmp".
+ */
+function pair(a: string | null, b: string | null): string | null {
+  if (a && b) return clip(`${a}${LOADED_SEP}${b}`, MAX_SUMMARY);
+  return a || b || null;
 }
 
 /* ── reading ─────────────────────────────────────────────────────────── */
@@ -964,8 +1209,11 @@ export function liveState(sessionId: string): {
   for (const r of rows) {
     if (ANSWERED.has(r.event)) break;
     // Not every CLI version emits PermissionRequest; the ones that don't send a
-    // Notification instead.
-    if (r.event === 'PermissionRequest'
+    // Notification instead. An Elicitation is the third spelling of the same
+    // state: an MCP server has put a question on the operator's screen and the
+    // run is standing still until it is answered. It was invisible here, so a
+    // session blocked that way ranked as a session quietly working.
+    if (r.event === 'PermissionRequest' || r.event === 'Elicitation'
       || (r.event === 'Notification' && WAITING.test(r.summary ?? ''))) {
       askedAt = r.at;
       break;
@@ -1016,6 +1264,9 @@ const ANSWERED = new Set<string>([
   'PermissionResponse', 'PermissionDenied', 'PreToolUse', 'PostToolUse',
   'PostToolUseFailure', 'UserPromptSubmit', 'Stop', 'StopFailure',
   'SessionStart', 'SessionEnd', 'PreCompact', 'PostCompact',
+  // The operator answering an MCP server settles that question and no other,
+  // but it settles it the same way a permission answer does.
+  'ElicitationResult',
 ]);
 
 /**

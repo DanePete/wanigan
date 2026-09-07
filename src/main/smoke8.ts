@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runGit } from './git';
+import * as gitOps from './git';
 import * as gh from './gh';
 
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
@@ -183,6 +184,53 @@ export async function runGhSmoke(check: Check, say: Say): Promise<void> {
     stub({ create: 'echo "pull request create failed: GraphQL: something" >&2; exit 1' });
     const failed = await throws({ title: 'ok' });
     check(/GraphQL: something/.test(failed ?? ''), 'a failed create surfaces gh\u2019s own reason', failed);
+
+    // ── a ref the renderer names cannot become a git option ────────────
+    // A branch really can be called `-f`: `update-ref` creates one and
+    // `branches()` lists it beside every other, with a live checkout button.
+    // Both halves of the guard are exercised because neither is sufficient
+    // alone — the name rule is the only thing that stops `-f`, and the
+    // trailing `--` is the only thing that stops `.`, which is a pathspec
+    // no name rule can tell apart from a ref.
+    const tracked = path.join(repo, 'a.txt');
+    const onDisk = () => fs.readFileSync(tracked, 'utf8');
+    const refuses = async (fn: () => Promise<unknown>): Promise<string | null> => {
+      try { await fn(); return null; } catch (e) { return e instanceof Error ? e.message : String(e); }
+    };
+    const branchNames = async () => (await git(repo, 'for-each-ref', '--format=%(refname:short)', 'refs/heads'))
+      .split('\n').filter(Boolean);
+    await git(repo, 'update-ref', 'refs/heads/-f', 'HEAD');
+    await git(repo, 'branch', 'p1-target');
+    fs.writeFileSync(tracked, 'uncommitted work\n');
+
+    const dashRef = await refuses(() => gitOps.checkout(repo, '-f'));
+    check(dashRef !== null && /begins with a dash/.test(dashRef) && onDisk() === 'uncommitted work\n',
+      'a branch literally named -f is refused by name before it reaches argv, so `git checkout -f` never runs and the uncommitted edit to a.txt is still on disk',
+      JSON.stringify({ refusal: dashRef, file: onDisk() }));
+
+    const pathspec = await refuses(() => gitOps.checkout(repo, '.'));
+    check(pathspec !== null && onDisk() === 'uncommitted work\n',
+      'a checkout of `.` — a pathspec no name rule can tell apart from a ref — is refused by the trailing `--` the argv carries, and the working tree is unchanged',
+      JSON.stringify({ refusal: pathspec, file: onDisk() }));
+
+    const afterRefusals = await branchNames();
+    check(afterRefusals.includes('-f') && !afterRefusals.includes('p1-gone'),
+      'the refusals destroyed nothing: the -f branch the fixture created is still listed afterwards, and no branch the test never asked for appeared',
+      afterRefusals.join(' | '));
+
+    const mergeDash = await refuses(() => gitOps.merge(repo, '-f'));
+    const deleteDash = await refuses(() => gitOps.deleteBranch(repo, '-f', true));
+    check(/begins with a dash/.test(mergeDash || '') && /begins with a dash/.test(deleteDash || ''),
+      'merge and deleteBranch read a renderer ref through the same rule, so a leading dash is refused by name in Wanigan rather than by git\u2019s own usage text after the process had already started',
+      JSON.stringify({ merge: mergeDash, deleteBranch: deleteDash }));
+
+    const switched = await gitOps.checkout(repo, 'p1-target');
+    const head = (await git(repo, 'rev-parse', '--abbrev-ref', 'HEAD')).trim();
+    check(switched === true && head === 'p1-target' && onDisk() === 'uncommitted work\n',
+      'an ordinary branch switch still works with the trailing `--` in place and carries the uncommitted edit across, so the guard did not cost the operation it protects',
+      JSON.stringify({ head, file: onDisk() }));
+    await gitOps.checkout(repo, 'feature-x');
+    await git(repo, 'checkout', '--', 'a.txt');
   } catch (e) {
     check(false, `gh smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   } finally {

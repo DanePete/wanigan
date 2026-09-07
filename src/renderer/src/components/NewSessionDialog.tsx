@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AccountResolution, AgentAccount, LaunchModelCatalogue, LaunchOptions, Project, ProviderId, ProviderInfo, TrustLevel } from '@shared/types';
+import type { AccountResolution, AgentAccount, LaunchModelCatalogue, LaunchOptions, Project, ProviderId, ProviderInfo, Session, TrustLevel } from '@shared/types';
 import { TRUST_LEVELS, permissionModeCopy, trustCopy, trustGlyph } from '@shared/types';
 import { intersectChoices, launchFieldChoices, type LaunchChoice } from '@shared/launch-fields';
 import { providerTint } from '@shared/provider-status';
@@ -56,8 +56,11 @@ function FocusBtn({ style, onFocus, onBlur, children, ...rest }: React.ButtonHTM
  * own escape hatch unreachable. A native datalist keeps the suggestions
  * without adding a second control to tab through.
  */
-function OpenField({ id, value, choices, placeholder, onChange }: {
+function OpenField({ id, label, value, choices, placeholder, onChange }: {
   id: string;
+  /** The field's own name. `id` above names the datalist, not the input, so
+   *  without this the control reached a screen reader as an unlabelled box. */
+  label: string;
   value: string;
   choices: LaunchChoice[];
   placeholder?: string;
@@ -65,7 +68,7 @@ function OpenField({ id, value, choices, placeholder, onChange }: {
 }) {
   return (
     <>
-      <input className="field mono" style={{ margin: '6px 0 14px' }} value={value} placeholder={placeholder}
+      <input className="field mono" aria-label={label} style={{ margin: '6px 0 14px' }} value={value} placeholder={placeholder}
              list={choices.length ? id : undefined} onChange={(e) => onChange(e.target.value)} />
       {choices.length > 0 && (
         <datalist id={id}>
@@ -77,11 +80,13 @@ function OpenField({ id, value, choices, placeholder, onChange }: {
 }
 
 export default function NewSessionDialog({
-  providers, projects, defaultProjectId, onClose, onCreate, onAddProject,
+  providers, projects, defaultProjectId, liveSessions, onClose, onCreate, onAddProject,
 }: {
   providers: ProviderInfo[];
   projects: Project[];
   defaultProjectId?: string;
+  /** The session list as Sessions.tsx holds it, so this dialog can say what is already open. */
+  liveSessions: Session[];
   onClose: () => void;
   onCreate: (opts: LaunchOptions) => Promise<void>;
   onAddProject: () => Promise<void>;
@@ -189,6 +194,39 @@ export default function NewSessionDialog({
 
   const project = options.find((p) => p.id === projectId) ?? null;
   const isRepo = !!project?.branch;
+
+  /*
+   * Which live sessions are already sitting in the checkout this launch would
+   * enter — and only that, because only that is observed.
+   *
+   * The comparison is checkout to checkout, not project to project. A session's
+   * working directory is its worktree when it has one and its project path when
+   * it does not, so an isolated session on this very project is correctly not
+   * counted (it has its own checkout, which is the whole point of the control
+   * below), and a session filed under another project whose worktree happens to
+   * be this folder correctly is. The launch being configured lands in
+   * `project.path` unless `isolate` is ticked, which is why that flag hides the
+   * warning rather than the warning blocking the launch.
+   *
+   * It compares recorded path strings, not filesystem identity: a symlinked
+   * alias or a differently-cased volume path gives two strings for one
+   * directory and this misses it. Equal strings always name the same directory,
+   * so the error runs one way — it can under-report, it cannot invent.
+   *
+   * The docket claim system was checked and is not a better answer here.
+   * `work_claims` rows are written only through control.ts's claimPath(), whose
+   * two callers (startNode and claimForSession) both require a docket node, and
+   * startNode launches every node with `isolate: true` — so a claim can never
+   * describe a session running in the project's own checkout. A claim is also a
+   * declared relative path, not an observed write, and no preload API lists the
+   * live ones. What is stated below is therefore the session fact, and it is
+   * described as a session fact.
+   */
+  const sharing = useMemo(() => {
+    const root = project?.path;
+    if (!root) return [];
+    return liveSessions.filter((s) => s.status !== 'exited' && (s.worktree ?? s.projectPath) === root);
+  }, [liveSessions, project]);
   // Do not offer Claude aliases to a Codex process.  Empty deliberately means
   /**
    * Which account this launch will use, asked of the main process rather than
@@ -457,7 +495,7 @@ export default function NewSessionDialog({
         </div>
         {options.length ? (
           <div style={{ display: 'flex', gap: 6, margin: '6px 0 14px' }}>
-            <select className="field" style={{ flex: 1, minWidth: 0 }}
+            <select className="field" aria-label="Project" style={{ flex: 1, minWidth: 0 }}
                     value={projectId} onChange={(e) => setProjectId(e.target.value)}>
               {options.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -546,7 +584,7 @@ export default function NewSessionDialog({
             <Note tone="warn">Wanigan could not read what models this profile offers, so type one or leave it blank for the CLI’s own default.</Note>
           )}
           {modelOpen ? (
-            <OpenField id="new-session-model" value={model} choices={modelChoices}
+            <OpenField id="new-session-model" label={modelField.label} value={model} choices={modelChoices}
                        placeholder={modelField.required ? 'Required by provider' : 'Provider default'}
                        onChange={setModel} />
           ) : (
@@ -580,7 +618,7 @@ export default function NewSessionDialog({
           <>
             <div className="label">{effortField.label} <span style={{ textTransform: 'none' }}>— governs thinking depth, tool calls and length</span></div>
             {openField(effortField) ? (
-              <OpenField id="new-session-effort" value={effort} choices={effortChoices}
+              <OpenField id="new-session-effort" label={effortField.label} value={effort} choices={effortChoices}
                          placeholder={effortField.required ? 'Required by provider' : 'Provider default'}
                          onChange={setEffort} />
             ) : (
@@ -672,11 +710,11 @@ export default function NewSessionDialog({
           <>
             <div className="label">{permissionField.label}</div>
             {openField(permissionField) ? (
-              <OpenField id="new-session-permission-mode" value={permissionMode} choices={permissionField.choices}
+              <OpenField id="new-session-permission-mode" label={permissionField.label} value={permissionMode} choices={permissionField.choices}
                          placeholder={permissionField.required ? 'Required by provider' : 'Provider default'}
                          onChange={setPermissionMode} />
             ) : (
-              <select className="field" style={{ margin: '6px 0 5px' }} value={permissionMode}
+              <select className="field" aria-label={permissionField.label} style={{ margin: '6px 0 5px' }} value={permissionMode}
                       onChange={(e) => setPermissionMode(e.target.value)}>
                 {/*
                   * The guard the effort pills above already keep, one field
@@ -808,7 +846,7 @@ export default function NewSessionDialog({
         {accountList.length > 0 && (
           <>
             <div className="label">Account</div>
-            <select className="field" value={accountId ?? ''}
+            <select className="field" aria-label="Account" value={accountId ?? ''}
                     onChange={(e) => setAccountId(e.target.value || null)}
                     style={{ marginBottom: 6 }}>
               {/* This option is the absence of a choice, so it describes the
@@ -850,6 +888,27 @@ export default function NewSessionDialog({
         )}
 
         {/* ── P9 · isolation ───────────────────────────────────────────── */}
+        {/* Sits above the control it is the reason for, and disappears the moment
+            isolation is ticked — the hazard is gone, so the warning is. It never
+            touches `blocker` or `go()`: the operator may well have a reason, and a
+            state Wanigan can show is worth more than a click it refuses. */}
+        {sharing.length > 0 && !isolate && (
+          <Note tone="warn">
+            <span aria-hidden="true">⚠ </span>
+            <strong>
+              {sharing.length === 1 ? 'One session is' : `${sharing.length} sessions are`} already open on
+              the same checkout
+            </strong>
+            {' — '}
+            {sharing.map((s) => s.displayTitle || s.title).join(', ')}. Wanigan can see that they are running
+            in {project?.name ?? 'this folder'}; it does not watch what they write, so it cannot say whether
+            they are editing anything right now. Started as configured, this session runs in that same
+            directory rather than one of its own.
+            {isRepo
+              ? ' Tick “Isolate in a worktree” below to give it a private checkout instead.'
+              : ' This folder is not a git repository, so there is no worktree to cut.'}
+          </Note>
+        )}
         <div className="label">Working tree</div>
         <label className="sunk"
                style={{ display: 'flex', gap: 9, alignItems: 'flex-start', margin: '6px 0 14px',
@@ -879,13 +938,13 @@ export default function NewSessionDialog({
         </label>
 
         <div className="label">First message <span style={{ textTransform: 'none' }}>(optional)</span></div>
-        <textarea className="field mono" rows={3} style={{ margin: '6px 0 4px', resize: 'vertical' }}
+        <textarea className="field mono" aria-label="First message" rows={3} style={{ margin: '6px 0 4px', resize: 'vertical' }}
                   placeholder="Typed into the session once it is up."
                   value={initialPrompt} onChange={(e) => setInitialPrompt(e.target.value)} />
 
         <details style={{ margin: '10px 0 4px' }}>
           <summary className="faint" style={{ cursor: 'pointer', fontSize: 'var(--t-small)' }}>Extra CLI flags</summary>
-          <input className="field mono" style={{ marginTop: 6 }}
+          <input className="field mono" aria-label="Extra CLI flags" style={{ marginTop: 6 }}
                  placeholder="--resume    --permission-mode plan"
                  value={extraArgs} onChange={(e) => setExtraArgs(e.target.value)} />
         </details>

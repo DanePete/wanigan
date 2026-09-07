@@ -166,7 +166,7 @@ A map from the destination variable name to one source.
 |---|---|---|
 | `literal` | `{ "source": "literal", "value": "…" }` | the literal string, ≤ 4,096 characters |
 | `process` | `{ "source": "process", "name": "VAR", "fallback": "…" }` | Wanigan's own process environment, else `fallback`. Credential-shaped source names are refused — see below |
-| `credential` | `{ "source": "credential", "id": "…" }` | Wanigan's OS-keychain provider credential store; `id` defaults to the profile id |
+| `credential` | `{ "source": "credential", "id": "…" }` | a credential Wanigan has stored under that id; `id` defaults to the profile id and must be one this pack owns — see below |
 
 Rules that matter:
 
@@ -199,8 +199,34 @@ Rules that matter:
   whole `WANIGAN_` prefix is refused as a *destination* but not as a source,
   because the shipped GLM and DeepSeek packs read their own overrides that way.
   Declaring a refused source is a validation error, not a silent drop, and a
-  secret has a supported path — use `credential`. This refuses known shapes; it
-  is not proof that every other name is free of secrets.
+  secret has a declared path — use `credential`, and read the two bullets below
+  for how narrow that path is. This refuses known shapes; it is not proof that
+  every other name is free of secrets.
+- **A pack may only spend its own credential.** `source: 'credential'` resolves
+  through Wanigan's provider key store, which is one flat id space with no pack
+  namespace. So `id` is either omitted — spending the declaring profile's own
+  id — or names a profile id declared in this same manifest. Anything else is a
+  validation error: `{"source":"credential","id":"glm"}` in a manifest that does
+  not own the `glm` profile would read the operator's Z.ai token and hand it to
+  your command — the theft the ambient-source rule above refuses, reached
+  through a different source.
+  The store also reaches a file by deleting every character outside `[a-z0-9-]`
+  from the id, so `g.l.m`, `g_l_m` and `glm` all name one stored value; a pack
+  whose id lands on a credential another installed pack already claims is
+  `invalid`, contributes no profile, and cannot be enabled.
+- **Wanigan stores only `glm` and `deepseek` today.** There is no UI, and no
+  IPC handler, that writes a credential for a third-party pack — `key:setProvider`
+  accepts those two ids and refuses every other. Your own id still resolves, but
+  only out of Wanigan's own environment: `WANIGAN_<ID>_KEY`, with the id
+  uppercased verbatim, wins over anything stored. An id may hold `.`, `_` and
+  `-`, and the name keeps whichever it holds: `orbit_main` asks for
+  `WANIGAN_ORBIT_MAIN_KEY`, which bash and zsh both export, while `orbit-main`
+  asks for `WANIGAN_ORBIT-MAIN_KEY`, which neither will export, and a `.`
+  behaves like the `-` — so separate an id with underscores if you intend to
+  use the hatch. With nothing stored and nothing exported, the credential
+  resolves to nothing, which empties that profile's whole environment by the
+  rule below. Declaring `credential` is therefore honest wiring for a value the
+  operator exports, and nothing at all otherwise.
 - **A missing credential empties the whole map.** If any `credential` source
   resolves to nothing, the profile contributes `{}` rather than a partial
   environment — a base URL and its token are one atomic configuration, and
@@ -306,8 +332,13 @@ Anything else the adapter asserts is discarded silently, because a probe can
 prove the provider side of a contract but cannot manufacture Wanigan wiring
 that does not exist.
 
-A v1 adapter must be **self-contained**. Sibling files are not copied into
-staging, so an adapter that reads its own neighbours will fail there.
+A v1 adapter should be **a single self-contained file**, but not because it is
+cut off from its pack. Only the approved executable is staged, so a read the
+adapter makes relative to its own executable path lands in the fresh temp
+directory and finds nothing beside it; `cwd` is the real directory holding the
+approved adapter, so a read relative to `cwd` — `./config.json`, `../data` —
+reaches the real pack directory. Nothing the adapter loads that way is covered
+by the digest you approved.
 
 The adapter process boundary is **not** an OS sandbox and not containment. It
 is a digest-pinned, time-bounded, output-bounded, credential-free spawn of code
@@ -376,10 +407,14 @@ Be clear-eyed about what a third-party pack reaches today.
 - `hooks`, `mcp`, `policy` and `transcript` additionally require harness
   `claude-code` — the wiring is Claude-shaped, and a probe cannot widen it.
 - So a manifest-only third-party pack today is **a well-configured terminal**:
-  a real PTY, a real CLI, launch fields, resume, environment and credential
-  wiring, process exit reported. No hook timeline, no attention states beyond
-  exit, no policy gate, no MCP injection, no headless fan-out, no attachment
-  directory.
+  a real PTY, a real CLI, launch fields, resume, environment wiring, process
+  exit reported. No hook timeline, no attention states beyond exit, no policy
+  gate, no MCP injection, no headless fan-out, no attachment directory.
+- **Wanigan has nowhere to put your pack's secret.** It stores provider
+  credentials for `glm` and `deepseek` and no other id, so a third-party pack's
+  `credential` source resolves only from `WANIGAN_<ID>_KEY` in Wanigan's own
+  environment — and, resolving to nothing, empties that profile's environment
+  rather than launching half-configured.
 
 That is the honest boundary. It is not a roadmap statement, and nothing in the
 UI should imply more.

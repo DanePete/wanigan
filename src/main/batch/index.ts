@@ -108,9 +108,47 @@ export async function dryRunOne(config: RunConfig, rowIndex = 0) {
   return { result: await dryRun(config, target), rowIndex: target.rowIndex, prompt: target.rendered, errors: [] };
 }
 
+/**
+ * `runs` columns listRuns() must not put on the wire.
+ *
+ * `config_json` is the whole run configuration — system prompt, template,
+ * schema, and for a pasted source the operator's entire dataset verbatim. The
+ * list screen reads none of it: it draws the name, model, counts and cost, and
+ * RunDetail fetches the config separately through runDetail() below. Against a
+ * copy of this schema, one run whose source was a 20,000-line pasted CSV
+ * measured 118KB on its single list row; the list returns up to 200 rows and
+ * Batches.tsx polls it every eight seconds while its window is visible.
+ */
+const LIST_OMITS = new Set(['config_json']);
+
+/**
+ * The columns listRuns() selects: every column `runs` has, minus LIST_OMITS.
+ *
+ * Read out of the schema rather than typed out, because a hand-written list is
+ * the version that breaks quietly. A later additive migration adds a column,
+ * the list does not, and a consumer reads `undefined` where a value used to be.
+ * `runs` has been extended that way twice: `kind` and `eval_pair_id` are
+ * addColumn() migrations in db.ts rather than columns of its CREATE TABLE, and
+ * Schedules.tsx filters the re-run picker on `kind`. Deriving fails in the
+ * other direction instead: a new column ships until someone names it above,
+ * which costs bytes rather than a value.
+ *
+ * The names are interpolated into SQL. They are the strings PRAGMA table_info
+ * reports for this table, so nothing a caller passes and nothing an operator
+ * types reaches the query.
+ */
+function listRunColumns(): string[] {
+  const cols = (db().prepare('PRAGMA table_info(runs)').all() as { name: string }[])
+    .map((c) => c.name)
+    .filter((name) => !LIST_OMITS.has(name));
+  if (!cols.length) throw new Error('The runs table reported no columns — the database has not been migrated.');
+  return cols;
+}
+
 export function listRuns() {
+  const cols = listRunColumns().map((c) => `r.${c}`).join(', ');
   return db().prepare(`
-    SELECT r.*,
+    SELECT ${cols},
       (SELECT COUNT(*) FROM requests q WHERE q.run_id = r.id AND q.status = 'succeeded') succeeded,
       (SELECT COUNT(*) FROM requests q WHERE q.run_id = r.id AND q.status IN ('errored','expired','canceled','refused')) failed,
       (SELECT COUNT(*) FROM requests q WHERE q.run_id = r.id AND q.status = 'pending') pending,
@@ -163,13 +201,14 @@ export type RunsInFlight = {
  * six seconds from whichever view is open.
  *
  * It exists because the shell used to answer this out of listRuns() — 200 whole
- * `runs` rows, `config_json` and all, plus a thousand correlated counts and a
- * per-run expiry subquery — to render one integer and one progress bar. The
- * counts here are the same counts, over the same statuses, so nothing on screen
- * moves; only the read shrinks. `runs` still has no index on `status` (db.ts
- * indexes created_at, project_id and (kind, created_at)), so this remains a
- * scan of `runs` — the saving is the row payload and the discarded subqueries,
- * not a seek, and on a fresh install with no runs it costs nothing either way.
+ * `runs` rows, which at the time meant `config_json` and all, plus a thousand
+ * correlated counts and a per-run expiry subquery — to render one integer and
+ * one progress bar. The counts here are the same counts, over the same
+ * statuses, so nothing on screen moves; only the read shrinks. `runs` still
+ * has no index on `status` (db.ts indexes created_at, project_id and (kind,
+ * created_at)), so this remains a scan of `runs` — the saving is the row
+ * payload and the discarded subqueries, not a seek, and on a fresh install
+ * with no runs it costs nothing either way.
  */
 export function runsInFlight(): RunsInFlight {
   const statuses: string[] = [...IN_FLIGHT];

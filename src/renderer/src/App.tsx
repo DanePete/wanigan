@@ -178,6 +178,14 @@ export default function App() {
   const [tab, setTab] = useState<Tab>(initialTabFromLocation);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  // Whether a project-list read has actually returned. The list above seeds
+  // empty and a failed read leaves it empty behind an error toast, so its
+  // length cannot tell "you have no projects" from "nobody has looked yet" —
+  // and Git told operators the first while the second was true. Passed to Git
+  // rather than folded into `projects` as a nullable, because a dozen views
+  // take that prop and only one of them can say anything useful about the
+  // difference.
+  const [projectsRead, setProjectsRead] = useState(false);
   const [hasKey, setHasKey] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
   // Runs still in flight, counted by main rather than derived here from 200
@@ -275,7 +283,7 @@ export default function App() {
       window.wanigan.projects.list(),
       window.wanigan.key.status(),
     ]);
-    setProviders(pv); setProjects(pj); setHasKey(ks.present);
+    setProviders(pv); setProjects(pj); setHasKey(ks.present); setProjectsRead(true);
   }, []);
 
   useEffect(() => {
@@ -415,7 +423,10 @@ export default function App() {
   // session and attention polls above already do.
   const refreshProjects = useCallback(() => {
     window.wanigan.projects.refresh()
-      .then((list) => setProjects((prev) => (projectShape(prev) === projectShape(list) ? prev : list)))
+      .then((list) => {
+        setProjectsRead(true);
+        setProjects((prev) => (projectShape(prev) === projectShape(list) ? prev : list));
+      })
       .catch(() => {});
   }, []);
 
@@ -667,7 +678,10 @@ export default function App() {
   // run again; a callback that reported its own failure could not be its retry.
   const pickProject = useCallback(async () => {
     const p = await window.wanigan.projects.pick();
-    if (p) { setProjects(await window.wanigan.projects.list()); choose(p.id); }
+    if (p) {
+      const list = await window.wanigan.projects.list();
+      setProjectsRead(true); setProjects(list); choose(p.id);
+    }
   }, [choose]);
 
   const addProject = useCallback(async () => {
@@ -676,7 +690,8 @@ export default function App() {
   }, [pickProject, reportError]);
 
   const removeProject = useCallback(async (id: string) => {
-    setProjects(await window.wanigan.projects.remove(id));
+    const list = await window.wanigan.projects.remove(id);
+    setProjectsRead(true); setProjects(list);
   }, []);
 
   // ── nav chrome ─────────────────────────────────────────────────────
@@ -1271,12 +1286,12 @@ export default function App() {
             <Skills projectId={projectId} providers={providers} activeSessionId={activeSessionId} />
           )}
           {tab === 'context' && (
-            <Context projectId={projectId} projects={projects}
+            <Context projectId={projectId} projects={projects} projectsRead={projectsRead}
                      onReloadProjects={loadShell} onOpenLearning={openLearning} />
           )}
           {tab === 'plugins' && <Plugins />}
           {tab === 'schedules' && <Schedules projects={projects} />}
-          {tab === 'git' && <Git projects={projects} />}
+          {tab === 'git' && <Git projects={projects} projectsRead={projectsRead} />}
           {tab === 'runs' && <HeadlessRuns projects={projects} providers={providers} />}
           {tab === 'settings' && (
             <SettingsView providers={providers} projects={projects} jump={settingsJump}

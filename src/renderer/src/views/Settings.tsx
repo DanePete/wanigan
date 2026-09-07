@@ -9,7 +9,7 @@ import type {
   TranscriptHit, TranscriptTurn, TrustLevel, UploadedFile, WorktreeInfo,
 } from '@shared/types';
 import { TRUST_COPY, TRUST_LEVELS, trustCopy } from '@shared/types';
-import { ConfirmNote, Explainer, Note, PageHead, Section, Stat, ago, num } from '../components/bits';
+import { ConfirmNote, Explainer, Note, PageHead, Reading, Section, Stat, ago, num } from '../components/bits';
 import ThemeControl from '../components/ThemeControl';
 import type { ResolvedTheme } from '../theme-boot';
 import '../styles/settings.css';
@@ -462,7 +462,17 @@ export default function Settings({
     if (st.workspaceId) { setWorkspaceId(st.workspaceId); setShowWorkspace(true); }
   });
   useEffect(() => {
-    void load();
+    // `void` marks a promise as deliberately unawaited; it does not handle a
+    // rejection. This one had no catch while the three reads under it do, so a
+    // key.status that failed became an unhandled rejection — and the panel then
+    // rendered its `status?.present ? … : …` else-branch, offering "Paste your
+    // key" as though Wanigan had asked and been told there was none. load()
+    // itself must keep rejecting: the two callers that `await` it report the
+    // failure through this same Note.
+    void load().catch((e) => setMsg({
+      tone: 'error',
+      text: `Wanigan could not read whether a key is installed: ${msg(e)}. What this panel shows below is not an answer about your key.`,
+    }));
     void window.wanigan.key.provider('glm').then(setGlmStatus).catch(() => {});
     void window.wanigan.key.provider('deepseek').then(setDeepseekStatus).catch(() => {});
     window.wanigan.settings.get().then((s) => setCap(s.spendCapUsd.toFixed(2))).catch(() => {});
@@ -1072,9 +1082,8 @@ function ProviderPacks({ providers }: { providers: ProviderInfo[] }) {
         {(list) => list.length === 0 ? (
           <Note tone="warn">
             <strong>⚠ The pack registry answered, and it is empty</strong> — not even the built-in
-            Claude, Codex and GLM manifests, which ship inside the app and should always be listed.
-            Re-read from disk; if they are still missing, this install is incomplete and no session
-            can start.
+            manifests, which ship inside the app and should always be listed. Re-read from disk; if
+            they are still missing, this install is incomplete and no session can start.
           </Note>
         ) : (
           <div className="set-packs">
@@ -1237,7 +1246,8 @@ function ProviderPacks({ providers }: { providers: ProviderInfo[] }) {
                       <button className="btn" disabled={busy !== null}
                               onClick={() => void act(`revoke-${pack.id}`,
                                 () => window.wanigan.providerPacks.revokeAdapterTrust(pack.id),
-                                `${packName(pack)}: adapter trust revoked. The pack itself is unchanged.`)}>
+                                `${packName(pack)}: adapter trust revoked, and the pack is disabled for new launches. `
+                                + 'Trusting a digest again does not re-enable it — enabling is a separate action.')}>
                         Revoke adapter trust
                       </button>
                     )}
@@ -3089,14 +3099,41 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
       <Frame v={ledger.v} what="the ledger" onRetry={ledger.reload}>
         {(rows) => {
           if (!rows.length) {
-            return deniedOnly ? (
-              <div className="sunk set-empty">
-                No denials in the ledger. Every tool call an agent made was allowed or asked.
-                <div style={{ marginTop: 9 }}>
-                  <button className="btn" onClick={() => setDeniedOnly(false)}>Show every decision</button>
+            // A denied-only read coming back empty says nothing on its own about
+            // what the agent was allowed to do: an empty table returns the same
+            // zero rows as a table full of allows. Only the summary counts the
+            // whole ledger, so it is what decides which sentence is true here —
+            // and when it has not answered, neither has this.
+            const counts = summary.v.s === 'ok' ? summary.v.d : null;
+            const recorded = counts ? counts.denied + counts.asked + counts.allowed : null;
+            if (deniedOnly && recorded !== 0) {
+              return (
+                <div className="sunk set-empty">
+                  {summary.v.s === 'loading' ? (
+                    <>No denied decision came back in this read. The ledger summary has not answered
+                      yet, so Wanigan cannot say whether one is recorded at all.</>
+                  ) : counts === null ? (
+                    <>No denied decision came back in this read. Wanigan could not read the ledger
+                      summary, so it cannot say whether one is recorded at all.</>
+                  ) : counts.denied === 0 ? (
+                    counts.denied + counts.asked + counts.allowed === 1 ? (
+                      <>No denials in the ledger. The one recorded decision was allowed or asked.</>
+                    ) : (
+                      <>No denials in the ledger. All
+                        {' '}{plural(counts.denied + counts.asked + counts.allowed, 'recorded decision')} were
+                        allowed or asked.</>
+                    )
+                  ) : (
+                    <>Two reads disagree: the summary counts {plural(counts.denied, 'denial')} and this
+                      list came back empty. Read the ledger again before trusting either.</>
+                  )}
+                  <div style={{ marginTop: 9 }}>
+                    <button className="btn" onClick={() => setDeniedOnly(false)}>Show every decision</button>
+                  </div>
                 </div>
-              </div>
-            ) : (
+              );
+            }
+            return (
               <div className="sunk set-empty">
                 Nothing recorded yet. The ledger fills the first time an agent calls a tool while the
                 hook bus is on.
@@ -3368,9 +3405,9 @@ function Accounts() {
 
           <div className="label">Add an account</div>
           <div style={{ display: 'grid', gap: 7, marginBottom: 8 }}>
-            <input className="field" placeholder="Label, such as Work" value={label}
+            <input className="field" aria-label="Account label" placeholder="Label, such as Work" value={label}
                    onChange={(e) => setLabel(e.target.value)} />
-            <input className="field mono" placeholder="~/.claude-work" value={dir}
+            <input className="field mono" aria-label="Account configuration directory" placeholder="~/.claude-work" value={dir}
                    onChange={(e) => setDir(e.target.value)} />
             {defaultAccount && (
               <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
@@ -5062,15 +5099,31 @@ function Backup() {
    cannot inspect is one you cannot trust before you publish a screenshot.
    ──────────────────────────────────────────────────────────────────────── */
 
+type DemoState = { on: boolean; blurTerminals: boolean; map: { real: string; fake: string }[] };
+
 function DemoPanel() {
-  const [state, setState] = useState<{ on: boolean; blurTerminals: boolean; map: { real: string; fake: string }[] }>(
-    { on: false, blurTerminals: false, map: [] });
+  // Null until demo:state answers. It used to start at {on:false,
+  // blurTerminals:false}, which the effect below wrote straight to the global
+  // attribute — so opening Settings removed the blur App had applied, and a
+  // rejected read (swallowed by an empty catch) left it removed for the rest of
+  // the session while masking, which lives in the main process, stayed on. That
+  // is the half-masked screen: invented project names over real terminal bytes.
+  const [state, setState] = useState<DemoState | null>(null);
+  const [readErr, setReadErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => { window.wanigan.demo.state().then(setState).catch(() => {}); }, []);
+  const read = useCallback(() => window.wanigan.demo.state()
+    .then((s) => { setState(s); setReadErr(null); })
+    .catch((e) => { setReadErr(msg(e)); }), []);
+  useEffect(() => { void read(); }, [read]);
+
   // App applies this at start-up from the same stored answer; this keeps the
-  // page honest between ticking the box and the next launch.
+  // page honest between ticking the box and the next launch. Until the read
+  // answers there is no answer to apply, so this writes nothing and leaves
+  // whatever App last set standing — blurred, if App's own read has not
+  // returned either.
   useEffect(() => {
+    if (!state) return;
     document.documentElement.toggleAttribute('data-demo-blur', state.on && state.blurTerminals);
   }, [state]);
 
@@ -5081,10 +5134,10 @@ function DemoPanel() {
     catch { /* the checkbox stays where it was: state was not updated */ }
   }
 
-  async function toggle() {
+  async function toggle(on: boolean) {
     setBusy(true);
     try {
-      await window.wanigan.demo.set(!state.on);
+      await window.wanigan.demo.set(!on);
       // Reload rather than just flipping the flag. Views hold data fetched
       // before the toggle, so without this the rail keeps showing real project
       // names while this panel shows masked ones — half-masked is the one
@@ -5096,42 +5149,51 @@ function DemoPanel() {
   return (
     <Section title="Demo mode"
              hint="Replaces your project names, paths, usernames and git authors with plausible fakes everywhere in the app, so a screenshot shows the tool rather than your work.">
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <button className={state.on ? 'btn btn-primary' : 'btn'} disabled={busy} onClick={() => void toggle()}>
-          {busy ? '…' : state.on ? 'Demo mode is on' : 'Turn on demo mode'}
-        </button>
-        <span className="faint" style={{ fontSize: 'var(--t-small)' }}>⌘⇧D toggles it without touching the mouse.</span>
-      </div>
-
-      {state.on && (
+      {readErr !== null && (
+        <PanelError what="whether demo mode is on" detail={readErr} onRetry={() => void read()} />
+      )}
+      {state === null ? (
+        readErr === null && <Reading what="whether demo mode is on" />
+      ) : (
         <>
-          <div style={{ marginTop: 10 }}>
-            <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', fontSize: 'var(--t-small)' }}>
-              <input type="checkbox" checked={state.blurTerminals}
-                     onChange={(e) => void toggleBlur(e.target.checked)} style={{ marginTop: 3 }} />
-              <span>
-                <strong>Blur terminals too.</strong> A live terminal draws raw bytes from the agent, so nothing in the
-                app can rewrite what it already printed. Masking cannot reach it — blurring can.
-              </span>
-            </label>
-          </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className={state.on ? 'btn btn-primary' : 'btn'} disabled={busy} onClick={() => void toggle(state.on)}>
+            {busy ? '…' : state.on ? 'Demo mode is on' : 'Turn on demo mode'}
+          </button>
+          <span className="faint" style={{ fontSize: 'var(--t-small)' }}>⌘⇧D toggles it without touching the mouse.</span>
+        </div>
 
-          <div style={{ marginTop: 10 }}>
-            <div className="label">What your projects look like right now</div>
-            <table className="viz-table">
-              <tbody>
-                {state.map.slice(0, 12).map((m) => (
-                  <tr key={m.real}>
-                    <td className="mono" style={{ fontSize: 'var(--t-micro)', color: 'var(--text-faint)' }}>{m.fake}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="faint" style={{ fontSize: 'var(--t-small)', marginTop: 6, lineHeight: 1.5 }}>
-              Only the masked side is listed — printing the real paths beside them would put the thing you are
-              hiding on the screen you are about to photograph.
-            </p>
-          </div>
+        {state.on && (
+          <>
+            <div style={{ marginTop: 10 }}>
+              <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', fontSize: 'var(--t-small)' }}>
+                <input type="checkbox" checked={state.blurTerminals}
+                       onChange={(e) => void toggleBlur(e.target.checked)} style={{ marginTop: 3 }} />
+                <span>
+                  <strong>Blur terminals too.</strong> A live terminal draws raw bytes from the agent, so nothing in the
+                  app can rewrite what it already printed. Masking cannot reach it — blurring can.
+                </span>
+              </label>
+            </div>
+
+            <div style={{ marginTop: 10 }}>
+              <div className="label">What your projects look like right now</div>
+              <table className="viz-table">
+                <tbody>
+                  {state.map.slice(0, 12).map((m) => (
+                    <tr key={m.real}>
+                      <td className="mono" style={{ fontSize: 'var(--t-micro)', color: 'var(--text-faint)' }}>{m.fake}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="faint" style={{ fontSize: 'var(--t-small)', marginTop: 6, lineHeight: 1.5 }}>
+                Only the masked side is listed — printing the real paths beside them would put the thing you are
+                hiding on the screen you are about to photograph.
+              </p>
+            </div>
+          </>
+        )}
         </>
       )}
     </Section>

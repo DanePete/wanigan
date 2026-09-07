@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { runGitSync } from '../git';
 import { managedPolicyDir } from './instructions';
 
 /**
@@ -50,6 +50,16 @@ const PROJECTS_ROOT = path.join(HOME, '.claude', 'projects');
 const SCAN_MAX = 2 * 1024 * 1024;
 /** What the reading pane gets. Large enough for any real memory file. */
 const BODY_MAX = 200 * 1024;
+/**
+ * Past this, a file in the memory directory is not a memory.
+ *
+ * Ten times what the whole index is allowed to load, and larger than the
+ * reading pane will ever show — so a topic file that genuinely holds pages of
+ * prose stays well under it, and nothing legitimate trips this. It is set as a
+ * ceiling on plausibility rather than on cost: the point is to name a file that
+ * something else has written to, not to complain about a long one.
+ */
+const IMPLAUSIBLE_FILE = 256 * 1024;
 
 /* ── shape ───────────────────────────────────────────────────────────── */
 
@@ -187,27 +197,32 @@ type GitResult =
   | { ok: false; why: string };
 
 function git(dir: string, args: string[]): GitResult {
-  try {
-    // Sync on purpose: readMemory's signature is sync, and this is a handful of
-    // milliseconds cached for 30s rather than a spawn per renderer poll.
-    const out = execFileSync('git', ['-C', dir, ...args], {
-      encoding: 'utf8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const t = out.trim();
+  // Sync on purpose: readMemory's signature is sync, and this is a handful of
+  // milliseconds cached for 30s rather than a spawn per renderer poll.
+  //
+  // Through git.ts's runner rather than a second execFileSync, because the
+  // wrapper's value is the environment it sets and not the call it saves. This
+  // used to spawn git with the app's own environment: bounded at four seconds,
+  // so it could not hang the process, but free to reach a credential helper or
+  // put an askpass dialog on screen for a repository the operator had only
+  // opened a panel on. runGitSync sets GIT_TERMINAL_PROMPT=0 and empties both
+  // askpass variables, so the answer to "is this a repo" cannot be a prompt.
+  //
+  // The three-way outcome below is this module's own and is preserved exactly:
+  // git answering, git answering no, and git never being asked.
+  const r = runGitSync(dir, args, { timeout: 4000, maxBuffer: 1024 * 1024 });
+  if (r.ok) {
+    const t = r.out.trim();
     return { ok: true, out: t || null };
-  } catch (e) {
-    const err = e as { code?: unknown; status?: unknown; signal?: unknown; message?: unknown };
-    // An Electron app launched from Finder inherits a minimal PATH, not the
-    // login shell's, so a missing binary here is routine rather than exotic.
-    if (err.code === 'ENOENT') return { ok: false, why: 'git is not on the PATH this app inherits' };
-    if (err.code === 'ETIMEDOUT' || err.signal === 'SIGTERM') {
-      return { ok: false, why: 'git did not answer within 4 seconds' };
-    }
-    // A non-zero exit is git ANSWERING: rev-parse outside a repository exits
-    // 128, and that is a real "no", not a failure to ask.
-    if (typeof err.status === 'number') return { ok: true, out: null };
-    return { ok: false, why: typeof err.message === 'string' ? err.message : String(e) };
   }
+  // A non-zero exit is git ANSWERING: rev-parse outside a repository exits
+  // 128, and that is a real "no", not a failure to ask.
+  if (typeof r.code === 'number') return { ok: true, out: null };
+  if (r.killed) return { ok: false, why: 'git did not answer within 4 seconds' };
+  // An Electron app launched from Finder inherits a minimal PATH, not the
+  // login shell's, so a missing binary here is routine rather than exotic.
+  if (/\bENOENT\b/.test(r.err)) return { ok: false, why: 'git is not on the PATH this app inherits' };
+  return { ok: false, why: r.err };
 }
 
 /**
@@ -540,6 +555,35 @@ function budgetFor(text: string, bytes: number, complete: boolean): NonNullable<
 
 type Scanned = { file: MemoryFile; targets: string[]; text: string; complete: boolean };
 
+/**
+ * What to say about a memory file's size, or null when there is nothing to say.
+ *
+ * Two different facts, and they were one note for too long. "Only its first
+ * 2 MB were read" describes this scanner; it is what you say about a long file.
+ * A file past IMPLAUSIBLE_FILE is not long, it is wrong — this directory is
+ * written by the agent's own memory tooling in kilobytes, so a megabyte here
+ * got there some other way. Saying it as a scanning limit buries that.
+ *
+ * The case this was written for: one of these reached 12.6 MB after a stream of
+ * transcribed audio was appended to it by something outside the agent, and four
+ * later sessions pulled it into context before anyone noticed — because the
+ * only thing any surface would have said was that the read was partial.
+ *
+ * Pure, so the decision can be tested without a 256 KB fixture on a real disk.
+ */
+export function memorySizeNote(name: string, size: number, complete: boolean): string | null {
+  if (size > IMPLAUSIBLE_FILE) {
+    return `${name} is ${kb(size)}. No memory file is written that large — the index caps at `
+      + `25 KB and a topic file holds a few pages — so this one has almost certainly been `
+      + `appended to by something other than the agent's memory tooling. Check its tail before `
+      + `trusting anything here about it: a session that recalls it reads the whole file.`;
+  }
+  if (!complete) {
+    return `${name} is ${kb(size)}; only its first ${kb(SCAN_MAX)} were read, so its line count and links are partial.`;
+  }
+  return null;
+}
+
 function scanFile(full: string, notes: string[]): Scanned | null {
   let st: fs.Stats;
   try { st = fs.statSync(full); } catch { return null; }
@@ -564,9 +608,8 @@ function scanFile(full: string, notes: string[]): Scanned | null {
   const base = path.basename(full).replace(/\.md$/i, '');
   const targets = linkTargets(head.text);
 
-  if (!head.complete) {
-    notes.push(`${path.basename(full)} is ${kb(st.size)}; only its first ${kb(SCAN_MAX)} were read, so its line count and links are partial.`);
-  }
+  const sizeNote = memorySizeNote(path.basename(full), st.size, head.complete);
+  if (sizeNote) notes.push(sizeNote);
 
   return {
     text: head.text,

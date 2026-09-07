@@ -113,8 +113,12 @@ export default function ObservedBand() {
   useEffect(() => {
     live.current = true;
     void read();
-    const timer = window.setInterval(() => { void read(); }, POLL_MS);
-    const wake = () => { void read(); };
+    // The wake handlers below already say this band only matters while someone
+    // is looking at it; the beat itself was still running behind a hidden
+    // window, scanning for unmanaged sessions nobody was there to be told about.
+    const timer = window.setInterval(() => { if (document.hidden) return; void read(); }, POLL_MS);
+    // visibilitychange fires in both directions; only one of them is a wake.
+    const wake = () => { if (!document.hidden) void read(); };
     document.addEventListener('visibilitychange', wake);
     window.addEventListener('focus', wake);
     return () => {

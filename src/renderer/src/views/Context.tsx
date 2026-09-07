@@ -371,9 +371,14 @@ type Data = {
   errors: Errors;
 };
 
-export default function Context({ projectId, projects, onReloadProjects, onOpenLearning }: {
+export default function Context({ projectId, projects, projectsRead, onReloadProjects, onOpenLearning }: {
   projectId?: string;
   projects: Project[];
+  /** False until the shell's project list has come back at least once. An
+   *  empty array on its own cannot tell "you have no projects" from "the read
+   *  failed", and this view states one of those as fact. Git takes the same
+   *  flag for the same reason. */
+  projectsRead: boolean;
   onReloadProjects: () => Promise<void>;
   onOpenLearning: (tab: 'overview' | 'inbox' | 'knowledge' | 'optimize') => void;
 }) {
@@ -530,30 +535,47 @@ export default function Context({ projectId, projects, onReloadProjects, onOpenL
   }
 
   /* Empty: no projects at all. Not the same as a project with nothing in it —
-     and "reading the list right now" is a third state, not a claim of empty. */
+     and "reading the list right now" is a third state, not a claim of empty.
+     So is "the read failed", which is a fourth: `checking` is only true while
+     this view's own Check for projects button is in flight, so a shell read
+     that never came back left the branch below stating "No projects yet" as
+     fact. That is the one sentence this view must not invent — it is the
+     answer to "what is Wanigan configured to work on". */
   if (projects.length === 0 || !project) {
+    /* One heading and one paragraph, picked from the three states, rather than
+       three copies of the same two elements: the card looked identical in each
+       branch and only the words differed. */
+    const empty = checking
+      ? {
+          title: 'Reading projects…',
+          body: <>
+            Asking the main process for the saved project list. Anything added in Sessions since
+            this view loaded will show up here.
+          </>,
+        }
+      : !projectsRead
+        ? {
+            title: 'Your project list has not been read yet',
+            body: <>
+              This is not a count of your projects. Wanigan reads the list when the window opens and
+              again when it regains focus; if that read failed, the message at the bottom of the window
+              carries the error and the button that runs it again.
+            </>,
+          }
+        : {
+            title: 'No projects yet',
+            body: <>
+              This view reads a project folder from disk and shows what a session launched in it would
+              be told before you type anything. Add a folder in Sessions and it appears here.
+            </>,
+          };
     return (
       <div className="pane ctx">
         <Head project={null} projects={projects} onPick={setPinned} strayFrom={strayFrom} onFollow={() => setPinned(null)}
               onRescan={() => load(true)} busy={busy} />
         <div className="card" style={{ padding: 18, maxWidth: 680 }}>
-          {checking ? (
-            <>
-              <h2 style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>Reading projects…</h2>
-              <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 6 }}>
-                Asking the main process for the saved project list. Anything added in Sessions since
-                this view loaded will show up here.
-              </p>
-            </>
-          ) : (
-            <>
-              <h2 style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>No projects yet</h2>
-              <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 6 }}>
-                This view reads a project folder from disk and shows what a session launched in it would
-                be told before you type anything. Add a folder in Sessions and it appears here.
-              </p>
-            </>
-          )}
+          <h2 style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>{empty.title}</h2>
+          <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 6 }}>{empty.body}</p>
           <button className="btn" style={{ marginTop: 12 }} disabled={checking}
                   onClick={() => void checkProjects()}>
             {checking ? 'Reading projects…' : 'Check for projects'}
@@ -656,6 +678,17 @@ export default function Context({ projectId, projects, onReloadProjects, onOpenL
     memory: e.memory, config: e.config, budget: e.budget, learning: undefined,
   };
   const unfilled = SLOTS.filter((s) => !filled[s.key] && !errored[s.key]);
+
+  /* Where the setup card goes.
+
+     `nothing` already puts it first, because a repo that owns none of this is
+     a repo whose page is the offer to create it. The half that was missing is
+     the ordinary case in between: two slots filled and five empty rendered the
+     two — opening the page on a section numbered 3, with nothing above it to
+     say why — and left "here is what is missing, and here is /init" below seven
+     sections. The numbers are stable slot identities and stay as they are; what
+     moves is the card, up to the top whenever most of the list is still empty. */
+  const setupLeads = unfilled.length > SLOTS.length / 2;
   const nothing = !Object.values(shows).some(Boolean) && Object.keys(e).length === 0;
 
   return (
@@ -667,6 +700,10 @@ export default function Context({ projectId, projects, onReloadProjects, onOpenL
         <Setup full project={project} slots={SLOTS} onInit={runInit} initMsg={initMsg} />
       ) : (
         <>
+          {setupLeads && unfilled.length > 0 && (
+            <Setup project={project} slots={unfilled} onInit={runInit} initMsg={initMsg} />
+          )}
+
           {(shows.chain || errored.chain) && (
             <Section n={1} title="Instructions"
                      hint="The CLAUDE.md chain in load order. Everything above the project is loaded before it."
@@ -733,7 +770,7 @@ export default function Context({ projectId, projects, onReloadProjects, onOpenL
             </Section>
           )}
 
-          {unfilled.length > 0 && (
+          {!setupLeads && unfilled.length > 0 && (
             <Setup project={project} slots={unfilled} onInit={runInit} initMsg={initMsg} />
           )}
         </>

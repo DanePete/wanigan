@@ -32,7 +32,7 @@ nvm use          # Node 22.23.2 (see .nvmrc) — not optional, see below
 npm install      # rebuilds node-pty and better-sqlite3 for Electron's ABI
 npm run app      # through scripts/launch.sh
 npm run dev      # hot reload — but read the warning under this block first
-npm test         # typecheck, two packaging suites, then smoke: no network, no spend
+npm test         # typecheck, style gate, two packaging suites, smoke: no network, no spend
 npm run cli      # the same database from a terminal
 ```
 
@@ -43,11 +43,13 @@ is exactly the variable that makes an Electron app die at startup with
 Code terminal and you get that failure; `npm run app` unsets it and does not.
 The full explanation is in *Six things that will bite you if you fork this*.
 
-`npm test` is four steps, in this order: `typecheck` (both tsconfigs),
+`npm test` is five steps, in this order: `typecheck` (both tsconfigs),
+`test:renderer-style` (the ratchets over the renderer sources — inline styles,
+literal font sizes and durations, shadowed modifiers, unnamed form controls),
 `test:package-hooks` and `test:local-install` (fixture-only checks over the
 macOS packaging and installer hooks — they build nothing and touch no
 `/Applications`), then `smoke` (the suite inside a real Electron main process,
-mock runner, no API key). CI runs the same four across two runners; see
+mock runner, no API key). CI runs the same five across two runners; see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Installing a local macOS arm64 build
@@ -160,10 +162,29 @@ carrying duration and effort. No wrapper, no proxy, no transcript parsing.
 
 Hooks are the other half. A second loopback listener accepts the CLI's `http`
 hook posts — `PreToolUse`, `PostToolUse` with `duration_ms`, `PermissionRequest`,
-`Notification`, `Stop`, `PreCompact` — which is what makes the attention queue
-and the timeline possible. Both listeners bind to `127.0.0.1` on an ephemeral
-port, refuse any non-loopback peer, and the hook bus requires a bearer token
-minted per launch.
+`Notification`, `Stop`, `PreCompact` and twenty more — which is what makes the
+attention queue and the timeline possible. Both listeners bind to `127.0.0.1` on
+an ephemeral port, refuse any non-loopback peer, and the hook bus requires a
+bearer token minted per launch.
+
+Each event is asked for only from a CLI at or past the release that added it,
+because the CLI rejects a whole settings file over one name it does not know and
+the session then starts with no hooks and no warning. That gate is why the list
+can grow at all. Four of them matter more than the rest:
+
+| Event | What it prevents |
+|---|---|
+| `PostModelSwitch` | The session's recorded model going stale. `/model` typed into the terminal, or the CLI falling back on its own, used to leave every surface naming the model from the launch argv. |
+| `SubagentStart` / `SubagentStop` | Subagent fan-out being invisible. Paired on `agent_id`, so concurrent subagents each get their own duration. |
+| `CwdChanged` / `DirectoryAdded` | A session moving outside the roots it launched under without saying so. |
+| `Elicitation` | An MCP server's question reading as a session quietly working rather than one waiting on you. |
+
+Some are deliberately never asked for. `MessageDisplay` is assistant message
+text and nothing else; `FileChanged` means "watch these filenames" and Wanigan
+has no such list; `PreModelSwitch` can block a switch that the Post half already
+reports. Every field name above was read off the payload schemas in the shipped
+binary rather than the published docs — the docs give `DirectoryAdded` a
+`directory_path`, and the CLI sends `directory`.
 
 **Prompt and response content is never collected.** The CLI redacts it by
 default and Wanigan does not opt in; the content-logging variables are pinned

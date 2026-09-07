@@ -553,7 +553,7 @@ export default function Skills({ projectId, providers, activeSessionId }: {
                 ))}
               </ul>
             </div>
-            <p className="skills-sr" role="status">
+            <p className="sr-only" role="status">
               {open && suggestions.length ? `${suggestions.length} suggestions, use arrow keys` : ''}
             </p>
 
@@ -614,7 +614,7 @@ export default function Skills({ projectId, providers, activeSessionId }: {
               Nothing exists to catalogue — not in your skills folder, this project, or any plugin.
               Write one below and Wanigan creates
               <span className="mono"> &lt;root&gt;/skills/&lt;name&gt;/SKILL.md</span> for you, or create that
-              file by hand with a <span className="mono">name</span> and <span className="mono">description</span>
+              file by hand with a <span className="mono">name</span> and <span className="mono">description</span>{' '}
               in its frontmatter; either way it shows up here on the next scan. Skills committed under a
               project's <span className="mono">.claude/skills</span> travel with the repo.
             </p>
@@ -898,8 +898,10 @@ function SkillWriter({ project, providers, onInstalled }: {
               </button>
               {!ready && (
                 <p className="faint" style={{ fontSize: 'var(--t-micro)' }}>
-                  Name, description and trigger are required — they are the frontmatter an agent
-                  searches to find this skill at all.
+                  Wanigan needs all three to write a useful file. The spec itself requires none of
+                  them — a skill with no frontmatter takes its name from the directory — but
+                  description and when-to-use are the only text an agent reads while deciding
+                  whether to load the skill at all.
                 </p>
               )}
               {ready && targets.length === 0 && (

@@ -177,9 +177,19 @@ button.stat-tile[aria-pressed='true'] { background: var(--bg-selected); box-shad
 .overlay-backdrop.blur { background: var(--scrim-strong); backdrop-filter: blur(3px); }
 
 /* ── screen-reader-only text ────────────────────────────────────────── */
+/* The one visually-hidden utility. Text stays in the accessibility tree and is
+   announced; display:none would remove it from both. `clip` is deprecated and
+   clip-path is its replacement, so both are set — this is the belt-and-braces
+   recipe the two per-surface copies already carried.
+
+   There were four of these: this rule, a byte-equivalent .sr-only in
+   settings.css, .skills-sr in evals.css and .composer-sr in composer.css, whose
+   own comment noted it was "Same clip as .skills-sr". Four copies of one
+   utility is four places to fix a hiding technique that has changed twice. */
 .sr-only {
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
-  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
+  white-space: nowrap; border: 0;
 }
 
 /* ── section (bits.tsx Section) ─────────────────────────────────────── */

@@ -179,10 +179,6 @@
    anything load-bearing wraps in place instead of hiding behind a hover. */
 .set-wrap { white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
 
-/* Visually hidden, still announced and still focusable by a screen reader. */
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-           overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-
 .set-list { margin: 0; padding-left: 17px; color: var(--text-dim);
             font-size: var(--t-small); line-height: 1.55; }
 .set-list li { margin-top: 3px; }

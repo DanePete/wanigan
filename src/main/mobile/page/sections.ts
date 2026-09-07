@@ -42,15 +42,6 @@ import { LAUNCH_SECTION } from './sections/launch';
  */
 
 /**
- * Where in the frame a section's markup is composed. The two slots predate the
- * phone's navigation and the shell now places each into a named screen from
- * shared/mobile-nav.ts: 'dashboard' fills the Fleet view, 'controls' fills the
- * remote-control block inside the Agent view. The names are kept because they
- * describe the *frame* — the control slot is still the part that only exists
- * when remote control is separately enabled, which is a different question from
- * which screen it appears on.
- */
-/**
  * Where a section's markup lands. 'dashboard' fills the Fleet view and
  * 'controls' the remote-control block inside Agent; 'device' is its own screen,
  * which is why it is a slot rather than a second dashboard panel — it is about

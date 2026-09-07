@@ -19,6 +19,15 @@ function yamlString(value: string): string {
   return JSON.stringify(value.replace(/\s+/g, ' ').trim());
 }
 
+/**
+ * The combined cap the skill listing applies to `description` + `when_to_use`.
+ *
+ * Documented as 1,536 characters "to reduce context usage". Named here because
+ * two fields are written against it and a number spelled twice is a number that
+ * drifts.
+ */
+const SKILL_LISTING_BUDGET = 1_536;
+
 export function forgeSkill(input: ForgeSkillInput): ForgedSkill {
   const name = validName(input.name);
   const description = input.description.trim();
@@ -31,10 +40,25 @@ export function forgeSkill(input: ForgeSkillInput): ForgedSkill {
   const allowedTools = uniqueStrings(input.allowedTools ?? [], 50);
   const providerIds = uniqueStrings(input.providerIds ?? [], 50);
 
+  // `when_to_use` is a real frontmatter field, and it is the one that decides
+  // whether the skill is ever loaded: the docs say it is "appended to
+  // description in the skill listing", which is the text an agent reads while
+  // choosing. The trigger used to exist only as the "## When to use" section
+  // below — inside the body, which an agent sees only after it has already
+  // decided to load the skill. The prose stays too, for whoever opens the file.
+  //
+  // The listing truncates description + when_to_use at 1,536 characters
+  // together, so the second field is given what the first leaves rather than a
+  // fixed cap of its own; past that the trigger would be silently cut off in
+  // the one place it had to survive.
+  const triggerBudget = Math.max(0, SKILL_LISTING_BUDGET - description.length);
+  const listedTrigger = trigger.length > triggerBudget ? trigger.slice(0, triggerBudget).trimEnd() : trigger;
+
   const sections: string[] = [
     '---',
     `name: ${name}`,
     `description: ${yamlString(description)}`,
+    ...(listedTrigger ? [`when_to_use: ${yamlString(listedTrigger)}`] : []),
     '---',
     '',
     `# ${titleCase(name)}`,

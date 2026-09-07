@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import type {
   BriefingPreview,
   CandidateExplanation,
+  ConsolidationOutcome,
   ConsolidationRun,
   FreshnessReport,
   KnowledgeBriefing,
@@ -564,7 +565,7 @@ export default function Learning({ projectId, projects, providers, onPickProject
              }}>
           {tabs.map((item) => (
             <button key={item.id} role="tab" aria-selected={tab === item.id}
-                    id={`learning-tab-${item.id}`} aria-controls={`learning-panel-${item.id}`}
+                    id={`learning-tab-${item.id}`} aria-controls="learning-panel"
                     tabIndex={tab === item.id ? 0 : -1} title={item.hint}
                     className={tab === item.id ? 'on' : ''} onClick={() => setTab(item.id)}>
               <span>{item.label}</span>
@@ -582,8 +583,16 @@ export default function Learning({ projectId, projects, providers, onPickProject
       {notice && <div className="learning-banner ok" role="status" key={notice.key}>{notice.text}</div>}
 
       {/* tabIndex makes the panel focusable, which is what lets a keyboard
-          scroll it at all; without it the arrow keys had nothing to act on. */}
-      <div className="learning-scroll" ref={panelRef} tabIndex={0} role="tabpanel" id={`learning-panel-${tab}`} aria-labelledby={`learning-tab-${tab}`}>
+          scroll it at all; without it the arrow keys had nothing to act on.
+
+          One panel swaps its contents, so its id is constant and every tab's
+          aria-controls names it. It used to be `learning-panel-${tab}`, so the
+          id existed only for the selected tab and every other button in the
+          tablist pointed at an id that was in no document — the same dangling
+          reference the composer's skill menu and the plan editor's slot are
+          each written to avoid. Settings is the other tablist here and renders
+          all of its panels, so its per-tab ids do resolve. */}
+      <div className="learning-scroll" ref={panelRef} tabIndex={0} role="tabpanel" id="learning-panel" aria-labelledby={`learning-tab-${tab}`}>
         {tab === 'overview' && (
           <Overview overview={overview} settings={settings} pipeline={pipeline} read={read}
                     pipelineErr={pipelineErr} pipelineBusy={pipelineBusy}
@@ -769,10 +778,21 @@ function Overview({ overview, settings, pipeline, read, pipelineErr, pipelineBus
           </ul>
           <p className="faint">Repeated observations across independent tasks are consolidated into proposals every 5 minutes while Wanigan is open.</p>
         </section>
-        <HowItWorks pipeline={pipeline} windowDays={windowDays} onNavigate={onNavigate} />
-        <AutoPromotion pipeline={pipeline} windowDays={windowDays} onNavigate={onNavigate} />
-        <NeedsAttention overview={overview} settings={settings} candidates={candidates} onNavigate={onNavigate} />
-        <PrivacyCard />
+        {/* Four further cards used to stand open under the one above, on a page
+            whose every number was zero — the most words in the app, Settings
+            included, describing a pipeline that had not run. They are the right
+            reading once there is something to read them against, so they are
+            folded rather than dropped, and a reader who opens them keeps them
+            open. Insights already works this way: a short reason, the one
+            control that does anything yet, and nothing else. */}
+        <Explainer id="learning-empty-detail" title="How learning works, in full" defaultHidden>
+          <div className="learning-stack">
+            <HowItWorks pipeline={pipeline} windowDays={windowDays} onNavigate={onNavigate} />
+            <AutoPromotion pipeline={pipeline} windowDays={windowDays} onNavigate={onNavigate} />
+            <NeedsAttention overview={overview} settings={settings} candidates={candidates} onNavigate={onNavigate} />
+            <PrivacyCard />
+          </div>
+        </Explainer>
       </div>
     );
   }
@@ -799,8 +819,8 @@ function Overview({ overview, settings, pipeline, read, pipelineErr, pipelineBus
                      onWiden={windowDays < 90 ? () => onWindow(90) : null} />
 
       <section className="learning-grid two">
-        <Heartbeat runs={pipeline.consolidationRuns} settings={settings} scopeParam={scopeParam}
-                   busy={busy} act={act} />
+        <Heartbeat runs={pipeline.consolidationRuns} storedTotal={pipeline.consolidationRunsTotal}
+                   settings={settings} scopeParam={scopeParam} busy={busy} act={act} />
         <RetrievalCard settings={settings} pipeline={pipeline} windowDays={windowDays}
                        candidates={candidates} onNavigate={onNavigate} />
       </section>
@@ -1063,8 +1083,14 @@ const triggerWords = (trigger: ConsolidationRun['trigger']): string =>
     : trigger === 'manual' ? 'started by “Consolidate now”'
     : `trigger recorded as “${trigger}”`;
 
-function Heartbeat({ runs, settings, scopeParam, busy, act }: {
+function Heartbeat({ runs, storedTotal, settings, scopeParam, busy, act }: {
   runs: ConsolidationRun[];
+  /**
+   * Every pass still stored, counted by main. `runs` is a bounded page of the
+   * most recent 20, so its length is a page size: with a pass every 5 minutes
+   * it reads "20 recorded" forever, whatever the table holds.
+   */
+  storedTotal: number;
   settings: LearningSettings;
   scopeParam: string | null | undefined;
   busy: string | null;
@@ -1078,7 +1104,17 @@ function Heartbeat({ runs, settings, scopeParam, busy, act }: {
             onClick={() => void act('consolidate', () => window.wanigan.learning.consolidate(scopeParam),
               // The notice reports what this pass actually did — zeros included.
               (result) => {
-                const r = result as { processed: number; candidates: number; autoApplied: number };
+                // A refusal and a finished pass are different shapes. Reading
+                // counts off the union without narrowing printed "Consolidation
+                // finished" over four undefined values whenever the pass never
+                // started, which is reachable: this button is disabled while the
+                // engine is off, but consolidation has a switch of its own.
+                const r = result as ConsolidationOutcome;
+                if (!r.ran) {
+                  return r.reason === 'consolidation-disabled'
+                    ? 'Nothing ran: consolidation is switched off. Turn it on above and press this again.'
+                    : 'Nothing ran: the learning engine is switched off.';
+                }
                 return r.candidates > 0
                   ? `Consolidation finished: ${r.candidates} candidate${pl(r.candidates)} from ${r.processed} consumed signal${pl(r.processed)}, ${r.autoApplied} auto-applied.`
                   : 'Consolidation finished: no new candidates — nothing repeated across enough independent sessions yet.';
@@ -1090,7 +1126,7 @@ function Heartbeat({ runs, settings, scopeParam, busy, act }: {
     <article className="card learning-card">
       <div className="learning-card-head">
         <div><span className="label">Automation heartbeat</span><h2>Consolidation passes</h2></div>
-        {latest && <span className="learning-status muted">{runs.length} recorded</span>}
+        {latest && <span className="learning-status muted">{storedTotal.toLocaleString()} recorded</span>}
       </div>
       {latest ? (
         <>
@@ -1101,7 +1137,7 @@ function Heartbeat({ runs, settings, scopeParam, busy, act }: {
             auto-applied <strong>{latest.autoApplied.toLocaleString()}</strong>.
           </p>
           <div className="heartbeat-strip" role="img"
-               aria-label={`${runs.length} recorded consolidation pass${runs.length === 1 ? '' : 'es'}; the most recent produced ${latest.candidates} candidate${pl(latest.candidates)}.`}>
+               aria-label={`the ${runs.length} most recent of ${storedTotal.toLocaleString()} recorded consolidation pass${storedTotal === 1 ? '' : 'es'}; the newest produced ${latest.candidates} candidate${pl(latest.candidates)}.`}>
             {strip.map((r) => (
               <span key={r.id} className={r.candidates > 0 ? 'hit' : ''}
                     style={{ height: `${4 + Math.round((r.candidates / maxC) * 18)}px` }}
@@ -1580,7 +1616,7 @@ function CandidateCard({ candidate, providers, busy, act }: {
       <div className="candidate-top">
         <div>
           <span className="label">{candidate.targetKind} · {candidate.scope}{candidate.pathScope ? ` · ${candidate.pathScope}` : ''}</span>
-          {editing ? <input className="field" value={title} onChange={(e) => setTitle(e.target.value)} /> : <h2>{candidate.title}</h2>}
+          {editing ? <input className="field" aria-label="Candidate title" value={title} onChange={(e) => setTitle(e.target.value)} /> : <h2>{candidate.title}</h2>}
         </div>
         <span className={`learning-status ${candidate.status === 'failed' ? 'bad' : candidate.status === 'approved' ? 'good' : 'muted'}`}>{candidate.status}</span>
       </div>
@@ -1641,10 +1677,10 @@ function CandidateCard({ candidate, providers, busy, act }: {
           ? <p className="learning-status bad">✕ {evErr}</p>
           : <p className="faint">Reading the stored signals…</p>
       )}
-      {editing ? <textarea className="field mono" rows={9} value={text} onChange={(e) => setText(e.target.value)} /> : <pre className="candidate-patch">{candidate.proposedText}</pre>}
+      {editing ? <textarea className="field mono" aria-label="Candidate text" rows={9} value={text} onChange={(e) => setText(e.target.value)} /> : <pre className="candidate-patch">{candidate.proposedText}</pre>}
       {candidate.conflicts.length > 0 && <div className="candidate-conflicts"><strong>Conflicts to resolve</strong>{candidate.conflicts.map((c) => <p key={`${c.itemId}-${c.relation}`}>{c.relation}: {c.title} — {c.reason}</p>)}</div>}
       <div className="candidate-targets">
-        <div><span className="label">Provider targets</span><select className="field" value={target} onChange={(e) => setTarget(e.target.value)}>{providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select></div>
+        <div><span className="label">Provider targets</span><select className="field" aria-label="Provider target" value={target} onChange={(e) => setTarget(e.target.value)}>{providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select></div>
         <p><span className="label">Activation</span><br />Canonical after approval; written to the selected provider only after Apply. New sessions see it after validation.</p>
       </div>
       <div className="learning-actions">
@@ -1796,7 +1832,7 @@ function PayloadPanel({ providers, scopeParam, settings, items, read, onNavigate
         profile’s harness, stated underneath.
       </p>
       <div className="inspector-form">
-        <input className="field" value={query} onChange={(e) => setQuery(e.target.value)}
+        <input className="field" aria-label="Task a session would start with" value={query} onChange={(e) => setQuery(e.target.value)}
                onKeyDown={(e) => { if (e.key === 'Enter') void run(query.trim()); }}
                placeholder="The task a session would start with — or leave empty for a prompt-less launch…" />
         <select className="field" value={providerId} onChange={(e) => setProviderId(e.target.value)} aria-label="Provider profile">
@@ -2014,7 +2050,7 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
           <ProjectMap project={project} items={items} signals={signals} onSelect={(item) => void choose(item)} />
         ) : (
           <>
-            <div className="learning-search card"><input className="field" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void search(); }} placeholder="Search canonical knowledge and path scopes…" /><button className="btn" onClick={() => void search()}>Search</button></div>
+            <div className="learning-search card"><input className="field" aria-label="Search canonical knowledge" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void search(); }} placeholder="Search canonical knowledge and path scopes…" /><button className="btn" onClick={() => void search()}>Search</button></div>
             <div className="knowledge-filterbar card">
               <label className="knowledge-filter-status">
                 <span className="label">Status</span>
@@ -2465,7 +2501,7 @@ function BriefingInspector({ providers, scopeParam, settings, onNavigate }: {
         </p>
       )}
       <div className="inspector-form">
-        <input className="field" value={query} onChange={(e) => setQuery(e.target.value)}
+        <input className="field" aria-label="Task a session would start with" value={query} onChange={(e) => setQuery(e.target.value)}
                onKeyDown={(e) => { if (e.key === 'Enter') void run(); }}
                placeholder="Describe the task a session would start with — or leave empty…" />
         <select className="field" value={providerId} onChange={(e) => setProviderId(e.target.value)} aria-label="Provider profile">

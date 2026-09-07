@@ -501,6 +501,21 @@ export const HOOK_EVENTS = [
   // only from a CLI whose reported version is at least that, because the CLI
   // rejects a whole settings file over one unknown event name.
   'InstructionsLoaded',
+  // Fires after the session's model changes, including a change Wanigan did not
+  // ask for: an operator typing /model into the terminal, or the CLI falling
+  // back on its own. Same version gate and the same reason as the line above.
+  'PostModelSwitch',
+  // Where the session is allowed to reach, changing under Wanigan: a cd, an
+  // /add-dir, a settings file edited mid-run.
+  'CwdChanged', 'DirectoryAdded', 'ConfigChange',
+  // An MCP server asking the operator a question, and the answer. This is a
+  // blocked session by any other name, which is why liveState treats the first
+  // as an outstanding question and the second as what settles it.
+  'Elicitation', 'ElicitationResult',
+  // Agent teams and their task list.
+  'TeammateIdle', 'TaskCreated', 'TaskCompleted',
+  // Worktrees the CLI made for itself, which are not the ones worktrees.ts owns.
+  'WorktreeCreate', 'WorktreeRemove',
 ] as const;
 export type HookEventName = (typeof HOOK_EVENTS)[number];
 
@@ -530,6 +545,35 @@ export type HookInput = {
   memory_type?: string;
   /** InstructionsLoaded only: why it loaded — one of INSTRUCTION_LOAD_REASONS, or a value a newer CLI adds. */
   load_reason?: string;
+  /** PostModelSwitch only: the model the session was running before the change. */
+  from_model?: string;
+  /** PostModelSwitch only: the model it is running now. This is the observed fact. */
+  to_model?: string;
+  /**
+   * Why something happened, spelled differently by each event that carries it:
+   * PostModelSwitch uses command/picker/sdk/auto/resume, DirectoryAdded uses
+   * slash_command/register_repo_root, and ConfigChange names the settings layer
+   * that changed. One field because it is one string in every one of them.
+   */
+  source?: string;
+  /** CwdChanged: where the session was, and where it is now. */
+  old_cwd?: string;
+  new_cwd?: string;
+  /** DirectoryAdded: the absolute path added. The docs call this directory_path; the CLI sends `directory`. */
+  directory?: string;
+  /** Elicitation and ElicitationResult: which MCP server asked. */
+  mcp_server_name?: string;
+  /** ElicitationResult only: accept, decline or cancel. */
+  action?: string;
+  /** TeammateIdle, TaskCreated and TaskCompleted: which teammate. */
+  teammate_name?: string;
+  /** TaskCreated and TaskCompleted: the task's id and one-line subject. */
+  task_id?: string;
+  task_subject?: string;
+  /** WorktreeCreate: the worktree's name — this event carries a name, not a path. */
+  name?: string;
+  /** WorktreeRemove: the path being removed. */
+  worktree_path?: string;
   /** Wanigan's own session id, carried through the generated hook config. */
   wanigan_session_id?: string;
 };
@@ -2290,6 +2334,25 @@ export type ConsolidationRun = {
   durationMs: number;
 };
 
+/** What one consolidation pass consumed and produced. */
+export type ConsolidationCounts = {
+  processed: number;
+  candidates: number;
+  autoApplied: number;
+  woken: number;
+};
+
+/**
+ * The result of asking for a consolidation pass. A refusal is a separate shape
+ * from a finished pass, so no caller can read four zeros off a pass that never
+ * started and report it as a run that found nothing: the counts do not exist
+ * unless `ran` is true. Hand-mirrored with ConsolidationOutcome in
+ * src/main/learning/types.ts.
+ */
+export type ConsolidationOutcome =
+  | ({ ran: true } & ConsolidationCounts)
+  | { ran: false; reason: 'learning-disabled' | 'consolidation-disabled' };
+
 /** Everything recorded about one session's learning. All fields are stored rows. */
 export type SessionLearningLedger = {
   sessionId: string;
@@ -2360,7 +2423,20 @@ export type LearningPipelineStats = {
   projectionsApplied: number;
   briefingsServed: number;
   signalsByDay: { day: string; total: number; failures: number; teachings: number }[];
+  /**
+   * The most recent passes only — a bounded page of 20, not the whole table.
+   * Its length is a page size and must never be rendered as a total; retention
+   * keeps 2,000 rows and a 5-minute timer writes about 288 a day.
+   */
   consolidationRuns: ConsolidationRun[];
+  /**
+   * Every consolidation pass still stored, counted: a COUNT(*) over
+   * consolidation_runs with no window predicate and no project predicate. A
+   * project scope was never available — the table has no project_id column —
+   * and what it counts is what retention has kept, the sweep in
+   * recordConsolidationRun holding the table at the 2,000 most recent passes.
+   */
+  consolidationRunsTotal: number;
 };
 
 /** A stored relation edge between knowledge items, with its recorded reason. */

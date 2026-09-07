@@ -167,7 +167,16 @@ export default function Schedules({ projects }: { projects: Project[] }) {
     try { setCap((await window.wanigan.settings.get()).spendCapUsd); }
     catch { /* the cap shown here is a warning; submit.ts holds the real one */ }
   }, []);
-  useEffect(() => { void load(); const t = setInterval(load, 15_000); return () => clearInterval(t); }, [load]);
+  // Two IPC reads a beat, forever, for a table that is one tab away. The
+  // scheduler keeps its own time either way — this poll only decides how fresh
+  // the screen is, so it stops while nobody is on it and catches up on return.
+  useEffect(() => {
+    void load();
+    const t = setInterval(() => { if (document.hidden) return; void load(); }, 15_000);
+    const onVisible = () => { if (!document.hidden) void load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVisible); };
+  }, [load]);
   useEffect(() => { void window.wanigan.schedule.daemon().then(setDaemon).catch(() => {}); }, []);
 
   /* The scheduler ticks every 20 seconds, and a fire that came due while
@@ -384,7 +393,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
 
       {/* What a schedule is survives a quit as a guide, not as eight lines
           above the form. The daemon state below it is a live fact and stays. */}
-      <Explainer id="schedules-guide" title="What a schedule is">
+      <Explainer id="schedules-guide" title="What a schedule is" defaultHidden={list.length === 0}>
       <p className="dim">
         A schedule is a row in your database, not a timer inside a session: it survives a quit and never expires.
         While Wanigan is open, its own ticker fires whatever is due. With the background scheduler installed it
@@ -450,16 +459,16 @@ export default function Schedules({ projects }: { projects: Project[] }) {
         <div className="sc-row">
           <div className="sc-f" style={{ flex: 2, minWidth: 200 }}>
             <span className="label">Name</span>
-            <input className="field" value={name} placeholder="Nightly audit"
+            <input className="field" aria-label="Schedule name" value={name} placeholder="Nightly audit"
                    onChange={(e) => setName(e.target.value)} />
           </div>
           <div className="sc-f" style={{ flex: 1, minWidth: 150 }}>
             <span className="label">Cron</span>
-            <input className="field mono" value={cron} onChange={(e) => setCron(e.target.value)} />
+            <input className="field mono" aria-label="Cron expression" value={cron} onChange={(e) => setCron(e.target.value)} />
           </div>
           <div className="sc-f" style={{ minWidth: 130 }}>
             <span className="label">What runs</span>
-            <select className="field" value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
+            <select className="field" aria-label="What runs" value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
               <option value="headless">Headless run</option>
               <option value="batch">Batch re-run</option>
             </select>
@@ -469,7 +478,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
             {/* "Every project" read like a convenience. It is a fan-out across
                 every repository registered now and every one added later, at a
                 budget per repository, so it says what it does. */}
-            <select className="field" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+            <select className="field" aria-label="Project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
               <option value="">Every registered repository</option>
               {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
@@ -485,7 +494,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
         {kind === 'headless' ? (
           <div className="sc-f">
             <span className="label">Prompt</span>
-            <input className="field" value={prompt} placeholder="Audit every controller for N+1 queries"
+            <input className="field" aria-label="Prompt" value={prompt} placeholder="Audit every controller for N+1 queries"
                    onChange={(e) => setPrompt(e.target.value)} />
             <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
               Every fire starts an unattended agent with this prompt and nothing else typed. What it is told
@@ -544,7 +553,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
         ) : (
           <div className="sc-f">
             <span className="label">Run to re-submit</span>
-            <select className="field" value={rerunId} onChange={(e) => setRerunId(e.target.value)}>
+            <select className="field" aria-label="Run to re-submit" value={rerunId} onChange={(e) => setRerunId(e.target.value)}>
               <option value="">Pick a run…</option>
               {runs.map((r) => (
                 <option key={r.id} value={r.id}>
@@ -751,15 +760,15 @@ export default function Schedules({ projects }: { projects: Project[] }) {
                       <div className="sc-row">
                         <div className="sc-f sc-f-name">
                           <span className="label">Name</span>
-                          <input className="field" value={edit.name} onChange={(e) => setEdit((v) => ({ ...v, name: e.target.value }))} />
+                          <input className="field" aria-label="Schedule name" value={edit.name} onChange={(e) => setEdit((v) => ({ ...v, name: e.target.value }))} />
                         </div>
                         <div className="sc-f sc-f-cron">
                           <span className="label">Cron</span>
-                          <input className="field mono" value={edit.cron} onChange={(e) => setEdit((v) => ({ ...v, cron: e.target.value }))} />
+                          <input className="field mono" aria-label="Cron expression" value={edit.cron} onChange={(e) => setEdit((v) => ({ ...v, cron: e.target.value }))} />
                         </div>
                         <div className="sc-f sc-f-proj">
                           <span className="label">Project</span>
-                          <select className="field" value={edit.projectId}
+                          <select className="field" aria-label="Project" value={edit.projectId}
                                   onChange={(e) => {
                                     const next = e.target.value;
                                     // Removing the pin removes the declaration with it; it has to be ticked again.
@@ -778,7 +787,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
                       {s.kind === 'headless' && (
                         <div className="sc-f">
                           <span className="label">Prompt</span>
-                          <input className="field" value={edit.prompt} onChange={(e) => setEdit((v) => ({ ...v, prompt: e.target.value }))} />
+                          <input className="field" aria-label="Prompt" value={edit.prompt} onChange={(e) => setEdit((v) => ({ ...v, prompt: e.target.value }))} />
                           {editUnpinned && (
                             <label className="sc-check">
                               <input type="checkbox" checked={edit.allProjects}
@@ -794,7 +803,7 @@ export default function Schedules({ projects }: { projects: Project[] }) {
                       {s.kind === 'batch' && (
                         <div className="sc-f">
                           <span className="label">Run to re-submit</span>
-                          <select className="field" value={edit.rerunId} onChange={(e) => setEdit((v) => ({ ...v, rerunId: e.target.value }))}>
+                          <select className="field" aria-label="Run to re-submit" value={edit.rerunId} onChange={(e) => setEdit((v) => ({ ...v, rerunId: e.target.value }))}>
                             <option value="">Pick a run…</option>
                             {runs.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
                           </select>
