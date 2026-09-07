@@ -661,8 +661,16 @@ function PipelineSpine({ overview, pipeline, pipelineBusy, read, windowDays, onN
     { key: 'projected', label: 'Projected', value: flow(pipeline?.projectionsApplied), sub: `files written · last ${windowDays}d`,
       // A zero here is not a fault: a briefing is injected at launch and needs
       // no file write, so a store can brief every session and project nothing.
-      note: pipeline && pipeline.projectionsApplied === 0 ? 'optional step — a briefing needs no file write' : undefined,
-      go: () => onNavigate('knowledge'), title: 'Open Knowledge — projections are listed on each item' },
+      //
+      // One word, not the sentence it used to be. The stations are nowrap
+      // inside an overflow-x strip, so a 44-character aside on the fourth one
+      // pushed the fifth — Briefed, the stage the whole pipeline is for — off
+      // the right edge behind a scrollbar at 1440px. The reason survives in the
+      // station's own title and in full under "the four tabs are the four
+      // stages"; what the strip has to carry is that the zero is not a failure.
+      note: pipeline && pipeline.projectionsApplied === 0 ? 'optional' : undefined,
+      go: () => onNavigate('knowledge'),
+      title: 'Open Knowledge — projections are listed on each item. A zero here is not a fault: a briefing is delivered at launch and needs no file write.' },
     { key: 'briefed', label: 'Briefed', value: flow(pipeline?.briefingsServed), sub: `served · last ${windowDays}d`,
       go: () => onNavigate('context'), title: 'Open Context — the briefing inspector previews one' },
   ];
@@ -918,8 +926,15 @@ function HowItWorks({ pipeline, windowDays, onNavigate }: {
   // old drawer had, which hid the explanation from the reader who needed it.
   // The sub-stage counts stay inside it because each is the row count of the
   // tab beside it, and the tabs themselves carry those counts too.
+  // Folded by default, in every branch. This is orientation — four numbered
+  // stages, a paragraph each and a dozen stat chips — and orientation is read
+  // once. Left expanded it was the first thing on the page every time, and the
+  // change that folded it for an empty Learning missed the case that matters:
+  // one signal is enough to make hasAnyEver true, so a real install rendered
+  // the wall and only a completely empty one did not. Anyone who opens it keeps
+  // it open, because the Explainer stores that choice.
   return (
-    <Explainer id="learning-stages" title="The four tabs are the four stages">
+    <Explainer id="learning-stages" title="The four tabs are the four stages" defaultHidden>
       <ol className="how-steps">
         {steps.map((step, i) => (
           <li key={step.tab}>

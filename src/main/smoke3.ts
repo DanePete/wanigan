@@ -6181,6 +6181,20 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && /case 'PostModelSwitch':\s*\n\s*return \{ glyph: '⇄', word: 'model switched'/.test(timelineSrc),
   'the Timeline names a model switch rather than falling through to the raw event name');
 
+  // Learning's stage guide is folded in EVERY branch, not only the empty one.
+  // The first attempt folded it inside `if (!hasAnyEver)`, which is the branch a
+  // stub with no learning rows renders and very nearly the only state a real
+  // install is never in: one signal makes hasAnyEver true, so every real
+  // Learning page still opened on four numbered stages and a dozen stat chips.
+  // The fix belongs on the Explainer itself, where both branches reach it.
+  check(/<Explainer id="learning-stages" title="[^"]*" defaultHidden>/.test(learningSrc),
+    'the Learning stage guide is folded wherever it renders, not only on a page with nothing on it');
+  // The five stations are nowrap inside an overflow-x strip, so prose on one of
+  // them pushes the last stage off the right edge behind a scrollbar. Briefed is
+  // the stage the whole pipeline exists to reach.
+  check(/note: pipeline && pipeline\.projectionsApplied === 0 \? 'optional' : undefined,/.test(learningSrc),
+    'and the optional-stage note is one word, so the fifth station is not pushed off the end of the spine');
+
   // A view with nothing in it yet opens on its next action, not on an essay
   // about the thing that has not happened. Control put its first interactive
   // control 686px down the page and Schedules 596px, both behind a guide that
