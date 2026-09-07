@@ -7,9 +7,10 @@ import { projectById } from './store';
 import { listSessions } from './sessions';
 import { providerById } from './providers';
 import { redactCredentials } from './redact';
+import * as modelAssist from './learning-model-assist';
 import type {
-  BriefingPreview, CandidateStatus, ForgedSkill, KnowledgeKind, LearningSettings, Session,
-  SessionEvent, TeachWaniganInput, ReviewRun,
+  BriefingPreview, CandidateStatus, ForgedSkill, KnowledgeKind, LearningPhrasingOutcome,
+  LearningSettings, Session, SessionEvent, TeachWaniganInput, ReviewRun,
 } from '../shared/types';
 import {
   ARTIFACT_SCOPES,
@@ -29,6 +30,7 @@ import {
   listRelations,
   pipelineStats,
   recordConsolidationRun,
+  recordModelPhrasing,
   recordMetric,
   recordSessionBriefing,
   recordTranscriptCitations,
@@ -61,6 +63,7 @@ import {
   recordSignal,
   reviewCandidate,
   searchKnowledge,
+  semanticExtractionEligibility,
   signalDetailBytes,
   startExperiment,
   summarizeArtifactRoi,
@@ -108,8 +111,39 @@ function emitLearningChanged(): void {
   changedTimer.unref?.();
 }
 
+/**
+ * The effective learning settings, which is what IPC and the renderer read.
+ *
+ * settings.ts can only return the stored intent for allowModelAssistance: the
+ * router that decides whether a call is actually possible reads settings.ts, so
+ * it cannot be read from there. The AND happens here. Reporting the switch as
+ * on while consent, routing or metering refuses it is exactly the false control
+ * the guardrails forbid, so the two values are reconciled in one place.
+ */
 export function settings(): LearningSettings {
-  return learningSettings();
+  const stored = learningSettings();
+  return {
+    ...stored,
+    allowModelAssistance: stored.allowModelAssistance
+      && modelAssist.isEffective(stored.monthlyBudgetUsd),
+  };
+}
+
+/** The full model-assist picture for the settings screen: consent, routing, spend. */
+export function modelAssistStatus(): ReturnType<typeof modelAssist.status> {
+  return modelAssist.status(learningSettings().monthlyBudgetUsd);
+}
+
+export function modelAssistConsentPreview(providerId: string, model?: string | null) {
+  return modelAssist.consentPreview(providerId, model);
+}
+
+export function acceptModelAssistConsent(providerId: string, model?: string | null) {
+  return modelAssist.acceptConsent(providerId, model);
+}
+
+export function withdrawModelAssistConsent(): void {
+  modelAssist.withdrawConsent();
 }
 
 export function updateSettings(patch: Partial<LearningSettings>): LearningSettings {
@@ -126,16 +160,30 @@ export function updateSettings(patch: Partial<LearningSettings>): LearningSettin
     }
     setSetting('learning_automation', patch.automation);
   }
-  if (patch.allowModelAssistance !== undefined) {
-    if (patch.allowModelAssistance) {
-      throw new Error('Model-assisted consolidation is not connected in this build; deterministic learning remains active.');
-    }
-    setSetting('learning_model_assistance', '0');
-  }
   if (patch.monthlyBudgetUsd !== undefined) {
     const value = Number(patch.monthlyBudgetUsd);
     if (!Number.isFinite(value) || value < 0 || value > 10_000) throw new Error('Learning budget must be between $0 and $10,000.');
     setSetting('learning_monthly_budget_usd', String(value));
+  }
+  // After the budget, deliberately: a caller that raises the ceiling and turns
+  // the switch on in one patch must be judged against the ceiling it just set,
+  // not the one it is replacing.
+  if (patch.allowModelAssistance !== undefined) {
+    if (patch.allowModelAssistance) {
+      const consent = modelAssist.readConsent();
+      // ignoreSwitch, because the switch is what this call is trying to set:
+      // asking with it still off would report itself as the blocker.
+      const verdict = modelAssist.assessRouting(
+        consent?.providerId ?? null,
+        consent?.backendId ?? null,
+        learningSettings().monthlyBudgetUsd,
+        { ignoreSwitch: true },
+      );
+      if (!verdict.ok) throw new Error(verdict.detail);
+      setSetting('learning_model_assistance', '1');
+    } else {
+      setSetting('learning_model_assistance', '0');
+    }
   }
   if (patch.briefingMaxTokens !== undefined) {
     const value = Math.round(Number(patch.briefingMaxTokens));
@@ -693,6 +741,19 @@ function ruleDerivedConfidence(taskCount: number): number {
 const MACHINE_DERIVED_RATIONALE = 'Rule-derived from repeated observations.';
 
 /**
+ * The provenance prefix a model-phrased candidate carries instead. It names the
+ * profile that wrote the sentence, because "a model phrased this" is a fact a
+ * reviewer needs and cannot recover from the text.
+ *
+ * A phrased candidate is still machine-derived — isMachineDerived below counts
+ * both — so it inherits every existing lock unchanged: the confidence ceiling,
+ * the TTL that expires a derived claim, and the automatic-promotion refusal.
+ * Phrasing only ever replaces a nomination, and auto-apply requires a matched
+ * template, so a phrased candidate cannot reach memory without a person.
+ */
+const MODEL_ASSISTED_RATIONALE = 'Model-assisted from repeated observations.';
+
+/**
  * knowledge_items has carried expires_at, and staleness.ts has honoured it,
  * since the schema landed — but no production path ever set it, so a derived
  * claim stayed canonical no matter how stale the pattern behind it became.
@@ -700,7 +761,8 @@ const MACHINE_DERIVED_RATIONALE = 'Rule-derived from repeated observations.';
  * the ledger's refreshDeliveredKnowledgeTtl, which owns the length itself.
  */
 function isMachineDerived(candidate: KnowledgeCandidate): boolean {
-  return candidate.rationale.startsWith(MACHINE_DERIVED_RATIONALE);
+  return candidate.rationale.startsWith(MACHINE_DERIVED_RATIONALE)
+    || candidate.rationale.startsWith(MODEL_ASSISTED_RATIONALE);
 }
 
 function machineExpiry(candidate: KnowledgeCandidate, at = Date.now()): number | null {
@@ -923,6 +985,113 @@ export function consolidate(
   }
   if (candidates > 0 || autoApplied > 0 || woken > 0) emitLearningChanged();
   return { ran: true, processed, candidates, autoApplied, woken };
+}
+
+export type PhrasingOutcome = LearningPhrasingOutcome;
+
+/**
+ * Rebuilds the cluster facts for a candidate from its own evidence, using the
+ * same helpers that derived them during consolidation. Reading them back from
+ * the signals rather than parsing the stored cluster key means the payload
+ * cannot drift from the key format, and the two counts stay the counts the
+ * candidate was actually built from.
+ */
+export function factsFor(signals: LearningSignal[]): modelAssist.ClusterFacts {
+  const derived = signals.map((signal) => facetsOf(signal));
+  const facets = derived[0].facets;
+  return {
+    signalKind: String(signals[0].kind),
+    toolName: facets.toolName ?? null,
+    outcome: facets.outcome ?? null,
+    errorClass: facets.errorClass ?? null,
+    command: facets.command ?? null,
+    pathPrefix: facets.pathPrefix ?? null,
+    sharedFile: sharedFileOf(derived.map((entry) => entry.paths)),
+    observations: signals.length,
+    independentTasks: independentTasks(signals),
+  };
+}
+
+/**
+ * The second consolidation pass, and the only one that can spend money.
+ *
+ * It runs after `consolidate()` rather than inside it for three reasons: the
+ * deterministic pass is synchronous and stays that way, a phrasing call that
+ * the budget refuses today should be retried tomorrow rather than lost, and a
+ * candidate that is never phrased is still a perfectly good nomination — which
+ * is exactly what this build produced before the pass existed.
+ *
+ * Every refusal is silent and costs nothing. The only thing that changes on
+ * success is one candidate's title, text and rationale; its evidence, scope,
+ * confidence and status are untouched, so a phrased candidate still faces the
+ * same review a nominated one does.
+ */
+export async function phrasePendingNominations(
+  opts: { projectId?: string | null; limit?: number } = {},
+): Promise<PhrasingOutcome> {
+  // The effective settings, not the stored ones: this is the accessor that
+  // ANDs the switch with consent, routing and metering.
+  const cfg = settings();
+  if (!cfg.enabled) return { ran: false, reason: 'learning-disabled' };
+  if (!cfg.allowModelAssistance) return { ran: false, reason: 'model-assist-unavailable' };
+
+  const limit = Math.min(20, Math.max(1, Math.round(opts.limit ?? 5)));
+  const nominations = listCandidates({ projectId: opts.projectId, status: ['pending'], limit: 200 })
+    .filter(isUnauthoredNomination)
+    .slice(0, limit);
+
+  let phrased = 0;
+  let refused = 0;
+  let skipped = 0;
+
+  for (const candidate of nominations) {
+    const signals = candidate.signalIds
+      .map((id) => getSignal(id))
+      .filter((value): value is LearningSignal => !!value);
+    // Evidence aged out from under the candidate. Phrasing it would describe
+    // observations nobody can now cite, which is worse than leaving it.
+    if (!signals.length) { skipped++; continue; }
+
+    const first = signals[0];
+    // The designed gate, not a second copy of its reasoning: content may be
+    // inspected only through the backend that first processed it, and only for
+    // signals that opted in. One ineligible signal refuses the whole cluster.
+    const blocked = signals.some((signal) => !semanticExtractionEligibility(signal, {
+      allowModelAssistance: true,
+      extractionProviderId: first.providerId,
+      extractionBackendId: first.backendId,
+    }).eligible);
+    if (blocked) { refused++; continue; }
+
+    let claim: Awaited<ReturnType<typeof modelAssist.phraseCluster>> = null;
+    try {
+      claim = await modelAssist.phraseCluster({
+        providerId: first.providerId,
+        backendId: first.backendId,
+        clusterKey: candidate.clusterKey ?? null,
+        facts: factsFor(signals),
+        budgetUsd: cfg.monthlyBudgetUsd,
+      });
+    } catch (error) {
+      // phraseCluster is written not to throw; if it ever does, one candidate
+      // must not end the pass for the rest.
+      console.warn(`[wanigan] phrasing failed for candidate ${candidate.id}:`, error);
+    }
+    if (!claim) { refused++; continue; }
+
+    const updated = recordModelPhrasing(candidate.id, {
+      title: truncateUtf8Bytes(claim.title, 480),
+      proposedText: claim.text,
+      rationale: `${MODEL_ASSISTED_RATIONALE} Phrased by ${claim.label} (${claim.providerId}) from `
+        + `${signals.length} observation(s) across ${independentTasks(signals)} independent task(s). `
+        + 'The observations are Wanigan\'s; the sentence is the model\'s, and neither is a review.',
+      onlyIfTextStartsWith: NOMINATION_MARKER,
+    });
+    if (updated) phrased++; else skipped++;
+  }
+
+  if (phrased > 0) emitLearningChanged();
+  return { ran: true, phrased, refused, skipped };
 }
 
 function privacyMetadata(candidate: KnowledgeCandidate, providerIds?: string[]): Record<string, unknown> {
@@ -1431,6 +1600,13 @@ export function startConsolidator(): void {
   if (consolidationTimer) return;
   consolidationTimer = setInterval(() => {
     try { consolidate(undefined, 'timer'); } catch (error) { console.warn('[wanigan] learning consolidation skipped:', error); }
+    // Phrasing follows the deterministic pass and never blocks it: it is async,
+    // it may spend money, and it returns immediately when the switch, consent,
+    // routing or metering refuses. A rejection here is a bug in a path written
+    // not to throw, so it is logged rather than swallowed.
+    void phrasePendingNominations().catch((error) => {
+      console.warn('[wanigan] learning phrasing pass skipped:', error);
+    });
   }, CONSOLIDATION_INTERVAL_MS);
   consolidationTimer.unref?.();
 }

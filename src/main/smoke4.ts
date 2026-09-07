@@ -3,6 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { db } from './db';
+import { getSetting, setSetting } from './settings';
+import {
+  PAYLOAD_FIELDS, assessRouting, averageCostUsd, meteringVerdict, monthToDateUsd,
+  parseClaimReply, readConsent,
+} from './learning-model-assist';
 import { addProject } from './store';
 import {
   REQUIRED_LEARNING_TABLES,
@@ -36,7 +41,9 @@ import {
   listSignals,
   pipelineStats,
   promoteCandidate,
+  getCandidate,
   recordConsolidationRun,
+  recordModelPhrasing,
   recordMetric,
   recordSessionBriefing,
   recordSignal,
@@ -162,6 +169,190 @@ export async function runLearningSmoke(check: Check, say: Say): Promise<void> {
     check(!crossBackend.eligible && /Cross-backend/.test(crossBackend.reason),
       'semantic learning refuses cross-backend content transfer', crossBackend.reason);
     check(!excluded.eligible, 'excluded external content is never semantically learned');
+
+    say('── compound · model-assisted phrasing: consent, routing, metering');
+    // The three gates the guardrails require, exercised in the order the router
+    // checks them. None of this spawns a CLI: every refusal below is reached
+    // before a process would be, which is the property being asserted.
+    const priorSwitch = getSetting('learning_model_assistance', '0');
+    const priorConsent = getSetting('learning_model_assist_consent', 'null');
+    const priorBudget = getSetting('learning_monthly_budget_usd', '0');
+    try {
+      setSetting('learning_model_assistance', '0');
+      setSetting('learning_model_assist_consent', 'null');
+      const off = assessRouting('orbit.profile-v9', 'orbit.backend-v9', 5);
+      check(!off.ok && off.reason === 'switched-off',
+        'with the switch off nothing is routed, and the refusal names the switch rather than a missing approval',
+        off);
+
+      setSetting('learning_model_assistance', '1');
+      const unattributed = assessRouting(null, null, 5);
+      check(!unattributed.ok && unattributed.reason === 'no-attribution',
+        'observations with no provider attribution have no backend to be routed back to, so they are refused rather than sent somewhere plausible',
+        unattributed);
+
+      const unconsented = assessRouting('orbit.profile-v9', 'orbit.backend-v9', 5);
+      check(!unconsented.ok && unconsented.reason === 'not-consented',
+        'the switch alone does not authorise a call: with no approval on file the router still refuses',
+        unconsented);
+
+      // Approval for one profile is not approval for another. This is the
+      // cross-backend rule at the routing layer: content stays with the backend
+      // that produced it, so a different provider's observations are refused
+      // even though a valid approval exists.
+      setSetting('learning_model_assist_consent', JSON.stringify({
+        providerId: 'orbit.profile-v9', backendId: 'orbit.backend-v9',
+        fingerprint: 'orbit:v9', acceptedAt: Date.now(),
+      }));
+      const wrongProvider = assessRouting('other.profile', 'other.backend', 5);
+      check(!wrongProvider.ok && wrongProvider.reason === 'not-consented'
+        && /stays inside the backend/.test(wrongProvider.detail),
+        'observations from a provider nobody approved are never phrased by the one that was approved',
+        wrongProvider);
+
+      const gone = assessRouting('orbit.profile-v9', 'orbit.backend-v9', 5);
+      check(!gone.ok && gone.reason === 'unknown-provider',
+        'an approval that names a profile this machine does not have refuses on the missing profile, not on consent',
+        gone);
+
+      // Metering, from recorded runs rather than a table of provider names.
+      check(meteringVerdict('metering.probe') === 'unproven',
+        'a harness nobody has called yet is unproven, never assumed priced');
+      const priced = (providerId: string, costReported: 0 | 1) => db().prepare(`
+        INSERT INTO learning_model_runs
+          (id, at, provider_id, backend_id, cluster_key, status, cost_usd, cost_reported,
+           in_tokens, out_tokens, duration_ms, error)
+        VALUES (?,?,?,?,?,'ok',?,?,0,0,0,NULL)
+      `).run(`mrun-${tag}-${providerId}-${costReported}-${Math.random()}`, Date.now(),
+        providerId, null, null, costReported ? 0.25 : 0, costReported);
+
+      priced('metering.silent', 0);
+      check(meteringVerdict('metering.silent') === 'unmetered',
+        'a harness that ran and reported no usage is proven unmetered by its own call rather than by a hardcoded list');
+      priced('metering.loud', 1);
+      check(meteringVerdict('metering.loud') === 'metered',
+        'a harness that returned a usage figure is metered');
+
+      // An unpriced call contributes nothing to spend: the ledger records that
+      // it happened without inventing what it cost.
+      const before = monthToDateUsd();
+      priced('metering.silent', 0);
+      check(monthToDateUsd() === before,
+        'a call the harness did not price adds nothing to recorded spend, so an unmetered run can never be presented as a dollar figure');
+      priced('metering.loud', 1);
+      check(Math.abs(monthToDateUsd() - (before + 0.25)) < 1e-9,
+        'and a priced call adds exactly what it reported');
+
+      // The cost lever. A profile's default model is often its most expensive:
+      // an observed 12.9c a call on Claude Code against 3.8c for a small model
+      // on the same profile. What matters to the ledger is that the figure
+      // shown is the observed mean of priced calls, never a modelled one.
+      const meanNow = averageCostUsd();
+      check(meanNow !== null && Math.abs(meanNow - 0.25) < 1e-9,
+        'the average is the mean of what harnesses actually reported',
+        meanNow);
+      priced('metering.silent', 0);
+      check(averageCostUsd() !== null && Math.abs((averageCostUsd() ?? 0) - 0.25) < 1e-9,
+        'and an unpriced call does not drag that average toward zero — it is excluded, not counted as free');
+
+      // The approved model rides on the consent record, because it changes the
+      // argv a person agreed to. A record written before it existed reads null.
+      setSetting('learning_model_assist_consent', JSON.stringify({
+        providerId: 'orbit.profile-v9', backendId: 'orbit.backend-v9',
+        fingerprint: 'orbit:v9', acceptedAt: Date.now(), model: '  small-fast  ',
+      }));
+      check(readConsent()?.model === 'small-fast',
+        'the approved model is carried on the consent record and trimmed');
+      setSetting('learning_model_assist_consent', JSON.stringify({
+        providerId: 'orbit.profile-v9', backendId: 'orbit.backend-v9',
+        fingerprint: 'orbit:v9', acceptedAt: Date.now(),
+      }));
+      check(readConsent()?.model === null,
+        'and an approval recorded before the model lever existed reads as the harness default rather than throwing');
+
+      // The payload itself. factsFor rebuilds it from the candidate's own
+      // evidence rather than parsing the stored cluster key, so the fields sent
+      // cannot drift from the key format and the two counts stay the counts the
+      // candidate was actually built from. This is the glue between a stored
+      // candidate and the nine fields PAYLOAD_FIELDS promises, and it is the
+      // one place a transcript could leak into a prompt if it grew a field.
+      const facts = compound.factsFor([first, second]);
+      check(Object.keys(facts).length === PAYLOAD_FIELDS.length
+        && PAYLOAD_FIELDS.every((field) => field in facts),
+        'the payload carries exactly the fields the consent screen names — no more, and none missing',
+        Object.keys(facts));
+      check(facts.observations === 2 && facts.independentTasks === 2,
+        'the counts are the observations and independent tasks the candidate was built from');
+      check(!Object.values(facts).some((value) =>
+        typeof value === 'string' && /Mooncalf protocol|second independent success/.test(value)),
+        'and no signal summary rides along in the payload: a summary is prose the agent produced, and the contract is counters and identifiers');
+    } finally {
+      setSetting('learning_model_assistance', priorSwitch);
+      setSetting('learning_model_assist_consent', priorConsent);
+      setSetting('learning_monthly_budget_usd', priorBudget);
+    }
+
+    // The reply validator. A model that declines, rambles, or hands back the
+    // marker must leave a nomination standing rather than produce a claim.
+    check(parseClaimReply('{"title":"Retry storms on flaky fetch","text":"Two sentences. Do the thing."}')?.title
+      === 'Retry storms on flaky fetch',
+      'a well-formed reply becomes a claim');
+    check(parseClaimReply('Sure! Here is the JSON: {"title":"A","text":"B"} Hope that helps.')?.text === 'B',
+      'a claim wrapped in chat prose is still read, because the JSON is found rather than assumed to be the whole reply');
+    check(parseClaimReply('{"title":null,"text":null}') === null,
+      'a model declining to claim anything produces no claim, which leaves the nomination for a person');
+    check(parseClaimReply('the counters do not support a claim') === null,
+      'a reply that is not JSON at all produces no claim');
+    check(parseClaimReply('{"title":"NEEDS AUTHORING — x","text":"y"}') === null,
+      'a reply containing the nomination marker is refused: it would either make an authored claim unpromotable or make an unreviewed one look reviewed');
+    check(parseClaimReply(`{"title":"${'x'.repeat(600)}","text":"y"}`) === null,
+      'an over-long title is refused rather than silently truncated into a claim nobody wrote');
+
+    // The provenance write. It is deliberately not updateCandidate — that is
+    // the review edit, and it cannot touch a rationale — so its own guard is
+    // what stops it overwriting anything but the placeholder it wrote.
+    const nominated = createCandidate({
+      targetKind: 'memory', scope: 'personal', providerId: first.providerId,
+      title: `Unexplained repetition: mooncalf ${tag}`,
+      proposedText: `NEEDS AUTHORING — Observed 2 times across 2 independent tasks ${tag}.`,
+      rationale: 'Rule-derived from repeated observations. No template matched.',
+      confidence: 0.55, signalIds: [first.id, second.id],
+    });
+    const phrasedRow = recordModelPhrasing(nominated.id, {
+      title: `Mooncalf retries mask a stale lock ${tag}`,
+      proposedText: 'The retry is masking a stale launch lock. Clear the lock before retrying.',
+      rationale: 'Model-assisted from repeated observations. Phrased by Orbit (orbit.profile-v9).',
+      onlyIfTextStartsWith: 'NEEDS AUTHORING —',
+    });
+    check(!!phrasedRow && /stale lock/.test(phrasedRow.title)
+      && /^Model-assisted from repeated observations\./.test(phrasedRow.rationale),
+      'phrasing replaces the placeholder and rewrites the rationale to say a model wrote the sentence');
+    check(!/NEEDS AUTHORING/.test(phrasedRow?.proposedText ?? 'NEEDS AUTHORING'),
+      'and the marker is gone, so the candidate is promotable by a person for the first time');
+
+    const secondPass = recordModelPhrasing(nominated.id, {
+      title: 'A different sentence entirely',
+      proposedText: 'Something else again.',
+      rationale: 'Model-assisted from repeated observations. Phrased twice.',
+      onlyIfTextStartsWith: 'NEEDS AUTHORING —',
+    });
+    check(secondPass === null,
+      'a candidate that is no longer a nomination is never re-phrased, so a second pass cannot overwrite the first — or a person’s own edit');
+
+    const authored = createCandidate({
+      targetKind: 'memory', scope: 'personal', providerId: first.providerId,
+      title: `Hand-authored mooncalf ${tag}`,
+      proposedText: 'A person wrote this sentence themselves.',
+      rationale: 'Taught explicitly.',
+      confidence: 0.9, signalIds: [first.id],
+    });
+    check(recordModelPhrasing(authored.id, {
+      title: 'Overwritten by a model',
+      proposedText: 'Replaced.',
+      rationale: 'Model-assisted from repeated observations.',
+      onlyIfTextStartsWith: 'NEEDS AUTHORING —',
+    }) === null && getCandidate(authored.id)?.proposedText === 'A person wrote this sentence themselves.',
+      'and a claim a person authored is never touched by the phrasing pass, whatever else is on file');
 
     say('── compound · candidate, review, evidence, and FTS lifecycle');
     const memoryCandidate = createCandidate({

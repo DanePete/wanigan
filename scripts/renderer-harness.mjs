@@ -236,6 +236,28 @@ const STUB = `
     // and state.map.slice(0, 12) read .slice off a function. A field named
     // after an array method is the one shape anything() cannot fake.
     'demo.state': { on: false, blurTerminals: false, map: [] },
+    // The model-assist card renders its consent branch off status.consent and
+    // prints providerId into the DOM. anything() answers that with a Proxy,
+    // which is truthy, so the card would take the approved branch and then die
+    // rendering an object as a React child — the same class of failure the two
+    // scalars above document. A real "nothing approved yet" record is the
+    // honest default anyway: it is what a fresh install returns.
+    // Learning reads its own settings over IPC rather than off the app settings
+    // record, so without this key anything() answered allowModelAssistance with
+    // a truthy Proxy and the governor card drew itself switched on beside its
+    // own "nothing has been approved" sentence. A boolean a card branches on is
+    // the same trap as a scalar it formats.
+    'learning.settings': {
+      enabled: true, contentMode: 'local-same-provider', automation: 'hybrid',
+      allowModelAssistance: false, monthlyBudgetUsd: 0, briefingMaxTokens: 1200,
+      consolidationEnabled: true,
+    },
+    'learning.modelAssistStatus': {
+      switchedOn: false, effective: false, consent: null,
+      routing: { ok: false, reason: 'not-consented',
+                 detail: 'No provider has been approved for model-assisted phrasing.' },
+      monthToDateUsd: 0, averageCostUsd: null, runs: [],
+    },
   };
   const settings = {
     spendCapUsd: 1, motion: 'auto', navSidebar: 'open', telemetry: true, hooks: true,

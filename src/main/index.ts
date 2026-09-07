@@ -2387,6 +2387,17 @@ function registerIpc() {
     learning.updateSettings(patch));
   handle('learning:teach', (input: Parameters<typeof learning.teach>[0]) => learning.teach(input));
   handle('learning:consolidate', (projectId?: string | null) => learning.consolidate(projectId));
+  // Model-assisted phrasing. Every one of these is a main-process decision:
+  // the renderer may ask for a preview and record an approval, but it never
+  // decides whether a call is allowed — assessRouting does, on every path.
+  handle('learning:modelAssistStatus', () => learning.modelAssistStatus());
+  handle('learning:modelAssistPreview', (providerId: string, model?: string | null) =>
+    learning.modelAssistConsentPreview(String(providerId), model == null ? null : String(model)));
+  handle('learning:modelAssistAccept', (providerId: string, model?: string | null) =>
+    learning.acceptModelAssistConsent(String(providerId), model == null ? null : String(model)));
+  handle('learning:modelAssistWithdraw', () => learning.withdrawModelAssistConsent());
+  handle('learning:phrase', (projectId?: string | null, limit?: number) =>
+    learning.phrasePendingNominations({ projectId, limit }));
   handle('learning:signals', (filter?: Parameters<typeof learning.listSignals>[0]) =>
     learning.listSignals(filter));
   handle('learning:candidates', (filter?: Parameters<typeof learning.candidates>[0]) =>

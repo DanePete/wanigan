@@ -15,6 +15,8 @@ import type {
   LearningPipelineStats,
   LearningSettings,
   LearningSignal,
+  ModelAssistConsentPreview,
+  ModelAssistStatus,
   OptimizerDiagnostic,
   Project,
   ProviderInfo,
@@ -2587,6 +2589,180 @@ function BriefingInspector({ providers, scopeParam, settings, onNavigate }: {
   );
 }
 
+/**
+ * The learning budget governor: the only control in Wanigan that can spend
+ * money, and the only one whose "on" position is not the operator's to give
+ * alone.
+ *
+ * `settings.allowModelAssistance` arrives here already reconciled by the main
+ * process — the stored switch ANDed with consent, routing and metering — so the
+ * checkbox reflects what would actually happen, not what was once asked for.
+ * When it is off, `status.routing.detail` says which of the three refused, by
+ * name. A control that silently does nothing is the thing this card exists to
+ * avoid.
+ */
+function ModelAssistCard({ settings, providers, busy, act, save }: {
+  settings: LearningSettings;
+  providers: ProviderInfo[];
+  busy: string | null;
+  act: Act;
+  save: (patch: Partial<LearningSettings>) => Promise<boolean>;
+}) {
+  const [status, setStatus] = useState<ModelAssistStatus | null>(null);
+  const [preview, setPreview] = useState<ModelAssistConsentPreview | null>(null);
+  const [pick, setPick] = useState('');
+  // The cost lever. A profile's default model is often its most expensive, and
+  // phrasing nine counters into two sentences does not need it — an observed
+  // 12.9c a call against 3.8c for a small model on the same profile. It is part
+  // of the approval because it changes the argv a person agreed to.
+  const [modelDraft, setModelDraft] = useState('');
+  const [budgetDraft, setBudgetDraft] = useState(String(settings.monthlyBudgetUsd));
+  useEffect(() => { setBudgetDraft(String(settings.monthlyBudgetUsd)); }, [settings.monthlyBudgetUsd]);
+
+  const load = useCallback(() => {
+    void window.wanigan.learning.modelAssistStatus()
+      .then(setStatus)
+      .catch(() => setStatus(null));
+  }, []);
+  useEffect(() => { load(); }, [load, settings.allowModelAssistance, settings.monthlyBudgetUsd]);
+
+  // Routed by declared capability, never by a provider id: a pack that proves a
+  // non-interactive protocol is offered, and one that does not is not.
+  const eligible = providers.filter((p) => p.path && p.capabilities.headlessJson);
+  const refusal = status && !status.routing.ok ? status.routing : null;
+
+  const commitBudget = () => {
+    const n = Number(budgetDraft);
+    if (Number.isFinite(n) && n >= 0 && n <= 10_000 && n !== settings.monthlyBudgetUsd) void save({ monthlyBudgetUsd: n });
+    else setBudgetDraft(String(settings.monthlyBudgetUsd));
+  };
+
+  const showPreview = (providerId: string, model?: string | null) => {
+    void window.wanigan.learning.modelAssistPreview(providerId, model ?? null)
+      .then(setPreview)
+      .catch(() => setPreview(null));
+  };
+
+  return (
+    <article className="card learning-card">
+      <span className="label">Learning budget governor</span>
+      <h2>{settings.allowModelAssistance ? 'Model-assisted phrasing is on' : 'Deterministic only'}</h2>
+      <p>
+        Classification, hashing, routing and diagnostics always run locally without a model call.
+        Model assistance does one job: it phrases the repeated patterns no template claims, which
+        today reach the inbox as unauthored nominations. It never promotes, never auto-applies, and
+        never sees a transcript.
+      </p>
+
+      {status?.consent ? (
+        <p className="faint">
+          Approved: <code>{status.consent.providerId}</code>
+          {status.consent.backendId ? <> · backend <code>{status.consent.backendId}</code></> : null}
+          {' · '}model <code>{status.consent.model ?? 'harness default'}</code>
+          {' · '}approved {ago(status.consent.acceptedAt)}
+          {' '}
+          <button className="btn" disabled={!!busy} onClick={() => {
+            void act('model-assist-withdraw',
+              () => window.wanigan.learning.modelAssistWithdraw(),
+              'Approval withdrawn. Model-assisted phrasing is off and nothing further will be sent.',
+            ).then(load);
+          }}>Withdraw approval</button>
+        </p>
+      ) : eligible.length ? (
+        <p className="faint">
+          <label>
+            <span className="label">Profile to approve</span>
+            <select className="field" value={pick} onChange={(e) => { setPick(e.target.value); setPreview(null); }}>
+              <option value="">Choose a profile…</option>
+              {eligible.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+            </select>
+          </label>
+          <button className="btn" disabled={!pick} onClick={() => showPreview(pick, modelDraft)}>Review what would be sent…</button>
+        </p>
+      ) : (
+        <p className="faint">
+          No installed profile declares a non-interactive protocol, so there is nothing to route a
+          phrasing call through.
+        </p>
+      )}
+
+      {preview ? (
+        <div className="faint">
+          <p>
+            Approving <strong>{preview.label}</strong> lets Wanigan run this command, in an empty
+            directory with no repository and every tool denied:
+          </p>
+          <p><code>{preview.argv.join(' ')}</code></p>
+          <p>Tools denied: <code>{preview.deniedTools.join(', ')}</code></p>
+          <p>Fields sent, and nothing else: <code>{preview.payloadFields.join(', ')}</code></p>
+          <p>
+            Environment destinations (names only, values never shown or logged):{' '}
+            <code>{preview.envDestinations.length ? preview.envDestinations.join(', ') : 'none'}</code>
+          </p>
+          <p>Profile fingerprint: <code>{preview.fingerprint}</code> — a pack upgrade re-asks.</p>
+          {preview.supportsModel ? (
+            <label>
+              <span className="label">Model · blank uses the harness default</span>
+              <input
+                className="field" type="text" value={modelDraft}
+                placeholder="harness default"
+                onChange={(e) => setModelDraft(e.target.value)}
+                onBlur={() => showPreview(preview.providerId, modelDraft)}
+                onKeyDown={(e) => { if (e.key === 'Enter') showPreview(preview.providerId, modelDraft); }}
+              />
+            </label>
+          ) : null}
+          {preview.probeRequired ? (
+            <p>
+              This harness has not been priced yet. The first call establishes whether it reports
+              usage; if it does not, phrasing switches itself off and says so rather than spending
+              against a budget it cannot measure.
+            </p>
+          ) : null}
+          <button className="btn btn-primary" disabled={!!busy} onClick={() => {
+            void act('model-assist-accept',
+              () => window.wanigan.learning.modelAssistAccept(preview.providerId, preview.model),
+              'Profile approved. Switch model-assisted phrasing on when you want it to run.',
+            ).then(() => { setPreview(null); load(); });
+          }}>Approve {preview.label}</button>
+          <button className="btn" onClick={() => setPreview(null)}>Cancel</button>
+        </div>
+      ) : null}
+
+      <label className="learning-check">
+        <input
+          type="checkbox"
+          className="learning-switch"
+          checked={settings.allowModelAssistance}
+          disabled={!!busy || (!settings.allowModelAssistance && !status?.consent)}
+          onChange={(e) => { void save({ allowModelAssistance: e.target.checked }).then(load); }}
+        />
+        {' '}Model-assisted phrasing of patterns no template claims
+      </label>
+      {refusal ? <p className="faint">{refusal.detail}</p> : null}
+
+      <label>
+        <span className="label">Monthly ceiling · USD</span>
+        <input
+          className="field" type="number" min={0} max={10000} step="0.25"
+          value={budgetDraft}
+          onChange={(e) => setBudgetDraft(e.target.value)}
+          onBlur={commitBudget}
+          onKeyDown={(e) => { if (e.key === 'Enter') commitBudget(); }}
+        />
+      </label>
+      <p className="faint">
+        {status
+          ? `$${status.monthToDateUsd.toFixed(2)} recorded this month across ${status.runs.length} call${pl(status.runs.length)} read back`
+            + `${status.averageCostUsd === null ? '' : `, averaging $${status.averageCostUsd.toFixed(4)} a call`}.`
+          : 'Recorded spend is read from the calls themselves.'}
+        {' '}Only a call the harness actually priced counts here; an unpriced one is recorded as
+        unpriced rather than estimated.
+      </p>
+    </article>
+  );
+}
+
 function ContextTab({ diagnostics, settings, providers, scopeParam, emptyFrame, read, busy, act, onNavigate }: {
   diagnostics: OptimizerDiagnostic[];
   settings: LearningSettings;
@@ -2646,7 +2822,7 @@ function ContextTab({ diagnostics, settings, providers, scopeParam, emptyFrame, 
 
       <section className="learning-grid two">
         <article className="card learning-card"><span className="label">Adaptive context router</span><h2>Load less, later</h2><p>Structured project/path scope and full-text ranking run locally first. Progressive skills and mission briefings receive a hard token ceiling.</p><label><span className="label">Briefing ceiling · tokens</span><input className="field" type="number" min={200} max={8000} value={ceilingDraft} onChange={(e) => setCeilingDraft(e.target.value)} onBlur={commitCeiling} onKeyDown={(e) => { if (e.key === 'Enter') commitCeiling(); }} /></label><label className="learning-check"><input type="checkbox" className="learning-switch" checked={settings.consolidationEnabled} onChange={(e) => void save({ consolidationEnabled: e.target.checked })} /> Consolidate while Wanigan or its daemon is active</label></article>
-        <article className="card learning-card"><span className="label">Learning budget governor</span><h2>Deterministic-only today</h2><p>Classification, hashing, routing, and diagnostics run locally without a model call. The stored opt-in and monthly ceiling reserve an explicit boundary for a future model-assisted consolidator; they do not spend or launch one in this build.</p><label className="learning-check"><input type="checkbox" className="learning-switch" checked={settings.allowModelAssistance} disabled /> Model-assisted extraction (not connected yet)</label><label><span className="label">Reserved monthly ceiling · USD</span><input className="field" type="number" min={0} step="0.25" value={settings.monthlyBudgetUsd} disabled /></label><p className="faint">Wanigan will not imply this control is active before usage metering and provider-specific consent are wired end to end.</p></article>
+        <ModelAssistCard settings={settings} providers={providers} busy={busy} act={act} save={save} />
       </section>
 
       {/* Diagnosis sits below the controls it cannot change. It reads the same

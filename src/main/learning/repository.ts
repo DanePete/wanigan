@@ -360,6 +360,50 @@ export function updateCandidate(id: string, patch: UpdateCandidatePatch): Knowle
   return getCandidate(id)!;
 }
 
+/**
+ * Replaces an unauthored nomination with a phrased claim, and rewrites its
+ * rationale to say who phrased it.
+ *
+ * Deliberately not part of updateCandidate: that is the review edit, and it
+ * excludes `rationale` so a person revising a title cannot erase how the
+ * candidate came to exist. This is the one authorized provenance write, and it
+ * is narrow on purpose. `onlyIfTextStartsWith` is the caller's proof that it is
+ * still replacing its own placeholder -- if a person authored the text first,
+ * or another pass already phrased it, this returns null and changes nothing.
+ */
+export function recordModelPhrasing(id: string, input: {
+  title: string;
+  proposedText: string;
+  rationale: string;
+  onlyIfTextStartsWith: string;
+}): KnowledgeCandidate | null {
+  const current = getCandidate(id);
+  if (!current) return null;
+  if (current.status !== 'pending') return null;
+  if (!current.proposedText.trimStart().startsWith(input.onlyIfTextStartsWith)) return null;
+
+  const title = nonEmpty(input.title, 'Candidate title', 500);
+  const proposedText = nonEmpty(input.proposedText, 'Proposed knowledge', 128 * 1024);
+  const rationale = nonEmpty(input.rationale, 'Candidate rationale', 4 * 1024);
+  const conflicts = findCandidateConflicts({
+    itemId: current.itemId,
+    targetKind: current.targetKind,
+    scope: current.scope,
+    projectId: current.projectId,
+    pathScope: current.pathScope,
+    title,
+    proposedText,
+  });
+  db().prepare(`
+    UPDATE knowledge_candidates SET title=?,proposed_text=?,rationale=?,
+      estimated_token_delta=?,conflicts_json=?,updated_at=? WHERE id=?
+  `).run(
+    title, proposedText, rationale, estimateTokens(proposedText),
+    stableJson(conflicts), Date.now(), id,
+  );
+  return getCandidate(id);
+}
+
 export type ReviewAction = 'approve' | 'reject' | 'snooze' | 'reopen';
 
 export function reviewCandidate(id: string, action: ReviewAction, note?: string | null): KnowledgeCandidate {
