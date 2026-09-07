@@ -620,7 +620,13 @@ export async function startHeadlessRun(cfg: HeadlessStart): Promise<{ runId: str
      be said out loud. Anything smaller is untouched: this is about the shape
      of the request, not the size of the bill.
      ───────────────────────────────────────────────────────────────── */
-  if (picked.length > 1 && !cfg.allProjects) {
+  // `=== true`, not merely truthy: this value arrives from the renderer over
+  // IPC and index.ts hands the config through untouched, so `allProjects: 'no'`
+  // is a string that passes a truthiness test and buys an eight-repository
+  // unattended fan-out with a word that means the opposite. schedule.ts,
+  // mobile/manage.ts and the queue runner all read the same declaration this
+  // way; this was the one place that did not.
+  if (picked.length > 1 && cfg.allProjects !== true) {
     const chosen = new Set(cfg.projectIds);
     const registered = listProjects();
     if (registered.length === picked.length && registered.every((p) => chosen.has(p.id))) {

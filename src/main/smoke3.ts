@@ -5407,6 +5407,28 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && /Try again<\/button>/.test(runsViewSrc),
   'Runs holds its run count, "Nothing has run yet" and "No run selected" behind a loaded flag set only by a read that returned, and a failed first read shows that error with a retry rather than a confident zero');
 
+  /* ── P10 · the fan-out declaration has a control ────────────────────
+   * headless.ts refuses a start whose selection is the whole registered list
+   * unless the request declares it, and this form could not declare it: the
+   * config it built was typed HeadlessConfig, which has no such field, while
+   * the selection was seeded with every project id and put back there by an
+   * effect until the operator picked for themselves. With two or more
+   * repositories registered the untouched default form was refused every
+   * time, by an error naming an intent flag with no control on the screen.
+   * The negatives below are the shape that did it. */
+  check(runsViewSrc.includes('const cfg: HeadlessStartRequest = {')
+    && runsViewSrc.includes('...(coversEveryProject && declared ? { allProjects: true } : {}),')
+    && runsViewSrc.includes('const coversEveryProject = allPicked && projects.length > 1;')
+    && runsViewSrc.includes('const needsIntent = coversEveryProject && !declared;')
+    && runsViewSrc.includes('const [declared, setDeclared] = useState(false);')
+    && /const canStart = [\s\S]{0,200}!needsIntent/.test(runsViewSrc)
+    && !runsViewSrc.includes('const cfg: HeadlessConfig')
+    && !/useState<Set<string>>\(\(\) => new Set\(projects\.map/.test(runsViewSrc),
+  'Runs can state the every-repository fan-out its own default used to require and had no way to express: the request is typed HeadlessStartRequest, the declaration is a checkbox that is never seeded true and is written only when the selection really is the whole list, the primary button stays disabled until it is ticked, and the form no longer opens with every repository already selected');
+
+  check(sourceOf('src/main/headless.ts').includes('if (picked.length > 1 && cfg.allProjects !== true) {'),
+    'the fan-out guard reads the declaration as the literal true, so a renderer that sends any other truthy value for allProjects is refused rather than believed — this config crosses IPC unvalidated, where the string "no" used to buy the whole fleet');
+
   /* ── P7 · a run's rows, stats and merge belong to that run ──────────
    * `headless:rows` rejecting for the newly selected run used to leave the
    * previous run's repositories, Changed and Cost under the new run's name,

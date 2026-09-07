@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
-  HeadlessConfig, HeadlessRowSummary, HeadlessRun, Project, ProviderId, ProviderInfo,
+  HeadlessRowSummary, HeadlessRun, HeadlessStartRequest, Project, ProviderId, ProviderInfo,
 } from '@shared/types';
 import { ConfirmNote, EmptyState, Note, Reading, Stat, ago, num, usd } from '../components/bits';
 import '../styles/runs.css';
@@ -83,14 +83,33 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   // project id so collapsing and reopening a row does not re-cross IPC.
   const [details, setDetails] = useState<Record<string, RowDetailState>>({});
   const [providerId, setProviderId] = useState<ProviderId>('claude');
-  const [chosen, setChosen] = useState<Set<string>>(() => new Set(projects.map((p) => p.id)));
-  // The project list resolves asynchronously, so this view can mount before it
-  // arrives. Until the operator picks for themselves, the selection is still
-  // Wanigan's default — every repository — and has to follow the list rather
-  // than freeze an empty default nothing explains. Once they have picked, their
-  // choice is the record: a project that disappeared drops out and nothing is
-  // ever silently re-selected.
-  const picked = useRef(false);
+  // Empty on purpose. Seeding every registered project made the widest and most
+  // expensive run the resting state of a form nobody had touched — the same
+  // "nobody chose this" shape the fan-out guard in headless.ts exists to refuse
+  // — and with two or more projects registered that default was rejected on
+  // submit every time, by a message naming an intent this view could not state.
+  // The operator names the repositories; "Select all projects" is still one
+  // click away, and now it is a choice rather than a starting position.
+  const [chosen, setChosen] = useState<Set<string>>(() => new Set());
+  /**
+   * The operator saying "every registered repository" out loud.
+   *
+   * Never seeded true, and retired by any change to the selection or to the
+   * registered list: it is a statement about one specific set of repositories
+   * and cannot outlive that set. main refuses a start covering the whole
+   * project list without it, because a payload that simply left the repository
+   * out arrives there as exactly the same array.
+   */
+  const [declared, setDeclared] = useState(false);
+  /**
+   * The registered list as an identity.
+   *
+   * App rebuilds the `projects` array whenever a branch moves under one of them
+   * (App.tsx:127 folds `branch` into the shape it compares), so keying anything
+   * to the array itself would retire the declaration under the operator's
+   * cursor every time they checked out elsewhere. Ids only.
+   */
+  const projectKey = projects.map((p) => p.id).join('|');
   /** Rows whose detail has been requested for the run currently selected. */
   const asked = useRef<Set<string>>(new Set());
   /** So a detail response that outlives its run can be discarded. */
@@ -145,15 +164,19 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
     }
   }, [providers, providerId]);
 
+  // Keyed to the ids, not to the array: a branch moving is not a list changing,
+  // and unticking the declaration on that would pull it out from under someone
+  // mid-form. A project that genuinely leaves drops out of the selection, and a
+  // project joining or leaving retires the declaration — it was a statement
+  // about the list as it stood, and this is no longer that list.
   useEffect(() => {
-    const live = new Set(projects.map((p) => p.id));
+    const live = new Set(projectKey ? projectKey.split('|') : []);
     setChosen((prior) => {
-      const next = picked.current
-        ? new Set([...prior].filter((id) => live.has(id)))
-        : live;
+      const next = new Set([...prior].filter((id) => live.has(id)));
       return sameIds(prior, next) ? prior : next;
     });
-  }, [projects]);
+    setDeclared(false);
+  }, [projectKey]);
 
   /** The fingerprint of the list this screen last accepted for painting. */
   const painted = useRef('');
@@ -256,8 +279,18 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   }, [selected]);
 
   const allPicked = chosen.size === projects.length && projects.length > 0;
+  /* The one selection main cannot tell apart from an accident: every repository
+     Wanigan has registered. Below two there is nothing to declare — the guard
+     in headless.ts does not fire on a single repository — so the control
+     appears exactly when it means something, and naming three of eight still
+     needs nothing. */
+  const coversEveryProject = allPicked && projects.length > 1;
+  const needsIntent = coversEveryProject && !declared;
   const toggleProject = (id: string) => {
-    picked.current = true;
+    // Any change to the selection retires the declaration. Otherwise dropping a
+    // repository and putting it back would re-declare a fan-out nobody re-read,
+    // out of a tick made about a different list.
+    setDeclared(false);
     setChosen((prior) => {
       const next = new Set(prior); next.has(id) ? next.delete(id) : next.add(id); return next;
     });
@@ -272,21 +305,28 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
         : providerOptions[field.id];
     return value === undefined || value === null || value === '';
   });
+  /** What the budget field will actually send, so the copy below cannot quote a different figure. */
+  const perRepoBudget = Math.max(0, Number(budget) || 0);
   const canStart = !!provider?.path && prompt.trim().length > 0 && chosen.size > 0
-    && !missingRequired && !busy;
+    && !missingRequired && !needsIntent && !busy;
 
   async function start() {
     if (!canStart) return;
     setBusy(true); setErr(null);
-    const cfg: HeadlessConfig = {
+    const cfg: HeadlessStartRequest = {
       name: name.trim() || `fan-out · ${new Date().toLocaleString()}`,
       providerId, projectIds: [...chosen], prompt: prompt.trim(), model: model.trim() || undefined,
       effort: effort.trim() || undefined, providerOptions,
-      maxBudgetUsd: Math.max(0, Number(budget) || 0), timeoutMs: minutes * 60_000, isolate,
+      maxBudgetUsd: perRepoBudget, timeoutMs: minutes * 60_000, isolate,
+      // Written only when the selection really is the whole registered list, so
+      // a run over three of eight repositories never carries — and never stores
+      // in its config_json — a claim about a fan-out it did not do.
+      ...(coversEveryProject && declared ? { allProjects: true } : {}),
     };
     try {
       const result = await window.wanigan.headless.start(cfg);
-      setPrompt(''); setName(''); setSelected(result.runId); await load();
+      // The declaration was spent on this run. The next one is asked again.
+      setPrompt(''); setName(''); setDeclared(false); setSelected(result.runId); await load();
     } catch (e) { setErr(msg(e)); }
     finally { setBusy(false); }
   }
@@ -433,7 +473,10 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
         <div className="hr-launch-footer">
           <label className="hr-budget"><span className="label">CLI budget / repository</span><div><span aria-hidden="true">$</span><input className="field" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} /></div></label>
           <label className="hr-check"><input type="checkbox" checked={isolate} onChange={(e) => setIsolate(e.target.checked)} /> isolate in worktrees</label>
-          <button className="btn" onClick={() => { picked.current = true; setChosen(allPicked ? new Set() : new Set(projects.map((p) => p.id))); }}>{allPicked ? 'Clear projects' : 'Select all projects'}</button>
+          {/* Selecting every repository is a selection, not a declaration: this
+              button deliberately does not tick the box below, and clears a tick
+              that was already there. */}
+          <button className="btn" onClick={() => { setDeclared(false); setChosen(allPicked ? new Set() : new Set(projects.map((p) => p.id))); }}>{allPicked ? 'Clear projects' : 'Select all projects'}</button>
         </div>
         {missingRequired && <Note tone="warn">{missingRequired.label} is required by this provider profile.</Note>}
         {!provider?.capabilities.policy && provider && <Note tone="warn">{provider.label} is allowed only when this project is Trusted: Wanigan cannot enforce its Claude-style unattended policy boundary yet.</Note>}
@@ -442,7 +485,27 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
           <div className="hr-projects">
             {projects.map((p) => <button key={p.id} className={`hr-project${chosen.has(p.id) ? ' on' : ''}`} aria-pressed={chosen.has(p.id)} onClick={() => toggleProject(p.id)}><span aria-hidden="true" className="hr-project-mark">{chosen.has(p.id) ? '✓' : '+'}</span>{p.name}</button>)}
           </div>
-          <div className="hr-submit-row"><span className="faint">{canStart ? 'Ready to start the selected agents.' : 'Add a task, select at least one repository, and complete provider requirements.'}</span><button className="btn btn-primary" disabled={!canStart} onClick={() => void start()}>{busy ? 'Starting…' : `Run in ${chosen.size} repo${chosen.size === 1 ? '' : 's'}`}</button></div>
+          {/* The declaration sits with the repositories it is about: their names
+              are the chips directly above, so this counts them rather than
+              listing them again. The figure is the budget field's own value,
+              which is what Wanigan passes to the CLI's budget flag — and at 0
+              it passes no flag at all (headless.ts:306), which the copy says
+              rather than printing a $0.00 ceiling that does not exist. */}
+          {coversEveryProject && (
+            <label className="hr-declare">
+              <input type="checkbox" checked={declared} onChange={(e) => setDeclared(e.target.checked)} />
+              <span>
+                <strong>Run in every registered repository.</strong>{' '}
+                {declared ? (perRepoBudget > 0
+                  ? <>All {projects.length} start one unattended agent each, carrying the {usd(perRepoBudget)} per-repository budget Wanigan hands the CLI — up to {usd(perRepoBudget * projects.length)} across the fan-out if every one spends it. The CLI enforces that flag; Wanigan does not.</>
+                  : <>All {projects.length} start one unattended agent each, and the budget is 0, so Wanigan passes no budget flag at all — nothing here caps what they spend.</>
+                ) : (perRepoBudget > 0
+                  ? <>Selecting every repository is the one request that reaches the runner looking exactly like a payload that named none, so it is said here rather than inferred. Right now that is all {projects.length} of them, at {usd(perRepoBudget)} each.</>
+                  : <>Selecting every repository is the one request that reaches the runner looking exactly like a payload that named none, so it is said here rather than inferred. Right now that is all {projects.length} of them, with no budget flag passed.</>)}
+              </span>
+            </label>
+          )}
+          <div className="hr-submit-row"><span className="faint">{canStart ? 'Ready to start the selected agents.' : needsIntent ? 'This selection is every repository Wanigan has registered. Tick the declaration above, or drop one repository from the run.' : 'Add a task, select at least one repository, and complete provider requirements.'}</span><button className="btn btn-primary" disabled={!canStart} onClick={() => void start()}>{busy ? 'Starting…' : `Run in ${chosen.size} repo${chosen.size === 1 ? '' : 's'}`}</button></div>
         </div>
       </section>
 
