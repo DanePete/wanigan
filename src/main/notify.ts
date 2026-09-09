@@ -3,9 +3,9 @@ import path from 'node:path';
 import { app, BrowserWindow, Notification } from 'electron';
 import { db, resultsDir } from './db';
 import { getSetting, setSetting } from './settings';
-import { sendMobilePush } from './mobile';
+import { deliverMobileAlert } from './mobile';
 import type { MobilePushResult } from './mobile';
-import type { Attention, AttentionKind } from '../shared/types';
+import type { Attention, AttentionKind, InAppAlert } from '../shared/types';
 
 /**
  * Telling the human something happened, and knowing when to look.
@@ -156,11 +156,28 @@ export function notify(opts: {
   body: string;
   /** Redacted alternative when desktop detail contains a command or path. */
   mobileBody?: string;
+  /**
+   * Groups repeated alerts about one thing into a single banner on the phone
+   * rather than a column of them. It rides inside the Web Push record, which is
+   * encrypted to the device, so it never reaches the push service.
+   */
+  mobileTag?: string;
   urgent?: boolean;
-  onClick?: () => void;
+  /**
+   * Where a click lands, and what the in-app card opens. One field rather than
+   * a closure, because the same identity now has to survive being sent to the
+   * renderer as well as being called back inside this process.
+   */
+  target?: NotificationTarget;
   /** Internal sink controls let attention suppress only the Mac banner. */
   desktop?: boolean;
   mobile?: boolean;
+  /**
+   * The card inside Wanigan's own window. Follows the desktop sink by default,
+   * because the two answer the same question — is the operator looking at
+   * something else — from opposite sides of the window frame.
+   */
+  inApp?: boolean;
   onMobileResult?: (result: MobilePushResult) => void;
   /**
    * Keep this for the attended app when the process showing it has no window.
@@ -169,15 +186,20 @@ export function notify(opts: {
    */
   hold?: boolean;
 }): void {
-  // Phone delivery is its own opt-in. A user may reasonably turn off banners
-  // on the Mac while keeping the alert that lets them leave the room, so the
-  // desktop toggle must not gate this sink. Delivery is bounded and failures
-  // are recorded by mobile.ts; a network service never sits in the hook path.
+  // Phone delivery is its own opt-in — two of them, in fact, one per channel.
+  // A user may reasonably turn off banners on the Mac while keeping the alert
+  // that lets them leave the room, so the desktop toggle must not gate this
+  // sink. Which channels are on, and what two of them disagreeing means, is
+  // decided in mobile/alerts.ts rather than here: a notification call site is
+  // the wrong place to learn that a subscription expired. Delivery is bounded
+  // and failures are recorded there; a network service never sits in the hook
+  // path, and neither channel can make the other wait on its timeout.
   if (opts.mobile !== false) {
-    void sendMobilePush({
+    void deliverMobileAlert({
       title: opts.title,
       body: opts.mobileBody ?? opts.body,
       urgent: opts.urgent === true,
+      tag: opts.mobileTag,
     }).then(
       (result) => opts.onMobileResult?.(result),
       () => opts.onMobileResult?.({
@@ -198,6 +220,21 @@ export function notify(opts: {
     return;
   }
 
+  // The card inside the window, raised before the OS banner rather than after.
+  // A banner is a courtesy the platform may decline — Do Not Disturb, a Focus
+  // mode, notification permission never granted to the app, a full screen —
+  // and every one of those failures is silent. The card is the surface Wanigan
+  // can actually promise, so it does not sit behind an API that might throw.
+  if (opts.inApp !== false) {
+    raiseInApp({
+      at: Date.now(),
+      title: opts.title,
+      body: opts.body,
+      urgent: opts.urgent === true,
+      target: opts.target ?? null,
+    });
+  }
+
   try {
     // isSupported() is false on a Linux box with no notification daemon, and
     // the constructor itself throws before the app is ready.
@@ -216,12 +253,13 @@ export function notify(opts: {
     });
 
     const release = () => { live.delete(n); };
+    const onClick = reveal(opts.target ?? undefined);
     n.on('close', release);
     n.on('failed', release);
     n.on('click', () => {
       release();
       try {
-        opts.onClick?.();
+        onClick();
       } catch {
         // A handler that throws must not surface as an unhandled error from
         // inside Electron's notification callback.
@@ -283,6 +321,45 @@ let opener: ((target: NotificationTarget) => void) | null = null;
  */
 export function setNotificationOpener(fn: ((target: NotificationTarget) => void) | null): void {
   opener = fn;
+}
+
+/* ── the card inside the window ──────────────────────────────────────── */
+
+/**
+ * The third surface, and the only one Wanigan can actually guarantee.
+ *
+ * The other two are both delivered by somebody else. A macOS banner is shown at
+ * the operating system's discretion — Do Not Disturb, a Focus mode, a
+ * permission the operator declined once a year ago, or simply a full-screen
+ * app — and a phone alert depends on a push service, a radio and a device that
+ * may be face down in another room. Neither reports back. What that adds up to
+ * is an app whose entire premise is "leave Fleet open and walk away" having no
+ * surface it can promise, inside its own window, that a session is blocked.
+ *
+ * This is that surface. It is deliberately not the shell toast: the toast is
+ * feedback on something the operator just did, it holds one message, and an
+ * agent needing approval is neither. It carries the same three states the
+ * banner does and nothing else, so no new policy about what is worth an
+ * interruption exists anywhere but ANNOUNCE_KINDS above.
+ */
+export type { InAppAlert };
+
+let inAppSink: ((alert: InAppAlert) => void) | null = null;
+
+/** Registered by whoever owns the renderer, alongside the opener above. */
+export function setInAppAlertSink(fn: ((alert: InAppAlert) => void) | null): void {
+  inAppSink = fn;
+}
+
+function raiseInApp(alert: InAppAlert): void {
+  if (!inAppSink) return;
+  try {
+    inAppSink(alert);
+  } catch {
+    // Same contract as every other sink here: a notification is commentary on
+    // the work, and a renderer that has gone away must not take down the poll
+    // cycle that is keeping a batch moving.
+  }
 }
 
 function reveal(target?: NotificationTarget): () => void {
@@ -388,7 +465,6 @@ export function drainNotificationDigest(): number {
       urgent: held.some((h) => h.urgent),
       // Delivered by the process that held them, at the time they happened.
       mobile: false,
-      onClick: reveal(),
     });
     return held.length;
   } finally {
@@ -736,7 +812,7 @@ export function announceRunEnded(runId: string): void {
     // Counts, an operator-chosen name and a cost — nothing an agent wrote, so
     // this is one of the two things the windowless scheduler may keep.
     hold: true,
-    onClick: reveal({ kind: 'run', runId }),
+    target: { kind: 'run', runId },
   });
 }
 
@@ -763,7 +839,6 @@ export function announceSpendCapTrip(name: string, projected: number, cap: numbe
     // No target, for the same reason there is no run id above: the refusal
     // happens before the row exists, so there is nothing to deep-link to. The
     // window still comes forward, on the form the operator was last using.
-    onClick: reveal(),
   });
 }
 
@@ -821,7 +896,12 @@ export function announceAttention(a: Attention): void {
     // The session is the whole content of the alert. Raising the window onto
     // whatever tab was last open leaves the operator with the same search they
     // would have had if nothing had told them.
-    onClick: reveal({ kind: 'session', sessionId: a.sessionId }),
+    target: { kind: 'session', sessionId: a.sessionId } as NotificationTarget,
+    // Two prompts from one session should replace each other on a lock screen,
+    // not stack. Keyed on the session and the kind rather than the transition,
+    // because a second permission wait in the same session is the same standing
+    // question — the operator has to walk back to the Mac either way.
+    mobileTag: `${a.sessionId}:${a.kind}`,
   };
   if (sendMobile) notify({
     ...message,

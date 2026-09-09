@@ -73,3 +73,8 @@
   font-size: var(--t-micro);
   line-height: 1.45;
 }
+
+/* The agent an account signs into, beside its label in the spend table. Two
+   accounts can carry the same name — 'Personal' is the seeded default on every
+   harness — so the row says which one this is. */
+.u-row-harness { display: block; font-size: var(--t-micro); }

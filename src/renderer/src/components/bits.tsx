@@ -481,7 +481,8 @@ export type IconName =
   // One per destination in the sidebar. A route's icon is a second way to find
   // it, never the only way: every row prints its word beside the glyph.
   | 'terminal' | 'grid' | 'target' | 'layers' | 'chart' | 'brain' | 'plug'
-  | 'clock' | 'branch' | 'play' | 'gauge' | 'book' | 'file-text' | 'compass' | 'sliders';
+  | 'clock' | 'branch' | 'play' | 'gauge' | 'book' | 'file-text' | 'compass' | 'sliders'
+  | 'columns';
 
 const ICON_PATHS: Record<IconName, React.ReactNode> = {
   'chevron-right': <path d="m9 18 6-6-6-6" />,
@@ -513,6 +514,9 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
   book: <><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v18H6.5A2.5 2.5 0 0 0 4 22Z" /><path d="M4 19.5h16" /></>,
   'file-text': <><path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7Z" /><path d="M14 2v5h5" /><path d="M9 12h6" /><path d="M9 16h6" /></>,
   compass: <><circle cx="12" cy="12" r="9" /><path d="m15.5 8.5-2 5.5-5.5 2 2-5.5Z" /></>,
+  // Three columns of unequal fill: a board, not a table. The uneven heights are
+  // the whole glyph — equal bars read as a chart.
+  columns: <><rect width="5" height="18" x="3" y="3" rx="1" /><rect width="5" height="12" x="10" y="3" rx="1" /><rect width="5" height="15" x="17" y="3" rx="1" /></>,
   sliders: <><path d="M4 6h10" /><path d="M18 6h2" /><path d="M4 12h4" /><path d="M12 12h8" /><path d="M4 18h10" /><path d="M18 18h2" /><circle cx="16" cy="6" r="2" /><circle cx="10" cy="12" r="2" /><circle cx="16" cy="18" r="2" /></>,
 };
 

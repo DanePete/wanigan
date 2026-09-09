@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readableTerminal } from './terminal-text';
+import { styledTerminal, type TerminalStyle } from './terminal-text';
 
 /**
  * What the phone's terminal poll actually reads.
@@ -26,6 +26,15 @@ import { readableTerminal } from './terminal-text';
 
 /** The ceiling on the text any single terminal response may carry. */
 export const MAX_TERMINAL_BYTES = 240 * 1024;
+
+/**
+ * And a ceiling on the styling that travels with it. Colour is per-column, so a
+ * screen of alternating attributes can describe itself in several times its own
+ * length. Past this the response carries its text with no styling at all rather
+ * than a partial colouring of it: a screen half in colour looks like a rendering
+ * fault, and reading it wrong is worse than reading it plain.
+ */
+export const MAX_TERMINAL_SPAN_VALUES = 24_000;
 
 /**
  * How much of the bottom of the screen is treated as still being redrawn. An
@@ -64,6 +73,24 @@ export type MobileTerminalRead = {
    * and always a suffix of `text` in 'screen' mode.
    */
   tail: string;
+  /**
+   * One row per line of `text`, each a flat run of `[column, length, styleId]`
+   * triples pointing into `palette`. Empty when this response carries no styling
+   * — either the output had none or it exceeded MAX_TERMINAL_SPAN_VALUES — and
+   * the page then draws the text plain, which is what it did before colour.
+   */
+  spans: number[][];
+  /** The same, for the lines of `tail`. */
+  tailSpans: number[][];
+  /**
+   * How many trailing lines of `text` are the live tail, so the page can split a
+   * screen into its two nodes by counting lines instead of by measuring the tail
+   * string against the end of the screen. Zero on an append, where `text` is the
+   * settled lines only and the tail travels beside it.
+   */
+  tailLines: number;
+  /** styleId → style, index 0 being the default. Empty alongside empty spans. */
+  palette: TerminalStyle[];
   /** Send this back as `cursor` on the next read. */
   cursor: string;
   /** Null on an append; otherwise which of the three screen cases this is. */
@@ -119,20 +146,57 @@ function liveTailStart(lines: string[]): number {
  * byte cut landed in, and it removes the replacement character that a split
  * multi-byte sequence decodes to.
  */
-function lastBytesOfLines(text: string, maxBytes: number): { text: string; truncated: boolean } {
+function lastBytesOfLines(text: string, maxBytes: number): { text: string; truncated: boolean; dropped: number } {
   const buffer = Buffer.from(text, 'utf8');
-  if (buffer.length <= maxBytes) return { text, truncated: false };
+  if (buffer.length <= maxBytes) return { text, truncated: false, dropped: 0 };
   const cut = buffer.subarray(buffer.length - maxBytes).toString('utf8');
   const boundary = cut.indexOf('\n');
   // A slice with no newline at all is one enormous line; strip the replacement
   // character directly rather than throwing the whole line away.
-  return { text: boundary >= 0 ? cut.slice(boundary + 1) : cut.replace(/^\ufffd+/, ''), truncated: true };
+  const kept = boundary >= 0 ? cut.slice(boundary + 1) : cut.replace(/^\ufffd+/, '');
+  // How many whole lines came off the front, so the styling can be sliced to
+  // exactly the lines that survived. A partial first line counts as dropped: the
+  // half of it that is left keeps its own columns, which is why the cut is made
+  // at a newline in the first place.
+  const removed = text.length - kept.length;
+  let dropped = 0;
+  for (let at = 0; at < removed && at < text.length; at++) if (text[at] === '\n') dropped++;
+  return { text: kept, truncated: true, dropped };
 }
 
 export function readTerminalScreen(request: MobileTerminalRequest): MobileTerminalRead {
-  // readableTerminal is the display parser the smoke suite pins; this module
-  // reads what it produced and never reinterprets terminal control bytes.
-  const lines = readableTerminal(request.raw).split('\n');
+  // styledTerminal is the display parser the smoke suite pins; this module reads
+  // what it produced and never reinterprets terminal control bytes. Its text and
+  // its styling come out of one pass, so a span can only ever point at the line
+  // it was measured on.
+  const rendered = styledTerminal(request.raw);
+  const lines = rendered.text.split('\n');
+  const allSpans = rendered.spans;
+  /**
+   * The styling for a half-open range of lines, with a leading empty row when
+   * the string it describes opens with the newline that joins it to what came
+   * before. Both halves of every response are sliced through here so the
+   * off-by-one lives in one place.
+   */
+  const spansFor = (from: number, to: number, leadingJoiner: boolean): number[][] => {
+    const rows = allSpans.slice(Math.max(0, from), Math.max(0, to));
+    return leadingJoiner ? [[] as number[], ...rows] : rows;
+  };
+  /**
+   * A response either carries all of its styling or none of it. Counting first
+   * is what makes that decision before any of it is on the wire.
+   */
+  const withStyling = (read: MobileTerminalRead, spans: number[][], tailSpans: number[][]): MobileTerminalRead => {
+    const values = spans.reduce((total, row) => total + row.length, 0)
+      + tailSpans.reduce((total, row) => total + row.length, 0);
+    if (!values || values > MAX_TERMINAL_SPAN_VALUES) return read;
+    // Only the palette entries these spans actually name. A screen that used
+    // four colours must not carry the four thousand a long session accumulated.
+    const used = new Set<number>();
+    for (const row of [...spans, ...tailSpans]) for (let at = 2; at < row.length; at += 3) used.add(row[at]);
+    const palette = rendered.palette.map((style, at) => (at === 0 || used.has(at) ? style : DROPPED_STYLE));
+    return { ...read, spans, tailSpans, palette };
+  };
   const start = liveTailStart(lines);
   const settled = lines.slice(0, start).join('\n');
   // The newline that `split` consumed belongs between the two halves, and only
@@ -147,16 +211,25 @@ export function readTerminalScreen(request: MobileTerminalRequest): MobileTermin
     // The tail is bounded by construction, so the settled budget is never
     // squeezed to nothing and a screen can never exceed the ceiling.
     const bounded = lastBytesOfLines(settled, MAX_TERMINAL_BYTES - tailBytes);
-    return {
+    return withStyling({
       title: request.title,
       running: request.running,
       mode: 'screen',
       text: bounded.text + tail,
       tail,
+      spans: [],
+      tailSpans: [],
+      tailLines: lines.length - start,
+      palette: [],
       cursor,
       screenReason: reason,
       truncated: bounded.truncated,
-    };
+    // A screen reads as one continuous run of lines: the tail's leading newline
+    // is what joins its first line to the last settled one, so concatenating the
+    // two halves' rows must not insert a row for it. `tail` on its own does open
+    // with that newline, so tailSpans does carry the empty row.
+    }, spansFor(bounded.dropped, start, false).concat(spansFor(start, lines.length, false)),
+    spansFor(start, lines.length, Boolean(joiner)));
   };
 
   if (!asked) return screen('first-read');
@@ -176,14 +249,28 @@ export function readTerminalScreen(request: MobileTerminalRequest): MobileTermin
   // pretending to be complete.
   if (Buffer.byteLength(appended) + tailBytes > MAX_TERMINAL_BYTES) return screen('too-much-output');
 
-  return {
+  return withStyling({
     title: request.title,
     running: request.running,
     mode: 'append',
     text: appended,
     tail,
+    spans: [],
+    tailSpans: [],
+    tailLines: 0,
+    palette: [],
     cursor,
     screenReason: null,
     truncated: false,
-  };
+  // The appended slice opens with the newline that joins it to what the page
+  // already holds, exactly when there was something to join it to.
+  }, spansFor(asked.lines, start, asked.lines > 0), spansFor(start, lines.length, Boolean(joiner)));
 }
+
+/**
+ * The stand-in for a palette entry this response does not name. Keeping the
+ * array dense means a styleId is still an index into it, and keeping the unused
+ * entries empty means a long session's accumulated colours do not ride along on
+ * every poll.
+ */
+const DROPPED_STYLE: TerminalStyle = { fg: null, bg: null, flags: 0 };

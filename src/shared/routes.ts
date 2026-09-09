@@ -41,6 +41,12 @@ export const TABS = [
   // so an entry inserted beside Insights would quietly move every shortcut
   // after it; Usage takes a named chord instead.
   { id: 'usage',     label: 'Usage',     group: 'Explore', hint: 'What is left on each account, and what you actually spent', keywords: 'usage limits quota remaining left rate limit weekly session plan account work personal model burn' },
+  // The board reads the same tickets Control does, across every goal and
+  // project at once, in columns. Control answers "how is this one goal going";
+  // this answers "what is outstanding, and what am I doing about it today" —
+  // which spans goals and is therefore a different surface, not a tab inside
+  // one. Appended past the digit row for the reason stated above Usage.
+  { id: 'board',     label: 'Board',     group: 'Work',    hint: 'Every ticket across every goal, in columns you can move and park', keywords: 'board kanban tickets ticket issues issue backlog triage jira column swimlane defer park later todo in progress blocked done' },
 ] as const;
 
 export type Tab = (typeof TABS)[number]['id'];
@@ -67,11 +73,12 @@ export const TAB_ICONS = {
   context: 'file-text',
   scout: 'compass',
   usage: 'gauge',
+  board: 'columns',
 } as const satisfies Record<Tab, string>;
 
 /** The order the sidebar lists destinations in, grouped by the job they serve. */
 export const SIDEBAR_GROUPS: readonly { group: string; tabs: readonly Tab[] }[] = [
-  { group: 'Work', tabs: ['sessions', 'fleet', 'control', 'batches'] },
+  { group: 'Work', tabs: ['sessions', 'fleet', 'board', 'control', 'batches'] },
   { group: 'Explore', tabs: ['insights', 'usage', 'learning', 'scout', 'skills', 'context', 'plugins'] },
   { group: 'Manage', tabs: ['git', 'runs', 'schedules', 'settings'] },
 ];
@@ -105,6 +112,8 @@ export const TAB_SHORTCUTS: Record<Tab, { label: string; aria: string }> = {
   // I for Improvement Scout — S and C are taken. On macOS, the platform this
   // ships to, ⌘⇧I is free: the inspector is ⌥⌘I there.
   scout:     { label: '⌘⇧I', aria: 'Meta+Shift+I Control+Shift+I' },
+  // B for Board. Free on macOS, and the digit row is full.
+  board:     { label: '⌘⇧B', aria: 'Meta+Shift+B Control+Shift+B' },
 };
 
 /**

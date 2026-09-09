@@ -69,3 +69,55 @@ button.nav-mark:hover { filter: brightness(1.08); }
 /* The command palette's Recent group and its row marks. The row rules
    themselves belong to index.css; only the mark's inline geometry lives here. */
 .command-item-copy .mark { margin-right: 6px; font-weight: 600; }
+
+/* ── halt and catch fire ─────────────────────────────────────────────── */
+/* The handle is quiet until it is armed. A control that is permanently red is
+   one the eye stops seeing, which is the opposite of what an emergency stop
+   needs — and this one kills every agent in the app on its second click. */
+.hdr-halt {
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.hdr-halt:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
+.hdr-halt.armed {
+  border-color: var(--bad);
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+/* Full width, under the header, above every view. A halted fleet is a fact
+   about the whole app rather than about whichever tab is on screen. */
+.halt-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-4);
+  padding: var(--card-pad);
+  border-bottom: 1px solid var(--bad);
+  background: var(--bad-soft);
+  color: var(--text);
+}
+.halt-banner-say { flex: 1; min-width: 0; }
+.halt-banner strong { display: block; color: var(--bad); font-size: var(--t-body); }
+.halt-banner p { margin-top: 3px; color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
+
+/* What was actually stopped, from the stop pass's own report — never a claim
+   this view assembled. A subsystem that failed to stop says so on its row. */
+.halt-what {
+  list-style: none;
+  margin: var(--s-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px var(--s-3);
+  color: var(--text-dim);
+  font-size: var(--t-micro);
+}
+.halt-n { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+.halt-note { color: var(--text-faint); }

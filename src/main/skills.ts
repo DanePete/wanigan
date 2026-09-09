@@ -636,6 +636,18 @@ export function refreshSkills(): void {
 
 /* ── sending ─────────────────────────────────────────────────────────── */
 
+
+/**
+ * Claude Code commands Wanigan may type that are not skills.
+ *
+ * Closed on purpose. Everything else routed through `skills:send` must name a
+ * skill this project actually has, so this channel cannot become a way to send
+ * arbitrary text to an agent. `/init` writes a CLAUDE.md from the repository
+ * and the operator reviews the diff before it lands, which is why it is the
+ * one entry here.
+ */
+const CLAUDE_BUILTIN_COMMANDS = new Set(['/init']);
+
 /**
  * Whether typing this skill into that session is something Wanigan has
  * verified. Routed by the session's FROZEN harness, never its profile id: GLM
@@ -661,6 +673,14 @@ export function skillSendDecision(session: Session | null | undefined, invoke: s
     return { ok: false, code: 'unsupported-harness', reason };
   }
   const wanted = typeof invoke === 'string' ? invoke.trim() : '';
+  // Claude Code's own built-ins are not SKILL.md files and never appear in the
+  // catalogue, so gating on the catalogue alone refused them. The list is
+  // closed and spelled out here rather than pattern-matched: a caller must not
+  // be able to type an arbitrary slash command into a session through this
+  // channel, which is the whole reason the gate exists. `/init` is the one the
+  // Context view's setup card offers, and it was refused with a message about
+  // a skill catalogue that has nothing to do with it.
+  if (CLAUDE_BUILTIN_COMMANDS.has(wanted)) return { ok: true, invoke: wanted };
   const catalogue = discoverSkills(session.projectId);
   const skill = wanted ? catalogue.skills.find((s) => s.invoke === wanted) : undefined;
   if (!skill) {

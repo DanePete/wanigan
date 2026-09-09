@@ -15,7 +15,7 @@ import AttentionQueue from '../components/AttentionQueue';
 import Timeline from '../components/Timeline';
 import SessionLearning from '../components/SessionLearning';
 import Pet from '../components/Pet';
-import { Explainer, Mark, Note, ago, num, usd } from '../components/bits';
+import { ConfirmNote, Explainer, Mark, Note, ago, num, usd } from '../components/bits';
 import type { Tone } from '../components/bits';
 import { useDialog } from '../components/useDialog';
 import { bindingMatches, modalOpen } from '../bindings';
@@ -241,6 +241,8 @@ export default function Sessions({
   // not, so the ninth-newest resumable conversation was reachable only by
   // settling, pinning or forgetting a newer one.
   const [activeShown, setActiveShown] = useState(8);
+  /** The Recent row whose Forget is awaiting confirmation, if any. */
+  const [forgetting, setForgetting] = useState<string | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
   const [teachSession, setTeachSession] = useState<Session | null>(null);
   const activeRef = useRef<string | null>(null);
@@ -382,8 +384,16 @@ export default function Sessions({
     // overwritten from local state on arrival, because main's copy was the one
     // nothing maintained; that is the wrong way round today.
     const offList = window.wanigan.on.sessions((list) => setSessions(list));
-    return () => { offUnread(); offList(); };
-  }, []);
+    // An agent that exits belongs in Recent immediately: main's pastSessions()
+    // excludes a conversation only while its execution is non-exited. Without
+    // this the list was refreshed on mount, create, resume, rename and worktree
+    // actions only, so a session that finished while the view was open showed
+    // 'exited 0' on its tab and appeared nowhere in Recent until the operator
+    // did something unrelated — and the phone, which polls every three seconds,
+    // showed a different set of sessions from the Mac beside it.
+    const offExit = window.wanigan.on.exit(() => { void refreshPast(); });
+    return () => { offUnread(); offList(); offExit(); };
+  }, [refreshPast]);
 
   const select = useCallback((id: string) => {
     onActiveChange(id, sessions.find((session) => session.id === id)?.projectId);
@@ -721,7 +731,7 @@ export default function Sessions({
                   .catch((e) => onError(msg(e)));
               };
               const renderPast = (p: PastSession) => (
-                <div key={p.id} className="past-row">
+                <div key={p.id} className={forgetting === p.id ? 'past-row past-row-confirming' : 'past-row'}>
                   <FocusBtn className="past-main" disabled={!p.live || resuming !== null}
                             title={p.live
                               ? `Resume this exact conversation in ${p.projectPath}`
@@ -764,12 +774,31 @@ export default function Sessions({
                             onClick={() => setPastFlag(p, 'settle', p.settledAt == null)}>
                     {p.settledAt != null ? '⤒' : '⤓'}
                   </FocusBtn>
-                  <FocusBtn className="past-x faint" title={`Forget this conversation and all ${p.continuationCount} saved launch record${p.continuationCount === 1 ? '' : 's'}`}
-                            onClick={() => window.wanigan.sessions.forget(p.id)
-                              .then((rows) => { setPast(rows); setPastErr(null); })
-                              .catch((e) => onError(msg(e)))}>
+                  {/* Forget destroys launch records and the exact-resume handle
+                      with no undo, which bits.tsx records as tier T2: an inline
+                      sentence, a verb button and Cancel. It sat 2px from settle
+                      and pin in a 12px row and fired on one click. */}
+                  <FocusBtn className="past-x faint"
+                            title={`Forget this conversation and all ${p.continuationCount} saved launch record${p.continuationCount === 1 ? '' : 's'}`}
+                            aria-label={`Forget ${p.title ?? p.projectName}`}
+                            onClick={() => setForgetting(p.id)}>
                     ×
                   </FocusBtn>
+                  {forgetting === p.id && (
+                    <ConfirmNote
+                      tone="error"
+                      what={`Forget “${p.title ?? p.projectName}” and its ${p.continuationCount} launch record${p.continuationCount === 1 ? '' : 's'}. The conversation can no longer be resumed exactly.`}
+                      verb="Forget"
+                      busy={false}
+                      onCancel={() => setForgetting(null)}
+                      onRun={() => {
+                        setForgetting(null);
+                        void window.wanigan.sessions.forget(p.id)
+                          .then((rows) => { setPast(rows); setPastErr(null); })
+                          .catch((e) => onError(msg(e)));
+                      }}
+                    />
+                  )}
                 </div>
               );
               return (
@@ -1069,14 +1098,14 @@ export default function Sessions({
                 </FocusBtn>
                 {active.status === 'running' && (
                   <FocusBtn className="faint session-status-action" style={{ fontSize: 'var(--t-small)', color: 'var(--warning)', borderRadius: 'var(--r-sm)' }}
-                            title="Stop the current turn. The session stays open — this is the Escape key Claude Code listens for. ⌘."
+                            title="Sends Escape to the agent — the key Claude Code and Codex both use to stop a turn. The session stays open. ⌘."
                             onClick={() => void window.wanigan.sessions.interrupt(active.id)}>
                     ⎋ interrupt
                   </FocusBtn>
                 )}
                 {active.status === 'running' && (
                   <FocusBtn className="faint session-status-action" style={{ fontSize: 'var(--t-small)', color: 'var(--bad)', borderRadius: 'var(--r-sm)' }}
-                            title="End the session entirely. The conversation goes with it."
+                            title="End the session. The conversation stays in Recent below and can be resumed exactly."
                             onClick={() => window.wanigan.sessions.kill(active.id)}>end session</FocusBtn>
                 )}
               </>
@@ -1292,8 +1321,16 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
   const launched = session.providerProfile ?? provider ?? null;
   const harness = session.harnessId ?? session.providerProfile?.harness
     ?? provider?.harnessId ?? session.providerId;
-  const tunable = harness !== 'codex' && session.status === 'running' &&
+  // Claude Code's harness, and only it. `/model` and `/effort` are Claude Code
+  // slash commands typed straight into the PTY; a generic-cli profile that
+  // declares a model launch field would have had them typed into a CLI that
+  // reads them as a prompt, under a sentence describing Claude's persistence.
+  const tunable = harness === 'claude-code' && session.status === 'running' &&
     (launched?.supports.model === true || launched?.supports.effort === true);
+  // Declared but not reachable: say so rather than showing nothing.
+  const declaresTuning = harness !== 'claude-code' && harness !== 'codex'
+    && session.status === 'running'
+    && (launched?.supports.model === true || launched?.supports.effort === true);
   // Codex has its own live controls.  Its TUI's /model picker changes model,
   // reasoning effort and Auto choices, and /plan changes the next turn's
   // collaboration mode.  Treating it as Claude made this whole useful row
@@ -1308,6 +1345,14 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
       )}
       {session.worktree && <WorktreeBar session={session} path={session.worktree} onRefresh={onRefresh} />}
       {tunable && <RunConfigBar session={session} provider={provider} />}
+      {/* Honest unsupported beats a control that types Claude's slash commands
+          into a CLI that never agreed to read them. */}
+      {declaresTuning && (
+        <div className="session-tuning-absent">
+          <Mark glyph="⊘" word="model and effort cannot be changed here" tone="quiet"
+                title={`This profile declares a model or effort field, but Wanigan has no verified way to change either on a running ${harness} session. Start a new session to change them.`} />
+        </div>
+      )}
       {codexControls && <CodexControlBar session={session} />}
     </div>
   );
@@ -1329,8 +1374,18 @@ function CodexControlBar({ session }: { session: Session }) {
                   padding: '8px 12px', borderTop: '1px solid var(--line-soft)',
                   background: 'color-mix(in srgb, var(--codex) 9%, var(--bg-soft))' }}>
       <span className="label" style={{ margin: 0, color: 'var(--codex)' }}>Codex</span>
+      {/* An absent model means no --model was passed, so the CLI's own default
+          runs and Wanigan does not read what that default is. 'Auto' named a
+          setting nobody chose and nobody observed; the run-config bar four
+          lines down already says this correctly. */}
       <span className="mono" style={{ fontSize: 'var(--t-micro)', color: 'var(--text-dim)' }}>
-        {session.model || 'Auto'} · effort {session.effort || 'Auto'}
+        {session.model
+          ? session.model
+          : <Mark glyph="◦" word="CLI default" tone="quiet" title="No model was passed at launch, so Codex used its own default. Wanigan does not read what that is." />}
+        {' · effort '}
+        {session.effort
+          ? session.effort
+          : <Mark glyph="◦" word="CLI default" tone="quiet" title="No effort was passed at launch, so Codex used its own default." />}
       </span>
       <button className="btn btn-primary" style={{ fontSize: 'var(--t-small)', padding: '4px 10px' }}
               title="Open Codex’s model picker: choose model, reasoning effort, or an Auto choice"
@@ -1343,7 +1398,7 @@ function CodexControlBar({ session }: { session: Session }) {
         Plan next task
       </button>
       <span className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.35, minWidth: 0 }}>
-        {sent ?? 'Use Model & effort for Auto / reasoning level. Plan mode affects the next task, not work already running.'}
+        {sent ?? 'Model & effort opens Codex’s own picker. Plan mode affects the next task, not work already running.'}
       </span>
     </div>
   );
@@ -1523,6 +1578,20 @@ function RunConfigBar({ session, provider }: { session: Session; provider?: Prov
       .catch(() => { /* exited under the click; the next session push removes this bar */ });
   }
 
+  /**
+   * The last effort this bar actually sent, so a repeat is not re-sent.
+   *
+   * Seeded from the session's recorded effort: on mount the level on screen is
+   * the level the agent is already at, and typing it again is a slash command
+   * and a carriage return the operator did not ask for.
+   */
+  const lastEffortSent = useRef<string | undefined>(session.effort ?? undefined);
+  function sendEffortIfChanged(value: string | undefined) {
+    if (!value || value === lastEffortSent.current) return;
+    lastEffortSent.current = value;
+    send('effort', value);
+  }
+
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
                   padding: '6px 12px', borderTop: '1px solid var(--line-soft)' }}>
@@ -1563,8 +1632,14 @@ function RunConfigBar({ session, provider }: { session: Session; provider?: Prov
             aria-label={`${effortField.label} level`}
             aria-valuetext={levels[effortIdx]}
             onChange={(e) => setEffortIdx(Number(e.target.value))}
-            onPointerUp={() => send('effort', levels[effortIdx])}
-            onKeyUp={(e) => { if (e.key.startsWith('Arrow')) send('effort', levels[effortIdx]); }}
+            // Sent only when the level actually changed. Every pointer-up used
+            // to type `/effort high⏎` into the agent — a tap on the thumb with
+            // no movement, or a tap on the track from an iPad, submitted a
+            // carriage return into whatever the TUI had half-typed. Home, End
+            // and PageUp moved the slider and sent nothing at all, so the
+            // keyboard check is on the value now rather than on the key name.
+            onPointerUp={() => sendEffortIfChanged(levels[effortIdx])}
+            onKeyUp={() => sendEffortIfChanged(levels[effortIdx])}
             style={{ width: 128, accentColor: 'var(--accent)' }}
           />
           {/* The word, not just the notch — a slider position is not a value.
@@ -1590,8 +1665,8 @@ function RunConfigBar({ session, provider }: { session: Session; provider?: Prov
              and it is the only place on screen that says it. Choosing the note
              would retire the instruction for every anthropic-backed session,
              because that backend's catalogue always carries a note. */
-          : <>Typed into the session as a slash command. /model also sets your default
-              for new sessions.{shown?.note ? ` ${shown.note}` : ''}</>}
+          : <>Typed into the session as a slash command, and recorded on this
+              session.{shown?.note ? ` ${shown.note}` : ''}</>}
       </span>
     </div>
   );

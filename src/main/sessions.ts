@@ -7,6 +7,7 @@ import {
 } from './providers';
 import { projectById } from './store';
 import { db } from './db';
+import { refuseIfHalted } from './halt';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,7 +20,7 @@ import * as accounts from './accounts';
 import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './hooks';
 import { finalizeSessionCheckpoints, forgetSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
 import { archiveSession } from './transcripts';
-import { createWorktree, removeWorktree, repoRootFor } from './worktrees';
+import { createWorktree, removeWorktree, repoRootFor, worktreeStatus } from './worktrees';
 import { trustFor } from './policy';
 import { slots } from './queue';
 import { budgetBreached } from './spend';
@@ -327,7 +328,17 @@ type ExactCodexRecovery = {
   claimKey: string;
 };
 
-type CreateSessionInternal = { exactCodexRecovery?: ExactCodexRecovery };
+type CreateSessionInternal = {
+  exactCodexRecovery?: ExactCodexRecovery;
+  /**
+   * An existing worktree this session must run in, instead of cutting a fresh
+   * one. Main-process callers only, and only Control uses it: a verification
+   * task launched into its own worktree was reading the base branch, not the
+   * implementation it exists to check. The path is validated as a live
+   * worktree of the project's repository before it is used.
+   */
+  useWorktree?: string;
+};
 
 function codexConversationKey(conversationId: string): string {
   return `codex:${conversationId}`;
@@ -912,6 +923,11 @@ function assertBudgetAllowsLaunch(projectId: string): void {
 }
 
 export async function createSession(opts: LaunchOptions, internal: CreateSessionInternal = {}): Promise<Session> {
+  // First, before provider probing, worktree creation or any injected file
+  // exists to roll back. Every attended session in the app comes through here —
+  // the renderer, the phone, an autopilot node, the MCP server — so one guard
+  // at this line is the whole of "a halted Wanigan starts no agent".
+  refuseIfHalted('start a session');
   const exactRecovery = internal.exactCodexRecovery ?? null;
   if (exactRecovery && (
     opts.providerId !== 'codex' || opts.resumeFrom || opts.extraArgs || opts.initialPrompt || opts.isolate
@@ -1007,6 +1023,19 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   // outside the repo so the agent never trips over it in its own file listings.
   let worktree: string | null = resumeTree.existing;
   let createdWorktree = false;
+  // A worktree handed in by a main-process caller is adopted rather than
+  // created, so the session runs in a tree that already holds work. It is
+  // checked against this project's repository first: an unchecked path here
+  // would be a way to run an agent anywhere.
+  if (!worktree && internal.useWorktree) {
+    const info = await worktreeStatus(internal.useWorktree);
+    if (!info) throw new Error('The worktree this task was given no longer exists.');
+    const projectRepo = await repoRootFor(project.path);
+    if (!projectRepo || fs.realpathSync.native(info.repoRoot) !== fs.realpathSync.native(projectRepo)) {
+      throw new Error('The worktree this task was given belongs to a different repository.');
+    }
+    worktree = info.path;
+  }
   if (!worktree && (opts.isolate || resumeTree.needsFreshIsolation)) {
     try {
       const wt = await createWorktree(project.path, project.name, id0);
@@ -2054,7 +2083,12 @@ export function setSessionTuning(sessionId: unknown, field: unknown, value: unkn
   if (field === 'effort' && !(EFFORT_LEVELS as readonly string[]).includes(value)) return false;
   if (field === 'model' && !MODEL_ID.test(value)) return false;
   const s = sessions.get(sessionId);
-  if (!s || s.meta.status !== 'running' || s.meta.harnessId === 'codex') return false;
+  // `/model` and `/effort` are Claude Code slash commands. Refusing only Codex
+  // let every other harness — a generic-cli pack profile that happens to
+  // declare a model field — be sent them, where they arrive as a prompt with a
+  // carriage return after it. The renderer gates on this too; main is the gate
+  // that has to hold, because the renderer is not trusted to be the only one.
+  if (!s || s.meta.status !== 'running' || s.meta.harnessId !== 'claude-code') return false;
   if (!writeSession(sessionId, `/${field} ${value}\r`)) return false;
   s.meta[field] = value;
   // The command is already in the terminal; a history-row hiccup must not
@@ -2133,12 +2167,22 @@ export function interruptSession(sessionId: string, force = false) {
   } catch { return false; }
 }
 
-export function killSession(sessionId: string) {
+/**
+ * Signal a session to stop. Returns whether there was a live process to signal.
+ *
+ * The boolean is the point: this used to return void behind an IPC handler that
+ * answered `true` unconditionally, so Fleet reported "platform was ended" for a
+ * session that had already exited and could never render the "had no live
+ * process to stop" sentence it carries for that case. Stopping is also not
+ * ending — the exit arrives on its own — so the caller says "stop sent" and
+ * waits for `session:exit` to say the rest.
+ */
+export function killSession(sessionId: string): boolean {
   const s = sessions.get(sessionId);
-  if (!s) return;
-  if (s.meta.status !== 'exited') {
-    try { s.proc.kill(); } catch { /* already gone */ }
-  }
+  if (!s) return false;
+  if (s.meta.status === 'exited') return false;
+  try { s.proc.kill(); } catch { /* already gone */ }
+  return true;
 }
 
 /** Removes an exited session from the list. Refuses while it is still running. */
@@ -2192,10 +2236,13 @@ export function bumpUnread(sessionId: string) {
 }
 
 /** Kill everything on quit so no orphaned agent keeps running headless. */
-export function killAll() {
+/** Signal every live PTY, and report how many were still running. */
+export function killAll(): number {
   const now = Date.now();
+  let killed = 0;
   for (const s of sessions.values()) {
     if (s.meta.status !== 'exited') {
+      killed++;
       try { s.proc.kill(); } catch { /* noop */ }
       try {
         db().prepare('UPDATE session_log SET ended_at = ?, exit_code = ? WHERE id = ? AND ended_at IS NULL')
@@ -2203,6 +2250,7 @@ export function killAll() {
       } catch { /* db already closed */ }
     }
   }
+  return killed;
 }
 
 /**

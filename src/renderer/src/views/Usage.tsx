@@ -174,8 +174,13 @@ function LimitCard({ limits, now }: { limits: AccountLimits; now: number }) {
  * a fourteen-pixel column with a mouse — so the same figures are laid out as a
  * table underneath, and the bars carry a name for a reader who never sees them.
  */
-function DailyChart({ points, accountLabel }: { points: ConsumptionPoint[]; accountLabel: string }) {
-  const mine = points.filter((p) => p.accountLabel === accountLabel);
+function DailyChart({ points, account }: {
+  points: ConsumptionPoint[];
+  account: { id: string | null; label: string; harness: string | null };
+}) {
+  const accountLabel = account.label;
+  // Matched on the account's id where it has one: the label is not an identity.
+  const mine = points.filter((p) => (account.id ? p.accountId === account.id : p.accountLabel === account.label));
   const days = [...new Set(mine.map((p) => p.day))].sort();
   const models = [...new Set(mine.map((p) => p.model))].sort();
   const byDay = new Map<string, Map<string, number>>();
@@ -284,7 +289,10 @@ function ConsumptionTable({ rows }: { rows: ModelConsumption[] }) {
         <tbody>
           {rows.map((row) => (
             <tr key={`${row.accountId ?? 'none'}:${row.model}`} style={{ borderTop: '1px solid var(--line-soft)' }}>
-              <td style={{ padding: '6px 10px' }}>{row.accountLabel}</td>
+              <td style={{ padding: '6px 10px' }}>
+                {row.accountLabel}
+                {row.harness && <span className="faint u-row-harness">{harnessLabel(row.harness)}</span>}
+              </td>
               <td className="mono" style={{ padding: '6px 10px' }}>{row.model}</td>
               <td className="mono" style={{ padding: '6px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt.format(row.requests)}</td>
               <td className="mono" style={{ padding: '6px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{compact(row.inTokens)}</td>
@@ -368,11 +376,32 @@ export default function Usage() {
     return out;
   }, [snap]);
 
-  const accountLabels = useMemo(
-    () => [...new Set([...(snap?.limits ?? []).map((l) => l.accountLabel),
-                       ...(snap?.consumption ?? []).map((c) => c.accountLabel)])],
-    [snap],
-  );
+  /**
+   * One entry per account, keyed by id rather than by label.
+   *
+   * `accounts.seed` names the first account of every harness 'Personal', so a
+   * machine with Claude Code and Codex has two of them by default — and
+   * grouping by label summed both agents' tokens into one chart and produced
+   * two table rows nothing on screen could tell apart, while the limit cards
+   * above distinguished the same pair by harness pill.
+   */
+  const accountSeries = useMemo(() => {
+    const seen = new Map<string, { id: string | null; label: string; harness: string | null }>();
+    for (const l of snap?.limits ?? []) {
+      seen.set(l.accountId ?? `label:${l.accountLabel}`, { id: l.accountId, label: l.accountLabel, harness: l.harness });
+    }
+    for (const c of snap?.consumption ?? []) {
+      const key = c.accountId ?? `label:${c.accountLabel}`;
+      if (!seen.has(key)) seen.set(key, { id: c.accountId, label: c.accountLabel, harness: c.harness });
+    }
+    return [...seen.values()];
+  }, [snap]);
+  /** Only worth naming the agent when two accounts share a label. */
+  const ambiguousLabels = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const a of accountSeries) counts.set(a.label, (counts.get(a.label) ?? 0) + 1);
+    return new Set([...counts.entries()].filter(([, n]) => n > 1).map(([label]) => label));
+  }, [accountSeries]);
 
   return (
     <div className="pane">
@@ -472,12 +501,16 @@ export default function Usage() {
         ) : (
           <>
             <div style={{ display: 'grid', gap: 20, marginTop: 8 }}>
-              {accountLabels
-                .filter((label) => (snap?.daily ?? []).some((point) => point.accountLabel === label))
-                .map((label) => (
-                  <div key={label}>
-                    <div style={{ fontSize: 'var(--t-small)', fontWeight: 600, marginBottom: 6 }}>{label}</div>
-                    <DailyChart points={snap?.daily ?? []} accountLabel={label} />
+              {accountSeries
+                .filter((a) => (snap?.daily ?? []).some((point) => (
+                  a.id ? point.accountId === a.id : point.accountLabel === a.label)))
+                .map((a) => (
+                  <div key={a.id ?? `label:${a.label}`}>
+                    <div style={{ fontSize: 'var(--t-small)', fontWeight: 600, marginBottom: 6 }}>
+                      {a.label}
+                      {ambiguousLabels.has(a.label) && a.harness ? ` · ${harnessLabel(a.harness)}` : ''}
+                    </div>
+                    <DailyChart points={snap?.daily ?? []} account={a} />
                   </div>
                 ))}
             </div>

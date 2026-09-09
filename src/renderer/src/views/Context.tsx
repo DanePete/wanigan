@@ -1,5 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
-import type { KnowledgeProjection, LearningOverview, LearningSettings, Project } from '@shared/types';
+import type {
+  CodexAgentsChain, KnowledgeProjection, LearningOverview, LearningSettings, Project,
+} from '@shared/types';
 import { Note, Section, Stat, ago, num, usd } from '../components/bits';
 
 /**
@@ -363,6 +365,8 @@ type Data = {
   memory: MemoryState | null;
   config: ProjectConfig | null;
   agents: AgentsMd | null;
+  /** The Codex compiler's AGENTS.md targets. Null when the read failed — the block hides. */
+  codexAgents: CodexAgentsChain | null;
   budget: ContextBudget | null;
   /** Applied knowledge projections keyed by targetPath. Empty when the read failed — the badge simply does not show. */
   managed: Map<string, KnowledgeProjection>;
@@ -434,11 +438,16 @@ export default function Context({ projectId, projects, projectsRead, onReloadPro
     // The three learning reads are additive colour on this view, not its
     // subject, so they degrade silently: a failure hides the badge or section
     // instead of raising a banner.
-    const [ri, rm, rc, ra, rp, rls, rlo] = await Promise.allSettled([
+    const [ri, rm, rc, ra, rcx, rp, rls, rlo] = await Promise.allSettled([
       window.wanigan.context.instructions(path),
       window.wanigan.context.memory(path),
       window.wanigan.context.config(path),
       window.wanigan.context.agentsMd(path),
+      // The Codex half of this section. Degrades silently like the learning
+      // reads below: it is additional colour on a view whose subject is the
+      // Claude Code loader, and a failure should hide it rather than raise a
+      // banner about a harness the operator may not even use here.
+      window.wanigan.context.codexAgents(pid ?? null, path),
       window.wanigan.learning.projections({ status: 'applied', limit: 500 }),
       window.wanigan.learning.settings(),
       window.wanigan.learning.overview(pid ?? null),
@@ -452,6 +461,7 @@ export default function Context({ projectId, projects, projectsRead, onReloadPro
     if (rc.status === 'rejected') errors.config = msg(rc.reason);
     const agents = ra.status === 'fulfilled' ? (ra.value as AgentsMd) : null;
     if (ra.status === 'rejected') errors.agents = msg(ra.reason);
+    const codexAgents = rcx.status === 'fulfilled' ? (rcx.value as CodexAgentsChain) : null;
 
     const applied = rp.status === 'fulfilled' ? (rp.value as KnowledgeProjection[]) : [];
     const managed = new Map(applied.map((p) => [p.targetPath, p] as const));
@@ -482,7 +492,7 @@ export default function Context({ projectId, projects, projectsRead, onReloadPro
       }
     }
 
-    setD({ chain, memory, config, agents, budget, managed, learn, errors });
+    setD({ chain, memory, config, agents, codexAgents, budget, managed, learn, errors });
     setBusy(false);
   }, [path, pid]);
 
@@ -520,10 +530,15 @@ export default function Context({ projectId, projects, projectsRead, onReloadPro
     if (!project) return;
     try {
       const list = await window.wanigan.sessions.list();
-      const s = list.find((x) => x.projectId === project.id && x.status === 'running');
+      // The session must be on the Claude Code harness: /init is its command,
+      // and skills:send refuses every other harness by name. Picking the first
+      // running session regardless meant a project whose only live agent was
+      // Codex failed with a message about skill invocation forms.
+      const s = list.find((x) => x.projectId === project.id && x.status === 'running'
+        && (x.harnessId ?? x.providerProfile?.harness) === 'claude-code');
       if (!s) {
         setInitMsg({ tone: 'info', text:
-          `No session is running in ${project.name}. Open Sessions, start one there with ⌘T, then come back — this button types /init into a live session, it does not start one.` });
+          `No Claude Code session is running in ${project.name}. /init is Claude Code's own command, so it needs one: open Sessions, start one with ⌘T, then come back — this button types /init into a live session, it does not start one.` });
         return;
       }
       await window.wanigan.skills.send(s.id, '/init');
@@ -727,6 +742,13 @@ export default function Context({ projectId, projects, projectsRead, onReloadPro
               {e.agents
                 ? <PanelError channel="context:agentsMd" detail={e.agents} onRetry={() => load(true)} />
                 : d.agents && <AgentsPanel a={d.agents} managed={d.managed} root={project.path} />}
+              {/* The other harness. This section used to end at "Codex reads
+                  AGENTS.md natively", which is true and leaves the operator
+                  with no way to see WHICH files Wanigan's own Codex compiler
+                  wrote, or the one thing it can detect and nothing could show:
+                  that it wrote a personal instruction into a directory this
+                  account's Codex does not read. */}
+              {d.codexAgents && <CodexAgentsPanel c={d.codexAgents} />}
             </Section>
           )}
 
@@ -791,9 +813,17 @@ function Head({ project, projects, onPick, onRescan, busy, strayFrom, onFollow }
       <div>
         <h1>Context</h1>
         <p className="dim">
+          {/* Whose loader this is, said once at the top. `chain.harness` is
+              'claude-code' and always has been — instructions.ts says so in its
+              header — so a project whose sessions are all Codex was reading a
+              prediction about a launch that never happens there, under a
+              heading that claimed it was about every session. GLM and DeepSeek
+              run the same harness, so they are named too. */}
           {project
-            ? <>What a session launched in <span className="mono">{project.path}</span> is told before you type anything.</>
-            : <>What a session is told before you type anything.</>}
+            ? <>What a <strong>Claude Code</strong> session launched in <span className="mono">{project.path}</span> is
+                told before you type anything. Claude, GLM and DeepSeek profiles all load this way;
+                Codex reads its own AGENTS.md natively and is not predicted here.</>
+            : <>What a Claude Code session is told before you type anything.</>}
         </p>
         {/* A pick made here is this view's alone. Saying so is the difference
             between a scope control and a control that looks broken because the
@@ -1157,6 +1187,55 @@ function RulesPanel({ rules, root, managed }: {
 
 /* ── 3 · AGENTS.md ───────────────────────────────────────────────────── */
 
+/**
+ * What Wanigan's Codex compiler writes, and whether Codex will read it.
+ *
+ * Deliberately not a prediction of Codex's load order — `agentsChain()` says so
+ * in as many words, and this heading matches: these are the files Wanigan
+ * writes to, not the files Codex loads. Wanigan never consulted Codex's loader,
+ * and a list captioned "what Codex reads" would be a claim it cannot support.
+ *
+ * The note is the reason this panel exists. When the compiler's personal target
+ * and this account's Codex home disagree, Wanigan has written an instruction to
+ * a file nothing will ever read — a failure whose only other symptom is an
+ * agent quietly ignoring a rule you are sure you set.
+ */
+function CodexAgentsPanel({ c }: { c: CodexAgentsChain }) {
+  const written = c.files.filter((f) => f.exists);
+  const mismatch = c.note.includes('does not read');
+  return (
+    <div className="ctx-codex">
+      <h3 className="ctx-sub">Codex — the AGENTS.md files Wanigan writes to</h3>
+      {mismatch && (
+        <Callout level="critical" title="Wanigan is writing personal Codex instructions somewhere Codex will not read them.">
+          {c.note}
+        </Callout>
+      )}
+      {written.length === 0
+        ? (
+          <p className="dim ctx-fine">
+            None of them exist yet. Wanigan writes one only when a learned instruction is approved
+            and compiled for Codex, so an empty list here means nothing has been projected — not
+            that Codex is unconfigured.
+          </p>
+        )
+        : (
+          <ul className="ctx-codex-list">
+            {written.map((file) => (
+              <li key={file.path} className="ctx-codex-row">
+                <span className="ctx-codex-scope">{file.scope}</span>
+                <code className="ctx-codex-path">{file.path}</code>
+                <span className="ctx-codex-bytes">{file.bytes === null ? '' : `${file.bytes} B`}</span>
+                {file.managed && <ManagedChip />}
+              </li>
+            ))}
+          </ul>
+        )}
+      {!mismatch && <p className="faint ctx-fine">{c.note}</p>}
+    </div>
+  );
+}
+
 function AgentsPanel({ a, managed, root }: {
   a: AgentsMd; managed: Map<string, KnowledgeProjection>; root: string;
 }) {
@@ -1176,9 +1255,14 @@ function AgentsPanel({ a, managed, root }: {
       {isManaged && (
         <div style={{ marginBottom: 8 }}><ManagedChip /></div>
       )}
+      {/* Scoped, because it is only true of one harness. Codex reads AGENTS.md
+          on its own, and instructions.ts rewrote its own note to say so
+          precisely because the unscoped sentence was false for every Codex
+          session in the project. */}
       <Callout level="critical" title="Claude Code will NOT read this project’s AGENTS.md.">
-        Nothing imports it and no CLAUDE.md is a symlink to it, so not one line of it reaches the agent.
-        Whatever it says about this repo is being ignored on every single session.
+        Nothing imports it and no CLAUDE.md is a symlink to it, so not one line of it reaches a
+        Claude Code session. Codex reads AGENTS.md natively, so this is about Claude Code, GLM and
+        DeepSeek sessions only.
       </Callout>
       <h3 className="ctx-sub">Two fixes, either one is enough</h3>
       <ol style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 9 }}>

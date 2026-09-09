@@ -214,6 +214,8 @@ export async function runSmoke(): Promise<void> {
     await runContextMeterSmoke(check, say);
     const { runPaletteSmoke } = await import('./smoke10');
     await runPaletteSmoke(check, say);
+    const { runClaudeMeterSmoke } = await import('./smoke11');
+    await runClaudeMeterSmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -232,8 +234,8 @@ export async function runSmoke(): Promise<void> {
   // and 660 was still here at 1148, which would have let two thirds of the
   // suite vanish and still reported a pass. The margin is the same ~25 the
   // 1125/1148 pair carried; widening it is how a floor goes stale again.
-  // Observed 1291 when this was last raised.
-  const MIN_ASSERTIONS = 1268;
+  // Observed 1318 when this was last raised (2026-09-07, the audit fix pass).
+  const MIN_ASSERTIONS = 1293;
   const ran = pass + fail;
   check(ran >= MIN_ASSERTIONS,
     `at least ${MIN_ASSERTIONS} assertions ran, so a suite that stopped early cannot pass by running almost nothing`,

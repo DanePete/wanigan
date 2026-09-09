@@ -26,6 +26,8 @@ type ScoutRun = {
   finishedAt: number | null;
   suggestionCount: number;
   error: string | null;
+  /** Why a run was blocked. Main records it here with `error` left null. */
+  detail: string | null;
 };
 
 type ScoutOverview = {
@@ -180,6 +182,11 @@ function normalizeRun(value: unknown): ScoutRun {
     finishedAt: timestamp(raw.finishedAt ?? raw.finished_at),
     suggestionCount: numeric(raw.suggestionCount ?? raw.suggestions, 0) ?? 0,
     error: typeof raw.error === 'string' && raw.error ? raw.error : null,
+    // Every blocked outcome carries its reason here, not in `error`: main calls
+    // finish('blocked', { detail: … }) with error null. Dropping it left the
+    // card printing the bare word 'blocked' for a scan whose reason was
+    // recorded, and which the phone has been showing all along.
+    detail: typeof raw.detail === 'string' && raw.detail ? raw.detail : null,
   };
 }
 
@@ -495,6 +502,13 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
   }, [onOpenGoal]);
 
   const statuses = useMemo(() => ['all', ...new Set(suggestions.map((item) => item.status))], [suggestions]);
+  // Reviewing the last 'new' proposal removes 'new' from the options above. A
+  // controlled select with a value that matches no option displays the first
+  // one, so the control read 'All statuses' while the state still filtered to
+  // 'new' and the queue said nothing matched — with no filter visibly set.
+  useEffect(() => {
+    if (!statuses.includes(status)) setStatus('all');
+  }, [statuses, status]);
   const filteredSuggestions = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     const matches = suggestions.filter((item) => {
@@ -643,9 +657,11 @@ export default function ImprovementScout({ projects, onOpenGoal }: {
                 <span className={`scout-run-outcome ${overview.latestRun.status}`}>
                   <span aria-hidden="true">{RUN_GLYPH[overview.latestRun.status]}</span>{' '}
                   {overview.latestRun.status === 'completed'
-                    ? `completed · ${overview.latestRun.suggestionCount} ${overview.latestRun.suggestionCount === 1 ? 'proposal' : 'proposals'}`
+                    ? overview.latestRun.networkAllowed
+                      ? `online · ${overview.latestRun.suggestionCount} ${overview.latestRun.suggestionCount === 1 ? 'proposal' : 'proposals'}`
+                      : 'local pass · no source was contacted'
                     : overview.latestRun.status === 'running' ? 'still running'
-                    : overview.latestRun.error ?? overview.latestRun.status}
+                    : overview.latestRun.detail ?? overview.latestRun.error ?? overview.latestRun.status}
                 </span>
               )}</small></article>
             <article className="card scout-stat"><span className="label">Next review</span><strong className="scout-date">{settings.weeklyEnabled && settings.enabled && settings.networkEnabled ? formatWhen(overview.nextRunAt) : 'not scheduled'}</strong><small>{settings.weeklyEnabled ? overview.cadenceLabel : 'enable a weekly watch below'}</small></article>

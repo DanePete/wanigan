@@ -3,7 +3,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { theme } from '../settings';
 import { ensureMobileToken, pairingCodeValid } from './secrets';
 import { MOBILE_SERVICE_WORKER_PATH, mobileServiceWorker } from './page/sw';
-import { dashboardHtml, dashboardIcon, dashboardManifest } from './page';
+import { MOBILE_ICON_PNG_PATH, dashboardHtml, dashboardIcon, dashboardIconPng, dashboardManifest } from './page';
 
 /**
  * The one gate every mobile API request passes through, and the only module
@@ -42,16 +42,35 @@ export type MobileApiRoute = {
    * operator's remote-action budget by guessing pairing codes.
    */
   unauthenticated?: boolean;
+  /**
+   * Which POST budget this route spends, when it is a POST at all.
+   *
+   * 'action' is the default and the one that matters: those routes start real
+   * local processes or spend money, and twenty a minute is a deliberate ceiling
+   * on what a paired device may do.
+   *
+   * 'housekeeping' is for a write that manages the connection itself rather
+   * than the fleet — registering this device's push subscription, or dropping
+   * it. The page re-registers on every launch, so charging that to the action
+   * budget meant an operator who opened the app a few times could no longer
+   * interrupt a run: the device would have spent its own ability to act on
+   * saying hello. It is the same reasoning that already gives /api/pair its own
+   * window, and the same shape of bug — one caller quietly eating another's.
+   */
+  budget?: 'action' | 'housekeeping';
   handler: (req: http.IncomingMessage, res: http.ServerResponse, url: URL) => Promise<void> | void;
 };
 
 const routes = new Map<string, Map<string, MobileApiRoute>>();
 
-// Two sliding one-minute windows. Remote actions start real local processes,
-// and a pairing attempt is a guess at a ten-character code; they are capped
-// separately so eight guesses cannot eat the operator's twenty actions.
+// Three sliding one-minute windows, capped separately so that no one kind of
+// write can eat another's budget. Remote actions start real local processes; a
+// pairing attempt is a guess at a ten-character code; and connection
+// housekeeping is a paired device registering or dropping its own push
+// subscription, which it does on every launch and which starts nothing.
 const actionTimes: number[] = [];
 const pairingAttempts: number[] = [];
+const housekeepingWrites: number[] = [];
 
 /** Add one route to the table. Registering the same path and verb twice is a bug. */
 export function registerApiRoute(route: MobileApiRoute): void {
@@ -162,6 +181,31 @@ export function send(
   res.end(body);
 }
 
+/**
+ * The same headers and the same policy, for bytes that are not text.
+ *
+ * Separate from send() rather than widening it, because the two differ in the
+ * one place that matters: a string body is measured with byteLength and a
+ * Buffer is already the bytes. A single function taking `string | Buffer` would
+ * have to branch on that, and the branch that gets it wrong sends a
+ * content-length that disagrees with the body.
+ */
+export function sendBytes(
+  res: http.ServerResponse,
+  status: number,
+  contentType: string,
+  body: Buffer,
+  extra: Record<string, string> = {},
+): void {
+  res.writeHead(status, {
+    ...securityHeaders(),
+    'content-type': contentType,
+    'content-length': String(body.length),
+    ...extra,
+  });
+  res.end(body);
+}
+
 export function json(res: http.ServerResponse, status: number, body: unknown, extra?: Record<string, string>): void {
   send(res, status, 'application/json; charset=utf-8', JSON.stringify(body), undefined, extra);
 }
@@ -242,6 +286,15 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse): Pr
     send(res, 200, 'image/svg+xml; charset=utf-8', dashboardIcon());
     return;
   }
+  // The raster the Home Screen and every push notification actually use. Safari
+  // does not accept an SVG as a touch icon, and iOS draws the installed app's
+  // icon on a notification rather than the one the notification asks for — so
+  // without this file every alert arrives under a thumbnail of the page.
+  if (url.pathname === MOBILE_ICON_PNG_PATH) {
+    if (req.method !== 'GET') { json(res, 405, { error: 'Method not allowed.' }, { allow: 'GET' }); return; }
+    sendBytes(res, 200, 'image/png', dashboardIconPng());
+    return;
+  }
 
   const byMethod = routes.get(url.pathname);
   if (!byMethod) { json(res, 404, { error: 'Not found.' }); return; }
@@ -279,14 +332,19 @@ async function dispatch(req: http.IncomingMessage, res: http.ServerResponse): Pr
   // correctly within seconds.
   if (req.method === 'POST') {
     const credentialled = !route.unauthenticated;
-    const allowed = credentialled
-      ? windowAllows(actionTimes, 20)
-      : windowAllows(pairingAttempts, 8);
+    const housekeeping = credentialled && route.budget === 'housekeeping';
+    const allowed = !credentialled
+      ? windowAllows(pairingAttempts, 8)
+      : housekeeping
+        ? windowAllows(housekeepingWrites, 12)
+        : windowAllows(actionTimes, 20);
     if (!allowed) {
       json(res, 429, {
-        error: credentialled
-          ? 'Too many remote actions. Wait a minute and try again.'
-          : 'Too many pairing attempts. Wait a minute and try again.',
+        error: !credentialled
+          ? 'Too many pairing attempts. Wait a minute and try again.'
+          : housekeeping
+            ? 'Too many subscription changes. Wait a minute and try again.'
+            : 'Too many remote actions. Wait a minute and try again.',
       });
       return;
     }

@@ -206,8 +206,42 @@ const STUB = `
   const ctxAgents = { present: true, imported: true, symlinked: false,
                       note: 'AGENTS.md is imported by CLAUDE.md, so it reaches context.' };
   const ctxBudget = { files: [], totalTokens: 0, totalCostUsd: 0, model: null, note: null };
+  // Insights' two newest cards are the same trap as Context and Fleet above:
+  // both render nothing at all when their record reads zero, and anything()
+  // reads zero. Without these keys a sweep photographs an Insights page with a
+  // burn rate and a transcript meter silently missing and calls it green.
+  //
+  // The transcript figures are shaped like the real thing rather than round:
+  // most turns from an entrypoint Wanigan never launched (which is the whole
+  // point of the card), a cache-read share that dominates the token count, and
+  // one model with no published rate so the unpriced warning is on screen where
+  // it can be reviewed.
+  const transcriptMeter = {
+    days: 30,
+    coverage: { requests: 121254, outsideWanigan: 92318, firstAt: now - 240 * 86400000,
+                lastAt: now - 600000, files: 5136, filesBehind: 0 },
+    totals: { requests: 121254, inTokens: 5036976, outTokens: 115180069,
+              cacheRead: 26572099438, cacheWrite: 715787384, costUsd: 486.31,
+              unpricedRequests: 2468 },
+    byDay: [],
+    unpricedModels: [{ model: 'claude-fable-5-1', requests: 2468 }],
+    telemetryUsd: 61.04, telemetryRequests: 4651, filesBehind: 0,
+  };
+  const burn = [
+    { kind: 'session', scope: null, accountLabel: 'Personal', usedPercent: 42,
+      resetsAtText: 'in 2h 51m', resetsAt: now + 2.85 * 3600000,
+      windowStartMs: now - 2.15 * 3600000, spansMultipleAccounts: false,
+      burn: { windowStartMs: now - 2.15 * 3600000, elapsedMinutes: 129, tokens: 4180000,
+              requests: 96, tokensPerMinute: 32403, projectedTokens: 9720000 } },
+    { kind: 'week', scope: 'Opus', accountLabel: 'Personal', usedPercent: 79,
+      resetsAtText: 'Sep 12 at 8:59pm', resetsAt: now + 4 * 86400000,
+      windowStartMs: now - 3 * 86400000, spansMultipleAccounts: false,
+      burn: { windowStartMs: now - 3 * 86400000, elapsedMinutes: 4320, tokens: 51200000,
+              requests: 1180, tokensPerMinute: 11851, projectedTokens: 119500000 } },
+  ];
   const FIXED = {
     'usage.snapshot': usageSnapshot,
+    'spend.transcripts': transcriptMeter, 'usage.burn': burn,
     'context.instructions': ctxInstructions, 'context.memory': ctxMemory,
     'context.config': ctxConfig, 'context.agentsMd': ctxAgents, 'context.budget': ctxBudget,
     'usage.many': usageMany, 'usage.throughput': throughput,

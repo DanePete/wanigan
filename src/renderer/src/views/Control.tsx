@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ControlEvent, DocketAutopilot, DocketDetail, DocketNode, DocketNodeKind, DocketNodeStatus, DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
 } from '@shared/types';
@@ -147,7 +147,12 @@ export default function Control({ projects, providers, onOpenSession }: {
   const [tasks, setTasks] = useState<McpTaskRecord[]>([]);
   const [receipts, setReceipts] = useState<GoalResumeReceipt[]>([]);
   const [traces, setTraces] = useState<GoalTraceEvent[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  // Two failures, two states. One `error` served both, so a refused budget
+  // ("Budget must be a number…") rendered the goals card as "Could not read
+  // your goals" with a Try again that reloaded a list which had read fine.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const error = actionError ?? loadError;
   /**
    * Whether control:list has answered at all.
    *
@@ -222,26 +227,53 @@ export default function Control({ projects, providers, onOpenSession }: {
     return [...projects, ...picked.filter((project) => !seen.has(project.id))];
   }, [projects, picked]);
 
+  // `selected` is read through a ref rather than a dependency: as a dependency
+  // every selection changed load's identity, the mount effect below fired it a
+  // second time, and each click cost fourteen IPC calls instead of seven.
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selected;
+  // Monotonic, so a slow answer for goal A cannot land after the operator has
+  // already clicked goal B and set the page back to A.
+  const loadSeq = useRef(0);
   const load = useCallback(async (focus?: string | null) => {
+    const seq = ++loadSeq.current;
     try {
       const [next, nextOutcomes, nextEvents] = await Promise.all([
         window.wanigan.control.list(), window.wanigan.control.outcomes(), window.wanigan.control.events('all'),
       ]);
+      if (seq !== loadSeq.current) return;
       setDockets(next); setOutcomes(nextOutcomes); setEvents(nextEvents);
       const linked = goalFromHash();
-      const id = focus ?? (linked && next.some((docket) => docket.id === linked) ? linked : null) ?? selected ?? next[0]?.id ?? null;
+      const id = focus ?? (linked && next.some((docket) => docket.id === linked) ? linked : null) ?? selectedRef.current ?? next[0]?.id ?? null;
       if (id && next.some((docket) => docket.id === id)) {
         const [full, mcp, nextReceipts, nextTraces] = await Promise.all([
-          window.wanigan.control.get(id), window.wanigan.control.mcpTasks(id), window.wanigan.control.resumeReceipts(id), window.wanigan.control.traces(id, 8),
+          window.wanigan.control.get(id), window.wanigan.control.mcpTasks(id), window.wanigan.control.resumeReceipts(id), window.wanigan.control.traces(id, 5),
         ]);
+        if (seq !== loadSeq.current) return;
         setSelected(id); setDetail(full); setTasks(mcp); setReceipts(nextReceipts); setTraces(nextTraces);
       } else { setSelected(null); setDetail(null); setTasks([]); setReceipts([]); setTraces([]); }
-      setError(null);
-    } catch (e) { setError(errText(e)); }
-    finally { setReady(true); }
-  }, [selected]);
+      setLoadError(null);
+    } catch (e) { if (seq === loadSeq.current) setLoadError(errText(e)); }
+    finally { if (seq === loadSeq.current) setReady(true); }
+  }, []);
 
   useEffect(() => { void load(); }, [load]);
+  // The board is driven by main: autopilot queues and launches tasks on a
+  // 10-second sweep, and sessions exit on their own. Without these the page sat
+  // frozen at the last click while tasks started, spent and finished behind it.
+  useEffect(() => {
+    let timer: number | null = null;
+    const nudge = () => {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => { timer = null; void load(); }, 400);
+    };
+    const offQueue = window.wanigan.on.queueChanged(nudge);
+    const offExit = window.wanigan.on.exit(nudge);
+    return () => {
+      if (timer !== null) window.clearTimeout(timer);
+      offQueue(); offExit();
+    };
+  }, [load]);
   useEffect(() => {
     const onHash = () => { const id = goalFromHash(); if (id) void load(id); };
     window.addEventListener('hashchange', onHash);
@@ -251,9 +283,9 @@ export default function Control({ projects, providers, onOpenSession }: {
   useEffect(() => { if (!providerId && enabledProviders[0]) setProviderId(enabledProviders[0].id); }, [enabledProviders, providerId]);
 
   const act = async (key: string, work: () => Promise<void>, message?: string) => {
-    setBusy(key); setError(null); setNotice(null);
+    setBusy(key); setActionError(null); setNotice(null);
     try { await work(); if (message) setNotice(message); }
-    catch (e) { setError(errText(e)); }
+    catch (e) { setActionError(errText(e)); }
     finally { setBusy(null); }
   };
 
@@ -449,7 +481,7 @@ export default function Control({ projects, providers, onOpenSession }: {
       <div className="control-example"><span className="label">Example</span><p><strong>Title:</strong> “Prevent duplicate checkout charge”</p><p><strong>Objective:</strong> “Make checkout retries idempotent without changing successful order flow.”</p><p><strong>Acceptance:</strong> “A repeated payment callback is ignored; the existing checkout suite passes; the diff has a review decision.”</p><p className="faint">Start Plan with your preferred provider, claim the payment handler during Implement, run the configured review gate in Verify, then approve or request changes in Review.</p></div>
       </div>
     </Explainer>
-    {error && <Note tone="error">{error}</Note>}
+    {error && <Note tone="error" onDismiss={actionError ? () => setActionError(null) : undefined}>{error}</Note>}
     {notice && <Note tone="ok">{notice}</Note>}
 
     <section className="control-grid">
@@ -505,11 +537,11 @@ export default function Control({ projects, providers, onOpenSession }: {
           </div>
         )}
         {!ready && <Reading what="your goals" />}
-        {ready && error !== null && dockets.length === 0 && (
-          <EmptyState posture="could-not-read" title="Could not read your goals" cue={error}
+        {ready && loadError !== null && dockets.length === 0 && (
+          <EmptyState posture="could-not-read" title="Could not read your goals" cue={loadError}
                       action={<button className="btn" type="button" onClick={() => void load()}>Try again</button>} />
         )}
-        {ready && error === null && dockets.length === 0 && (
+        {ready && loadError === null && dockets.length === 0 && (
           <p className="faint">Nothing is in flight. Create a goal before sending work to an agent.</p>
         )}
         {shownDockets.length === 0 && dockets.length > 0 && <p className="faint">No goal has that status right now. Press All to see every goal.</p>}
@@ -538,7 +570,7 @@ export default function Control({ projects, providers, onOpenSession }: {
         onNote={(value) => setNotes((previous) => ({ ...previous, [node.id]: value }))} onClaim={(value) => setClaims((previous) => ({ ...previous, [node.id]: value }))}
         onStart={() => start(node)} onCheckpoint={() => checkpoint(node)} onClaimAdd={() => addClaim(node)} onProof={() => proof(node)} onComplete={(decision) => complete(node, decision)} onRetry={() => retry(node)} />)}</div>
       <div className="control-evidence"><div><span className="label">Proof bundle</span><h3>{detail.proofs.length} record{detail.proofs.length === 1 ? '' : 's'}</h3>{detail.proofs.length === 0 ? <p className="faint">No evidence yet. A review gate result is required before verification can pass.</p> : detail.proofs.map((proof) => <p key={proof.id}><span className={`control-status ${proof.status}`}>{proof.status}</span> {proof.summary} <small>{ago(proof.createdAt)}</small></p>)}</div><div><span className="label">Continuity</span><h3>{detail.checkpoints.length} checkpoint{detail.checkpoints.length === 1 ? '' : 's'}</h3>{detail.checkpoints.length === 0 ? <p className="faint">Save a checkpoint before handoff or interruption. It records the exact provider conversation when one exists.</p> : detail.checkpoints.slice(0, 4).map((checkpoint) => <p key={checkpoint.id}>{checkpoint.note}<small>{checkpoint.conversationId ? ` · thread ${checkpoint.conversationId.slice(0, 12)}…` : ''} · {ago(checkpoint.createdAt)}</small></p>)}</div></div>
-      <div className="control-evidence"><div><span className="label">Safe recovery</span><h3>{receipts.length === 0 ? 'No launched task yet' : `${receipts.filter((receipt) => receipt.state === 'exact').length} exact resume${receipts.filter((receipt) => receipt.state === 'exact').length === 1 ? '' : 's'}`}</h3>{receipts.map((receipt) => <p key={receipt.nodeId}><span className={`control-status ${receipt.state === 'exact' ? 'passed' : receipt.state === 'writer_active' ? 'working' : 'blocked'}`}>{receipt.state.replace('_', ' ')}</span> {receipt.detail}<small>{receipt.conversationId ? ` · thread ${receipt.conversationId.slice(0, 12)}…` : ''}</small></p>)}</div><div><span className="label">Goal trace</span><h3>{traces.length} recent signal{traces.length === 1 ? '' : 's'}</h3>{traces.length === 0 ? <p className="faint">Operational events appear here without copying prompts or responses into Control.</p> : traces.slice(0, 5).map((trace) => <p key={trace.id}><span className={`control-status ${trace.status}`}>{trace.status}</span> {trace.toolName ?? trace.kind}{trace.summary ? ` · ${trace.summary}` : ''}<small>{trace.durationMs !== null ? ` · ${trace.durationMs}ms` : ''}{trace.costUsd ? ` · ${usd(trace.costUsd)}` : ''} · {ago(trace.createdAt)}</small></p>)}</div></div>
+      <div className="control-evidence"><div><span className="label">Safe recovery</span><h3>{receipts.length === 0 ? 'No launched task yet' : `${receipts.filter((receipt) => receipt.state === 'exact').length} exact resume${receipts.filter((receipt) => receipt.state === 'exact').length === 1 ? '' : 's'}`}</h3>{receipts.map((receipt) => <p key={receipt.nodeId}><span className={`control-status ${receipt.state === 'exact' ? 'passed' : receipt.state === 'writer_active' ? 'working' : 'blocked'}`}>{receipt.state.replace('_', ' ')}</span> {receipt.detail}<small>{receipt.conversationId ? ` · thread ${receipt.conversationId.slice(0, 12)}…` : ''}</small></p>)}</div><div><span className="label">Goal trace</span><h3>{traces.length} recent signal{traces.length === 1 ? '' : 's'}</h3>{traces.length === 0 ? <p className="faint">Operational events appear here without copying prompts or responses into Control.</p> : traces.map((trace) => <p key={trace.id}><span className={`control-status ${trace.status}`}>{trace.status}</span> {trace.toolName ?? trace.kind}{trace.summary ? ` · ${trace.summary}` : ''}<small>{trace.durationMs !== null ? ` · ${trace.durationMs}ms` : ''}{trace.costUsd ? ` · ${usd(trace.costUsd)}` : ''} · {ago(trace.createdAt)}</small></p>)}</div></div>
       <div className="control-claims"><span className="label">Active file claims</span>{detail.claims.filter((claim) => !claim.releasedAt).length === 0 ? <p className="faint">No paths claimed. Claims are optional but prevent overlapping parallel edits.</p> : detail.claims.filter((claim) => !claim.releasedAt).map((claim) => <span key={claim.id} className="control-claim">{claim.path} <button className="btn" onClick={() => void act(`release-${claim.id}`, async () => { await window.wanigan.control.releaseClaim(claim.id); await load(detail.id); })}>Release</button></span>)}</div>
     </section>}
 
@@ -547,7 +579,7 @@ export default function Control({ projects, providers, onOpenSession }: {
     a Goal nobody wanted. Dismissed rows are also filtered out rather than
     left to consume the six visible slots. */}
 {events.filter((event) => event.status !== 'dismissed').slice(0, 6).map((event) => <div className="control-event" key={event.id}><span className={`control-status ${event.status}`}>{event.status}</span><strong>{event.kind}</strong><p>{event.summary}</p>{event.status === 'new' && <><button className="btn" onClick={() => void triage(event)}>Create goal</button><button className="btn" disabled={busy !== null} onClick={() => void act(`dismiss-${event.id}`, async () => { await window.wanigan.control.dismissEvent(event.id); await load(detail?.id); })}>Dismiss</button></>}</div>)}</article>
-      <article className="card"><span className="label">Model evidence</span><h2>Outcome router</h2><p className="faint">This ranks only completed goal evidence; it does not invent a winner from token volume or a single run.</p>{outcomes.length === 0 ? <p className="faint">No completed provider outcomes yet.</p> : <table className="control-table"><thead><tr><th>Model</th><th>Task</th><th>Accept</th><th>Tests</th><th>Cost</th></tr></thead><tbody>{outcomes.map((outcome) => <tr key={`${outcome.providerId}-${outcome.model}-${outcome.taskKind}`}><td>{outcome.providerId}<small>{outcome.model}</small></td><td>{outcome.taskKind}<small>{outcome.samples} sample{outcome.samples === 1 ? '' : 's'}</small></td><td>{outcome.acceptedRate === null ? '—' : `${Math.round(outcome.acceptedRate * 100)}%`}</td><td>{outcome.testPassRate === null ? '—' : `${Math.round(outcome.testPassRate * 100)}%`}</td><td>{usd(outcome.totalCostUsd)}</td></tr>)}</tbody></table>}
+      <article className="card"><span className="label">Model evidence</span><h2>Outcome router</h2><p className="faint">Ordered by acceptance rate over completed goal evidence. One sample is one sample: the count is beside every row, and a cost is shown only for the sessions whose CLI reported one.</p>{outcomes.length === 0 ? <p className="faint">No completed provider outcomes yet.</p> : <table className="control-table"><thead><tr><th>Model</th><th>Task</th><th>Accept</th><th>Tests</th><th>Cost</th></tr></thead><tbody>{outcomes.map((outcome) => <tr key={`${outcome.providerId}-${outcome.model}-${outcome.taskKind}`}><td>{outcome.providerId}<small>{outcome.model}</small></td><td>{outcome.taskKind}<small>{outcome.samples} sample{outcome.samples === 1 ? '' : 's'}</small></td><td>{outcome.acceptedRate === null ? '—' : `${Math.round(outcome.acceptedRate * 100)}%`}</td><td>{outcome.testPassRate === null ? '—' : `${Math.round(outcome.testPassRate * 100)}%`}</td><td title={outcome.reportedSamples === outcome.samples ? undefined : `${outcome.reportedSamples} of ${outcome.samples} session${outcome.samples === 1 ? '' : 's'} reported a cost. The rest ran on a plan or a harness that reports none, so they are not in this figure.`}>{outcome.reportedSamples === 0 ? <span className="faint">not reported</span> : <>{usd(outcome.totalCostUsd)}{outcome.reportedSamples < outcome.samples && <small>{outcome.reportedSamples} of {outcome.samples} reported</small>}</>}</td></tr>)}</tbody></table>}
         <span className="label">MCP task compatibility</span><p className="faint">Goal tasks have durable working/input-required/completed/cancelled state ready for the evolving MCP Tasks adapter.</p>{shownTasks.map((task) => <p key={task.id}><span className={`control-status ${task.status}`}>{task.status}</span> {task.title} {['working', 'input_required'].includes(task.status) && <button className="btn btn-sm" disabled={busy !== null} title={cancelStopsAgent(task)
           ? 'Cancel this task, stop the agent session running it, and release any file claims it holds. The goal is marked blocked until you reopen the task.'
           : 'Cancel this task. If it has not ended, any file claims it holds are released and the goal is marked blocked until you reopen it; if it has, only the MCP task record is marked cancelled.'}
@@ -672,7 +704,9 @@ function NodeCard({ node, busy, note, claim, prereqs, onNote, onClaim, onStart, 
   const actionable = ['ready', 'running'].includes(node.status);
   const reopenable = ['failed', 'canceled'].includes(node.status);
   return <article className="control-node"><div><span className={`control-status ${node.status}`}>{node.status}</span><span className="label">{node.kind}</span><h3>{node.title}</h3>{prereqs.length > 0 && <p className="control-node-waits">Waits on {prereqs.map((prereq, index) => { const mark = markOf(prereq.status); return <span key={`${prereq.title}-${index}`}>{index > 0 ? ', ' : ''}{prereq.title} <Mark glyph={mark.glyph} word={mark.word} tone={mark.tone} /></span>; })}</p>}<p>{node.instructions}</p>{node.sessionId && <button className="btn" onClick={onCheckpoint} disabled={busy !== null}>Checkpoint</button>}</div>
-    <div className="control-node-actions">{node.status === 'ready' && <button className="btn btn-primary" onClick={onStart} disabled={busy !== null}>Start isolated task</button>}{reopenable && <button className="btn" onClick={onRetry} disabled={busy !== null}
+    <div className="control-node-actions">{node.status === 'ready' && (node.queued
+      ? <Mark glyph="◴" word="queued by autopilot" tone="quiet" title="The autopilot dispatcher has claimed this task and will launch it on its next sweep. Starting it by hand here would race that and one of the two sessions would be killed after its first prompt." />
+      : <button className="btn btn-primary" onClick={onStart} disabled={busy !== null}>Start isolated task</button>)}{reopenable && <button className="btn" onClick={onRetry} disabled={busy !== null}
       title="Reopen this task so it can be started again. Tasks waiting on it stay blocked until it completes.">Reopen task</button>}{node.kind === 'verify' && actionable && <button className="btn" onClick={onProof} disabled={busy !== null}>Run review gate</button>}<input className="field" aria-label="Evidence or handoff note" value={note} onChange={(event) => onNote(event.target.value)} placeholder="Evidence or handoff note" disabled={!actionable} />{node.kind === 'implement' && actionable && <div className="control-inline"><input className="field" aria-label="Path to claim" value={claim} onChange={(event) => onClaim(event.target.value)} placeholder="src/path.ts" /><button className="btn" onClick={onClaimAdd} disabled={busy !== null || !claim.trim()}>Claim</button></div>}{node.kind === 'review' && actionable ? <div className="control-review-actions"><button className="btn btn-primary" onClick={() => onComplete('approve')} disabled={busy !== null}>Approve</button><button className="btn" onClick={() => onComplete('request_changes')} disabled={busy !== null}>Request changes</button><button className="btn btn-danger" onClick={() => onComplete('reject')} disabled={busy !== null}>Reject</button></div> : actionable && <button className="btn" onClick={() => onComplete('approve')} disabled={busy !== null}>Mark complete</button>}</div>
   </article>;
 }

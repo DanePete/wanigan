@@ -17,6 +17,7 @@ import {
 import { handle } from './dispatch';
 import { safeString } from './snapshot';
 import { lastMobilePushResult } from './push';
+import { forgetAllPushDevices, forgetPushDevice, listPushDevices, rotatePushKeys, webPushProbe } from './webpush';
 import type { MobileMonitorConfig, MobileMonitorStatus } from '../../shared/types';
 // Routes register themselves at import time. The lifecycle module names every
 // route module explicitly rather than trusting the facade's re-exports, so a
@@ -31,6 +32,8 @@ import './goals';
 import './learning';
 import './scout';
 import './skills';
+import './halt';
+import './recent';
 
 /**
  * The listener's lifecycle. It intentionally binds to loopback: reach it from
@@ -53,7 +56,10 @@ export function mobileStatus(): MobileMonitorStatus {
   const config = mobileConfig();
   const token = ensureMobileToken();
   const push = lastMobilePushResult();
-  const credentialIssue = config.dashboardEnabled || config.pushEnabled ? secretsIssue() : null;
+  const web = webPushProbe();
+  const credentialIssue = config.dashboardEnabled || config.pushEnabled || config.webPushEnabled
+    ? secretsIssue()
+    : null;
   return {
     config,
     running: Boolean(server?.listening && serverPort === config.port),
@@ -64,6 +70,13 @@ export function mobileStatus(): MobileMonitorStatus {
     error: credentialIssue ?? lastServerError,
     lastPushAt: push?.ok ? push.at : null,
     lastPushError: push && !push.skipped ? push.error : null,
+    pushDevices: listPushDevices(),
+    webPush: {
+      ready: web.ready,
+      blocked: web.blocked,
+      lastAt: web.last?.ok ? web.last.at : null,
+      lastError: web.last && !web.last.skipped ? web.last.error : null,
+    },
   };
 }
 
@@ -82,6 +95,7 @@ export async function setMobileConfig(patch: MobileConfigPatch): Promise<MobileM
       ? current.pushServer
       : normaliseHttpsUrl(patch.pushServer, 'ntfy server'),
     pushTopic: patch.pushTopic ?? current.pushTopic,
+    webPushEnabled: patch.webPushEnabled ?? current.webPushEnabled,
   };
 
   if (!Number.isInteger(next.port) || next.port < 1_024 || next.port > 65_535) {
@@ -93,7 +107,10 @@ export async function setMobileConfig(patch: MobileConfigPatch): Promise<MobileM
   if (next.pushEnabled && !next.pushServer) {
     throw new Error('Set an HTTPS ntfy server before enabling mobile push.');
   }
-  if ((next.dashboardEnabled || next.pushEnabled) && !mobileCredentialsReady()) {
+  // Web Push joins the same gate. It reads the VAPID keypair out of the same
+  // encrypted file the pairing token lives in, so a keychain Wanigan cannot
+  // reach is exactly as disqualifying for it as for the other two.
+  if ((next.dashboardEnabled || next.pushEnabled || next.webPushEnabled) && !mobileCredentialsReady()) {
     throw new Error(
       `${secretsIssue() ?? 'Encrypted phone-monitor credentials are unavailable.'} `
       + 'Restore the system keychain or replace the affected credential before turning phone monitoring on.',
@@ -115,6 +132,7 @@ export async function setMobileConfig(patch: MobileConfigPatch): Promise<MobileM
   setSetting(KEY.dashboardUrl, next.dashboardUrl);
   setSetting(KEY.pushEnabled, next.pushEnabled ? '1' : '0');
   setSetting(KEY.pushServer, next.pushServer);
+  setSetting(KEY.webPushEnabled, next.webPushEnabled ? '1' : '0');
   if (!next.dashboardEnabled || (server && serverPort !== next.port)) stopMobileMonitor();
   return startMobileMonitor();
 }
@@ -133,6 +151,40 @@ export async function regenerateMobilePushTopic(): Promise<MobileMonitorStatus> 
   const secrets = mobileSecrets();
   persistSecrets({ ...secrets, topic: generateTopic() });
   return startMobileMonitor();
+}
+
+/**
+ * Forget one subscribed device, or every one of them.
+ *
+ * Local and immediate: the row goes, and Wanigan stops sending to it. The
+ * browser on that device still holds a subscription it does not know is
+ * orphaned — nothing on this Mac can reach into it and cancel one — so the
+ * device re-registers itself the next time the app is opened. That is the
+ * intended behaviour and it is why this is the weaker of the two revocations:
+ * to make a device stop receiving alerts for good, rotate the key below.
+ */
+export function forgetMobilePushDevice(id: string): MobileMonitorStatus {
+  forgetPushDevice(id);
+  return mobileStatus();
+}
+
+export function forgetAllMobilePushDevices(): MobileMonitorStatus {
+  forgetAllPushDevices();
+  return mobileStatus();
+}
+
+/**
+ * Replace the VAPID keypair, which revokes every subscription at once.
+ *
+ * This is the Web Push equivalent of rotating the pairing token, and unlike
+ * forgetting a device it cannot be undone by a phone re-registering: a
+ * subscription is cryptographically bound to the key it was created against, so
+ * every existing one is dead the moment this returns. Each device has to be
+ * switched back on from the device itself.
+ */
+export function regenerateMobilePushKeys(): MobileMonitorStatus {
+  rotatePushKeys();
+  return mobileStatus();
 }
 
 function closeServer(target: http.Server | null): void {

@@ -457,6 +457,30 @@ export function navWiring(): string {
         const restored = event.state && typeof event.state.wanigan === 'string' ? event.state.wanigan : rememberedView();
         setView(restored, 'pop');
       });
+      // A tapped notification. The service worker cannot route this page by
+      // changing the address — the route lives in localStorage precisely so
+      // that the one field a pairing token ever occupied is written to once and
+      // never again — so it asks, and this decides. setView validates the id
+      // against VIEW_IDS like every other caller, so a message naming a screen
+      // this build does not have lands on the default rather than nowhere.
+      if (navigator.serviceWorker) {
+        navigator.serviceWorker.addEventListener('message', (event) => {
+          const data = event.data;
+          if (data && data.wanigan === 'resubscribe') {
+            // The worker's subscription changed under it. The worker cannot
+            // reach the pairing token, so the page re-registers instead.
+            if (typeof pushSync === 'function') void pushSync(false);
+            return;
+          }
+          if (!data || data.wanigan !== 'view' || typeof data.view !== 'string' || !data.view) return;
+          if (data.view !== currentView) setView(data.view, 'push');
+          // The alert is about something that changed on the Mac, and the app
+          // may have been closed for an hour. Ask now rather than waiting out
+          // whatever the backed-off interval had grown to.
+          void poll();
+        });
+      }
+
       // Two hooks, because a mark goes wrong in two different ways. render()
       // is the only thing that carries counts, and it runs only when a poll
       // came back; the freshness pass is what runs when one did not, and it is

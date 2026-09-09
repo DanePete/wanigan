@@ -15,8 +15,21 @@ export function mobileStyle(): string {
     :root[data-theme="system"] { color-scheme:light dark; }
     @media (prefers-color-scheme:light) { :root[data-theme="system"] { color-scheme:light; --bg:#f8f3ea; --glow:#f5dfc4; --panel:#fffdf9; --panel-raised:#f2ebe0; --input:#fffdfa; --line:#d9cebf; --ink:#29221c; --dim:#655b50; --faint:#82766a; --accent:#b84620; --accent-soft:#f8dfd3; --accent-ink:#fffaf5; --critical:#b3261e; --critical-soft:#fbe0dd; --serious:#a84716; --good:#14743a; --good-soft:#dff5e5; --blue:#285fa8; --blue-soft:#e0ecff; --terminal:#251f1a; --terminal-ink:#f7f1e8; --shadow:#5a46301f; } }
     * { box-sizing:border-box; }
+    /* A grid or flex item takes its own min-content width as an automatic
+       minimum, so one long unbroken string — a mono skill command, a branch, an
+       absolute path — sets the floor for the whole column it sits in, and the
+       card runs off the side of an iPhone instead of the string wrapping inside
+       it. No row on this surface wants to be wider than the screen: every box
+       inside the frame may be narrower than its own content, and a word may
+       break inside itself when there is no other way to fit it. This is the
+       rule sections used to re-declare one class at a time, and miss on the
+       next one. The boxes that do mean to outgrow their column — the diff body,
+       the pairing field — carry a min-width of their own on a class or an id
+       and win against this on specificity. A pre-formatted run has no soft wrap
+       opportunity to take, so the diff and the terminal still scroll. */
+    main * { min-width:0; }
     html { background:var(--bg); }
-    body { margin:0; min-height:100vh; color:var(--ink); background:radial-gradient(circle at 80% -10%,var(--glow) 0,transparent 34rem),var(--bg); font:15px/1.45 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    body { margin:0; min-height:100vh; color:var(--ink); background:radial-gradient(circle at 80% -10%,var(--glow) 0,transparent 34rem),var(--bg); font:15px/1.45 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; overflow-wrap:anywhere; }
     main { width:min(980px,100%); margin:0 auto; padding:max(20px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(30px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left)); }
     header { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin:2px 0 20px; }
     h1 { margin:0; font-size:clamp(25px,7vw,40px); letter-spacing:-.04em; font-weight:760; }

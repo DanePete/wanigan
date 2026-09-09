@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { db } from './db';
+import { halted } from './halt';
 import { redactCredentials } from './redact';
 import { getSetting, setSetting } from './settings';
 import { TRUST_COPY, TRUST_LEVELS } from '../shared/types';
@@ -433,6 +434,24 @@ function ask(reason: string, rule: string): PolicyDecision {
 export function decideFor(ctx: PolicyContext, input: HookInput): PolicyDecision {
   const tool = (input.tool_name ?? '').trim();
   if (!tool) return allow('Not a tool call.', 'no-tool');
+
+  // The halt outranks trust, and that ordering is the point of putting it here
+  // rather than at a launch site. Killing a PTY is a signal, and a CLI wedged
+  // hard enough to be worth halting over is exactly the one that may not act on
+  // it — but it still has to come back through this gate before it can touch a
+  // file, run a command or spend a token. This is the line that makes the
+  // difference between "no new work starts" and "nothing more happens".
+  //
+  // It is deliberately above the trusted branch. A trusted project is a
+  // statement about which repositories Wanigan may act in without asking; it is
+  // not a statement that the operator's emergency stop does not apply there,
+  // and reading it as one would exempt the projects an operator trusts most.
+  if (halted()) {
+    return deny(
+      'Wanigan is halted. Every tool call is refused until the halt is cleared at the Mac.',
+      'halted.deny',
+    );
+  }
 
   // Checked before anything else so that TRUST_COPY.trusted — "Nothing is
   // denied by Wanigan" — stays literally true.

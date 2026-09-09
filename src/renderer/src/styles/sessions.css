@@ -331,3 +331,11 @@
   .sessions-view .tab-new-session-text { display: none; }
   .sessions-view .session-picker-trigger { padding-inline: 9px; }
 }
+
+/* The row that says a profile's model and effort cannot be changed on a running
+   session of its harness. Same inset and rule as the run-config bar it stands in
+   for, so the two read as one band rather than two. */
+.session-tuning-absent {
+  padding: var(--s-2) var(--s-3);
+  border-top: 1px solid var(--line-soft);
+}

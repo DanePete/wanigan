@@ -59,7 +59,13 @@ export const SKILLS_SECTION: MobileSection = {
        colour alone — and always alongside the sentence that says why. */
     .skill-row-flat { border-style:dashed; }
     .skill-row-top { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
-    .skill-invoke { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:14px; font-weight:720; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    /* The command wraps onto a second line rather than being clipped with an
+       ellipsis. The one claim this card makes is which command a tap types into
+       the session, so the name has to stay readable to the end of it: a
+       truncated command is the single thing on the row a reader cannot check.
+       The frame's rule about a box being allowed to be narrower than its
+       content is what keeps a long one inside the card. */
+    .skill-invoke { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:14px; font-weight:720; }
     .skill-origin { flex:none; border:1px solid var(--line); border-radius:999px; padding:2px 8px; color:var(--dim); font-size:11px; font-weight:700; white-space:nowrap; }
     .skill-desc { color:var(--dim); font-size:12px; line-height:1.5; }
     .skill-flag { color:var(--serious); font-size:11px; font-weight:700; line-height:1.5; }

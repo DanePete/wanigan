@@ -138,6 +138,12 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
 
   const installed = providers.filter((p) => p.path && p.capabilities.headlessJson);
   const provider = providers.find((p) => p.id === providerId);
+  /** Identity of what this effect actually depends on: which fields the
+      profile declares and what each one defaults to. */
+  const launchFieldsKey = useMemo(
+    () => JSON.stringify((provider?.launchFields ?? []).map((field) => [field.id, field.defaultValue])),
+    [provider?.launchFields],
+  );
   const modelField = provider?.launchFields?.find((field) => field.id === 'model');
   const effortField = provider?.launchFields?.find((field) => field.id === 'effort');
   const current = runs.find((r) => r.id === selected) ?? null;
@@ -156,7 +162,13 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
       else if (field.kind === 'boolean') defaults[field.id] = false;
     }
     setProviderOptions(defaults);
-  }, [providerId, provider?.launchFields, modelField?.defaultValue, effortField?.defaultValue]);
+  // Keyed on a stable fingerprint, not on the object identity of
+  // `launchFields`. App.loadShell() runs on every window focus and calls
+  // setProviders unconditionally, and providers.ts maps launch fields to
+  // fresh objects each time — so switching to a terminal and back reset the
+  // operator's model, effort and every provider option to their defaults,
+  // mid-form, and re-disabled Start behind a requirement they had met.
+  }, [providerId, launchFieldsKey]);
 
   useEffect(() => {
     if (!installed.some((candidate) => candidate.id === providerId)) {
@@ -387,7 +399,11 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   const costStatus = useMemo(() => {
     if (readRows === null) return null;
     const ran = readRows.filter((r) => r.status === 'succeeded' || r.status === 'timeout');
-    if (ran.length === 0) return { kind: 'reported' as const, missing: 0 };
+    // Nothing has run, so nothing has reported. Calling that 'reported' put
+    // "$0.00 · CLI-reported; never estimated" on a run whose repositories were
+    // all still pending, all blocked by trust, or all cancelled — a measured
+    // figure claimed for a measurement that had not been taken.
+    if (ran.length === 0) return { kind: 'none' as const, missing: 0 };
     const missing = ran.filter((r) => r.costReported !== true).length;
     return {
       kind: missing === 0 ? 'reported' as const
@@ -408,8 +424,9 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
           <span className="label-stencil">Headless runs · unattended workflows</span>
           <h1>Runs</h1>
           <p className="dim">
-            One prompt × selected repositories. Each repository gets its own timeout and CLI budget;
-            isolated worktrees stay on by default so review and merge remain deliberate.
+            One prompt × selected repositories. Each repository gets its own timeout, and its own
+            CLI budget where the agent takes one; isolated worktrees stay on by default so review
+            and merge remain deliberate.
           </p>
         </div>
         <span className="hr-head-status">{projects.length} project{projects.length === 1 ? '' : 's'} available</span>
@@ -471,7 +488,18 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
           </div>
         )}
         <div className="hr-launch-footer">
-          <label className="hr-budget"><span className="label">CLI budget / repository</span><div><span aria-hidden="true">$</span><input className="field" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} /></div></label>
+          {/* Shown only where the protocol takes one. Codex's headless mode has
+              no budget flag, so this field promised every Codex fan-out a
+              ceiling that was never passed and the row then reported no cost
+              either. What actually bounds a Codex row is the timeout. */}
+          {provider?.capabilities.headlessBudget !== false ? (
+            <label className="hr-budget"><span className="label">CLI budget / repository</span><div><span aria-hidden="true">$</span><input className="field" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} /></div></label>
+          ) : (
+            <div className="hr-budget">
+              <span className="label">CLI budget / repository</span>
+              <p className="dim">{provider.label} takes no budget flag. The timeout below is the only ceiling on a repository.</p>
+            </div>
+          )}
           <label className="hr-check"><input type="checkbox" checked={isolate} onChange={(e) => setIsolate(e.target.checked)} /> isolate in worktrees</label>
           {/* Selecting every repository is a selection, not a declaration: this
               button deliberately does not tick the box below, and clears a tick
@@ -570,13 +598,18 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
                   for the case that earns it. */}
               <Stat label="Cost"
                     value={!totals || !costStatus ? '—'
-                      : costStatus.kind === 'unreported' ? '—' : costStatus.kind === 'partial' ? `≥ ${usd(totals.cost)}` : usd(totals.cost)}
+                      : costStatus.kind === 'none' || costStatus.kind === 'unreported' ? '—'
+                        : costStatus.kind === 'partial' ? `≥ ${usd(totals.cost)}` : usd(totals.cost)}
                     sub={!totals || !costStatus ? rowsUnread
-                      : costStatus.kind === 'unreported'
-                        ? 'no repository reported a cost, so there is no figure to show'
-                        : costStatus.kind === 'partial'
-                          ? `a floor · ${num(costStatus.missing)} ${costStatus.missing === 1 ? 'repository' : 'repositories'} reported no cost`
-                          : 'CLI-reported; never estimated'} />
+                      : costStatus.kind === 'none'
+                        ? 'no agent has run yet, so nothing has been reported'
+                        : costStatus.kind === 'unreported'
+                          ? 'no repository reported a cost, so there is no figure to show'
+                          : costStatus.kind === 'partial'
+                            ? `a floor · ${num(costStatus.missing)} ${costStatus.missing === 1 ? 'repository' : 'repositories'} reported no cost`
+                            // The CLI's own estimate, banked as handed over.
+                            // Wanigan never prices a session itself.
+                            : 'the CLI’s own figure; Wanigan never prices it'} />
             </div>
             {/* The rows region answers for its own read. A run's repositories
                 are shown under that run's name or not at all, so "reading" and

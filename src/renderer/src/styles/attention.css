@@ -135,3 +135,116 @@
   max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--text-faint); font-size: var(--t-micro);
 }
+
+/* ── the notification card ───────────────────────────────────────────── */
+/* The in-window half of a notification. It sits above everything except a
+   modal, because it is the one alert surface Wanigan controls: a macOS banner
+   is shown at the operating system's discretion and reports nothing back. */
+
+.alert-stack {
+  position: fixed;
+  /* Below the header, not over it. The header is a drag region carrying the
+     usage pill and the two chrome buttons, and a card laid across it covers
+     controls while making the window itself un-draggable at that corner —
+     a notification that takes the title bar away is a notification people
+     learn to resent. --topbar-h is the same token the header sizes itself
+     from, so the two cannot drift. */
+  top: calc(var(--topbar-h) + var(--s-2));
+  right: var(--s-4);
+  /* Above the views and the sidebar, below the palette, the modals and the
+     shell toast: an interruption, never a thing you have to dismiss to get at
+     the dialog you deliberately opened. */
+  z-index: 19;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, calc(100vw - var(--s-5)));
+  /* Four cards fit a laptop; a shorter window scrolls them rather than growing
+     the column past the bottom of the screen and hiding the oldest off-view. */
+  max-height: calc(100vh - var(--topbar-h) - var(--s-5));
+  overflow-y: auto;
+  /* The column must never eat clicks in the gaps between its cards — the view
+     underneath is what the operator is trying to work in. Each card takes its
+     own pointer events back. */
+  pointer-events: none;
+}
+
+.alert-clear {
+  align-self: flex-end;
+  pointer-events: auto;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--bg-soft);
+  color: var(--text-dim);
+  font-size: var(--t-micro);
+}
+.alert-clear:hover { color: var(--text); background: var(--bg-raised); }
+
+.alert-card {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: var(--card-pad-tight);
+  border: 1px solid var(--line);
+  /* The left edge is the same geometry on every card so that colour alone
+     carries the state — --text-faint is a text token and reads as a heavy dark
+     bar against the light palette's white card, which made an ordinary
+     "finished" look like the urgent one. */
+  border-left: 3px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-soft);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 28%);
+  animation: alert-card-in var(--mo-view) var(--mo-ease);
+}
+
+/* Urgent is the permission wait and the error: the two states where an agent
+   is stopped and a human is the only thing that can restart it. */
+.alert-card.urgent {
+  border-left-color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.alert-card-body { flex: 1; min-width: 0; }
+.alert-card-title {
+  font-size: var(--t-body);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.alert-card-text {
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: var(--t-small);
+  /* Two lines, then clipped. The body is a state and a wait time, and a hook
+     detail that ran long must not push the card over the view it is about. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.alert-card-acts { flex: none; display: flex; align-items: center; gap: 6px; }
+.alert-card-x {
+  padding: 2px 5px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--t-small);
+  line-height: 1;
+}
+.alert-card-x:hover { color: var(--text); background: var(--bg-raised); }
+
+@keyframes alert-card-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* An operator who asked the system for less motion gets the card, not the
+   slide: it is an interruption either way, and the movement is the decoration. */
+@media (prefers-reduced-motion: reduce) {
+  .alert-card { animation: none; }
+}

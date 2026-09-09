@@ -235,7 +235,11 @@ export function mobileShell(nonce: string, appearance: string, remoteControl: bo
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="mobile-web-app-capable" content="yes">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="apple-touch-icon" href="icon.svg">
+  <!-- PNG, not the SVG this used to name. Safari has never accepted an SVG as a
+       touch icon, so an installed app took a thumbnail of this page instead —
+       and iOS then draws that same icon on every push notification. -->
+  <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
   <title>Wanigan Mobile</title>
   <style nonce="${nonce}">
 ${[mobileStyle(), navStyle(), sectionStyle()].join('\n')}

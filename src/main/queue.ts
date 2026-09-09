@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { db } from './db';
+import { halted } from './halt';
 import { pruneEvents } from './hooks';
 import { pruneCheckpoints } from './checkpoints';
 import { eventRetentionDays, getSetting, setSetting } from './settings';
@@ -294,6 +295,10 @@ export function stopDispatcher(): void {
  * dispatch it twice — two agents in one worktree, or a batch submitted twice.
  */
 export async function tick(): Promise<void> {
+  // Silently, and without touching a lease. The queue is the subsystem most
+  // likely to undo a halt: it holds the rows an operator hit the switch over,
+  // and a tick that leased one would start the very work they stopped.
+  if (halted()) return;
   if (ticking) return;
   ticking = true;
   try {

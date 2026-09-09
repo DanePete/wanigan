@@ -23,6 +23,13 @@ export const KEY = {
   dashboardUrl: 'mobile_dashboard_url',
   pushEnabled: 'mobile_push_enabled',
   pushServer: 'mobile_push_server',
+  // Alerts to the installed Wanigan Remote app, through Web Push. Unlike the
+  // ntfy row above this one defaults ON, because it is not the consent gate:
+  // nothing is sent until a device subscribes, and subscribing takes a
+  // deliberate tap on that device plus its own operating-system permission
+  // prompt. A third switch in front of those two would protect nothing and
+  // would leave an operator who granted permission wondering why it is quiet.
+  webPushEnabled: 'mobile_web_push_enabled',
 } as const;
 
 export type MobileConfigPatch = Partial<MobileMonitorConfig>;
@@ -63,6 +70,7 @@ export function mobileConfig(): MobileMonitorConfig {
     pushEnabled: boolSetting(KEY.pushEnabled),
     pushServer: getSetting(KEY.pushServer, 'https://ntfy.sh').trim(),
     pushTopic: ensurePushTopic(),
+    webPushEnabled: boolSetting(KEY.webPushEnabled, true),
   };
 }
 

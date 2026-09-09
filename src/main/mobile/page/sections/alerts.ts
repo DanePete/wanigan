@@ -8,12 +8,16 @@ import type { MobileSection } from '../sections';
  * two days look identical, and only one of them is safe to walk away from. So
  * this screen says which of the two it is in words, from the alert state
  * /api/status now carries, and raises its own notice while the page is open —
- * the channel that needs no ntfy topic, no server and no permission prompt.
+ * the one signal that needs no subscription, no server and no permission
+ * prompt.
  *
- * It is deliberately not a notification. A web page cannot deliver one in the
- * background on iOS without being installed to the Home Screen and wired to Web
- * Push, which Wanigan has not done, so the page says what the operator gets
- * rather than implying an alert that will never arrive.
+ * The notice is still not a notification, and the distinction still matters.
+ * Wanigan does now deliver a real background notification, through Web Push to
+ * this app once it is installed to the Home Screen and switched on from the
+ * Device screen — but that is a thing the operator has to have done, on this
+ * device, and this panel has no way to know whether they did. So it goes on
+ * describing exactly what an open page can do, and points at the screen that
+ * knows the rest.
  */
 export const ALERTS_SECTION: MobileSection = {
   id: 'alerts',
@@ -25,7 +29,7 @@ export const ALERTS_SECTION: MobileSection = {
           <div id="alert-attention-list" class="alert-list"></div>
         </div>
         <p id="alert-path" class="alert-path">Wanigan has not said yet whether it can alert you.</p>
-        <p id="alert-reach" class="alert-reach">This page can raise an alert only while it is open on screen. iOS does not deliver a web page's notification in the background, so anything that has to reach you with this closed goes through the ntfy app.</p>
+        <p id="alert-reach" class="alert-reach">This notice and the count in the tab title need this page open on screen. Anything that has to reach you with it closed is a notification, which Wanigan sends to this app once you switch it on under Device — or to the ntfy app, if that is how you have it set up.</p>
       </section>`,
   style: `    .alerts { display:grid; gap:7px; margin:2px 0 14px; }
     .alert-attention { border-color:color-mix(in srgb,var(--critical) 50%,var(--line)); }
@@ -71,14 +75,24 @@ export const ALERTS_SECTION: MobileSection = {
       }
 
       // Every branch is something the Mac reported about the outbound path. The
-      // page never says an alert was delivered: ntfy accepting a publication is
-      // the last event Wanigan observes, and what the device did with it is not
-      // reported back.
+      // page never says an alert was delivered: a push service or an ntfy
+      // server accepting the publication is the last event Wanigan observes,
+      // and what the device did with it afterwards is not reported back to
+      // anyone.
+      function alertChannelWords() {
+        const on = alertPath && alertPath.channels ? alertPath.channels : null;
+        if (!on) return 'an alert channel';
+        if (on.webPush && on.ntfy) return 'the Wanigan app and ntfy';
+        if (on.webPush) return 'the Wanigan app';
+        if (on.ntfy) return 'ntfy';
+        return 'an alert channel';
+      }
+
       function alertPathSentence() {
         if (alertFault) return alertFault;
         const state = alertPath;
         if (!state) return 'Wanigan has not said yet whether it can alert you.';
-        if (!state.enabled) return 'Off · phone alerts are switched off, so nothing reaches this device while this page is closed. Turn them on in Wanigan Settings → Phone monitor.';
+        if (!state.enabled) return 'Off · every alert channel is switched off, so nothing reaches this device while this page is closed. Wanigan Settings → Phone monitor on the Mac is where they are switched back on.';
         if (!state.ready) return 'Not working · ' + (state.blocked || 'Wanigan did not say why.');
         if (state.lastOutcome === 'failed') {
           const why = state.lastReason || 'no reason was recorded';
@@ -89,9 +103,9 @@ export const ALERTS_SECTION: MobileSection = {
           return 'Failing · the last alert failed ' + ago(state.lastAt) + ' ago' + code + ': ' + why +
             (state.retryable ? ' — Wanigan will try the next one.' : ' — Wanigan will not retry until that is fixed.');
         }
-        if (state.lastOutcome === 'sent') return 'On · your ntfy server accepted the last alert ' + ago(state.lastAt) + ' ago. Whether the device showed it is not reported.';
+        if (state.lastOutcome === 'sent') return 'On · the last alert was accepted ' + ago(state.lastAt) + ' ago through ' + alertChannelWords() + '. Whether a device showed it is not reported back.';
         if (state.lastOutcome === 'skipped') return 'On · the last alert was not sent, because alerts were switched off when it happened.';
-        return 'On · nothing has needed an alert yet, so none has been sent. Send a test from Wanigan Settings to prove the path end to end.';
+        return 'On · Wanigan can alert you through ' + alertChannelWords() + ', and nothing has needed one yet. A test send from Wanigan Settings is what proves it end to end.';
       }
 
       // 'fresh' is passed in rather than read from connectionState, because

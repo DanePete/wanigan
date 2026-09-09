@@ -12,6 +12,7 @@ import { createWorktree, removeWorktree } from './worktrees';
 import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } from './learning';
 import { claimFireForRun, recordFireOutcome, type ScheduleFire } from './schedule';
 import { announceRunEnded } from './notify';
+import { refuseIfHalted } from './halt';
 import * as accounts from './accounts';
 import { redirectsAnthropicApi, stripAmbientAnthropicCredentials } from './sessions';
 import { rememberReportedContextWindows } from './transcripts';
@@ -556,6 +557,9 @@ export function registerHeadlessRunner(fn: HeadlessRunner | null) {
 /* ── the fan-out ──────────────────────────────────────────────────────── */
 
 export async function startHeadlessRun(cfg: HeadlessStart): Promise<{ runId: string; rows: number }> {
+  // Before the run row exists. A halted fleet that still recorded a run would
+  // leave a row nobody started and nothing will ever finish.
+  refuseIfHalted('start a headless run');
   // The app may have been open while an on-disk pack changed. Refresh before
   // accepting the requested identity or probing its executable.
   refreshProviderPacks();

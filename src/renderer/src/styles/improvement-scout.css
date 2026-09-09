@@ -100,7 +100,11 @@
 .scout-card-head p { margin-top: var(--s-1); color: var(--text-faint); font-size: var(--t-small); line-height: 1.45; }
 
 .scout-setting-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) repeat(2, minmax(130px, .65fr)); gap: var(--s-3); margin-top: var(--s-3); }
-.scout-setting-grid > label, .scout-goal-picker > label { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
+/* The column rule is for the two select wrappers only. `.scout-toggle` is a
+   checkbox beside its label and this selector outranked its own row rule, so
+   every consent box floated centred above the words it belongs to. */
+.scout-setting-grid > label:not(.scout-toggle),
+.scout-goal-picker > label:not(.scout-toggle) { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
 .scout-toggle {
   display: flex;
   align-items: center;

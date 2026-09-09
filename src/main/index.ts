@@ -12,8 +12,10 @@ import {
   killSession, closeSession, scrollback, markRead, shutdownAll, sessionBaseline, interruptSession,
   pastSessions, forgetPastSession, recoverExactCodexThread, setSessionExitObserver,
   setSessionTuning, setConversationFlag, renameSession, redirectsAnthropicApiFor,
-  setFocusedSession, recordObservedModel,
+  setFocusedSession, recordObservedModel, killAll,
 } from './sessions';
+import { clearHalt, haltState, halted, pullHalt, registerHaltStopper } from './halt';
+import { agentsChain } from './codex-sessions';
 import { listProjects, addProject, removeProject, refreshBranches, projectById } from './store';
 import * as batch from './batch';
 import * as code from './code';
@@ -36,6 +38,7 @@ import { adapterTrustPrompt, manifestTrustPrompt } from './pack-consent';
 // ── phases 1-24 ────────────────────────────────────────────────────────
 import * as otel from './otel';
 import { codexUsageSummary } from './codex-usage';
+import * as claudeUsage from './claude-usage';
 import * as hooks from './hooks';
 import * as checkpoints from './checkpoints';
 import * as attention from './attention';
@@ -89,6 +92,7 @@ import * as learning from './learning-service';
 // wraps consolidation and briefing, and has no retirement path of its own.
 import { retireKnowledgeItem } from './learning';
 import * as control from './control';
+import * as interview from './interview';
 import * as accounts from './accounts';
 import * as usage from './usage';
 import * as scout from './improvement-scout';
@@ -190,8 +194,59 @@ function syncAwake(): AwakeState {
   return awake.reconcileAwake({ sessions: live + headless.liveHeadlessCount(), dashboard });
 }
 
+/**
+ * Tell every surface the fleet was stopped, and by whom.
+ *
+ * Urgent, and on all three sinks. This is the one notification in the app that
+ * is not about an agent needing something: it is about the operator's own fleet
+ * having been stopped, possibly from a phone in another room, and the person
+ * sitting at the Mac watching sessions disappear deserves a sentence rather
+ * than a guess.
+ */
+function announceHalt(state: ReturnType<typeof haltState>): void {
+  const counts = state.stopped
+    .filter((entry) => entry.stopped > 0 && entry.name !== 'batch polling')
+    .map((entry) => `${entry.stopped} ${entry.name}`)
+    .join(', ');
+  notify.notify({
+    title: state.source === 'phone' ? 'Halted from your phone' : 'Wanigan is halted',
+    body: `${counts || 'Nothing was running'}. Nothing will start until you clear it.`
+      + (state.reason ? ` — ${state.reason}` : ''),
+    urgent: true,
+    mobileTag: 'wanigan-halt',
+  });
+}
+
+/**
+ * Restart the loops the stop pass stopped.
+ *
+ * Autopilots are deliberately absent: the halt disarmed them and said so, and
+ * re-arming unattended, budgeted dispatch is a decision that belongs to whoever
+ * reads that list — not to the act of clearing an unrelated emergency.
+ */
+function queueChanged(): void {
+  const w = win;
+  if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
+}
+
+function resumeAfterHalt(): void {
+  // Each in its own try. The scheduler re-arming and the dispatcher waking are
+  // independent, and one of them failing must not leave the other stopped —
+  // which would be a fleet that looks cleared and quietly never runs a schedule
+  // again.
+  try { startPoller(); } catch (error) { console.warn('[wanigan] batch polling did not resume after the halt:', error); }
+  try { schedule.startScheduler(queueChanged); } catch (error) { console.warn('[wanigan] the scheduler did not resume after the halt:', error); }
+  try { queue.startDispatcher(queueChanged); } catch (error) { console.warn('[wanigan] the queue did not resume after the halt:', error); }
+  try { learning.startConsolidator(); } catch (error) { console.warn('[wanigan] learning did not resume after the halt:', error); }
+}
+
 function startPoller() {
   if (pollTimer) return;
+  // The queue and the scheduler refuse their own ticks while halted; this loop
+  // has no such guard because polling a batch is a read. It is still stopped,
+  // because it is also what announces attention and holds the Mac awake — and a
+  // halted fleet should not be keeping a laptop up to watch work it stopped.
+  if (halted()) return;
   const tick = async () => {
     try {
       const s = await batch.pollOnce();
@@ -266,6 +321,17 @@ let win: BrowserWindow | null = null;
 /** Slower than the dispatcher: a goal becomes eligible when work finishes. */
 const AUTOPILOT_SWEEP_MS = 10_000;
 let autopilotTimer: NodeJS.Timeout | null = null;
+
+/**
+ * How often the transcript reader is offered a slice of time.
+ *
+ * Thirty seconds is a compromise between two costs that pull opposite ways: a
+ * first pass over a multi-gigabyte corpus wants to be handed budget often, and
+ * a caught-up store wants to be left alone. The ingest itself is what resolves
+ * it — it returns `done` and the timer drops to a quarter-second budget after.
+ */
+const TRANSCRIPT_INGEST_MS = 30_000;
+let transcriptTimer: NodeJS.Timeout | null = null;
 let uiInitialized = false;
 
 /**
@@ -949,10 +1015,7 @@ async function startServices() {
   });
   queue.setSlots(slotsSetting());
   // Schedules feed the dispatcher; the dispatcher decides when there is a slot.
-  schedule.startScheduler(() => {
-    const w = win;
-    if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
-  });
+  schedule.startScheduler(queueChanged);
   queue.registerRunner('node', async (payload) => {
     const nodeId = (payload as { nodeId?: unknown } | null)?.nodeId;
     if (typeof nodeId !== 'string' || !nodeId) {
@@ -960,10 +1023,7 @@ async function startServices() {
     }
     await control.startQueuedNode(nodeId);
   });
-  queue.startDispatcher(() => {
-    const w = win;
-    if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
-  });
+  queue.startDispatcher(queueChanged);
   // The sweep only writes queue rows; the dispatcher above still decides when
   // one may start. It runs on its own slower interval because a goal becomes
   // eligible through work finishing, not through the queue moving.
@@ -985,6 +1045,32 @@ async function startServices() {
       console.warn('[wanigan] autopilot sweep failed; skipping this pass:', e);
     }
   }, AUTOPILOT_SWEEP_MS);
+
+  // Claude Code's transcripts are the one meter that can report on work
+  // Wanigan never launched, and the first pass over them is measured in
+  // gigabytes. It runs here rather than on the Insights load so a person who
+  // opens that page gets a warm store instead of a spinner, and it is
+  // deliberately paced: a bounded budget, a gap between passes, and no work at
+  // all once the store has caught up.
+  //
+  // Guarded against smoke for the same reason the sweep above is — smoke11
+  // drives ingest() directly against fixtures, and a timer racing it inside the
+  // same process would ingest the operator's real corpus into the suite's
+  // temporary database mid-assertion.
+  if (!smokeMode) {
+    let transcriptCaughtUp = false;
+    transcriptTimer = setInterval(() => {
+      try {
+        // A caught-up store still costs one stat per file, which is cheap but
+        // not free over five thousand of them. Once done, back off to the slow
+        // beat that only exists to notice newly written turns.
+        const result = claudeUsage.ingest({ budgetMs: transcriptCaughtUp ? 250 : 1_500 });
+        transcriptCaughtUp = result.done;
+      } catch (e) {
+        console.warn('[wanigan] transcript ingest failed; retrying next pass:', e);
+      }
+    }, TRANSCRIPT_INGEST_MS);
+  }
 
   if (f.mcpServerEnabled) {
     try {
@@ -1045,6 +1131,31 @@ function configureMobileSources(): void {
       .filter((session) => session.status !== 'exited')
       .map((session) => session.projectId),
   });
+  // Conversations a paired device may pick back up. Rebuilt here rather than
+  // handed over whole: a past-session row carries the project's absolute path,
+  // its worktree and the agent's conversation id, and the phone monitor's
+  // boundary excludes all three by name.
+  mobile.configureMobileRecentSource(() => pastSessions(60)
+    // Settled conversations are parked on purpose. They stay in the record and
+    // out of a list whose whole job is "what would I pick up now".
+    .filter((row) => row.settledAt === null)
+    .map((row) => ({
+      id: row.id,
+      title: row.title ?? row.projectName,
+      projectName: row.projectName,
+      providerId: row.providerId,
+      model: row.model,
+      startedAt: row.startedAt,
+      endedAt: row.endedAt,
+      exitCode: row.exitCode,
+      turns: row.continuationCount,
+      // Both halves matter: a conversation whose project Wanigan no longer
+      // knows, or whose directory is gone, cannot be resumed — and a Resume
+      // button for one would fail in a way nobody can fix from a phone.
+      live: row.live && row.projectId !== null,
+      pinned: row.pinnedAt !== null,
+    })));
+
   mobile.configureMobileControlSource({
     projects: async () => listProjects().map((project) => ({ id: project.id, name: project.name, branch: project.branch })),
     providers: async () => mobileLaunchProviders(await detectProviders()),
@@ -1054,6 +1165,32 @@ function configureMobileSources(): void {
       // exactly as a desktop launch with no account picked: the project's pin
       // first, then the default.
       const session = await createSession({ providerId, projectId, model, effort, accountId, initialPrompt: prompt });
+      return { id: session.id, title: session.title };
+    },
+    /**
+     * Pick a recorded conversation back up, named only by Wanigan's session id.
+     *
+     * Everything else is resolved here: the conversation id the CLI needs, the
+     * project it ran in, and whether that project still exists. None of the
+     * three ever crosses to a paired device — the phone is offered a list of
+     * ids it may resume and nothing it could use to construct one.
+     *
+     * The row is looked up against pastSessions() rather than against whatever
+     * the phone sent, which is the same rule the account resolution above
+     * follows: an id naming no recorded conversation ends the call here.
+     */
+    resume: async (sessionId) => {
+      const past = pastSessions(200).find((row) => row.id === sessionId);
+      if (!past) throw new Error('That conversation is not in this Mac’s recent list.');
+      if (!past.projectId) throw new Error('The project this conversation ran in has been removed from Wanigan.');
+      if (!past.live) throw new Error('The project directory this conversation ran in is no longer on disk.');
+      const session = await createSession({
+        providerId: past.providerId,
+        projectId: past.projectId,
+        model: past.model ?? undefined,
+        effort: past.effort ?? undefined,
+        resumeFrom: { sessionId: past.id, conversationId: past.conversationId },
+      });
       return { id: session.id, title: session.title };
     },
     prompt: async (sessionId, prompt) => {
@@ -1150,11 +1287,27 @@ async function startAttendedServices(): Promise<StartupState> {
     try {
       initSessions(() => win);
       setSessionExitObserver((value) => {
+        // A session ending is the one event that changes the Recent list, and
+        // it is the moment somebody is most likely to be looking at that list —
+        // so drop the cache here rather than making them wait it out.
+        try { mobile.forgetRecentCache(); } catch { /* the phone listener may not be up */ }
         notify.announceAttention(attention.attentionOf(value));
         // The last agent exiting is the moment the Mac should be allowed to
         // sleep again, and waiting up to a poll interval for that is ten
         // seconds of battery spent on nothing.
         syncAwake();
+        // A goal task whose agent has exited is not running any more, and its
+        // file claims are not held any more. Reconciling only at start-up left
+        // the board reading 'running' — and blocking every sibling claim —
+        // until the app was restarted.
+        try {
+          if (control.onSessionExit(value.id)) {
+            const w = win;
+            if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
+          }
+        } catch (error) {
+          console.warn('[wanigan] could not reconcile a goal task after its session exited:', error);
+        }
       });
       // Clicking a banner already raises the window; this is the half that was
       // missing. Without a route the operator lands on whichever tab happened
@@ -1163,6 +1316,61 @@ async function startAttendedServices(): Promise<StartupState> {
         const w = win;
         if (!w || w.isDestroyed()) return;
         w.webContents.send('notify:open', target);
+      });
+      // The card inside the window. Sent to the renderer rather than drawn by
+      // main, because it has to be dismissible, stackable and clickable, and
+      // because the window is the one place a notification cannot be silently
+      // swallowed by a Focus mode nobody remembers switching on.
+      notify.setInAppAlertSink((alert) => {
+        const w = win;
+        if (!w || w.isDestroyed()) return;
+        w.webContents.send('notify:alert', alert);
+      });
+
+      // ── the emergency stop ─────────────────────────────────────────
+      //
+      // Registered in stop order, and the order is the design. Everything that
+      // *starts* work goes first — a dispatcher, a scheduler, an autopilot — so
+      // that by the time the sessions are killed there is nothing left that
+      // would notice them dying and launch a replacement. Killing first and
+      // disarming after leaves exactly the window an autopilot sweep needs to
+      // put the fleet back, which is how an emergency stop earns a reputation
+      // for not working.
+      //
+      // Each stopper reports a count and a noun. halt.ts knows neither what a
+      // docket is nor what a PTY is; it collects sentences and shows them.
+      registerHaltStopper({
+        name: 'schedules',
+        stop: () => { schedule.stopScheduler(); return { name: 'schedules', stopped: 1, note: 'the scheduler is stopped; no schedule was deleted or moved forward' }; },
+      });
+      registerHaltStopper({
+        name: 'queue',
+        stop: () => { queue.stopDispatcher(); return { name: 'queue', stopped: 1, note: 'the dispatcher is stopped; queued rows keep their place' }; },
+      });
+      registerHaltStopper({
+        name: 'autopilots',
+        stop: () => ({ name: 'autopilots', stopped: control.disarmAllAutopilots(), note: 'disarmed, not paused — arm them again yourself' }),
+      });
+      registerHaltStopper({
+        name: 'batch polling',
+        stop: () => {
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+          // Said plainly rather than counted. A batch the API has accepted runs
+          // on Anthropic's machines and no switch here reaches it; claiming a
+          // stop Wanigan did not perform is the one thing this panel must not
+          // do. What stopping the poller costs is stated too, because it is the
+          // clock that keeps a batch from expiring unwatched.
+          return { name: 'batch polling', stopped: 1, note: 'batches already accepted keep running at the API and are no longer being watched' };
+        },
+      });
+      registerHaltStopper({
+        name: 'learning',
+        stop: () => { learning.stopConsolidator(); return { name: 'learning', stopped: 1, note: 'the background consolidator is stopped' }; },
+      });
+      // Last, once nothing is left that would replace them.
+      registerHaltStopper({
+        name: 'sessions',
+        stop: () => ({ name: 'sessions', stopped: killAll(), note: 'every live agent was signalled; working trees are untouched' }),
       });
 
       stage = 'mobile control setup';
@@ -1195,6 +1403,7 @@ function stopServices() {
   // route leaves notify.ts's own degraded behaviour — raise the window — rather
   // than sending into a destroyed WebContents.
   notify.setNotificationOpener(null);
+  notify.setInAppAlertSink(null);
   stopHookEventListener?.();
   stopHookEventListener = null;
   try { mobile.stopMobileMonitor(); } catch { /* already down */ }
@@ -1205,6 +1414,7 @@ function stopServices() {
   try { schedule.stopScheduler(); } catch { /* already down */ }
   try { queue.stopDispatcher(); } catch { /* already down */ }
   if (autopilotTimer) { clearInterval(autopilotTimer); autopilotTimer = null; }
+  if (transcriptTimer) { clearInterval(transcriptTimer); transcriptTimer = null; }
   try { hooks.stopHookServer(); } catch { /* already down */ }
   try { otel.stopCollector(); } catch { /* already down */ }
   try { mcpServer.stopMcpServer(); } catch { /* already down */ }
@@ -1602,7 +1812,7 @@ function registerIpc() {
     recoverExactCodexThread(input));
   handle('sessions:scrollback', (id: string) => scrollback(id));
   handle('sessions:interrupt', (id: string, force?: boolean) => interruptSession(id, force === true));
-  handle('sessions:kill', (id: string) => { killSession(id); return true; });
+  handle('sessions:kill', (id: string) => killSession(id));
   handle('sessions:close', (id: string) => { closeSession(id); return true; });
   handle('sessions:markRead', (id: string) => { markRead(id); return true; });
   // 'sessions:write' is fire-and-forget; this typed variant exists so a tuning
@@ -1649,17 +1859,12 @@ function registerIpc() {
 
   // ── batches ──────────────────────────────────────────────────────────
   handle('batch:presets', (projectId?: string) => batch.presetsFor(projectId));
-  handle('batch:refreshModels', async () => {
-    try {
-      return await batch.refreshModels();
-    } catch (e) {
-      // Keep the local table in play; report why the live catalog is unavailable.
-      return {
-        models: [], fetchedAt: 0,
-        source: `unavailable — ${e instanceof Error ? e.message : String(e)}`,
-      };
-    }
-  });
+  // Rethrown, not swallowed. Returning an 'unavailable' shape resolved the
+  // renderer's await, so its catch never ran, its "Model refresh failed" Note
+  // could never fire, and the button went back to rest above a capability table
+  // the page then described as freshly read. The renderer already has the
+  // failure path; this is what reaches it.
+  handle('batch:refreshModels', () => batch.refreshModels());
   handle('batch:insights', () => batch.insights());
   handle('batch:preview', (source: SourceConfig, userTemplate: string) => batch.previewSource(source, userTemplate));
   handle('batch:estimate', (config: RunConfig, observedOut?: number) => batch.estimateRun(config, observedOut));
@@ -1940,6 +2145,12 @@ function registerIpc() {
   handle('spend:byProject', (days?: number) => spend.spendByProject(days));
   handle('spend:cache', () => spend.unifiedCacheRate());
   handle('spend:sync', (days?: number) => spend.syncComparison(days));
+  // The three surfaces as three series, windowed, with the priced/unpriced
+  // request counts beside them. Insights used to rebuild this by subtracting a
+  // correctly-windowed session series from an always-30-day sync series, which
+  // painted interactive spend as headless for every day the two did not cover
+  // alike. One read, one authority.
+  handle('spend:unified', (days?: number) => spend.unifiedSpend(days));
   handle('spend:effort', () => otel.effortBreakdown());
   handle('spend:byDay', (days: number) => otel.spendByDay(days));
   handle('budgets:list', () => spend.budgets());
@@ -1949,6 +2160,12 @@ function registerIpc() {
   handle('budgets:breached', () => spend.budgetBreached());
   handle('budgets:reconcile', (from: string, to: string) => spend.reconcile(from, to));
   handle('budgets:accuracy', () => spend.estimateAccuracy());
+  handle('spend:transcripts', (days?: number) => spend.transcriptMeter(days));
+  // The renderer may ask for a slice of ingest so a person who opens Insights
+  // on a cold store sees it fill rather than waiting for the background beat.
+  // The budget is clamped in claude-usage.ts, so a renderer cannot ask the main
+  // process to spend a minute here.
+  handle('spend:ingestTranscripts', (budgetMs?: number) => claudeUsage.ingest({ budgetMs }));
 
   // ══ phase 14 · notifications ════════════════════════════════════════
   handle('notify:expiring', () => notify.expiringSoon());
@@ -1973,17 +2190,41 @@ function registerIpc() {
     queueMicrotask(announceCurrentAttention);
     return true;
   });
+  // ── halt and catch fire ──────────────────────────────────────────────
+  //
+  // Three calls and no arguments worth guessing at. The renderer polls the
+  // state because a halt can be pulled from the phone, and a window that only
+  // learned about it on its own click would show a running fleet that is not.
+  handle('halt:state', () => haltState());
+  handle('halt:pull', async (reason?: string) => {
+    const state = await pullHalt({ reason, source: 'desktop' });
+    announceHalt(state);
+    return state;
+  });
+  // Clearing restarts what the stop pass stopped — with the deliberate
+  // exception of the autopilots, which were disarmed rather than paused. Wanigan
+  // does not decide on an operator's behalf that unattended dispatch should
+  // resume because a separate emergency is over.
+  handle('halt:clear', () => {
+    const state = clearHalt();
+    resumeAfterHalt();
+    return state;
+  });
+
   handle('mobile:status', () => mobile.mobileStatus());
   handle('mobile:configure', async (patch: Parameters<typeof mobile.setMobileConfig>[0]) => {
     const before = mobile.mobileConfig();
     const status = await mobile.setMobileConfig(patch);
     const deliveryChanged = before.pushEnabled !== status.config.pushEnabled
       || before.pushServer !== status.config.pushServer
-      || before.pushTopic !== status.config.pushTopic;
+      || before.pushTopic !== status.config.pushTopic
+      || before.webPushEnabled !== status.config.webPushEnabled;
     // Enabling alerts while a session is already waiting should not require
     // another lifecycle transition (or up to one poll interval) to be useful.
     if (deliveryChanged) notify.resetMobileAttentionDelivery();
-    if (deliveryChanged && status.config.pushEnabled) queueMicrotask(announceCurrentAttention);
+    if (deliveryChanged && (status.config.pushEnabled || status.config.webPushEnabled)) {
+      queueMicrotask(announceCurrentAttention);
+    }
     // Switching the phone dashboard on is a promise that this Mac will answer a
     // device that is not in the room, which it cannot keep while suspended;
     // switching it off is one of the two ways the hold is released.
@@ -1997,14 +2238,58 @@ function registerIpc() {
     if (status.config.pushEnabled) queueMicrotask(announceCurrentAttention);
     return status;
   });
+  // Both channels, reported separately. A merged verdict is the one answer a
+  // test cannot usefully give: "one of your two channels works" is exactly what
+  // the operator pressed the button to stop wondering about.
+  // Every surface, not just the phone. Until this fired the desktop pair too,
+  // the only way to find out whether a macOS banner or the in-window card
+  // worked was to wait for an agent to block on something — so a fresh install
+  // had no way at all to tell "nothing is configured" from "nothing happened".
   handle('mobile:testPush', async () => {
-    const result = await mobile.testMobilePush();
-    return {
-      ok: result.ok,
-      detail: result.ok
-        ? 'Test alert accepted by ntfy; device receipt is not reported.'
-        : result.error ?? (result.skipped ? 'Phone alerts are disabled.' : 'ntfy did not accept the test alert.'),
-    };
+    const phone = await mobile.testMobileAlerts();
+    // Through notify(), deliberately, rather than by constructing a banner
+    // here: this is the same call an attention transition makes, so a test that
+    // passes is evidence about the real path rather than about a second one
+    // written to look like it. `mobile: false` because the phone half already
+    // went, and reporting per channel is what makes the result readable.
+    notify.notify({
+      title: 'Wanigan test notification',
+      body: 'If you can see this, the desktop banner and the in-window card both work.',
+      urgent: false,
+      mobile: false,
+      mobileTag: 'wanigan-test',
+    });
+    return [
+      ...phone,
+      {
+        channel: 'desktop' as const,
+        ok: notify.notificationsEnabled(),
+        detail: notify.notificationsEnabled()
+          ? 'A banner and an in-window card were raised. macOS may still suppress the banner under a Focus mode; the card is not suppressible.'
+          : 'Notifications are switched off in Settings, so neither the banner nor the card was raised.',
+      },
+    ];
+  });
+  handle('mobile:alertChannels', () => mobile.alertChannelReadiness());
+  // Forgetting a device is local and immediate, and it is the weaker of the two
+  // revocations on purpose: the browser on that device still holds a
+  // subscription, so it re-registers the next time the app is opened. Rotating
+  // the key below is the one that cannot be undone from the device.
+  handle('mobile:forgetPushDevice', (id: string) => {
+    if (typeof id !== 'string' || !id) throw new Error('A device id is required.');
+    const status = mobile.forgetMobilePushDevice(id);
+    notify.resetMobileAttentionDelivery();
+    return status;
+  });
+  handle('mobile:forgetPushDevices', () => {
+    const status = mobile.forgetAllMobilePushDevices();
+    notify.resetMobileAttentionDelivery();
+    return status;
+  });
+  handle('mobile:regeneratePushKeys', () => {
+    const status = mobile.regenerateMobilePushKeys();
+    notify.resetMobileAttentionDelivery();
+    return status;
   });
 
   // ── the private transport in front of that loopback listener ─────────
@@ -2213,6 +2498,7 @@ function registerIpc() {
 
   // ══ P30 · durable agent control plane ═══════════════════════════════
   handle('usage:snapshot', (input?: { days?: number; force?: boolean }) => usage.snapshot(input));
+  handle('usage:burn', (force?: boolean) => usage.burnWindows(force === true));
   handle('accounts:list', (harness: string) => accounts.list(harness));
   handle('accounts:create', (input: { harness: string; label: string; configDir: string; seedFromAccountId?: string | null }) =>
     accounts.create(input));
@@ -2265,6 +2551,33 @@ function registerIpc() {
   // setDocketBudget bounds it in the main process.
   handle('control:setBudget', (docketId: string, budgetUsd: number | null) =>
     control.setDocketBudget(docketId, budgetUsd));
+  // The board reads the same rows the goal graph does, a second way. There is
+  // no ticket table behind it — see control.boardCards.
+  // ── the interview ────────────────────────────────────────────────────
+  //
+  // Every call spends money, so every call is one the operator took: there is
+  // no timer and no background pass here. `start` is the consent, and the
+  // budget it carries is checked before each question rather than after.
+  handle('interview:start', (input: {
+    projectId: string; seed: string; model?: string; budgetUsd?: number; maxQuestions?: number;
+  }) => interview.startInterview(input));
+  // Platform API models only, with what each costs a question. Codex and GLM
+  // are agent harnesses Wanigan launches as CLIs; this path is a direct
+  // Messages API call, and offering a model it cannot reach would fail later
+  // rather than on the screen where the choice is made.
+  handle('interview:models', () => interview.interviewModels());
+  handle('interview:answer', (id: string, answer: string) => interview.answerInterview(id, answer));
+  handle('interview:conclude', (id: string) => interview.concludeInterview(id));
+  handle('interview:commit', (id: string, edits?: Parameters<typeof interview.commitInterview>[1]) =>
+    interview.commitInterview(id, edits));
+  handle('interview:abandon', (id: string) => interview.abandonInterview(id));
+  handle('interview:get', (id: string) => interview.interview(id));
+  handle('interview:list', (projectId?: string | null, limit?: number) =>
+    interview.listInterviews(projectId, limit));
+
+  handle('control:board', (projectId?: string | null, limit?: number) =>
+    control.boardCards({ projectId, limit }));
+  handle('control:defer', (nodeId: string, until: number | null) => control.deferNode(nodeId, until));
   handle('control:outcomes', (projectId?: string | null) => control.outcomes(projectId));
   handle('control:events', (status?: 'new' | 'triaged' | 'dismissed' | 'all', limit?: number) => control.listEvents(status ?? 'all', limit));
   handle('control:addEvent', (input: { projectId?: string | null; source: string; kind: string; summary: string }) => control.addEvent(input));
@@ -2386,6 +2699,11 @@ function registerIpc() {
   handle('uploads:prune', () => uploads.pruneOrphans());
   handle('refusal:rows', (runId: string) => refusal.refusedRows(runId));
   handle('refusal:summary', (runId: string) => refusal.refusalSummary(runId));
+  // Priced before it is submitted, and the price is shown. The copy under the
+  // Rescue button already promised this ("the rescue is priced before it is
+  // submitted, so it goes through the per-run spend cap rather than around
+  // it") while the figure existed only inside main and never reached a screen.
+  handle('refusal:estimate', (runId: string, model: string) => refusal.estimateRescue(runId, model));
   handle('refusal:rescue', (runId: string, model: string) => refusal.rescueRefusals(runId, model));
   handle('refusal:merge', (childRunId: string) => refusal.mergeRescue(childRunId));
   handle('refusal:children', (runId: string) => refusal.rescueChildren(runId));
@@ -2394,6 +2712,47 @@ function registerIpc() {
   handle('cache:ttl', (cfg: RunConfig, requests: number) => cachediag.recommendedTtl(cfg, requests));
   handle('evals:pairs', () => evals.listPairs());
   handle('evals:createPair', (name: string, a: string, b: string) => evals.createPair(name, a, b));
+  /*
+   * The two calls the Evals tab has always told the operator to make.
+   *
+   * `runVariant` and `judgePair` were written, exported and never registered,
+   * so the tab's own copy — "copy this run in the builder, change exactly one
+   * field, and submit it", "paste the id of a judge run created for this pair"
+   * — instructed work no control could do, and `ingestJudgement` refuses any
+   * run whose kind is not 'eval', which nothing could produce.
+   *
+   * Both spend money, so both are validated here before they reach main's own
+   * guards: the change set is narrowed to the fields a pair may vary, and every
+   * value is shape-checked rather than passed through from the renderer.
+   */
+  handle('evals:variant', (baseRunId: unknown, change: unknown, name: unknown) => {
+    if (typeof baseRunId !== 'string' || !baseRunId.trim()) throw new Error('Choose the run this variant is based on.');
+    if (typeof name !== 'string' || !name.trim()) throw new Error('Give the variant a name.');
+    if (!change || typeof change !== 'object' || Array.isArray(change)) throw new Error('A variant changes one field.');
+    // Only the fields a pair is allowed to vary. Anything else would submit a
+    // run the pairing rule then refuses, after it had already been paid for.
+    const allowed = new Set(['model', 'effort', 'maxTokens', 'temperature', 'userTemplate', 'schemaJson']);
+    const patch: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(change as Record<string, unknown>)) {
+      if (!allowed.has(key)) throw new Error(`A variant cannot change ${key}.`);
+      if (typeof value === 'string') { if (value.length > 100_000) throw new Error(`${key} is too long.`); patch[key] = value; }
+      else if (typeof value === 'number' && Number.isFinite(value)) patch[key] = value;
+      else throw new Error(`${key} must be text or a number.`);
+    }
+    if (Object.keys(patch).length !== 1) throw new Error('A variant changes exactly one field, so the pair has one variable.');
+    return evals.runVariant(baseRunId, patch as Partial<RunConfig>, name.trim().slice(0, 200));
+  });
+  handle('evals:judge', (pairId: unknown, opts: unknown) => {
+    if (typeof pairId !== 'string' || !pairId.trim()) throw new Error('Choose the pair to judge.');
+    const raw = (opts ?? {}) as Record<string, unknown>;
+    const model = typeof raw.model === 'string' ? raw.model.trim() : '';
+    const rubric = typeof raw.rubric === 'string' ? raw.rubric.trim() : '';
+    const effort = typeof raw.effort === 'string' ? raw.effort.trim() : undefined;
+    if (!model) throw new Error('Choose the model that will judge.');
+    if (!rubric) throw new Error('A judge needs a rubric. Say what “better” means for this task.');
+    if (rubric.length > 20_000) throw new Error('That rubric is too long.');
+    return evals.judgePair(pairId, { model, rubric, effort });
+  });
   handle('evals:diff', (pairId: string) => evals.pairDiff(pairId));
   handle('evals:summary', (pairId: string) => evals.regressionSummary(pairId));
   handle('evals:ingest', (judgeRunId: string) => evals.ingestJudgement(judgeRunId));
@@ -2424,6 +2783,14 @@ function registerIpc() {
     ctxConfig.contextBudget(assertManagedRoot(projectPath, 'That project folder'), files, model));
   handle('context:read', (p: string) => ctxInstructions.readInstruction(p));
   handle('context:memoryBody', (p: string) => ctxMemory.memoryBody(p));
+  // The other half of the AGENTS.md story, and the reason this handler exists
+  // at all: agentsChain() was written, documented down to the heading the UI
+  // would give it, and never called. It computes one thing nobody could see —
+  // that the Codex compiler writes personal instructions to a directory this
+  // account's Codex home does not read — which is a silent misconfiguration a
+  // user would otherwise only find by noticing an agent ignoring a rule.
+  handle('context:codexAgents', (projectId: string | null, projectPath: string) =>
+    agentsChain(projectId, projectPath));
   handle('context:agentsMd', (projectPath: string) =>
     ctxInstructions.agentsMdStatus(assertManagedRoot(projectPath, 'That project folder')));
   handle('context:refresh', (projectPath: string) => {

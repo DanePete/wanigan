@@ -215,6 +215,9 @@ const SHADOWED_MODIFIER_BASELINE = {
   'attention.css': 0,
   'composer.css': 0,
   'control.css': 0,
+  // New sheets start at zero and stay there: the baseline records debt that
+  // existed the day the gate landed, and board.css was written after it.
+  'board.css': 0,
   'evals.css': 0,
   'fleet.css': 0,
   'git.css': 0,

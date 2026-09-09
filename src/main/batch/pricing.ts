@@ -4,6 +4,34 @@
  * These are the *batch* rates (already 50% of the synchronous list price).
  * Source: platform.claude.com/docs/en/build-with-claude/batch-processing
  */
+/**
+ * A rate that has since been superseded, and the instant it stopped applying.
+ *
+ * The table below is a snapshot of *today's* published rates, and until this
+ * existed every function here priced the whole of history at them. That is a
+ * silent rewrite: edit a row because Anthropic changed a price and every batch
+ * run, every reconciliation and every accuracy ratio already on record moves,
+ * with nothing on screen to say why. The Insights page carries two cards whose
+ * only job is explaining the gap between Wanigan's arithmetic and an invoice,
+ * so a table edit was an invisible source of exactly the drift they exist to
+ * account for.
+ *
+ * `until` is exclusive: a period applies to every event stamped before it.
+ * Periods are searched oldest-first, so they must be ordered that way.
+ *
+ * These arrays are empty, and that is deliberate. No rate change is recorded
+ * here because none has been verified against a published schedule, and
+ * inventing one would put a wrong number on a receipt rather than a missing
+ * one. When a rate does change, the edit is: push the OLD rate onto `history`
+ * with the changeover instant, then update the top-level fields.
+ */
+export type RatePeriod = {
+  /** Epoch ms. These rates applied to anything stamped strictly before it. */
+  until: number;
+  batchInput: number;   // $/MTok
+  batchOutput: number;  // $/MTok
+};
+
 export type ModelPricing = {
   id: string;
   label: string;
@@ -14,6 +42,8 @@ export type ModelPricing = {
   /** Eligible for the output-300k-2026-03-24 beta (batch only). */
   extendedOutput: boolean;
   retired?: boolean;
+  /** Superseded rates, oldest first. Empty means this model has never moved. */
+  history?: RatePeriod[];
 };
 
 export const MODELS: ModelPricing[] = [
@@ -54,9 +84,41 @@ export function findModel(id: string): ModelPricing | undefined {
   return MODELS.find((m) => m.id.replace(DATED_SNAPSHOT, '') === family);
 }
 
-/** True when MODELS carries a published rate for this id. Ask before quoting money. */
-export function isPricedModel(id: string): boolean {
-  return findModel(id) !== undefined;
+/**
+ * The rates in force for `id` at `atMs`, or undefined when there is none.
+ *
+ * Undefined for the same reason findModel() returns it: "no published rate"
+ * and "costs X" are different claims and a caller about to print a dollar sign
+ * has to be able to tell them apart.
+ *
+ * `atMs` defaults to now rather than to the current rate directly, so a caller
+ * that forgets to pass a timestamp gets today's price for today's work — the
+ * same answer it got before this existed — instead of silently pricing a
+ * two-year-old run at a rate that had not been set yet.
+ */
+export function rateAt(id: string, atMs?: number): { batchInput: number; batchOutput: number } | undefined {
+  const m = findModel(id);
+  return m ? pickRate(m, atMs) : undefined;
+}
+
+/**
+ * The schedule walk, kept separate from the table lookup so it can be tested
+ * against a history the shipped table does not have. Every `history` array in
+ * MODELS is empty today, so a test that could only go through `rateAt` would
+ * exercise the fallback and nothing else — and the branch that matters is the
+ * one that only runs once a rate has actually moved.
+ */
+export function pickRate(m: ModelPricing, atMs?: number): { batchInput: number; batchOutput: number } {
+  const at = Number.isFinite(atMs) ? Number(atMs) : Date.now();
+  for (const period of m.history ?? []) {
+    if (at < period.until) return { batchInput: period.batchInput, batchOutput: period.batchOutput };
+  }
+  return { batchInput: m.batchInput, batchOutput: m.batchOutput };
+}
+
+/** True when MODELS carries a published rate for this id at `atMs`. Ask before quoting money. */
+export function isPricedModel(id: string, atMs?: number): boolean {
+  return rateAt(id, atMs) !== undefined;
 }
 
 /**
@@ -87,6 +149,18 @@ export type Usage = {
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
   cacheTtl?: '5m' | '1h';
+  /**
+   * The two cache-write halves, when the source reports them apart.
+   *
+   * The Batches API hands back one `cache_creation_input_tokens` total and the
+   * run's own configured `cacheTtl` says which multiplier it earned. Claude
+   * Code's transcripts instead carry `cache_creation.ephemeral_5m_input_tokens`
+   * and `…_1h_input_tokens` on every turn, and a single turn can hold both. A
+   * total plus one ttl cannot express that, so when either of these is present
+   * they are used and `cache_creation_input_tokens`/`cacheTtl` are ignored.
+   */
+  cache_creation_5m?: number;
+  cache_creation_1h?: number;
 };
 
 /**
@@ -98,16 +172,37 @@ export type Usage = {
  * The number is therefore only a price when isPricedModel(modelId) is true;
  * every caller that shows it to somebody has to say which of the two it has.
  */
-export function costOf(modelId: string, u: Usage): number {
-  const m = modelFor(modelId);
-  const writeMult = u.cacheTtl === '1h' ? CACHE_MULTIPLIER.write1h : CACHE_MULTIPLIER.write5m;
-  const perM = (tokens: number, rate: number) => (tokens / 1_000_000) * rate;
+export function costOf(modelId: string, u: Usage, atMs?: number): number {
+  // modelFor() substitutes DEFAULT_MODEL for an unknown id; rateAt() answers
+  // for that same substitute so the two cannot disagree about which row is
+  // being priced. Callers that must not guess gate on isPricedModel() first.
+  const rate = rateAt(modelId, atMs) ?? rateAt(DEFAULT_MODEL, atMs)!;
+  const perM = (tokens: number, perMillion: number) => (tokens / 1_000_000) * perMillion;
+
+  const split = (u.cache_creation_5m ?? 0) + (u.cache_creation_1h ?? 0) > 0;
+  const write5m = split ? u.cache_creation_5m ?? 0 : u.cacheTtl === '1h' ? 0 : u.cache_creation_input_tokens ?? 0;
+  const write1h = split ? u.cache_creation_1h ?? 0 : u.cacheTtl === '1h' ? u.cache_creation_input_tokens ?? 0 : 0;
+
   return (
-    perM(u.input_tokens ?? 0, m.batchInput) +
-    perM(u.output_tokens ?? 0, m.batchOutput) +
-    perM(u.cache_read_input_tokens ?? 0, m.batchInput * CACHE_MULTIPLIER.read) +
-    perM(u.cache_creation_input_tokens ?? 0, m.batchInput * writeMult)
+    perM(u.input_tokens ?? 0, rate.batchInput) +
+    perM(u.output_tokens ?? 0, rate.batchOutput) +
+    perM(u.cache_read_input_tokens ?? 0, rate.batchInput * CACHE_MULTIPLIER.read) +
+    perM(write5m, rate.batchInput * CACHE_MULTIPLIER.write5m) +
+    perM(write1h, rate.batchInput * CACHE_MULTIPLIER.write1h)
   );
+}
+
+/**
+ * The same usage at synchronous rates.
+ *
+ * The table above is batch pricing, which the header states is already 50% of
+ * the synchronous list price — so anything that calls the Messages API directly
+ * and priced it with costOf() would report half of what it actually cost. That
+ * is a small error in the one place it is least acceptable: a screen whose
+ * whole job is telling somebody what Wanigan spent on their behalf.
+ */
+export function syncCostOf(modelId: string, u: Usage, atMs?: number): number {
+  return costOf(modelId, u, atMs) * 2;
 }
 
 export function usd(n: number): string {

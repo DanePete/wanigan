@@ -571,6 +571,58 @@ function migratePhases(d: Database.Database) {
   migrateImprovementScout(d);
   migrateCheckpoints(d);
   migrateConversationFlags(d);
+  migrateClaudeUsage(d);
+}
+
+/**
+ * Claude Code's own transcripts, folded into a meter. See claude-usage.ts for
+ * why this is a second instrument rather than more rows in session_api_events.
+ *
+ * Two tables because the work has two halves that fail differently. The events
+ * table is the answer; the files table is the bookmark that makes producing it
+ * resumable over a corpus measured in gigabytes, and losing the bookmark costs
+ * time but never correctness — the events fold on a request key, so re-reading
+ * bytes already read changes nothing.
+ */
+function migrateClaudeUsage(d: Database.Database) {
+  d.exec(`
+    -- One row per API turn, keyed by the turn's own identity rather than by
+    -- the line that carried it: Claude Code writes one line per content block
+    -- and every one repeats the turn's cumulative usage, so the key is the only
+    -- thing standing between this table and a total several times too large.
+    CREATE TABLE IF NOT EXISTS claude_usage_events (
+      request_key    TEXT PRIMARY KEY,
+      at             INTEGER NOT NULL,
+      model          TEXT NOT NULL,
+      cwd            TEXT,
+      session_id     TEXT,
+      effort         TEXT,
+      entrypoint     TEXT,
+      sidechain      INTEGER NOT NULL DEFAULT 0,
+      in_tokens      INTEGER NOT NULL DEFAULT 0,
+      out_tokens     INTEGER NOT NULL DEFAULT 0,
+      cache_read     INTEGER NOT NULL DEFAULT 0,
+      cache_write_5m INTEGER NOT NULL DEFAULT 0,
+      cache_write_1h INTEGER NOT NULL DEFAULT 0
+    );
+    -- Every read on this table is a window plus a group by model or day, and
+    -- the primary key is a hash of a request id with no useful order. Carrying
+    -- the token columns answers the daily rollups from the index alone.
+    CREATE INDEX IF NOT EXISTS idx_claude_usage_at
+      ON claude_usage_events(at, model, in_tokens, out_tokens, cache_read,
+                             cache_write_5m, cache_write_1h);
+
+    -- How far into each transcript the reader has got. byte_offset is a
+    -- position in an append-only file, valid only while size and mtime still
+    -- match what was observed when it was written.
+    CREATE TABLE IF NOT EXISTS claude_usage_files (
+      path        TEXT PRIMARY KEY,
+      size        INTEGER NOT NULL,
+      mtime_ms    REAL    NOT NULL,
+      byte_offset INTEGER NOT NULL DEFAULT 0,
+      scanned_at  INTEGER NOT NULL
+    );
+  `);
 }
 
 /**
@@ -1198,7 +1250,56 @@ function migrateControl(d: Database.Database) {
   // marker the sweep re-enqueues the same node every tick until the runner
   // wins the race, and the losers burn queue attempts on an error.
   addColumn(d, 'work_nodes', 'dispatch_state', 'TEXT');
+  // Whether the CLI reported a cost for the session behind an outcome. The
+  // column used to hold 0 for both "reported nothing" and "reported zero", so
+  // the Outcome router totalled unmetered work as free and ranked it cheapest —
+  // the one thing CLAUDE.md says never to do with an unpriced call. Existing
+  // rows default to 0: they were written before the distinction was recorded,
+  // and claiming they were reported would be inventing evidence. `effort` joins
+  // them because a router that cannot say which effort produced a result cannot
+  // answer whether the expensive one was worth it.
+  addColumn(d, 'work_model_outcomes', 'cost_reported', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(d, 'work_model_outcomes', 'effort', 'TEXT');
+  // A ticket the operator parked until a date. Null is the normal case: work
+  // that is ready is ready. This is what lets the board hold a real backlog —
+  // "not now, but not never" — instead of forcing every known issue to be
+  // either in progress or forgotten.
+  addColumn(d, 'work_nodes', 'defer_until', 'INTEGER');
+  // The interview that produced a goal, kept after it did.
+  //
+  // Durable rather than in memory because an interview is ten minutes of the
+  // operator's own answers, and losing that to a quit — or to the app crashing
+  // on question nine — costs them the work and the money already spent on it.
+  // The transcript stays after the goal is written: it is the record of why the
+  // acceptance checks say what they say, which is the question somebody asks
+  // three weeks later when one of them fails.
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS interviews (
+      id            TEXT PRIMARY KEY,
+      project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      seed          TEXT NOT NULL,
+      model         TEXT NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'asking',
+      turns_json    TEXT NOT NULL DEFAULT '[]',
+      proposal_json TEXT,
+      docket_id     TEXT,
+      spend_usd     REAL NOT NULL DEFAULT 0,
+      budget_usd    REAL NOT NULL,
+      calls         INTEGER NOT NULL DEFAULT 0,
+      detail        TEXT,
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_interviews_project ON interviews(project_id, updated_at DESC);
+  `);
+  // How hard the operator asked to be grilled. The dial used to be a dollar
+  // budget, which was the wrong thing to put in front of them: a whole
+  // interview costs between ten and thirty cents, so every option on that menu
+  // meant "yes". The budget still exists as a runaway guard and is derived from
+  // this. Rows written before it default to the standard length.
+  addColumn(d, 'interviews', 'max_questions', 'INTEGER NOT NULL DEFAULT 10');
   d.exec('CREATE INDEX IF NOT EXISTS idx_work_nodes_dispatch ON work_nodes(dispatch_state) WHERE dispatch_state IS NOT NULL');
+  d.exec('CREATE INDEX IF NOT EXISTS idx_work_nodes_defer ON work_nodes(defer_until) WHERE defer_until IS NOT NULL');
 }
 
 /**

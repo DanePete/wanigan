@@ -2,14 +2,16 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { db } from './db';
+import { halted, refuseIfHalted } from './halt';
 import { headSync } from './git';
-import { projectById } from './store';
+import { listProjects, projectById } from './store';
 import { createSession, killSession, listSessions } from './sessions';
 import * as review from './review';
 import * as otel from './otel';
 import { listGoalTrace, recordGoalTrace } from './goal-trace';
 import { enqueue } from './queue';
 import type {
+  BoardCard,
   ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode,
   DocketAutopilot, DocketNodeKind, DocketNodeStatus, DocketPlanNode, DocketProof, DocketRisk, DocketStatus,
   GoalCapsule, GoalResumeReceipt, GoalTraceEvent,
@@ -35,7 +37,7 @@ type NodeRow = {
   id: string; docket_id: string; kind: string; title: string; instructions: string; depends_json: string;
   status: string; provider_id: string | null; model: string | null; session_id: string | null;
   worktree: string | null; started_at: number | null; ended_at: number | null; detail: string | null;
-  claim_path: string | null; dispatch_state: string | null;
+  claim_path: string | null; dispatch_state: string | null; defer_until: number | null;
 };
 
 const MAX_OBJECTIVE = 12_000;
@@ -188,7 +190,7 @@ function rawNodes(docketId: string): NodeRow[] {
 
 /** Dependencies are computed from durable rows each read; an app restart cannot
  * leave a transient "ready" cache lying about a task whose prerequisite failed. */
-function mapNodes(rows: NodeRow[]): DocketNode[] {
+function mapNodes(rows: NodeRow[], at: number = Date.now()): DocketNode[] {
   const complete = new Set(rows.filter((row) => row.status === 'completed').map((row) => row.id));
   const failed = new Set(rows.filter((row) => ['failed', 'canceled'].includes(row.status)).map((row) => row.id));
   return rows.map((row) => {
@@ -197,6 +199,14 @@ function mapNodes(rows: NodeRow[]): DocketNode[] {
     if (status === 'pending') {
       status = dependsOn.some((id) => failed.has(id)) ? 'blocked'
         : dependsOn.every((id) => complete.has(id)) ? 'ready' : 'blocked';
+      // A parked ticket is not ready, however satisfied its dependencies are.
+      // Derived here rather than stored as a status of its own, for the reason
+      // the comment above this function gives about 'ready': the date is the
+      // durable fact and the state is read from it, so a deferral that has come
+      // due needs no sweep to notice — the next read simply returns 'ready'.
+      // Storing a 'deferred' status instead would mean a ticket parked to
+      // Tuesday sits in that status forever unless something wakes it up.
+      if (status === 'ready' && row.defer_until !== null && row.defer_until > at) status = 'pending';
     }
     return {
       id: row.id, docketId: row.docket_id, kind: NODE_KINDS.includes(row.kind as DocketNodeKind)
@@ -204,6 +214,8 @@ function mapNodes(rows: NodeRow[]): DocketNode[] {
       title: row.title, instructions: row.instructions, dependsOn, claimPath: row.claim_path, status,
       providerId: row.provider_id, model: row.model, sessionId: row.session_id,
       worktree: row.worktree, startedAt: row.started_at, endedAt: row.ended_at, detail: row.detail,
+      queued: row.dispatch_state === 'queued',
+      deferUntil: row.defer_until,
     };
   });
 }
@@ -325,11 +337,21 @@ function buildPlan(raw: unknown): PlannedNode[] {
     if (!NODE_KINDS.includes(value.kind as DocketNodeKind)) {
       throw new Error(`Task ${index + 1} has kind "${String(value.kind)}"; use one of: ${NODE_KINDS.join(', ')}.`);
     }
-    const depends = Array.isArray(value.dependsOn) ? value.dependsOn : [];
+    // Read as unknown[] deliberately. The declared type says number[], and the
+    // whole job of this function is that what arrived is not yet known to be
+    // what it was declared to be.
+    const depends: unknown[] = Array.isArray(value.dependsOn) ? value.dependsOn : [];
     if (depends.length > MAX_NODE_DEPENDENCIES) {
       throw new Error(`Task ${index + 1} has ${depends.length} dependencies; the maximum is ${MAX_NODE_DEPENDENCIES}.`);
     }
-    const dependsOn = [...new Set(depends.map((dep) => Number(dep)))];
+    // `Number()` alone was too generous to be a validator here: it turns null,
+    // false, '' and [] all into 0, so a malformed dependency list did not fail
+    // the graph — it silently made every one of those entries a dependency on
+    // task 1. Anything that is not already a number or a number written down
+    // becomes NaN and is refused by name below.
+    const dependsOn = [...new Set(depends.map((dep) => (
+      typeof dep === 'number' || (typeof dep === 'string' && dep.trim() !== '') ? Number(dep) : NaN
+    )))];
     for (const dep of dependsOn) {
       if (!Number.isInteger(dep) || dep < 0 || dep >= raw.length) {
         throw new Error(`Task ${index + 1} depends on a task that is not in this graph.`);
@@ -540,16 +562,26 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
     `You are working on goal: ${parent.title}.`, `Objective:\n${parent.objective}`,
     `Your assigned phase: ${node.title}.`, `Phase instructions:\n${node.instructions}`,
     `Acceptance checks:\n${acceptance}`,
-    'Work only in the isolated worktree Wanigan provided. Report evidence and unresolved risks; do not claim a passed check you did not run.',
+    node.kind === 'verify' || node.kind === 'review'
+      ? 'You are working in the worktree the implementation task produced, so the change under review is already here. Report evidence and unresolved risks; do not claim a passed check you did not run.'
+      : 'Work only in the isolated worktree Wanigan provided. Report evidence and unresolved risks; do not claim a passed check you did not run.',
   ].join('\n\n');
   // Built after this node's own claim is taken, so its sibling list is what the
   // agent will actually be running beside.
   const capsule = goalCapsuleFor(nodeId);
+  // A verification or review task runs in the tree it is verifying. Cutting it
+  // a fresh worktree from the base branch handed the agent a checkout without
+  // the implementation in it and then asked it to check the implementation.
+  const inheritedTree = (node.kind === 'verify' || node.kind === 'review')
+    ? verificationTree(nodeRow(nodeId))
+    : { kind: 'none' as const };
+  const inherited = inheritedTree.kind === 'found' ? inheritedTree.path : null;
   let session: Awaited<ReturnType<typeof createSession>>;
   try {
     session = await createSession({ providerId, projectId: project.id, model: input.model?.trim() || undefined,
       effort: input.effort?.trim() || undefined, permissionMode: input.permissionMode?.trim() || (node.kind === 'implement' ? 'acceptEdits' : 'plan'),
-      isolate: true, initialPrompt: prompt, goalCapsule: capsule });
+      isolate: !inherited, initialPrompt: prompt, goalCapsule: capsule },
+      inherited ? { useWorktree: inherited } : {});
   } catch (error) {
     if (takenClaim) releaseClaim(takenClaim.id);
     throw error;
@@ -679,16 +711,100 @@ export function traces(docketId: string, limit?: number): GoalTraceEvent[] {
   return listGoalTrace(docketId, limit);
 }
 
+/**
+ * The tree a verification is about.
+ *
+ * Every node starts in a worktree of its own, cut from the base branch, and no
+ * node merges into another. So a verify node's own worktree contains the plan
+ * and none of the implementation, and running the gate there recorded
+ * "N review command(s) passed" about a tree that did not hold the change being
+ * verified — which `completeNode` then let gate an approval.
+ *
+ * The tree that matters is the one the implementation was made in: the worktree
+ * of the node this one depends on, walking back through the graph.
+ *
+ * Three answers, because three things are true in practice:
+ *  - `found`   an implementation worktree exists and is on disk. Use it.
+ *  - `gone`    one was recorded and is no longer there. Refuse: the change
+ *              cannot be verified, and verifying the base branch instead would
+ *              record a pass for work nobody looked at.
+ *  - `none`    no prerequisite ever recorded a worktree, so the work happened
+ *              in the project checkout — isolation off, or a goal whose
+ *              implementation was completed by hand. Verify the project, and
+ *              say in the proof that that is what was verified.
+ */
+type VerificationTree =
+  | { kind: 'found'; path: string; from: NodeRow }
+  | { kind: 'gone'; path: string; from: NodeRow }
+  | { kind: 'none' };
+
+function verificationTree(node: NodeRow): VerificationTree {
+  // A node that ran in its own worktree and is not a verification of something
+  // else is its own subject: an implement node re-running its gate is fine.
+  if (node.kind !== 'verify' && node.kind !== 'review' && node.worktree) {
+    return pathExists(node.worktree)
+      ? { kind: 'found', path: node.worktree, from: node }
+      : { kind: 'gone', path: node.worktree, from: node };
+  }
+  const rows = rawNodes(node.docket_id);
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const seen = new Set<string>([node.id]);
+  const queue = [...parseStrings(node.depends_json)];
+  let missing: VerificationTree | null = null;
+  while (queue.length) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const row = byId.get(id);
+    if (!row) continue;
+    if (row.kind === 'implement' && row.worktree) {
+      if (pathExists(row.worktree)) return { kind: 'found', path: row.worktree, from: row };
+      // Keep looking: a fan-out can hold more than one implementation, and a
+      // live one outranks a vanished one. Remember this for the refusal.
+      missing ??= { kind: 'gone', path: row.worktree, from: row };
+    }
+    queue.push(...parseStrings(row.depends_json));
+  }
+  return missing ?? { kind: 'none' };
+}
+
 export async function runProof(nodeId: string): Promise<DocketProof> {
   const node = nodeRow(nodeId); const parent = docketRow(node.docket_id); const project = projectById(parent.project_id);
   if (!project) throw new Error('Project not found.');
-  const run = await review.runAt(project.id, node.worktree ?? project.path);
+  const tree = verificationTree(node);
+  if (tree.kind === 'gone') {
+    throw new Error(
+      `The worktree “${tree.from.title}” produced is no longer on disk (${tree.path}), so there is `
+      + 'nothing here to verify. Running the gate anyway would test the base branch and record a '
+      + 'pass for a change it never saw.',
+    );
+  }
+  const cwd = tree.kind === 'found' ? tree.path : project.path;
+  const run = await review.runAt(project.id, cwd);
   const passed = run.status === 'passed';
-  const summary = passed ? `${run.results.length} review command(s) passed.` : `Review gate failed after ${run.results.length} command(s).`;
+  // Which tree, named by the task that produced it — never by its path.
+  //
+  // A proof that does not say which working copy it ran in cannot be checked
+  // afterwards, which is the whole job here. But `summary` is one of the few
+  // fields that crosses to a paired phone (mobile/goals.ts sends it beside the
+  // decision buttons), and a worktree path is exactly what that wire is not
+  // allowed to carry. The path goes into detail_json, which stays on the Mac.
+  const where = tree.kind === 'found'
+    ? (tree.from.id === node.id ? '' : ` in the worktree from “${tree.from.title}”`)
+    : " in this goal's project checkout";
+  const summary = passed
+    ? `${run.results.length} review command(s) passed${where}.`
+    : `Review gate failed after ${run.results.length} command(s)${where}.`;
   const proof: DocketProof = { id: uid('proof'), docketId: parent.id, nodeId, kind: 'test', status: passed ? 'passed' : 'failed', summary, createdAt: now() };
   db().prepare(`INSERT INTO work_proofs (id,docket_id,node_id,kind,status,summary,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)`)
     .run(proof.id, proof.docketId, proof.nodeId, proof.kind, proof.status, proof.summary,
-      JSON.stringify(run.results.map((result) => ({ command: result.command, exitCode: result.exitCode, durationMs: result.durationMs }))), proof.createdAt);
+      JSON.stringify({
+        // Which working copy the commands actually ran in. Desktop-only: the
+        // phone reads `summary`, and this is the field that names a path.
+        cwd,
+        treeFrom: tree.kind === 'found' ? tree.from.title : null,
+        results: run.results.map((result) => ({ command: result.command, exitCode: result.exitCode, durationMs: result.durationMs })),
+      }), proof.createdAt);
   touch(parent.id); return proof;
 }
 
@@ -708,10 +824,17 @@ function storeOutcome(node: NodeRow, accepted: boolean, testsPassed: boolean): v
   if (!node.provider_id) return;
   const usage = node.session_id ? otel.usageFor(node.session_id) : null;
   const model = node.model || usage?.models[0] || 'provider-default';
-  db().prepare(`INSERT INTO work_model_outcomes (id,docket_id,node_id,provider_id,model,task_kind,accepted,tests_passed,cost_usd,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(node_id) DO UPDATE SET accepted=excluded.accepted,tests_passed=excluded.tests_passed,cost_usd=excluded.cost_usd`)
+  // Whether the figure was reported is stored beside it. Writing 0 for an
+  // unreported cost and 0 for a genuinely free session made the two
+  // indistinguishable one row later, and the router then read the unmetered
+  // provider as the cheapest one.
+  const reported = usage?.costStatus === 'reported';
+  const effort = db().prepare('SELECT effort FROM session_log WHERE id=?')
+    .get(node.session_id ?? '') as { effort: string | null } | undefined;
+  db().prepare(`INSERT INTO work_model_outcomes (id,docket_id,node_id,provider_id,model,task_kind,accepted,tests_passed,cost_usd,cost_reported,effort,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(node_id) DO UPDATE SET accepted=excluded.accepted,tests_passed=excluded.tests_passed,cost_usd=excluded.cost_usd,cost_reported=excluded.cost_reported,effort=excluded.effort`)
     .run(uid('outcome'), node.docket_id, node.id, node.provider_id, model, node.kind, accepted ? 1 : 0, testsPassed ? 1 : 0,
-      usage?.costStatus === 'reported' ? usage.costUsd : 0, now());
+      reported ? usage!.costUsd : 0, reported ? 1 : 0, effort?.effort ?? null, now());
 }
 
 export function completeNode(nodeId: string, input: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }): DocketNode {
@@ -760,15 +883,144 @@ export function completeNode(nodeId: string, input: { detail?: string; decision?
   return mapNodes(rawNodes(parent.id)).find((value) => value.id === nodeId)!;
 }
 
+/**
+ * What each provider and model has actually produced, per task kind.
+ *
+ * Two rules this query is built around. Money: only rows whose CLI reported a
+ * cost are totalled, and the count of those rows travels with the total, so a
+ * profile that reports nothing reads as "not reported" rather than as free.
+ * Order: by acceptance *rate*, not by raw accepted count, which ranked whichever
+ * profile happened to run most; a single sample is still shown and still says
+ * it is one sample, and the renderer is the place that decides how much weight
+ * one sample earns.
+ */
+/* ── the board ───────────────────────────────────────────────────────── */
+
+/**
+ * Every ticket in the app, flattened across goals, with enough context to be
+ * read on a card.
+ *
+ * A goal is a contract with a task graph, and the Control view is the right
+ * place to read one goal that way. It is the wrong place to answer the question
+ * an operator actually has most mornings — "what is outstanding across
+ * everything, and what am I doing about it today" — because that question spans
+ * goals and projects, and the answer to it is a board rather than a graph.
+ *
+ * So this is a second reading of the same rows, not a second store. There is no
+ * ticket table: a card *is* a work_node, its column *is* the status derived in
+ * mapNodes, and moving one is the same call the Control view makes. Two tables
+ * that both claimed to hold the tickets would disagree within a week, and the
+ * one the operator was looking at would be the wrong one.
+ */
+export function boardCards(input: { projectId?: string | null; limit?: number } = {}): BoardCard[] {
+  const limit = Math.max(1, Math.min(1_000, input.limit ?? 500));
+  // The window is chosen in goals and only then read in rows, and that order is
+  // the load-bearing part. `LIMIT` on the joined rows cuts wherever the count
+  // runs out, which is the middle of a goal, and it cuts a goal's *tail* —
+  // rows come back in plan order, so what falls off is the end of the graph.
+  // The review task is the last node of every plan buildPlan will accept, so
+  // the tickets a row limit silently drops are precisely the ones waiting on a
+  // person, from a board whose whole claim is "every ticket across every goal".
+  //
+  // The partial group is also wrong on its own terms: mapNodes() derives
+  // 'ready' from the completed rows *it was handed*, so a prerequisite on the
+  // far side of the cut reads as unfinished and its ticket renders in Blocked —
+  // the column this board reserves for work stopped on a failure. Backward
+  // dependencies keep the built-in plans out of that, since a prefix carries
+  // its own prerequisites, but buildPlan permits a forward one and a
+  // hand-edited graph can have it. Whole goals in, or none of it.
+  //
+  // The window is a subquery rather than a list of ids read out and sent back:
+  // a thousand-goal window is a thousand bound parameters, and SQLite has a
+  // ceiling on those that this would sit right underneath.
+  const rows = (input.projectId
+    ? db().prepare(`SELECT n.*, d.title AS docket_title, d.project_id, d.risk, d.status AS docket_status
+        FROM work_nodes n JOIN work_dockets d ON d.id = n.docket_id
+        WHERE n.docket_id IN (
+          SELECT id FROM work_dockets WHERE project_id = ? ORDER BY updated_at DESC, rowid LIMIT ?)
+        ORDER BY d.updated_at DESC, d.rowid, n.rowid`).all(input.projectId, limit)
+    : db().prepare(`SELECT n.*, d.title AS docket_title, d.project_id, d.risk, d.status AS docket_status
+        FROM work_nodes n JOIN work_dockets d ON d.id = n.docket_id
+        WHERE n.docket_id IN (
+          SELECT id FROM work_dockets ORDER BY updated_at DESC, rowid LIMIT ?)
+        ORDER BY d.updated_at DESC, d.rowid, n.rowid`).all(limit)) as (NodeRow & {
+    docket_title: string; project_id: string; risk: string; docket_status: string;
+  })[];
+
+  // Status is derived per goal, not per row: 'ready' means every prerequisite
+  // inside *that* goal completed, so the rows have to be grouped before they
+  // can be mapped. Doing it row by row would mark every pending ticket blocked.
+  const byDocket = new Map<string, (typeof rows)>();
+  for (const row of rows) {
+    const list = byDocket.get(row.docket_id) ?? [];
+    list.push(row);
+    byDocket.set(row.docket_id, list);
+  }
+
+  const projects = new Map(listProjects().map((project) => [project.id, project.name] as const));
+  const cards: BoardCard[] = [];
+  for (const [docketId, group] of byDocket) {
+    // Counted between goals rather than inside one. A goal that straddles the
+    // ceiling is taken whole — at most MAX_DOCKET_PLAN_NODES over — because the
+    // alternative is the partial group this function exists to avoid.
+    if (cards.length >= limit) break;
+    const mapped = mapNodes(group);
+    mapped.forEach((node, index) => {
+      const row = group[index];
+      cards.push({
+        node,
+        docketId,
+        docketTitle: row.docket_title,
+        projectId: row.project_id,
+        projectName: projects.get(row.project_id) ?? 'Unknown project',
+        risk: (RISKS as string[]).includes(row.risk) ? row.risk as DocketRisk : 'elevated',
+      });
+    });
+  }
+  return cards;
+}
+
+/**
+ * Park a ticket until a date, or un-park it.
+ *
+ * Only a ticket that has not started. Deferring something already running would
+ * either be a lie — the agent is still going — or a kill dressed up as a
+ * calendar entry, and the operator has a Stop for that.
+ */
+export function deferNode(nodeId: string, until: number | null): DocketNode {
+  const node = nodeRow(nodeId);
+  if (['running', 'completed'].includes(node.status)) {
+    throw new Error(`A ${node.status} task cannot be parked. Complete or stop it first.`);
+  }
+  if (until !== null) {
+    if (!Number.isFinite(until)) throw new Error('A parked date must be a timestamp.');
+    if (until <= Date.now()) throw new Error('Park a task for a future date; a past one would already be due.');
+    // Two years. Past that it is not a plan, it is a way of deleting something
+    // without admitting to it — and a board that quietly hides work forever is
+    // the failure mode this column exists to prevent.
+    if (until > Date.now() + 730 * 24 * 60 * 60_000) throw new Error('Park a task no more than two years out.');
+  }
+  db().prepare('UPDATE work_nodes SET defer_until=? WHERE id=?').run(until, nodeId);
+  touch(node.docket_id);
+  const found = mapNodes(rawNodes(node.docket_id)).find((row) => row.id === nodeId);
+  if (!found) throw new Error('Task not found after parking it.');
+  return found;
+}
+
 export function outcomes(projectId?: string | null): ModelOutcome[] {
   const where = projectId ? 'WHERE d.project_id=?' : '';
-  const rows = db().prepare(`SELECT o.provider_id,o.model,o.task_kind,COUNT(*) samples,SUM(o.accepted) accepted,SUM(o.tests_passed) tests_passed,SUM(o.cost_usd) total_cost_usd
+  const rows = db().prepare(`SELECT o.provider_id,o.model,o.task_kind,COUNT(*) samples,SUM(o.accepted) accepted,SUM(o.tests_passed) tests_passed,
+      SUM(CASE WHEN o.cost_reported=1 THEN o.cost_usd ELSE 0 END) total_cost_usd,
+      SUM(CASE WHEN o.cost_reported=1 THEN 1 ELSE 0 END) reported_samples
     FROM work_model_outcomes o JOIN work_dockets d ON d.id=o.docket_id ${where}
-    GROUP BY o.provider_id,o.model,o.task_kind ORDER BY accepted DESC,tests_passed DESC,samples DESC`).all(...(projectId ? [projectId] : [])) as Array<{
-      provider_id: string; model: string; task_kind: DocketNodeKind; samples: number; accepted: number; tests_passed: number; total_cost_usd: number;
+    GROUP BY o.provider_id,o.model,o.task_kind
+    ORDER BY (CAST(SUM(o.accepted) AS REAL)/COUNT(*)) DESC,samples DESC,tests_passed DESC`).all(...(projectId ? [projectId] : [])) as Array<{
+      provider_id: string; model: string; task_kind: DocketNodeKind; samples: number; accepted: number; tests_passed: number;
+      total_cost_usd: number; reported_samples: number;
     }>;
   return rows.map((row) => ({ providerId: row.provider_id, model: row.model, taskKind: row.task_kind, samples: row.samples,
     accepted: row.accepted, testsPassed: row.tests_passed, totalCostUsd: row.total_cost_usd,
+    reportedSamples: row.reported_samples,
     acceptedRate: row.samples ? row.accepted / row.samples : null, testPassRate: row.samples ? row.tests_passed / row.samples : null }));
 }
 
@@ -968,6 +1220,22 @@ export function setAutopilot(docketId: string, input: { enabled: boolean; provid
  * visible. The bounds match createDocket's, because the same value read back
  * from a different screen has to mean the same thing.
  */
+/**
+ * Disarm every armed autopilot at once, and report how many.
+ *
+ * The halt's stop pass calls this. It disarms rather than pausing, and that is
+ * deliberate: a pause implies Wanigan will resume the dispatch by itself when
+ * the halt lifts, and resuming unattended work because somebody decided a
+ * separate emergency was over is not a decision this app gets to make. The
+ * count is what the halt panel shows, so the operator knows exactly how many
+ * goals need arming again and can go and look at them.
+ */
+export function disarmAllAutopilots(): number {
+  const changed = db().prepare('UPDATE work_dockets SET autopilot=0, updated_at=? WHERE autopilot=1')
+    .run(now()).changes;
+  return typeof changed === 'number' ? changed : 0;
+}
+
 export function setDocketBudget(docketId: string, budgetUsd: number | null): DocketDetail {
   const row = docketRow(docketId);
   // The declared type is not a guarantee: this arrives from the renderer, where
@@ -1000,6 +1268,11 @@ export function setDocketBudget(docketId: string, budgetUsd: number | null): Doc
  * reported.
  */
 export function sweepAutopilot(): number {
+  // Left armed, not disarmed. The halt's own stop pass disarms autopilots and
+  // records how many, so an operator can see what it turned off and decide
+  // whether to arm them again; a sweep that quietly disarmed them on every tick
+  // would make that record a lie about what the halt did.
+  if (halted()) return 0;
   const dockets = db().prepare("SELECT * FROM work_dockets WHERE autopilot=1 AND status NOT IN ('accepted','rejected')")
     .all() as DocketRow[];
   let queued = 0;
@@ -1078,10 +1351,7 @@ export function reconcileRunningNodes(): number {
   let reopened = 0;
   for (const node of running) {
     if (node.session_id && live.has(node.session_id)) continue;
-    db().prepare(`UPDATE work_nodes SET status='failed',ended_at=?,dispatch_state=NULL,detail=? WHERE id=? AND status='running'`)
-      .run(now(), 'The session running this task ended before it was completed. Reopen it to continue.', node.id);
-    releaseClaims(node.id);
-    reopened++;
+    if (failRunningNode(node.id)) reopened++;
   }
   if (reopened) {
     for (const id of new Set(running.map((node) => nodeRow(node.id).docket_id))) {
@@ -1089,4 +1359,35 @@ export function reconcileRunningNodes(): number {
     }
   }
   return reopened;
+}
+
+/** One node, moved out of 'running' with its claims released. */
+function failRunningNode(nodeId: string): boolean {
+  const changed = db().prepare(`UPDATE work_nodes SET status='failed',ended_at=?,dispatch_state=NULL,detail=? WHERE id=? AND status='running'`)
+    .run(now(), 'The session running this task ended before it was completed. Reopen it to continue.', nodeId);
+  if (changed.changes === 0) return false;
+  releaseClaims(nodeId);
+  return true;
+}
+
+/**
+ * A session ended; the task it was running is no longer running.
+ *
+ * This used to be reconciled at start-up only, so a task whose agent finished
+ * or crashed kept reading 'running' — offering "Mark complete" and holding its
+ * file claims against every sibling in the project — until Wanigan was
+ * restarted, while the Safe recovery row for the same task said on the same
+ * screen that no writer was active. Two statuses for one task is the defect;
+ * the exit is the fact, so it is applied when the exit happens.
+ *
+ * Returns the docket id when something changed, so the caller can tell the
+ * renderer which goal to re-read.
+ */
+export function onSessionExit(sessionId: string): string | null {
+  const row = db().prepare("SELECT id,docket_id FROM work_nodes WHERE session_id=? AND status='running'")
+    .get(sessionId) as { id: string; docket_id: string } | undefined;
+  if (!row) return null;
+  if (!failRunningNode(row.id)) return null;
+  try { setDocketPhase(row.docket_id); } catch { /* the goal may have been removed */ }
+  return row.docket_id;
 }

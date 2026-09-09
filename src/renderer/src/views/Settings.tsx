@@ -4,7 +4,7 @@ import type {
   AgentAccount,
   WaniganSettings, BackupCheck, BackupRestoreSummary, BackupSummary,
   EgressHost, LedgerEntry, McpServerConfig, McpServerReview, MotionSetting, ThemeSetting,
-  MobileMonitorConfig, MobileMonitorStatus, Project, ProviderInfo, ProviderManifestInspection,
+  MobileAlertChannels, MobileMonitorConfig, MobileMonitorStatus, Project, ProviderInfo, ProviderManifestInspection,
   ProviderPackInfo, ProviderProfileInfo, QueueItem, QueueSlots, QueueState,
   TranscriptHit, TranscriptTurn, TrustLevel, UploadedFile, WorktreeInfo,
 } from '@shared/types';
@@ -2240,6 +2240,11 @@ function PhoneMonitor() {
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [net, setNet] = useState<Transport>({ s: 'reading' });
+  // What a test would reach, read before one is sent. "I pressed it and nothing
+  // happened" has two unrelated causes — a channel that failed, and a channel
+  // that was never going to send because nothing had subscribed — and the
+  // button could not tell them apart.
+  const [channels, setChannels] = useState<MobileAlertChannels | null>(null);
 
   const absorb = useCallback((next: MobileMonitorStatus) => {
     setStatus(next);
@@ -2252,6 +2257,10 @@ function PhoneMonitor() {
   const load = useCallback(() => {
     window.wanigan.mobile.status().then(absorb)
       .catch((e) => setResult({ tone: 'error', text: `Phone monitoring could not be read: ${msg(e)}` }));
+    // Degrades silently: this is a sentence above a button, not the panel's
+    // subject, and a failed read should hide it rather than raise an error
+    // about a thing the operator was not asking about.
+    window.wanigan.mobile.alertChannels().then(setChannels).catch(() => setChannels(null));
   }, [absorb]);
   useEffect(() => { load(); }, [load]);
 
@@ -2302,6 +2311,14 @@ function PhoneMonitor() {
     }, 'Phone connection settings saved');
   }
 
+  /**
+   * Fire one alert down every channel and report each on its own line.
+   *
+   * The verdict is deliberately not merged. The two channels fail for unrelated
+   * reasons — a topic nobody subscribed to, a phone that never installed the
+   * app — and telling an operator "the test failed" when one of the two worked
+   * sends them to debug the half that is fine.
+   */
   async function testPush() {
     setBusy('test'); setResult(null);
     try {
@@ -2310,10 +2327,31 @@ function PhoneMonitor() {
       });
       absorb(next);
       const tested = await window.wanigan.mobile.testPush();
-      setResult({ tone: tested.ok ? 'ok' : 'error', text: tested.detail });
+      const name = (channel: string) => (channel === 'webpush' ? 'Wanigan app' : 'ntfy');
+      setResult({
+        tone: tested.some((row) => row.ok) ? 'ok' : 'error',
+        text: tested.map((row) => `${name(row.channel)}: ${row.detail}`).join(' · '),
+      });
       absorb(await window.wanigan.mobile.status());
     } catch (e) {
       setResult({ tone: 'error', text: `Test alert failed: ${msg(e)}` });
+    } finally { setBusy(null); }
+  }
+
+  /** Forget one subscribed device, or all of them, without touching the key. */
+  async function forgetDevice(id: string | null) {
+    setBusy('device'); setResult(null);
+    try {
+      absorb(id
+        ? await window.wanigan.mobile.forgetPushDevice(id)
+        : await window.wanigan.mobile.forgetPushDevices());
+      setResult({
+        tone: 'ok',
+        text: 'Forgotten. That device keeps its subscription until it next opens Wanigan Remote, '
+          + 'which re-registers it — use Replace push keys to stop a device for good.',
+      });
+    } catch (e) {
+      setResult({ tone: 'error', text: `The device was not forgotten: ${msg(e)}` });
     } finally { setBusy(null); }
   }
 
@@ -2366,6 +2404,14 @@ function PhoneMonitor() {
   }
 
   const serveCommand = `tailscale serve --bg ${status?.config.port ?? 47831}`;
+  // Narrowed rather than trusted through the type. This panel can render against
+  // a preload surface that predates Web Push — during a partial reload, and in
+  // the screenshot harness, which stubs the bridge with an older status — and
+  // reading .length off a field that build never sends takes the whole Settings
+  // view down to an error boundary. An absent field means nothing is
+  // subscribed, which is also the truth on a build that cannot subscribe.
+  const pushDevices = status?.pushDevices ?? [];
+  const webPush = status?.webPush ?? null;
   // A QR of http://127.0.0.1 is a picture of an address the phone cannot reach.
   // The code is offered only once there is a real HTTPS base behind the token.
   const pairable = Boolean(status?.running && status.config.dashboardUrl);
@@ -2596,14 +2642,96 @@ function PhoneMonitor() {
             </>
           )}
 
+          <div className="set-sub">Phone alerts · the Wanigan app</div>
+          {/* Read narrowly rather than through the type, the way the transport
+              block below already reads its bridge. This panel can be compiled
+              and rendered against a preload surface that predates Web Push —
+              during a partial reload, or in the screenshot harness, which
+              stubs the bridge — and `status.pushDevices.length` on a status
+              that has neither field takes the whole Settings view down to an
+              error boundary. An absent field is "nothing subscribed", which is
+              also the truth on a build that cannot subscribe anything. */}
+          <Toggle title="Notify the Wanigan app on your phone and iPad" on={status.config.webPushEnabled === true} busy={busy !== null}
+                  onChange={(on) => void configure({ webPushEnabled: on },
+                    on ? 'Alerts to the Wanigan app enabled' : 'Alerts to the Wanigan app disabled')}>
+            Sends the notification to Wanigan Remote itself, encrypted so that only the device can read it —
+            the push service carries it and cannot see what it says. Nothing is sent until a device subscribes,
+            which takes a tap on that device and its own permission prompt. On iPhone and iPad the app has to be
+            added to the Home Screen first: iOS delivers a web app&apos;s notification to an installed app and to nothing else.
+          </Toggle>
+
+          <div className="sunk set-block">
+            {pushDevices.length === 0 ? (
+              <p className="faint set-fine">
+                No device is subscribed yet. Open Wanigan Remote on the phone or iPad, go to <strong>Device</strong>,
+                and turn on <strong>Send alerts to this device</strong>. It will appear here.
+              </p>
+            ) : (
+              <>
+                <ul className="set-dev">
+                  {pushDevices.map((device) => (
+                    <li key={device.id} className="set-dev-row">
+                      <div className="set-dev-txt">
+                        <span className="set-dev-name">{device.label}</span>
+                        <span className="faint set-dev-fine">
+                          {/* Never "delivered". Handing a notification to a push
+                              service is the last event Wanigan observes; what
+                              the device did with it is not reported back. */}
+                          {device.lastAt === null
+                            ? `subscribed ${ago(device.createdAt)}, nothing sent yet`
+                            : device.lastOk
+                              ? `last alert accepted ${ago(device.lastAt)}`
+                              : `last alert failed ${ago(device.lastAt)}${device.lastError ? `: ${device.lastError}` : ''}`}
+                        </span>
+                      </div>
+                      <button className="set-mini danger" disabled={busy !== null}
+                              onClick={() => void forgetDevice(device.id)}>forget</button>
+                    </li>
+                  ))}
+                </ul>
+                <p className="faint set-fine">
+                  Forgetting a device stops Wanigan sending to it, but that device still holds a subscription and
+                  re-registers itself the next time it opens Wanigan Remote — switch it off on the device, or replace
+                  the keys below, to stop it for good.
+                </p>
+              </>
+            )}
+            {webPush?.blocked && !webPush.ready && status.config.webPushEnabled && (
+              <p className="faint set-fine">{webPush.blocked}</p>
+            )}
+            {webPush?.lastError && (
+              <p className="critical set-fine">Last send failed: {webPush.lastError}</p>
+            )}
+            <div className="set-inline set-stack">
+              <button className="set-mini" disabled={busy !== null || pushDevices.length === 0}
+                      onClick={() => void forgetDevice(null)}>forget all devices</button>
+              <button className="set-mini danger" disabled={busy !== null}
+                      onClick={async () => {
+                        setBusy('keys'); setResult(null);
+                        try {
+                          absorb(await window.wanigan.mobile.regeneratePushKeys());
+                          setResult({ tone: 'ok', text: 'New push keys. Every subscription is now dead and cannot be revived — switch alerts on again on each device you still want.' });
+                        } catch (e) { setResult({ tone: 'error', text: `The push keys were not replaced: ${msg(e)}` }); }
+                        finally { setBusy(null); }
+                      }}>replace push keys</button>
+            </div>
+            <p className="faint set-fine">
+              Replacing the keys is the revocation that holds: a subscription is bound to the key it was made with,
+              so every device stops receiving the moment they change, and each one has to be switched on again from the device.
+            </p>
+          </div>
+
           <div className="set-sub">Phone alerts · ntfy</div>
-          <Toggle title="Send alerts to ntfy" on={status.config.pushEnabled} busy={busy !== null}
+          <Toggle title="Also send alerts to ntfy" on={status.config.pushEnabled} busy={busy !== null}
                   onChange={(on) => void configure({
                     pushEnabled: on, pushServer: server.trim(), pushTopic: topic.trim(), dashboardUrl: dashboardUrl.trim(),
                   }, on ? 'Phone alerts enabled' : 'Phone alerts disabled')}>
-            Sends only notification title, project name, state and wait time. Prompt text,
+            A second, independent channel, for a device that cannot install the app — an Android phone, a watch,
+            a desktop somewhere else. Sends only notification title, project name, state and wait time. Prompt text,
             commands, paths and terminal output are excluded. Permission waits and errors use ntfy&apos;s urgent/maximum priority;
-            finished turns are normal priority.
+            finished turns are normal priority. Unlike the channel above, the alert text is readable by whoever
+            carries it: with <span className="mono">ntfy.sh</span> that is a third party, and anyone who learns the topic
+            receives every alert.
           </Toggle>
           <p className="faint set-fine">
             Built-in Claude-compatible and Codex sessions expose those in-turn states. A provider pack
@@ -2627,9 +2755,27 @@ function PhoneMonitor() {
               Install the ntfy app and subscribe to this exact topic on the server above. The generated topic is the subscription credential:
               anyone who learns it can subscribe or publish, so do not use a guessable word. With <span className="mono">ntfy.sh</span>, the alert text leaves this machine for delivery.
             </p>
+            {/* Said before the press, not after it. Each channel names itself
+                and whether it would reach anything, so a silent test is
+                diagnosable from this line rather than from an empty phone. */}
+            {channels && (
+              <p className="faint set-fine">
+                A test would reach:{' '}
+                <strong>
+                  {channels.webPush.ready
+                    ? `the Wanigan app (${channels.webPush.deviceCount} ${channels.webPush.deviceCount === 1 ? 'device' : 'devices'})`
+                    : `not the Wanigan app — ${channels.webPush.blocked ?? 'it is not ready'}`}
+                </strong>
+                {'; '}
+                <strong>
+                  {channels.ntfy.ready ? 'ntfy' : `not ntfy — ${channels.ntfy.blocked ?? 'it is not ready'}`}
+                </strong>
+                {'; and this Mac — a banner and the card in this window, unless notifications are switched off.'}
+              </p>
+            )}
             <div className="set-inline set-stack">
               <button className="btn" disabled={busy !== null} onClick={() => void saveConnection()}>Save connection</button>
-              <button className="btn" disabled={busy !== null || !topic.trim()} onClick={() => void testPush()}>
+              <button className="btn" disabled={busy !== null} onClick={() => void testPush()}>
                 {busy === 'test' ? 'Sending…' : 'Send test alert'}
               </button>
               <button className="set-mini" disabled={!topic.trim()} onClick={() => void copy(topic.trim(), 'ntfy topic')}>copy topic</button>

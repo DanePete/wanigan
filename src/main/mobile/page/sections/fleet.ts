@@ -15,6 +15,7 @@ export const FLEET_SECTION: MobileSection = {
         <div class="stat"><strong id="cost">$0.00</strong><span>Fleet spend</span></div>
         <div class="stat"><strong id="tokens">0</strong><span>Output tokens</span></div>
       </div>
+      <p id="fleet-start-row" class="fleet-start hidden"><button type="button" id="fleet-start">Start an agent</button></p>
       <h2>Sessions</h2>
       <div id="sessions" class="grid"></div>
       <div id="empty" class="notice hidden"><strong id="empty-claim">No session panes are open.</strong><span id="empty-note">Start one in Wanigan and it will appear on the next poll.</span></div>
@@ -28,7 +29,16 @@ export const FLEET_SECTION: MobileSection = {
     .session-card { width:100%; color:var(--ink); text-align:left; font-weight:400; cursor:pointer; touch-action:manipulation; }
     .session-card:active { transform:scale(.985); border-color:var(--accent); }
     .tap-hint { color:var(--accent); font-size:11px; font-weight:700; margin-top:10px; }
+    /* Told apart from a live session's invitation by wording and by weight, not
+       by colour alone: this one opens a record, not a terminal you can type in. */
+    .tap-hint-ended { color:var(--dim); font-weight:400; }
     .monitor-note { margin-top:10px; font-size:12px; }
+    /* The one creative act a phone can perform, at the top of the screen a
+       phone opens on. It declares no display of its own, so the shared .hidden
+       rule still decides whether it is there — it is not, while remote control
+       is off at the Mac and starting anything would fail. */
+    .fleet-start { margin-top:12px; }
+    .fleet-start button { width:100%; }
     .card-top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
     .name { font-weight:720; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .provider { color:var(--dim); font-size:12px; margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -51,7 +61,12 @@ export const FLEET_SECTION: MobileSection = {
       }
 
       function card(session) {
-        const interactive = remoteControlEnabled && session.status !== 'exited';
+        // An ended session is still worth opening: its terminal holds what the
+        // agent printed on its way out, which is the only answer to "why did
+        // that stop?". Making the card inert was what left a phone with a
+        // session it could see, could not tap, and could not explain.
+        const ended = session.status === 'exited';
+        const interactive = remoteControlEnabled;
         const out = node(interactive ? 'button' : 'article', interactive ? 'card session-card' : 'card');
         if (interactive) out.type = 'button';
         const top = node('div', 'card-top');
@@ -71,10 +86,18 @@ export const FLEET_SECTION: MobileSection = {
           metric('Output', number(session.usage.outTokens)));
         out.append(top, meta);
         if (interactive) {
-          out.append(node('div', 'tap-hint', 'Tap to open terminal & reply'));
+          out.append(node('div', ended ? 'tap-hint tap-hint-ended' : 'tap-hint',
+            ended ? 'Ended · tap to read its last output' : 'Tap to open terminal & reply'));
           out.addEventListener('click', () => openSession(session.id));
         }
         return out;
+      }
+
+      // Drawn from the same flag the session cards read: while remote control is
+      // off, a button that cannot launch anything is worse than no button, and
+      // the read-only notice below already names the setting that turns it on.
+      function applyStartButton() {
+        byId('fleet-start-row').classList.toggle('hidden', !remoteControlEnabled);
       }
 
       function applyEmptyClaim() {
@@ -87,9 +110,15 @@ export const FLEET_SECTION: MobileSection = {
         if (!observed) return;
         const fresh = connectionState === 'connected';
         text('empty-claim', fresh ? 'No session panes are open.' : 'Nothing was open when the Mac last answered.');
-        text('empty-note', fresh
-          ? 'Start one in Wanigan and it will appear on the next poll.'
-          : 'That reading is ' + ago(lastGoodAt) + ' old, so the fleet may have changed since.');
+        // 'Start one in Wanigan' was the wrong instruction to give someone
+        // holding a paired phone with remote control on: this device can start
+        // one, and the button above does it. The Mac is named only when it is
+        // genuinely the only way.
+        text('empty-note', !fresh
+          ? 'That reading is ' + ago(lastGoodAt) + ' old, so the fleet may have changed since.'
+          : remoteControlEnabled
+            ? 'Start an agent with the button above, or start one in Wanigan; either appears on the next poll.'
+            : 'Start one in Wanigan and it will appear on the next poll.');
       }`,
-  wiring: '',
+  wiring: `      byId('fleet-start').addEventListener('click', () => openLaunch());`,
 };

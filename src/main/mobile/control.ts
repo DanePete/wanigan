@@ -62,6 +62,14 @@ export type MobileControlSource = {
     projectId: string; providerId: string; model?: string; effort?: string;
     accountId?: string | null; prompt: string;
   }) => Promise<{ id: string; title: string }>;
+  /**
+   * Pick a recorded conversation back up.
+   *
+   * Takes Wanigan's session id and nothing else. The conversation id, the
+   * project and the worktree are resolved on the Mac: a paired device cannot
+   * name a conversation it was never shown, and cannot learn one by asking.
+   */
+  resume?: (sessionId: string) => Promise<{ id: string; title: string }>;
   prompt: (sessionId: string, prompt: string) => Promise<void>;
   /**
    * Write one already-validated key sequence into the session's terminal.
@@ -130,7 +138,18 @@ function requireSource(res: http.ServerResponse): MobileControlSource | null {
 async function serveControlOptions(res: http.ServerResponse): Promise<void> {
   const source = requireSource(res);
   if (!source) return;
-  const [projects, providers] = await Promise.all([source.projects(), source.providers()]);
+  // The two reads are settled independently. Providers can reach a network or
+  // spawn a CLI for a model catalogue; projects is a database read. Failing the
+  // whole route when either one does made the phone hide its entire launch card
+  // — the page's own catch does that — so a bad backend read presented as "this
+  // phone cannot start a session" with nothing on screen saying otherwise.
+  const [projectsResult, providersResult] = await Promise.allSettled([source.projects(), source.providers()]);
+  if (projectsResult.status === 'rejected') {
+    json(res, 503, { error: 'Wanigan could not read this Mac’s project list.' });
+    return;
+  }
+  const projects = projectsResult.value;
+  const providers = providersResult.status === 'fulfilled' ? providersResult.value : [];
   // The key row is advertised, not assumed. The page draws exactly the buttons
   // this answer names, so the closed list here is also the list on screen and
   // the two cannot drift into a button posting a name the main process would
@@ -185,6 +204,19 @@ async function serveAction(req: http.IncomingMessage, res: http.ServerResponse):
         prompt: actionText(body?.prompt, 'Prompt'),
       });
       json(res, 201, { ok: true, session: { id: safeString(session.id, 160), title: safeString(session.title, 200) } }); return;
+    }
+    if (action === 'resume') {
+      if (!source.resume) {
+        json(res, 501, { error: 'This Wanigan build cannot resume a conversation from a paired device.' });
+        return;
+      }
+      // Charged to the action budget like a launch, because that is what it is:
+      // resuming starts a real agent against a real repository. The only
+      // difference from `launch` is that the operator is continuing something
+      // rather than beginning it, and that is not a reason to charge less.
+      const resumed = await source.resume(actionText(body?.sessionId, 'Session'));
+      json(res, 201, { ok: true, session: { id: safeString(resumed.id, 160), title: safeString(resumed.title, 200) } });
+      return;
     }
     if (action === 'prompt') {
       await source.prompt(actionText(body?.sessionId, 'Session'), actionText(body?.prompt, 'Prompt'));

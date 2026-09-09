@@ -92,10 +92,18 @@ permission first, then errored, finished, idle, working — rather than by how
 much output they have produced, which is what an unread counter measures.
 
 **Notifications.** When a session blocks on a permission prompt, stops on an
-error, or finishes a turn, Wanigan raises an OS notification — those three
-states and no others, because they are the three where a human is the blocker
-and everything else would fire constantly enough to get the feature switched
-off. It is a Settings toggle, on by default.
+error, or finishes a turn, Wanigan tells you — those three states and no
+others, because they are the three where a human is the blocker and everything
+else would fire constantly enough to get the feature switched off.
+
+It tells you on three surfaces, and the third one exists because the first two
+are delivered by somebody else. A macOS banner is shown at the operating
+system's discretion — Do Not Disturb, a Focus mode, a permission declined a
+year ago — and none of those failures is reported back. A phone alert depends
+on a push service and a device that may be in another room. So Wanigan also
+draws a card inside its own window, which is the one surface it can promise to
+an operator who is looking at it. All three are the same event and the same
+Settings toggle, on by default.
 
 Built-in Claude-compatible and Codex sessions expose those in-turn lifecycle
 states. A generic provider pack without a lifecycle channel can still report
@@ -124,13 +132,30 @@ settings, or deliver arbitrary PTY keystrokes. Left off — which is the default
 the page is the read-only monitor described above. [SECURITY.md](SECURITY.md)
 carries the same boundary.
 
-Phone alerts are another independent opt-in through
-[ntfy](https://ntfy.sh/). Wanigan generates an encrypted high-entropy topic and
-sends the same three useful states at urgent/normal priority. Notification text
-is redacted before it leaves the machine; Settings names exactly what is sent,
-can fire a test, and can replace either local credential immediately. Replacing
-an ntfy topic stops Wanigan using the old one but cannot revoke the topic at the
-ntfy service; remove the old subscription separately. Both the page
+**Phone alerts reach the app itself.** Add the paired page to the Home Screen
+and it is a real installed app; open its Device screen, turn on alerts, and the
+Mac notifies it through Web Push — with the app closed and the screen locked.
+The notification is encrypted to that device under RFC 8291, so the push
+service carrying it relays ciphertext rather than reading your project names;
+what it can see is which device an alert was for and when. Nothing is sent
+until a device subscribes, and subscribing takes a tap on that device plus its
+own permission prompt, which is why the channel is on by default at the Mac —
+the consent that matters belongs to the phone. On iPhone and iPad this needs
+the Home Screen app: iOS delivers Web Push to an installed web app and to
+nothing else, and the Device screen says so rather than offering a switch that
+would do nothing. Settings lists every subscribed device, can forget one, and
+can replace the keypair — which is the revocation that holds, because a
+subscription is bound to the key it was made with.
+
+[ntfy](https://ntfy.sh/) is still there as a second, independent channel, for a
+device that cannot install the app. Wanigan generates a high-entropy topic and
+sends the same three states at urgent/normal priority. Unlike Web Push, that
+text is readable by whoever carries it, and anyone who learns the topic receives
+every alert. Notification text is redacted before it leaves the machine on
+either channel; Settings names exactly what is sent, can fire a test down both
+and reports them separately, and can replace any local credential immediately.
+Replacing an ntfy topic stops Wanigan using the old one but cannot revoke the
+topic at the ntfy service; remove the old subscription separately. Both the page
 and alerts require the Mac to be awake and Wanigan to remain running — a fully
 quit app has also stopped the PTYs there would be nothing live to monitor.
 

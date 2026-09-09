@@ -154,7 +154,7 @@ export function listRuns() {
       (SELECT COUNT(*) FROM requests q WHERE q.run_id = r.id AND q.status = 'pending') pending,
       (SELECT MIN(expires_at) FROM batches b WHERE b.run_id = r.id AND b.processing_status != 'ended') expires_at,
       (SELECT name FROM projects p WHERE p.id = r.project_id) project_name
-    FROM runs r ORDER BY r.created_at DESC LIMIT 200
+    FROM runs r WHERE r.kind IN ('batch','eval') ORDER BY r.created_at DESC LIMIT 200
   `).all();
 }
 
@@ -218,7 +218,7 @@ export function runsInFlight(): RunsInFlight {
                       AND q.status IN ('succeeded','errored','expired','canceled','refused'))), 0) returned,
       COALESCE(SUM((SELECT COUNT(*) FROM requests q WHERE q.run_id = r.id
                       AND q.status = 'pending')), 0) outstanding
-    FROM runs r WHERE r.status IN (${statuses.map(() => '?').join(',')})
+    FROM runs r WHERE r.kind IN ('batch','eval') AND r.status IN (${statuses.map(() => '?').join(',')})
   `).get(...statuses) as { runs: number; returned: number; outstanding: number };
   return {
     readAt: Date.now(),

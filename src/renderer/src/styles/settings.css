@@ -331,3 +331,38 @@ a.set-mini, a.btn { text-decoration: none; }
 @media (max-width: 640px) {
   .set-leave-row { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ── subscribed push devices ─────────────────────────────────────────── */
+/* One row per device that has switched on alerts to itself. A label, what the
+   last send did, and the button that forgets it. */
+.set-dev { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-1); }
+.set-dev-row {
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: 5px 0; border-top: 1px solid var(--line-soft);
+}
+.set-dev-row:first-child { border-top: none; }
+.set-dev-txt { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.set-dev-name { font-weight: 600; }
+/* The state line wraps rather than truncating: it can carry a push service's
+   own failure text, and a reason cut off mid-word is a reason nobody acts on. */
+.set-dev-fine { font-size: var(--t-micro); line-height: 1.45; }
+
+/* ── the Codex half of the Context view's AGENTS.md section ──────────── */
+/* What Wanigan's Codex compiler writes to — never a claim about what Codex
+   loads. agentsChain() computed this from the day it was written and nothing
+   rendered it, so the one thing it can detect on its own — a personal
+   instruction written where this account's Codex will not read it — was
+   invisible. */
+.ctx-codex { margin-top: var(--s-4); padding-top: var(--s-3); border-top: 1px solid var(--line-soft); }
+.ctx-codex-list { list-style: none; margin: var(--s-2) 0 0; padding: 0; display: grid; gap: 5px; }
+.ctx-codex-row { display: flex; align-items: baseline; gap: var(--s-2); min-width: 0; }
+.ctx-codex-scope {
+  flex: none; min-width: 52px;
+  color: var(--text-faint); font-size: var(--t-micro);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+/* The path wraps rather than truncating: it is the whole content of the row,
+   and a home directory cut off mid-segment is a path nobody can act on. */
+.ctx-codex-path { flex: 1; min-width: 0; font-size: var(--t-small); word-break: break-all; }
+.ctx-codex-bytes { flex: none; color: var(--text-faint); font-size: var(--t-micro); font-variant-numeric: tabular-nums; }
+.ctx-fine { font-size: var(--t-small); line-height: 1.55; margin-top: var(--s-2); }

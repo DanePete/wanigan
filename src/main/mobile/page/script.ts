@@ -72,6 +72,10 @@ export function mobileScript(
         remoteControlEnabled = next === true;
         modeLabel.textContent = remoteControlEnabled ? 'Private remote control' : 'Private fleet monitor';
         monitorNote.classList.toggle('hidden', remoteControlEnabled);
+        // The Fleet screen's way in to the launch form is drawn from the same
+        // answer, so the button and the read-only notice below it can never both
+        // be on screen claiming opposite things about this device.
+        applyStartButton();
         syncAgentNotice();
       }
 
@@ -109,8 +113,35 @@ export function mobileScript(
         const prompt = byId('prompt-form').querySelector('button');
         const interrupt = byId('interrupt');
         launch.disabled = actionBusy || !byId('project').value || !byId('provider').value || !byId('launch-prompt').value.trim();
-        prompt.disabled = actionBusy || !byId('session').value || !byId('session-prompt').value.trim();
-        interrupt.disabled = actionBusy || !byId('session').value;
+        // A disabled button with no sentence beside it is indistinguishable
+        // from a broken one. Say which of the three it is waiting for, and say
+        // it where the operator is already looking.
+        var blocker = byId('launch-blocker');
+        var why = '';
+        if (!byId('project').value) {
+          why = 'No repository is registered on the Mac yet. Add one there and this list fills in.';
+        } else if (!byId('provider').value) {
+          why = 'No installed agent was found on the Mac, so there is nothing to launch. Install Claude Code or Codex there, or check Settings › Agents.';
+        } else if (!byId('launch-prompt').value.trim()) {
+          why = 'Write what this agent should do, then Start session.';
+        }
+        blocker.textContent = why;
+        blocker.classList.toggle('hidden', why === '');
+        // The same rule as the launch button next door: a control that is off
+        // says which of its reasons is the live one. An ended session is the
+        // reason that used to be invisible, because the picker never offered
+        // one — its terminal is readable and nothing else about it is.
+        const chosen = visibleSessions.find((value) => value.id === byId('session').value);
+        const ended = Boolean(chosen) && chosen.status === 'exited';
+        prompt.disabled = actionBusy || ended || !byId('session').value || !byId('session-prompt').value.trim();
+        interrupt.disabled = actionBusy || ended || !byId('session').value;
+        var promptBlocker = byId('prompt-blocker');
+        var promptWhy = '';
+        if (!byId('session').value) promptWhy = 'Choose a session above.';
+        else if (ended) promptWhy = 'This session has ended, so nothing can be typed into it. Its last output is above; start a new agent to carry on.';
+        else if (!byId('session-prompt').value.trim()) promptWhy = 'Write the next instruction, then Send message.';
+        promptBlocker.textContent = promptWhy;
+        promptBlocker.classList.toggle('hidden', promptWhy === '');
       }
 
       function setActionBusy(next) {
@@ -137,9 +168,25 @@ export function mobileScript(
           control.classList.add('hidden');
           return;
         }
-        visibleSessions = sessions.filter((session) => session.status !== 'exited');
+        // Every session, ended ones included. An ended session cannot be typed
+        // into and the buttons below say so, but its last output is the only
+        // record of why it ended — and filtering it out here was what made a
+        // Fleet card for it untappable and its terminal unreachable.
+        visibleSessions = sessions;
         try {
-          if (!controlOptions) controlOptions = await api('api/control');
+          // Cached, but not cached forever when the answer cannot launch
+          // anything. Provider detection is asynchronous on the Mac, so the
+          // first /api/control after a cold start can legitimately return no
+          // installed profile — and this cache then held that empty list for
+          // the life of the page, leaving the provider picker empty and the
+          // Start button disabled until someone reloaded. An answer with
+          // nothing launchable in it is re-asked; a good one is kept.
+          var launchable = controlOptions
+            && Array.isArray(controlOptions.providers)
+            && controlOptions.providers.some(function (value) { return value && value.available; })
+            && Array.isArray(controlOptions.projects)
+            && controlOptions.projects.length > 0;
+          if (!launchable) controlOptions = await api('api/control');
           const project = byId('project'), provider = byId('provider'), session = byId('session');
           const selected = {
             project: project.value,
@@ -154,7 +201,8 @@ export function mobileScript(
           restoreValue(provider, selected.provider);
           renderLaunchChoices(selected);
           const selectedSession = requestedSessionId || selected.session;
-          session.replaceChildren(...visibleSessions.map((value) => option(value.id, value.title + ' · ' + value.projectName)));
+          session.replaceChildren(...visibleSessions.map((value) => option(value.id,
+            value.title + ' · ' + value.projectName + (value.status === 'exited' ? ' · ended' : ''))));
           if ([...session.options].some((value) => value.value === selectedSession)) {
             session.value = selectedSession;
             requestedSessionId = '';
@@ -185,6 +233,15 @@ export function mobileScript(
           if (/disabled/.test(message)) {
             agentConsoleFault = '';
             setRemoteMode(false);
+          } else if (controlOptions) {
+            // A read that failed AFTER a good one establishes nothing new about
+            // what this Mac can launch. The last answer is still the last thing
+            // it said, so the card stays up with the fault beside it rather than
+            // disappearing — a launch form that vanishes on one bad poll reads
+            // as a phone that cannot start a session at all.
+            control.classList.remove('hidden');
+            agentConsoleFault = message || 'Wanigan did not say why.';
+            syncAgentNotice();
           } else {
             // remoteControlEnabled stays as /api/status reported it, so the
             // next poll tries the console again. The message goes on the notice

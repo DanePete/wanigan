@@ -507,6 +507,8 @@ async function capabilitiesFor(def: ProviderDef, resolved: string | null, PATH: 
     transcript: declared('transcript', isClaude),
     namedResume: declared('resume.named', isClaude),
     headlessJson: declared('headless.json', def.headless !== 'none'),
+    // Only the Claude headless protocol compiles a spend ceiling into argv.
+    headlessBudget: def.headless === 'claude-json',
     note: isClaude
       ? 'Wanigan injects hooks, MCP configuration, policy and telemetry into this CLI.'
       : def.harness === 'codex'
@@ -552,6 +554,9 @@ async function capabilitiesFor(def: ProviderDef, resolved: string | null, PATH: 
       headlessJson: base.headlessJson || (def.source === 'builtin' &&
         def.harness === 'codex' && help.includes('exec') && help.includes('--json')
       ),
+      // A probe cannot widen this: it is a property of the protocol Wanigan
+      // compiles argv for, not of what the binary happens to accept.
+      headlessBudget: base.headlessBudget,
       note: base.note,
     };
     observed = probed;

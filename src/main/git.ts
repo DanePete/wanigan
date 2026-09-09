@@ -447,9 +447,15 @@ export async function log(dir: string, opts: { limit?: number; all?: boolean } =
   // Scoped to the project's own directory when it is not the repo root: a
   // graph of commits that never touched it is a graph about something else.
   const r = await git(root, within(scope, args));
-  if (!r.ok) return [];
-
   const tip = (await head(root)) ?? '';
+  // An unborn branch has no commits and `git log` exits non-zero saying so:
+  // that is an empty history, not a failed read. Every other failure is a
+  // failed read, and returning [] for it drew a timeout or a locked index as
+  // a repository with no history — a claim nobody observed.
+  if (!r.ok) {
+    if (!tip) return [];
+    fail(r.err);
+  }
   const commits: Commit[] = [];
   for (const block of r.out.split('\0')) {
     const line = block.replace(/^\n/, '');
@@ -474,6 +480,10 @@ export async function log(dir: string, opts: { limit?: number; all?: boolean } =
  *  write-anywhere primitive, not a bad lookup. */
 const OBJECT_NAME = /^[0-9a-fA-F]{4,64}$/;
 
+/** A patch this long is not going to be read in a pane; the cut is announced
+ *  rather than silently returning a diff that stops mid-hunk. */
+const PATCH_MAX_BYTES = 400_000;
+
 export async function commitDiff(dir: string, hash: string) {
   if (!OBJECT_NAME.test(hash)) return { files: [], patch: '' };
   const scope = await scopeOf(dir);
@@ -485,7 +495,11 @@ export async function commitDiff(dir: string, hash: string) {
     return { path: p ?? '', added: Number(a) || 0, removed: Number(d) || 0 };
   }).filter((f) => f.path) : [];
   const patch = await git(root, within(scope, ['show', '--patch', '--format=medium', hash]));
-  return { files, patch: patch.ok ? patch.out.slice(0, 400_000) : '' };
+  // An empty commit and a `git show` that failed both used to answer '' here,
+  // so a locked index or a timeout was shown as a commit that changed nothing.
+  if (!patch.ok) fail(patch.err);
+  const cut = patch.out.length > PATCH_MAX_BYTES;
+  return { files, patch: cut ? patch.out.slice(0, PATCH_MAX_BYTES) : patch.out, truncated: cut, bytes: patch.out.length };
 }
 
 /* -- branches, stash ------------------------------------------------- */
@@ -497,7 +511,10 @@ export async function branches(root: string): Promise<Branch[]> {
   const f = ['%(refname:short)', '%(HEAD)', '%(upstream:short)', '%(upstream:track)',
              '%(committerdate:unix)', '%(contents:subject)', '%(refname)'].join(SEP);
   const r = await git(root, ['for-each-ref', '--format=' + f, 'refs/heads', 'refs/remotes']);
-  if (!r.ok) return [];
+  // A repository with no branches answers with an empty list, not an error, so
+  // any failure here is a failed read and says so rather than rendering as a
+  // repository that has no branches.
+  if (!r.ok) fail(r.err);
   const out: Branch[] = [];
   for (const line of r.out.split('\n')) {
     if (!line.trim()) continue;
@@ -515,7 +532,8 @@ export async function branches(root: string): Promise<Branch[]> {
 
 export async function stashes(root: string): Promise<Stash[]> {
   const r = await git(root, ['stash', 'list', '--format=%gd' + SEP + '%ct' + SEP + '%gs']);
-  if (!r.ok) return [];
+  // `stash list` succeeds with empty output when there are no stashes, here too.
+  if (!r.ok) fail(r.err);
   return r.out.split('\n').filter(Boolean).map((l, i) => {
     const [label, at, subject] = l.split(SEP);
     return { index: i, label, at: at ? Number(at) * 1000 : null, subject: subject ?? '' };
@@ -716,5 +734,8 @@ export async function fileDiff(dir: string, file: string, staged: boolean) {
   const scope = await scopeOf(dir);
   if (!scope) return '';
   const r = await git(scope.repoRoot, staged ? ['diff', '--staged', '--', file] : ['diff', '--', file]);
-  return r.ok ? r.out : '';
+  // '' means git had nothing to print (binary, or a mode change only). A failed
+  // read is not that, and the renderer's fallback sentence said it was.
+  if (!r.ok) fail(r.err);
+  return r.out;
 }

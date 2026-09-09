@@ -373,9 +373,13 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
       setActed(ok
         ? {
             ok: true,
+            // "Stop sent", not "was ended": the signal has gone, the exit has
+            // not been observed yet, and the card below still reads Running
+            // until session:exit arrives. Claiming the end here was a green
+            // for something nobody had seen happen.
             text: action === 'interrupt'
               ? `Interrupt sent to ${session.projectName}. The session is still open.`
-              : `${session.projectName} was ended.`,
+              : `Stop sent to ${session.projectName}. Its card updates when the agent exits.`,
           }
         : { ok: false, text: `${session.projectName} had no live process to ${verb}; its card is catching up.` });
     } catch (e) {
@@ -439,7 +443,12 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
     return (
       <div className="pane">
         {head}
-        <Note tone="error">
+        {/* role="none": the sr-only live region above already announces the
+            membership change once. This Note carries a duration that reticks
+            every second, and as an alert a screen reader re-read the whole
+            sentence sixty times a minute — drowning out the polite one that
+            was written to be heard. */}
+        <Note tone="error" role="none">
           <strong>Could not read the fleet.</strong> {err}
           <div style={{ marginTop: 6 }}>
             The main process answers these calls; if Wanigan is still starting, the database is not
@@ -956,9 +965,10 @@ function FleetTable({ rows, att, usageOf, spark, defaultTrust, onOpen }: {
         </table>
       </div>
       <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.45 }}>
-        Tokens are input plus output; cached reads are billed at a tenth of the input rate and are
-        counted separately on each card. An em dash means the collector has no samples yet, not zero
-        throughput.
+        Tokens are input plus output, and cached reads are counted separately on each card. What a
+        cached read costs depends on the backend — the table above holds rows whose cost is an
+        estimate and rows that report none at all — so no rate is claimed here. An em dash means the
+        collector has no samples yet, not zero throughput.
       </p>
     </div>
   );

@@ -14,17 +14,27 @@ export type {
   MobileFleetSession,
   MobileFleetSnapshot,
   MobileMonitorConfig,
+  MobileAlertTest,
   MobileMonitorStatus,
+  MobilePushDeviceSummary,
 } from '../shared/types';
 
 export { DEFAULT_MOBILE_PORT, mobileConfig } from './mobile/config';
 export type { MobileConfigPatch } from './mobile/config';
 
-export { readableTerminal } from './mobile/terminal-text';
+export { readableTerminal, styledTerminal } from './mobile/terminal-text';
+export { readTerminalScreen, MAX_TERMINAL_SPAN_VALUES } from './mobile/terminal';
 
 export { configureSnapshotSource } from './mobile/snapshot';
 
 export { configureMobileControlSource } from './mobile/control';
+
+// Conversations a paired device can pick back up. A separate source from the
+// fleet snapshot because it is a different question — what did I have open
+// before — and a separate shape because a past-session row is the most
+// path-laden record in the app.
+export { configureMobileRecentSource, forgetRecentCache } from './mobile/recent';
+export type { MobileRecentSource } from './mobile/recent';
 
 // Firing an installed skill into a live session, from the Agent screen. The
 // Skills SCREEN stays on the Mac — writing one edits a file inside a working
@@ -45,7 +55,10 @@ export { MOBILE_REPO_LIMITS, numstatCounts, repoJson, repoReviewAllowed } from '
 export type { MobileRepoCounts, MobileRepoFile, MobileRepoSummary } from './mobile/git';
 
 export {
+  forgetAllMobilePushDevices,
+  forgetMobilePushDevice,
   mobileStatus,
+  regenerateMobilePushKeys,
   regenerateMobilePushTopic,
   regenerateMobileToken,
   setMobileConfig,
@@ -60,5 +73,40 @@ export {
   testMobilePush,
 } from './mobile/push';
 export type { MobilePushInput, MobilePushResult } from './mobile/push';
+
+// Web Push: alerts delivered to the installed Wanigan Remote app itself, which
+// is the channel an operator normally uses. The crypto lives one module further
+// down and is exported for the offline suite, which proves a real subscriber
+// can decrypt what this sends rather than asserting that the bytes look right.
+export {
+  WEB_PUSH_TIMEOUT_MS,
+  forgetAllPushDevices,
+  forgetPushDevice,
+  lastWebPushResult,
+  listPushDevices,
+  pushEndpointHosts,
+  pushPublicKey,
+  rememberPushDevice,
+  rotatePushKeys,
+  sendWebPush,
+  testWebPush,
+  webPushEnabled,
+  webPushProbe,
+} from './mobile/webpush';
+export type { MobilePushDeviceView, MobileWebPushProbe } from './mobile/webpush';
+export {
+  MAX_PLAINTEXT_BYTES,
+  encryptPushPayload,
+  generateVapidKeys,
+  pushAudience,
+  vapidAuthorization,
+  vapidKeysValid,
+} from './mobile/webpush-crypto';
+export type { VapidKeys } from './mobile/webpush-crypto';
+export { MAX_PUSH_DEVICES } from './mobile/secrets';
+
+// The one call that reaches a phone. notify.ts uses this rather than either
+// sink, so what two channels disagreeing means is decided in one place.
+export { alertChannelReadiness, deliverMobileAlert, testMobileAlerts } from './mobile/alerts';
 
 export { MOBILE_SECTION_ANCHORS } from './mobile/page';

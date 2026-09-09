@@ -17,7 +17,13 @@ const MAX_STDERR_BYTES = 64 * 1024;
 const MAX_EXECUTABLE_BYTES = 128 * 1024 * 1024;
 
 export type ProviderAdapterProbe = {
-  capabilities: Partial<Omit<ProviderCapabilities, 'probed' | 'note'>>;
+  /**
+   * `headlessBudget` is excluded alongside `probed` and `note`: it is not a
+   * fact about the inspected executable but about which argv Wanigan itself
+   * compiles, so no adapter may claim it. Letting one would mean a manifest
+   * could promise a spend ceiling the runner never passes.
+   */
+  capabilities: Partial<Omit<ProviderCapabilities, 'probed' | 'note' | 'headlessBudget'>>;
   note: string | null;
 };
 

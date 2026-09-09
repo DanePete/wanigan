@@ -8,11 +8,11 @@ import type {
   QueueItem, QueueSlots, QueueState,
   BackupCheck, BackupRestoreSummary, BackupSummary,
   CheckpointDiff, CheckpointRevertPlan, CheckpointRevertResult, SessionCheckpoint,
-  InteractiveSessionLoad, MenuRoute, NotificationRoute, PluginScope,
+  BoardCard, CodexAgentsChain, HaltState, InAppAlert, MobileAlertChannels, Interview, InterviewProposal, InteractiveSessionLoad, MenuRoute, NotificationRoute, PluginScope,
   McpServerConfig, McpServerReview, McpServerStatus, BudgetState, Reconciliation, TrustLevel, LedgerEntry,
   WaniganSettings, ThemeSetting, UploadedFile, EvalPair, GoldenSet,
   EgressReport, ObservedSession, ObservedState,
-  MobileMonitorConfig, MobileMonitorStatus, TailnetStatus,
+  MobileAlertTest, MobileMonitorConfig, MobileMonitorStatus, TailnetStatus,
   ReviewRecipe, ReviewRun,
   ArtifactRoiSummary, CandidateExplanation, ConsolidationOutcome, ForgedSkill, FreshnessReport,
   BriefingPreview, KnowledgeCandidate,
@@ -26,7 +26,7 @@ import type {
   ImprovementScoutGoal, ImprovementScoutOverview, ImprovementScoutRun,
   ImprovementScoutSettings, ImprovementScoutSource, ImprovementScoutSuggestion, ImprovementScoutSuggestionStatus,
   AccountResolution, AgentAccount, ControlEvent, UsageSnapshot, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode, DocketPlanNode, DocketProof,
-  DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, WorkDocket, LaunchModelCatalogue,} from '../shared/types';
+  DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, WorkDocket, LaunchModelCatalogue, UnifiedSpendDay,} from '../shared/types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -204,6 +204,7 @@ const api = {
     events: (id: string, limit?: number) => call<ApiEvent[]>('usage:events', id, limit),
     throughput: (id: string, buckets?: number) => call<number[]>('usage:throughput', id, buckets),
     collector: () => call<{ port: number | null }>('usage:collector'),
+    burn: (force?: boolean) => call<unknown>('usage:burn', force),
   },
   // ── phases 2/3/8 · events, attention, timeline ───────────────────────
   events: {
@@ -278,9 +279,21 @@ const api = {
   spend: {
     byProject: (days?: number) => call<unknown[]>('spend:byProject', days),
     cache: () => call<{ surface: string; read: number; write: number; input: number; rate: number; note: string }[]>('spend:cache'),
-    sync: (days?: number) => call<{ day: string; actualUsd: number; syncUsd: number }[]>('spend:sync'),
+    // `days` is forwarded. It used to be declared and dropped, so every
+    // windowed spend chart drew thirty days whatever the picker said.
+    sync: (days?: number) => call<{ day: string; actualUsd: number; syncUsd: number }[]>('spend:sync', days),
+    unified: (days?: number) => call<UnifiedSpendDay[]>('spend:unified', days),
     effort: () => call<{ effort: string; requests: number; costUsd: number }[]>('spend:effort'),
     byDay: (days: number) => call<{ day: string; sessionUsd: number }[]>('spend:byDay', days),
+    // Claude Code's own transcripts, which cover the sessions the collector
+    // never saw. `unknown` rather than the main-process type: the shape is
+    // validated where it is read, and importing a main module here would drag
+    // node built-ins into the preload bundle.
+    transcripts: (days?: number) => call<unknown>('spend:transcripts', days),
+    ingestTranscripts: (budgetMs?: number) => call<{
+      filesRead: number; filesSkipped: number; rowsWritten: number;
+      bytesRead: number; ms: number; done: boolean; pending: number;
+    }>('spend:ingestTranscripts', budgetMs),
   },
   budgets: {
     list: () => call<BudgetState[]>('budgets:list'),
@@ -300,6 +313,32 @@ const api = {
     setWatchedSession: (sessionId: string | null) =>
       call<boolean>('notify:setWatchedSession', sessionId),
   },
+  // ── the goal interview ──────────────────────────────────────────────
+  // Every call here spends money at synchronous rates and every one is a click
+  // the operator made. There is no poll: an interview only moves when answered.
+  interview: {
+    start: (input: { projectId: string; seed: string; model?: string; budgetUsd?: number; maxQuestions?: number }) =>
+      call<Interview>('interview:start', input),
+    /** Which models this path can run on, and what a question costs on each. */
+    models: () => call<{ id: string; label: string; costPerQuestion: number }[]>('interview:models'),
+    answer: (id: string, answer: string) => call<Interview>('interview:answer', id, answer),
+    /** Stop asking and propose from what it has. */
+    conclude: (id: string) => call<Interview>('interview:conclude', id),
+    /** Accept the proposal, with the operator's edits, and write the goal. */
+    commit: (id: string, edits?: Partial<InterviewProposal>) => call<DocketDetail>('interview:commit', id, edits),
+    abandon: (id: string) => call<Interview>('interview:abandon', id),
+    get: (id: string) => call<Interview>('interview:get', id),
+    list: (projectId?: string | null, limit?: number) => call<Interview[]>('interview:list', projectId, limit),
+  },
+  // ── halt and catch fire ─────────────────────────────────────────────
+  // Polled, not only pushed: the handle can be pulled from a paired phone, and
+  // a window that only learned about a halt when it caused one would keep
+  // drawing a fleet that is no longer running.
+  halt: {
+    state: () => call<HaltState>('halt:state'),
+    pull: (reason?: string) => call<HaltState>('halt:pull', reason),
+    clear: () => call<HaltState>('halt:clear'),
+  },
   // ── read-only phone fleet + outbound alerts ─────────────────────────
   mobile: {
     status: () => call<MobileMonitorStatus>('mobile:status'),
@@ -307,7 +346,18 @@ const api = {
       call<MobileMonitorStatus>('mobile:configure', patch),
     regenerateToken: () => call<MobileMonitorStatus>('mobile:regenerateToken'),
     regenerateTopic: () => call<MobileMonitorStatus>('mobile:regenerateTopic'),
-    testPush: () => call<{ ok: boolean; detail: string }>('mobile:testPush'),
+    // One entry per channel, in a fixed order, because the panel prints them
+    // side by side: knowing that ntfy failed while the app succeeded is the
+    // whole reason to press it.
+    testPush: () => call<MobileAlertTest[]>('mobile:testPush'),
+    /** What a test would actually reach, read before one is sent. */
+    alertChannels: () => call<MobileAlertChannels>('mobile:alertChannels'),
+    // Web Push devices. Forgetting is local to the Mac; rotating the keypair is
+    // what actually revokes a device that is no longer trusted, because a
+    // subscription is bound to the key it was created with.
+    forgetPushDevice: (id: string) => call<MobileMonitorStatus>('mobile:forgetPushDevice', id),
+    forgetPushDevices: () => call<MobileMonitorStatus>('mobile:forgetPushDevices'),
+    regeneratePushKeys: () => call<MobileMonitorStatus>('mobile:regeneratePushKeys'),
   },
   // ── the private HTTPS transport in front of that loopback listener ───
   // The port is optional and advisory: main serves the port the phone monitor
@@ -457,6 +507,10 @@ const api = {
     runProof: (nodeId: string) => call<DocketProof>('control:runProof', nodeId),
     complete: (nodeId: string, input?: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }) =>
       call<DocketNode>('control:complete', nodeId, input ?? {}),
+    // Every ticket across every goal, flattened for the board.
+    board: (projectId?: string | null, limit?: number) => call<BoardCard[]>('control:board', projectId, limit),
+    // Park a ticket until a date, or null to bring it back into play.
+    defer: (nodeId: string, until: number | null) => call<DocketNode>('control:defer', nodeId, until),
     outcomes: (projectId?: string | null) => call<ModelOutcome[]>('control:outcomes', projectId),
     events: (status?: ControlEvent['status'] | 'all', limit?: number) => call<ControlEvent[]>('control:events', status, limit),
     addEvent: (input: { projectId?: string | null; source: string; kind: string; summary: string }) => call<ControlEvent>('control:addEvent', input),
@@ -529,6 +583,8 @@ const api = {
   refusal: {
     rows: (runId: string) => call<any[]>('refusal:rows', runId),
     summary: (runId: string) => call<any>('refusal:summary', runId),
+    estimate: (runId: string, model: string) =>
+      call<{ rows: number; costLowUsd: number; costHighUsd: number; cacheWarning: string | null }>('refusal:estimate', runId, model),
     rescue: (runId: string, model: string) => call<{ runId: string; rows: number }>('refusal:rescue', runId, model),
     merge: (childRunId: string) => call<{ merged: number; parentRunId: string }>('refusal:merge', childRunId),
     children: (runId: string) => call<any[]>('refusal:children', runId),
@@ -541,6 +597,10 @@ const api = {
   evals: {
     pairs: () => call<EvalPair[]>('evals:pairs'),
     createPair: (name: string, a: string, b: string) => call<EvalPair>('evals:createPair', name, a, b),
+    variant: (baseRunId: string, change: Partial<RunConfig>, name: string) =>
+      call<{ runId: string }>('evals:variant', baseRunId, change, name),
+    judge: (pairId: string, opts: { model: string; rubric: string; effort?: string }) =>
+      call<{ runId: string; rows: number }>('evals:judge', pairId, opts),
     diff: (pairId: string) => call<any>('evals:diff', pairId),
     summary: (pairId: string) => call<any>('evals:summary', pairId),
     ingest: (judgeRunId: string) => call<{ scored: number; pairId: string }>('evals:ingest', judgeRunId),
@@ -558,6 +618,11 @@ const api = {
     read: (p: string) => call<{ text: string; truncated: boolean; bytes: number }>('context:read', p),
     memoryBody: (p: string) => call<{ text: string; truncated: boolean; bytes: number }>('context:memoryBody', p),
     agentsMd: (projectPath: string) => call<{ present: boolean; imported: boolean; symlinked: boolean; note: string }>('context:agentsMd', projectPath),
+    // Which AGENTS.md files Wanigan's Codex compiler writes to, and whether any
+    // of them is somewhere this account's Codex actually reads. Read-only, and
+    // deliberately not a prediction of Codex's load order — see agentsChain().
+    codexAgents: (projectId: string | null, projectPath: string) =>
+      call<CodexAgentsChain>('context:codexAgents', projectId, projectPath),
     refresh: (projectPath: string) => call<any>('context:refresh', projectPath),
   },
   // Opening a link is an external side effect, so it is explicit and validated
@@ -748,6 +813,15 @@ const api = {
       const h = (_e: unknown, route: NotificationRoute) => cb(route);
       ipcRenderer.on('notify:open', h);
       return () => ipcRenderer.removeListener('notify:open', h);
+    },
+    // The same notification, delivered to the window instead of to macOS. Both
+    // fire for one event on purpose: a banner is shown at the operating
+    // system's discretion and reports nothing back, so the card is the only
+    // surface Wanigan can promise an operator who is looking at it.
+    notificationRaised: (cb: (alert: InAppAlert) => void) => {
+      const h = (_e: unknown, alert: InAppAlert) => cb(alert);
+      ipcRenderer.on('notify:alert', h);
+      return () => ipcRenderer.removeListener('notify:alert', h);
     },
     // A menu item was chosen. Main builds the menu bar from the route table but
     // owns none of the routing: the renderer holds the router, the dialogs and

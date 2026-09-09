@@ -1,0 +1,204 @@
+/* board — owned by the Board view. Tokens come from index.css; never redeclare a colour here. */
+
+/* Columns scroll sideways as one row rather than wrapping. A board that
+   reflowed to two rows on a narrow window would put Done above Ready, which
+   destroys the only thing a column layout is for: left-to-right progression. */
+.brd {
+  display: grid;
+  /* An explicit five-track template, not grid-auto-flow with auto columns. An
+     implicit `1fr` track still resolves against its own content rather than the
+     container, so the fifth column ran past the right edge and sat there
+     half-clipped — and a board whose last column is always cut off trains you
+     to forget it exists, when that column is the one saying the work is done.
+     The floor keeps a card readable; below it the row scrolls instead. */
+  grid-template-columns: repeat(5, minmax(190px, 1fr));
+  gap: var(--s-3);
+  overflow-x: auto;
+  padding-bottom: var(--s-2);
+  align-items: start;
+}
+
+.brd-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: var(--card-pad-tight);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--bg-sunk);
+}
+
+.brd-col-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-2); }
+.brd-col-head h2 { font-size: var(--t-body); font-weight: 600; }
+.brd-count { color: var(--text-dim); font-size: var(--t-small); font-variant-numeric: tabular-nums; }
+/* The sentence under a column heading is what stops "Blocked" being read as
+   "broken" and "Parked" as "dropped". It stays on screen rather than living in
+   a tooltip, because the person who needs it is the one who has not read the
+   board before. */
+.brd-col-why { margin: 3px 0 var(--s-2); color: var(--text-faint); font-size: var(--t-micro); line-height: 1.45; }
+
+.brd-cards { display: grid; gap: var(--s-2); }
+.brd-none { color: var(--text-faint); font-size: var(--t-small); padding: var(--s-2) 0; }
+
+.brd-card {
+  display: grid;
+  gap: 4px;
+  padding: var(--card-pad-tight);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-soft);
+}
+/* High risk is the one property of a goal that changes how carefully a card
+   should be read, so it is the one the card colours for. */
+.brd-card.high { border-left-color: var(--warning); }
+
+/* A title that opens the goal. A button rather than a link because it routes
+   inside the app, and it keeps the text alignment of the paragraph it heads. */
+.brd-card-title {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: var(--t-body);
+  font-weight: 600;
+  text-align: left;
+  line-height: 1.3;
+}
+.brd-card-title:hover { color: var(--accent); }
+
+.brd-meta { color: var(--text-dim); font-size: var(--t-micro); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brd-where { font-weight: 600; }
+
+.brd-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.brd-chip {
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  color: var(--text-dim);
+  font-size: var(--t-micro);
+}
+.brd-chip.warn { border-color: var(--warning); color: var(--warning); }
+
+.brd-why { color: var(--text-dim); font-size: var(--t-micro); line-height: 1.45; }
+
+.brd-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 3px; }
+.brd-acts:empty { display: none; }
+/* The park action, folded away. See the note at its call site: four buttons on
+   every card made the action row taller than the title it belonged to. */
+.brd-park-menu > summary {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  color: var(--text-faint);
+  font-size: var(--t-micro);
+  cursor: default;
+  list-style: none;
+}
+.brd-park-menu > summary::-webkit-details-marker { display: none; }
+.brd-park-menu > summary:hover { border-color: var(--accent); color: var(--accent); }
+.brd-park-menu[open] > summary { border-color: var(--accent); color: var(--accent); }
+.brd-park-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.brd-park {
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--t-micro);
+}
+.brd-park:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+
+.brd-scope { min-width: 180px; }
+
+/* ── the interview ───────────────────────────────────────────────────── */
+/* Reading width, not full width. This is a conversation: a question set across
+   1400px is one nobody reads to the end of. */
+/* .pane > * in index.css already holds these to --page-max and outranks an
+   imported sheet, so a max-width stated here alone would be a dead declaration.
+   The form takes the app's measure; only the transcript below narrows, and it
+   does so through a selector that actually wins. */
+.iv-start, .iv-review { display: grid; gap: 5px; }
+.iv-start > .label, .iv-review > .label { margin-top: var(--s-3); }
+.iv-seed { resize: vertical; }
+.iv-fine { font-size: var(--t-micro); line-height: 1.55; }
+.iv-acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); margin-top: var(--s-3); }
+
+.iv-budgets, .iv-risks { display: flex; flex-wrap: wrap; gap: 6px; }
+.iv-budget {
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--t-small);
+  font-variant-numeric: tabular-nums;
+}
+.iv-budget.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+/* What it has cost, in the head, from the first question onward. */
+.iv-spend {
+  color: var(--text-dim);
+  font-size: var(--t-micro);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Narrower than the rest of the app on purpose, and specific enough to beat
+   `.pane > *`: this is a conversation, and a question set across a full-width
+   column is one the eye loses track of halfway through. */
+.pane > .iv-turns { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-4); max-width: 68ch; }
+.iv-turn { display: grid; gap: 3px; }
+/* The question carries the weight on the page, because it is the thing being
+   answered. Answers sit back: they are what you already said. */
+.iv-q { font-size: var(--t-body); font-weight: 600; line-height: 1.4; }
+.iv-why { color: var(--text-faint); font-size: var(--t-micro); }
+.iv-a {
+  margin-top: 4px;
+  padding-left: var(--s-3);
+  border-left: 2px solid var(--line);
+  color: var(--text-dim);
+  font-size: var(--t-small);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.iv-answer { display: grid; gap: 4px; margin-top: 6px; }
+
+.iv-plan { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+.iv-node {
+  display: grid;
+  gap: 3px;
+  padding: var(--card-pad-tight);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-soft);
+}
+.iv-node-top { display: flex; align-items: baseline; gap: var(--s-2); }
+.iv-kind {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  color: var(--text-faint);
+  font-size: var(--t-micro);
+}
+.iv-node-say { color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
+.iv-node-meta { display: flex; flex-wrap: wrap; gap: 5px; }
+.iv-chip { color: var(--text-faint); font-size: var(--t-micro); }
+
+/* Interviews left open. Money was spent on every one of these, so they are
+   offered before the form to start another. */
+.iv-resume { display: grid; gap: 5px; max-width: 720px; margin-bottom: var(--s-4); }
+.iv-resume-row {
+  display: grid;
+  gap: 2px;
+  padding: var(--card-pad-tight);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-soft);
+  text-align: left;
+}
+.iv-resume-row:hover { border-color: var(--accent); }
+.iv-resume-seed { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.iv-resume-meta { color: var(--text-faint); font-size: var(--t-micro); }

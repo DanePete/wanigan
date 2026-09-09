@@ -184,9 +184,8 @@ export default function ObservedBand() {
         <Note tone="info" action={{ label: 'Turn it on', run: () => setEnabled(true) }}>
           <strong>Wanigan lists the sessions it started.</strong> A Claude session started from a
           terminal or by the VS Code extension is not among them, and is not counted anywhere in
-          this app, while this is off. {state.note} The switch is called “Sessions started outside
-          Wanigan” and it is one of Wanigan’s own settings — turning it on changes nothing in your
-          Claude install.
+          this app, while this is off. {state.note} The switch is at the foot of this band and it is one
+          of Wanigan’s own settings — turning it on changes nothing in your Claude install.
         </Note>
       </section>
     );
@@ -263,7 +262,7 @@ export default function ObservedBand() {
 
       <p className="obs-switch">
         <button type="button" className="btn btn-sm" onClick={() => void setEnabled(false)}
-                title="Turns off the “Sessions started outside Wanigan” setting. It stops Wanigan reading the registry and does nothing to any session.">
+                title="Turns off observing sessions started outside Wanigan. It stops Wanigan reading the registry and does nothing to any session.">
           Stop reading the registry
         </button>
       </p>

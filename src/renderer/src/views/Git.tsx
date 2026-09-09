@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { GhPr, GhStatusReport, Project } from '@shared/types';
+import type { GhPr, GhStatusReport, Project, WorktreeInfo } from '@shared/types';
 import { ConfirmNote, EmptyState, Note, PageHead, Reading, ago } from '../components/bits';
 import ReviewGate from '../components/ReviewGate';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 
 type GFile = { path: string; index: string; work: string; staged: boolean; untracked: boolean; conflicted: boolean };
 type Status = {
-  isRepo: boolean; root: string; branch: string | null; detached: boolean;
+  isRepo: boolean; root: string;
+  /** The repository `root` belongs to; the same path unless the project is a
+      subdirectory of a larger repository. Worktrees are listed against this. */
+  repoRoot: string;
+  /** Set when the project is a subdirectory: every acting call refuses. */
+  subpath: string | null;
+  branch: string | null; detached: boolean;
   upstream: string | null; ahead: number; behind: number;
   staged: GFile[]; unstaged: GFile[]; untracked: GFile[]; conflicted: GFile[];
   clean: boolean; operation: string | null;
@@ -49,8 +55,17 @@ function checksLabel(c: NonNullable<GhPr['checks']>): string {
 }
 
 /** Every arm of GhPrStatus rendered as itself; absence is shown, not faked. */
-function PrChip({ report, onRefresh }: { report: GhStatusReport | null; onRefresh: () => void }) {
-  if (!report) return null;
+function PrChip({ report, busy, onRefresh }: { report: GhStatusReport | null; busy: boolean; onRefresh: () => void }) {
+  // No report means nobody has asked. Asking runs gh, which talks to GitHub, so
+  // it is a button and not a mount effect.
+  if (!report) {
+    return (
+      <button className="gt-chip" disabled={busy} onClick={onRefresh}
+              title="Runs gh on your machine to ask your GitHub host whether this branch has a pull request. Nothing leaves your machine until you press this.">
+        {busy ? 'Checking…' : 'Check for a PR'}
+      </button>
+    );
+  }
   const s = report.status;
   if (s.kind === 'no-branch') return null;
   const refresh = (
@@ -60,11 +75,16 @@ function PrChip({ report, onRefresh }: { report: GhStatusReport | null; onRefres
     </button>
   );
   if (s.kind === 'missing') {
+    // The refresh belongs here too: gh.ts promises an operator who installs gh
+    // mid-run sees the chip work on the next refresh, not after a restart.
     return (
-      <span className="faint" style={{ fontSize: 'var(--t-small)' }}
-            title="Install GitHub's gh CLI and sign in with `gh auth login` to see pull requests here. Wanigan runs the gh you install; it never stores GitHub credentials itself.">
-        PRs: gh not installed
-      </span>
+      <>
+        <span className="faint" style={{ fontSize: 'var(--t-small)' }}
+              title="Install GitHub's gh CLI and sign in with `gh auth login` to see pull requests here. Wanigan runs the gh you install; it never stores GitHub credentials itself.">
+          PRs: gh not installed
+        </span>
+        {refresh}
+      </>
     );
   }
   if (s.kind === 'unauthenticated') {
@@ -90,7 +110,7 @@ function PrChip({ report, onRefresh }: { report: GhStatusReport | null; onRefres
   );
 }
 
-function Diff({ text }: { text: string }) {
+function Diff({ text, cutBytes }: { text: string; cutBytes?: number | null }) {
   const { lines, total } = useMemo(() => {
     const all = text.split('\n');
     return { lines: all.slice(0, DIFF_LINES), total: all.length };
@@ -108,6 +128,15 @@ function Diff({ text }: { text: string }) {
         <div className="meta">
           — showing {DIFF_LINES.toLocaleString('en-US')} of {total.toLocaleString('en-US')} lines.
           The remaining {(total - DIFF_LINES).toLocaleString('en-US')} are not displayed.
+        </div>
+      )}
+      {/* The byte cut happens in main, before the line count above is taken, so
+          a patch cut there ends mid-hunk and the line note alone reads as the
+          whole diff. */}
+      {cutBytes != null && (
+        <div className="meta">
+          — the patch was cut at 400 KB of {(cutBytes / 1024).toLocaleString('en-US', { maximumFractionDigits: 0 })} KB.
+          What is below stops there; read the rest with git.
         </div>
       )}
     </div>
@@ -167,7 +196,7 @@ export default function Git({ projects, projectsRead }: {
   // A filter over the commits already in memory: no new gh or git process
   // runs for a keystroke, and the footer says how many rows it searched.
   const [commitFilter, setCommitFilter] = useViewMemory('commitFilter', '');
-  const [detail, setDetail] = useState<{ title: string; patch: string } | null>(null);
+  const [detail, setDetail] = useState<{ title: string; patch: string; cutBytes?: number | null } | null>(null);
   const [msg, setMsg] = useViewMemory('commitMsg', '');
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -182,6 +211,11 @@ export default function Git({ projects, projectsRead }: {
   const [confirm, setConfirm] = useState<{ what: string; verb: string; run: () => Promise<void> } | null>(null);
   const [adding, setAdding] = useState(false);
   const [pr, setPr] = useState<GhStatusReport | null>(null);
+  const [prBusy, setPrBusy] = useState(false);
+  /** Agent checkouts on this repository, keyed by the branch each holds. A
+      branch in here is merged through worktrees.merge, which carries the
+      guards a bare `git merge` from this pane skipped. */
+  const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ title: '', body: '', draft: false, base: '' });
 
@@ -242,7 +276,7 @@ export default function Git({ projects, projectsRead }: {
   // it would otherwise still be on screen, one press from acting on A.
   useEffect(() => {
     requestEpoch.current += 1;
-    setSt(null); setCommits([]); setBrs([]); setStash([]);
+    setSt(null); setCommits([]); setBrs([]); setStash([]); setWorktrees([]);
     setDetail(null); setErr(null); setOk(null); setConfirm(null);
     setPr(null); setCreating(false);
   }, [root]);
@@ -259,13 +293,18 @@ export default function Git({ projects, projectsRead }: {
       if (epoch !== requestEpoch.current) return null;
       setSt(s);
       if (!s.isRepo) { setCommits([]); setBrs([]); setStash([]); setErr(null); return s; }
-      const [l, b, sh] = await Promise.all([
+      const [l, b, sh, wt] = await Promise.all([
         window.wanigan.git.log(s.root, { limit: 150, all: showAll }),
         window.wanigan.git.branches(s.root),
         window.wanigan.git.stashes(s.root),
+        // Local and cheap, and it decides whether `merge` on a branch row is
+        // safe. A failure here must not blank the workbench: the worst it costs
+        // is the worktree label, so it degrades to an empty list.
+        window.wanigan.worktrees.list(s.repoRoot).catch(() => [] as WorktreeInfo[]),
       ]);
       if (epoch !== requestEpoch.current) return null;
       setCommits(l as Commit[]); setBrs(b as Branch[]); setStash(sh as Stash[]);
+      setWorktrees(wt);
       setErr(null);
       return s;
     } catch (e) {
@@ -278,7 +317,7 @@ export default function Git({ projects, projectsRead }: {
       // repository blanks the workbench until the next read returns. The
       // commit draft survives it; it is view memory, not component state.
       if (epoch !== requestEpoch.current) return null;
-      setSt(null); setCommits([]); setBrs([]); setStash([]);
+      setSt(null); setCommits([]); setBrs([]); setStash([]); setWorktrees([]);
       setErr(e instanceof Error ? e.message : String(e));
       return null;
     }
@@ -300,9 +339,10 @@ export default function Git({ projects, projectsRead }: {
     };
   }, [load]);
 
-  // PR state is asked for on open, on branch change and on the explicit ↻ —
-  // never from the 8-second poll above, which stays local-only. The main
-  // process adds a 60s cache so re-renders cannot become gh spawns.
+  // PR state is asked for only when the operator asks. It used to be read on
+  // open and on every branch change, which contacted GitHub through gh without
+  // a press — under a head that says "Wanigan only reads it until you press a
+  // button here". The head is the promise; this read now keeps it.
   // Epoch-guarded for the same reason the status read is: the chip is a link to
   // one repository's pull request, and a late answer for A landing under B's
   // name is a button that opens the wrong PR.
@@ -315,7 +355,10 @@ export default function Git({ projects, projectsRead }: {
     } catch { if (epoch === requestEpoch.current) setPr(null); }
   }, [root]);
   const branch = st?.branch ?? null;
-  useEffect(() => { void loadPr(); }, [loadPr, branch]);
+  // Switching project or branch drops the answer rather than fetching a new
+  // one: a PR chip for the branch that was on screen a moment ago is worse
+  // than no chip.
+  useEffect(() => { setPr(null); }, [root, branch]);
 
   // The action itself is safe — it was given the root that was on screen when
   // it was pressed. What is not safe is its *report*: switch project while a
@@ -346,7 +389,7 @@ export default function Git({ projects, projectsRead }: {
     try {
       const d = await window.wanigan.git.commitDiff(st.root, c.hash);
       if (epoch !== requestEpoch.current) return;
-      setDetail({ title: `${c.short} · ${c.subject}`, patch: d.patch });
+      setDetail({ title: `${c.short} · ${c.subject}`, patch: d.patch, cutBytes: d.truncated ? d.bytes : null });
     } catch (e) { if (epoch === requestEpoch.current) setErr(e instanceof Error ? e.message : String(e)); }
   }
 
@@ -506,10 +549,14 @@ export default function Git({ projects, projectsRead }: {
             {st.upstream ? <>↑<span className="a">{st.ahead}</span> ↓<span className="b">{st.behind}</span> {st.upstream}</>
               : 'no upstream'}
           </span>
-          <PrChip report={pr} onRefresh={() => void loadPr(true)} />
+          <PrChip report={pr} busy={prBusy} onRefresh={() => { setPrBusy(true); void loadPr(true).finally(() => setPrBusy(false)); }} />
           {st.operation && <span className="gt-op">⚠ {st.operation} in progress</span>}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-            {pr?.status.kind === 'none' && (
+            {/* A branch whose only pull request was closed or merged can have
+                another one. Gating on 'none' alone hid the button for good the
+                first time a PR was closed by mistake. */}
+            {(pr?.status.kind === 'none'
+              || (pr?.status.kind === 'pr' && (pr.status.pr.state === 'closed' || pr.status.pr.state === 'merged'))) && (
               <button className="btn" disabled={!!busy || creating || !st.upstream}
                       title={st.upstream
                         ? `Open a pull request for ${st.branch} with gh`
@@ -529,7 +576,11 @@ export default function Git({ projects, projectsRead }: {
                     onClick={() => void act('Pull', () => window.wanigan.git.pull(st.root))}>
               Pull{st.behind ? ` ${st.behind}` : ''}
             </button>
-            <button className="btn btn-primary" disabled={!!busy || (st.ahead === 0 && !!st.upstream)}
+            <button className="btn btn-primary"
+                    disabled={!!busy || st.detached || !st.branch || (st.ahead === 0 && !!st.upstream)}
+                    title={st.detached || !st.branch
+                      ? 'Detached HEAD — check out a branch before pushing.'
+                      : undefined}
                     onClick={() => setConfirm({
                       what: st.upstream
                         ? `Push ${st.ahead} commit${st.ahead > 1 ? 's' : ''} to ${st.upstream}. This leaves your machine.`
@@ -816,6 +867,11 @@ export default function Git({ projects, projectsRead }: {
                   <span className="p" title={b.subject ?? ''}>
                     {b.name}
                     {(b.ahead || b.behind) ? <span className="faint" style={{ marginLeft: 6, fontSize: 'var(--t-micro)' }}>↑{b.ahead} ↓{b.behind}</span> : null}
+                    {worktrees.some((w) => w.branch === b.name) && (
+                      <span className="faint gt-wt-mark" title="Checked out in an agent's worktree. Merging it here goes through the worktree guards.">
+                        ⑂ worktree
+                      </span>
+                    )}
                   </span>
                   <span className="go" style={{ display: 'flex', gap: 5 }}>
                     {!b.current && (
@@ -827,9 +883,25 @@ export default function Git({ projects, projectsRead }: {
                     {!b.current && !b.remote && (
                       <>
                         <button className="gt-chip" disabled={!!busy}
-                                onClick={() => setConfirm({ what: `Merge ${b.name} into ${st.branch}.`,
-                                  verb: `Merge into ${st.branch}`,
-                                  run: () => act('Merge', () => window.wanigan.git.merge(st.root, b.name)) })}>merge</button>
+                                onClick={() => {
+                                  // A branch checked out in an agent's worktree is merged
+                                  // through worktrees.merge, which refuses a dirty worktree,
+                                  // refuses an unknown ahead count and aborts on conflict.
+                                  // A bare `git merge` from here ran none of that and took
+                                  // the committed half of an agent's work silently.
+                                  const wt = worktrees.find((w) => w.branch === b.name);
+                                  setConfirm(wt
+                                    ? { what: `Merge ${b.name} into ${st.branch}. It is an agent's worktree at ${wt.path}${wt.dirty > 0 ? ` with ${wt.dirty} uncommitted file${wt.dirty > 1 ? 's' : ''} that will not be merged` : ''}.`,
+                                        verb: `Merge into ${st.branch}`,
+                                        run: () => act('Merge', async () => {
+                                          const r = await window.wanigan.worktrees.merge(wt.path, { squash: false });
+                                          if (!r.merged) throw new Error(r.detail);
+                                          return r;
+                                        }) }
+                                    : { what: `Merge ${b.name} into ${st.branch}.`,
+                                        verb: `Merge into ${st.branch}`,
+                                        run: () => act('Merge', () => window.wanigan.git.merge(st.root, b.name)) });
+                                }}>merge</button>
                         <button className="gt-chip" disabled={!!busy}
                                 onClick={() => setConfirm({ what: `Delete branch ${b.name}. Unmerged work on it would be lost.`,
                                   verb: `Delete ${b.name}`,
@@ -895,7 +967,7 @@ export default function Git({ projects, projectsRead }: {
           {detail && (
             <div style={{ borderTop: '1px solid var(--line)', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
               <div className="gt-sec-h"><span className="t" style={{ textTransform: 'none', letterSpacing: 0 }}>{detail.title}</span></div>
-              <Diff text={detail.patch} />
+              <Diff text={detail.patch} cutBytes={detail.cutBytes} />
             </div>
           )}
         </div>

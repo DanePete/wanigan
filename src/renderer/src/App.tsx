@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import type { Attention, AttentionKind, ClaudeContextUsage, MotionSetting, Project, ProviderInfo, Session, ThemeSetting, TranscriptHit } from '@shared/types';
+import type { Attention, AttentionKind, ClaudeContextUsage, HaltState, InAppAlert, MotionSetting, Project, ProviderInfo, Session, ThemeSetting, TranscriptHit } from '@shared/types';
 import { filterPalette, groupPalette, transcriptHitRow, TRANSCRIPT_QUERY_MIN, TRANSCRIPT_RESULT_CAP, type PaletteEntry } from '@shared/palette';
 import { DIGIT_ROUTES, SIDEBAR_GROUPS, TABS, TAB_ICONS, TAB_SHORTCUTS, labelForTab, type Tab } from '@shared/routes';
 import { bindingMatches, inTerminal, modalOpen } from './bindings';
 import Sessions from './views/Sessions';
 import Fleet from './views/Fleet';
 import Control from './views/Control';
+import Board from './views/Board';
 import Batches from './views/Batches';
 import InsightsView from './views/Insights';
 import Learning from './views/Learning';
@@ -123,6 +124,37 @@ const NEED_MARK: Record<string, { glyph: string; tone: string; phrase: (n: numbe
 const shape = (l: Session[]) => l.map((s) => `${s.id}:${s.status}:${s.projectId}`).join('|');
 /** Likewise for the ranked attention list: identity, kind and when it began. */
 const attentionShape = (l: Attention[]) => l.map((a) => `${a.sessionId}:${a.kind}:${a.since}`).join('|');
+
+/**
+ * How many notification cards the window will stack before the oldest drops.
+ *
+ * Four, because that is about what fits above the status bar without becoming
+ * the window. A fleet that raises five alerts in a minute is a fleet the
+ * operator has to go and look at anyway, and a column that covers the view they
+ * would look at is the fastest way to make somebody want the feature gone.
+ */
+const MAX_IN_APP_ALERTS = 4;
+
+/**
+ * How long a card stays before it fades on its own.
+ *
+ * Only the ones that are not urgent. A finished turn is news with a short shelf
+ * life; a permission wait is a question that is still unanswered, and a
+ * question that dismissed itself while the operator was in another window is
+ * indistinguishable from never having been asked.
+ */
+const IN_APP_ALERT_MS = 12_000;
+
+/**
+ * How long the halt handle stays armed after the first click.
+ *
+ * Short. A click now and a stray click four minutes later must never be read as
+ * one decision to kill every agent in the app — which is the failure mode a
+ * two-step confirm has if the first step never expires.
+ */
+const HALT_ARM_MS = 6_000;
+
+type InAppAlertCard = InAppAlert & { id: string };
 /** Likewise for the shared project list: identity, name, path and branch. */
 const projectShape = (l: Project[]) => l.map((p) => `${p.id}:${p.name}:${p.path}:${p.branch}`).join('|');
 
@@ -203,6 +235,15 @@ export default function App() {
   // first, then longest wait. The counts above are derived from it; the rail
   // popover and the palette's session marks read it directly.
   const [attention, setAttention] = useState<Attention[]>([]);
+  // Cards raised by main, newest first. Deliberately not derived from the
+  // attention list above: that list is a poll of what is true now, and a card
+  // is a record that a transition happened — a prompt answered thirty seconds
+  // after it appeared has left the list and still deserves to have been seen.
+  const [alerts, setAlerts] = useState<InAppAlertCard[]>([]);
+  // Polled, not derived from this window's own actions: the handle can be
+  // pulled from a paired phone, and a window that only learned about a halt
+  // when it caused one would go on drawing a fleet that is no longer running.
+  const [halt, setHalt] = useState<HaltState | null>(null);
   // The "n need you" popover: the mark button it is anchored to, or null.
   const [needAnchor, setNeedAnchor] = useState<HTMLElement | null>(null);
   const [error, setError] = useState<ShellError | null>(null);
@@ -902,6 +943,46 @@ export default function App() {
     return () => { off(); };
   }, [focusSession, go]);
 
+  useEffect(() => {
+    // Compared before it is stored. The IPC boundary hands back a fresh object
+    // every time, so assigning it unconditionally re-rendered the entire shell
+    // every five seconds forever — which is both wasted work and, until the
+    // card sweep above was rewritten, the thing that stopped notifications from
+    // ever dismissing themselves.
+    const read = () => {
+      window.wanigan.halt.state()
+        .then((next) => setHalt((prev) => (
+          prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next
+        )))
+        .catch(() => {});
+    };
+    read();
+    // Guarded like every other poll in the app: a hidden window is not one
+    // anybody is reading a halt banner in, and this is the only interval that
+    // was still asking every five seconds behind a closed lid. Read once on the
+    // way back so becoming visible never shows a stale one.
+    const tick = () => { if (document.hidden) return; read(); };
+    const timer = window.setInterval(tick, 5_000);
+    document.addEventListener('visibilitychange', tick);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
+  }, []);
+
+  // The same notification, inside the window. Main decides what is worth one —
+  // permission waits, errors and finished turns, and nothing else — so this
+  // holds no policy of its own, only the last few and how long they stay.
+  useEffect(() => {
+    const off = window.wanigan.on.notificationRaised((alert) => {
+      setAlerts((prev) => {
+        // Newest first, and keyed by arrival time. A burst of three finished
+        // turns is three cards; a stack that replaced them with a count would
+        // hide which agents they were, which is the whole content of the alert.
+        const next = [{ ...alert, id: `${alert.at}:${prev.length}:${alert.title}` }, ...prev];
+        return next.slice(0, MAX_IN_APP_ALERTS);
+      });
+    });
+    return () => { off(); };
+  }, []);
+
   // ⌥⌘S: the destination list off and on. Its own handler because the two
   // above both refuse Option — the digit row takes ⌘ alone and the named
   // routes take ⌘⇧, and widening either guard would let a chord meant for one
@@ -1134,6 +1215,12 @@ export default function App() {
                 project select that only sometimes rendered was the invisible
                 scope that let two surfaces state contradictory counts. */}
 
+            {/* The emergency stop lives in the header rather than on a page,
+                because the moment you want it you do not want to navigate
+                first. It is a small, quiet control until it is pulled — an
+                always-red button in permanent chrome is one you stop seeing. */}
+            <HaltControl halt={halt} onChange={setHalt} />
+
             <button className="nav-new-session" type="button" onClick={requestNewSession}
                     title="Start a new interactive agent session (⌘T)"
                     aria-label="Start a new interactive agent session (Command T)">
@@ -1193,6 +1280,17 @@ export default function App() {
           the window gets those 48px back for the terminal. ⌘1–9, ⌘0, ⌘, and
           every ⌘⇧ chord are unchanged; the palette is still the complete
           index. */}
+      {/* Above the workspace, not inside it. A halted fleet is a fact about the
+          whole app rather than about whichever tab is on screen, so it belongs
+          in the same band as the recovery strip and the demo banner — and it
+          sits outside the view's error boundary, because a screen that crashed
+          is one of the reasons somebody pulls the handle.
+
+          Placed here specifically rather than one element lower: .workspace is
+          a flex ROW holding the sidebar and the view, and a banner dropped into
+          it becomes a third column that stretches to the full height of the
+          window. */}
+      {halt?.halted && <HaltBanner halt={halt} onChange={setHalt} />}
       <div className="workspace">
         {sidebarOpen && (
           <nav className="sidebar" id="wanigan-sidebar" aria-label="Primary navigation">
@@ -1268,6 +1366,10 @@ export default function App() {
                       onSendToBatch={(seed) => { setBatchSeed(seed); go('batches'); }} />
           )}
           {tab === 'fleet' && <Fleet projects={projects} onOpenSession={openSession} onNewSession={requestNewSession} />}
+          {tab === 'board' && (
+            <Board projects={projects} providers={providers} projectId={projectId}
+                   onOpenGoal={openGoal} onOpenSession={openSession} />
+          )}
           {tab === 'control' && <Control projects={projects} providers={providers} onOpenSession={openSession} />}
           {tab === 'batches' && (
             <Batches projects={projects} hasKey={hasKey} onNeedKey={() => go('settings')}
@@ -1326,6 +1428,19 @@ export default function App() {
             <span className="faint" style={{ alignSelf: 'center', fontSize: 'var(--t-micro)' }}>Esc closes</span>
           </div>
         </div>
+      )}
+      {alerts.length > 0 && (
+        <AlertStack
+          alerts={alerts}
+          onOpen={(alert) => {
+            setAlerts((prev) => prev.filter((row) => row.id !== alert.id));
+            if (!alert.target) return;
+            if (alert.target.kind === 'session') { focusSession(alert.target.sessionId); go('sessions'); }
+            else go('runs');
+          }}
+          onDismiss={(id) => setAlerts((prev) => prev.filter((row) => row.id !== id))}
+          onDismissAll={() => setAlerts([])}
+        />
       )}
       {palette && (
         <CommandPalette
@@ -1598,6 +1713,185 @@ function relativeReset(at: number): string {
  * renders and drives it. The data half of the shape lives in shared/palette
  * so the smoke suite can hold the filter and grouping to account.
  */
+/* ════════════════════════════════════════════════════════════════════════
+   Halt and catch fire
+   ════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The handle, in the header.
+ *
+ * Two clicks, never one, and the arm expires. This kills every agent in the
+ * app; a control that did that on a single mis-click in permanent chrome would
+ * be a control people move the window to avoid. It is also deliberately not red
+ * until it has been armed — a button that is always shouting is one the eye
+ * stops seeing, which is the opposite of what an emergency stop needs.
+ */
+function HaltControl({ halt, onChange }: { halt: HaltState | null; onChange: (next: HaltState) => void }) {
+  const [armedAt, setArmedAt] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const armed = Date.now() - armedAt < HALT_ARM_MS;
+
+  useEffect(() => {
+    if (!armed) return;
+    const timer = window.setTimeout(() => setArmedAt(0), HALT_ARM_MS);
+    return () => window.clearTimeout(timer);
+  }, [armed, armedAt]);
+
+  // While it is pulled the banner below owns the state and the way out of it.
+  // A second control saying the same thing in the header would be one more
+  // place for the two to disagree.
+  if (halt?.halted) return null;
+
+  return (
+    <button className={`hdr-halt${armed ? ' armed' : ''}`} type="button" disabled={busy}
+            title="Stop every agent, schedule and queue, and refuse to start anything until you clear it"
+            aria-label={armed
+              ? 'Confirm: stop every agent, schedule and queue'
+              : 'Halt: stop every agent, schedule and queue'}
+            onClick={() => {
+              if (!armed) { setArmedAt(Date.now()); return; }
+              setArmedAt(0);
+              setBusy(true);
+              window.wanigan.halt.pull()
+                .then(onChange)
+                .catch(() => {})
+                .finally(() => setBusy(false));
+            }}>
+      {busy ? 'Stopping…' : armed ? 'Stop everything?' : 'Halt'}
+    </button>
+  );
+}
+
+/**
+ * What a halted Wanigan says, on every screen.
+ *
+ * It reports what was stopped rather than asserting that everything was,
+ * because those are different claims and one of them is not true: a batch the
+ * API already accepted keeps running on Anthropic's machines whatever this
+ * button does. The list comes from the stop pass itself, so a subsystem that
+ * failed to stop says so here instead of being silently counted as stopped.
+ */
+function HaltBanner({ halt, onChange }: { halt: HaltState; onChange: (next: HaltState) => void }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="halt-banner" role="alert">
+      <div className="halt-banner-say">
+        <strong>
+          Wanigan is halted{halt.source === 'phone' ? ' — pulled from your phone' : ''}
+          {halt.at ? ` ${ago(halt.at)}` : ''}.
+        </strong>
+        <p>
+          Nothing will start until this is cleared: no session, no schedule, no queued task, no batch.
+          Every tool call from anything still running is refused.
+          {halt.reason ? ` Reason given: ${halt.reason}` : ''}
+        </p>
+        {halt.stopped.length > 0 && (
+          <ul className="halt-what">
+            {halt.stopped.map((entry) => (
+              <li key={entry.name}>
+                <span className="halt-n">{entry.stopped}</span> {entry.name}
+                {entry.note ? <span className="halt-note"> — {entry.note}</span> : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <button className="btn btn-primary" type="button" disabled={busy}
+              onClick={() => {
+                setBusy(true);
+                window.wanigan.halt.clear()
+                  .then(onChange)
+                  .catch(() => {})
+                  .finally(() => setBusy(false));
+              }}>
+        {busy ? 'Clearing…' : 'Clear the halt'}
+      </button>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   The notification card
+   ════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * What a notification looks like when it is not allowed to leave the window.
+ *
+ * The transient twin of NeedYouPopover above, and the difference between them
+ * is the whole reason this exists. That popover answers "what needs me right
+ * now", read from a poll of current state; it is correct, and it is only ever
+ * seen by somebody who already went looking. This one interrupts. It fires on a
+ * transition — the moment an agent started waiting — and it stays put until it
+ * is read or, for the states that stop mattering, until a timer takes it.
+ *
+ * Three separate surfaces now carry the same event: this card, the macOS
+ * banner, and the phone. That is deliberate and it is not belt-and-braces. Of
+ * the three, this is the only one whose delivery Wanigan controls: a banner is
+ * shown at the operating system's discretion and reports nothing back, and a
+ * phone alert depends on a push service and a device that may be in another
+ * room. The card is what an operator looking at the window is promised.
+ */
+function AlertStack({ alerts, onOpen, onDismiss, onDismissAll }: {
+  alerts: InAppAlertCard[];
+  onOpen: (alert: InAppAlertCard) => void;
+  onDismiss: (id: string) => void;
+  onDismissAll: () => void;
+}) {
+  // Non-urgent cards retire themselves; a permission wait does not.
+  //
+  // One sweep against a deadline stamped on each card, rather than a timeout
+  // per card. The per-card version had `alerts` and `onDismiss` in its
+  // dependencies, and `onDismiss` is an inline arrow in the shell — so every
+  // App render tore the timers down and started them again from zero. That was
+  // survivable until the halt poll landed: it refreshes every five seconds and
+  // its result is a fresh object off the IPC boundary, so the shell now
+  // re-renders on a guaranteed five-second cadence. Twelve seconds measured in
+  // five-second instalments never elapses, and the cards stayed forever.
+  //
+  // A deadline cannot be reset by a re-render, because it was decided when the
+  // card arrived.
+  useEffect(() => {
+    if (!alerts.some((alert) => !alert.urgent)) return;
+    const sweep = window.setInterval(() => {
+      const cutoff = Date.now() - IN_APP_ALERT_MS;
+      for (const alert of alerts) if (!alert.urgent && alert.at <= cutoff) onDismiss(alert.id);
+    }, 1_000);
+    return () => window.clearInterval(sweep);
+  }, [alerts, onDismiss]);
+
+  return (
+    <div className="alert-stack">
+      {alerts.length > 1 && (
+        <button className="alert-clear" type="button" onClick={onDismissAll}>
+          Dismiss {alerts.length} notifications
+        </button>
+      )}
+      {alerts.map((alert) => (
+        <div key={alert.id}
+             className={`alert-card${alert.urgent ? ' urgent' : ''}`}
+             /* assertive for the urgent one only. A finished turn read out over
+                whatever the operator was already having read to them is the
+                behaviour that gets a screen reader user to turn the app off. */
+             role={alert.urgent ? 'alert' : 'status'}>
+          <div className="alert-card-body">
+            <div className="alert-card-title">{alert.title}</div>
+            <div className="alert-card-text">{alert.body}</div>
+          </div>
+          <div className="alert-card-acts">
+            {alert.target && (
+              <button className="btn btn-primary btn-sm" type="button" onClick={() => onOpen(alert)}>
+                {alert.target.kind === 'session' ? 'Open session' : 'Open run'}
+              </button>
+            )}
+            <button className="alert-card-x" type="button" aria-label={`Dismiss: ${alert.title}`}
+                    onClick={() => onDismiss(alert.id)}>&#10005;</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** A glyph-and-word mark before the title: a live session's attention state,
  *  "active" on the project the shell is pointed at, "current" on the theme. */
 type PaletteMark = { glyph: string; word: string };

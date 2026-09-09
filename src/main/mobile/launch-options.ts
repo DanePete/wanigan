@@ -552,9 +552,35 @@ export async function mobileLaunchProviders(
   providers: readonly ProviderInfo[],
   projectIds: readonly string[] = listProjects().map((project) => project.id),
 ): Promise<MobileLaunchProvider[]> {
-  return Promise.all(providers.map(async (provider) => {
+  // One profile must not be able to empty this list or hold it open.
+  //
+  // Every row here can reach outside the process — a live model catalogue is a
+  // network round trip or a CLI spawn, and reading accounts stats a directory —
+  // and the phone's launch form is drawn from the whole answer or not at all.
+  // So a row that throws contributes what Wanigan can vouch for instead of
+  // rejecting the array, and a row that will not answer in time is cut off at
+  // the same fallback rather than leaving the form hidden behind a request that
+  // never settles. The failure this replaces was silent and total: any throw
+  // became a 500, and the page hides the entire launch card when /api/control
+  // fails, so a slow backend read as "this phone cannot start a session".
+  const rows = await Promise.all(providers.map(async (provider): Promise<MobileLaunchProvider> => {
     const available = Boolean(provider.path);
-    const offer = launchOffer(provider, available ? await backendCatalog(provider.backendId) : []);
+    let catalog: CatalogModel[] = [];
+    if (available) {
+      try {
+        catalog = await withDeadline(backendCatalog(provider.backendId), CATALOG_DEADLINE_MS);
+      } catch {
+        // backendCatalog already falls back to the published list on a failed
+        // live read; this catches the deadline and anything it did not.
+        catalog = [];
+      }
+    }
+    const offer = launchOffer(provider, catalog);
+    let accounts = NO_ACCOUNTS;
+    if (available) {
+      try { accounts = mobileAccountOffer(provider.id, projectIds); }
+      catch { accounts = NO_ACCOUNTS; }
+    }
     return {
       id: provider.id,
       label: provider.label,
@@ -564,9 +590,30 @@ export async function mobileLaunchProviders(
         .map((choice) => ({ value: choice.value, label: choice.label })),
       efforts: offer.effort.choices.filter((choice) => choice.value !== '').map((choice) => choice.value),
       launch: offer,
-      accounts: available ? mobileAccountOffer(provider.id, projectIds) : NO_ACCOUNTS,
+      accounts,
     };
   }));
+  return rows;
+}
+
+/**
+ * How long one backend gets to answer with its live model list.
+ *
+ * The phone polls /api/control on every render, so this is a per-render cost on
+ * a radio. Past this the published list is served instead — the same answer
+ * backendCatalog gives when a live read fails, which the form already handles.
+ */
+const CATALOG_DEADLINE_MS = 4_000;
+
+function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('catalogue read timed out')), ms);
+    timer.unref?.();
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
 }
 
 

@@ -1,6 +1,7 @@
 import { db } from './db';
 import { codexUsageSummary } from './codex-usage';
-import type { BudgetState, Reconciliation } from '../shared/types';
+import * as claudeUsage from './claude-usage';
+import type { BudgetState, Reconciliation, UnifiedSpendDay } from '../shared/types';
 
 /**
  * One spend model over three surfaces — and two meters.
@@ -89,9 +90,47 @@ type DayUsd = { day: string; usd: number };
 function sessionUsdByDay(sinceMs: number): Map<string, number> {
   const rows = db().prepare(`
     SELECT ${localDay('at')} AS day, COALESCE(SUM(cost_usd), 0) AS usd
-    FROM session_api_events WHERE at >= ? GROUP BY day
+    FROM session_api_events WHERE kind='request' AND at >= ? GROUP BY day
   `).all(sinceMs) as DayUsd[];
   return new Map(rows.map((r) => [r.day, r.usd]));
+}
+
+/**
+ * How many requests each day carried a cost, and how many did not.
+ *
+ * A session on a Codex plan, a GLM flat plan, or a Claude account whose
+ * telemetry omits cost contributes requests and no dollars. Summing those as
+ * zero and printing the total made the page state a bill nobody measured —
+ * usage.ts refuses to do this two files away, in a comment that says why. The
+ * counts travel beside the money so a surface can say "at least", and say how
+ * much of the day it is talking about.
+ */
+export type PricedCounts = { day: string; priced: number; unpriced: number };
+
+function sessionRequestsByDay(sinceMs: number): Map<string, { priced: number; unpriced: number }> {
+  const rows = db().prepare(`
+    SELECT ${localDay('at')} AS day,
+           SUM(CASE WHEN cost_usd > 0 THEN 1 ELSE 0 END) AS priced,
+           SUM(CASE WHEN cost_usd > 0 THEN 0 ELSE 1 END) AS unpriced
+    FROM session_api_events WHERE kind='request' AND at >= ? GROUP BY day
+  `).all(sinceMs) as { day: string; priced: number; unpriced: number }[];
+  return new Map(rows.map((r) => [r.day, { priced: r.priced ?? 0, unpriced: r.unpriced ?? 0 }]));
+}
+
+/**
+ * The same question for headless rows, which record `cost_reported` explicitly
+ * because the runner already had to decide it: headless.ts refuses to estimate
+ * a cost the CLI did not report, and writes 0 with the flag off instead.
+ */
+function headlessReportedByDay(sinceMs: number): Map<string, { priced: number; unpriced: number }> {
+  const rows = db().prepare(`
+    SELECT ${localDay(hlAt('h'))} AS day,
+           SUM(CASE WHEN h.cost_reported = 1 THEN 1 ELSE 0 END) AS priced,
+           SUM(CASE WHEN h.cost_reported = 1 THEN 0 ELSE 1 END) AS unpriced
+    FROM headless_rows h
+    WHERE ${hlAt('h')} IS NOT NULL AND ${hlAt('h')} >= ? GROUP BY day
+  `).all(sinceMs) as { day: string; priced: number; unpriced: number }[];
+  return new Map(rows.map((r) => [r.day, { priced: r.priced ?? 0, unpriced: r.unpriced ?? 0 }]));
 }
 
 function batchUsdByDay(sinceMs: number): Map<string, number> {
@@ -116,6 +155,7 @@ function headlessUsdByDay(sinceMs: number): Map<string, number> {
   return new Map(rows.map((r) => [r.day, r.usd]));
 }
 
+
 /**
  * The whole bill on one axis, oldest day first: interactive sessions, bulk
  * batch runs and headless fan-outs as three separate series.
@@ -125,21 +165,29 @@ function headlessUsdByDay(sinceMs: number): Map<string, number> {
  * the local pricing table. A caller is free to stack them into one total, but
  * it does so knowing it has added two meters together.
  */
-export function unifiedSpend(
-  days?: number
-): { day: string; sessionUsd: number; batchUsd: number; headlessUsd: number }[] {
+export function unifiedSpend(days?: number): UnifiedSpendDay[] {
   const n = windowDays(days);
   const since = windowStart(n).getTime();
   const s = sessionUsdByDay(since);
   const b = batchUsdByDay(since);
   const h = headlessUsdByDay(since);
+  const sc = sessionRequestsByDay(since);
+  const hc = headlessReportedByDay(since);
 
-  return daySeries(n).map((day) => ({
-    day,
-    sessionUsd: s.get(day) ?? 0,
-    batchUsd: b.get(day) ?? 0,
-    headlessUsd: h.get(day) ?? 0,
-  }));
+  return daySeries(n).map((day) => {
+    const session = sc.get(day) ?? { priced: 0, unpriced: 0 };
+    const headless = hc.get(day) ?? { priced: 0, unpriced: 0 };
+    return {
+      day,
+      sessionUsd: s.get(day) ?? 0,
+      batchUsd: b.get(day) ?? 0,
+      headlessUsd: h.get(day) ?? 0,
+      pricedRequests: session.priced,
+      unpricedRequests: session.unpriced,
+      pricedHeadlessRows: headless.priced,
+      unpricedHeadlessRows: headless.unpriced,
+    };
+  });
 }
 
 /* ── per project ──────────────────────────────────────────────────────── */
@@ -1141,4 +1189,56 @@ export function estimateAccuracy(): {
       ratio: r.est > 0 ? r.actual / r.est : 0,
     }))
     .sort((a, b) => b.actualUsd - a.actualUsd);
+}
+
+/* ── the transcript meter ─────────────────────────────────────────────── */
+
+/**
+ * Claude Code's own transcripts, beside what the collector saw.
+ *
+ * A fourth source, and the first one that can contradict the others usefully.
+ * The three above all describe work Wanigan started; claude-usage.ts reads the
+ * files Claude Code writes for itself, which cover every session on the machine
+ * including the ones Wanigan never launched and every one that predates it.
+ *
+ * `telemetryUsd` is deliberately carried beside `totals.costUsd` rather than
+ * reconciled into it. They are measuring overlapping but different sets — one
+ * is the CLI's own cost for sessions the collector received, the other is
+ * Wanigan's arithmetic over Claude's token counts for every session on disk —
+ * and the interesting number is the gap, not a blend. A surface that summed
+ * them would double-count every session that appears in both.
+ */
+export type TranscriptMeter = {
+  days: number;
+  coverage: ReturnType<typeof claudeUsage.coverage>;
+  totals: ReturnType<typeof claudeUsage.totals>;
+  byDay: ReturnType<typeof claudeUsage.byDay>;
+  /** Models in the window with no published rate, so the total can name its own gap. */
+  unpricedModels: { model: string; requests: number }[];
+  /** What otel.ts banked over the same window, for comparison only. */
+  telemetryUsd: number;
+  telemetryRequests: number;
+  /** Transcript bytes still unread. Non-zero means these figures are still growing. */
+  filesBehind: number;
+};
+
+export function transcriptMeter(days?: number): TranscriptMeter {
+  const n = windowDays(days);
+  const since = windowStart(n).getTime();
+  const telemetry = db().prepare(`
+    SELECT COALESCE(SUM(cost_usd), 0) AS usd, COUNT(*) AS n
+    FROM session_api_events WHERE kind = 'request' AND at >= ?
+  `).get(since) as { usd: number; n: number };
+
+  const cover = claudeUsage.coverage();
+  return {
+    days: n,
+    coverage: cover,
+    totals: claudeUsage.totals(since),
+    byDay: claudeUsage.byDay(since),
+    unpricedModels: claudeUsage.unpricedModels(since),
+    telemetryUsd: telemetry.usd ?? 0,
+    telemetryRequests: telemetry.n ?? 0,
+    filesBehind: cover.filesBehind,
+  };
 }

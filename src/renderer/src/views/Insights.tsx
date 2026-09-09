@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import type { BudgetState, Project, Reconciliation } from '@shared/types';
+import type { BudgetState, Project, Reconciliation, UnifiedSpendDay } from '@shared/types';
 import { Note, Stat, num, usd } from '../components/bits';
 import '../styles/insights.css';
 
@@ -42,7 +42,7 @@ const SERIES = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--
 
 /* ── meters ───────────────────────────────────────────────────────────── */
 
-type MeterKey = 'cli' | 'wanigan';
+type MeterKey = 'cli' | 'wanigan' | 'transcript';
 
 const METER: Record<MeterKey, { glyph: string; word: string; detail: string }> = {
   cli: {
@@ -54,6 +54,11 @@ const METER: Record<MeterKey, { glyph: string; word: string; detail: string }> =
     glyph: '◑',
     word: 'Wanigan meter',
     detail: "Wanigan's arithmetic over its local batch pricing table",
+  },
+  transcript: {
+    glyph: '◒',
+    word: 'Transcript meter',
+    detail: "Claude's own token counts from its local transcripts, priced by Wanigan",
   },
 };
 
@@ -161,26 +166,37 @@ type CacheRow = { surface: string; read: number; write: number; input: number; r
 type AccuracyRow = { model: string; runs: number; estUsd: number; actualUsd: number; ratio: number };
 type CodexUsage = { conversations: number; inTokens: number; outTokens: number; cacheRead: number; totalTokens: number; lastAt: number | null };
 
-type DayRow = { day: string; session: number; batch: number; headless: number; total: number; sync: number };
+type DayRow = { day: string; session: number; batch: number; headless: number; total: number; sync: number; unpricedRequests: number; unpricedHeadlessRows: number };
 
 /**
- * Three surfaces per day, out of the two windowed series the main process
- * exposes.
+ * Three surfaces per day, read from the one source that computes them.
  *
- * syncUsd is session + headless + 2×batch and actualUsd is session + headless +
- * batch, so their difference is exactly the batch column — batch rates are half
- * of list, session and headless spend is already at list price and crosses over
- * at 1×. What is left after the session line is headless. Both inputs come off
- * the same booking rule and the same local-day buckets in the main process, so
- * this cannot drift from the totals it is built from.
+ * This used to rebuild the split by subtraction — batch inferred from the gap
+ * between the sync and actual series, headless from whatever the session line
+ * did not account for. That is only sound while both inputs cover the same
+ * days, and they did not: the preload dropped the window argument, so the sync
+ * series was always thirty days while the session series honoured the picker.
+ * On a seven-day view every interactive dollar from days eight to thirty had no
+ * session figure to subtract and landed in the headless column, under a legend
+ * that named it.
+ *
+ * `spend.unified` returns the three series the main process already keeps
+ * separately, for the window asked for. `sync` stays the counterfactual it
+ * always was: list price for the same work, which is batch at 2x.
  */
-function surfaceRows(byDay: DayUsd[], sync: SyncRow[]): DayRow[] {
-  const s = new Map(byDay.map((r) => [r.day, r.sessionUsd]));
-  return sync.map((r) => {
-    const batch = Math.max(0, r.syncUsd - r.actualUsd);
-    const session = Math.min(s.get(r.day) ?? 0, r.actualUsd);
-    const headless = Math.max(0, r.actualUsd - session - batch);
-    return { day: r.day, session, batch, headless, total: r.actualUsd, sync: r.syncUsd };
+function surfaceRows(days: UnifiedSpendDay[]): DayRow[] {
+  return days.map((r) => {
+    const total = r.sessionUsd + r.batchUsd + r.headlessUsd;
+    return {
+      day: r.day,
+      session: r.sessionUsd,
+      batch: r.batchUsd,
+      headless: r.headlessUsd,
+      total,
+      sync: r.sessionUsd + r.headlessUsd + r.batchUsd * 2,
+      unpricedRequests: r.unpricedRequests,
+      unpricedHeadlessRows: r.unpricedHeadlessRows,
+    };
   });
 }
 
@@ -220,6 +236,117 @@ function projectRows(value: unknown[]): ProjectSpendRow[] {
   return out;
 }
 
+/**
+ * Claude Code's own transcripts, as spend.transcriptMeter() returns them.
+ *
+ * A fourth source and the only one that can see work Wanigan never launched.
+ * It is NOT summed into the totals above and must never be: it overlaps the
+ * session series wherever a session was launched from Wanigan, so adding them
+ * would bill that work twice. The card reports the two side by side and lets
+ * the gap be the finding.
+ */
+type TranscriptMeter = {
+  days: number;
+  requests: number;
+  outsideWanigan: number;
+  filesBehind: number;
+  firstAt: number | null;
+  costUsd: number;
+  tokens: number;
+  unpricedRequests: number;
+  unpricedModels: { model: string; requests: number }[];
+  telemetryUsd: number;
+  telemetryRequests: number;
+};
+
+/** One provider-reported limit window, with the token rate measured inside it. */
+type BurnWindow = {
+  kind: string;
+  scope: string | null;
+  accountLabel: string;
+  usedPercent: number;
+  resetsAtText: string | null;
+  resetsAt: number;
+  tokens: number;
+  tokensPerMinute: number;
+  projectedTokens: number | null;
+  spansMultipleAccounts: boolean;
+};
+
+const numberOr = (v: unknown, fallback = 0) =>
+  typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+
+/**
+ * Both of these arrive over a channel typed `unknown`, so the shape is checked
+ * rather than asserted — the same rule projectRows() follows, and for the same
+ * reason: a NaN reads on screen as a real number and this page is about money.
+ */
+function transcriptMeter(value: unknown): TranscriptMeter | null {
+  if (!value || typeof value !== 'object') return null;
+  const r = value as Record<string, unknown>;
+  const coverage = (r.coverage ?? {}) as Record<string, unknown>;
+  const totals = (r.totals ?? {}) as Record<string, unknown>;
+  const models: { model: string; requests: number }[] = [];
+  for (const row of Array.isArray(r.unpricedModels) ? r.unpricedModels : []) {
+    if (!row || typeof row !== 'object') continue;
+    const m = row as Record<string, unknown>;
+    if (typeof m.model === 'string') models.push({ model: m.model, requests: numberOr(m.requests) });
+  }
+  return {
+    days: numberOr(r.days, 30),
+    requests: numberOr(coverage.requests),
+    outsideWanigan: numberOr(coverage.outsideWanigan),
+    filesBehind: numberOr(r.filesBehind),
+    firstAt: typeof coverage.firstAt === 'number' ? coverage.firstAt : null,
+    costUsd: numberOr(totals.costUsd),
+    tokens: numberOr(totals.inTokens) + numberOr(totals.outTokens)
+      + numberOr(totals.cacheRead) + numberOr(totals.cacheWrite),
+    unpricedRequests: numberOr(totals.unpricedRequests),
+    unpricedModels: models,
+    telemetryUsd: numberOr(r.telemetryUsd),
+    telemetryRequests: numberOr(r.telemetryRequests),
+  };
+}
+
+function burnWindows(value: unknown): BurnWindow[] {
+  const out: BurnWindow[] = [];
+  for (const row of Array.isArray(value) ? value : []) {
+    if (!row || typeof row !== 'object') continue;
+    const r = row as Record<string, unknown>;
+    const burn = (r.burn ?? {}) as Record<string, unknown>;
+    if (typeof r.kind !== 'string' || typeof r.resetsAt !== 'number') continue;
+    out.push({
+      kind: r.kind,
+      scope: typeof r.scope === 'string' ? r.scope : null,
+      accountLabel: typeof r.accountLabel === 'string' ? r.accountLabel : 'Account',
+      usedPercent: numberOr(r.usedPercent),
+      resetsAtText: typeof r.resetsAtText === 'string' ? r.resetsAtText : null,
+      resetsAt: r.resetsAt,
+      tokens: numberOr(burn.tokens),
+      tokensPerMinute: numberOr(burn.tokensPerMinute),
+      projectedTokens: typeof burn.projectedTokens === 'number' ? burn.projectedTokens : null,
+      spansMultipleAccounts: r.spansMultipleAccounts === true,
+    });
+  }
+  return out;
+}
+
+/**
+ * Which meter the headline totals and the two time-series charts speak for.
+ *
+ * ccusage offers auto/calculate/display over one source; Wanigan's equivalent
+ * question is which of its two instruments is being read, because it genuinely
+ * has two and they are not interchangeable. 'both' is the page as it has always
+ * been. The other two are for the moment a figure looks wrong and the first
+ * thing worth knowing is which half of it moved.
+ */
+const METER_MODES = [
+  { value: 'both', label: 'Both meters' },
+  { value: 'cli', label: 'CLI-reported' },
+  { value: 'wanigan', label: 'Wanigan-priced' },
+] as const;
+type MeterMode = (typeof METER_MODES)[number]['value'];
+
 const WINDOWS = [7, 30, 90];
 
 /**
@@ -250,6 +377,18 @@ const TTL = {
   accuracy: 120_000,
   /** Only changes when a repository is added or removed. */
   projects: 120_000,
+  /**
+   * The transcript meter reads a table the background ingest is still filling
+   * on a first run, so it is the one read here that can legitimately change
+   * between two beats with nothing else moving.
+   */
+  transcripts: 20_000,
+  /**
+   * A limit window is a live provider probe behind a staleness bound. Asking
+   * more often than that bound cannot return anything new and does spawn a CLI
+   * process, so this is set to the bound rather than to a refresh rate.
+   */
+  burn: 10 * 60_000,
 } as const;
 
 /* ── the view ─────────────────────────────────────────────────────────── */
@@ -266,7 +405,7 @@ export default function InsightsView({ onOpenRun, projects: given }: {
 }) {
   const [days, setDays] = useState(30);
   const [batch, setBatch] = useState<BatchInsights | null>(null);
-  const [byDay, setByDay] = useState<DayUsd[]>([]);
+  const [unified, setUnified] = useState<UnifiedSpendDay[]>([]);
   const [sync, setSync] = useState<SyncRow[]>([]);
   const [effort, setEffort] = useState<EffortRow[]>([]);
   const [cache, setCache] = useState<CacheRow[]>([]);
@@ -276,6 +415,9 @@ export default function InsightsView({ onOpenRun, projects: given }: {
   const [byProject, setByProject] = useState<ProjectSpendRow[]>([]);
   const [ownProjects, setOwnProjects] = useState<Project[]>([]);
   const [codexUsage, setCodexUsage] = useState<CodexUsage | null>(null);
+  const [transcripts, setTranscripts] = useState<TranscriptMeter | null>(null);
+  const [burn, setBurn] = useState<BurnWindow[]>([]);
+  const [meterMode, setMeterMode] = useState<MeterMode>('both');
   const [errs, setErrs] = useState<{ batch?: string; spend?: string; budgets?: string }>({});
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -340,13 +482,15 @@ export default function InsightsView({ onOpenRun, projects: given }: {
       (async () => {
         if (!due(`spend:${d}`, TTL.spend, force)) return;
         try {
-          const [bd, sy] = await Promise.all([
-            window.wanigan.spend.byDay(d),
+          const [un, sy] = await Promise.all([
+            window.wanigan.spend.unified(d),
             window.wanigan.spend.sync(d),
           ]);
           stamp(`spend:${d}`);
-          if (!alive.current) return;
-          setByDay(bd); setSync(sy);
+          // A window the operator has already moved on from must not land over
+          // the one they are looking at.
+          if (!alive.current || d !== daysRef.current) return;
+          setUnified(un); setSync(sy);
         } catch (e) { next.spend = msg(e); }
       })(),
       (async () => {
@@ -370,6 +514,40 @@ export default function InsightsView({ onOpenRun, projects: given }: {
           if (!alive.current) return;
           setEffort(ef); setCache(ca);
         } catch (e) { next.spend = msg(e); }
+      })(),
+      (async () => {
+        if (!due(`transcripts:${d}`, TTL.transcripts, force)) return;
+        try {
+          const value = await window.wanigan.spend.transcripts(d);
+          stamp(`transcripts:${d}`);
+          if (!alive.current || d !== daysRef.current) return;
+          const meter = transcriptMeter(value);
+          setTranscripts(meter);
+          // A cold store fills on a background beat measured in minutes. Asking
+          // for one bounded slice while somebody is actually looking at the page
+          // makes that visible instead of leaving a card that says "still
+          // reading" and does not move. Self-limiting: it only fires while
+          // files are behind, once per read, and the budget is clamped in the
+          // main process. The result is picked up by the next beat rather than
+          // awaited, so it cannot delay this paint.
+          if (meter && meter.filesBehind > 0) {
+            window.wanigan.spend.ingestTranscripts(600)
+              .then(() => { readAt.current.delete(`transcripts:${d}`); })
+              .catch(() => {});
+          }
+        } catch { /* A machine with no Claude transcripts is not an error. */ }
+      })(),
+      (async () => {
+        if (!due('burn', TTL.burn, force)) return;
+        try {
+          // Never forced. `force` here would re-probe the account on every
+          // window change and every Retry, and each probe starts a real CLI
+          // process; the staleness bound in claude-limits.ts is what decides
+          // when a reading is old, and this read honours it.
+          const value = await window.wanigan.usage.burn(false);
+          stamp('burn');
+          if (alive.current) setBurn(burnWindows(value));
+        } catch { /* No Claude account, or the probe could not read the reply. */ }
       })(),
       (async () => {
         if (!due('budgets', TTL.budgets, force)) return;
@@ -432,23 +610,69 @@ export default function InsightsView({ onOpenRun, projects: given }: {
     };
   }, [load]);
 
-  const rows = useMemo(() => surfaceRows(byDay, sync), [byDay, sync]);
+  /**
+   * The day series, with the meter the operator is not reading zeroed out.
+   *
+   * Zeroed rather than filtered: every chart below draws a continuous axis over
+   * `rows`, and dropping days would make a mode switch silently change the
+   * window as well. `sync` is rebuilt from what survives, because the
+   * counterfactual is only defined over the work still on the chart — leaving
+   * the full-price line while removing the actual one it is compared against
+   * would draw a saving that nothing on screen accounts for.
+   */
+  const rows = useMemo(() => {
+    const all = surfaceRows(unified);
+    if (meterMode === 'both') return all;
+    const cli = meterMode === 'cli';
+    return all.map((r) => {
+      const session = cli ? r.session : 0;
+      const headless = cli ? r.headless : 0;
+      const batch = cli ? 0 : r.batch;
+      return {
+        ...r,
+        session, headless, batch,
+        total: session + headless + batch,
+        sync: session + headless + batch * 2,
+      };
+    });
+  }, [unified, meterMode]);
   const win = useMemo(() => {
-    const acc0 = { session: 0, batch: 0, headless: 0, total: 0, sync: 0 };
+    const acc0 = { session: 0, batch: 0, headless: 0, total: 0, sync: 0, unpricedRequests: 0, unpricedHeadlessRows: 0 };
     for (const r of rows) {
       acc0.session += r.session; acc0.batch += r.batch; acc0.headless += r.headless;
       acc0.total += r.total; acc0.sync += r.sync;
+      acc0.unpricedRequests += r.unpricedRequests; acc0.unpricedHeadlessRows += r.unpricedHeadlessRows;
     }
     return acc0;
   }, [rows]);
+  /**
+   * Work in this window that produced no cost figure at all.
+   *
+   * A Codex plan, a GLM flat plan and a Claude account whose telemetry omits
+   * cost all bill through channels Wanigan is never handed a number for. Those
+   * requests were summed as zero, so the totals above read as the whole bill.
+   * They are not a bill while this is non-zero, and the page says so.
+   */
+  const unmetered = win.unpricedRequests + win.unpricedHeadlessRows;
 
   const t = batch?.totals ?? {};
   const hasBatch = (t.runs ?? 0) > 0;
   const cacheTotal = cache.reduce((a, c) => a + c.read + c.write + c.input, 0);
+  /**
+   * Whether anything has been billed at all — the gate on the empty state.
+   *
+   * The transcript meter belongs in it, and its absence was a real defect
+   * rather than a missing nicety: every other term here describes work Wanigan
+   * launched, so a person who has run Claude Code for a year from a terminal or
+   * the VS Code extension and has just installed Wanigan saw "Nothing has been
+   * billed yet" over a store holding tens of thousands of turns. The one card
+   * that could have corrected the page was below the return that produced it.
+   */
   const everSpent =
     hasBatch || win.total > 0 || cacheTotal > 0 ||
     effort.some((e) => e.costUsd > 0 || e.requests > 0) ||
-    buds.some((b) => b.spentUsd > 0) || (codexUsage?.totalTokens ?? 0) > 0;
+    buds.some((b) => b.spentUsd > 0) || (codexUsage?.totalTokens ?? 0) > 0 ||
+    (transcripts?.requests ?? 0) > 0;
 
   const head = (
     <div className="pane-head">
@@ -512,7 +736,10 @@ export default function InsightsView({ onOpenRun, projects: given }: {
           <ul className="dim ins-start">
             <li>
               <strong>Open a session.</strong> Cost and effort arrive from the agent's own
-              telemetry, so the first numbers land after its first API call.
+              telemetry, so the first numbers land after its first API call. Claude Code's
+              transcripts are read separately and fill this page on their own, including for
+              sessions Wanigan never launched — if that store is still being read, this page
+              will populate without you doing anything.
             </li>
             <li>
               <strong>Submit a batch run.</strong> Batch rates are half of list, and the synchronous
@@ -581,13 +808,32 @@ export default function InsightsView({ onOpenRun, projects: given }: {
             </button>
           ))}
         </div>
+        <span className="label">Meter</span>
+        <div className="ins-seg" role="group" aria-label="Which meter the totals below are read from">
+          {METER_MODES.map((m) => (
+            <button key={m.value} type="button" aria-pressed={m.value === meterMode}
+              onClick={() => setMeterMode(m.value)}>
+              {m.label}
+            </button>
+          ))}
+        </div>
         <span className="faint ins-filter-note">
           Scopes the two time-series charts and the totals beside them. Effort, cache and estimator
           accuracy are all-time; budgets are month-to-date.
+          {meterMode !== 'both' && (
+            <> Showing <strong>{meterMode === 'cli'
+              ? 'only what the CLI reported for itself'
+              : 'only what Wanigan priced from token counts'}</strong> — the other meter reads zero
+              here by choice, not because nothing was spent.</>
+          )}
         </span>
       </div>
 
-      <TwoSpeeds win={win} days={days} />
+      <TwoSpeeds win={win} days={days} unmetered={unmetered} />
+
+      <BurnRate windows={burn} />
+
+      <TranscriptMeterCard meter={transcripts} days={days} />
 
       <SurfaceOverTime rows={rows} days={days} onWiden={() => setDays(90)} />
 
@@ -733,11 +979,157 @@ function CodexActivity({ usage }: { usage: CodexUsage }) {
   );
 }
 
+/* ── the transcript meter ─────────────────────────────────────────────── */
+
+/**
+ * Claude Code's own record, beside what the collector was handed.
+ *
+ * The card exists for one number: `outsideWanigan`. Every other figure on this
+ * page describes work Wanigan started, so the page has never been able to say
+ * anything at all about a session run from a terminal or the VS Code
+ * extension — including saying that it existed. That silence reads as zero.
+ *
+ * The two dollar figures are deliberately NOT differenced into a single "you
+ * were missing $X". They cover overlapping sets — the collector's number is
+ * the CLI's own cost for the sessions it received, the transcript number is
+ * Wanigan's arithmetic over Claude's token counts for every session on disk —
+ * so their difference is not a quantity anything was billed for. They sit side
+ * by side and the reader draws the conclusion.
+ */
+function TranscriptMeterCard({ meter, days }: { meter: TranscriptMeter | null; days: number }) {
+  if (!meter || meter.requests === 0) return null;
+
+  const share = meter.requests > 0 ? meter.outsideWanigan / meter.requests : 0;
+  return (
+    <div className="chart-card">
+      <h3>Claude&rsquo;s own transcripts</h3>
+      <p className="dim ins-note">
+        Read from the files Claude Code writes for itself, which exist whether or not telemetry
+        was ever switched on. This is the only meter here that can see a session Wanigan did not
+        launch.
+      </p>
+
+      <div className="stat-grid ins-hero-row">
+        <Stat
+          label={`Turns on record · ${days}d window`}
+          value={num(meter.requests)}
+          sub={<>{num(meter.outsideWanigan)} from an entrypoint Wanigan never launched
+            {meter.requests > 0 && <> · {pct(share)} of all turns</>}</>}
+        />
+        <Stat
+          label="Priced from transcripts"
+          value={usd(meter.costUsd)}
+          sub={<>{METER.transcript.glyph} {METER.transcript.word} · {num(meter.tokens)} tokens</>}
+        />
+        <Stat
+          label="Seen by the collector"
+          value={usd(meter.telemetryUsd)}
+          sub={<>{METER.cli.glyph} {METER.cli.word} · {num(meter.telemetryRequests)} requests</>}
+        />
+      </div>
+
+      <Meters of={['transcript', 'cli']} extra={
+        <> These two are not added together and their difference is not a bill: they cover
+          overlapping sets of the same work, measured by different instruments.</>
+      } />
+
+      {meter.unpricedRequests > 0 && (
+        <Note tone="warn">
+          <strong>{num(meter.unpricedRequests)} turns have no published rate</strong> and are
+          absent from the figure above, not counted as free.{' '}
+          {meter.unpricedModels.length > 0 && (
+            <>The models are{' '}
+              {meter.unpricedModels.map((m, i) => (
+                <span key={m.model}>
+                  {i > 0 && ', '}<code>{m.model}</code> ({num(m.requests)})
+                </span>
+              ))}
+              . Adding a row for each to the pricing table is what closes this.
+            </>
+          )}
+        </Note>
+      )}
+
+      {meter.filesBehind > 0 && (
+        <Note tone="info">
+          <strong>Still reading.</strong> {num(meter.filesBehind)} transcript
+          {meter.filesBehind === 1 ? ' has' : 's have'} bytes not yet folded in, so every figure on
+          this card is a floor that is still rising. A first pass over a large history takes a few
+          minutes and resumes on its own.
+        </Note>
+      )}
+    </div>
+  );
+}
+
+/* ── burn rate against the provider's own window ──────────────────────── */
+
+/**
+ * How fast the current limit window is going, and where it lands.
+ *
+ * The window is the provider's, not one this page inferred: claude-limits.ts
+ * asks the account and is told the percentage used and the instant it resets.
+ * ccusage, where the idea comes from, reconstructs a five-hour block by adding
+ * five hours to the first message it can find; that guess is exactly what the
+ * limits probe exists to avoid, so it is not repeated here.
+ *
+ * The rate is tokens, never dollars. The plan meters tokens, so a dollar rate
+ * would answer a different question from the percentage beside it while looking
+ * like the same one.
+ */
+function BurnRate({ windows }: { windows: BurnWindow[] }) {
+  if (windows.length === 0) return null;
+
+  return (
+    <div className="chart-card">
+      <h3>Burn rate</h3>
+      <p className="dim ins-note">
+        Token throughput measured inside the window the account itself reports, so the percentage
+        and the rate are describing the same period.
+      </p>
+
+      <div className="stat-grid ins-hero-row">
+        {windows.map((w) => {
+          const label = w.scope ? `${w.kind} · ${w.scope}` : w.kind;
+          const perMin = w.tokensPerMinute;
+          return (
+            <Stat
+              key={`${w.accountLabel}-${w.kind}-${w.scope ?? 'all'}`}
+              label={`${label} · ${w.accountLabel}`}
+              value={`${num(Math.round(perMin))}/min`}
+              sub={<>
+                {pct(w.usedPercent / 100)} used
+                {w.resetsAtText ? <> · resets {w.resetsAtText}</> : null}
+                {w.projectedTokens !== null && (
+                  <> · ~{num(w.projectedTokens)} tokens by reset at this rate</>
+                )}
+              </>}
+            />
+          );
+        })}
+      </div>
+
+      <p className="faint ins-note">
+        The percentage is the provider&rsquo;s own reading for one account. The rate is measured
+        from Claude&rsquo;s transcripts on this machine
+        {windows.some((w) => w.spansMultipleAccounts)
+          ? ', which cover every account signed in on it — so with more than one account the rate '
+            + 'can legitimately outrun the percentage beside it.'
+          : '.'}
+        {' '}The projection assumes the observed rate holds, which is a run rate rather than a
+        forecast.
+      </p>
+    </div>
+  );
+}
+
 /* ── the two speeds, as a number ──────────────────────────────────────── */
 
-function TwoSpeeds({ win, days }: {
+function TwoSpeeds({ win, days, unmetered }: {
   win: { session: number; batch: number; headless: number; total: number; sync: number };
   days: number;
+  /** Requests and headless rows in this window that reported no cost at all. */
+  unmetered: number;
 }) {
   const interactive = win.session + win.headless;
   const saved = win.sync - win.total;
@@ -746,7 +1138,14 @@ function TwoSpeeds({ win, days }: {
       <Stat
         label={`Interactive · ${days}d`}
         value={usd(interactive)}
-        sub={<>{METER.cli.glyph} CLI meter · sessions {usd(win.session)} + headless {usd(win.headless)}</>}
+        sub={<>
+          {METER.cli.glyph} CLI meter · sessions {usd(win.session)} + headless {usd(win.headless)}
+          {unmetered > 0 && (
+            <> · <span className="pill" title="These ran on a plan or a harness that reports no per-request cost. Wanigan records the work and refuses to price it, so this figure is a floor rather than a bill.">
+              {num(unmetered)} unpriced
+            </span></>
+          )}
+        </>}
       />
       <Stat
         label={`Bulk · ${days}d`}
@@ -758,18 +1157,22 @@ function TwoSpeeds({ win, days }: {
         value={usd(win.total)}
         sub={
           win.total > 0
-            ? <>{pct(interactive / win.total)} interactive · {pct(win.batch / win.total)} bulk</>
+            ? <>{pct(interactive / win.total)} interactive · {pct(win.batch / win.total)} bulk{unmetered > 0 ? ' · at least' : ''}</>
             : <>Nothing billed in this window</>
         }
       />
       <Stat
-        label="Saved by batching"
-        value={usd(saved)}
-        tone={saved > 0 ? 'var(--good)' : undefined}
+        label="Synchronous list price"
+        // Not a saving in the observed-good colour: `saved` is
+        // `sync - actual`, and `sync` is a modelled counterfactual — what the
+        // same batch work would have cost at list rates. No money moved, so it
+        // wears the estimate mark and the neutral tone every other derived
+        // figure on this page wears.
+        value={<>~{usd(win.sync)}</>}
         sub={
           win.sync > 0
-            ? <>{pct(saved / win.sync)} off the synchronous figure of {usd(win.sync)}</>
-            : <>No batch runs in this window to save anything</>
+            ? <>{usd(saved)} less was billed · {pct(saved / win.sync)} below list · est.</>
+            : <>No batch runs in this window</>
         }
       />
     </div>

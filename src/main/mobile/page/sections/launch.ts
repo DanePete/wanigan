@@ -59,7 +59,7 @@ export const LAUNCH_SECTION: MobileSection = {
   slot: 'controls',
   markup: `        <div class="control-card">
           <div class="console-kicker">New work</div><h3>Start an agent</h3><p>Launches a normal Wanigan session on your Mac with the model and reasoning effort you choose.</p>
-          <form id="launch-form" class="fields"><label class="field-label"><span>Project</span><select id="project" aria-label="Project"></select></label><label class="field-label"><span>Provider</span><select id="provider" aria-label="Provider"></select></label><label class="field-label" id="model-field"><span id="model-label">Model</span><select id="model" aria-label="Model"></select></label><label class="field-label hidden" id="model-open-field"><span id="model-open-label">Model</span><input id="model-open" type="text" aria-label="Model" maxlength="120" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="CLI default"></label><label class="field-label" id="effort-field"><span id="effort-label">Reasoning effort</span><select id="effort" aria-label="Reasoning effort"></select></label><label class="field-label hidden" id="effort-open-field"><span id="effort-open-label">Reasoning effort</span><input id="effort-open" type="text" aria-label="Reasoning effort" maxlength="120" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="CLI default"></label><label class="field-label hidden" id="account-field"><span>Account for this session</span><select id="account" aria-label="Account for this session"></select></label><label class="field-label hidden" id="account-pin-field"><span>Account for this project</span><select id="account-pin" aria-label="Account pinned to this project"></select></label><p id="account-note" class="account-note hidden" role="status"></p><p id="account-pin-note" class="account-note hidden" role="status"></p><div id="account-pin-state" class="account-pin-state hidden"></div><textarea id="launch-prompt" aria-label="Task for the new agent" maxlength="8000" required placeholder="What should this agent do?"></textarea><button>Start session</button></form>
+          <form id="launch-form" class="fields"><label class="field-label"><span>Project</span><select id="project" aria-label="Project"></select></label><label class="field-label"><span>Provider</span><select id="provider" aria-label="Provider"></select></label><label class="field-label" id="model-field"><span id="model-label">Model</span><select id="model" aria-label="Model"></select></label><label class="field-label hidden" id="model-open-field"><span id="model-open-label">Model</span><input id="model-open" type="text" aria-label="Model" maxlength="120" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="CLI default"></label><label class="field-label" id="effort-field"><span id="effort-label">Reasoning effort</span><select id="effort" aria-label="Reasoning effort"></select></label><label class="field-label hidden" id="effort-open-field"><span id="effort-open-label">Reasoning effort</span><input id="effort-open" type="text" aria-label="Reasoning effort" maxlength="120" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="CLI default"></label><label class="field-label hidden" id="account-field"><span>Account for this session</span><select id="account" aria-label="Account for this session"></select></label><label class="field-label hidden" id="account-pin-field"><span>Account for this project</span><select id="account-pin" aria-label="Account pinned to this project"></select></label><p id="account-note" class="account-note hidden" role="status"></p><p id="account-pin-note" class="account-note hidden" role="status"></p><div id="account-pin-state" class="account-pin-state hidden"></div><textarea id="launch-prompt" aria-label="Task for the new agent" maxlength="8000" required placeholder="What should this agent do?"></textarea><p id="launch-blocker" class="account-note hidden" role="status"></p><button>Start session</button></form>
         </div>`,
   /* `.field-label` sets a display of its own and is declared after the shared
      `.hidden`, so the two tie on specificity and the later rule wins: a field
@@ -92,6 +92,20 @@ export const LAUNCH_SECTION: MobileSection = {
       // still holds whatever the previously chosen profile needed.
       function launchControl(id) {
         return byId(id + '-open-field').classList.contains('hidden') ? byId(id) : byId(id + '-open');
+      }
+
+      // The Fleet screen's button, and the reason it exists: on an iPhone the
+      // launch form is below a terminal and, before this, below every installed
+      // skill as well. A form two screens down is a form nobody found, which is
+      // the same experience as a phone that cannot start a session. This puts it
+      // on screen in one tap, with the cursor already in the box that says what
+      // the agent should do.
+      function openLaunch() {
+        if (!remoteControlEnabled) return;
+        setView('agent', 'push');
+        const card = byId('launch-form');
+        if (card && card.scrollIntoView) card.scrollIntoView({ block: 'start' });
+        byId('launch-prompt').focus({ preventScroll: true });
       }
 
       function launchValue(id) {

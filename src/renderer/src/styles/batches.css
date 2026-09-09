@@ -48,3 +48,18 @@
    owns a rule instead of borrowing .row2. */
 .bx-golden { display: flex; flex-direction: column; gap: var(--s-2); min-width: 0; }
 .bx-golden-line { font-size: var(--t-small); line-height: 1.55; }
+
+/* The two eval forms: submit a variant of this run, and submit a judge over a
+   pair. Both are a row of fields whose captions sit above their controls and
+   whose action button aligns with the bottom of the row, so the classes carry
+   the alignment and the caption gap the fields would otherwise spell inline. */
+.bx-evalform { align-items: end; margin-top: var(--s-2); }
+.bx-evalform > div { min-width: 0; }
+.bx-evalform .field { margin-top: var(--s-1); }
+.bx-evalform .btn { justify-content: center; }
+/* The rubric sits under the row it belongs to, full width. */
+.bx-rubric { margin-top: var(--s-2); }
+/* The by-id ingest path, kept for a judge run submitted earlier. */
+.bx-ingest { margin-top: var(--s-1); }
+.bx-ingest summary { font-size: var(--t-micro); cursor: pointer; }
+.bx-ingest-row { display: flex; gap: var(--s-2); margin-top: var(--s-2); }

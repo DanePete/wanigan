@@ -295,8 +295,11 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
             counterfactual off the published 50% batch discount — arithmetic,
             not an invoice line. It gets the same mark as every other number
             here that has not been charged. */}
-        <Stat label="Saved vs sync" value={usdEst(spent)} tone="var(--ok)"
-              sub="est. · batch rates are 50% of list" />
+        {/* No tone: this is arithmetic on a published discount, not money observed
+            arriving. A green figure reads as a win someone measured, and at $0
+            spent it was a green zero. */}
+        <Stat label="Saved vs sync" value={usdEst(spent)}
+              sub="est. · what the same work would list at, less what batch billed" />
       </div>
 
       <div className="card scroll-x">
@@ -975,7 +978,14 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           <div style={{ borderTop: '1px solid var(--line)', paddingTop: 11 }}>
             <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}
                     disabled={!!blockers.length || submitting} onClick={submit}>
-              {submitting ? 'Submitting…' : est ? `Submit — up to ${usdEst(est.costHighUsd)} est.` : 'Submit'}
+              {/* A ceiling for a model Wanigan has no published rate for is a
+                  stand-in dressed as this model's price. estimate.ts sets
+                  unpricedModel and says so in its notes; the button said it
+                  anyway. */}
+              {submitting ? 'Submitting…'
+                : est?.unpricedModel ? 'Submit — price unknown for this model'
+                : est ? `Submit — up to ${usdEst(est.costHighUsd)} est.`
+                : 'Submit'}
             </button>
             {blockers.length > 0 && (
               <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 7, textAlign: 'center' }}>Still to do: {blockers.join(', ')}.</p>
@@ -1944,6 +1954,31 @@ function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
     return () => { alive = false; };
   }, [runId, config?.projectId, run.model]);
 
+  /**
+   * What this rescue would cost, read before it is submitted.
+   *
+   * The sentence under the button already promised the rescue is priced first;
+   * main computed the figure and nothing ever showed it, so the operator
+   * committed spend on a second model with no number in front of them — the
+   * builder shows an estimate before Submit and this did not.
+   */
+  const [rescueEst, setRescueEst] = useState<
+    { rows: number; costLowUsd: number; costHighUsd: number; cacheWarning: string | null } | null
+  >(null);
+  const [rescueEstErr, setRescueEstErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pick || pick === run.model || live) { setRescueEst(null); setRescueEstErr(null); return; }
+    let alive = true;
+    setRescueEst(null); setRescueEstErr(null);
+    window.wanigan.refusal.estimate(runId, pick)
+      .then((value) => { if (alive) setRescueEst(value); })
+      // A price that could not be read is said plainly. Submitting anyway is
+      // still the operator's call, but it is made knowing the figure is absent
+      // rather than believing one was shown.
+      .catch((e) => { if (alive) setRescueEstErr(msg(e)); });
+    return () => { alive = false; };
+  }, [runId, pick, run.model, live]);
+
   async function rescue() {
     if (!pick) return;
     setBusy('rescue'); setErr(null); setOk(null);
@@ -2082,9 +2117,25 @@ function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
               <button className="btn btn-primary bx-f" style={{ justifyContent: 'center' }}
                       disabled={!pick || pick === run.model || busy !== null || live}
                       onClick={() => void rescue()}>
-                {busy === 'rescue' ? 'Submitting…' : `Rescue ${num(total)} row${total === 1 ? '' : 's'}`}
+                {busy === 'rescue' ? 'Submitting…'
+                  : rescueEst
+                    ? `Rescue ${num(total)} row${total === 1 ? '' : 's'} — up to ${usdEst(rescueEst.costHighUsd)} est.`
+                    : `Rescue ${num(total)} row${total === 1 ? '' : 's'}`}
               </button>
             </div>
+          )}
+          {rescueEst && (
+            <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.5 }}>
+              {usdEst(rescueEst.costLowUsd)} – {usdEst(rescueEst.costHighUsd)} est. for {num(rescueEst.rows)} row
+              {rescueEst.rows === 1 ? '' : 's'} at batch rates.
+              {rescueEst.cacheWarning ? ` ${rescueEst.cacheWarning}` : ''}
+            </p>
+          )}
+          {rescueEstErr && (
+            <Note tone="warn">
+              <strong>This rescue could not be priced.</strong> {rescueEstErr} Submitting it still goes
+              through the per-run spend cap, but no figure is being shown because none was read.
+            </Note>
           )}
           <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.5 }}>
             {live
@@ -2171,6 +2222,29 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
   const [creating, setCreating] = useState(false);
   const [filter, setFilter] = useState<'all' | 'differs' | 'a' | 'b' | 'tie'>('all');
   const [limit, setLimit] = useState(15);
+  /* The variant form. One field, one value, one name — the same rule
+     `createPair` enforces, asked for before the money is spent rather than
+     after. */
+  const [varField, setVarField] = useState<'model' | 'effort' | 'maxTokens' | 'temperature'>('model');
+  const [varValue, setVarValue] = useState('');
+  const [varName, setVarName] = useState('');
+  const [varBusy, setVarBusy] = useState(false);
+  const [varErr, setVarErr] = useState<string | null>(null);
+  /* The judge form. A rubric is required by main; asking for it here means the
+     refusal is a field that is empty rather than an error after a click. */
+  const [jModel, setJModel] = useState('');
+  /* The models this judge may run on. Read from the same presets catalogue the
+     builder uses, so the picker cannot offer one the submit path would refuse. */
+  const [judgeModels, setJudgeModels] = useState<Model[]>([]);
+  useEffect(() => {
+    let alive = true;
+    window.wanigan.batch.presets(run?.project_id ?? null)
+      .then((d) => { if (alive) setJudgeModels(d.models as Model[]); })
+      .catch(() => { /* the picker stays empty and the button stays disabled */ });
+    return () => { alive = false; };
+  }, [run?.project_id]);
+  const [jRubric, setJRubric] = useState('');
+  const [jBusy, setJBusy] = useState(false);
   const [judgeRun, setJudgeRun] = useState('');
   const [judgeNote, setJudgeNote] = useState<string | null>(null);
   const [judgeErr, setJudgeErr] = useState<string | null>(null);
@@ -2237,6 +2311,34 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
       setSel(p.id);
     } catch (e) { setPairErr(msg(e)); }
     finally { setCreating(false); }
+  }
+
+  async function runVariant() {
+    if (!varValue.trim()) return;
+    setVarBusy(true); setVarErr(null);
+    try {
+      const numeric = varField === 'maxTokens' || varField === 'temperature';
+      const value = numeric ? Number(varValue) : varValue.trim();
+      if (numeric && !Number.isFinite(value as number)) throw new Error(`${varField} must be a number.`);
+      const r = await window.wanigan.evals.variant(
+        runId,
+        { [varField]: value } as Partial<RunConfig>,
+        varName.trim() || `${run.name} — ${varField} ${varValue.trim()}`,
+      );
+      setVarValue(''); setVarName('');
+      onOpen(r.runId);
+    } catch (e) { setVarErr(msg(e)); }
+    finally { setVarBusy(false); }
+  }
+
+  async function judge(pairId: string) {
+    setJBusy(true); setJudgeErr(null); setJudgeNote(null);
+    try {
+      const r = await window.wanigan.evals.judge(pairId, { model: jModel, rubric: jRubric });
+      setJudgeNote(`Judge run ${r.runId} submitted over ${num(r.rows)} row${r.rows === 1 ? '' : 's'}. Its scores land here once it ends — the judge sees A and B in a random order per row, and they are un-swapped on the way in.`);
+      setJRubric('');
+    } catch (e) { setJudgeErr(msg(e)); }
+    finally { setJBusy(false); }
   }
 
   async function ingest() {
@@ -2310,9 +2412,32 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
           <div className="bx-state">
             <h4>Only one run exists</h4>
             <p>
-              A pair needs a second run. Copy this run in the builder, change exactly one field — the model,
-              the effort, max_tokens, the template or the schema — and submit it. Then come back here.
+              A pair needs a second run: this one again with exactly one field changed, so the difference
+              between them has one cause. Submit it here — it is a real batch run and it costs what it costs.
             </p>
+            <div className="row3 bx-evalform">
+              <div>
+                <label className="label" htmlFor="bx-varfield">Change</label>
+                <select id="bx-varfield" className="field bx-f" value={varField}
+                        onChange={(e) => setVarField(e.target.value as typeof varField)}>
+                  <option value="model">model</option>
+                  <option value="effort">effort</option>
+                  <option value="maxTokens">max_tokens</option>
+                  <option value="temperature">temperature</option>
+                </select>
+              </div>
+              <div>
+                <label className="label" htmlFor="bx-varvalue">To</label>
+                <input id="bx-varvalue" className="field bx-f" value={varValue}
+                       placeholder={varField === 'model' ? 'claude-sonnet-5' : varField === 'effort' ? 'high' : '4096'}
+                       onChange={(e) => setVarValue(e.target.value)} />
+              </div>
+              <button className="btn btn-primary bx-f"
+                      disabled={!varValue.trim() || varBusy} onClick={() => void runVariant()}>
+                {varBusy ? 'Submitting…' : 'Submit variant'}
+              </button>
+            </div>
+            {varErr && <Note tone="error">{varErr}</Note>}
           </div>
         ) : (
           <>
@@ -2438,17 +2563,41 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
           )}
 
           <div className="sunk bx-lane" style={{ marginTop: 12, padding: 11, gap: 8 }}>
-            <span className="label">Score this pair from a judge run</span>
+            <span className="label">Score this pair with a judge</span>
             <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.5 }}>
-              A verdict without a judge is only “the outputs differ”. Paste the id of a judge run created for
-              this pair and its scores land here, un-swapped — the judge sees A and B in a random order per row,
-              and skipping the un-swap is how a randomised judge silently becomes a coin flip.
+              A verdict without a judge is only “the outputs differ”. This submits a judge run over the pair:
+              it sees A and B in a random order per row, and the scores are un-swapped on the way back in —
+              skipping that un-swap is how a randomised judge silently becomes a coin flip. It is a batch run
+              and it costs what it costs. Say what “better” means; the judge cannot infer it.
             </p>
-            <div style={{ display: 'flex', gap: 7 }}>
-              <input className="field mono bx-f" aria-label="Run id to judge" placeholder="run_…" value={judgeRun}
-                     onChange={(e) => setJudgeRun(e.target.value)} />
-              <button className="btn bx-f" disabled={!judgeRun.trim()} onClick={() => void ingest()}>Ingest scores</button>
+            <div className="row2 bx-evalform">
+              <div>
+                <label className="label" htmlFor="bx-jmodel">Judge model</label>
+                <select id="bx-jmodel" className="field bx-f" value={jModel}
+                        onChange={(e) => setJModel(e.target.value)}>
+                  <option value="">Choose a model…</option>
+                  {judgeModels.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                </select>
+              </div>
+              <button className="btn btn-primary bx-f"
+                      disabled={!jModel || !jRubric.trim() || jBusy || !sel}
+                      onClick={() => { if (sel) void judge(sel); }}>
+                {jBusy ? 'Submitting…' : 'Submit judge run'}
+              </button>
             </div>
+            <textarea className="field bx-f bx-rubric" aria-label="Rubric" rows={3} value={jRubric}
+                      placeholder="What makes one answer better than the other for this task?"
+                      onChange={(e) => setJRubric(e.target.value)} />
+            {/* The paste path stays: a judge run submitted earlier, or cancelled
+                and re-run, still has to be ingestible by id. */}
+            <details className="bx-ingest">
+              <summary className="faint">Already have a judge run? Ingest it by id</summary>
+              <div className="bx-ingest-row">
+                <input className="field mono bx-f" aria-label="Run id to judge" placeholder="run_…" value={judgeRun}
+                       onChange={(e) => setJudgeRun(e.target.value)} />
+                <button className="btn bx-f" disabled={!judgeRun.trim()} onClick={() => void ingest()}>Ingest scores</button>
+              </div>
+            </details>
             {judgeErr && <Note tone="error">{judgeErr}</Note>}
             {judgeNote && <Note tone="ok">{judgeNote}</Note>}
           </div>

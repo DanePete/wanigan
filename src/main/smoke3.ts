@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createServer as createNetServer } from 'node:net';
+import { createDecipheriv, createECDH, createHmac, createPublicKey, randomBytes, verify } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { SIDEBAR_GROUPS, TABS, TAB_ICONS, TAB_SHORTCUTS } from '../shared/routes';
 import { MOBILE_ABSENT, MOBILE_VIEWS, mobileViewLabel } from '../shared/mobile-nav';
@@ -30,6 +31,13 @@ import * as observed from './observed';
 import * as otel from './otel';
 import * as policy from './policy';
 import * as control from './control';
+import * as halt from './halt';
+import * as codexSessions from './codex-sessions';
+import * as interview from './interview';
+import * as pricing from './batch/pricing';
+import * as sessionsModule from './sessions';
+import * as headless from './headless';
+import { createAndSubmitRun as submitRun } from './batch/submit';
 import * as queue from './queue';
 import * as accounts from './accounts';
 import * as claudeLimits from './claude-limits';
@@ -1513,6 +1521,72 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const redrawnTerminal = mobile.readableTerminal('building 100%\rDone\x1b[K\nvisible\x1bPprivate-control-data\x1b\\ text');
   check(redrawnTerminal === 'Done\nvisible text',
     'the mobile terminal renderer applies carriage-return/erase redraws and removes opaque control strings', redrawnTerminal);
+  /* ── colour, carried as data ─────────────────────────────────────────
+   * The phone drew every agent in one grey, because this parser threw SGR away
+   * along with the control bytes it exists to remove. An agent CLI says a great
+   * deal in colour — whose line this is, what failed, which side of a diff — and
+   * none of it reached the device. It is carried now, and the property that made
+   * the old renderer safe is the one being held here: the page is still handed
+   * text and numbers, never an escape byte, and a colour is either one of the
+   * sixteen names it has a token for or a plain #rrggbb.
+   */
+  const ESC = String.fromCharCode(27);
+  const painted = mobile.styledTerminal(
+    ESC + '[33mwarn' + ESC + '[39m plain ' + ESC + '[1;38;2;123;227;162mgreen bold' + ESC + '[0m end');
+  const paintedLines = painted.text.split('\n');
+  const runText = (line: number, at: number): string => {
+    const row = painted.spans[line] ?? [];
+    return (paintedLines[line] ?? '').slice(row[at * 3], row[at * 3] + row[at * 3 + 1]);
+  };
+  check(painted.text === 'warn plain green bold end'
+    && painted.spans.length === paintedLines.length
+    && runText(0, 0) === 'warn' && painted.palette[painted.spans[0][2]]?.fg === 'yellow'
+    && runText(0, 1) === 'green bold'
+    && painted.palette[painted.spans[0][5]]?.fg === '#7be3a2'
+    && painted.palette[painted.spans[0][5]]?.flags === 1
+    // Ordinary text carries no run at all: a reset resolves back to style 0
+    // rather than minting a second entry that means the same thing, which is
+    // what keeps the styling off most of a screen instead of doubling it.
+    && painted.spans[0].length === 6
+    && painted.palette.length === 3,
+  'the phone terminal carries colour as data — one palette and per-line column ranges into it — so a named slot, a 24-bit value and a bold flag all reach the device without a single escape byte, and unstyled text still costs nothing',
+  `${painted.palette.length} styles, row 0: ${JSON.stringify(painted.spans[0])}`);
+
+  // The same 24-bit colour, written the other legal way. ITU T.416 puts a
+  // colour-space id between the selector and the channels — `38:2::r:g:b` — and
+  // the parameter split flattens ':' and ';' together, so that id arrives as an
+  // empty parameter. Read straight past, Number('') is 0: the colour came out
+  // shifted by one channel and the leftover channel was then read as the next
+  // SGR code, which for this sequence is a literal 0 that resets everything
+  // after it. Both spellings have to land on the same colour.
+  const colonRgb = mobile.styledTerminal(ESC + '[38:2::123:227:162mgreen' + ESC + '[0m end');
+  check(colonRgb.text === 'green end'
+    && colonRgb.palette[colonRgb.spans[0][2]]?.fg === '#7be3a2'
+    && colonRgb.spans[0].length === 3,
+  'a 24-bit colour written in the colon form the standard actually specifies lands on the same value as the semicolon form, rather than one channel over with the remainder read as a reset',
+  `${JSON.stringify(colonRgb.spans[0])} → ${colonRgb.palette[colonRgb.spans[0][2]]?.fg}`);
+
+  // `[>4m` and `[?25m` end in the same byte as SGR and are not SGR. Reading a
+  // private-mode switch as a colour would reset the palette on every spinner
+  // frame the agent draws.
+  const privateMode = mobile.styledTerminal('a' + ESC + '[>4mb' + ESC + '[?25mc');
+  const screenRead = mobile.readTerminalScreen({
+    sessionId: 's_smoke_paint', title: 'Paint', running: true,
+    raw: 'first\n' + ESC + '[31msecond' + ESC + '[0m\nthird', cursor: null,
+  });
+  const screenLines = screenRead.text.split('\n');
+  const tailOwned = screenRead.tail.split('\n');
+  check(privateMode.palette.length === 1 && privateMode.text === 'abc'
+    && screenRead.spans.length === screenLines.length
+    && screenRead.tailSpans.length === tailOwned.length
+    // The tail travels with its own joining newline, so the rows describing it
+    // are one more than the lines of the screen it accounts for.
+    && screenRead.tailLines === tailOwned.length - (screenRead.tail.startsWith('\n') ? 1 : 0)
+    && JSON.stringify(screenRead.spans[1]) === JSON.stringify([0, 6, screenRead.spans[1][2]])
+    && screenRead.palette[screenRead.spans[1][2]]?.fg === 'red',
+  'a private-mode switch sharing SGR’s final byte colours nothing, and the styling a response carries is sliced to exactly the lines it sends — one row per line of the screen, one per line of the live tail — so a span can never point into a line the page was not given',
+  `screen rows ${screenRead.spans.length}/${screenLines.length}, tail rows ${screenRead.tailSpans.length}/${tailOwned.length}`);
+
   // Both caps refuse rather than trim, and say so in a sentence. A phone shown
   // half a diff's line counts, or a file list quietly cut to fit, reads as a
   // complete answer, and there is nothing on the screen to tell it from one.
@@ -1662,9 +1736,94 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && !/\brunning\b|\bsessions\b|\btokens\b/i.test(offlineHtml),
     "opening the phone app with no network lands on Wanigan's own offline screen rather than the browser's error page, and that screen states this device's missing radio without showing one fleet number",
     offlineScreen ? `${offlineScreen.status} ${offlineHtml.length} bytes` : 'no response');
+    // And the handler the whole alert path ends at. Grepping for it proves a
+    // handler was written; a browser that takes a push and shows nothing has
+    // its notification permission revoked, so what has to be true is that
+    // *every* path through it ends in showNotification — including the one
+    // where the payload is unreadable, which is the path a grep never reaches.
+    const workerPush = workerEvents.get('push');
+    const shown: { title: string; options: Record<string, unknown> }[] = [];
+    const pushWaits: Promise<unknown>[] = [];
+    Object.assign(workerScope, {
+      registration: {
+        showNotification: async (title: string, options: Record<string, unknown>) => {
+          shown.push({ title, options });
+        },
+      },
+    });
+    const drivePush = (data: unknown) => {
+      if (typeof workerPush !== 'function') return;
+      workerPush({
+        data: data === undefined ? null : { json: () => {
+          if (data === 'unreadable') throw new SyntaxError('Unexpected token');
+          return data;
+        } },
+        waitUntil: (value: Promise<unknown>) => { pushWaits.push(value); },
+      });
+    };
+    drivePush({ title: 'Asking — mnair-shop', body: 'Waiting for approval for 2m.', urgent: true, tag: 's1:permission', view: 'fleet' });
+    drivePush({ title: 'lighthouse finished', body: 'Turn finished 4s ago.', urgent: false });
+    drivePush('unreadable');
+    drivePush(undefined);
+    await Promise.all(pushWaits);
+
+    check(typeof workerPush === 'function' && shown.length === 4,
+      'the worker shows a notification for every push it takes, including one whose payload it cannot read and one that carries none at all',
+      `${shown.length} of 4 shown`);
+    check(shown[0]?.title === 'Asking — mnair-shop'
+      && shown[0]?.options.requireInteraction === true
+      && shown[0]?.options.tag === 's1:permission'
+      && shown[1]?.options.requireInteraction === false,
+    'a permission wait stays on the lock screen and is tagged so repeats replace it; a finished turn behaves like the news it is',
+    shown[0]?.options);
+    check(shown.every((entry) => typeof entry.title === 'string' && entry.title.length > 0
+      && typeof entry.options.body === 'string' && (entry.options.body as string).length > 0),
+    'no notification reaches a lock screen as an empty rectangle, whatever arrived in the payload',
+    shown.map((entry) => entry.title));
+    check(String(shown[2]?.title) === 'Wanigan' && /needs you/.test(String(shown[3]?.options.body)),
+      'an unreadable or absent payload falls back to words rather than throwing out of the handler',
+      [shown[2]?.title, shown[3]?.options.body]);
+    check(workerCache.size === 0,
+      'nothing a push carried was written to the shell cache', workerCache.size);
+
+    // Tapping it has to land somewhere. The route lives in localStorage and
+    // never in the URL, so the worker asks the page rather than navigating it —
+    // which means a focused client must actually be messaged.
+    const workerClick = workerEvents.get('notificationclick');
+    const posted: unknown[] = [];
+    let focused = 0;
+    let opened = 0;
+    const clickWaits: Promise<unknown>[] = [];
+    Object.assign(workerScope.clients, {
+      matchAll: async () => [{
+        url: monitor.localUrl,
+        focus: async () => { focused++; },
+        postMessage: (value: unknown) => { posted.push(value); },
+      }],
+      openWindow: async () => { opened++; },
+    });
+    let closed = 0;
+    if (typeof workerClick === 'function') {
+      workerClick({
+        notification: { close: () => { closed++; }, data: { view: 'fleet' } },
+        waitUntil: (value: Promise<unknown>) => { clickWaits.push(value); },
+      });
+    }
+    await Promise.all(clickWaits);
+    check(typeof workerClick === 'function' && closed === 1 && focused === 1 && opened === 0
+      && JSON.stringify(posted) === JSON.stringify([{ wanigan: 'view', view: 'fleet' }]),
+    'tapping the notification raises the app already open and asks it for the screen, rather than opening a second window or writing a route into the URL',
+    { closed, focused, opened, posted });
+
     const manifest = await fetch(new URL('manifest.webmanifest', monitor.localUrl));
     check(manifest.ok && JSON.parse(await manifest.text()).display === 'standalone',
       'the paired dashboard is installable as an iPad Home Screen web app');
+    const iconResponse = await fetch(new URL('icon-180.png', monitor.localUrl));
+    const iconBytes = Buffer.from(await iconResponse.arrayBuffer());
+    check(iconResponse.ok && (iconResponse.headers.get('content-type') ?? '').includes('image/png')
+      && iconBytes.readUInt32BE(16) === 180 && iconBytes.readUInt32BE(20) === 180,
+    'the Home Screen icon is served as a real 180×180 PNG — iOS ignores an SVG touch icon and draws this on every notification',
+    `${iconResponse.status} ${iconBytes.length} bytes`);
 
     const apiUrl = new URL('api/status', monitor.localUrl).toString();
     const refused = await fetch(apiUrl);
@@ -1753,10 +1912,22 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // topic is the ntfy subscription credential — anyone holding it receives
     // every alert — and the server is network-identifying metadata the page has
     // no use for.
+    //
+    // Both channels are pinned off for this read rather than left at their
+    // defaults. Web Push defaults ON — the consent that gates it is the
+    // per-device subscription, not a switch on the Mac — so a test that read
+    // whatever the settings happened to say would be asserting the default
+    // rather than the reporting, and would go green on a build where `enabled`
+    // was hard-coded true.
+    await mobile.setMobileConfig({ pushEnabled: false, webPushEnabled: false });
     const alertConfig = mobile.mobileConfig();
     const alertBody = await (await fetch(apiUrl, { headers: { authorization: `Bearer ${token}` } })).text();
     const alertPath = (JSON.parse(alertBody) as {
-      alerts?: { enabled: boolean; ready: boolean; blocked: string | null; lastOutcome: string };
+      alerts?: {
+        enabled: boolean; ready: boolean; blocked: string | null; lastOutcome: string;
+        channels?: { webPush: boolean; ntfy: boolean };
+        webPush?: { enabled: boolean; ready: boolean; blocked: string | null; devices: number };
+      };
     }).alerts;
     check(alertPath !== undefined && alertPath.enabled === false && alertPath.ready === false
       && typeof alertPath.blocked === 'string' && alertPath.blocked.length > 0
@@ -1765,6 +1936,131 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && !JSON.stringify(alertPath).includes('http'),
     'the paired phone is told the real state of its alert path — switched off, never attempted, and why — without the ntfy topic or server URL that would make it work',
     alertPath);
+    // The phone is told how many devices are subscribed and nothing about which
+    // — an endpoint is the capability to notify one specific device, and the
+    // device that just handed one over is not handed it back.
+    check(alertPath?.channels?.webPush === false && alertPath?.channels?.ntfy === false
+      && alertPath?.webPush?.devices === 0
+      && !JSON.stringify(alertPath).includes('push.apple.com'),
+    'each alert channel is reported separately, as a switch and a device count rather than as an endpoint',
+    alertPath?.webPush);
+    await mobile.setMobileConfig({ pushEnabled: false, webPushEnabled: true });
+
+    // ── the three routes a phone actually calls ────────────────────
+    //
+    // Exercised over HTTP rather than through the module, because every other
+    // assertion about Web Push in this suite calls the sender directly — and a
+    // route that answers 400 to the shape the page sends would leave all of
+    // them green while the feature is unusable on every device. This is the
+    // seam where that failure lives.
+    const pushKeyUrl = new URL('api/push/key', monitor.localUrl).toString();
+    const subscribeUrl = new URL('api/push/subscribe', monitor.localUrl).toString();
+    const forgetUrl = new URL('api/push/forget', monitor.localUrl).toString();
+    const bearer = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+
+    const unauthorizedKey = await fetch(pushKeyUrl);
+    const unauthorizedSubscribe = await fetch(subscribeUrl, { method: 'POST', body: '{}' });
+    check(unauthorizedKey.status === 401 && unauthorizedSubscribe.status === 401,
+      'subscribing is not a second door: an unpaired device cannot read the push key or register itself',
+      `${unauthorizedKey.status}/${unauthorizedSubscribe.status}`);
+
+    const keyResponse = await fetch(pushKeyUrl, { headers: { authorization: `Bearer ${token}` } });
+    const keyPayload = await keyResponse.json() as { key?: string; enabled?: boolean; devices?: number; max?: number };
+    check(keyResponse.ok && typeof keyPayload.key === 'string'
+      && Buffer.from(keyPayload.key, 'base64url').length === 65
+      && typeof keyPayload.max === 'number' && keyPayload.max > 0,
+    'the page is given a subscribable application server key and the device cap', keyPayload);
+
+    // The exact body the served page builds, including the base64url shapes its
+    // own helpers produce.
+    const routeSubscriber = createECDH('prime256v1');
+    routeSubscriber.generateKeys();
+    const routeEndpoint = 'https://web.push.apple.com/smoke-route/' + randomBytes(6).toString('hex');
+    const subscribed = await fetch(subscribeUrl, {
+      method: 'POST',
+      headers: bearer,
+      body: JSON.stringify({
+        endpoint: routeEndpoint,
+        keys: {
+          p256dh: routeSubscriber.getPublicKey().toString('base64url'),
+          auth: randomBytes(16).toString('base64url'),
+        },
+        label: 'iPhone',
+      }),
+    });
+    const subscribedBody = await subscribed.json() as { ok?: boolean; devices?: number };
+    check(subscribed.ok && subscribedBody.ok === true && subscribedBody.devices === 1
+      && mobile.listPushDevices().length === 1,
+    'the page can register this device, and the Mac stores exactly one row for it', subscribedBody);
+
+    // Three bodies a broken or hostile page could send. Each has to be refused
+    // by name rather than stored and then failing at 3am on the one alert that
+    // mattered — and an http:// endpoint in particular must never become a
+    // request this process makes on someone else's behalf.
+    const refusals = await Promise.all([
+      { endpoint: 'http://web.push.apple.com/x', keys: { p256dh: 'a', auth: 'b' } },
+      { endpoint: 'https://web.push.apple.com/y', keys: { p256dh: 'too-short', auth: 'nope' } },
+      { endpoint: 'https://web.push.apple.com/z' },
+    ].map((body) => fetch(subscribeUrl, { method: 'POST', headers: bearer, body: JSON.stringify(body) })
+      .then((r) => r.status)));
+    check(refusals.every((status) => status === 400) && mobile.listPushDevices().length === 1,
+      'a non-HTTPS endpoint, unusable keys, and a body with no keys at all are each refused before anything is stored',
+      refusals.join(', '));
+
+    const forgotten = await fetch(forgetUrl, {
+      method: 'POST', headers: bearer, body: JSON.stringify({ endpoint: routeEndpoint }),
+    });
+    check(forgotten.ok && mobile.listPushDevices().length === 0,
+      'a device can unsubscribe itself, and the row goes with it', forgotten.status);
+
+    // Registering a device is housekeeping, not a remote action. The page does
+    // it on every launch, so it must not spend the twenty-a-minute budget that
+    // exists to cap launching sessions and interrupting runs — a device that
+    // could no longer act because it had opened the app too often would be a
+    // rate limit protecting the operator from themselves.
+    const budgetProbe = await fetch(subscribeUrl, {
+      method: 'POST', headers: bearer, body: JSON.stringify({ endpoint: 'https://web.push.apple.com/budget' }),
+    });
+    check(budgetProbe.status === 400,
+      'subscription writes are charged to their own budget, so a re-registering phone cannot 429 its own remote actions',
+      budgetProbe.status);
+
+    // The endpoint is the capability. It arrived over this API and must not be
+    // readable back out of it by the next device to pair.
+    await fetch(subscribeUrl, {
+      method: 'POST',
+      headers: bearer,
+      body: JSON.stringify({
+        endpoint: routeEndpoint,
+        keys: {
+          p256dh: routeSubscriber.getPublicKey().toString('base64url'),
+          auth: randomBytes(16).toString('base64url'),
+        },
+        label: 'iPhone',
+      }),
+    });
+    const afterSubscribe = await (await fetch(apiUrl, { headers: { authorization: `Bearer ${token}` } })).text();
+    const afterKey = await (await fetch(pushKeyUrl, { headers: { authorization: `Bearer ${token}` } })).text();
+    check(!afterSubscribe.includes(routeEndpoint) && !afterKey.includes(routeEndpoint)
+      && !afterSubscribe.includes('web.push.apple.com'),
+    'a stored subscription is never readable back over the API — not on the status poll, not from the key route',
+    afterSubscribe.slice(0, 0));
+    mobile.forgetAllPushDevices();
+
+    // The emergency stop, over the wire the phone actually uses. Control scope:
+    // a device the operator left in read-only mode may watch the fleet and may
+    // not stop it, because an emergency stop is the largest touch in the app.
+    const haltUrl = new URL('api/halt', monitor.localUrl).toString();
+    const haltUnauthorized = await fetch(haltUrl, { method: 'POST', body: '{}' });
+    check(haltUnauthorized.status === 401,
+      'an unpaired device cannot halt the fleet', haltUnauthorized.status);
+    const haltReadOnly = await fetch(haltUrl, {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: '{}',
+    });
+    check(haltReadOnly.status === 403,
+      'a paired device with remote control off may watch the fleet and may not stop it',
+      haltReadOnly.status);
+    check(!halt.halted(), 'and a refused halt really did not halt anything');
 
     const write = await fetch(apiUrl, { method: 'POST' });
     check(write.status === 405 && write.headers.get('allow') === 'GET',
@@ -1969,14 +2265,16 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       `${sectionAnchors.length} sections, wrong count for: ${misplacedSections.join(', ') || 'none'}`);
     // The generic anchor sweep above passes vacuously for a screen that was
     // never registered, so the alert screen is named here — together with the
-    // sentence that keeps the page honest about iOS. A web page cannot deliver a
-    // background notification without being installed to the Home Screen and
-    // wired to Web Push, which Wanigan has not done, and an alert panel that
-    // implied otherwise would be worse than no panel at all.
+    // sentence that keeps the page honest about what it is. Wanigan does now
+    // deliver a real background notification through Web Push, but this panel
+    // is still not one: it is a notice on an open page, and it has to keep
+    // saying so rather than letting an operator read it as proof that something
+    // will reach them once they lock the screen.
     check(sectionAnchors.includes('alerts') && composedShell.split('id="alerts"').length === 2
       && composedShell.includes('id="alert-path"')
-      && composedShell.includes('iOS does not deliver a web page'),
-    'the alert screen is composed exactly once and says plainly that a closed page cannot be notified on iOS, rather than implying a background alert that will never arrive',
+      && composedShell.includes('need this page open on screen')
+      && composedShell.includes('switch it on under Device'),
+    'the alert screen is composed exactly once, and separates the notice it draws on an open page from the notification that reaches a closed one',
     `${composedShell.split('id="alerts"').length - 1} alert screens`);
     // The generic sweep above passes vacuously for a screen that was never
     // registered, so the Spend screen is named here too. It is the one Explore
@@ -2216,6 +2514,23 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'firing a skill types the command into the agent’s prompt and stops there: no carriage return is ever written, the answer carries submitted:false, and nothing the screen can print afterwards claims the skill ran — the PTY owns keystrokes and Wanigan has not parsed what the agent will do with them',
     `suffix ${JSON.stringify(skillsWire.MOBILE_SKILL_LIMITS.typedSuffix)}`);
 
+    // The colour that now reaches the phone was chosen by the agent's own
+    // output, so the page treats it as data from an untrusted source even though
+    // the Mac already resolved it: a style property is only ever assigned one of
+    // the sixteen names this page has a token for, or a plain #rrggbb. Every
+    // character still arrives through textContent, and no part of a terminal
+    // response is ever parsed as markup.
+    const consoleSection = (await import('./mobile/page/sections/console')).CONSOLE_SECTION;
+    const consolePaint = consoleSection.script;
+    check(/^#\[0-9a-fA-F\]\{6\}\$/.test('') === false
+      && consolePaint.includes("if (/^#[0-9a-fA-F]{6}$/.test(value)) return value;")
+      && consolePaint.includes("TERMINAL_SLOTS.indexOf(value) >= 0 ? 'var(--t-' + value + ')' : ''")
+      && consolePaint.includes('span.textContent = text;')
+      && !/innerHTML|insertAdjacentHTML|outerHTML|document\.write/.test(consolePaint)
+      && consoleSection.style.includes('--t-bright-magenta:'),
+    'the phone paints a coloured terminal without ever parsing markup: each run is a span whose text is set through textContent, and a colour reaches a style property only after it matches one of the sixteen slot names or a plain six-digit hex — the agent picked those values, so the page checks them rather than trusting the Mac to have',
+    `${(consolePaint.match(/terminalColor\(/g) ?? []).length} colour resolutions, markup APIs: ${/innerHTML|insertAdjacentHTML/.test(consolePaint) ? 'present' : 'none'}`);
+
     const skillCalls = skillsSection.script.match(/api\('api\/[^']*'/g) ?? [];
     const skillBody = /body:JSON\.stringify\(\{([^}]*)\}\)/.exec(skillsSection.script)?.[1] ?? '';
     check(sectionAnchors.includes('agent-skills') && composedShell.split('id="agent-skills"').length === 2
@@ -2224,6 +2539,53 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && skillBody.includes('skillId:row.id') && !skillBody.includes('invoke'),
     'the skill card is composed exactly once into the Agent screen’s remote-control block and posts an id and a session — never the text to write, because the Mac decides what an id means and a route that accepted the text would be an unrestricted terminal write wearing a skill’s name',
     `${composedShell.split('id="agent-skills"').length - 1} cards, calls: ${skillCalls.join(' | ') || 'none'}, body: ${skillBody.trim() || 'none'}`);
+
+    // Reported twice from a phone as "there is no way to start a new session".
+    // Nothing was broken: the Mac had eight projects and four installed
+    // profiles, and /api/control answered with all of them. The launch form was
+    // simply the last card on the Agent screen, under the terminal and under
+    // every installed skill, and the Fleet screen — the one a phone opens on —
+    // said to go and start one in Wanigan instead. A control nobody can find is
+    // absent, so this holds both halves of the way in.
+    const controlsBlock = composedShell.slice(composedShell.indexOf('id="controls"'), composedShell.indexOf('id="control-result"'));
+    const cardOrder = (controlsBlock.match(/console-kicker">([^<]+)/g) ?? []).map((entry) => entry.replace(/.*">/, ''));
+    // Console, then the two ways to get an agent going — start something new,
+    // or pick up something recorded — then the skill list. What this assertion
+    // has always been about is the launch form sitting directly under the
+    // console rather than below every installed skill; Recent joins it there
+    // because away from the desk "get back into what I was doing" is the more
+    // common wish, and burying it would repeat the mistake this test records.
+    check(cardOrder.indexOf('New work') === 1 && cardOrder.indexOf('Pick up again') === 2
+      && cardOrder.indexOf('Installed skills') === 3
+      && composedShell.includes('id="fleet-start"')
+      && composedShell.indexOf('id="fleet-start"') < composedShell.indexOf('id="sessions"')
+      && /openLaunch\(\)/.test(composedShell)
+      && composedShell.includes('Start an agent with the button above'),
+    'the two ways in — start an agent, resume a recorded one — are the cards directly under the console rather than the last ones below every installed skill, and the Fleet screen carries a button that jumps to them: a form two screens down is a form nobody found, which is the same experience as a phone that cannot start a session at all',
+    `Agent cards in order: ${cardOrder.join(' → ') || 'none'}`);
+
+    // The iPhone report this rule came from: the skills list ran off the side
+    // of its card. A grid or flex item's automatic minimum is its own
+    // min-content width, so /plugin-dev:agent-development set the floor for the
+    // whole column and the card grew past the screen. The frame now says once
+    // that a box may be narrower than its content, which is the rule sections
+    // had been re-declaring one class at a time and missing on the next one.
+    const phoneCss = composedShell.slice(composedShell.indexOf('<style'), composedShell.indexOf('</style>'));
+    const phoneMinWidths = phoneCss.match(/[^{;}]*\{[^}]*min-width:[^;}]*/g) ?? [];
+    const unguardedMinWidth = phoneMinWidths.filter((rule) => !/min-width:0/.test(rule) && !/^[^{]*[.#]/.test(rule));
+    check(phoneCss.includes('main * { min-width:0; }')
+      && /body \{[^}]*overflow-wrap:anywhere/.test(phoneCss)
+      && unguardedMinWidth.length === 0
+      && phoneCss.includes('.repo-diff-body { display:block; min-width:max-content; }')
+      && phoneCss.includes('.repo-diff-line { display:block; white-space:pre; }'),
+    'the phone frame says once that every box inside it may be narrower than its own content and that a word may break inside itself — the defect a long mono skill command showed by pushing its card off the side of an iPhone — and the two boxes that do mean to outgrow their column say so on a class, which outranks it, so the diff pane still scrolls',
+    `${phoneMinWidths.length} min-width rules, ${unguardedMinWidth.length} of them unguarded by a class or id`);
+
+    check(/\.skill-invoke \{[^}]*\}/.test(skillsSection.style)
+      && !/\.skill-invoke \{[^}]*(text-overflow|white-space:nowrap)/.test(skillsSection.style)
+      && /\.skill-invoke \{[^}]*ui-monospace/.test(skillsSection.style),
+    'the command on a skill row wraps rather than being clipped with an ellipsis: what a tap types into the session is this card’s one claim, so the name has to stay readable to the end of it — a truncated command is the single thing on the row a reader cannot check',
+    /\.skill-invoke \{([^}]*)\}/.exec(skillsSection.style)?.[1]?.trim() ?? 'no rule');
 
     check(skillsSection.script.includes("ui.off('Sending a skill is off.'")
       && skillsSection.script.includes('Wanigan Settings → Phone monitor')
@@ -2490,19 +2852,27 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && composedShell.includes('the switches below are read here and changed only at the Mac'),
     'the phone says once and plainly what a pairing token is not — consent to spend, to trust a plugin, or to widen what Wanigan may do — and names every switch that stays at the Mac beside the screens that do',
     deviceMacSwitches.join(', ') || 'none');
-    // An alert this phone will never receive is worse than no alert at all, so
-    // the screen states the limit instead of implying it away: a web page can
-    // raise something only while it is open, and installing it to the Home
-    // Screen does not change that while Web Push is unbuilt. It also reports
-    // which of the two this browser is, so an operator who has already installed
-    // it is not left working out whether the sentence is about them.
-    check(composedShell.includes('Installing it to the Home Screen adds nothing to it')
-      && composedShell.includes('only through Web Push, which Wanigan has not built')
-      && composedShell.includes('has never asked for notification permission and holds no push subscription')
+    // The screen that used to state a limit now offers the thing it disclaimed,
+    // and the honesty requirement moves with it rather than going away. iOS
+    // delivers Web Push to an installed app and to nothing else, so a tab has to
+    // be told to install rather than offered a button that would ask for a
+    // permission the platform will not honour — and the browser is asked which
+    // of the two it is, rather than the answer being guessed from a user agent.
+    check(composedShell.includes('Send alerts to this device')
+      && composedShell.includes('Add Wanigan to the Home Screen first')
+      && composedShell.includes('id="device-push-act"')
       && composedJs.includes("window.matchMedia('(display-mode: standalone)').matches")
       && composedJs.includes("deviceWords('device-alert-mode', deviceDisplayWords());"),
-    'the phone settings screen says outright that an installed web page still cannot notify this device, naming Web Push as the thing Wanigan has not built rather than leaving a background alert implied',
+    'the phone Device screen offers the subscription, and refuses to offer it in a tab where iOS would never deliver it',
     'stated');
+    // The two consent gates that make this safe to default on at the Mac, read
+    // from the served page: a subscription needs an explicit tap, and a device
+    // that was switched off is not switched back on by a page load.
+    check(composedJs.includes('Notification.requestPermission()')
+      && composedJs.includes("pushRecall(PUSH_WANTED) !== '1'")
+      && !composedJs.includes('web.push.apple.com'),
+    'subscribing takes a deliberate tap on the device, and the page carries no push endpoint of its own',
+    'gated');
     // The two values that make the alert path work must never reach the phone:
     // the topic is the ntfy subscription credential — anyone holding it receives
     // every alert — and the server is network-identifying metadata the page has
@@ -3130,6 +3500,818 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     await mobile.setMobileConfig({ pushEnabled: false, pushServer: 'https://ntfy.sh' });
   }
 
+  /* ── phase 22z · the goal interview ────────────────────────────────── */
+  //
+  // Driven end to end against a stubbed Messages API: the transport is faked,
+  // everything else is the shipped path. What is under test is not that a model
+  // can be called — it is the four properties that make calling one on somebody
+  // else's key acceptable: the budget stops it, the transcript survives, the
+  // proposal is treated as untrusted, and nothing is written until accepted.
+  say('── phase 22z · goal interview');
+  {
+    const ivProject = await addProject(appRoot());
+    const originalFetch = globalThis.fetch;
+    let reply: Record<string, unknown> = {};
+    let usageReported: Record<string, number> | null = { input_tokens: 4_000, output_tokens: 600 };
+    const seen: Record<string, unknown>[] = [];
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      seen.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      return new Response(JSON.stringify({
+        id: 'msg_smoke', type: 'message', role: 'assistant', model: 'claude-sonnet-5',
+        content: [reply], stop_reason: 'tool_use',
+        ...(usageReported ? { usage: usageReported } : {}),
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+
+    const ask = (question: string) => ({ type: 'tool_use', id: 't1', name: 'ask_one_question', input: { question, why: 'it changes the plan' } });
+    try {
+      reply = ask('What happens to an offer with no end date?');
+      // The models this path can reach, and what each costs a question — the
+      // numbers the screen prints before anything is spent.
+      const offered = interview.interviewModels();
+      check(offered.length >= 3 && offered.every((m) => m.costPerQuestion > 0)
+        && offered.some((m) => m.id === 'claude-fable-5')
+        && offered.some((m) => m.id === 'claude-opus-5')
+        && !offered.some((m) => /codex|glm|deepseek/i.test(m.id)),
+      'the interview offers every Platform model it can price — Fable and Opus included — and no agent harness it cannot call',
+      offered.map((m) => m.id));
+      // Opus costs more than Sonnet per question, so the estimate on the screen
+      // moves with the choice rather than being decoration.
+      const opus = offered.find((m) => m.id === 'claude-opus-5')!.costPerQuestion;
+      const sonnet = offered.find((m) => m.id === 'claude-sonnet-5')!.costPerQuestion;
+      check(opus > sonnet * 2, 'the per-question estimate tracks the model, not a fixed number', { opus, sonnet });
+      // A whole interview is cents. This is the fact that made a $0.25–$10
+      // budget menu meaningless, and it is asserted so the dial cannot quietly
+      // go back to being one.
+      check(interview.budgetForQuestions('claude-sonnet-5', 10) <= 1,
+        'ten questions on the default model is well under a dollar, which is why length is the dial and not money',
+        interview.budgetForQuestions('claude-sonnet-5', 10));
+      let refusedModel = '';
+      try {
+        await interview.startInterview({ projectId: ivProject.id, seed: 'unpriced model', model: 'gpt-9' });
+      } catch (error) { refusedModel = error instanceof Error ? error.message : String(error); }
+      check(/no published rate/.test(refusedModel),
+        'a model Wanigan cannot price is refused rather than billed at some other model’s rates', refusedModel);
+
+      let iv = await interview.startInterview({
+        projectId: ivProject.id, seed: 'add dated offers to the MNA sites', maxQuestions: 10,
+      });
+      check(iv.maxQuestions === 10 && iv.budgetUsd > 0,
+        'the operator picks a length, and the runaway budget is derived from it', { max: iv.maxQuestions, budget: iv.budgetUsd });
+      check(iv.status === 'asking' && iv.turns.length === 1 && iv.turns[0].answer === null,
+        'the interview opens with one question and no answer', iv.turns[0]?.question);
+      check(iv.spendUsd > 0 && iv.calls === 1,
+        'the first question is priced from what the API reported, not estimated', iv.spendUsd);
+
+      // Synchronous rates, not batch. The pricing table is batch pricing and
+      // says so; charging an interview at it would report half of what it cost.
+      const batchPrice = pricing.costOf('claude-sonnet-5', { input_tokens: 4_000, output_tokens: 600 });
+      check(Math.abs(iv.spendUsd - batchPrice * 2) < 1e-9,
+        'an interview is priced at synchronous rates — double the batch table it shares',
+        { charged: iv.spendUsd, batch: batchPrice });
+
+      const sent = seen[0] as { tools?: { name: string }[]; tool_choice?: { type: string } };
+      check(sent.tools?.length === 2 && sent.tool_choice?.type === 'any',
+        'the model is given exactly two tools and must use one of them — there is no prose path',
+        { tools: sent.tools?.map((t) => t.name), choice: sent.tool_choice });
+
+      reply = ask('Who authors an offer — a site editor or you?');
+      iv = await interview.answerInterview(iv.id, 'it renders forever, which is the bug');
+      check(iv.turns.length === 2 && iv.turns[0].answer === 'it renders forever, which is the bug',
+        'the answer is kept and the next question is written after it', iv.turns.length);
+      check(JSON.stringify(seen[1]).includes('renders forever'),
+        'the whole transcript is sent back, so each question is written against the last answer');
+
+      // The transcript is durable. Ten minutes of the operator's own answers
+      // must not be lost to a quit, or to a crash on question nine.
+      const reread = interview.interview(iv.id);
+      check(reread.turns.length === 2 && reread.seed.includes('dated offers'),
+        'an interview is read back from the database rather than held in memory', reread.turns.length);
+
+      // The proposal, and the part that matters: it is not trusted. This one
+      // carries a task kind that does not exist, a forward dependency, a
+      // self-dependency, and more tasks than the cap allows.
+      reply = {
+        type: 'tool_use', id: 't2', name: 'propose_goal',
+        input: {
+          title: 'MNA Offers rollout',
+          objective: 'Dated offers across the fleet.',
+          risk: 'nonsense',
+          acceptance: ['An offer past its end date never renders.', '   ', 'Existing coupons still render.'],
+          plan: [
+            { kind: 'plan', title: 'Survey the sites', instructions: 'Read the two generations.', dependsOn: [4] },
+            { kind: 'wizardry', title: 'Add the entity', instructions: 'Create it.', dependsOn: [0], claimPath: 'web/modules/custom/mna_offers' },
+            { kind: 'verify', title: 'Prove expiry', instructions: 'Run the tests.', dependsOn: [1, 1] },
+            { kind: 'review', title: 'Review and merge', instructions: 'Decide.', dependsOn: [2, 99, 3] },
+          ],
+        },
+      };
+      iv = await interview.answerInterview(iv.id, 'site editors author them');
+      check(iv.status === 'proposed' && iv.proposal !== null, 'the interview proposes a goal', iv.status);
+
+      const plan = iv.proposal!.plan;
+      check(iv.proposal!.risk === 'elevated',
+        'a risk level the model invented falls back to the default rather than reaching the goal', iv.proposal!.risk);
+      check(iv.proposal!.acceptance.length === 2,
+        'a blank acceptance check is dropped rather than stored as an empty contract line', iv.proposal!.acceptance);
+      check(plan[1].kind === 'implement',
+        'a task kind this build has never heard of becomes implement rather than reaching the graph', plan[1].kind);
+      check(plan[0].dependsOn?.length === 0,
+        'a forward dependency is dropped — it is a cycle, and one bad index must not cost the whole plan',
+        plan[0].dependsOn);
+      // [2, 99, 3] at index 3 keeps only 2: 99 names no task, and 3 is this task
+      // itself. Both are dropped and the good one survives, which is the whole
+      // point — a plan is not thrown away over one bad index.
+      check(plan[3].dependsOn?.length === 1 && plan[3].dependsOn?.[0] === 2,
+        'a dependency on a task that does not exist, and on itself, are both dropped while the real one survives',
+        plan[3].dependsOn);
+
+      // Nothing is written until the operator accepts, and what they accept is
+      // what they edited rather than what the model said.
+      const beforeCommit = control.listDockets(ivProject.id).length;
+      check(beforeCommit === 0, 'a proposal writes no goal by itself', beforeCommit);
+      const docket = interview.commitInterview(iv.id, {
+        ...iv.proposal!,
+        title: 'MNA Offers rollout (edited)',
+      });
+      check(docket.title === 'MNA Offers rollout (edited)' && docket.nodes.length === plan.length,
+        'accepting writes the operator’s edit, and one ticket per task in the graph',
+        { title: docket.title, nodes: docket.nodes.length });
+      check(interview.interview(iv.id).docketId === docket.id
+        && interview.interview(iv.id).status === 'committed',
+      'the interview keeps the goal it produced, so the transcript stays answerable later');
+      check(control.boardCards({ projectId: ivProject.id }).length === plan.length,
+        'and those tickets are on the board', control.boardCards({ projectId: ivProject.id }).length);
+
+      // The board's limit is counted in goals, not in rows. A row limit cut a
+      // goal wherever the count ran out, and because rows come back in plan
+      // order what fell off was the tail — the review task is the last node of
+      // every plan buildPlan accepts, so the ticket a full board silently
+      // dropped was the one waiting on a person. A second goal here makes the
+      // cut land inside the first one at any limit below its size.
+      const secondGoal = control.createDocket({
+        projectId: ivProject.id,
+        title: 'A second goal, so the window has somewhere to cut',
+        objective: 'Two goals on one board.',
+        acceptance: ['The board never shows half a goal.'],
+      });
+      const tight = control.boardCards({ projectId: ivProject.id, limit: 2 });
+      const perGoal = new Map<string, number>();
+      for (const card of tight) perGoal.set(card.docketId, (perGoal.get(card.docketId) ?? 0) + 1);
+      const sizes = [...perGoal.entries()].map(([id, count]) => ({
+        id, count, whole: count === control.docket(id).nodes.length,
+      }));
+      check(sizes.length > 0 && sizes.every((row) => row.whole),
+        'a board read narrower than one goal returns that goal whole rather than its first two tickets — a cut inside a graph drops the review task and derives the rest from prerequisites it was not handed',
+        sizes);
+      check(tight.some((card) => card.node.kind === 'review'),
+        'so the ticket waiting on a human decision is still on a board that ran out of room, which is the one it exists to surface');
+      check(control.boardCards({ projectId: ivProject.id }).some((card) => card.docketId === secondGoal.id),
+        'and an ordinary read still carries both goals', secondGoal.id);
+
+      // The money gate. A budget already spent stops the next question rather
+      // than the one after it.
+      reply = ask('Another question?');
+      usageReported = { input_tokens: 2_000_000, output_tokens: 100_000 };
+      let broke = await interview.startInterview({ projectId: ivProject.id, seed: 'something expensive', budgetUsd: 0.05, maxQuestions: 10 });
+      check(broke.spendUsd > broke.budgetUsd, 'the first call can exceed the budget — the cap is checked before a call, and the first has no prior spend to check', broke.spendUsd);
+      let refused = '';
+      try { await interview.answerInterview(broke.id, 'go on'); }
+      catch (error) { refused = error instanceof Error ? error.message : String(error); }
+      check(/budget/i.test(refused) && interview.interview(broke.id).calls === 1,
+        'and the next one is refused by name, with the spend it has already made', refused);
+
+      // A call the API reported no usage for is recorded as unpriced, never
+      // totalled as free — the one thing CLAUDE.md says never to do.
+      usageReported = null;
+      reply = ask('Unpriced question?');
+      const unpriced = await interview.startInterview({ projectId: ivProject.id, seed: 'unpriced', budgetUsd: 1, maxQuestions: 10 });
+      check(unpriced.spendUsd === 0 && /lower than the real one/.test(unpriced.detail ?? ''),
+        'a call the API priced nothing for is reported as unpriced rather than counted as free',
+        unpriced.detail);
+
+      // And it keeps saying so. The warning is cumulative — it says "at least
+      // one call" — but it was written to `detail` on every step, so the next
+      // question that *did* report usage wrote null over it. The spend stayed
+      // understated and the only thing that said so was gone.
+      usageReported = { input_tokens: 1_000, output_tokens: 100 };
+      reply = ask('And a priced one?');
+      const stillWarned = await interview.answerInterview(unpriced.id, 'an answer');
+      check(stillWarned.spendUsd > 0 && /lower than the real one/.test(stillWarned.detail ?? ''),
+        'and a later priced call does not erase that warning — the recorded spend is still short by the unpriced one, so the sentence saying so has to outlive it',
+        { spend: stillWarned.spendUsd, detail: stillWarned.detail });
+
+      // And the halt reaches it, because an interview spends money.
+      usageReported = { input_tokens: 100, output_tokens: 100 };
+      await halt.pullHalt({ reason: 'smoke' });
+      let haltedInterview = '';
+      try { await interview.startInterview({ projectId: ivProject.id, seed: 'while halted', budgetUsd: 1, maxQuestions: 10 }); }
+      catch (error) { haltedInterview = error instanceof Error ? error.message : String(error); }
+      halt.clearHalt();
+      check(/halted/i.test(haltedInterview),
+        'a halted Wanigan will not start an interview either — it is the one place the app spends money itself',
+        haltedInterview);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+
+  /* ── phase 23a · halt and catch fire ───────────────────────────────── */
+  //
+  // The property under test is not "a button kills processes" — it is that a
+  // halted Wanigan cannot be talked into starting work by any of the six paths
+  // that normally start it. Killing is the easy half and, alone, close to
+  // useless: an autopilot, a schedule or a queue tick would put the fleet back
+  // inside a minute, which is the moment an operator concludes the switch does
+  // nothing. So every guard is exercised, by name, from a halted state.
+  say('── phase 23a · halt');
+  {
+    const before = halt.haltState();
+    check(before.halted === false, 'the suite starts unhalted', before);
+
+    // Registered here rather than relying on startup: the smoke path returns
+    // before startServices() runs, so the real registrations are unreachable.
+    // These stand in for them and let the ordering contract be asserted.
+    const stopOrder: string[] = [];
+    for (const name of ['schedules', 'queue', 'autopilots', 'sessions']) {
+      halt.registerHaltStopper({
+        name,
+        stop: () => { stopOrder.push(name); return { name, stopped: name === 'sessions' ? 2 : 1 }; },
+      });
+    }
+
+    const pulled = await halt.pullHalt({ reason: 'smoke pulled it', source: 'phone' });
+    check(pulled.halted && pulled.source === 'phone' && pulled.reason === 'smoke pulled it',
+      'the handle records who pulled it and why', pulled);
+    check(stopOrder.join(',') === 'schedules,queue,autopilots,sessions',
+      'the stop pass runs dispatchers before the processes they would otherwise relaunch',
+      stopOrder.join(','));
+    check(pulled.stopped.length === 4 && pulled.stopped.some((entry) => entry.stopped === 2),
+      'each subsystem reports its own count rather than the latch inventing one', pulled.stopped);
+
+    // The latch is durable. A restart is not a decision to resume, and the one
+    // thing this must never do is lift itself because the app was quit.
+    check(getSetting('halt', '') !== '' && JSON.parse(getSetting('halt', '{}')).halted === true,
+      'the latch is written to the database, so quitting the app does not clear it');
+
+    // Now the six refusals, each by the path an operator would actually reach.
+    const refusals: { what: string; refused: boolean; message: string }[] = [];
+    const tryRefuse = async (what: string, run: () => unknown | Promise<unknown>) => {
+      try { await run(); refusals.push({ what, refused: false, message: 'it ran' }); }
+      catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        refusals.push({ what, refused: /halted/i.test(message), message });
+      }
+    };
+    await tryRefuse('a session', () => sessionsModule.createSession({
+      projectId: 'p_smoke_halt', providerId: 'claude',
+    } as Parameters<typeof sessionsModule.createSession>[0]));
+    await tryRefuse('a headless run', () => headless.startHeadlessRun({
+      providerId: 'claude', prompt: 'halted', projectIds: ['p_smoke_halt'],
+    } as Parameters<typeof headless.startHeadlessRun>[0]));
+    await tryRefuse('a batch', () => submitRun(baseCfg({ name: 'halted batch' })));
+    check(refusals.every((row) => row.refused),
+      'a halted Wanigan refuses a session, a headless run and a batch — each by name, before it does any work',
+      refusals);
+
+    // The two loops do not throw; they decline. A queue tick that threw would
+    // be logged and skipped anyway, so the guard has to be a return.
+    const beforeSweep = control.sweepAutopilot();
+    check(beforeSweep === 0, 'the autopilot sweep dispatches nothing while halted', beforeSweep);
+    const fired = await schedule.tickSchedules();
+    check(fired === 0, 'a schedule due right now fires nothing while halted', fired);
+
+    // And the half that reaches a process the signal did not kill. This is the
+    // difference between "no new work starts" and "nothing more happens".
+    const haltedCall = policy.decideFor(
+      { sessionId: 's_halt', projectId: null, projectPath: '/tmp', trust: 'trusted', providerId: 'claude' } as never,
+      { tool_name: 'Bash', tool_input: { command: 'echo still here' } } as never,
+    );
+    check(haltedCall.decision === 'deny' && haltedCall.rule === 'halted.deny',
+      'every tool call is denied while halted — including in a trusted project, because trust is about which repositories Wanigan may act in, not about whether an emergency stop applies there',
+      haltedCall);
+
+    // The registrations themselves, read from source. The smoke path returns
+    // before startServices() runs, so the six real registerHaltStopper calls are
+    // unreachable from here — which is exactly why deleting one would fail no
+    // test at all, and the halt would quietly stop five things instead of six.
+    // haltStopperNames() was written for this assertion and then never called,
+    // which is the third time in this codebase a finished lane had no entrance.
+    const wiring = sourceOf('src/main/index.ts');
+    const registered = [...wiring.matchAll(/registerHaltStopper\(\{[\s\S]{0,40}?name: '([a-z ]+)'/g)].map((m) => m[1]);
+    check(JSON.stringify(registered) === JSON.stringify(['schedules', 'queue', 'autopilots', 'batch polling', 'learning', 'sessions']),
+      'every subsystem is registered with the halt, in the order that matters — dispatchers before the sessions they would otherwise relaunch',
+      registered);
+    check(halt.haltStopperNames().length >= 4,
+      'and the registry reports what it holds, so the order above is a fact about a list rather than about a regex',
+      halt.haltStopperNames());
+
+    // The latch is read on every tool call, so it is cached — and the cache
+    // must never be the reason a halt this process pulled is not yet in force.
+    const beforeWrite = Date.now();
+    await halt.pullHalt({ reason: 'cache coherence' });
+    check(halt.halted() === true && Date.now() - beforeWrite < 1_000,
+      'a halt is in force on the very next read in the process that pulled it, rather than after the cache expires');
+
+    // A database that refuses writes and answers reads is the shape of bad day
+    // this handle is for: a full disk, a read-only mount. `query_only` produces
+    // exactly that. The pull cannot reach the row, and the failure mode this
+    // proves is gone is the quiet one — the latch was held for the length of the
+    // cache and then the next successful SELECT returned the row that was never
+    // written and lifted the halt, with nothing anywhere saying so.
+    halt.clearHalt();
+    db().pragma('query_only = true');
+    let unwritable: halt.HaltState;
+    try {
+      unwritable = await halt.pullHalt({ reason: 'the disk is full' });
+    } finally {
+      // Restored before any assertion, so a failing check cannot leave the rest
+      // of the suite running against a database that refuses every write.
+      db().pragma('query_only = false');
+    }
+    check(unwritable.halted && halt.halted() === true,
+      'a halt whose write the database refused is still in force in the process that pulled it', unwritable);
+    check(halt.haltPersisted() === false,
+      'and it knows it is owed to the row rather than reporting itself as saved');
+    // Longer than halt.ts's one-second cache, because the whole point is what
+    // the *next* read of the row does rather than what the cached answer says.
+    await new Promise((resolve) => { setTimeout(resolve, 1_200); });
+    check(halt.halted() === true,
+      'the cache expiring does not lift it — a successful read of the row the write never reached is not a decision to resume, and this is the one failure this module must not have');
+    check(halt.haltPersisted() === true && JSON.parse(getSetting('halt', '{}')).halted === true,
+      'and once the database takes writes again the latch persists itself, so "it survives a restart" is true rather than only intended',
+      getSetting('halt', ''));
+
+    const cleared = halt.clearHalt();
+    check(!cleared.halted && getSetting('halt', '') === '' && halt.halted() === false,
+      'clearing releases the latch immediately and leaves no state behind', cleared);
+    const afterClear = policy.decideFor(
+      { sessionId: 's_halt', projectId: null, projectPath: '/tmp', trust: 'trusted', providerId: 'claude' } as never,
+      { tool_name: 'Bash', tool_input: { command: 'echo back' } } as never,
+    );
+    check(afterClear.decision === 'allow',
+      'and the gate goes back to answering on trust the moment it is cleared', afterClear);
+  }
+
+  /* ── phase 23b · Web Push, decrypted by a real subscriber ──────────── */
+  //
+  // The one part of the alert path that cannot be checked by reading it. An
+  // implementation with the two HKDF info strings transposed, or the two public
+  // keys the wrong way round in key_info, produces a body of exactly the right
+  // length with exactly the right header that every push service accepts and no
+  // device can decrypt. Nothing fails, nothing logs, and the operator finds out
+  // by walking back to a Mac that has been quietly not alerting them for a week.
+  //
+  // So this phase is a subscriber. It generates a P-256 keypair and an auth
+  // secret the way a browser does, hands the public half to Wanigan, and then
+  // decrypts what Wanigan sends by following RFC 8291 from the other side.
+  say('── phase 23b · Web Push');
+  {
+    const subscriber = createECDH('prime256v1');
+    subscriber.generateKeys();
+    const subscriberAuth = randomBytes(16);
+    const endpoint = 'https://web.push.apple.com/smoke/' + randomBytes(8).toString('hex');
+
+    const hmac = (key: Buffer, data: Buffer) => createHmac('sha256', key).update(data).digest();
+    const expand = (prk: Buffer, info: Buffer, length: number) =>
+      hmac(prk, Buffer.concat([info, Buffer.from([1])])).subarray(0, length);
+
+    /** Decrypt an aes128gcm body exactly as a user agent must. */
+    const openPush = (body: Buffer): string => {
+      const salt = body.subarray(0, 16);
+      const keyLength = body.readUInt8(20);
+      const senderPublic = body.subarray(21, 21 + keyLength);
+      const record = body.subarray(21 + keyLength);
+      const shared = subscriber.computeSecret(senderPublic);
+      const authPrk = hmac(subscriberAuth, shared);
+      const keyInfo = Buffer.concat([
+        Buffer.from('WebPush: info\0', 'utf8'), subscriber.getPublicKey(), senderPublic,
+      ]);
+      const prk = hmac(salt, expand(authPrk, keyInfo, 32));
+      const decipher = createDecipheriv(
+        'aes-128-gcm',
+        expand(prk, Buffer.from('Content-Encoding: aes128gcm\0', 'utf8'), 16),
+        expand(prk, Buffer.from('Content-Encoding: nonce\0', 'utf8'), 12),
+      );
+      decipher.setAuthTag(record.subarray(record.length - 16));
+      const padded = Buffer.concat([decipher.update(record.subarray(0, record.length - 16)), decipher.final()]);
+      return padded.subarray(0, padded.length - 1).toString('utf8');
+    };
+
+    const captured: { url: string; headers: Record<string, string>; body: Buffer }[] = [];
+    let pushStatus = 201;
+    let retryAfter: string | null = null;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const headers: Record<string, string> = {};
+      for (const [name, value] of Object.entries((init?.headers ?? {}) as Record<string, string>)) {
+        headers[name.toLowerCase()] = value;
+      }
+      captured.push({ url: String(input), headers, body: Buffer.from(init?.body as Uint8Array) });
+      return new Response(null, {
+        status: pushStatus,
+        ...(retryAfter ? { headers: { 'retry-after': retryAfter } } : {}),
+      });
+    }) as typeof fetch;
+
+    try {
+      await mobile.setMobileConfig({ webPushEnabled: true, pushEnabled: false });
+      mobile.rotatePushKeys();
+
+      const key = mobile.pushPublicKey();
+      check(mobile.vapidKeysValid({ publicKey: key, privateKey: 'x' }) === false
+        && Buffer.from(key, 'base64url').length === 65 && Buffer.from(key, 'base64url')[0] === 0x04,
+      'the advertised application server key is a 65-byte uncompressed P-256 point');
+
+      const noDevices = await mobile.sendWebPush({ title: 'Nobody', body: 'is subscribed.' });
+      check(!noDevices.ok && !noDevices.retryable && captured.length === 0
+        && /No device is subscribed/.test(noDevices.error ?? ''),
+      'with no subscription nothing is sent, and the reason names the action rather than the state',
+      noDevices.error);
+
+      mobile.rememberPushDevice({
+        endpoint,
+        p256dh: subscriber.getPublicKey().toString('base64url'),
+        auth: subscriberAuth.toString('base64url'),
+        label: 'iPhone',
+      });
+      check(mobile.listPushDevices().length === 1
+        && !JSON.stringify(mobile.listPushDevices()).includes('web.push.apple.com'),
+      'a stored device is listed without its endpoint: the list is not the capability');
+
+      // The real assertion. A local path and a shell command are handed in the
+      // way a hook detail would arrive, and the subscriber has to read back a
+      // notification that carries neither.
+      const privatePath = '/Users/smoke/secret-repo/.env';
+      const delivered = await mobile.sendWebPush({
+        title: 'Asking — mnair-shop',
+        body: `Waiting for approval for 2m. Bash · cat ${privatePath}`,
+        urgent: true,
+        tag: 's_smoke:permission',
+      });
+      check(delivered.ok && captured.length === 1, 'a subscribed device receives one publication', delivered.error);
+
+      const sent = captured[0];
+      const opened = openPush(sent.body);
+      check(opened.length > 0, 'the subscriber decrypts the body Wanigan encrypted', opened.slice(0, 60));
+      const payload = JSON.parse(opened) as Record<string, unknown>;
+      check(payload.title === 'Asking — mnair-shop' && payload.urgent === true,
+        'the decrypted payload is the notification, title and urgency intact', payload);
+      check(!opened.includes(privatePath) && opened.includes('[local path]'),
+        'a local path is redacted before encryption, not merely hidden by it', opened);
+      // Redaction at this sink strips paths; keeping the command out is the
+      // caller's job, and it is the same one line that keeps it out of ntfy.
+      // Asserted here because it is the property that actually matters — the
+      // path filter is the backstop, not the boundary.
+      const attentionBody = notify.mobileAttentionBody({
+        sessionId: 's_smoke_webpush', kind: 'permission', transitionId: 'event:webpush',
+        since: Date.now() - 120_000, label: 'Asking', detail: `Bash · cat ${privatePath}`, tool: 'Bash',
+      });
+      check(!attentionBody.includes('cat ') && !attentionBody.includes(privatePath)
+        && /approval/.test(attentionBody),
+      'the body an attention alert actually sends carries the state and the wait, never the hook detail',
+      attentionBody);
+      check(sent.url === endpoint && sent.headers['content-encoding'] === 'aes128gcm'
+        && sent.headers['content-type'] === 'application/octet-stream'
+        && Number(sent.headers.ttl) > 0 && sent.headers.urgency === 'high',
+      'the request is a well-formed RFC 8030 push with a bounded TTL', sent.headers);
+      check(!JSON.stringify(sent.headers).includes(subscriberAuth.toString('base64url')),
+        'the subscription secrets are never sent as headers, only used to encrypt');
+
+      // RFC 8030's Topic replaces an *undelivered* message at the service, which
+      // the payload tag cannot: a phone that was off for an hour comes back to
+      // one alert about a session rather than five queued behind each other. At
+      // most 32 base64url characters, and hashed — the raw tag is a session id,
+      // and the whole point of encrypting the payload is that identifiers like
+      // that do not travel in the clear.
+      check(typeof sent.headers.topic === 'string'
+        && sent.headers.topic.length <= 32
+        && /^[A-Za-z0-9_-]+$/.test(sent.headers.topic)
+        && !sent.headers.topic.includes('s_smoke'),
+      'a tagged alert carries an RFC 8030 Topic that is short, in the right alphabet, and not the session id',
+      sent.headers.topic);
+
+      // VAPID: verified against the key Wanigan advertises, with the audience
+      // it claims. A signature in the wrong encoding is refused by every push
+      // service with a 401 that says nothing about which of the two it got.
+      const vapid = /^vapid t=([^,]+), k=(.+)$/.exec(sent.headers.authorization ?? '');
+      check(Boolean(vapid) && vapid![2] === key, 'the Authorization header advertises the same key devices subscribe to');
+      const [head, claims, signature] = (vapid?.[1] ?? '..').split('.');
+      const parsedClaims = JSON.parse(Buffer.from(claims, 'base64url').toString('utf8')) as Record<string, unknown>;
+      const point = Buffer.from(key, 'base64url');
+      check(verify('sha256', Buffer.from(`${head}.${claims}`, 'utf8'), {
+        key: createPublicKey({
+          format: 'jwk',
+          key: {
+            kty: 'EC', crv: 'P-256',
+            x: point.subarray(1, 33).toString('base64url'),
+            y: point.subarray(33, 65).toString('base64url'),
+          },
+        }),
+        dsaEncoding: 'ieee-p1363',
+      }, Buffer.from(signature, 'base64url')),
+      'the ES256 signature verifies as raw r‖s against the advertised key');
+      check(parsedClaims.aud === 'https://web.push.apple.com'
+        && typeof parsedClaims.sub === 'string' && !String(parsedClaims.sub).startsWith('mailto:'),
+      'the token is scoped to the endpoint origin and carries no operator email', parsedClaims);
+
+      // Two alerts to one device must not share key material: the ephemeral
+      // keypair is per message, and reusing it would let one recovered payload
+      // open every other.
+      captured.length = 0;
+      await mobile.sendWebPush({ title: 'Second', body: 'A different alert.' });
+      check(captured.length === 1 && !captured[0].body.subarray(21, 86).equals(sent.body.subarray(21, 86)),
+        'each notification carries its own ephemeral public key');
+
+      // A push service that asks to be left alone is quoted rather than obeyed
+      // silently: the attention machinery owns the retry cadence, and a second
+      // invisible schedule invented here would disagree with it.
+      captured.length = 0;
+      pushStatus = 429;
+      retryAfter = '120';
+      const limited = await mobile.sendWebPush({ title: 'Slow down', body: 'Too many.' });
+      check(!limited.ok && limited.retryable && /120s/.test(limited.error ?? ''),
+        'a 429 is retryable and reports the Retry-After the service asked for', limited.error);
+      retryAfter = null;
+
+      // 410 Gone is the only notice a dead subscription ever gets.
+      captured.length = 0;
+      pushStatus = 410;
+      const gone = await mobile.sendWebPush({ title: 'Gone', body: 'This device is no longer there.' });
+      check(!gone.ok && !gone.retryable && mobile.listPushDevices().length === 0,
+        'a 410 forgets the device rather than retrying it forever', gone.error);
+
+      // Rotation is the revocation that holds. A device re-registered after it
+      // must be a new subscription, not the old one coming back.
+      pushStatus = 201;
+      mobile.rememberPushDevice({
+        endpoint,
+        p256dh: subscriber.getPublicKey().toString('base64url'),
+        auth: subscriberAuth.toString('base64url'),
+        label: 'iPhone',
+      });
+      const beforeRotation = mobile.pushPublicKey();
+      mobile.rotatePushKeys();
+      check(mobile.pushPublicKey() !== beforeRotation && mobile.listPushDevices().length === 0,
+        'replacing the keypair drops every subscription in the same write');
+
+      // The merged sink: one channel off is not a failure of the alert.
+      captured.length = 0;
+      mobile.rememberPushDevice({
+        endpoint,
+        p256dh: subscriber.getPublicKey().toString('base64url'),
+        auth: subscriberAuth.toString('base64url'),
+        label: 'iPhone',
+      });
+      const merged = await mobile.deliverMobileAlert({ title: 'Merged', body: 'One channel is enough.' });
+      check(merged.ok && !merged.skipped && captured.length === 1,
+        'with ntfy off, a Web Push delivery still counts as the alert having been sent', merged.error);
+
+      await mobile.setMobileConfig({ webPushEnabled: false, pushEnabled: false });
+      captured.length = 0;
+      const quiet = await mobile.deliverMobileAlert({ title: 'Quiet', body: 'Both channels are off.' });
+      check(quiet.skipped && !quiet.ok && quiet.retryable && captured.length === 0,
+        'with both channels off nothing is sent and the transition is not consumed');
+    } finally {
+      globalThis.fetch = originalFetch;
+      await mobile.setMobileConfig({ webPushEnabled: true, pushEnabled: false });
+      mobile.rotatePushKeys();
+    }
+
+    // ── an endpoint is where a device is, not which device it is ──
+    //
+    // Safari rotates a Home Screen app's push endpoint by itself. Keyed on the
+    // endpoint alone, one iPhone became a new row on every rotation: the list
+    // filled with dead copies of one phone and the cap then evicted the
+    // operator's other devices to make room for them.
+    mobile.forgetAllPushDevices();
+    const stable = 'd-smoke-one-phone';
+    const asDevice = (endpoint: string) => ({
+      endpoint,
+      p256dh: subscriber.getPublicKey().toString('base64url'),
+      auth: subscriberAuth.toString('base64url'),
+      label: 'iPhone',
+      clientId: stable,
+    });
+    mobile.rememberPushDevice(asDevice('https://web.push.apple.com/smoke/rotate-1'));
+    const firstId = mobile.listPushDevices()[0]?.id;
+    for (let i = 2; i <= 6; i++) mobile.rememberPushDevice(asDevice(`https://web.push.apple.com/smoke/rotate-${i}`));
+    check(mobile.listPushDevices().length === 1,
+      'a phone whose endpoint rotated five times is still one device, not six',
+      mobile.listPushDevices().length);
+    check(mobile.listPushDevices()[0]?.id === firstId,
+      'and it keeps its row, so forgetting it in Settings still means the same phone');
+
+    // A device that sends no client id — an older build of the page — still
+    // matches on its endpoint rather than duplicating on every launch.
+    mobile.forgetAllPushDevices();
+    const legacy = {
+      endpoint: 'https://web.push.apple.com/smoke/legacy',
+      p256dh: subscriber.getPublicKey().toString('base64url'),
+      auth: subscriberAuth.toString('base64url'),
+      label: 'iPad',
+    };
+    mobile.rememberPushDevice(legacy);
+    mobile.rememberPushDevice(legacy);
+    check(mobile.listPushDevices().length === 1,
+      'a page that sends no client id still de-duplicates on its endpoint', mobile.listPushDevices().length);
+    mobile.forgetAllPushDevices();
+
+    // The device cap is a property of the store, and the store is the only
+    // thing standing between a paired browser that re-subscribes on every
+    // launch and a credential file that grows for the life of the install.
+    for (let i = 0; i < mobile.MAX_PUSH_DEVICES + 4; i++) {
+      mobile.rememberPushDevice({
+        endpoint: `https://web.push.apple.com/smoke/cap-${i}`,
+        p256dh: subscriber.getPublicKey().toString('base64url'),
+        auth: subscriberAuth.toString('base64url'),
+        label: `Device ${i}`,
+      });
+    }
+    check(mobile.listPushDevices().length === mobile.MAX_PUSH_DEVICES,
+      'the device list is capped rather than growing without bound',
+      mobile.listPushDevices().length);
+    const repeat = mobile.rememberPushDevice({
+      endpoint: 'https://web.push.apple.com/smoke/cap-9',
+      p256dh: subscriber.getPublicKey().toString('base64url'),
+      auth: subscriberAuth.toString('base64url'),
+      label: 'Renamed',
+    });
+    check(repeat.length === mobile.MAX_PUSH_DEVICES
+      && repeat.filter((device) => device.label === 'Renamed').length === 1,
+    're-subscribing one endpoint replaces its row instead of adding a second');
+    mobile.forgetAllPushDevices();
+
+    // An oversized notification must be refused rather than truncated into a
+    // record that decrypts to half a sentence.
+    check(mobile.MAX_PLAINTEXT_BYTES > 0 && mobile.MAX_PLAINTEXT_BYTES < 4096,
+      'the plaintext ceiling leaves room for the record framing inside 4096 bytes',
+      mobile.MAX_PLAINTEXT_BYTES);
+    let refusedOversize = false;
+    try { mobile.encryptPushPayload(Buffer.alloc(mobile.MAX_PLAINTEXT_BYTES + 1), {
+      p256dh: subscriber.getPublicKey().toString('base64url'),
+      auth: subscriberAuth.toString('base64url'),
+    }); } catch { refusedOversize = true; }
+    check(refusedOversize, 'a payload too large for one record is refused, not silently cut');
+
+    // The private scalar comes back from OpenSSL without leading zeros roughly
+    // one time in 256, and an unpadded JWK import of one is rejected outright.
+    // That is a bug that works for 255 users out of 256, which is the worst
+    // distribution a bug can have, so the padding is asserted in bulk.
+    let allValid = true;
+    for (let i = 0; i < 300 && allValid; i++) allValid = mobile.vapidKeysValid(mobile.generateVapidKeys());
+    check(allValid, '300 generated VAPID keypairs all import and validate');
+  }
+
+  /* ── phase 23c · the surfaces that carry a notification ────────────── */
+  //
+  // Source assertions, because the service worker runs in a browser and the
+  // renderer card in a window, and neither is reachable from this process. They
+  // are a weak claim about behaviour and a strong one about presence — and
+  // presence is exactly what was missing: a worker with no push handler is an
+  // installed app that can never be notified, and it looks completely normal.
+  say('── phase 23c · notification surfaces');
+  {
+    const worker = (await import('./mobile/page/sw')).mobileServiceWorker('dark');
+    check(worker.includes("addEventListener('push'") && worker.includes("addEventListener('notificationclick'"),
+      'the phone service worker handles a push and a tap on it');
+    check(worker.includes('showNotification'),
+      'the worker shows a notification for every push it takes — a browser revokes permission from one that does not');
+    check(worker.includes('icon-180.png'),
+      'the notification names the raster icon rather than the SVG iOS ignores');
+    // Scoped to the push handler itself. A regex across the whole worker matches
+    // the cache the shell legitimately uses two hundred lines earlier, which is
+    // how an assertion like this passes for the wrong reason — or, as it did
+    // here first, fails for one.
+    const pushHandler = worker.slice(worker.indexOf("addEventListener('push'"),
+      worker.indexOf("addEventListener('notificationclick'"));
+    check(pushHandler.length > 200 && !pushHandler.includes('caches') && !pushHandler.includes('cache'),
+      'nothing from a push is written to the shell cache — a replayed alert is a lie about a fleet that moved on',
+      pushHandler.length);
+
+    const png = (await import('./mobile/page/icon')).dashboardIconPng();
+    check(png.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+      && png.readUInt32BE(16) === 180 && png.readUInt32BE(20) === 180,
+    'the Home Screen icon is a real 180×180 PNG, which is what iOS draws on every alert', png.length);
+
+    const shell = sourceOf('src/main/mobile/page/shell.ts');
+    check(shell.includes('apple-touch-icon') && shell.includes('icon-180.png')
+      && !/apple-touch-icon[^>]*icon\.svg/.test(shell),
+    'the touch icon points at the PNG: Safari has never accepted an SVG there');
+
+    // The subscription repair path, both halves. The worker cannot reach the
+    // pairing token — it lives in the page's localStorage — so it re-subscribes
+    // and tells the page, and the page, which has the token, registers it.
+    check(worker.includes("addEventListener('pushsubscriptionchange'"),
+      'the worker handles the browser rotating this device’s subscription out from under it');
+    check(/pushsubscriptionchange[\s\S]*?postMessage/.test(worker),
+      'and hands the result to a page, because only the page holds the pairing token');
+    const navSrc = sourceOf('src/main/mobile/page/nav.ts');
+    check(navSrc.includes("data.wanigan === 'resubscribe'"),
+      'the page listens for that and re-registers itself');
+
+    const deviceScreen = sourceOf('src/main/mobile/page/sections/device.ts');
+    check(deviceScreen.includes('PUSH_CLIENT') && deviceScreen.includes('clientId: pushClientId()'),
+      'the page sends a stable id for itself, so a rotated endpoint is the same device rather than a new one');
+    check(deviceScreen.includes('Notification.requestPermission()')
+      && deviceScreen.indexOf('const asking = interactive') < deviceScreen.indexOf('pushBusy = true'),
+    'the permission prompt is raised before the first await, which is the only way Safari honours it');
+    check(deviceScreen.includes("pushRecall(PUSH_WANTED) !== '1'"),
+      'a silent re-registration cannot switch a device back on that its operator switched off');
+    check(!deviceScreen.includes('Wanigan has not built'),
+      'the screen no longer tells the operator that background notifications do not exist');
+
+    // The page's own base64url helpers, run as the browser runs them.
+    //
+    // Extracted from the served script and executed against the platform's real
+    // atob/btoa, because the failure they had was invisible to anything more
+    // forgiving: the padding was computed from a four-character '====' instead
+    // of three, which appends one '=' too many. Node's Buffer.from(s, 'base64')
+    // shrugs at that and decodes anyway; a browser's atob refuses the whole
+    // string. So a round-trip written against a Buffer shim passed on the
+    // broken version, and the only thing that ever failed was an actual
+    // browser — with a subscription that could not be created and an operator
+    // told "alerts did not switch on" for a reason nobody could act on.
+    const pageJs = (await import('./mobile/page/shell')).mobileShell('nonce', 'dark', true)
+      .replace(/[\s\S]*<script nonce="nonce">/, '').replace(/<\/script>[\s\S]*/, '');
+    const bytesFn = /function pushBytes\(value\) \{[\s\S]*?\n      \}/.exec(pageJs)?.[0] ?? '';
+    const keyFn = /function pushKeyText\(subscription, name\) \{[\s\S]*?\n      \}/.exec(pageJs)?.[0] ?? '';
+    check(bytesFn.length > 0 && keyFn.length > 0,
+      'the page carries both base64url helpers, so the assertions below are about shipped code',
+      `${bytesFn.length}/${keyFn.length}`);
+    let b64Ok = bytesFn.length > 0 && keyFn.length > 0;
+    let b64Why = '';
+    if (b64Ok) {
+      // eslint-disable-next-line no-new-func -- the shipped fragment, run as served
+      const helpers = new Function(`${bytesFn}\n${keyFn}\nreturn { pushBytes, pushKeyText };`)() as {
+        pushBytes: (value: string) => Uint8Array;
+        pushKeyText: (subscription: { getKey: (name: string) => ArrayBuffer }, name: string) => string;
+      };
+      // 65 bytes is the only length that matters — a P-256 point, which encodes
+      // to 87 base64url characters and is precisely the length the old padding
+      // got wrong. 16 is the auth secret. Random values so a key carrying '+'
+      // or '/' in its standard alphabet is covered too.
+      for (const size of [65, 16]) {
+        for (let i = 0; i < 200 && b64Ok; i++) {
+          const raw = randomBytes(size);
+          const encoded = raw.toString('base64url');
+          try {
+            const back = Buffer.from(helpers.pushBytes(encoded));
+            const out = helpers.pushKeyText(
+              { getKey: () => raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.length) as ArrayBuffer },
+              'p256dh',
+            );
+            if (!back.equals(raw) || out !== encoded) { b64Ok = false; b64Why = `${size}-byte value did not round-trip`; }
+          } catch (error) {
+            b64Ok = false;
+            b64Why = `${size}-byte value threw: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        }
+      }
+    }
+    check(b64Ok,
+      "400 keys survive the page's own base64url helpers under the platform's strict atob, padding included",
+      b64Why);
+
+    // agentsChain() was written, documented down to the heading a UI would give
+    // it, and had no caller — so the one misconfiguration it can detect on its
+    // own, a personal Codex instruction written where this account's Codex will
+    // not read it, could never reach anybody. A finished lane no screen can
+    // enter is the same defect as a feature that was never built.
+    const codexChainSrc = sourceOf('src/main/codex-sessions.ts');
+    const contextSrc = sourceOf('src/renderer/src/views/Context.tsx');
+    const indexSrc = sourceOf('src/main/index.ts');
+    const preloadSrc = sourceOf('src/preload/index.ts');
+    check(codexChainSrc.includes('export function agentsChain')
+      && indexSrc.includes("handle('context:codexAgents'")
+      && preloadSrc.includes("call<CodexAgentsChain>('context:codexAgents'")
+      && contextSrc.includes('<CodexAgentsPanel'),
+    'the Codex AGENTS.md chain reaches a screen — main exposes it, preload types it, and the Context view renders it',
+    'wired');
+    const chain = codexSessions.agentsChain(null, appRoot());
+    check(chain.files.some((file) => file.scope === 'home')
+      && chain.files.some((file) => file.scope === 'project')
+      && /Load order is not predicted/.test(chain.note),
+    'it lists the compiler’s own targets and refuses to claim it knows Codex’s load order',
+    chain.files.map((file) => file.scope));
+    // Against what a reader sees, not against the comment explaining it. The
+    // heading names whose files these are, and {c.note} renders the disclaimer
+    // agentsChain() writes rather than a second copy of it in the view.
+    check(contextSrc.includes('the AGENTS.md files Wanigan writes to')
+      && contextSrc.includes('{c.note}'),
+    'and the panel says whose files these are in its own heading, and prints the chain’s disclaimer rather than restating it');
+
+    const appSrc = sourceOf('src/renderer/src/App.tsx');
+    check(appSrc.includes('notificationRaised') && appSrc.includes('function AlertStack'),
+      'the desktop window draws its own card for the same notification macOS may decline to show');
+
+    const notifySrc = sourceOf('src/main/notify.ts');
+    check(notifySrc.includes('deliverMobileAlert') && !notifySrc.includes('sendMobilePush('),
+      'notify() reaches both phone channels through one call rather than picking one');
+    check(notifySrc.indexOf('raiseInApp') < notifySrc.indexOf('Notification.isSupported'),
+      'the in-window card is raised before the OS banner, which is the sink that may silently decline');
+  }
+
   /* ── phase 24 · the money gate holds on every path ─────────────────── */
   // A missing estimate used to read as $0, so `projected > cap` could never fire
   // for a caller that had not priced its own run — which is every caller the
@@ -3642,8 +4824,20 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // RFC 2606 reserves these for documentation; they turn up in an error message
   // showing the shape of an MCP URL, never as somewhere Wanigan connects.
   const DOC_HOSTS = new Set(['example.com', 'example.org', 'example.net']);
+  // Wanigan's own project URL, and the one https:// literal in the main process
+  // that is not somewhere anything connects. It is the VAPID `sub` claim: a
+  // contact a push service could use if this application server misbehaved,
+  // required by Apple, and carried inside a signed token rather than requested.
+  // It is named here rather than assembled out of fragments to dodge this
+  // sweep, and the assertion below keeps it honest by proving nothing fetches
+  // it — which is the property the table is actually about.
+  const VAPID_SUBJECT_HOST = 'wanigan.deadnorth.io';
+  const webPushSrc = sourceOf('src/main/mobile/webpush.ts');
+  check(webPushSrc.includes(`const VAPID_SUBJECT = 'https://${VAPID_SUBJECT_HOST}'`)
+    && !/fetch\([^)]*deadnorth/.test(webPushSrc),
+  'the one host in main that is not on the egress table is a token claim, and nothing fetches it');
   const onTable = new Set(report.hosts.map((h) => h.host));
-  const unlisted = [...named].filter((h) => !DOC_HOSTS.has(h) && !onTable.has(h));
+  const unlisted = [...named].filter((h) => !DOC_HOSTS.has(h) && !onTable.has(h) && h !== VAPID_SUBJECT_HOST);
   check(unlisted.length === 0,
     'every host the main process names is on the table the Settings panel prints', unlisted.join(', '));
 
@@ -4807,9 +6001,15 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const shadowImported = [...shadowIndexCss.matchAll(/@import\s+'\.\/styles\/([a-z0-9-]+\.css)'/g)].map((m) => m[1]);
   const shadowLastImportEnd = shadowIndexCss.indexOf(';', shadowIndexCss.lastIndexOf('@import')) + 1;
 
-  check(shadowImported.length === 14 && shadowLastImportEnd > 1
+  // The count is a floor, not an equality. What this assertion is about is the
+  // *order* — every @import stated before index.css opens a rule of its own,
+  // which is what makes an imported sheet lose at equal specificity and makes
+  // the gate's fifth check sound. Pinning the exact number instead made every
+  // new stylesheet fail a test about bundler order, which teaches the next
+  // person to edit the number rather than read the sentence.
+  check(shadowImported.length >= 14 && shadowLastImportEnd > 1
     && !shadowIndexCss.slice(0, shadowLastImportEnd).includes('{'),
-  'index.css states every one of its fourteen @import lines before it opens a single rule of its own, which is the fact that makes a declaration in an imported sheet lose to index.css at equal specificity and makes the style gate fifth check sound rather than a guess about bundler order',
+  'index.css states every one of its @import lines before it opens a single rule of its own, which is the fact that makes a declaration in an imported sheet lose to index.css at equal specificity and makes the style gate fifth check sound rather than a guess about bundler order',
   `imported sheets: ${shadowImported.length}, last @import ends at char ${shadowLastImportEnd}, braces before it: ${shadowIndexCss.slice(0, shadowLastImportEnd).split('{').length - 1}`);
 
   const shadowStrays = shadowRows.filter((r) => !shadowImported.includes(r.sheet)).map((r) => r.sheet);
@@ -4914,8 +6114,14 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // regrows one of these fails rather than spending an allowance.
   const cascadeGateRows = [...shadowBaselineBlock.matchAll(/'([a-z0-9-]+\.css)': (\d+),/g)]
     .map((m) => ({ sheet: m[1], allowed: Number(m[2]) }));
-  check(cascadeGateRows.length === 14 && cascadeGateRows.every((r) => r.allowed === 0),
-  'the shadowed-modifier baseline still lists all fourteen imported sheets and grants none of them a single dead declaration, so the debt this check measured cannot be re-opened one sheet at a time by editing the gate instead of the CSS',
+  // Every imported sheet, at zero. Written against the import list rather than
+  // a fixed fourteen for the same reason as the order check above: what this
+  // assertion protects is that the debt cannot be re-opened by editing the
+  // gate, and a hard-coded count makes adding a stylesheet look like re-opening
+  // it. The pairing with shadowImported is also strictly stronger — it catches
+  // a sheet imported but missing from the baseline, which a count cannot.
+  check(cascadeGateRows.length === shadowImported.length && cascadeGateRows.every((r) => r.allowed === 0),
+  'the shadowed-modifier baseline still lists every imported sheet and grants none of them a single dead declaration, so the debt this check measured cannot be re-opened one sheet at a time by editing the gate instead of the CSS',
   `rows: ${cascadeGateRows.length}, sheets still holding an allowance: ${cascadeGateRows.filter((r) => r.allowed > 0).map((r) => `${r.sheet}=${r.allowed}`).join(', ') || 'none'}`);
 
   // A catalog row is an offer, and accepting one runs code on this machine, so
@@ -4964,12 +6170,17 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // the operator’s behalf, not in the "Where this comes from" table below it,
   // and the offline fallback keeps the origin the disk scan read rather than
   // dropping it on the floor.
+  //
+  // `enabled: null` rather than `false`: a disk row records that a plugin is
+  // installed and nothing about whether it is switched on, and hardcoding false
+  // drew a green ✓ beside the word "disabled" for every installed plugin until
+  // the CLI answered — and kept the tick on one that really was off.
   const pluginsViewSrc2 = sourceOf('src/renderer/src/views/Plugins.tsx');
   const consentAt = pluginsViewSrc2.indexOf('<strong>Install {confirming.name}?</strong>');
   const originAt = pluginsViewSrc2.indexOf('{origin(confirming.source, confirming.marketplace)}');
   check(consentAt > 0 && originAt > consentAt
     && originAt < pluginsViewSrc2.indexOf('This dialog is that prompt.')
-    && pluginsViewSrc2.includes('enabled: false, source: a.source,')
+    && pluginsViewSrc2.includes('enabled: null, source: a.source,')
     && !/source: null/.test(pluginsViewSrc2),
     'the plugin’s origin is named inside the install confirmation itself, before the sentence explaining what pressing Install accepts, and the offline catalog row no longer throws away the source the disk scan read',
     { consentAt, originAt });
@@ -5112,7 +6323,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && runBarSrc.includes('disabled={!shown}')
     && runBarSrc.includes('That is not the same as this profile having none.')
     && runBarSrc.includes('shown?.note')
-    && runBarSrc.includes('Typed into the session as a slash command. /model also sets your default')
+    && runBarSrc.includes('Typed into the session as a slash command, and recorded on this')
     && !runBarSrc.includes('models.length > 0'),
     'the running-session picker names the provenance of the list it is showing as a glyph and a word, prints whatever note that read carried instead of letting a published fallback pass as the backend’s answer, keeps saying that these controls type a slash command into the session even when a note is present, says that nothing could be established rather than drawing no models, and holds a disabled reading state until the read returns rather than treating an unanswered read as an empty catalogue',
     runBarSrc.includes("CATALOGUE_MARK[shown ? shown.source : 'reading']"));
@@ -5674,6 +6885,129 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && observedCssSrc.includes('@media (max-width: 980px)'),
     'the observed band’s sheet spells no colour and no font size of its own and reaches the medium shelf at the house 980px rather than inventing a thirteenth breakpoint',
     observedCssSrc.length);
+
+  /* ── the 2026-09-07 audit pass · honesty invariants a renderless suite can
+        only check in source ──────────────────────────────────────────────
+     Each of these fails against the file as it stood before that change, so
+     they are a ratchet rather than a snapshot of what happens to be written. */
+  const gitMainSrc = sourceOf('src/main/git.ts');
+  const preloadIndexSrc = sourceOf('src/preload/index.ts');
+  const controlMainSrc = sourceOf('src/main/control.ts');
+  const sessionsMainAudit = sourceOf('src/main/sessions.ts');
+  const pluginsMainSrc = sourceOf('src/main/plugins.ts');
+  const pluginsViewAudit = sourceOf('src/renderer/src/views/Plugins.tsx');
+  const batchIndexSrc = sourceOf('src/main/batch/index.ts');
+  const insightsViewSrc = sourceOf('src/renderer/src/views/Insights.tsx');
+  const sessionsViewAudit = sourceOf('src/renderer/src/views/Sessions.tsx');
+
+  // A failed read is not an empty repository. `log`, `branches` and `stashes`
+  // each answered [] for a timeout, a locked index or any other git failure,
+  // which the view then drew as a repo with no history, no branches and no
+  // stashes — a claim nobody observed. The unborn case still answers [],
+  // because a repository with no commits genuinely has none.
+  check(!/if \(!r\.ok\) return \[\];/.test(gitMainSrc)
+    && gitMainSrc.includes('if (!tip) return [];')
+    && (gitMainSrc.match(/if \(!r\.ok\) fail\(r\.err\);/g) ?? []).length >= 2
+    && gitMainSrc.includes('if (!patch.ok) fail(patch.err);'),
+  'a git list read that fails says so instead of answering with an empty list, and only an unborn branch — a repository that really has no commits — still answers with one',
+  JSON.stringify({ emptyReturns: (gitMainSrc.match(/if \(!r\.ok\) return \[\];/g) ?? []).length }));
+
+  // The window was declared and dropped, so every windowed spend chart drew
+  // thirty days whatever the picker said, and Insights then rebuilt the surface
+  // split by subtracting series that did not cover the same days.
+  check(preloadIndexSrc.includes("call<{ day: string; actualUsd: number; syncUsd: number }[]>('spend:sync', days)")
+    && preloadIndexSrc.includes("call<UnifiedSpendDay[]>('spend:unified', days)")
+    && insightsViewSrc.includes('window.wanigan.spend.unified(d)')
+    && !insightsViewSrc.includes('r.syncUsd - r.actualUsd'),
+  'every windowed spend channel forwards the window it was given, and Insights reads the three surfaces from the one feeder that computes them rather than inferring two of them by subtraction');
+
+  // A verification ran in a worktree cut from the base branch, so it tested a
+  // tree without the change and recorded a pass that then gated an approval.
+  // The path names the tree in detail_json only: `summary` crosses to a paired
+  // phone, and a worktree path is what that wire may not carry.
+  check(controlMainSrc.includes("type VerificationTree =")
+    && controlMainSrc.includes("kind: 'gone'")
+    && controlMainSrc.includes('isolate: !inherited')
+    && controlMainSrc.includes('useWorktree: inherited')
+    && !/summary = passed[\s\S]{0,200}\$\{tree\.path\}/.test(controlMainSrc)
+    && controlMainSrc.includes('cwd,'),
+  'a goal’s verification runs in the tree its implementation was made in, refuses when that tree is gone rather than testing the base branch, and records which working copy it used where a phone cannot read the path');
+
+  // A task whose session exited kept reading 'running' — offering Mark complete
+  // and holding its file claims against every sibling — until Wanigan restarted.
+  check(controlMainSrc.includes('export function onSessionExit(sessionId: string)')
+    && controlMainSrc.includes('function failRunningNode(')
+    && mainIndexSrc.includes('control.onSessionExit(value.id)'),
+  'a goal task is moved out of running when its session exits rather than at the next start-up, so its claims are released while the operator is still looking at the board');
+
+  // Unreported and zero were the same stored value, so the router totalled
+  // unmetered work as free and ranked it cheapest.
+  check(controlMainSrc.includes('cost_reported')
+    && controlMainSrc.includes('reported ? usage!.costUsd : 0')
+    && controlMainSrc.includes('reported_samples')
+    && !/ORDER BY accepted DESC,tests_passed DESC,samples DESC/.test(controlMainSrc),
+  'the outcome router records whether a cost was reported beside the figure, totals only the reported rows, and ranks by acceptance rate rather than by whichever profile happened to run most');
+
+  // The handler answered true unconditionally, so Fleet said a session "was
+  // ended" for one that had already exited and could never render its own
+  // "had no live process to stop" sentence.
+  check(sessionsMainAudit.includes('export function killSession(sessionId: string): boolean')
+    && mainIndexSrc.includes("handle('sessions:kill', (id: string) => killSession(id));")
+    && fleetViewSrc.includes('Stop sent to')
+    && !fleetViewSrc.includes('was ended.'),
+  'stopping a session reports whether a live process was actually signalled, and the surface says the stop was sent rather than claiming an end it has not observed');
+
+  // /model and /effort are Claude Code slash commands. Refusing only Codex let
+  // a generic-cli pack profile be sent them, where they arrive as a prompt.
+  check(sessionsMainAudit.includes("s.meta.harnessId !== 'claude-code'")
+    && sessionsViewAudit.includes("harness === 'claude-code' && session.status === 'running'")
+    && sessionsViewAudit.includes('declaresTuning'),
+  'model and effort are typed into a running session only on the harness whose commands they are, in main as well as in the renderer, and a profile that declares the fields on another harness is told so rather than shown a control that types into the wrong CLI');
+
+  // An empty array from a failed CLI call was stored as an answered catalog, so
+  // every card claimed the CLI had answered and the disk rows disappeared.
+  check(pluginsViewAudit.includes('setCat(r.note ? null : (r.plugins as CatalogItem[]))')
+    && pluginsMainSrc.includes('function enabledFromSettings()')
+    && pluginsMainSrc.includes('enabledInSettings:')
+    && pluginsViewAudit.includes("'on-settings'"),
+  'a plugin catalog call that failed is kept as no answer rather than as an empty one, and the enabled state settings.json already records is read from disk instead of only from a 90-second pair of CLI calls');
+
+  // A headless fan-out appeared in the Batches list with a Batch-API Cancel,
+  // an Export that wrote nothing and a Delete that removed headless evidence.
+  // The Evals tab told the operator to copy a run in the builder and to paste a
+  // judge run id, while `runVariant` and `judgePair` were exported and
+  // registered nowhere — so `ingestJudgement`, which refuses any run whose kind
+  // is not 'eval', could only ever be handed a run nothing could produce. Same
+  // for the rescue price: the copy promised it and main computed it, and no
+  // screen ever showed it.
+  const evalsMainSrc = sourceOf('src/main/batch/evals.ts');
+  const batchesViewAudit = sourceOf('src/renderer/src/views/Batches.tsx');
+  check(mainIndexSrc.includes("handle('evals:variant'")
+    && mainIndexSrc.includes("handle('evals:judge'")
+    && mainIndexSrc.includes("handle('refusal:estimate'")
+    && preloadIndexSrc.includes("'evals:variant'")
+    && preloadIndexSrc.includes("'evals:judge'")
+    && preloadIndexSrc.includes("'refusal:estimate'")
+    && evalsMainSrc.includes('export async function runVariant')
+    && evalsMainSrc.includes('export async function judgePair'),
+  'the two calls the Evals tab instructs the operator to make are reachable from it, and so is the rescue estimate the rescue copy promises — a surface that tells someone to do something main cannot be asked to do is a sentence with nothing behind it');
+
+  // Both spend money, so the renderer's payload is narrowed in main rather than
+  // trusted: a variant may vary only the fields a pair is allowed to vary, and
+  // exactly one of them, which is the rule createPair enforces after the money
+  // has already been spent.
+  check(mainIndexSrc.includes("if (!allowed.has(key)) throw new Error(`A variant cannot change ${key}.`);")
+    && mainIndexSrc.includes("if (Object.keys(patch).length !== 1)")
+    && mainIndexSrc.includes('A judge needs a rubric')
+    && batchesViewAudit.includes('void runVariant()')
+    && batchesViewAudit.includes('void judge(sel)')
+    && batchesViewAudit.includes('window.wanigan.refusal.estimate(runId, pick)')
+    && !batchesViewAudit.includes('Paste the id of a judge run created for'),
+  'a variant’s change set is validated in main to exactly one of the fields a pair may vary, a judge is refused without a rubric before it is submitted, and the rescue button prints the price it is about to spend');
+
+  check(batchIndexSrc.includes("FROM runs r WHERE r.kind IN ('batch','eval') ORDER BY")
+    && batchIndexSrc.includes("FROM runs r WHERE r.kind IN ('batch','eval') AND r.status IN"),
+  'the Batches list and its in-flight count read batch runs only, so a headless fan-out is not offered a Batch-API cancel, export and delete on a surface that never said it was headless');
 
   check(missingSources.length === 0,
     'every source path this suite reads resolved to a non-empty file, so no negated assertion passes by reading nothing',
@@ -6274,7 +7608,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // on this page hands to main. Nothing used to clear it, so a project whose status read threw left
   // the previous repository's status, and its root, standing under the new one's name.
   check(gitViewSrc.includes('const requestEpoch = useRef(0);')
-    && /useEffect\(\(\) => \{\n\s*requestEpoch\.current \+= 1;\n\s*setSt\(null\); setCommits\(\[\]\); setBrs\(\[\]\); setStash\(\[\]\);/.test(gitViewSrc)
+    && /useEffect\(\(\) => \{\n\s*requestEpoch\.current \+= 1;\n\s*setSt\(null\); setCommits\(\[\]\); setBrs\(\[\]\); setStash\(\[\]\); setWorktrees\(\[\]\);/.test(gitViewSrc)
     && gitViewSrc.includes('setDetail(null); setErr(null); setOk(null); setConfirm(null);')
     && gitViewSrc.includes('setPr(null); setCreating(false);')
     && gitViewSrc.includes('if (epoch !== requestEpoch.current) return null;'),
@@ -6286,7 +7620,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // repositories one press of “Discard changes” acted on the one you had just navigated away from.
   check(gitViewSrc.includes('setDetail(null); setErr(null); setOk(null); setConfirm(null);')
     && !/\} catch \(e\) \{ setErr\(e instanceof Error \? e\.message : String\(e\)\); return null; \}/.test(gitViewSrc)
-    && /setSt\(null\); setCommits\(\[\]\); setBrs\(\[\]\); setStash\(\[\]\);\n\s*setErr\(e instanceof Error/.test(gitViewSrc),
+    && /setSt\(null\); setCommits\(\[\]\); setBrs\(\[\]\); setStash\(\[\]\); setWorktrees\(\[\]\);\n\s*setErr\(e instanceof Error/.test(gitViewSrc),
   'a confirmation raised for one repository is dismissed when the selected project changes rather than left on screen one press from acting on the tree you navigated away from, and a status read that throws drops the status it could not confirm instead of leaving it under the twenty-one call sites that pass st.root to the main process',
   JSON.stringify({ stRootCallSites: (gitViewSrc.match(/st\.root/g) ?? []).length }));
 
@@ -6459,10 +7793,22 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const usageSrc = sourceOf('src/main/usage.ts');
   check(usageSrc.includes("import { allAccountLimits } from './limits'")
     && !usageSrc.includes("from './claude-limits'")
-    && limitsSrc.includes("accounts.list('codex')")
+    && limitsSrc.includes("forHarness('codex')")
+    && limitsSrc.includes("forHarness('claude-code')")
     && limitsSrc.includes('readCodexStatus(force, account.id)')
     && limitsSrc.includes('accounts.listAll()'),
   'the usage snapshot reads every account across harnesses, not only the Claude ones');
+
+  // `accounts.list(harness)` seeds a 'Personal' row for any harness that
+  // supports accounts, whether or not that agent is installed — so reading it
+  // for every readable harness wrote a durable account for an agent the
+  // operator has never had, and then drew a card explaining that Wanigan could
+  // not read it. Seeding follows detection; a row someone actually created is
+  // still shown, because that is a fact and an unasked-for row is not.
+  check(limitsSrc.includes('await detectProviders()')
+    && limitsSrc.includes('installed.has(harness)')
+    && limitsSrc.includes("accounts.listAll().filter((a) => a.harness === harness)"),
+  'the usage snapshot seeds an account only for a harness this machine actually has installed, and shows already-created rows for the rest rather than inventing one for an agent nobody has');
   // Codex names a window by its duration; Claude names it with a word. Where
   // the span is the same, the page must not call it two different things.
   check(limits.__test.windowKind(10_080) === 'week'
@@ -6680,7 +8026,16 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && sessionsCssSrc.includes('.session-picker-scrim')
     && sessionsCssSrc.includes('@media (pointer: coarse)')
     && compactCssSrc.includes('@media (max-width: 720px)')
-    && mobileSrc.includes('const interactive = remoteControlEnabled && session.status !== \'exited\';')
+    // A Fleet card is a live control only while remote control is on — that is
+    // the half of this the label is about. Which session it opens is a separate
+    // question with a separate answer: an ended one opens too, labelled as the
+    // record it is, because its last output is the only account of why it ended
+    // and a card that cannot be tapped cannot give it.
+    && mobileSrc.includes('const interactive = remoteControlEnabled;')
+    && mobileSrc.includes("const ended = session.status === 'exited';")
+    && mobileSrc.includes("'Ended · tap to read its last output'")
+    && mobileSrc.includes('visibleSessions = sessions;')
+    && mobileSrc.includes('This session has ended, so nothing can be typed into it.')
     && mobileSrc.includes('id="monitor-note"')
     && mobileSrc.includes('if (!remoteControlEnabled) {'),
   'tablet sessions keep the terminal full width behind an accessible picker while document surfaces reflow instead of clipping or silently offering unavailable remote controls');

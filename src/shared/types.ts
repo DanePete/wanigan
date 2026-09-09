@@ -32,6 +32,16 @@ export type ProviderCapabilities = {
   transcript: boolean;
   namedResume: boolean;
   headlessJson: boolean;
+  /**
+   * Whether this profile's headless protocol takes a per-run spend ceiling.
+   *
+   * Routed by the declared protocol, not by a profile id. `claude-json` passes
+   * --max-budget-usd; `codex-json` has no budget flag at all, so a timeout is
+   * the only bound a Codex row has. The Runs form offered the field either way
+   * and its lead promised "its own timeout and CLI budget", which was false for
+   * every Codex fan-out.
+   */
+  headlessBudget: boolean;
   note: string | null;
 };
 
@@ -312,6 +322,32 @@ export type PastSession = {
   settledAt: number | null;
   /** The user-facing name; null falls back to the project name. */
   title: string | null;
+};
+
+/**
+ * One resumable conversation, as a paired phone is allowed to see it.
+ *
+ * Deliberately not `PastSession`. That row carries the project's absolute path,
+ * its worktree and the agent's own conversation id — the three things the phone
+ * monitor's boundary excludes by name — so this is a separate shape built from
+ * an allow-list rather than a filtered view of the other. Resuming names a
+ * session by Wanigan's own id and the Mac resolves the rest locally, which is
+ * why no conversation id appears here in either direction.
+ */
+export type MobileRecentSession = {
+  id: string;
+  title: string;
+  projectName: string;
+  providerId: string;
+  model: string | null;
+  startedAt: number;
+  endedAt: number | null;
+  exitCode: number | null;
+  /** Executions folded into this one resumable conversation. */
+  turns: number;
+  /** The project directory still exists, so this can actually be resumed. */
+  live: boolean;
+  pinned: boolean;
 };
 
 /** What the repo looked like when a session started, so its own work is separable. */
@@ -824,6 +860,146 @@ export type MobileMonitorConfig = {
   pushServer: string;
   /** A random ntfy topic acts as the subscription credential. */
   pushTopic: string;
+  /**
+   * Alerts delivered to the installed Wanigan Remote app itself, through Web
+   * Push. Defaults on: the consent that matters is the per-device subscription,
+   * which takes a tap on that device and its own permission prompt.
+   */
+  webPushEnabled: boolean;
+};
+
+/**
+ * One device subscribed to Web Push, as Settings is allowed to see it.
+ *
+ * No endpoint and no keys. Those three values together are the capability to
+ * put a notification on that device's lock screen, they live only in the
+ * OS-encrypted credential file, and a renderer has no use for them — it lists
+ * devices, forgets one, and forgets them all, none of which needs the secret.
+ */
+/**
+ * One alert channel's answer to "prove you work", reported on its own.
+ *
+ * Separate entries rather than a merged verdict, because the two channels fail
+ * for unrelated reasons and only one of them is usually the one the operator is
+ * trying to fix. "One of your two channels works" is precisely the sentence
+ * that sends somebody looking in the wrong place.
+ */
+/**
+ * The emergency stop, and what it reported stopping.
+ *
+ * Read by the renderer on a poll rather than only on its own actions, because
+ * the handle can be pulled from a paired phone: a window that learned about a
+ * halt only when it caused one would go on drawing a running fleet that is not.
+ */
+export type HaltStopReport = { name: string; stopped: number; note?: string };
+
+export type HaltState = {
+  halted: boolean;
+  at: number | null;
+  reason: string | null;
+  /** Where the handle was pulled. A phone may pull it; only the Mac may clear it. */
+  source: 'desktop' | 'phone' | 'automatic' | null;
+  stopped: HaltStopReport[];
+};
+
+/**
+ * One ticket as the board draws it: the task, plus the goal and project it
+ * belongs to, so a card can be read without opening anything.
+ *
+ * There is no ticket table behind this. A card is a work_node read a second
+ * way — the board and the goal's task graph are two views of one set of rows,
+ * because two stores that both claimed to hold the tickets would disagree
+ * inside a week and the one on screen would be the wrong one.
+ */
+/**
+ * One exchange in an interview. `answer` is null while the question is open.
+ *
+ * `why` is the model's own line on what the answer would change about the plan.
+ * It is shown because a question you cannot see the point of is a question you
+ * answer carelessly, and a careless answer is what produces the generic goal
+ * this whole feature exists to stop producing.
+ */
+export type InterviewTurn = {
+  question: string;
+  why: string | null;
+  answer: string | null;
+  at: number;
+};
+
+/** What the interview proposes: a goal contract and the task graph under it. */
+export type InterviewProposal = {
+  title: string;
+  objective: string;
+  risk: DocketRisk;
+  acceptance: string[];
+  plan: DocketPlanNode[];
+};
+
+export type Interview = {
+  id: string;
+  projectId: string;
+  /** The rough description the operator started from. */
+  seed: string;
+  model: string;
+  status: 'asking' | 'proposed' | 'committed' | 'abandoned' | 'failed';
+  turns: InterviewTurn[];
+  proposal: InterviewProposal | null;
+  /** Set once the proposal was accepted and a goal written. */
+  docketId: string | null;
+  /**
+   * What the API reported this interview cost, at synchronous rates. A call the
+   * API reported no usage for is recorded as unpriced in `detail` rather than
+   * totalled as free.
+   */
+  spendUsd: number;
+  /**
+   * A runaway guard derived from the requested length, not the operator's dial.
+   * What they choose is how many questions; the money follows from that.
+   */
+  budgetUsd: number;
+  maxQuestions: number;
+  calls: number;
+  detail: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type BoardCard = {
+  node: DocketNode;
+  docketId: string;
+  docketTitle: string;
+  projectId: string;
+  projectName: string;
+  risk: DocketRisk;
+};
+
+/**
+ * What a test alert would actually reach, read before one is sent.
+ *
+ * This exists because "I pressed Send test alert and nothing happened" has two
+ * completely different causes — a channel that failed, and a channel that was
+ * never going to send because no device had subscribed — and a button that
+ * cannot tell them apart sends people to debug the wrong one.
+ */
+export type MobileAlertChannels = {
+  webPush: { enabled: boolean; ready: boolean; blocked: string | null; deviceCount: number };
+  ntfy: { enabled: boolean; ready: boolean; blocked: string | null };
+};
+
+export type MobileAlertTest = {
+  /** 'desktop' covers the macOS banner and the in-window card together. */
+  channel: 'webpush' | 'ntfy' | 'desktop';
+  ok: boolean;
+  detail: string;
+};
+
+export type MobilePushDeviceSummary = {
+  id: string;
+  label: string;
+  createdAt: number;
+  lastAt: number | null;
+  lastOk: boolean | null;
+  lastError: string | null;
 };
 
 export type MobileMonitorStatus = {
@@ -837,6 +1013,15 @@ export type MobileMonitorStatus = {
   error: string | null;
   lastPushAt: number | null;
   lastPushError: string | null;
+  /** Every device subscribed to Web Push, newest last. */
+  pushDevices: MobilePushDeviceSummary[];
+  /** The Web Push channel's own report of itself, for the Settings panel. */
+  webPush: {
+    ready: boolean;
+    blocked: string | null;
+    lastAt: number | null;
+    lastError: string | null;
+  };
 };
 
 /**
@@ -1163,6 +1348,22 @@ export type DocketNode = {
   startedAt: number | null;
   endedAt: number | null;
   detail: string | null;
+  /**
+   * A date this ticket was parked until, or null for "as soon as it can run".
+   *
+   * Until it passes, the ticket reads as pending however satisfied its
+   * dependencies are, so neither the board nor an autopilot treats it as work
+   * to pick up. It is a date and not a flag because "not now" without a "when"
+   * is how a backlog becomes a graveyard.
+   */
+  deferUntil: number | null;
+  /**
+   * The autopilot dispatcher has claimed this task and is about to launch it.
+   * A queued task reads as 'ready' otherwise, so pressing Start raced the
+   * dispatcher: both created a worktree and a PTY, the atomic claim decided
+   * one, and the loser was killed after its first prompt had already been sent.
+   */
+  queued: boolean;
 };
 
 export type DocketClaim = {
@@ -1237,6 +1438,29 @@ export type DocketDetail = WorkDocket & {
   checkpoints: DocketCheckpoint[];
 };
 
+/**
+ * One day of the bill, with the meters kept apart.
+ *
+ * `sessionUsd` and `headlessUsd` are the CLIs' own numbers; `batchUsd` is
+ * Wanigan's arithmetic over its pricing table. They stay three series so a
+ * caller that stacks them knows it has added two meters together.
+ *
+ * The request counts are what stop a total claiming to be a bill: a session on
+ * a plan that reports no cost contributes requests and no dollars, so a surface
+ * reads `unpricedRequests` and says "at least" rather than printing a figure
+ * that treats unmetered work as free.
+ */
+export type UnifiedSpendDay = {
+  day: string;
+  sessionUsd: number;
+  batchUsd: number;
+  headlessUsd: number;
+  pricedRequests: number;
+  unpricedRequests: number;
+  pricedHeadlessRows: number;
+  unpricedHeadlessRows: number;
+};
+
 export type ModelOutcome = {
   providerId: string;
   model: string;
@@ -1244,7 +1468,15 @@ export type ModelOutcome = {
   samples: number;
   accepted: number;
   testsPassed: number;
+  /**
+   * Summed over the reported rows only. Read it with `reportedSamples`: a total
+   * of 0 from 0 reported rows is "nothing was reported", not "this was free",
+   * and rendering it as a dollar figure is the mistake this field pair exists
+   * to prevent.
+   */
   totalCostUsd: number;
+  /** How many of `samples` carried a cost their CLI actually reported. */
+  reportedSamples: number;
   acceptedRate: number | null;
   testPassRate: number | null;
 };
@@ -1495,6 +1727,8 @@ export type AccountLimits = {
 export type ModelConsumption = {
   accountId: string | null;
   accountLabel: string;
+  /** The agent this account signs into; two accounts can share a label. */
+  harness: string | null;
   model: string;
   requests: number;
   inTokens: number;
@@ -1508,7 +1742,17 @@ export type ModelConsumption = {
 export type ConsumptionPoint = {
   /** Local day, YYYY-MM-DD. */
   day: string;
+  /**
+   * Which account, and which agent it belongs to.
+   *
+   * The label alone is not an identity: `accounts.seed` names the first account
+   * of every harness 'Personal', so a Claude 'Personal' and a Codex 'Personal'
+   * are the default pair on any machine with both — and grouping by label
+   * summed two agents' tokens into one series under one name.
+   */
+  accountId: string | null;
   accountLabel: string;
+  harness: string | null;
   model: string;
   tokens: number;
   costUsd: number;
@@ -3025,6 +3269,29 @@ export type ClaudeContextUsage =
 export type NotificationRoute =
   | { kind: 'session'; sessionId: string }
   | { kind: 'run'; runId: string };
+
+/**
+ * The same notification, delivered to Wanigan's own window.
+ *
+ * Both surfaces fire for one event, and that is not redundancy. A macOS banner
+ * is shown at the operating system's discretion — Do Not Disturb, a Focus mode,
+ * a permission declined once and forgotten, a full-screen app — and none of
+ * those failures is reported back to Wanigan or visible to the operator. An app
+ * whose premise is "leave Fleet open on a second monitor and walk away" cannot
+ * have its only in-room signal be one it is not allowed to observe, so the card
+ * is the surface it can actually promise.
+ *
+ * It carries no more than the banner does: the same title and body, which for a
+ * phone-bound alert have already had commands and paths taken out of them, plus
+ * where a click should land.
+ */
+export type InAppAlert = {
+  at: number;
+  title: string;
+  body: string;
+  urgent: boolean;
+  target: NotificationRoute | null;
+};
 
 /**
  * What a macOS menu item asked for. The menu bar is built in the main process

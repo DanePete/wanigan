@@ -1,4 +1,5 @@
 import { db } from './db';
+import { halted } from './halt';
 import { cancelQueued, enqueue } from './queue';
 import { projectById } from './store';
 
@@ -578,6 +579,11 @@ let ticking = false;
  * is what a person means by "run it when I open the lid".
  */
 export async function tickSchedules(onChange?: () => void): Promise<number> {
+  // A schedule that fires at 03:00 into a halted fleet is the case this latch
+  // exists for: nobody is awake to notice it undid the stop. Its next_at is
+  // left alone, so clearing the halt resumes the schedule rather than skipping
+  // it forward past everything it missed.
+  if (halted()) return 0;
   if (ticking) return 0;
   ticking = true;
   let fired = 0;

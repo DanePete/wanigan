@@ -38,7 +38,7 @@ export const MOBILE_SERVICE_WORKER_PATH = '/sw.js';
  * denylist because the dashboard may be proxied under a path prefix — a
  * denylist written against '/api/' would wave through '/wanigan/api/status'.
  */
-const SHELL_FILES = ['', 'index.html', 'icon.svg', 'manifest.webmanifest'];
+const SHELL_FILES = ['', 'index.html', 'icon.svg', 'icon-180.png', 'manifest.webmanifest'];
 
 /** The placeholder the worker replaces with a per-response CSP nonce. */
 const NONCE_MARK = '%NONCE%';
@@ -232,6 +232,102 @@ self.addEventListener('activate', (event) => {
       await Promise.all(names.map((name) => (name === SHELL_CACHE ? null : self.caches.delete(name))));
     } catch (ignored) { /* nothing to sweep */ }
     try { await self.clients.claim(); } catch (ignored) { /* no clients yet */ }
+  })());
+});
+
+// ── notifications ──────────────────────────────────────────────────
+// The only reason this worker runs when the app is closed. Everything above is
+// about a page that is open; a push arrives at a worker with no page at all,
+// which is exactly the case the whole alert path exists for.
+
+self.addEventListener('push', (event) => {
+  event.waitUntil((async () => {
+    let data = {};
+    // The payload was encrypted by the Mac and decrypted by the browser, so it
+    // is Wanigan's own bytes rather than a third party's — but a worker that
+    // threw here would show nothing, and showing nothing is the one outcome
+    // that gets this app's notification permission taken away. So every field
+    // is read defensively and every branch still ends in showNotification.
+    try { data = event.data ? event.data.json() : {}; } catch (unreadable) { data = {}; }
+    const title = typeof data.title === 'string' && data.title ? data.title : 'Wanigan';
+    const body = typeof data.body === 'string' && data.body
+      ? data.body
+      : 'A session needs you. Open Wanigan to see which.';
+    const options = {
+      body: body,
+      // iOS draws the installed app's own icon and ignores these two; every
+      // other browser uses them. Naming them costs nothing and is the
+      // difference between a branded alert and a grey circle on Android.
+      icon: SCOPE.href + 'icon-180.png',
+      badge: SCOPE.href + 'icon-180.png',
+      data: { view: typeof data.view === 'string' ? data.view : '' },
+      // A permission wait is a question that stays unanswered until somebody
+      // answers it, so it stays on screen. A finished turn is news and behaves
+      // like news.
+      requireInteraction: data.urgent === true,
+    };
+    // Tagging collapses repeats about one session into a single banner rather
+    // than a column of them; renotify makes the replacement still buzz, which
+    // is the point of sending it at all.
+    if (typeof data.tag === 'string' && data.tag) {
+      options.tag = data.tag;
+      options.renotify = true;
+    }
+    await self.registration.showNotification(title, options);
+  })());
+});
+
+// The browser rotated or revoked this device's subscription without being
+// asked. Firefox fires this; Safari's support is unreliable and Chrome's has
+// been incomplete for years, which is why the page also re-registers on every
+// launch — belt and braces, because between the rotation and the next launch
+// this device is subscribed to nothing and nobody is told.
+//
+// The worker cannot reach the pairing token: it lives in the page's
+// localStorage, which a worker has no access to. So it re-subscribes and hands
+// the result to whatever page is open; if none is, the next launch's own
+// re-registration does the same job a moment later.
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil((async () => {
+    try {
+      const old = event.oldSubscription || (await self.registration.pushManager.getSubscription());
+      const key = event.newSubscription
+        ? null
+        : (old && old.options && old.options.applicationServerKey) || null;
+      const next = event.newSubscription
+        || (key ? await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }) : null);
+      if (!next) return;
+      const open = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for (let i = 0; i < open.length; i++) {
+        try { open[i].postMessage({ wanigan: 'resubscribe' }); } catch (gone) { /* client died */ }
+      }
+    } catch (ignored) {
+      // Nothing this worker can do about it alone. The page repairs it on its
+      // next launch, which is the path that has the token.
+    }
+  })());
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const wanted = (event.notification.data && event.notification.data.view) || '';
+  event.waitUntil((async () => {
+    const open = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (let i = 0; i < open.length; i++) {
+      const client = open[i];
+      if (client.url.indexOf(SCOPE.href) !== 0) continue;
+      try { await client.focus(); } catch (denied) { /* the platform refused to raise it */ }
+      // Asked for, not navigated to. Which screen the app is on lives in
+      // localStorage and never in the URL (see nav.ts for why), so a worker
+      // that tried to route by changing the address would be fighting the one
+      // design decision that keeps a pairing token out of the address bar.
+      try { client.postMessage({ wanigan: 'view', view: wanted }); } catch (gone) { /* client died mid-focus */ }
+      return;
+    }
+    // Nothing open: a cold launch lands on the remembered screen, which is the
+    // best available answer — the app has to boot before it can be told where
+    // to go, and by then the operator is looking at it.
+    try { await self.clients.openWindow(SCOPE.href); } catch (blocked) { /* nothing more this worker can do */ }
   })());
 });
 

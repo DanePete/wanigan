@@ -33,7 +33,7 @@ const OK = 0;
 const FAILED = 1;
 const USAGE = 2;
 
-const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'learn-probe', 'learn-phrase', 'learn-sweep', 'learn-consolidate', 'help'] as const;
+const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'phone-launch', 'phone-start', 'learn-probe', 'learn-phrase', 'learn-sweep', 'learn-consolidate', 'help'] as const;
 type Command = (typeof COMMANDS)[number];
 
 // Scout rows are created only by the fixed weekly schedule. Keeping this
@@ -356,6 +356,126 @@ function cmdSessions(args: string[]): number {
   return OK;
 }
 
+/**
+ * The phone's launch form, answered from a terminal.
+ *
+ * "I cannot start a session from my iPad" has four different causes and the
+ * device cannot tell them apart: the listener is off, remote control is off,
+ * this Mac has no project to launch into, or every profile the picker would
+ * offer has no installed executable behind it. The page is honest about the
+ * last two — the Start button is disabled with a sentence saying which — but
+ * reading that sentence means holding the phone, and the answer is a fact about
+ * this Mac. So it is printed here, against the same database and the same
+ * detection the server uses, with no device and no pairing involved.
+ *
+ * It reports exactly what /api/control would build. What it deliberately does
+ * NOT report is whether the window has wired its control bridge: that is a fact
+ * about a running app, this process is not one, and printing "no bridge" here
+ * would be a diagnosis of the phone drawn from the CLI's own emptiness.
+ */
+async function cmdPhoneLaunch(): Promise<number> {
+  const { mobileConfig } = await import('./mobile/config');
+  const { detectProviders } = await import('./providers');
+  const { mobileLaunchProviders } = await import('./mobile/launch-options');
+  const { listProjects } = await import('./store');
+
+  const config = mobileConfig();
+  const projects = listProjects();
+  const detected = await detectProviders();
+  const offered = await mobileLaunchProviders(detected, projects.map((project) => project.id));
+  const launchable = offered.filter((row) => row.available);
+
+  out(`listener            ${config.dashboardEnabled ? 'on' : 'OFF — Settings → Phone monitor'}`);
+  out(`remote control      ${config.remoteControlEnabled ? 'on' : 'OFF — Settings → Phone monitor'}`);
+  out(`projects            ${projects.length || 'none — the form has nothing to launch into'}`);
+  out(`launchable profiles ${launchable.length} of ${offered.length}`);
+  out('');
+  table(
+    ['PROFILE', 'LABEL', 'INSTALLED', 'MODELS', 'ACCOUNTS'],
+    offered.map((row) => {
+      const detectedRow = detected.find((value) => value.id === row.id);
+      return [
+        row.id,
+        row.label,
+        row.available ? (detectedRow?.path ?? 'yes') : 'no executable found',
+        String(row.models.length),
+        String(row.accounts.choices.length),
+      ];
+    }),
+    [3, 4]
+  );
+  if (projects.length) {
+    out('');
+    table(['PROJECT', 'NAME'], projects.slice(0, 20).map((project) => [project.id, project.name]));
+  }
+  const blocked = !config.dashboardEnabled || !config.remoteControlEnabled || !projects.length || !launchable.length;
+  out('');
+  out(blocked
+    ? 'The phone cannot start a session, and the lines above say which of the four reasons applies.'
+    : 'Nothing here blocks a launch from the phone: both opt-ins are on, and there is a project and an installed profile to launch with.');
+  return OK;
+}
+
+/**
+ * One launch through the phone's own call, with the terminal printed after it.
+ *
+ * A session that starts and exits a second later reaches the phone as a card it
+ * cannot tap and a console it cannot select, so the one thing that would explain
+ * it — what the CLI printed on its way out — is the one thing the operator
+ * cannot reach. This runs the identical call the phone's launch button makes,
+ * waits, and prints the scrollback and the exit code.
+ *
+ * It is a diagnostic, not a way to work: the PTY belongs to this process, so the
+ * session dies when this command returns. Nothing here is left running.
+ */
+async function cmdPhoneStart(args: string[]): Promise<number> {
+  const positional = args.filter((value) => !value.startsWith('--'));
+  const flag = (name: string): string | undefined => {
+    const at = args.indexOf(`--${name}`);
+    return at === -1 ? undefined : args[at + 1];
+  };
+  const [projectId, providerId] = positional;
+  if (!projectId || !providerId) {
+    out('usage: phone-start <projectId> <providerId> [--model M] [--effort E] [--prompt TEXT]');
+    return USAGE;
+  }
+  const { createSession, listSessions, scrollback, killSession } = await import('./sessions');
+  let id = '';
+  try {
+    const session = await createSession({
+      providerId,
+      projectId,
+      model: flag('model'),
+      effort: flag('effort'),
+      initialPrompt: flag('prompt') ?? 'Say hello and stop.',
+    });
+    id = session.id;
+    out(`started ${session.id} — ${session.title}`);
+  } catch (error) {
+    out(`createSession refused: ${error instanceof Error ? error.message : String(error)}`);
+    return FAILED;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 6_000));
+  const row = listSessions().find((value) => value.id === id);
+  out('');
+  out(`status after 6s      ${row ? row.status : 'gone from the session list'}`);
+  out('');
+  out('── what the agent wrote ─────────────────────────────────────────');
+  out(scrollback(id).trim() || '(nothing at all — the process wrote no bytes before it went)');
+  out('─────────────────────────────────────────────────────────────────');
+  // …and what the phone would be sent for it. The colour an agent writes is the
+  // structure a phone reads, so a session that came up plain is worth seeing
+  // here rather than on a device.
+  const { readTerminalScreen } = await import('./mobile/terminal');
+  const read = readTerminalScreen({ sessionId: id, title: 'probe', running: true, raw: scrollback(id), cursor: null });
+  const coloured = read.spans.filter((row) => row.length > 0).length;
+  out('');
+  out(`the phone would be sent ${read.spans.length} lines, ${coloured} of them carrying colour, `
+    + `from a palette of ${read.palette.length} styles`);
+  killSession(id);
+  return OK;
+}
+
 function cmdHelp(): number {
   out(`Wanigan CLI — same database, no window.
 
@@ -367,6 +487,13 @@ function cmdHelp(): number {
   export <runId> <file>        results to .csv or .jsonl (extension decides)
   queue <kind> <label> [json]  queue work: kind is session, headless or batch
   sessions [limit]             recent agent sessions
+  phone-launch                 why the phone's Start-an-agent form can or
+                               cannot launch: the two opt-ins, the projects it
+                               would list, and each profile's installed path
+  phone-start <project> <profile> [--model M] [--effort E] [--prompt TEXT]
+                               start one session through the same call the
+                               phone's launch button makes, then print what the
+                               agent wrote and whether it was still running
   learn-probe <profile> [--approve] [--budget USD] [--model ID]
                                one real model-assisted phrasing call against
                                invented facts, to find out whether a profile
@@ -583,6 +710,8 @@ export async function runCli(argv: string[]): Promise<number> {
       case 'export': return cmdExport(rest);
       case 'queue': return cmdQueue(rest);
       case 'sessions': return cmdSessions(rest);
+      case 'phone-launch': return await cmdPhoneLaunch();
+      case 'phone-start': return await cmdPhoneStart(rest);
       case 'learn-probe': return await cmdLearnProbe(rest);
       case 'learn-phrase': return await cmdLearnPhrase(rest);
       case 'learn-sweep': return await cmdLearnSweep(rest);

@@ -70,7 +70,13 @@ export type MobileNavEntry = {
 export const MOBILE_VIEWS: readonly MobileNavEntry[] = [
   { id: 'fleet',    label: 'Fleet',    group: 'Work',    bar: true,  icon: 'grid',     hint: 'every session at once, and which ones need you',                      narrows: ['fleet'] },
   { id: 'agent',    label: 'Agent',    group: 'Work',    bar: true,  icon: 'terminal', hint: "one agent's terminal, and the next thing you tell it",                narrows: ['sessions'] },
-  { id: 'goals',    label: 'Goals',    group: 'Work',    bar: false, icon: 'target',   hint: "a goal's contract, its task graph, and the decision waiting on you",  narrows: ['control'] },
+  // Narrows both desktop readings of the same rows. Control asks how one goal
+  // is going and the Board asks what is outstanding across all of them; on a
+  // phone those collapse into one question — which of my goals needs me — for
+  // the same reason Insights and Usage collapse into Spend. A five-column board
+  // is also the one layout a phone genuinely cannot hold without becoming a
+  // list, and a list of every ticket is the Goals screen.
+  { id: 'goals',    label: 'Goals',    group: 'Work',    bar: false, icon: 'target',   hint: "your goals, their tasks, and the decision waiting on you",  narrows: ['control', 'board'] },
   { id: 'batches',  label: 'Batches',  group: 'Work',    bar: false, icon: 'layers',   hint: 'one prompt fanned across many inputs, and what came back',            narrows: ['batches'] },
   { id: 'runs',     label: 'Runs',     group: 'Work',    bar: false, icon: 'play',     hint: 'headless runs, and the schedules that start them without you',        narrows: ['runs', 'schedules'] },
   // Spend wears the gauge rather than the chart: the reading that gets checked

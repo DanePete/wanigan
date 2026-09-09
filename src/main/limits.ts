@@ -1,4 +1,5 @@
 import * as accounts from './accounts';
+import { detectProviders } from './providers';
 import { allLimits as claudeLimits } from './claude-limits';
 import { readCodexStatus, type CodexLimitWindow, type CodexStatus } from './codex-status';
 import type { AccountLimits, AgentAccount, LimitWindow } from '../shared/types';
@@ -117,11 +118,27 @@ function unsupported(account: AgentAccount): AccountLimits {
  * logins for one agent sit together.
  */
 export async function allAccountLimits(force = false): Promise<AccountLimits[]> {
-  const claude = claudeLimits(force);
-  const codexAccounts = accounts.list('codex');
+  // `accounts.list(harness)` seeds a 'Personal' row for any harness that
+  // supports accounts, whether or not that agent is installed. Reading it here
+  // for every readable harness wrote a durable row for an agent the operator
+  // has never had and then drew a card explaining that Wanigan cannot read it.
+  // So: seed only what is installed, and show already-created rows for the
+  // rest — an account someone made and later uninstalled the CLI for is a fact,
+  // an account nobody made is not.
+  const installed = new Set(
+    (await detectProviders()).filter((p) => p.path).map((p) => p.harnessId),
+  );
+  const forHarness = (harness: string): AgentAccount[] => (
+    installed.has(harness)
+      ? accounts.list(harness)
+      : accounts.listAll().filter((a) => a.harness === harness)
+  );
+
+  const claudeAccounts = forHarness('claude-code');
+  const codexAccounts = forHarness('codex');
   const others = accounts.listAll().filter((a) => !READABLE.has(a.harness));
   const [claudeRows, codexRows] = await Promise.all([
-    claude,
+    claudeLimits(force, claudeAccounts),
     Promise.all(codexAccounts.map((account) => codexLimitsFor(account, force))),
   ]);
   return [...claudeRows, ...codexRows, ...others.map(unsupported)];

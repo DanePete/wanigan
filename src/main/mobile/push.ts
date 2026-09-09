@@ -16,6 +16,12 @@ export type MobilePushInput = {
   title: string;
   body: string;
   urgent?: boolean;
+  /**
+   * Groups repeats about one session into a single banner. Used only by the
+   * Web Push sink, where it rides inside the encrypted record; ntfy has no
+   * equivalent and ignores it.
+   */
+  tag?: string;
 };
 
 export type MobilePushResult = {

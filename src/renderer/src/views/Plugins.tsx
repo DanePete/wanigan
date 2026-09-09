@@ -10,10 +10,12 @@ type Installed = {
   description: string | null; author: string | null; homepage: string | null;
   skills: Component[]; commands: Component[]; agents: Component[];
   hookEvents: string[]; mcpServers: string[]; hasReadme: boolean; present: boolean; bytes: number;
+  /** What settings.json says, or null when it does not mention this plugin. */
+  enabledInSettings: boolean | null;
 };
 type Src = { kind: string; origin: string; local: boolean; subpath: string | null; pinned: string | null };
 type Available = { id: string; name: string; marketplace: string; description: string | null; installed: boolean; path: string; source: Src | null };
-type CatalogItem = { id: string; name: string; marketplace: string; description: string; installed: boolean; enabled: boolean; source: Src | null };
+type CatalogItem = { id: string; name: string; marketplace: string; description: string; installed: boolean; enabled: boolean | null; source: Src | null };
 type Action = { ok: boolean; output: string; error: string | null };
 type Market = { name: string; source: string; installLocation: string; lastUpdated: number | null; present: boolean };
 type State = {
@@ -64,10 +66,24 @@ function origin(s: Src | null, marketplace: string) {
  *  - `unlisted`  the CLI answered and has never heard of this id, so the disk
  *                remains the only source and both actions stay on offer.
  */
-type Enablement = 'unread' | 'on' | 'off' | 'absent' | 'unlisted';
+type Enablement = 'unread' | 'on-settings' | 'off-settings' | 'on' | 'off' | 'absent' | 'unlisted';
 
-function enablementOf(id: string, cat: CatalogItem[] | null): Enablement {
-  if (!cat) return 'unread';
+/**
+ * Whether this plugin is switched on, and how that is known.
+ *
+ * settings.json is consulted first because it is the file the CLI itself reads,
+ * it is already on disk, and asking the CLI costs two subprocesses and up to
+ * ninety seconds. The CLI's answer still wins when it has been asked — it is
+ * the live authority and it also knows about plugins the settings file does not
+ * mention — but there is no longer a state where every card says the answer is
+ * unknowable while the answer sits in a JSON file Wanigan already reads.
+ */
+function enablementOf(id: string, cat: CatalogItem[] | null, fromSettings: boolean | null): Enablement {
+  if (!cat) {
+    if (fromSettings === true) return 'on-settings';
+    if (fromSettings === false) return 'off-settings';
+    return 'unread';
+  }
   const row = cat.find((c) => c.id === id);
   if (!row) return 'unlisted';
   if (!row.installed) return 'absent';
@@ -82,8 +98,18 @@ function enablementOf(id: string, cat: CatalogItem[] | null): Enablement {
 const ENABLEMENT: Record<Enablement, { glyph: string; word: string; tone: string; blurb: string }> = {
   unread: {
     glyph: '?', word: 'enabled state not read', tone: 'var(--text-faint)',
-    blurb: 'Nothing on disk records whether Claude Code has this switched on — installed_plugins.json and the '
-      + 'plugin folder note the installation and stop there. The CLI does know, and has not been asked yet.',
+    blurb: 'This account’s settings.json does not mention this plugin, so the CLI decides for it. '
+      + 'Ask the CLI above to have it answer.',
+  },
+  'on-settings': {
+    glyph: '●', word: 'enabled in settings', tone: 'var(--good)',
+    blurb: 'This account’s settings.json switches it on, so its skills, commands, hooks and MCP servers load '
+      + 'into sessions. Ask the CLI to confirm against what it is actually running.',
+  },
+  'off-settings': {
+    glyph: '○', word: 'disabled in settings', tone: 'var(--text-dim)',
+    blurb: 'This account’s settings.json switches it off, so it costs a session nothing. Ask the CLI to '
+      + 'confirm against what it is actually running.',
   },
   on: {
     glyph: '●', word: 'enabled', tone: 'var(--good)',
@@ -145,7 +171,13 @@ export default function Plugins() {
     setCatBusy(true);
     try {
       const r = await window.wanigan.plugins.catalog();
-      setCat(r.plugins as CatalogItem[]);
+      // A note means the CLI did not answer — it is missing, it errored, or it
+      // returned a shape this build does not recognise. Storing its empty array
+      // as a catalog made `cat` truthy, so every card said "The CLI answered
+      // and its catalog has no entry with this id", the retry button vanished,
+      // and the 54 rows read off disk a second earlier disappeared behind a
+      // search-miss message for an empty query. No answer is null.
+      setCat(r.note ? null : (r.plugins as CatalogItem[]));
       setCatNote(r.note);
     } catch (e) { setCatNote(e instanceof Error ? e.message : String(e)); }
     finally { setCatBusy(false); }
@@ -173,9 +205,13 @@ export default function Plugins() {
 
   const catalog = useMemo(() => {
     const s = q.trim().toLowerCase();
+    // Disk rows record installation and nothing about enablement, so `enabled`
+    // is null here rather than false: hardcoding false drew a green ✓ beside
+    // the word "disabled" for every installed plugin until the CLI answered,
+    // and kept the tick on one that really was switched off.
     const rows: CatalogItem[] = cat ?? (st?.available ?? []).map((a) => ({
       id: a.id, name: a.name, marketplace: a.marketplace,
-      description: a.description ?? '', installed: a.installed, enabled: false, source: a.source,
+      description: a.description ?? '', installed: a.installed, enabled: null, source: a.source,
     }));
     if (!s) return rows;
     return rows.filter((a) => a.name.toLowerCase().includes(s) || a.description.toLowerCase().includes(s));
@@ -316,7 +352,7 @@ export default function Plugins() {
             {st.installed.map((p) => {
               const items = [...p.skills, ...p.commands, ...p.agents];
               const isOpen = open[p.id];
-              const state = enablementOf(p.id, cat);
+              const state = enablementOf(p.id, cat, p.enabledInSettings ?? null);
               const mark = ENABLEMENT[state];
               // Only an answered state can narrow the actions to one. Every
               // other answer keeps both, because offering only Disable was a
@@ -509,7 +545,14 @@ export default function Plugins() {
               </div>
             )}
             {catalog.length === 0 ? (
-              <p className="faint">Nothing in the catalog matches “{q}”.</p>
+              // A search miss and an empty catalog are different facts, and
+              // reporting "nothing matches ''" for a query nobody typed sent
+              // the operator looking for a filter they had not set.
+              q.trim()
+                ? <p className="faint">Nothing in the catalog matches “{q}”.</p>
+                : catNote !== null
+                  ? <p className="faint">The catalog could not be read, so there is nothing to list here yet.</p>
+                  : <p className="faint">No marketplace is added yet — add one above to see what is on offer.</p>
             ) : (
               <div className="pg-cat">
                 {catalog.slice(0, 200).map((a) => (
@@ -517,7 +560,11 @@ export default function Plugins() {
                     <div className="t">
                       <span>{a.name}</span>
                       {a.installed
-                        ? <span className="pg-yes">✓ {a.enabled ? 'installed' : 'disabled'}</span>
+                        ? a.enabled === null
+                          ? <span className="faint pg-state">installed · enabled state not read</span>
+                          : a.enabled
+                            ? <span className="pg-yes">✓ installed</span>
+                            : <span className="faint pg-state">○ installed, switched off</span>
                         : (
                           <button className="btn" style={{ marginLeft: 'auto', fontSize: 'var(--t-micro)', padding: '2px 8px' }}
                                   disabled={!!working}

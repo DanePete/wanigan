@@ -57,6 +57,13 @@
 .gt-file.on { background: var(--accent-soft); }
 .gt-file .st { width: 12px; flex: none; font-weight: 700; text-align: center; font-family: ui-monospace, monospace; font-size: 11px; }
 .gt-file .p { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Branch and stash rows hold their actions in a `.go` span that matched no
+   rule, so the chips hugged the name at a ragged x instead of sitting in a
+   right-aligned column the eye can run down. */
+.gt-file .go { margin-left: auto; flex: none; display: flex; gap: var(--s-1); }
+/* A branch checked out in an agent's worktree, marked because merging one is
+   routed through the worktree guards rather than a bare `git merge`. */
+.gt-wt-mark { margin-left: var(--s-2); font-size: var(--t-micro); }
 .gt-file-row { display: flex; align-items: center; }
 .gt-file-row .gt-file { flex: 1; min-width: 0; }
 /* 24px hit area for the stage/unstage control, outside the path button. */

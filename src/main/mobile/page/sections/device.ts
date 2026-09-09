@@ -93,14 +93,27 @@ export const DEVICE_SECTION: DeviceSection = {
           <div id="device-can" class="device-can"></div>
 
           <h2>Alerts to this device</h2>
+          <div id="device-push" class="notice device-push">
+            <strong id="device-push-claim">Checking whether this device can be alerted.</strong>
+            <p id="device-push-why" class="why"></p>
+            <button id="device-push-act" type="button" class="secondary hidden"></button>
+          </div>
           <div id="device-alert-row" class="device-can"></div>
           <div class="notice device-alert-note">
-            <strong>What an alert can actually be on this phone.</strong>
+            <strong>What an alert can actually be on this device.</strong>
             <div class="device-facts">
               <div class="device-fact"><span>Last attempt</span><strong id="device-alert-last">Not read yet</strong></div>
               <div class="device-fact"><span>This page</span><strong id="device-alert-mode">Not read yet</strong></div>
             </div>
-            <p class="why">While this page is open it can raise the notice at the top of Fleet and put a count in the tab title, and that is the whole of what a page can do. Installing it to the Home Screen adds nothing to it: iOS delivers a web app's notification only through Web Push, which Wanigan has not built — this page has never asked for notification permission and holds no push subscription. Anything that has to reach you with this page closed goes through the ntfy app instead, which Wanigan publishes to from the Mac.</p>
+            <p class="why">With alerts on, the Mac sends a notification to this device through your browser's push service, encrypted so that only this device can read it — the service carries it and cannot see what it says. It arrives with this app closed and the screen locked, which is the whole point of it. While the page is open it also raises the notice at the top of Fleet and puts a count in the tab title, and those two work whether or not you switch anything on. On iPhone and iPad the notification needs this app added to the Home Screen: iOS delivers Web Push to an installed web app and to nothing else, so the button above says so rather than asking for a permission that would not be honoured.</p>
+          </div>
+
+          <h2>Stop everything</h2>
+          <div id="device-halt-panel" class="notice device-halt">
+            <strong>Halt the whole fleet from here.</strong>
+            <span>Kills every agent, stops the queue and the schedules, and disarms unattended dispatch. Nothing starts again until it is cleared at the Mac — including from this device, because deciding the danger has passed is not something to do from a lock screen. Working trees are left exactly as the agents left them.</span>
+            <button id="device-halt" type="button" class="secondary">Halt everything</button>
+            <p id="device-halt-note" class="why device-halt-note" role="status"></p>
           </div>
 
           <h2>What stays on the Mac</h2>
@@ -112,7 +125,7 @@ export const DEVICE_SECTION: DeviceSection = {
             </div>
             <div class="device-item">
               <strong>Phone alerts</strong>
-              <span>The ntfy server and topic Wanigan publishes to. Neither ever crosses to this device — the phone is told whether the path works, and nothing that would let it, or anyone else holding this token, subscribe to that topic. Wanigan Settings → Phone monitor.</span>
+              <span>Whether the Mac sends at all, on either channel, and the ntfy server and topic it publishes to. None of that ever crosses to this device — it is told whether the path works, and nothing that would let it, or anyone else holding this token, subscribe in its place. The one alert setting this device owns is the switch above, because it is the only one whose consent belongs to the device. Wanigan Settings → Phone monitor.</span>
             </div>
             <div class="device-item">
               <strong>Repository review</strong>
@@ -152,12 +165,22 @@ ${ABSENT_ROWS}
     .device-row.unknown .device-row-state { color:var(--serious); }
     .device-row p { color:var(--dim); font-size:13px; }
     .device-alert-note { margin-top:9px; }
+    .device-push { display:grid; gap:7px; margin-bottom:9px; }
+    .device-push.on { border-color:color-mix(in srgb,var(--good) 45%,var(--line)); }
+    .device-push.wrong { border-color:color-mix(in srgb,var(--serious) 50%,var(--line)); }
+    .device-push .why:empty { display:none; }
+    .device-push button { justify-self:start; margin-top:4px; }
+    .device-push button.hidden { display:none; }
     .device-lead { color:var(--dim); font-size:12px; margin-bottom:10px; }
     .device-list + .device-lead { margin-top:18px; }
     .device-list { display:grid; gap:9px; }
     .device-item { padding:14px; border:1px solid var(--line); border-radius:13px; background:var(--panel); }
     .device-item strong { display:block; color:var(--ink); margin-bottom:3px; }
     .device-item span { color:var(--dim); font-size:13px; }
+    .device-halt { display:grid; gap:7px; }
+    .device-halt.armed { border-color:var(--critical); }
+    .device-halt button { justify-self:start; margin-top:4px; }
+    .device-halt-note:empty { display:none; }
     .device-unpair.armed { border-color:color-mix(in srgb,var(--critical) 55%,var(--line)); }
     .device-unpair button { margin-top:13px; }
     .device-unpair-note:empty { display:none; }`,
@@ -314,19 +337,28 @@ ${ABSENT_ROWS}
             deviceAlertFailure(state) +
             (state.retryable ? ' — Wanigan will try the next one by itself.' : ' — Wanigan will not try again until that is fixed.'));
         }
+        // Which channel carried it, named from what the Mac reported rather
+        // than assumed. The two are not interchangeable to somebody standing
+        // here: 'the Wanigan app' is a notification this device either did or
+        // did not agree to receive, and 'ntfy' is a separate app that has to be
+        // installed and subscribed before the word means anything at all.
+        const channels = state.channels || { webPush: false, ntfy: false };
+        const via = channels.webPush && channels.ntfy ? 'App and ntfy'
+          : channels.webPush ? 'Through the app'
+            : channels.ntfy ? 'Through ntfy' : 'On';
         if (state.lastOutcome === 'sent') {
-          return deviceRow(name, 'can', 'Through ntfy',
-            'Your ntfy server accepted an alert' + (when ? ' ' + when : '') +
-            '. Whether this device showed it is not reported back: Wanigan publishes to a topic and cannot see which devices are subscribed to it.');
+          return deviceRow(name, 'can', via,
+            'An alert was accepted' + (when ? ' ' + when : '') +
+            '. Whether this device showed it is not reported back: Wanigan hands the notification to a push service and never hears what became of it.');
         }
         if (state.lastOutcome === 'skipped') {
-          return deviceRow(name, 'can', 'Through ntfy',
+          return deviceRow(name, 'can', via,
             'The last alert' + (when ? ' ' + when : '') +
-            ' was not sent, because alerts were switched off at the moment it happened. Nothing has been published since.');
+            ' was not sent, because alerts were switched off at the moment it happened. Nothing has been sent since.');
         }
-        return deviceRow(name, 'can', 'Through ntfy',
-          (fresh ? 'Wanigan can publish to your ntfy topic' : 'Wanigan could publish to your ntfy topic ' + deviceAsOf()) +
-          ', and nothing has needed an alert yet, so this path has not been proved end to end from this device. A test send from Wanigan Settings → Phone monitor is what proves it.');
+        return deviceRow(name, 'can', via,
+          (fresh ? 'Wanigan can send an alert' : 'Wanigan could send an alert ' + deviceAsOf()) +
+          ', and nothing has needed one yet, so this path has not been proved end to end from this device. A test send from Wanigan Settings → Phone monitor is what proves it.');
       }
 
       // Dated from the reading, and worded from the outcome the Mac reported.
@@ -383,6 +415,7 @@ ${ABSENT_ROWS}
         byId('device-alert-row').replaceChildren(deviceAlertRow());
         deviceWords('device-alert-last', deviceAlertLast(deviceAlerts));
         deviceWords('device-alert-mode', deviceDisplayWords());
+        paintPush();
       }
 
       // Store only. The paint is left to applyFreshness below, which poll()
@@ -397,6 +430,333 @@ ${ABSENT_ROWS}
         // moment it read the alert path, which is the only thing lastAt can
         // honestly be subtracted from.
         deviceGeneratedAt = Number(snapshot.generatedAt) || 0;
+      }
+
+      // ── alerts to this device ────────────────────────────────────
+      // Web Push, and the three facts that shape every branch below.
+      //
+      // iOS delivers a web app's notification only to an app that has been
+      // added to the Home Screen. In a Safari tab there is no push at all, so
+      // the button is not offered there — asking for a permission that cannot
+      // be honoured produces a device that looks subscribed and never buzzes,
+      // which is worse than saying no.
+      //
+      // Notification.requestPermission() is honoured only inside a user
+      // gesture. That is why the call below is the first statement of the tap
+      // and everything else is awaited after it: one await before it and Safari
+      // refuses, silently, with a promise that resolves to 'default'.
+      //
+      // A subscription is bound to the key it was created with. When the Mac
+      // rotates that key every subscription on every device stops working, and
+      // nothing tells the device — so the key is remembered here and compared
+      // on every open, and a mismatch is repaired by subscribing again rather
+      // than reported as a fault the operator has to understand.
+      const PUSH_KEY = 'wanigan.mobile.pushkey';
+      const PUSH_WANTED = 'wanigan.mobile.pushon';
+      // This device's own name for itself, generated once and kept. Safari
+      // rotates a Home Screen app's push endpoint on its own — a subscription
+      // that goes inactive after a week or two, or comes back as a completely
+      // different one after a restart, is the common report — and without a
+      // stable id the Mac saw each rotation as a *new device*. One phone became
+      // eight rows, seven of them dead, and the cap then evicted the operator's
+      // iPad to make room for the eighth copy of their phone.
+      const PUSH_CLIENT = 'wanigan.mobile.pushclient';
+      let pushState = 'unknown';
+      let pushWhy = '';
+      let pushBusy = false;
+
+      function pushRemember(name, value) {
+        // Safari in a private window throws on write rather than returning.
+        try { if (value === null) localStorage.removeItem(name); else localStorage.setItem(name, value); }
+        catch (ignored) { /* the preference is a convenience, not state the page needs */ }
+      }
+      function pushRecall(name) {
+        try { return localStorage.getItem(name) || ''; } catch (ignored) { return ''; }
+      }
+
+      function pushClientId() {
+        let id = pushRecall(PUSH_CLIENT);
+        if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) {
+          // randomUUID is not available on every browser this page has to run
+          // in, and this value only has to be unique among one operator's
+          // devices — it is not a credential and proves nothing.
+          id = 'd' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+          pushRemember(PUSH_CLIENT, id);
+        }
+        return id;
+      }
+
+      function pushSupported() {
+        return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+      }
+
+      // Asked of the browser rather than inferred from the user agent, the same
+      // way deviceDisplayWords() does it, and for a sharper reason here: this
+      // decides whether a button appears at all.
+      function pushInstalled() {
+        if (navigator.standalone === true) return true;
+        try { return window.matchMedia('(display-mode: standalone)').matches; } catch (ignored) { return false; }
+      }
+
+      // base64url in, bytes out. applicationServerKey takes a string in current
+      // browsers and a BufferSource in the ones that shipped Web Push first;
+      // the array satisfies both.
+      function pushBytes(value) {
+        const padded = value.replace(/-/g, '+').replace(/_/g, '/');
+        // Three '=' and not four. base64url drops the padding, and a length
+        // ending 87 characters — which is exactly what a 65-byte P-256 point
+        // encodes to, so it is every key this ever sees — needs one '=' back.
+        // A four-character source string here adds two, and a real atob refuses
+        // the result outright: "The string to be decoded is not correctly
+        // encoded". Node's Buffer.from(s, 'base64') accepts it, which is why a
+        // round-trip test written against that shim went green on the broken
+        // version and only a browser ever failed.
+        const raw = atob(padded + '==='.slice((padded.length + 3) % 4));
+        const out = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+        return out;
+      }
+
+      function pushKeyText(subscription, name) {
+        const raw = subscription.getKey(name);
+        if (!raw) return '';
+        const bytes = new Uint8Array(raw);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        return btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+      }
+
+      // What this device calls itself in the Mac's device list. Deliberately a
+      // category rather than anything that identifies the hardware: it exists so
+      // an operator can tell 'iPhone' from 'iPad' when forgetting one, and a
+      // full user-agent string on the Mac's screen would be a fingerprint kept
+      // for no reason. iPadOS reports itself as a Macintosh, so the touch count
+      // is what tells the two apart.
+      function pushLabel() {
+        const ua = navigator.userAgent || '';
+        if (/iPad/.test(ua)) return 'iPad';
+        if (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return 'iPad';
+        if (/iPhone/.test(ua)) return 'iPhone';
+        if (/Android/.test(ua)) return 'Android device';
+        if (/Macintosh/.test(ua)) return 'Mac';
+        return 'Paired device';
+      }
+
+      function pushPost(path, payload) {
+        return api(path, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem(KEY) },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      /**
+       * Bring this device's subscription in line with the Mac's.
+       *
+       * The interactive flag is the difference between a tap and a page load. A tap may
+       * ask for permission and create a subscription; a load may only repair one
+       * that already exists, because silently subscribing a device whose
+       * operator switched alerts off — permission stays granted after they do —
+       * would undo the one action this screen offers.
+       */
+      async function pushSync(interactive) {
+        if (pushBusy) return;
+        if (!pushSupported()) { pushState = 'unsupported'; paintDevice(); return; }
+        if (!pushInstalled()) { pushState = 'not-installed'; paintDevice(); return; }
+        if (!interactive && pushRecall(PUSH_WANTED) !== '1') { pushState = 'off'; paintDevice(); return; }
+
+        // Before any await. See the note at the top of this block.
+        const asking = interactive && Notification.permission === 'default'
+          ? Notification.requestPermission()
+          : null;
+
+        pushBusy = true;
+        pushWhy = '';
+        paintDevice();
+        try {
+          if (asking) {
+            const answer = await asking;
+            if (answer !== 'granted') { pushState = 'denied'; return; }
+          }
+          if (Notification.permission !== 'granted') {
+            pushState = Notification.permission === 'denied' ? 'denied' : 'off';
+            return;
+          }
+
+          const registration = await navigator.serviceWorker.ready;
+          const answer = await api('api/push/key');
+          const key = String(answer.key || '');
+          if (!key) throw new Error('Wanigan did not send a push key.');
+
+          let subscription = await registration.pushManager.getSubscription();
+          if (subscription && pushRecall(PUSH_KEY) !== key) {
+            // Bound to a key the Mac no longer signs with. It cannot be
+            // repaired, only replaced.
+            try { await subscription.unsubscribe(); } catch (ignored) { /* already gone */ }
+            subscription = null;
+          }
+          if (!subscription) {
+            subscription = await registration.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: pushBytes(key),
+            });
+          }
+
+          await pushPost('api/push/subscribe', {
+            endpoint: subscription.endpoint,
+            keys: { p256dh: pushKeyText(subscription, 'p256dh'), auth: pushKeyText(subscription, 'auth') },
+            label: pushLabel(),
+            clientId: pushClientId(),
+          });
+          pushRemember(PUSH_KEY, key);
+          pushRemember(PUSH_WANTED, '1');
+          pushState = answer.enabled === false ? 'muted' : 'on';
+        } catch (error) {
+          pushState = 'error';
+          pushWhy = error && error.message ? String(error.message) : 'The subscription did not go through.';
+        } finally {
+          pushBusy = false;
+          paintDevice();
+          // The alert path's own report is part of the next reading, and the
+          // operator has just changed it. Waiting out the poll interval to see
+          // the row agree with the button is how a working feature reads broken.
+          void poll();
+        }
+      }
+
+      /** Stop alerts to this device: tell the Mac first, then drop the subscription. */
+      async function pushStop() {
+        if (pushBusy || !pushSupported()) return;
+        pushBusy = true;
+        pushWhy = '';
+        paintDevice();
+        try {
+          const registration = await navigator.serviceWorker.ready;
+          const subscription = await registration.pushManager.getSubscription();
+          if (subscription) {
+            // The Mac is told before the browser forgets, because the endpoint
+            // is the only name the Mac knows this device by — unsubscribing
+            // first would leave a row nothing can ever match or remove.
+            try { await pushPost('api/push/forget', { endpoint: subscription.endpoint }); }
+            catch (ignored) { /* the row may already be gone; the local half still has to happen */ }
+            try { await subscription.unsubscribe(); } catch (ignored) { /* already gone */ }
+          }
+          pushRemember(PUSH_WANTED, '0');
+          pushRemember(PUSH_KEY, null);
+          pushState = 'off';
+        } catch (error) {
+          pushState = 'error';
+          pushWhy = error && error.message ? String(error.message) : 'This device could not be unsubscribed.';
+        } finally {
+          pushBusy = false;
+          paintDevice();
+          void poll();
+        }
+      }
+
+      // One row of copy per state: the claim, the explanation, and what the
+      // button does. Every one of them says what this device gets, because the
+      // question the operator is asking on this screen is never 'what is the
+      // state machine doing' — it is 'will my phone buzz'.
+      function pushCopy() {
+        if (pushBusy) return { claim: 'Working…', why: '', act: '', tone: '' };
+        const remote = deviceAlerts && deviceAlerts.webPush ? deviceAlerts.webPush : null;
+        switch (pushState) {
+          case 'unsupported':
+            return {
+              claim: 'This browser cannot receive alerts.',
+              why: 'It does not support Web Push, so nothing can reach it once this page is closed. On iPhone and iPad that means Safari; other browsers on iOS cannot do it at all.',
+              act: '', tone: 'wrong',
+            };
+          case 'not-installed':
+            return {
+              claim: 'Add Wanigan to the Home Screen first.',
+              why: 'iOS delivers a web app’s notification only to an installed app, never to a tab. Tap Share, then Add to Home Screen, and open Wanigan from the icon — this screen will offer the switch there.',
+              act: '', tone: 'wrong',
+            };
+          case 'denied':
+            return {
+              claim: 'Notifications are blocked for this app.',
+              why: 'The permission was declined, and only the device can give it back: open Settings → Notifications → Wanigan on this device and allow them, then come back here.',
+              act: 'Try again', tone: 'wrong',
+            };
+          case 'error':
+            return {
+              claim: 'Alerts to this device did not switch on.',
+              why: pushWhy,
+              act: 'Try again', tone: 'wrong',
+            };
+          case 'muted':
+            return {
+              claim: 'This device is subscribed, but the Mac is not sending.',
+              why: 'The subscription went through and Wanigan has it. Alerts to the Wanigan app are switched off in Wanigan Settings → Phone monitor, so nothing will be sent until they are switched back on there.',
+              act: 'Stop alerts to this device', tone: 'wrong',
+            };
+          case 'on':
+            return {
+              claim: 'Alerts to this device are on.',
+              why: 'Wanigan will notify this device when an agent is waiting for approval, stops on an error, or finishes a turn — with this app closed and the screen locked.'
+                + (remote && remote.devices > 1 ? ' ' + remote.devices + ' devices are subscribed in all.' : ''),
+              act: 'Stop alerts to this device', tone: 'on',
+            };
+          case 'off':
+            return {
+              claim: 'Alerts to this device are off.',
+              why: 'Nothing reaches this device once this page is closed. Switching them on asks for notification permission once, and then Wanigan sends the same three states it shows on the Fleet screen.',
+              act: 'Send alerts to this device', tone: '',
+            };
+          default:
+            return { claim: 'Checking whether this device can be alerted.', why: '', act: '', tone: '' };
+        }
+      }
+
+      function paintPush() {
+        const copy = pushCopy();
+        deviceWords('device-push-claim', copy.claim);
+        deviceWords('device-push-why', copy.why);
+        const button = byId('device-push-act');
+        button.classList.toggle('hidden', !copy.act);
+        if (copy.act && button.textContent !== copy.act) button.textContent = copy.act;
+        button.disabled = pushBusy;
+        const panel = byId('device-push');
+        panel.classList.toggle('on', copy.tone === 'on');
+        panel.classList.toggle('wrong', copy.tone === 'wrong');
+      }
+
+      // Two taps, like Unpair below and for a stronger reason: this one ends
+      // every agent on the Mac. The arm expires, so a tap now and a pocket tap
+      // later are never read as one decision.
+      let haltArmedAt = 0;
+      let haltBusy = false;
+
+      function haltDisarm() {
+        haltArmedAt = 0;
+        byId('device-halt').textContent = 'Halt everything';
+        byId('device-halt-panel').classList.remove('armed');
+      }
+
+      async function haltPull() {
+        haltBusy = true;
+        byId('device-halt').disabled = true;
+        byId('device-halt').textContent = 'Stopping…';
+        try {
+          const result = await pushPost('api/halt', { reason: 'Stopped from a paired device.' });
+          const counted = (result.stopped || [])
+            .filter((row) => row && row.stopped > 0)
+            .map((row) => row.stopped + ' ' + row.name)
+            .join(', ');
+          deviceWords('device-halt-note', 'Halted. ' + (counted || 'Nothing was running') +
+            '. Nothing will start until it is cleared at the Mac.');
+        } catch (error) {
+          deviceWords('device-halt-note', 'The halt did not go through: ' +
+            (error && error.message ? String(error.message) : 'the Mac did not answer.') +
+            ' Nothing was stopped.');
+        } finally {
+          haltBusy = false;
+          haltDisarm();
+          byId('device-halt').disabled = false;
+          void poll();
+        }
       }
 
       function deviceDisarm() {
@@ -427,6 +787,31 @@ ${ABSENT_ROWS}
       // it was left with. It reads nothing over the network — the load is a
       // repaint — but ui.watch is how the frame tells a screen it is on.
       ui.watch('device', () => { paintDevice(); });
+      byId('device-halt').addEventListener('click', () => {
+        if (haltBusy) return;
+        if (Date.now() - haltArmedAt > DEVICE_ARM_MS) {
+          haltArmedAt = Date.now();
+          byId('device-halt').textContent = 'Tap again to halt everything';
+          byId('device-halt-panel').classList.add('armed');
+          deviceWords('device-halt-note', 'This kills every agent on the Mac and stops the queue, the schedules and unattended dispatch. Only the Mac can start things again.');
+          setTimeout(() => { if (Date.now() - haltArmedAt >= DEVICE_ARM_MS) haltDisarm(); }, DEVICE_ARM_MS + 200);
+          return;
+        }
+        void haltPull();
+      });
+      byId('device-push-act').addEventListener('click', () => {
+        // Deliberately not two-tap like Unpair below. That button destroys a
+        // pairing the operator may not be able to re-create from where they are
+        // standing; this one subscribes or unsubscribes a device, and both
+        // directions are one tap away from being undone.
+        if (pushState === 'on' || pushState === 'muted') { void pushStop(); return; }
+        void pushSync(true);
+      });
+      // On open rather than on load: a subscription that the Mac lost, or one
+      // bound to a key it has since rotated, is repaired here without the
+      // operator being told anything happened. It is a no-op unless this device
+      // was switched on, which is what keeps it from undoing a deliberate off.
+      void pushSync(false);
       byId('device-unpair').addEventListener('click', () => {
         // Two taps. A thumb finds this button by accident on a screen it is
         // scrolling past, and a pairing link is not something you can re-scan

@@ -51,6 +51,17 @@ export type InstalledPlugin = {
   /** False when installed_plugins.json points somewhere that no longer exists. */
   present: boolean;
   bytes: number;
+  /**
+   * What the account's own settings.json says about this plugin, or null when
+   * no settings layer names it.
+   *
+   * The card used to say "nothing on disk records whether Claude Code has this
+   * switched on" and then shell out to the CLI twice, up to 90 seconds, to
+   * learn it. settings.json records it under `enabledPlugins`, and Wanigan's
+   * own context reader has been reading that key from every settings layer the
+   * whole time. This is the same fact, read once.
+   */
+  enabledInSettings: boolean | null;
 };
 
 /**
@@ -269,6 +280,26 @@ function marketplaceSources(mkt: string): Map<string, unknown> {
 let cache: { at: number; value: PluginState } | null = null;
 const TTL_MS = 15_000;
 
+/**
+ * `enabledPlugins` from the account's own settings.json.
+ *
+ * User scope only, deliberately: this view is about the plugin store under the
+ * configuration directory, and a project's settings can only be read against a
+ * project the view has not been given. A key absent here is null — unknown, not
+ * off — because a plugin the file does not mention is one the CLI decides for.
+ */
+function enabledFromSettings(): Record<string, boolean> {
+  const file = path.join(path.dirname(ROOT), 'settings.json');
+  const raw = readJson(file);
+  const table = raw?.enabledPlugins;
+  if (!table || typeof table !== 'object' || Array.isArray(table)) return {};
+  const out: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(table as Record<string, unknown>)) {
+    if (typeof value === 'boolean') out[key] = value;
+  }
+  return out;
+}
+
 export function readPlugins(): PluginState {
   if (cache && Date.now() - cache.at < TTL_MS) return cache.value;
 
@@ -277,6 +308,7 @@ export function readPlugins(): PluginState {
 
   const reg = readJson(path.join(ROOT, 'installed_plugins.json'));
   const entries = (reg?.plugins ?? {}) as Record<string, unknown>;
+  const settingsEnabled = enabledFromSettings();
 
   for (const [id, raw] of Object.entries(entries)) {
     const list = Array.isArray(raw) ? raw : [raw];
@@ -294,6 +326,7 @@ export function readPlugins(): PluginState {
       scope: typeof e.scope === 'string' ? e.scope : 'user',
       installedAt: ts(e.installedAt), lastUpdated: ts(e.lastUpdated),
       path: dir, present,
+      enabledInSettings: id in settingsEnabled ? settingsEnabled[id] : null,
       ...man,
       skills: present ? listSkills(path.join(dir, 'skills')) : [],
       commands: present ? listMarkdown(path.join(dir, 'commands'), 'command') : [],

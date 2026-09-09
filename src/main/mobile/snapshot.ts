@@ -3,6 +3,7 @@ import { theme } from '../settings';
 import { controlScopeAllowed, json, registerApiRoute, send } from './dispatch';
 import type { MobileFleetSession, MobileFleetSnapshot } from '../../shared/types';
 import type { MobilePushProbe } from './push';
+import type { MobileWebPushProbe } from './webpush';
 
 /**
  * The privacy boundary. /api/status is the only route that carries fleet
@@ -31,6 +32,9 @@ let snapshotSource: SnapshotSource | null = null;
 type PushProbeSource = () => MobilePushProbe;
 let pushProbeSource: PushProbeSource | null = null;
 
+type WebPushProbeSource = () => MobileWebPushProbe;
+let webPushProbeSource: WebPushProbeSource | null = null;
+
 /** Register the only source of bytes returned by /api/status. */
 export function configureSnapshotSource(fn: SnapshotSource | null): void {
   snapshotSource = fn;
@@ -46,6 +50,19 @@ export function configureSnapshotSource(fn: SnapshotSource | null): void {
  */
 export function configureMobilePushProbe(fn: PushProbeSource | null): void {
   pushProbeSource = fn;
+}
+
+/**
+ * The same, for the Web Push sink.
+ *
+ * Registered separately rather than composed by whichever module happens to
+ * load last. Two sinks reporting through one setter would make the phone's
+ * alert state depend on module import order, and the failure that produces —
+ * one channel's report silently replacing the other's — looks exactly like a
+ * working screen.
+ */
+export function configureWebPushProbe(fn: WebPushProbeSource | null): void {
+  webPushProbeSource = fn;
 }
 
 export function safeString(value: unknown, max: number, fallback = ''): string {
@@ -66,14 +83,23 @@ function money(value: unknown): number {
 }
 
 /**
- * What the phone is told about the channel that is meant to reach it when this
- * page is closed. The point of putting it on the wire at all is that a phone
- * showing a healthy fleet and a phone whose alerts have been failing for two
- * days look identical, and only one of them is safe to walk away from.
+ * What the phone is told about the channels that are meant to reach it when
+ * this page is closed. The point of putting it on the wire at all is that a
+ * phone showing a healthy fleet and a phone whose alerts have been failing for
+ * two days look identical, and only one of them is safe to walk away from.
  *
- * Nothing here identifies the channel. The topic is the ntfy subscription
- * credential — anyone holding it receives every alert — and the server URL is
- * network-identifying metadata the page has no use for, so neither travels.
+ * Nothing here identifies a channel. The ntfy topic is that channel's whole
+ * subscription credential — anyone holding it receives every alert — and a Web
+ * Push endpoint is the capability to put a banner on one specific device's lock
+ * screen. Neither travels, in either direction: the phone that just handed over
+ * its own subscription is not handed it back.
+ *
+ * The top-level fields are the two channels merged, because the question this
+ * screen answers is "will anything reach me", not "which pipe carried it". The
+ * `webPush` block beside them is the exception, and it is here for one reason:
+ * it is the only channel this device can do something about, and the Device
+ * screen needs to know whether the Mac would accept a subscription from it
+ * before offering a button that asks for notification permission.
  */
 export type MobileAlertState = {
   enabled: boolean;
@@ -88,6 +114,18 @@ export type MobileAlertState = {
   lastHttpStatus: number | null;
   /** Whether Wanigan will attempt the next alert by itself after a failure. */
   retryable: boolean;
+  /** Which of the two channels the operator has switched on at the Mac. */
+  channels: { webPush: boolean; ntfy: boolean };
+  webPush: {
+    enabled: boolean;
+    ready: boolean;
+    blocked: string | null;
+    /**
+     * How many devices hold a subscription. A count and not a list: this device
+     * learns that it is not alone, never who the others are.
+     */
+    devices: number;
+  };
 };
 
 function wireReason(value: string | null | undefined, max: number): string | null {
@@ -106,21 +144,49 @@ function wireReason(value: string | null | undefined, max: number): string | nul
  * later field lands on the wire without anyone deciding it should.
  */
 function alertState(): MobileAlertState {
-  const probe = pushProbeSource ? pushProbeSource() : null;
-  const last = probe?.last ?? null;
+  const ntfy = pushProbeSource ? pushProbeSource() : null;
+  const web = webPushProbeSource ? webPushProbeSource() : null;
+
+  const ntfyOn = ntfy?.enabled === true;
+  const webOn = web?.enabled === true;
+  const ready = ntfy?.ready === true || web?.ready === true;
+
+  // The blocked sentence is the one an operator acts on, so when both channels
+  // are stuck it names the one they would fix. Web Push first: it is the
+  // default channel, its fix is a tap on the device already in their hand, and
+  // an ntfy sentence shown to somebody who never configured ntfy sends them to
+  // a screen about a service they are not using.
+  const blocked = ready ? null : (webOn ? web?.blocked : null) ?? (ntfyOn ? ntfy?.blocked : null)
+    ?? web?.blocked ?? ntfy?.blocked ?? null;
+
+  // The more recent of the two attempts, whichever channel made it. A merged
+  // "last alert" that always reported one channel would go on saying an alert
+  // was sent an hour ago while the other channel failed a minute ago.
+  const attempts = [web?.last ?? null, ntfy?.last ?? null].filter((value) => value !== null);
+  const last = attempts.reduce<typeof attempts[number] | null>(
+    (newest, item) => (newest === null || finite(item!.at) > finite(newest.at) ? item : newest),
+    null,
+  );
   const outcome: MobileAlertState['lastOutcome'] = !last
     ? 'none'
     : last.ok === true ? 'sent' : last.skipped === true ? 'skipped' : 'failed';
   const status = last?.httpStatus;
   return {
-    enabled: probe?.enabled === true,
-    ready: probe?.ready === true,
-    blocked: wireReason(probe?.blocked, 240),
+    enabled: ntfyOn || webOn,
+    ready,
+    blocked: wireReason(blocked, 240),
     lastAt: last ? finite(last.at) || null : null,
     lastOutcome: outcome,
     lastReason: wireReason(last?.error, 240),
     lastHttpStatus: typeof status === 'number' && Number.isFinite(status) ? Math.trunc(status) : null,
     retryable: last?.retryable === true,
+    channels: { webPush: webOn, ntfy: ntfyOn },
+    webPush: {
+      enabled: webOn,
+      ready: web?.ready === true,
+      blocked: wireReason(web?.blocked, 240),
+      devices: count(web?.deviceCount),
+    },
   };
 }
 

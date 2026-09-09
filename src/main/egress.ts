@@ -6,7 +6,7 @@ import { getKey, hasProviderKey } from './keys';
 import { otelEnv } from './otel';
 import { transcriptsDir } from './transcripts';
 import { flags } from './settings';
-import { mobileConfig } from './mobile';
+import { mobileConfig, pushEndpointHosts } from './mobile';
 import { improvementScoutSettings, listSources } from './improvement-scout';
 import { providerPackRegistry } from './providers';
 import type { EgressHost, EgressPath, EgressPin, EgressReport } from '../shared/types';
@@ -168,6 +168,11 @@ function hosts(): EgressHost[] {
   const glm = glmKey();
   const deepseek = deepseekKey();
   const phone = mobileConfig();
+  // Read once, before the table is built. Decrypting the credential file can
+  // fail on its own, and a privacy panel that threw would show nothing at all —
+  // which is the one failure mode worse than an incomplete list.
+  let pushHosts: string[] = [];
+  try { pushHosts = pushEndpointHosts(); } catch { pushHosts = []; }
   const scout = improvementScoutSettings();
   const scoutHosts: EgressHost[] = listSources().map((source) => {
     let host = source.url;
@@ -272,6 +277,22 @@ function hosts(): EgressHost[] {
       activeNow: phone.pushEnabled,
       overrideEnv: null,
     },
+    // One row per push service a device actually subscribed through, read from
+    // the stored subscriptions rather than named here. Every other row on this
+    // table has a destination Wanigan chose; this one's is chosen by whichever
+    // browser the operator installed the phone app in — Safari picks Apple's,
+    // Firefox picks Mozilla's — so a hostname typed into this file would be a
+    // guess presented as an inventory. When nothing is subscribed there is no
+    // row, because nothing goes anywhere.
+    ...pushHosts.map((host): EgressHost => ({
+      host,
+      paths: ['/ (an opaque per-device path this table deliberately does not print)'],
+      by: 'wanigan',
+      purpose: 'Carrying a notification to one device that subscribed to alerts from the Wanigan app. The body is encrypted to a key held only by that device, so the service relays it without being able to read it.',
+      when: 'While alerts to the Wanigan app are on and a session needs approval, stops on an error or finishes a turn — or when you press Send test alert. What this service can see is the device it is for and the time you were alerted; the title, project name and state are inside the encrypted payload, and prompts, commands, paths and terminal output are never in it at all.',
+      activeNow: phone.webPushEnabled,
+      overrideEnv: null,
+    })),
     {
       host: 'api.anthropic.com',
       paths: [],

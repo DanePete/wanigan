@@ -76,3 +76,8 @@
 .pg-why > p { margin: 4px 0 0; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.5; }
 
 .pg-title { display: grid; gap: 2px; }
+
+/* An installed plugin whose enable state has not been read, or was read as off.
+   Neither earns the green tick .pg-yes carries: one is unknown and the other is
+   a plugin that is costing sessions nothing. */
+.pg-state { font-size: var(--t-micro); margin-left: auto; }

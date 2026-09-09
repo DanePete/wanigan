@@ -10,6 +10,7 @@ import { CONSOLE_SECTION } from './sections/console';
 import { FLEET_SECTION } from './sections/fleet';
 import { GIT_SECTION } from './sections/git';
 import { LAUNCH_SECTION } from './sections/launch';
+import { RECENT_SECTION } from './sections/recent';
 
 /**
  * The registry of screens the phone page is made of. A screen owns its markup,
@@ -71,11 +72,17 @@ export type MobileSection = {
 
 // Order is render order: the alert panel sits above the fleet on the Fleet
 // screen — an alert below the session it is about is an alert you find after
-// you did not need it — then the console, the skill launcher beneath it and the
-// launch form fill the remote-control slot on the Agent screen. The last two
-// each own a screen.
+// you did not need it — then the console, the launch form directly beneath it
+// and the skill launcher last fill the remote-control slot on the Agent screen.
+//
+// The launch form used to come last, and on an iPhone that put "Start an agent"
+// below the terminal AND below a list of every installed skill: two full screens
+// of scrolling from the top of the Agent screen, which is indistinguishable from
+// a phone that cannot start a session at all. It sits under the console now, and
+// the Fleet screen — the one a phone opens on — carries a button that jumps
+// straight to it.
 export const MOBILE_SECTIONS: readonly MobileSection[] = [
-  ALERTS_SECTION, FLEET_SECTION, CONSOLE_SECTION, SKILLS_SECTION, LAUNCH_SECTION, GIT_SECTION,
+  ALERTS_SECTION, FLEET_SECTION, CONSOLE_SECTION, LAUNCH_SECTION, RECENT_SECTION, SKILLS_SECTION, GIT_SECTION,
   SPEND_SECTION, MANAGE_SECTION, GOALS_SECTION, LEARNING_SECTION, SCOUT_SECTION, DEVICE_SECTION,
 ];
 

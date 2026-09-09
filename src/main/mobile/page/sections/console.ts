@@ -28,15 +28,56 @@ export const CONSOLE_SECTION: MobileSection = {
   slot: 'controls',
   markup: `        <div id="agent-console" class="control-card agent-console" tabindex="-1">
           <div class="console-kicker">Selected agent</div>
-          <div class="terminal-head"><div><h3 id="terminal-title">Live terminal output</h3><p>Readable live output from the selected session. Whatever you send below is typed into this agent&rsquo;s terminal, exactly as it would be at the Mac: a message, or one of the single keys a prompt is waiting on.</p></div><button id="terminal-refresh" type="button" class="secondary">Refresh</button></div><p id="terminal-note" class="terminal-note hidden"></p><pre id="terminal" class="terminal">Choose a running session to open its terminal.</pre>
+          <div class="terminal-head"><div><h3 id="terminal-title">Live terminal output</h3><p>Readable live output from the selected session. Whatever you send below is typed into this agent&rsquo;s terminal, exactly as it would be at the Mac: a message, or one of the single keys a prompt is waiting on.</p></div><button id="terminal-refresh" type="button" class="secondary">Refresh</button></div><p id="terminal-note" class="terminal-note hidden"></p><pre id="terminal" class="terminal">Choose a session to open its terminal.</pre>
           <div id="terminal-keys" class="terminal-keys hidden" role="group" aria-label="Press one key in this session terminal"></div>
-          <form id="prompt-form" class="fields"><label class="field-label"><span>Session</span><select id="session" aria-label="Running session"></select></label><textarea id="session-prompt" aria-label="Message for the selected agent" maxlength="8000" required placeholder="Type the next instruction for this agent…"></textarea><button>Send message</button><button id="interrupt" type="button" class="secondary">Interrupt turn</button></form>
+          <form id="prompt-form" class="fields"><label class="field-label"><span>Session</span><select id="session" aria-label="Session"></select></label><textarea id="session-prompt" aria-label="Message for the selected agent" maxlength="8000" required placeholder="Type the next instruction for this agent…"></textarea><p id="prompt-blocker" class="account-note hidden" role="status"></p><button>Send message</button><button id="interrupt" type="button" class="secondary">Interrupt turn</button></form>
         </div>`,
   style: `    .agent-console { scroll-margin-top:16px; border-color:color-mix(in srgb,var(--accent) 45%,var(--line)); }
     /* overscroll-behavior keeps a flick inside the terminal. Without it, reading
        to the end of the output carries straight on into scrolling the page, and
        the live screen someone was reading slides away under their thumb. */
-    .terminal { margin-top:10px; min-height:210px; max-height:58vh; overflow:auto; overscroll-behavior:contain; white-space:pre-wrap; overflow-wrap:anywhere; padding:13px; border-radius:10px; background:var(--terminal); border:1px solid var(--line); color:var(--terminal-ink); font:15px/1.58 ui-monospace,SFMono-Regular,Menlo,monospace; -webkit-text-size-adjust:100%; }
+    /* The palette the Mac's sixteen colour names resolve against, mirroring the
+       desktop's xterm theme so one agent's output reads the same on both
+       surfaces. It does not change with the appearance setting, and that is
+       deliberate: this box is dark in both, and a colour the agent picked for a
+       dark terminal has to stay legible on the dark terminal it lands on.
+       Anything the Mac sent as a 24-bit value is used as-is; these are only the
+       named slots. */
+    .terminal {
+      --t-black:#18120f; --t-bright-black:#b4a895;
+      --t-red:#ff9188; --t-bright-red:#ffb7b1;
+      --t-green:#7be3a2; --t-bright-green:#a6f1be;
+      --t-yellow:#ffd16d; --t-bright-yellow:#ffe29b;
+      --t-blue:#80a9ff; --t-bright-blue:#aac5ff;
+      --t-magenta:#c1a9ff; --t-bright-magenta:#dccdff;
+      --t-cyan:#79d5d1; --t-bright-cyan:#a7e9e5;
+      --t-white:#f6eedf; --t-bright-white:#fffaf0;
+      margin-top:10px; min-height:210px; max-height:58vh; overflow:auto; overscroll-behavior:contain;
+      white-space:pre-wrap; overflow-wrap:anywhere; tab-size:2;
+      padding:14px 13px; border-radius:12px;
+      background:var(--terminal); border:1px solid color-mix(in srgb,var(--terminal) 55%,var(--line));
+      box-shadow:inset 0 1px 0 #ffffff0d, 0 10px 28px var(--shadow);
+      color:var(--terminal-ink);
+      /* 1.45 rather than 1.58: a terminal reads as one block, and the looser
+         leading turned every wrapped agent line into two paragraphs. Ligatures
+         are off because a coding face turns != and -> into glyphs that no longer
+         line up with the box drawing beside them. */
+      font:15px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
+      font-variant-ligatures:none; font-feature-settings:"liga" 0,"calt" 0;
+      -webkit-text-size-adjust:100%;
+    }
+    .terminal ::selection { background:color-mix(in srgb,var(--accent) 45%,transparent); }
+    .terminal::-webkit-scrollbar { width:10px; height:10px; }
+    .terminal::-webkit-scrollbar-thumb { background:#ffffff24; border-radius:999px; }
+    .terminal::-webkit-scrollbar-track { background:transparent; }
+    /* The attributes SGR carries besides colour. Bold is a weight step rather
+       than a jump, because a mono face at 15px on a phone goes muddy at 700 on a
+       dark ground; dim is opacity so it stays in whatever hue the run already
+       had. */
+    .tf-bold { font-weight:620; }
+    .tf-dim { opacity:.66; }
+    .tf-italic { font-style:italic; }
+    .tf-underline { text-decoration:underline; text-underline-offset:2px; }
     .terminal-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
     .terminal-head p { margin-bottom:0; }
     .terminal-note { color:var(--serious); font-size:12px; margin:9px 0 0; }
@@ -93,19 +134,99 @@ export const CONSOLE_SECTION: MobileSection = {
       let terminalCursor = '';
       let terminalNodes = null;
 
-      // The <pre> is painted as two text nodes rather than one string. Setting
+      // The <pre> is painted as two containers rather than one string. Setting
       // textContent hands the browser the whole screen again on every tick,
       // which is the same quarter-megabyte problem one layer down; appending to
-      // the settled node and replacing only the still-redrawing tail keeps the
-      // device's side of the poll as cheap as the wire's.
+      // the settled half and replacing only the still-redrawing tail keeps the
+      // device's side of the poll as cheap as the wire's. They are elements
+      // rather than text nodes because the Mac now sends the colour along with
+      // the characters, and a coloured run is a span.
       function terminalParts() {
         const output = byId('terminal');
         if (!terminalNodes || terminalNodes.settled.parentNode !== output) {
           output.textContent = '';
-          terminalNodes = { settled: document.createTextNode(''), tail: document.createTextNode('') };
+          terminalNodes = { settled: document.createElement('span'), tail: document.createElement('span') };
+          terminalNodes.tail.className = 'terminal-live';
           output.append(terminalNodes.settled, terminalNodes.tail);
         }
         return terminalNodes;
+      }
+
+      // The sixteen names the Mac may send, each answered by one of this page's
+      // own tokens, exactly as the desktop answers xterm's palette from CSS. A
+      // name that is not on this list, and anything that is not a plain #rrggbb,
+      // colours nothing: the agent's own output chose these values, so they are
+      // checked here rather than handed to a style property on trust.
+      const TERMINAL_SLOTS = ['black','red','green','yellow','blue','magenta','cyan','white',
+        'bright-black','bright-red','bright-green','bright-yellow','bright-blue','bright-magenta','bright-cyan','bright-white'];
+      function terminalColor(value) {
+        if (typeof value !== 'string' || !value) return '';
+        if (/^#[0-9a-fA-F]{6}$/.test(value)) return value;
+        return TERMINAL_SLOTS.indexOf(value) >= 0 ? 'var(--t-' + value + ')' : '';
+      }
+
+      // One styled run. Inverse swaps the two colours here rather than using a
+      // filter, so a run that set only a foreground still reads as reversed
+      // against the terminal's own ground.
+      function terminalRun(text, style) {
+        const span = document.createElement('span');
+        span.textContent = text;
+        if (!style || typeof style !== 'object') return span;
+        const flags = Number(style.flags) || 0;
+        let fg = terminalColor(style.fg);
+        let bg = terminalColor(style.bg);
+        if (flags & 16) {
+          const ink = fg || 'var(--terminal-ink)';
+          fg = bg || 'var(--terminal)';
+          bg = ink;
+        }
+        if (fg) span.style.color = fg;
+        if (bg) span.style.background = bg;
+        const names = [];
+        if (flags & 1) names.push('tf-bold');
+        if (flags & 2) names.push('tf-dim');
+        if (flags & 4) names.push('tf-italic');
+        if (flags & 8) names.push('tf-underline');
+        if (names.length) span.className = names.join(' ');
+        return span;
+      }
+
+      // A half of one response, turned into nodes. A line with no runs stays a
+      // single text node, which is what every line was before colour and is
+      // still the common case; a row count that does not match the lines it
+      // claims to describe draws the text plain rather than guessing at the
+      // alignment.
+      function terminalFragment(lines, spans, palette) {
+        const frag = document.createDocumentFragment();
+        const styled = Array.isArray(spans) && spans.length === lines.length && Array.isArray(palette);
+        for (let at = 0; at < lines.length; at++) {
+          if (at > 0) frag.appendChild(document.createTextNode('\\n'));
+          const line = lines[at];
+          const runs = styled && Array.isArray(spans[at]) ? spans[at] : null;
+          if (!runs || !runs.length) { if (line) frag.appendChild(document.createTextNode(line)); continue; }
+          let column = 0;
+          for (let r = 0; r + 2 < runs.length; r += 3) {
+            const from = Number(runs[r]), length = Number(runs[r + 1]), id = Number(runs[r + 2]);
+            // Runs arrive in column order and inside the line they describe.
+            // Anything else is not a shape to repair: the rest of the line goes
+            // out as plain text below.
+            if (!(from >= column) || !(length > 0) || from + length > line.length) break;
+            if (from > column) frag.appendChild(document.createTextNode(line.slice(column, from)));
+            frag.appendChild(terminalRun(line.slice(from, from + length), palette[id]));
+            column = from + length;
+          }
+          if (column < line.length) frag.appendChild(document.createTextNode(line.slice(column)));
+        }
+        return frag;
+      }
+
+      // The oldest lines go when the page holds more than it will show. Whole
+      // child nodes rather than a character slice: a run is a node now, and
+      // cutting one in half would leave a span holding half a word.
+      function trimTerminal(settled) {
+        while (settled.textContent.length > TERMINAL_KEEP && settled.firstChild) {
+          settled.removeChild(settled.firstChild);
+        }
       }
 
       // Any plain message replaces the screen, so the cursor that described
@@ -166,7 +287,12 @@ export const CONSOLE_SECTION: MobileSection = {
           // buttons that each fail in turn would be worse than no row at all.
           row.classList.toggle('hidden', keys.length === 0);
         }
-        const ready = Boolean(byId('session').value) && !actionBusy;
+        // A key pressed into a session that has ended is a keystroke into
+        // nothing, and index.ts refuses it by name. The row goes flat for the
+        // same reason the message box does, and the sentence under the box
+        // covers both.
+        const chosen = visibleSessions.find((value) => value.id === byId('session').value);
+        const ready = Boolean(byId('session').value) && !actionBusy && !(chosen && chosen.status === 'exited');
         row.querySelectorAll('button').forEach((button) => { button.disabled = !ready; });
       }
 
@@ -204,7 +330,7 @@ export const CONSOLE_SECTION: MobileSection = {
           byId('terminal-title').textContent = 'Live terminal output';
           note.classList.add('hidden');
           resetTerminal('');
-          terminalMessage('Choose a running session to open its terminal.');
+          terminalMessage('Choose a session to open its terminal.');
           return;
         }
         if (terminalBusy) return;
@@ -216,26 +342,29 @@ export const CONSOLE_SECTION: MobileSection = {
             (terminalCursor ? '&cursor=' + encodeURIComponent(terminalCursor) : ''));
           const body = String(detail.text || '');
           const tail = String(detail.tail || '');
+          const palette = Array.isArray(detail.palette) ? detail.palette : [];
+          const spans = Array.isArray(detail.spans) ? detail.spans : [];
+          const tailSpans = Array.isArray(detail.tailSpans) ? detail.tailSpans : [];
           const parts = terminalParts();
-          let live = tail;
-          if (detail.mode === 'append') parts.settled.appendData(body);
-          // A screen replaces everything, and its tail is a suffix of its text,
-          // so taking that suffix off is what leaves the two nodes holding the
-          // same split the next append will assume.
-          else if (tail && body.endsWith(tail)) parts.settled.data = body.slice(0, body.length - tail.length);
-          // A response with no tail, or one whose tail is not the end of its
-          // screen, is not a shape this page can split. Showing the screen whole
-          // is still right; it simply leaves the next read nothing to append to.
-          else { parts.settled.data = body; live = ''; }
-          parts.tail.data = live;
-          if (parts.settled.length > TERMINAL_KEEP) {
-            const kept = parts.settled.data.slice(-TERMINAL_KEEP);
-            const edge = kept.indexOf('\\n');
-            parts.settled.data = edge >= 0 ? kept.slice(edge + 1) : kept;
+          const bodyLines = body.split('\\n');
+          if (detail.mode === 'append') {
+            parts.settled.appendChild(terminalFragment(bodyLines, spans, palette));
+          } else {
+            // A screen carries its own tail at the end, and the Mac says how many
+            // of its last lines that is. Counting lines is what both halves can
+            // agree on; measuring the tail string against the end of the screen
+            // was the same split done by arithmetic, and it stopped being
+            // possible once every line carried its own colour.
+            const tailCount = Math.max(0, Math.min(bodyLines.length, Number(detail.tailLines) || 0));
+            const cut = bodyLines.length - tailCount;
+            parts.settled.replaceChildren(terminalFragment(bodyLines.slice(0, cut), spans.slice(0, cut), palette));
           }
+          // Always replaced whole: this is the half the agent is still redrawing.
+          parts.tail.replaceChildren(terminalFragment(tail.split('\\n'), tailSpans, palette));
+          trimTerminal(parts.settled);
           terminalCursor = typeof detail.cursor === 'string' ? detail.cursor : '';
           byId('terminal-title').textContent = detail.title + (detail.running ? ' · live' : ' · ended');
-          if (!parts.settled.length && !parts.tail.length) terminalMessage('No terminal output yet.');
+          if (!parts.settled.textContent.length && !parts.tail.textContent.trim().length) terminalMessage('No terminal output yet.');
           const gap = terminalGap(detail);
           note.textContent = gap;
           note.classList.toggle('hidden', !gap);
@@ -246,6 +375,11 @@ export const CONSOLE_SECTION: MobileSection = {
         }
         finally { terminalBusy = false; }
       }
+      // Reached from a Fleet card, including a card for a session that has
+      // ended. That is deliberate: what the agent printed on its way out is the
+      // only thing that explains why it ended, and it is held on the Mac for as
+      // long as the session row is. A phone that could not open it left the
+      // operator with a card they could not tap and no way to find out.
       function openSession(sessionId) {
         if (!remoteControlEnabled) return;
         requestedSessionId = sessionId;

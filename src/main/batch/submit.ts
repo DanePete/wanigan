@@ -3,6 +3,7 @@ import { client, isMock, EXTENDED_OUTPUT_BETA, stripForbidden } from './anthropi
 import { buildRequests, type BuiltRequest } from './build';
 import { estimate } from './estimate';
 import { loadSource } from './sources';
+import { refuseIfHalted } from '../halt';
 import type { RunConfig } from '../../shared/types';
 import { mockCreate } from './mock';
 import { spendCap } from '../settings';
@@ -13,6 +14,12 @@ export async function createAndSubmitRun(
   cfg: RunConfig,
   opts: { parentRunId?: string; estimate?: { input: number; output: number; cost: number } } = {}
 ): Promise<SubmitResult> {
+  // Ahead of the dataset read, and well ahead of the submission. This is the
+  // one operation in the app that cannot be undone from here — once the API has
+  // the batch it runs on someone else's machine — so a halted fleet must not
+  // reach it, and the halt state says plainly that batches already accepted
+  // keep going.
+  refuseIfHalted('submit a batch');
   const ds = await loadSource(cfg.source);
   const built = buildRequests(cfg, ds.rows, ds.columns);
   if (built.errors.length) throw new Error(built.errors.join(' '));
