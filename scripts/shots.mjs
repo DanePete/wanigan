@@ -17,6 +17,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { launchWanigan } from './electron-harness.mjs';
+import assert from 'node:assert/strict';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(here, '..');
@@ -44,22 +46,58 @@ delete env.ELECTRON_RUN_AS_NODE;
 for (const k of Object.keys(env)) if (k.startsWith('VSCODE_')) delete env[k];
 const udd = mkdtempSync(path.join(tmpdir(), 'wanigan-shots-'));
 
-const binary = process.platform === 'darwin'
-  ? path.join(REPO, 'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron')
-  : path.join(REPO, 'node_modules/electron/dist/electron');
-
 // `--wanigan-automation` is the launch marker src/main/automation.ts reads.
 // It is the only mode in which the raw projects:add channel answers: a
 // headless run cannot click the folder picker that registers a root for a
 // person, and the marker cannot be reached from the page, only from argv.
 // An installed build refuses it outright (app.isPackaged).
-const app = await electron.launch({ executablePath: binary, args: ['.', `--user-data-dir=${udd}`, '--wanigan-automation'], cwd: REPO, env, timeout: 120_000 });
-const page = await app.firstWindow({ timeout: 120_000 });
+const errors=[];
+const layoutMeasurements=[];
+const {app,page}=await launchWanigan(electron,{root:REPO,userData:udd,env});
+try {
+log('Electron connected');
+log('Window opened: ' + page.url());
 page.on('console', (m) => { if (['error', 'warning'].includes(m.type())) log(`[console.${m.type()}] ${m.text()}`); });
-page.on('pageerror', (e) => log(`[pageerror] ${e.message}`));
+page.on('pageerror', (e) => { errors.push(e.message); log(`[pageerror] ${e.message}`); });
 await page.waitForSelector('.nav-tabs, .sidebar, nav', { timeout: 120_000 });
 await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.setSize(1440, 900); w.show(); });
 await page.waitForTimeout(800);
+await page.waitForSelector('.mission-room');
+await page.waitForFunction(()=>document.querySelector('.wanigan-orb')?.dataset.physics==='ready');
+const canvas=page.locator('.wanigan-orb canvas');
+await page.evaluate(()=>{document.documentElement.dataset.motion='full';});
+await page.getByRole('textbox',{name:'Talk to Wanigan',exact:true}).focus();
+await page.waitForFunction(()=>document.querySelector('.wanigan-orb canvas')?.dataset.expression==='attend');
+await page.getByRole('button',{name:'Wanigan appearance and play',exact:true}).click();
+await page.getByRole('button',{name:'Spin Wanigan',exact:true}).click();
+await page.keyboard.press('Escape');
+await page.waitForFunction(()=>Number(document.querySelector('.wanigan-orb canvas')?.dataset.yaw)>3);
+await page.waitForTimeout(1700);
+// Main-owned native visibility stops the GPU even when automation leaves
+// document.hidden false. Test actual hide/show and actual preload subscription.
+await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].hide());
+await page.waitForFunction(()=>document.querySelector('.wanigan-orb canvas')?.dataset.nativeVisibility==='hidden');
+assert.equal(await page.evaluate(()=>window.wanigan.windowVisibility.current()),false);
+// One already-submitted GPU frame may finish after the window is hidden.
+// Count submissions, rather than treating its delayed completion as new work.
+const paused=await canvas.getAttribute('data-submissions');await page.waitForTimeout(500);
+assert.equal(await canvas.getAttribute('data-submissions'),paused,'native hide must stop GPU submissions');
+await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].show());
+await page.waitForFunction(prior=>document.querySelector('.wanigan-orb canvas')?.dataset.submissions!==prior,paused);
+await page.getByRole('button',{name:'Wanigan appearance and play',exact:true}).click();
+await page.getByRole('button',{name:'Ember & flame',exact:true}).click();
+await page.keyboard.press('Escape');
+await setTheme('dark');
+await page.waitForTimeout(6000);
+assert(await page.evaluate(()=>document.querySelector('.mission-orb-caption').getBoundingClientRect().bottom<=document.querySelector('.mission-stage').getBoundingClientRect().bottom),'orb controls fit inside the stage');
+await page.screenshot({path:path.join(OUT,'companion-ember-dark.png')});
+await setTheme('light');
+await page.screenshot({path:path.join(OUT,'companion-ember-light.png')});
+assert.equal(await page.evaluate(()=>localStorage.getItem('wanigan.orb.temperament')),'ember');
+await page.getByRole('button',{name:'Wanigan appearance and play',exact:true}).click();
+await page.getByRole('button',{name:'Water & mist',exact:true}).click();
+await page.keyboard.press('Escape');
+log('Real main/preload checks passed: composer attention, globe spin, native hide/pause/show, temperament persistence.');
 
 // Seed through the real IPC surface, then reload so the shell's project list
 // refreshes. projects.add answers here only because of the launch marker above.
@@ -77,8 +115,13 @@ await page.reload();
 await page.waitForSelector('.nav-tabs, .sidebar, nav', { timeout: 120_000 });
 await page.waitForTimeout(1200);
 
-const VIEWS = ['Sessions', 'Fleet', 'Control', 'Batches', 'Insights', 'Learning', 'Plugins', 'Schedules', 'Git', 'Runs', 'Usage', 'Scout', 'Settings'];
-const CHORDS = { Skills: 'Meta+Shift+S', Context: 'Meta+Shift+C' };
+const CHORDS = {
+  Mission: 'Meta+Shift+H', Sessions: 'Meta+1', Fleet: 'Meta+2', Control: 'Meta+3',
+  Batches: 'Meta+4', Insights: 'Meta+5', Learning: 'Meta+6', Plugins: 'Meta+7',
+  Schedules: 'Meta+8', Git: 'Meta+9', Runs: 'Meta+0', Usage: 'Meta+Shift+U',
+  Scout: 'Meta+Shift+I', Settings: 'Meta+,', Skills: 'Meta+Shift+S', Context: 'Meta+Shift+C', Board: 'Meta+Shift+B',
+};
+const VIEWS = Object.keys(CHORDS);
 
 async function setTheme(theme) {
   await page.evaluate(async (t) => {
@@ -90,12 +133,19 @@ async function setTheme(theme) {
   await page.waitForTimeout(400);
 }
 async function goTo(label) {
+  if (CHORDS[label]) {
+    // The floating dock groups destinations; the keyboard contract reaches all
+    // of them without depending on the drawer's remembered open state.
+    await page.getByRole('button', { name: 'All destinations', exact: true }).focus();
+    await page.keyboard.press(CHORDS[label].replace('Meta', process.platform === 'darwin' ? 'Meta' : 'Control'));
+    return true;
+  }
   // Works with the tab rail and with a sidebar: any button whose text starts with the label.
   const btn = page.locator('nav button, nav a', { hasText: new RegExp(`^\\s*${label}\\b`) }).first();
   if (await btn.count()) { await btn.click(); return true; }
   return false;
 }
-async function shot(theme, name) { const dir = path.join(OUT, theme); mkdirSync(dir, { recursive: true }); await page.screenshot({ path: path.join(dir, `${name}.png`) }); log(`shot ${theme}/${name}`); }
+async function shot(theme, name) { const dir = path.join(OUT, theme); mkdirSync(dir, { recursive: true }); await page.screenshot({ path: path.join(dir, `${name}.png`) }); assert(!(await page.locator('body').innerText()).includes('This view hit an error'),name+' error boundary');log(`shot ${theme}/${name}`); }
 
 for (const theme of themes) {
   await setTheme(theme);
@@ -103,21 +153,78 @@ for (const theme of themes) {
     if (!(await goTo(label))) { log(`no nav control for ${label}`); continue; }
     await page.waitForTimeout(900);
     await shot(theme, label.toLowerCase());
+    if(label==='Mission') layoutMeasurements.push(await page.evaluate(theme=>({
+      theme,width:innerWidth,height:innerHeight,
+      stageHeight:document.querySelector('.mission-stage').getBoundingClientRect().height,
+      shelfBottom:document.querySelector('.mission-shelf')?.getBoundingClientRect().bottom,
+      workspaceBottom:document.querySelector('.body').getBoundingClientRect().bottom,
+    }),theme));
   }
-  for (const [label, chord] of Object.entries(CHORDS)) {
-    await page.locator('body').click({ position: { x: 5, y: 5 } }).catch(() => {});
-    await page.keyboard.press(chord); await page.waitForTimeout(900); await shot(theme, label.toLowerCase());
-  }
+  await goTo('Mission'); await page.waitForSelector('.mission-room');
+  await page.getByRole('button',{name:'Wanigan appearance and play',exact:true}).click();
+  assert(await page.locator('#wanigan-personality').evaluate(el=>{
+    const r=el.getBoundingClientRect();return r.width>0&&r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight;
+  }),'companion controls stay inside the window');
+  await shot(theme,'companion-controls');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#wanigan-personality').isVisible(),false);
+  await goTo('Control'); await page.waitForSelector('.control-detail');
+  const newGoal=page.getByRole('button',{name:'New goal',exact:true});
+  await newGoal.click();
+  const sheet=page.getByRole('dialog',{name:'New goal',exact:true});
+  await sheet.waitFor();
+  assert.equal(await sheet.getByLabel('Title',{exact:true}).evaluate(el=>el===document.activeElement),true,'creation sheet focuses Title');
+  await sheet.getByLabel('Title',{exact:true}).fill('Review sheet draft');
+  await page.keyboard.press('Escape');
+  assert.equal(await newGoal.evaluate(el=>el===document.activeElement),true,'Escape returns focus to New goal');
+  await newGoal.click();
+  assert.equal(await sheet.getByLabel('Title',{exact:true}).inputValue(),'Review sheet draft','closing retains the draft');
+  await shot(theme,'overlay-new-goal');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.getByRole('dialog').count(),0);
+  const reviewGeometry=await page.evaluate(()=>{
+    const list=document.querySelector('.control-list').getBoundingClientRect();
+    const detail=document.querySelector('.control-detail').getBoundingClientRect();
+    return {listRight:list.right,detailLeft:detail.left,detailTop:detail.top,height:innerHeight};
+  });
+  assert(reviewGeometry.detailLeft>=reviewGeometry.listRight-1,'selected record stays beside its list');
+  assert(reviewGeometry.detailTop<reviewGeometry.height/2,'selected record visible immediately');
   await page.keyboard.press('Meta+K'); await page.waitForTimeout(500); await shot(theme, 'overlay-palette'); await page.keyboard.press('Escape'); await page.waitForTimeout(300);
   await page.keyboard.press('Meta+T'); await page.waitForTimeout(700); await shot(theme, 'overlay-new-session'); await page.keyboard.press('Escape'); await page.waitForTimeout(300);
   await page.keyboard.press('Shift+Slash'); await page.waitForTimeout(500); await shot(theme, 'overlay-shortcuts'); await page.keyboard.press('Escape'); await page.waitForTimeout(300);
 }
 
+// Exercise the new form through the real typed bridge. Only a local draft
+// goal is created: no session, model request or worktree is started.
+await goTo('Control'); await page.waitForSelector('.control-detail');
+await page.getByRole('button',{name:'New goal',exact:true}).click();
+const creation=page.getByRole('dialog',{name:'New goal',exact:true});
+await creation.getByLabel('Title',{exact:true}).fill('Validate the review workspace');
+await creation.getByLabel('Objective',{exact:true}).fill('Keep the selected work visible and the draft recoverable.');
+await creation.getByLabel('Acceptance checks · one per line',{exact:true}).fill('Creation validates through main\nThe selected record opens beside the list');
+await creation.getByLabel('Budget · USD',{exact:true}).fill('-1');
+await creation.getByRole('button',{name:'Create goal',exact:true}).click();
+await creation.locator('.note.tone-error').waitFor();
+assert((await creation.locator('.note.tone-error').innerText()).length>0,'validation error stays inside the sheet');
+await creation.getByLabel('Budget · USD',{exact:true}).fill('2');
+await creation.getByRole('button',{name:'Create goal',exact:true}).click();
+await creation.waitFor({state:'detached'});
+await page.waitForFunction(()=>document.querySelector('.control-detail h2')?.textContent==='Validate the review workspace');
+assert.equal(await page.locator('.control-docket').count(),2,'successful creation adds one goal');
+assert.equal(await page.evaluate(async()=>(await window.wanigan.sessions.list()).filter(s=>s.status==='running').length),0,'creating a goal launches no agent');
+log('Real review creation passed: main validation, visible error, correction, selected record, no agent launched.');
+
 await setTheme('dark');
 await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(960, 760));
 await page.waitForTimeout(600);
-for (const label of ['Sessions', 'Fleet', 'Learning', 'Settings']) { if (await goTo(label)) { await page.waitForTimeout(700); await shot('narrow', label.toLowerCase()); } }
+for (const label of ['Mission', 'Sessions', 'Control', 'Fleet', 'Learning', 'Settings']) { if (await goTo(label)) { await page.waitForTimeout(700); await shot('narrow', label.toLowerCase()); } }
 
-await app.close();
-rmSync(udd, { recursive: true, force: true });
+assert.deepEqual(errors,[]);
+writeFileSync(path.join(OUT,'verification.json'),JSON.stringify({
+  capturedAt:new Date().toISOString(),realMainAndPreload:true,isolatedProfile:true,seededLocalRecords:true,
+  tests:['composer-gaze','globe-spin','native-visibility-pause','temperament-persistence','popover-bounds-and-escape','review-adjacent-detail','sheet-focus-return','sheet-draft-retention','main-create-validation','main-create-success','creation-does-not-launch'],
+  themes,views:VIEWS,layoutMeasurements,errors,
+},null,2)+'\n');
+log('Review checks passed: creation sheet, initial focus, Escape, draft retention, adjacent detail, both themes.');
 log('done');
+}finally{await app.close();rmSync(udd, { recursive: true, force: true });}

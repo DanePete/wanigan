@@ -15,7 +15,7 @@ import AttentionQueue from '../components/AttentionQueue';
 import Timeline from '../components/Timeline';
 import SessionLearning from '../components/SessionLearning';
 import Pet from '../components/Pet';
-import { ConfirmNote, Explainer, Mark, Note, ago, num, usd } from '../components/bits';
+import { ConfirmNote, EmptyState, Explainer, Mark, Note, ago, num, usd } from '../components/bits';
 import type { Tone } from '../components/bits';
 import { useDialog } from '../components/useDialog';
 import { bindingMatches, modalOpen } from '../bindings';
@@ -162,10 +162,10 @@ const FocusBtn = forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLBu
 FocusBtn.displayName = 'FocusBtn';
 
 export default function Sessions({
-  providers, projects, onAddProject, onError, activeId, onActiveChange,
+  providers, projects: allProjects, selectedProjectId, onAddProject, onError, activeId, onActiveChange,
   newSessionRequest, onNewSessionRequestConsumed, onSendToBatch,
 }: {
-  providers: ProviderInfo[]; projects: Project[];
+  providers: ProviderInfo[]; projects: Project[]; selectedProjectId: string | null;
   onAddProject: () => Promise<void>; onError: (m: string) => void;
   activeId: string | null;
   onActiveChange: (id: string, projectId?: string) => void;
@@ -173,7 +173,9 @@ export default function Sessions({
   onNewSessionRequestConsumed: () => void;
   onSendToBatch: (seed: { projectId: string; root: string; paths: string[] }) => void;
 }) {
+  const projects = useMemo(() => selectedProjectId ? allProjects.filter((p) => p.id === selectedProjectId) : allProjects, [allProjects, selectedProjectId]);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const scopedSessions = useMemo(() => selectedProjectId ? sessions.filter((s) => s.projectId === selectedProjectId) : sessions, [sessions, selectedProjectId]);
   const [dialog, setDialog] = useState(false);
   // Which project the per-project '+' asked for; the rail button used to open
   // the dialog on whichever project the active session belonged to.
@@ -219,7 +221,8 @@ export default function Sessions({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [defaultTrust, setDefaultTrust] = useState<TrustLevel | null>(null);
-  const [past, setPast] = useState<PastSession[]>([]);
+  const [allPast, setPast] = useState<PastSession[]>([]);
+  const past = useMemo(() => selectedProjectId ? allPast.filter((s) => s.projectId === selectedProjectId) : allPast, [allPast, selectedProjectId]);
   /**
    * Whether this machine has more than one account at all.
    *
@@ -414,11 +417,11 @@ export default function Sessions({
   // while the shell was on another view, so Sessions never opens to a blank
   // terminal column merely because selection arrived a render later.
   useEffect(() => {
-    if (!sessions.length || sessions.some((session) => session.id === activeId)) return;
-    const running = sessions.filter((session) => session.status === 'running');
-    const fallback = running[running.length - 1] ?? sessions[sessions.length - 1];
+    if (!scopedSessions.length || scopedSessions.some((session) => session.id === activeId)) return;
+    const running = scopedSessions.filter((session) => session.status === 'running');
+    const fallback = running[running.length - 1] ?? scopedSessions[scopedSessions.length - 1];
     if (fallback) onActiveChange(fallback.id, fallback.projectId);
-  }, [activeId, onActiveChange, sessions]);
+  }, [activeId, onActiveChange, scopedSessions]);
 
   const closeTab = useCallback(async (id: string) => {
     try {
@@ -426,13 +429,13 @@ export default function Sessions({
       disposePane(id);
       setSessions((prev) => {
         const next = prev.filter((s) => s.id !== id);
-        if (activeRef.current === id && next[next.length - 1]) {
-          onActiveChange(next[next.length - 1].id, next[next.length - 1].projectId);
-        }
+        const eligible = selectedProjectId ? next.filter((s) => s.projectId === selectedProjectId) : next;
+        const fallback = eligible[eligible.length - 1];
+        if (activeRef.current === id && fallback) onActiveChange(fallback.id, fallback.projectId);
         return next;
       });
     } catch (e) { onError(msg(e)); }
-  }, [onActiveChange, onError]);
+  }, [onActiveChange, onError, selectedProjectId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -486,7 +489,7 @@ export default function Sessions({
       if (!back && !bindingMatches(e, 'session-next')) return;
       e.preventDefault();
       e.stopPropagation();
-      const list = sessionsRef.current;
+      const list = selectedProjectId ? sessionsRef.current.filter((s) => s.projectId === selectedProjectId) : sessionsRef.current;
       if (list.length < 2) return;
       const at = list.findIndex((s) => s.id === activeRef.current);
       // No selection yet walks in from the end the arrow points from, so the
@@ -498,7 +501,7 @@ export default function Sessions({
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [select]);
+  }, [select, selectedProjectId]);
 
   // A file dropped anywhere but the terminal would otherwise navigate the
   // window to it, which unmounts the whole app.
@@ -527,7 +530,7 @@ export default function Sessions({
     return m;
   }, [sessions]);
 
-  const active = sessions.find((s) => s.id === activeId) ?? null;
+  const active = scopedSessions.find((s) => s.id === activeId) ?? null;
 
   /*
    * ⌘. is the macOS stop convention and the terminal has no use for it, so it
@@ -613,7 +616,7 @@ export default function Sessions({
               <span className="session-picker-current mono">
                 {active
                   ? `Viewing ${nameOf(active) || active.projectName}`
-                  : `${sessions.length} open session${sessions.length === 1 ? '' : 's'}`}
+                  : `${scopedSessions.length} open session${scopedSessions.length === 1 ? '' : 's'}`}
               </span>
             </div>
             <FocusBtn className="session-picker-close" data-session-picker-initial
@@ -892,9 +895,9 @@ export default function Sessions({
               <span aria-hidden="true" className="session-picker-glyph">☰</span>
               <span>Sessions</span>
               {active && <span className="session-picker-trigger-current">{nameOf(active) || active.projectName}</span>}
-              <span className="session-picker-count" aria-hidden="true">{sessions.length}</span>
+              <span className="session-picker-count" aria-hidden="true">{scopedSessions.length}</span>
             </FocusBtn>
-            {sessions.map((s) => (
+            {scopedSessions.map((s) => (
               <div key={s.id} className={`session-tab-wrap${s.id === activeId ? ' active' : ''}`}>
                 <FocusBtn className={`tab session-tab${s.id === activeId ? ' active' : ''}`} onClick={() => select(s.id)}
                           aria-current={s.id === activeId ? 'page' : undefined}
@@ -994,7 +997,10 @@ export default function Sessions({
                   onDragLeave={att.onDragLeave}
                   onDrop={att.onDrop}
                 >
-                  {sessions.map((s) => <TerminalPane key={s.id} sessionId={s.id} visible={s.id === activeId} />)}
+                  {sessions.map((s) => <TerminalPane key={s.id} sessionId={s.id} visible={s.id === active?.id} />)}
+                  {scopedSessions.length === 0 && <div className="space-session-empty"><EmptyState posture="nothing-in-scope"
+                    title="A clear space." cue="There are no open sessions in this project."
+                    action={<button type="button" className="btn btn-primary" onClick={() => setDialog(true)}>Start a session</button>} /></div>}
                   {att.dragging && active && (
                     <div style={{
                       position: 'absolute', inset: 8, pointerEvents: 'none', zIndex: 5,
@@ -1115,7 +1121,7 @@ export default function Sessions({
       </div>
 
       {dialog && (
-        <NewSessionDialog providers={providers} projects={projects} defaultProjectId={dialogProject ?? active?.projectId}
+        <NewSessionDialog providers={providers} projects={projects} defaultProjectId={dialogProject ?? selectedProjectId ?? active?.projectId}
                           liveSessions={sessions}
                           onClose={() => { setDialog(false); setDialogProject(undefined); }} onCreate={createSession} onAddProject={onAddProject} />
       )}

@@ -1,0 +1,18 @@
+{
+  "fixture": true,
+  "electron": true,
+  "gpu": true,
+  "themes": [
+    "dark",
+    "light"
+  ],
+  "views": [
+    "mission"
+  ],
+  "checks": [
+    "compact-dock-labels",
+    "compact-mission-destination",
+    "compact-popover-bounds"
+  ],
+  "errors": []
+}

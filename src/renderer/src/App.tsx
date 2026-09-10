@@ -5,6 +5,8 @@ import { filterPalette, groupPalette, transcriptHitRow, TRANSCRIPT_QUERY_MIN, TR
 import { DIGIT_ROUTES, SIDEBAR_GROUPS, TABS, TAB_ICONS, TAB_SHORTCUTS, labelForTab, type Tab } from '@shared/routes';
 import { bindingMatches, inTerminal, modalOpen } from './bindings';
 import Sessions from './views/Sessions';
+import MissionRoom from './views/MissionRoom';
+import { ProjectSpaces, SpaceRoutes, SpaceDock } from './components/SpaceNavigation';
 import Fleet from './views/Fleet';
 import Control from './views/Control';
 import Board from './views/Board';
@@ -92,7 +94,7 @@ const NAV_RAIL_TABS: readonly Tab[] = SIDEBAR_GROUPS.flatMap((section) => sectio
 function initialTabFromLocation(): Tab {
   try {
     const goal = new URLSearchParams(window.location.hash.slice(1)).get('goal');
-    return goal ? 'control' : 'sessions';
+    return goal ? 'control' : 'mission';
   } catch {
     return 'sessions';
   }
@@ -182,7 +184,7 @@ function rememberRecent(key: string): void {
 }
 
 type ViewTransitionDoc = Document & {
-  startViewTransition?: (cb: () => void) => { finished: Promise<void> };
+  startViewTransition?: (cb: () => void) => { ready: Promise<void>; finished: Promise<void> };
 };
 
 /**
@@ -272,7 +274,7 @@ export default function App() {
   const [navFocus, setNavFocus] = useState<Tab | null>(null);
   // Starts open. The stored answer arrives a frame later; rendering closed
   // until then would flash the shell narrow for everyone who never hid it.
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   // A request is deliberately one-shot. The Sessions view consumes it after
   // it mounts, so a later visit to Sessions never reopens an old dialog.
   const [newSessionRequest, setNewSessionRequest] = useState<number | null>(null);
@@ -282,6 +284,7 @@ export default function App() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   // The project the user last chose or last worked in, remembered per machine.
   const [picked, setPicked] = useState<string | null>(() => localStorage.getItem('wanigan.project'));
+  const [spaceId, setSpaceId] = useState<string | null>(null);
   const theme = useThemePreference();
   // Destructured so the palette corpus can depend on the three fields rather
   // than on an object whose identity changes every render.
@@ -373,7 +376,7 @@ export default function App() {
   // ── sidebar ────────────────────────────────────────────────────────
   useEffect(() => {
     void (async () => {
-      try { setSidebarOpen((await window.wanigan.prefs.all()).navSidebar !== 'closed'); }
+      try { setSidebarOpen((await window.wanigan.prefs.all()).navSidebar === 'open'); }
       catch { /* db not ready; the default stands */ }
     })();
   }, []);
@@ -507,16 +510,22 @@ export default function App() {
   // one rather than handing a dead id to a session-aware surface.
   useEffect(() => {
     setActiveSessionId((cur) => {
-      if (cur && sessions.some((s) => s.id === cur)) return cur;
-      const up = sessions.filter((s) => s.status === 'running');
-      return (up[up.length - 1] ?? sessions[sessions.length - 1])?.id ?? null;
+      const scoped = spaceId ? sessions.filter((s) => s.projectId === spaceId) : sessions;
+      if (cur && scoped.some((s) => s.id === cur)) return cur;
+      const up = scoped.filter((s) => s.status === 'running');
+      return (up[up.length - 1] ?? scoped[scoped.length - 1])?.id ?? null;
     });
-  }, [sessions]);
+  }, [sessions, spaceId]);
 
   const choose = useCallback((id: string) => {
+    setSpaceId(id);
     setPicked(id);
     localStorage.setItem('wanigan.project', id);
   }, []);
+
+  useEffect(() => {
+    if (projectsRead && spaceId && !projects.some((p) => p.id === spaceId)) setSpaceId(null);
+  }, [projects, projectsRead, spaceId]);
 
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeSessionId) ?? null, [sessions, activeSessionId]);
@@ -562,14 +571,22 @@ export default function App() {
   // ── view switching ─────────────────────────────────────────────────
   const go = useCallback((next: Tab) => {
     if (next === tabRef.current) return;
+    if (!['mission', 'sessions', 'board', 'git', 'context'].includes(next)) setSpaceId(null);
+    else if (['git', 'context'].includes(next) && !spaceId && projectId) setSpaceId(projectId);
     const swap = () => setTab(next);
     const doc = document as ViewTransitionDoc;
     // A live PTY on either side of the swap means no transition at all.
     const touchesPty =
       (next === 'sessions' || tabRef.current === 'sessions') && sessionsRef.current.length > 0;
     if (touchesPty || !motionOn() || typeof doc.startViewTransition !== 'function') { swap(); return; }
-    doc.startViewTransition(() => { flushSync(swap); });
-  }, []);
+    const transition = doc.startViewTransition(() => { flushSync(swap); });
+    // A second navigation can skip the animation while the DOM update still
+    // succeeds. Only finished rejects when the update itself fails.
+    void transition.ready.catch(() => {});
+    void transition.finished.catch((cause: unknown) => {
+      announceError(`Could not open this view: ${cause instanceof Error ? cause.message : String(cause)}`);
+    });
+  }, [spaceId, projectId, announceError]);
 
   // One-shot deep link into the Learning view: Context's "set in Learning →
   // Optimize" prose becomes a real door. Consumed by nonce, like newSessionRequest.
@@ -635,8 +652,11 @@ export default function App() {
   const focusSession = useCallback((id: string, projectId?: string) => {
     setActiveSessionId(id);
     const project = projectId ?? sessionsRef.current.find((x) => x.id === id)?.projectId;
-    if (project) choose(project);
-  }, [choose]);
+    if (project) {
+      setPicked(project); localStorage.setItem('wanigan.project', project);
+      if (spaceId !== null) setSpaceId(project);
+    }
+  }, [spaceId]);
 
   // ⌘1–9. Capture phase, so the shell wins over any view handler underneath
   // (Sessions once bound the same digits to its tabs and only one of us could
@@ -1155,7 +1175,7 @@ export default function App() {
     {/* The providers wrap the shell's content at the shell's own indentation:
         announce() and per-view memory are reachable from every view, and the
         polite region they feed is rendered inside the shell below the toast. */}
-    <div className="shell">
+    <div className="shell mission-shell">
     <AnnounceProvider onError={announceError}>
     <ViewMemoryProvider>
       {startup?.phase === 'recovery' && (
@@ -1210,6 +1230,9 @@ export default function App() {
             <span className="brand-context" aria-hidden="true">{labelForTab(tab)}</span>
           </div>
 
+          <ProjectSpaces projects={projects} selected={spaceId} onAdd={addProject}
+            onSelect={(id) => { setSpaceId(id); if (id) choose(id);
+              if (!['mission', 'sessions', 'board', 'git', 'context'].includes(tab) || (!id && ['git', 'context'].includes(tab))) go('mission'); }} />
           <div className="nav-actions">
             {/* The Learning view owns its scope control now — a nav-level
                 project select that only sometimes rendered was the invisible
@@ -1291,6 +1314,7 @@ export default function App() {
           it becomes a third column that stretches to the full height of the
           window. */}
       {halt?.halted && <HaltBanner halt={halt} onChange={setHalt} />}
+      <SpaceRoutes tab={tab} go={go} projectName={spaceId ? projectName : null} />
       <div className="workspace">
         {sidebarOpen && (
           <nav className="sidebar" id="wanigan-sidebar" aria-label="Primary navigation">
@@ -1299,7 +1323,7 @@ export default function App() {
                 <div className="sidebar-group" key={section.group}>
                   <div className="sidebar-group-label">{section.group}</div>
                   {section.tabs.map((id) => (
-                    <NavTab key={id} id={id} tab={tab} go={go} label={labelForTab(id)}
+                    <NavTab key={id} id={id} tab={tab} go={(next) => { go(next); setSidebarOpen(false); }} label={labelForTab(id)}
                             roving={navRoving} onKeyDown={onNavTabKeyDown}
                             badge={id === 'sessions' && running > 0 ? (
                               <span className="nav-badge mo-breathe" ref={runBadge}
@@ -1358,8 +1382,11 @@ export default function App() {
               without mounting another, which is how a broken view's memory is
               marked for clearing before the next mount. */}
           <ViewMemoryScope view={tab}>
+          {tab === 'mission' && <MissionRoom projectId={spaceId} onOpenSession={openSession}
+            onProject={(id) => { choose(id); go('sessions'); }} onAddProject={addProject}
+            onNewSession={requestNewSession} onSettings={() => jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' })} />}
           {tab === 'sessions' && (
-            <Sessions providers={providers} projects={projects}
+            <Sessions providers={providers} projects={projects} selectedProjectId={spaceId}
                       onAddProject={addProject} onError={reportSessionError}
                       activeId={activeSessionId} onActiveChange={focusSession}
                       newSessionRequest={newSessionRequest} onNewSessionRequestConsumed={consumeNewSessionRequest}
@@ -1367,7 +1394,8 @@ export default function App() {
           )}
           {tab === 'fleet' && <Fleet projects={projects} onOpenSession={openSession} onNewSession={requestNewSession} />}
           {tab === 'board' && (
-            <Board projects={projects} providers={providers} projectId={projectId}
+            <Board projects={projects} providers={providers} projectId={projectId} selectedProjectId={spaceId}
+                   onPickProject={(id) => { setSpaceId(id); if (id) choose(id); }}
                    onOpenGoal={openGoal} onOpenSession={openSession} />
           )}
           {tab === 'control' && <Control projects={projects} providers={providers} onOpenSession={openSession} />}
@@ -1388,12 +1416,12 @@ export default function App() {
             <Skills projectId={projectId} providers={providers} activeSessionId={activeSessionId} />
           )}
           {tab === 'context' && (
-            <Context projectId={projectId} projects={projects} projectsRead={projectsRead}
+            <Context projectId={projectId} projects={projects} projectsRead={projectsRead} onPickProject={choose}
                      onReloadProjects={loadShell} onOpenLearning={openLearning} />
           )}
           {tab === 'plugins' && <Plugins />}
           {tab === 'schedules' && <Schedules projects={projects} />}
-          {tab === 'git' && <Git projects={projects} projectsRead={projectsRead} />}
+          {tab === 'git' && <Git projects={projects} projectsRead={projectsRead} selectedProjectId={spaceId ?? projectId} onPickProject={choose} />}
           {tab === 'runs' && <HeadlessRuns projects={projects} providers={providers} />}
           {tab === 'settings' && (
             <SettingsView providers={providers} projects={projects} jump={settingsJump}
@@ -1405,6 +1433,7 @@ export default function App() {
       </div>
       </div>
 
+      <SpaceDock tab={tab} go={go} needs={needs.total} expanded={sidebarOpen} onMore={toggleSidebar} />
       {/* role=alert is itself an assertive live region; declaring aria-live as
           well made some VoiceOver builds read the message twice. */}
       {error && (

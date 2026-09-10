@@ -22,7 +22,7 @@
 export const TABS = [
   { id: 'sessions',  label: 'Sessions',  group: 'Work',    hint: 'Start and drive live agent terminals',                    keywords: 'agent terminal conversation interactive' },
   { id: 'fleet',     label: 'Fleet',     group: 'Work',    hint: 'Every session at once, and which ones need you',          keywords: 'monitor activity status' },
-  { id: 'control',   label: 'Control',   group: 'Work',    hint: 'Goals — a contract, a task graph, evidence and your decision', keywords: 'goals goal dockets tasks work graph' },
+  { id: 'control',   label: 'Review',   group: 'Work',    hint: 'Goals — a contract, a task graph, evidence and your decision', keywords: 'control goals goal dockets tasks work graph' },
   { id: 'batches',   label: 'Batches',   group: 'Work',    hint: 'Fan one prompt across many inputs on the Batches API',    keywords: 'batch api bulk fan-out' },
   { id: 'insights',  label: 'Insights',  group: 'Explore', hint: 'Recorded spend and token usage',                          keywords: 'spend costs usage analytics' },
   { id: 'learning',  label: 'Learning',  group: 'Explore', hint: 'Knowledge items, the review inbox, and what agents get',  keywords: 'knowledge memory briefing inbox proposals' },
@@ -47,6 +47,7 @@ export const TABS = [
   // which spans goals and is therefore a different surface, not a tab inside
   // one. Appended past the digit row for the reason stated above Usage.
   { id: 'board',     label: 'Board',     group: 'Work',    hint: 'Every ticket across every goal, in columns you can move and park', keywords: 'board kanban tickets ticket issues issue backlog triage jira column swimlane defer park later todo in progress blocked done' },
+  { id: 'mission', label: 'Mission room', group: 'Work', hint: 'Your companion and a briefing across project spaces', keywords: 'home orb assistant companion chat overview spaces' },
 ] as const;
 
 export type Tab = (typeof TABS)[number]['id'];
@@ -58,6 +59,7 @@ export type Tab = (typeof TABS)[number]['id'];
  * inline set in components/bits.tsx.
  */
 export const TAB_ICONS = {
+  mission: 'compass',
   sessions: 'terminal',
   fleet: 'grid',
   control: 'target',
@@ -78,7 +80,7 @@ export const TAB_ICONS = {
 
 /** The order the sidebar lists destinations in, grouped by the job they serve. */
 export const SIDEBAR_GROUPS: readonly { group: string; tabs: readonly Tab[] }[] = [
-  { group: 'Work', tabs: ['sessions', 'fleet', 'board', 'control', 'batches'] },
+  { group: 'Work', tabs: ['mission', 'sessions', 'fleet', 'board', 'control', 'batches'] },
   { group: 'Explore', tabs: ['insights', 'usage', 'learning', 'scout', 'skills', 'context', 'plugins'] },
   { group: 'Manage', tabs: ['git', 'runs', 'schedules', 'settings'] },
 ];
@@ -95,6 +97,7 @@ export const DIGIT_ROUTES = 9;
  * the key handler matches against, so a published chord is a working chord.
  */
 export const TAB_SHORTCUTS: Record<Tab, { label: string; aria: string }> = {
+  mission:   { label: '⌘⇧H', aria: 'Meta+Shift+H Control+Shift+H' },
   sessions:  { label: '⌘1', aria: 'Meta+1 Control+1' },
   fleet:     { label: '⌘2', aria: 'Meta+2 Control+2' },
   control:   { label: '⌘3', aria: 'Meta+3 Control+3' },
@@ -124,7 +127,7 @@ export const TAB_SHORTCUTS: Record<Tab, { label: string; aria: string }> = {
  */
 export const VIEW_SHORTCUT_ORDER: readonly Tab[] = [
   ...TABS.slice(0, DIGIT_ROUTES).map((item) => item.id),
-  'runs', 'settings', 'skills', 'context', 'scout', 'usage',
+  'runs', 'settings', 'skills', 'context', 'scout', 'usage', 'board', 'mission',
 ];
 
 export function labelForTab(id: Tab): string {

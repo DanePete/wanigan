@@ -220,6 +220,15 @@ function hosts(): EgressHost[] {
       overrideEnv: 'ANTHROPIC_BASE_URL',
     },
     {
+      host: hostOf(anthropicBase, 'api.anthropic.com'),
+      paths: ['/v1/messages'],
+      by: 'wanigan',
+      purpose: 'Answering an explicit companion question from bounded project and session status, without agent transcripts or files.',
+      when: 'Only when you send a question to Wanigan with a Claude Platform API key connected. Each send makes one bounded request.',
+      activeNow: key,
+      overrideEnv: 'ANTHROPIC_BASE_URL',
+    },
+    {
       host: 'api.anthropic.com',
       paths: ['/v1/models'],
       by: 'wanigan',

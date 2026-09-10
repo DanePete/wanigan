@@ -1,0 +1,36 @@
+{
+  "fixture": true,
+  "electron": true,
+  "gpu": true,
+  "themes": [
+    "dark",
+    "light"
+  ],
+  "views": [
+    "mission",
+    "sessions",
+    "fleet",
+    "control",
+    "batches",
+    "insights",
+    "learning",
+    "plugins",
+    "schedules",
+    "git",
+    "runs",
+    "settings",
+    "skills",
+    "context",
+    "scout",
+    "usage",
+    "board"
+  ],
+  "checks": [
+    "motion-off",
+    "project-scope",
+    "git-scope",
+    "context-scope",
+    "compact-dock-labels"
+  ],
+  "errors": []
+}

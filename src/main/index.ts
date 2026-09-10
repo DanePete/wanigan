@@ -94,6 +94,7 @@ import * as learning from './learning-service';
 import { retireKnowledgeItem } from './learning';
 import * as control from './control';
 import * as interview from './interview';
+import { companion } from './companion';
 import * as accounts from './accounts';
 import * as usage from './usage';
 import * as scout from './improvement-scout';
@@ -633,6 +634,14 @@ function createWindow() {
   });
 
   win.on('ready-to-show', () => win?.show());
+  const window=win;
+  const publishVisibility=()=>{
+    if(!window.isDestroyed()&&!window.webContents.isDestroyed())
+      window.webContents.send('window:visibility',window.isVisible()&&!window.isMinimized());
+  };
+  window.on('show',publishVisibility);window.on('hide',publishVisibility);
+  window.on('minimize',publishVisibility);window.on('restore',publishVisibility);
+  window.webContents.on('did-finish-load',publishVisibility);
   // The renderer's watched id does not change when the whole app loses focus.
   // Re-checking here lets a Mac banner that was intentionally quiet while the
   // session was visible fire once the operator moves to another app.
@@ -1340,6 +1349,7 @@ async function startAttendedServices(): Promise<StartupState> {
       //
       // Each stopper reports a count and a noun. halt.ts knows neither what a
       // docket is nor what a PTY is; it collects sentences and shows them.
+      registerHaltStopper({ name: 'companion', stop: () => ({ name: 'companion', stopped: companion.cancel() ? 1 : 0, note: 'pending answer stopped; provider billing may still apply' }) });
       registerHaltStopper({
         name: 'schedules',
         stop: () => { schedule.stopScheduler(); return { name: 'schedules', stopped: 1, note: 'the scheduler is stopped; no schedule was deleted or moved forward' }; },
@@ -1501,7 +1511,13 @@ function registerIpc() {
   // This handler is intentionally database-free. It remains available when a
   // failed migration has put the attended UI in recovery mode, so the renderer
   // can explain why normal controls are paused and offer one bounded retry.
+  handle('companion:snapshot', (projectId: unknown) => companion.snapshot(projectId));
+  handle('companion:history', (projectId: unknown) => companion.history(projectId));
+  handle('companion:ask', (input: unknown) => companion.ask(input));
+  handle('companion:cancel', () => companion.cancel());
+
   handle('startup:status', () => startupSnapshot());
+  handle('window:visible', () => !!win&&!win.isDestroyed()&&win.isVisible()&&!win.isMinimized());
   handle('startup:retry', () => startAttendedServices());
 
   handle('demo:state', () => demoState());

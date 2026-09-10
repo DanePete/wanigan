@@ -33,7 +33,7 @@ catch { console.error('playwright-core is not resolvable from this repo; run `np
 
 const MEASURE = process.argv.includes('--measure');
 
-const STUB = `
+export const STUB = `
 (() => {
   const now = Date.now();
   // Example data, deliberately generic: this file is committed, and a fixture
@@ -239,7 +239,24 @@ const STUB = `
       burn: { windowStartMs: now - 3 * 86400000, elapsedMinutes: 4320, tokens: 51200000,
               requests: 1180, tokensPerMinute: 11851, projectedTokens: 119500000 } },
   ];
+  function companionSnapshot(projectId) {
+    const selected = projectId ? projects.filter(p => p.id === projectId) : projects;
+    const rooms = selected.map(p => {
+      const ss = sessions.filter(s => s.projectId === p.id).map(s => ({ id: s.id, projectId: p.id, provider: s.providerId,
+        state: attention.find(a => a.sessionId === s.id)?.kind ?? 'unknown', status: s.status, createdAt: s.createdAt }));
+      return { id: p.id, name: p.name, branch: p.branch, sessions: ss, running: ss.filter(s => s.status === 'running').length,
+        needsYou: ss.filter(s => ['permission', 'error', 'finished'].includes(s.state)).length };
+    });
+    const sources = rooms.flatMap(p => [{ id: 'project:' + p.id, targetId: p.id, projectId: p.id, kind: 'project', label: p.name },
+      ...p.sessions.map(s => ({ id: 'session:' + s.id, targetId: s.id, projectId: p.id, kind: 'session', label: p.name + ' · ' + s.provider }))]);
+    return { readAt: now, projectId, projects: rooms, sources, totalProjects: rooms.length, running: rooms.reduce((n,p) => n+p.running,0),
+      needsYou: rooms.reduce((n,p) => n+p.needsYou,0), sessionsTruncated: false, available: true, defaultModel: 'claude-sonnet-5', models: [{id:'claude-sonnet-5',label:'Sonnet 5'}] };
+  }
   const FIXED = {
+    'startup.status': { phase: 'ready', stage: null, message: null },
+    'halt.state': { halted: false, at: null, reason: null, source: null, stopped: [] },
+    'halt.summary': { halted: false, sessions: 0, schedules: 0, queue: 0, autopilots: 0, headless: 0, batches: 0 },
+    'companion.history': [],
     'usage.snapshot': usageSnapshot,
     'spend.transcripts': transcriptMeter, 'usage.burn': burn,
     'context.instructions': ctxInstructions, 'context.memory': ctxMemory,
@@ -248,7 +265,7 @@ const STUB = `
     'events.session': timeline, 'events.tools': toolStats,
     'events.live': { tool: null, since: now - 12000, blocked: true, lastAt: now - 12000 },
     'checkpoints.list': [],
-    'projects.list': projects, 'sessions.list': sessions, 'providers.list': providers,
+    'projects.list': projects, 'projects.refresh': projects, 'sessions.list': sessions, 'providers.list': providers,
     'attention.list': attention, 'sessions.past': [], 'batch.runsInFlight': { readAt: now, runs: 2, requestsReturned: 1400, requestsOutstanding: 600 },
     'keys.has': true,
     // Two views read a bare scalar out of a record and then call a string or
@@ -299,7 +316,7 @@ const STUB = `
     },
   };
   const settings = {
-    spendCapUsd: 1, motion: 'auto', navSidebar: 'open', telemetry: true, hooks: true,
+    spendCapUsd: 1, motion: 'auto', navSidebar: 'closed', telemetry: true, hooks: true,
     checkpoints: true, archiveTranscripts: true, notifications: true, mcpServerEnabled: false, pet: false,
     slots: { session: 4, headless: 2, batch: 1, scout: 1, node: 4 }, eventRetentionDays: 30,
     defaultTrust: 'project',
@@ -340,6 +357,13 @@ const STUB = `
       },
       apply(_t, _this, args) {
         const key = pathParts.join('.');
+        if (key === 'windowVisibility.current') return Promise.resolve(true);
+        if (key === 'windowVisibility.onChanged') return () => {};
+        if (key === 'companion.snapshot') return Promise.resolve(companionSnapshot(args[0]));
+        if (key === 'git.status') return Promise.resolve({isRepo:true,root:args[0],repoRoot:args[0],subpath:null,
+          branch:projects.find(p=>p.path===args[0])?.branch??'main',detached:false,upstream:null,ahead:0,behind:0,
+          staged:[],unstaged:[],untracked:[],conflicted:[],clean:true,operation:null});
+        if (['git.log','git.branches','git.stashes'].includes(key)) return Promise.resolve([]);
         if (pathParts[0] === 'on') return () => {};
         if (key === 'prefs.all' || key === 'settings.all') return Promise.resolve(settings);
         if (key in FIXED) return Promise.resolve(FIXED[key]);
@@ -378,6 +402,7 @@ await new Promise((r) => server.listen(0, '127.0.0.1', r));
 // Never the reason a probe process stays alive after its last renderer closes.
 server.unref();
 const PORT = server.address().port;
+export const rendererURL = `http://127.0.0.1:${PORT}/index.html`;
 
 export async function openRenderer({ theme = 'dark', width = 1440, height = 900, onError, instrument } = {}) {
 if (!fs.existsSync(path.join(ROOT, 'index.html'))) {
