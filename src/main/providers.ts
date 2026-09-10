@@ -124,6 +124,8 @@ export const GLM_DEFAULT = 'glm-5.3';
 export const GLM_SMALL = 'glm-5.3-flash';
 export const DEEPSEEK_DEFAULT = 'deepseek-v4-pro';
 export const DEEPSEEK_SMALL = 'deepseek-v4-flash';
+export const XAI_DEFAULT = 'grok-4.6';
+export const XAI_SMALL = 'grok-build-0.1';
 
 const LEGACY_BUILTINS: ProviderDef[] = [
   {

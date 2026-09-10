@@ -49,6 +49,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'agents', tabLabel: 'Agents', section: 'Claude Platform API key', hint: 'Batches API key, workspace id', keywords: 'anthropic api key batches workspace sk-ant console' },
   { tab: 'agents', tabLabel: 'Agents', section: 'GLM Coding Plan', hint: 'Z.ai key for GLM sessions', keywords: 'glm z.ai zai coding plan key' },
   { tab: 'agents', tabLabel: 'Agents', section: 'DeepSeek', hint: 'DeepSeek key for sessions', keywords: 'deepseek key anthropic-compatible' },
+  { tab: 'agents', tabLabel: 'Agents', section: 'Grok · xAI', hint: 'xAI key for Grok sessions', keywords: 'grok xai x.ai key anthropic-compatible elon' },
   { tab: 'agents', tabLabel: 'Agents', section: 'Installed agent runtimes', hint: 'Which CLIs Wanigan found, and where', keywords: 'cli path version claude codex installed runtime detect' },
   { tab: 'agents', tabLabel: 'Agents', section: 'Provider packs', hint: 'Packs, profiles, trust and enablement', keywords: 'provider pack manifest profile harness backend trust digest sha256 adapter enable disable remove restore' },
   { tab: 'agents', tabLabel: 'Agents', section: 'Accounts', hint: 'Work and personal logins, and which is default', keywords: 'account login work personal switch claude config dir credentials organisation organization sign in profile' },
@@ -100,7 +101,7 @@ const SETTINGS_TABS: SettingsTabInfo[] = [
     id: 'agents', label: 'Agents', eyebrow: 'Accounts & runtime', title: 'Agents & providers',
     detail: 'Add provider keys, check their status, and manage the provider packs whose profiles Wanigan can launch.',
     help: 'Keys are verified before Wanigan stores them in your macOS credential store. A new key is ready for the next session; a session already running keeps the launch configuration it started with — including its frozen provider pack, even if you disable or remove that pack here.',
-    includes: ['Claude Platform', 'GLM Coding Plan', 'DeepSeek', 'installed runtimes', 'provider packs', 'accounts'],
+    includes: ['Claude Platform', 'GLM Coding Plan', 'DeepSeek', 'Grok · xAI', 'installed runtimes', 'provider packs', 'accounts'],
   },
   {
     id: 'projects', label: 'Projects & safety', eyebrow: 'Repositories & guardrails', title: 'Projects & safety',
@@ -482,6 +483,12 @@ export default function Settings({
   const [deepseekStatusError, setDeepseekStatusError] = useState<string | null>(null);
   const [deepseekBusy, setDeepseekBusy] = useState(false);
   const [deepseekMsg, setDeepseekMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [xaiKey, setXaiKey] = useState('');
+  const [xaiStatus, setXaiStatus] = useState<ProviderKeyStatus | null>(null);
+  /** Why the xAI key status could not be read; null means the read stands. */
+  const [xaiStatusError, setXaiStatusError] = useState<string | null>(null);
+  const [xaiBusy, setXaiBusy] = useState(false);
+  const [xaiMsg, setXaiMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>(savedSettingsTab);
   const compactSettingsLayout = useMediaQuery(SETTINGS_COMPACT_QUERY);
   const settingsTabsRef = useRef<HTMLElement>(null);
@@ -514,6 +521,9 @@ export default function Settings({
     void window.wanigan.key.provider('deepseek')
       .then((st) => { setDeepseekStatus(st); setDeepseekStatusError(null); })
       .catch((e) => setDeepseekStatusError(msg(e)));
+    void window.wanigan.key.provider('xai')
+      .then((st) => { setXaiStatus(st); setXaiStatusError(null); })
+      .catch((e) => setXaiStatusError(msg(e)));
     void window.wanigan.settings.get()
       .then((s) => { setCap(s.spendCapUsd.toFixed(2)); setCapError(null); })
       .catch((e) => setCapError(msg(e)));
@@ -571,6 +581,32 @@ export default function Settings({
     setDeepseekBusy(true);
     try { await window.wanigan.key.clearProvider('deepseek'); await loadDeepseek(); onKeyChange(); setDeepseekMsg(null); }
     finally { setDeepseekBusy(false); }
+  }
+
+  const loadXai = () => window.wanigan.key.provider('xai')
+    .then((st) => { setXaiStatus(st); setXaiStatusError(null); });
+  async function saveXai() {
+    setXaiBusy(true); setXaiMsg(null);
+    try {
+      await window.wanigan.key.setProvider('xai', xaiKey);
+      const verified = await window.wanigan.key.xaiVerify();
+      setXaiKey(''); await loadXai(); onKeyChange();
+      setXaiMsg({ tone: verified.ok ? 'ok' : 'error', text: verified.detail });
+    } catch (e) { setXaiMsg({ tone: 'error', text: msg(e) }); }
+    finally { setXaiBusy(false); }
+  }
+  async function verifyXai() {
+    setXaiBusy(true); setXaiMsg(null);
+    try {
+      const verified = await window.wanigan.key.xaiVerify();
+      setXaiMsg({ tone: verified.ok ? 'ok' : 'error', text: verified.detail });
+    } catch (e) { setXaiMsg({ tone: 'error', text: msg(e) }); }
+    finally { setXaiBusy(false); }
+  }
+  async function clearXai() {
+    setXaiBusy(true);
+    try { await window.wanigan.key.clearProvider('xai'); await loadXai(); onKeyChange(); setXaiMsg(null); }
+    finally { setXaiBusy(false); }
   }
 
   async function save() {
@@ -879,6 +915,32 @@ export default function Settings({
               {deepseekMsg && <div style={{ marginTop: 10 }}><Note tone={deepseekMsg.tone === 'ok' ? 'ok' : 'error'}>{deepseekMsg.text}</Note></div>}
               <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.45 }}>
                 Wanigan verifies the key against <span className="mono">api.deepseek.com/models</span>, then stores it encrypted in your macOS Keychain. The key is never shown, logged or sent to a renderer.
+              </p>
+            </Section>
+
+            <Section title="Grok · xAI"
+                     hint="Runs Grok through the installed Claude Code runtime using xAI’s Anthropic-compatible endpoint. It gets the same Wanigan terminal, review, policy, worktree and headless-run controls as Claude, GLM and DeepSeek.">
+              {xaiStatusError ? (
+                <Note tone="error">Wanigan could not read whether an xAI key is installed: {xaiStatusError}. This is not an answer about your key — it is a report that Wanigan could not ask.</Note>
+              ) : !xaiStatus ? (
+                <Reading what="the stored xAI key" />
+              ) : xaiStatus.present ? (
+                <div className="set-key-status">
+                  <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>xAI key installed</span>
+                  <span className="mono faint">{xaiStatus.fingerprint}</span>
+                  <button className="btn" onClick={() => void verifyXai()} disabled={xaiBusy}>Verify live catalogue</button>
+                  <button className="btn btn-danger" onClick={() => void clearXai()} disabled={xaiBusy}>Remove</button>
+                </div>
+              ) : <Note tone="warn">No xAI key stored. Grok sessions cannot authenticate until you add one.</Note>}
+              <label className="label" htmlFor="xai-api-key" style={{ marginTop: 11 }}>{xaiStatus?.present ? 'Replace xAI key' : xaiStatus ? 'Paste xAI API key' : 'xAI API key'}</label>
+              <div className="set-field-action">
+                <input id="xai-api-key" className="field mono" type="password" placeholder="xAI API key" value={xaiKey} autoComplete="off" spellCheck={false}
+                       onChange={(e) => setXaiKey(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && xaiKey.trim()) void saveXai(); }} />
+                <button className="btn btn-primary" onClick={() => void saveXai()} disabled={xaiBusy || !xaiKey.trim()}>{xaiBusy ? 'Checking…' : 'Save & verify'}</button>
+              </div>
+              {xaiMsg && <div style={{ marginTop: 10 }}><Note tone={xaiMsg.tone === 'ok' ? 'ok' : 'error'}>{xaiMsg.text}</Note></div>}
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.45 }}>
+                Wanigan verifies the key against <span className="mono">api.x.ai/v1/models</span>, then stores it encrypted in your macOS Keychain. This is a pay-as-you-go key from <span className="mono">console.x.ai</span>; a Grok Pro or SuperGrok subscription does not carry API credit, and its consumption cannot be read the way a Claude or Codex plan's can — so Grok appears under what you spend, never under what is left.
               </p>
             </Section>
 

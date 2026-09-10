@@ -963,6 +963,37 @@ export const BUILTIN_PROVIDER_PACKS: ProviderPackManifest[] = [
       headless: 'claude-json',
     }],
   },
+  {
+    schemaVersion: 1,
+    id: 'wanigan.xai',
+    label: 'Grok · xAI',
+    version: '1',
+    description: 'Claude Code harness connected to xAI\'s Anthropic-compatible API.',
+    publisher: { id: 'wanigan', name: 'Wanigan' },
+    profiles: [{
+      id: 'xai',
+      label: 'Grok · xAI',
+      harness: 'claude-code',
+      // xAI serves the Anthropic surface from the host root, not from /v1 —
+      // that path is the OpenAI-compatible one, and pointing the Anthropic SDK
+      // at it fails on the first request rather than at configuration time.
+      backend: { id: 'xai', label: 'xAI', baseUrl: 'https://api.x.ai' },
+      command: CLAUDE_COMMAND,
+      launchFields: CLAUDE_FIELDS.filter((field) => field.id !== 'effort'),
+      resume: { conversationArgs: ['--resume', '{conversationId}'], continueArgs: ['--continue'] },
+      environment: {
+        ANTHROPIC_BASE_URL: {
+          source: 'process', name: 'WANIGAN_XAI_BASE_URL', fallback: 'https://api.x.ai',
+        },
+        ANTHROPIC_AUTH_TOKEN: { source: 'credential', id: 'xai' },
+        ANTHROPIC_DEFAULT_OPUS_MODEL: { source: 'process', name: 'WANIGAN_XAI_MODEL', fallback: 'grok-4.6' },
+        ANTHROPIC_DEFAULT_SONNET_MODEL: { source: 'process', name: 'WANIGAN_XAI_MODEL', fallback: 'grok-4.6' },
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: { source: 'process', name: 'WANIGAN_XAI_SMALL_MODEL', fallback: 'grok-build-0.1' },
+      },
+      capabilities: CLAUDE_CAPABILITIES,
+      headless: 'claude-json',
+    }],
+  },
 ];
 
 export function defaultProviderPacksRoot(userDataDir?: string): string {

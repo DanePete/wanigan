@@ -76,6 +76,11 @@ function deepseekKey(): boolean {
   catch { return false; }
 }
 
+function xaiKey(): boolean {
+  try { return hasProviderKey('xai'); }
+  catch { return false; }
+}
+
 /**
  * The backend endpoint an installed provider pack declares, read out of the
  * pack registry instead of typed here.
@@ -164,9 +169,15 @@ function hosts(): EgressHost[] {
   const glmBase = process.env.WANIGAN_GLM_BASE_URL?.trim() || 'https://api.z.ai/api/anthropic';
   const deepseekModels = process.env.WANIGAN_DEEPSEEK_MODELS_URL?.trim() || 'https://api.deepseek.com/models';
   const deepseekBase = process.env.WANIGAN_DEEPSEEK_BASE_URL?.trim() || 'https://api.deepseek.com/anthropic';
+  // Two hosts on one service: xAI serves the Anthropic surface from the root
+  // and the OpenAI-compatible catalog from /v1, so the two rows below differ in
+  // path rather than in host.
+  const xaiModels = process.env.WANIGAN_XAI_MODELS_URL?.trim() || 'https://api.x.ai/v1/models';
+  const xaiBase = process.env.WANIGAN_XAI_BASE_URL?.trim() || 'https://api.x.ai';
   const key = platformKey();
   const glm = glmKey();
   const deepseek = deepseekKey();
+  const xai = xaiKey();
   const phone = mobileConfig();
   // Read once, before the table is built. Decrypting the credential file can
   // fail on its own, and a privacy panel that threw would show nothing at all —
@@ -267,6 +278,20 @@ function hosts(): EgressHost[] {
       purpose: 'Where Claude Code sends requests for DeepSeek sessions; Wanigan supplies the endpoint and key but does not inspect the traffic.',
       when: 'Only for DeepSeek sessions and only while a DeepSeek key is stored.',
       activeNow: deepseek, overrideEnv: 'WANIGAN_DEEPSEEK_BASE_URL',
+    },
+    {
+      host: hostOf(xaiModels, 'api.x.ai'),
+      paths: ['/v1/models'], by: 'wanigan',
+      purpose: 'Verifying an xAI key and reading its Grok model list before Wanigan offers it.',
+      when: 'Only when you save or verify an xAI key, or refresh its catalog.',
+      activeNow: xai, overrideEnv: 'WANIGAN_XAI_MODELS_URL',
+    },
+    {
+      host: hostOf(xaiBase, 'api.x.ai'),
+      paths: ['/v1/messages'], by: 'agent',
+      purpose: 'Where Claude Code sends requests for Grok sessions; Wanigan supplies the endpoint and key but does not inspect the traffic.',
+      when: 'Only for Grok sessions and only while an xAI key is stored.',
+      activeNow: xai, overrideEnv: 'WANIGAN_XAI_BASE_URL',
     },
     {
       host: hostOf(phone.pushServer, 'ntfy.sh'),

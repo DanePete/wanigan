@@ -3,6 +3,7 @@ import { launchFieldChoices, type LaunchFieldChoices } from '../shared/launch-fi
 import { db } from './db';
 import { glmModels } from './glm';
 import { deepseekModels } from './deepseek';
+import { xaiModels } from './xai';
 import * as codexStatus from './codex-status';
 
 /**
@@ -108,12 +109,12 @@ export const PUBLISHED_BACKEND_MODELS: Record<string, LaunchModelRow[]> = {
 /**
  * Backends Wanigan can ask for a live catalogue.
  *
- * `zai` and `deepseek` hold a key Wanigan stores, so the catalogue is an HTTP
- * read; `openai` is asked through the installed Codex CLI's own app-server,
+ * `zai`, `deepseek` and `xai` hold a key Wanigan stores, so the catalogue is an
+ * HTTP read; `openai` is asked through the installed Codex CLI's own app-server,
  * which is the only authority on what that build accepts.
  *
  * Two honesty rules are enforced right here rather than at the call site.
- * First, `glmModels` and `deepseekModels` never throw — on a missing key or a
+ * First, `glmModels`, `deepseekModels` and `xaiModels` never throw — on a missing key or a
  * failed read they return Wanigan's local list together with a note saying so —
  * so `source` reports `live` only when that note is null. Calling a fallback
  * list "live" is exactly the lie this module exists to stop. Second,
@@ -133,6 +134,14 @@ export const LIVE_BACKEND_MODELS: Record<string, () => Promise<LaunchModelCatalo
   },
   deepseek: async () => {
     const read = await deepseekModels();
+    return {
+      rows: read.models.map((model) => ({ value: model.id, label: model.label, description: null, efforts: null })),
+      source: read.note ? 'published' : 'live',
+      note: read.note,
+    };
+  },
+  xai: async () => {
+    const read = await xaiModels();
     return {
       rows: read.models.map((model) => ({ value: model.id, label: model.label, description: null, efforts: null })),
       source: read.note ? 'published' : 'live',

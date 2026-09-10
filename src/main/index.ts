@@ -60,6 +60,7 @@ import * as plugins from './plugins';
 import { glmModels, verifyGlmKey } from './glm';
 import { providerModelCatalogue } from './launch-choices';
 import { deepseekModels, verifyDeepSeekKey } from './deepseek';
+import { xaiModels, verifyXaiKey } from './xai';
 import * as gitOps from './git';
 import * as gh from './gh';
 import { demoOn, setDemo, demoState, setDemoBlur, maskOut, unmaskIn, noteAuthors } from './demo';
@@ -459,14 +460,14 @@ function trustedSender(sender: WebContents, frame: WebFrameMain | null): boolean
     && trustedRendererUrl(frame.url);
 }
 
-type ManagedProviderCredentialId = 'glm' | 'deepseek';
+type ManagedProviderCredentialId = 'glm' | 'deepseek' | 'xai';
 
 /** Provider keys are stored under predictable names in the OS keychain. Do
  * not let a renderer choose an arbitrary key identifier and turn this into a
  * secret-presence oracle for the process environment or credential store. */
 function managedProviderCredentialId(value: unknown): ManagedProviderCredentialId {
-  if (value === 'glm' || value === 'deepseek') return value;
-  throw new Error('Wanigan manages provider credentials only for GLM and DeepSeek.');
+  if (value === 'glm' || value === 'deepseek' || value === 'xai') return value;
+  throw new Error('Wanigan manages provider credentials only for GLM, DeepSeek and xAI.');
 }
 
 /* ── renderer text that becomes a `claude plugin` argv entry ───────────
@@ -1934,6 +1935,10 @@ function registerIpc() {
       const verified = await verifyDeepSeekKey(key);
       if (!verified.ok) throw new Error(verified.detail);
     }
+    if (id === 'xai') {
+      const verified = await verifyXaiKey(key);
+      if (!verified.ok) throw new Error(verified.detail);
+    }
     setProviderKey(id, key);
     return { present: true, fingerprint: providerKeyFingerprint(id) };
   });
@@ -1942,6 +1947,8 @@ function registerIpc() {
   handle('glm:verify', () => verifyGlmKey());
   handle('deepseek:models', (force?: boolean) => deepseekModels(force === true));
   handle('deepseek:verify', () => verifyDeepSeekKey());
+  handle('xai:models', (force?: boolean) => xaiModels(force === true));
+  handle('xai:verify', () => verifyXaiKey());
   handle('settings:get', () => ({ spendCapUsd: spendCap() }));
 
   // ── code panel ───────────────────────────────────────────────────────
