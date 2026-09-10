@@ -1,4 +1,7 @@
-export type Temperament='water'|'ember';
+export type Temperament='water'|'ember'|'lava';
+export function readTemperament():Temperament {
+  try{const value=localStorage.getItem('wanigan.orb.temperament');return value==='ember'||value==='lava'?value:'water';}catch{return 'water';}
+}
 export type GazePoint={x:number;y:number};
 export type ExpressionContext={focused:boolean;thinking:boolean;answerEvent:number;attentionEvent:number;temperament:Temperament;
   composer?:GazePoint;overview?:GazePoint};
@@ -18,6 +21,7 @@ const clamp=(n:number)=>Math.max(-1,Math.min(1,n));
 export class OrbExpression {
   private x=axis();private y=axis();private lean=axis();private energy=axis();
   private curiosity=axis();private warmth=axis();private fire:Spring;
+  private lava:Spring;private vortex=axis();
   private yaw=axis();private spinGoal=0;private spinAt=-10;
   private time=0;private blinkAt=3.4;private blinkStart=-10;private blinkCount=0;
   private acknowledgeAt=-10;private attentionAt=-10;private nudgeAt=-10;
@@ -25,7 +29,7 @@ export class OrbExpression {
   private targetX=0;private targetY=0;private targetKind='rest';private fixationUntil=0;private shiftAt=-10;
   private fromX=0;private fromY=0;private microAt=0;private microX=0;private microY=0;private microCount=0;
   private context:ExpressionContext;
-  constructor(context:ExpressionContext){this.context={...context};this.fire=axis(context.temperament==='ember'?1:0);}
+  constructor(context:ExpressionContext){this.context={...context};this.fire=axis(context.temperament==='ember'?1:0);this.lava=axis(context.temperament==='lava'?1:0);}
   setContext(context:ExpressionContext,animate=true){
     // While motion is off, absorb events without replaying them on resume.
     if(animate){
@@ -79,6 +83,8 @@ export class OrbExpression {
     spring(this.curiosity,(focused||attending)?.75:nudged?1:0,dt,9);
     spring(this.warmth,acknowledging?.8:0,dt,8);
     spring(this.fire,temperament==='ember'?1:0,dt,3,.92);
+    spring(this.lava,temperament==='lava'?1:0,dt,3,.92);
+    spring(this.vortex,thinking?.65:0,dt,2.8,.92);
     const turnGoal=this.spinGoal-(this.time-this.spinAt<.14?Math.PI*2:0);
     spring(this.yaw,turnGoal+this.targetX*.16,dt,4.8,.88);
     if(this.spinGoal>Math.PI*2&&Math.abs(this.yaw.position-this.spinGoal)<.2){this.yaw.position-=Math.PI*2;this.spinGoal-=Math.PI*2;}
@@ -97,6 +103,9 @@ export class OrbExpression {
     return {gazeX:this.x.position,gazeY:this.y.position,blink,lean:this.lean.position,
       energy:this.energy.position,curiosity:this.curiosity.position,warmth:this.warmth.position,
       yaw:this.yaw.position,angularVelocity:this.yaw.velocity,
-      fire:Math.max(0,Math.min(1,this.fire.position))};
+      fire:Math.max(0,Math.min(1,this.fire.position)),lava:Math.max(0,Math.min(1,this.lava.position)),
+      vortex:Math.max(0,Math.min(.65,this.vortex.position)),
+      bubbleInterest:!this.context.focused&&!this.context.thinking&&this.targetKind==='rest'?1:0,
+      celebration:Math.max(0,1-(this.time-this.acknowledgeAt)/.45)};
   }
 }

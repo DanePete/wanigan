@@ -1,0 +1,9 @@
+{
+  "capturedAt": "2026-09-10T13:24:13.298Z",
+  "provenance": "Actual Electron and GPU; synthetic bridge/session fixtures; no agent or model calls",
+  "checks": [
+    "dark: status colors and labels, bounded attention dialog, Escape/focus, same canvas across all 16 other destinations, motion off, quiet opens Mission, one orb",
+    "light: status colors and labels, bounded attention dialog, Escape/focus, same canvas across all 16 other destinations, motion off, quiet opens Mission, one orb"
+  ],
+  "errors": []
+}

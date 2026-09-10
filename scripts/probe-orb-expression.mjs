@@ -31,3 +31,27 @@ pose=advance(orb,2.4);assert(pose.yaw>6&&pose.yaw<6.6,'a spin completes one phys
 assert(Math.abs(pose.angularVelocity)<.1,'the globe settles after its turn');
 assert(pose.fire>.99,'temperament changes converge continuously');
 console.log('Orb expression checks passed: spring continuity, intention, fixation, blink, bounded waiting, pause and spin.');
+
+const intent=new OrbExpression(base);advance(intent,1);
+assert.equal(intent.frame().bubbleInterest,1,'idle eyes may notice a bubble');
+intent.setContext({...base,focused:true});advance(intent,.1);
+assert.equal(intent.frame().bubbleInterest,0,'typing interrupts bubble watching');
+intent.setContext({...base,thinking:true});advance(intent,5);const vortex=intent.frame().vortex;
+assert(vortex>.6);advance(intent,30);assert(Math.abs(intent.frame().vortex-vortex)<.001,'a long request does not accelerate the vortex');
+intent.setContext(base);const start=intent.frame().vortex;advance(intent,.1);
+assert(intent.frame().vortex>0&&intent.frame().vortex<start,'the vortex force ramps down instead of resetting water');
+advance(intent,4);assert(intent.frame().vortex<.001);
+intent.setContext({...base,answerEvent:1});assert(intent.frame().celebration>.99);
+advance(intent,1);intent.setContext({...base,answerEvent:1});assert.equal(intent.frame().celebration,0,'identical snapshots cannot repeat a burst');
+intent.setContext({...base,answerEvent:2},false);advance(intent,1);assert.equal(intent.frame().celebration,0,'events received with motion off are absorbed');
+intent.setContext({...base,temperament:'lava'});advance(intent,3);assert(intent.frame().lava>.99&&intent.frame().fire<.001);
+const handlingSource=readFileSync(new URL('../src/renderer/src/orb/handling.ts',import.meta.url),'utf8');
+const handlingCode=ts.transpileModule(handlingSource,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
+const {Handling}=await import('data:text/javascript;base64,'+Buffer.from(handlingCode).toString('base64'));
+const handled=new Handling();handled.grab(50,-50);let force=0;
+for(let i=0;i<30;i++){const pose=handled.step(1/30);assert(Math.abs(pose.ax)<=7&&Math.abs(pose.ay)<=7);force+=Math.abs(pose.ax);}
+assert(force>1);const held=handled.step(0);assert(Math.abs(held.roll)<=.221);
+handled.release();assert.deepEqual(handled.step(0),held,'release does not teleport the glass');
+for(let i=0;i<120;i++)handled.step(1/30);
+assert(Math.abs(handled.step(0).roll)<.001,'handling settles after release');
+console.log('Orb play intention checks passed: priority, bounded vortex, one-shot celebration, pause, lava and handling.');

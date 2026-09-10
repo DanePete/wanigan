@@ -57,6 +57,10 @@ fn curl(c:vec3i)->vec3f {
  let position=uv-vec3f(.5,.49,.49);
  let emitter=exp(-dot(position,position*vec3f(1.,.45,1.))*850.);
  value.w = min(1.8,value.w*exp(-u.dt*.22)+emitter*u.dt*.7*(1.-u.fire));
+ // A supplied cloud deck for the short weather performance. Dye keeps moving
+ // through the same advection/projection passes after its source switches off.
+ let cloud=uv-vec3f(.5,.79,.48);
+ value.w=min(1.8,value.w+exp(-dot(cloud*vec3f(1.,3.,1.4),cloud*vec3f(1.,3.,1.4))*65.)*u.dt*u.direction.w*3.);
  value = vec4f(value.xyz + u.dt*emitter*vec3f(.055*sin(u.time*.47)+u.impulse*.03,.14,.03*cos(u.time*.37)), value.w);
  // A bounded stirring force excites vortices; projection removes divergence.
  let q=uv-vec3f(.49,.69,.5);
@@ -216,9 +220,9 @@ export class Gas {
       return {before:Math.sqrt(before/n),after:Math.sqrt(after/n),maxSpeed,maxDye,invalid};
     }finally{storage.destroy();read.destroy();}
   }
-  step(encoder:GPUCommandEncoder, dt:number, time:number, impulse:number, fire:number, direction:number, energy:number, angularVelocity:number) {
+  step(encoder:GPUCommandEncoder, dt:number, time:number, impulse:number, fire:number, direction:number, energy:number, angularVelocity:number,weather=0) {
     this.thermal.step(encoder,dt,time,fire,energy,direction);
-    this.device.queue.writeBuffer(this.uniform,0,new Float32Array([dt,time,impulse,fire,direction,energy,Math.max(-6,Math.min(6,angularVelocity)),0]));
+    this.device.queue.writeBuffer(this.uniform,0,new Float32Array([dt,time,impulse,fire,direction,energy,Math.max(-6,Math.min(6,angularVelocity)),weather]));
     for(const {pipeline,group} of this.passes) {
       const pass=encoder.beginComputePass();pass.setPipeline(pipeline);pass.setBindGroup(0,group);
       pass.dispatchWorkgroups(SIZE/4,SIZE/4,SIZE/4);pass.end();

@@ -1,0 +1,25 @@
+{
+  "capturedAt": "2026-09-10T13:18:48.081Z",
+  "provenance": "Actual main process, preload and GPU using the isolated test bootstrap; fresh empty profile; no model/session launch",
+  "checks": [
+    "quiet state from real IPC",
+    "native hide stops GPU submissions; show resumes",
+    "motion off freezes rendering",
+    "small companion opens Mission room",
+    "only one orb mounted",
+    "no session or conversation created"
+  ],
+  "measurements": [
+    {
+      "frames": 34,
+      "seconds": 2.006,
+      "framesPerSecond": 16.949152542372882,
+      "canvas": {
+        "width": 200,
+        "height": 200,
+        "cssWidth": 64
+      }
+    }
+  ],
+  "errors": []
+}
