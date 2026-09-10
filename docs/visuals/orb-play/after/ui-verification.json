@@ -1,0 +1,15 @@
+{
+  "recordedAt": "2026-09-10T13:56:36.799Z",
+  "errors": [],
+  "checks": [
+    "Shared lava material",
+    "Play controls",
+    "Captured drag/release at both sizes",
+    "Pending request vortex",
+    "Exactly one answer burst",
+    "No replayed session events",
+    "Motion off",
+    "No automatic model calls"
+  ],
+  "scope": "Isolated Electron GPU, synthetic project fixtures"
+}

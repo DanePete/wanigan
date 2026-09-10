@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CompanionSnapshot, CompanionSource, CompanionTurn } from '@shared/companion';
+import type { CompanionPresenceState } from '@shared/companion-presence';
 import Orb from '../components/Orb';
-import type { Temperament } from '../orb/expression';
+import { readTemperament } from '../orb/expression';
+import type { OrbPlay } from '../orb/runtime';
+import { usePresenceReactions } from '../orb/presence';
 import { EmptyState, Icon, Note, PageHead, Pill, SectionHead, Segmented, ago } from '../components/bits';
 import '../styles/mission.css';
 
@@ -10,7 +13,8 @@ const stateWord = { permission: 'Permission needed', error: 'Needs a look', fini
 const numerals = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
 const count = (n: number) => numerals[n] ?? String(n);
 
-export default function MissionRoom({ projectId, onOpenSession, onProject, onAddProject, onNewSession, onSettings }: {
+export default function MissionRoom({ projectId, presence, onOpenSession, onProject, onAddProject, onNewSession, onSettings }: {
+  presence:CompanionPresenceState;
   projectId: string | null; onOpenSession: (id: string) => void; onProject: (id: string) => void;
   onAddProject: () => void; onNewSession: () => void; onSettings: () => void;
 }) {
@@ -24,16 +28,15 @@ export default function MissionRoom({ projectId, onOpenSession, onProject, onAdd
   const [historyOpen, setHistoryOpen] = useState(false);
   const [focused,setFocused]=useState(false);
   const [answerEvent,setAnswerEvent]=useState(0);
-  const [attentionEvent,setAttentionEvent]=useState(0);
+  const {attentionEvent,completionEvent}=usePresenceReactions(presence);
   const [spinEvent,setSpinEvent]=useState(0);
-  const [temperament,setTemperament]=useState<Temperament>(()=>{
-    try{return localStorage.getItem('wanigan.orb.temperament')==='ember'?'ember':'water';}catch{return 'water';}
-  });
+  const [playEvent,setPlayEvent]=useState<{kind:OrbPlay;id:number}>({kind:'splash',id:0});
+  const [temperament,setTemperament]=useState(readTemperament);
   const scopeRef = useRef(projectId); scopeRef.current = projectId;
   const input = useRef<HTMLTextAreaElement>(null);
+  const appearance=useRef<HTMLDivElement>(null),appearanceButton=useRef<HTMLButtonElement>(null);
   useEffect(() => {
     let alive = true; let loading = false;
-    let previousAttention:Set<string>|null=null;
     setSnapshot(null); setTurns([]); setError(null); setReadError(null); setSending(false); setQuestion('');
     const refresh = async () => {
       if (loading || document.hidden) return;
@@ -41,9 +44,6 @@ export default function MissionRoom({ projectId, onOpenSession, onProject, onAdd
       try {
         const [facts, history] = await Promise.all([window.wanigan.companion.snapshot(projectId), window.wanigan.companion.history(projectId)]);
         if (alive) {
-          const attention=new Set(facts.projects.flatMap(p=>p.sessions.filter(s=>['permission','error','finished'].includes(s.state)).map(s=>`${s.id}:${s.state}`)));
-          if(previousAttention&&[...attention].some(key=>!previousAttention!.has(key)))setAttentionEvent(n=>n+1);
-          previousAttention=attention;
           setSnapshot(facts); setTurns(history); setModel((current) => current || facts.defaultModel); setReadError(null);
         }
       } catch (e) { if (alive) setReadError(e instanceof Error ? e.message : String(e)); }
@@ -78,17 +78,29 @@ export default function MissionRoom({ projectId, onOpenSession, onProject, onAdd
 
   return <main className="pane mission-room">
     <section className="mission-stage" aria-label="Wanigan companion">
-      <div className="mission-presence">
-        <Orb thinking={pending} focused={focused} answerEvent={answerEvent} attentionEvent={attentionEvent} spinEvent={spinEvent} temperament={temperament} />
-        <button className="mission-orb-caption" type="button" popoverTarget="wanigan-personality" aria-label="Wanigan appearance and play">
+      <div className="mission-presence" onKeyDown={event=>{
+        if(event.key==='Escape'&&appearance.current?.matches(':popover-open')){
+          event.preventDefault();event.stopPropagation();appearance.current.hidePopover();appearanceButton.current?.focus();
+        }
+      }}>
+        <Orb thinking={pending} focused={focused} answerEvent={answerEvent+completionEvent} attentionEvent={attentionEvent} spinEvent={spinEvent} playEvent={playEvent} temperament={temperament} />
+        <button ref={appearanceButton} className="mission-orb-caption" type="button" popoverTarget="wanigan-personality" aria-label="Wanigan appearance and play">
           {pending ? 'Thinking about your question' : 'Wanigan'}<Icon name="sliders" />
         </button>
-        <div className="mission-temperament" id="wanigan-personality" popover="auto" aria-label="Wanigan appearance and play">
+        <div ref={appearance} className="mission-temperament" id="wanigan-personality" popover="auto" aria-label="Wanigan appearance and play">
           <SectionHead label="Make him yours" />
           <Segmented label="Wanigan’s temperament" value={temperament}
-          options={[{value:'water',label:'Water & mist'},{value:'ember',label:'Ember & flame'}]}
+          options={[{value:'water',label:'Water & mist'},{value:'ember',label:'Ember & flame'},{value:'lava',label:'Lava lamp'}]}
           onChange={value=>{setTemperament(value);try{localStorage.setItem('wanigan.orb.temperament',value);}catch{/* Keep this window’s choice when local storage is unavailable. */}}} />
-          <button className="mission-spin" type="button" onClick={()=>setSpinEvent(n=>n+1)} aria-label="Spin Wanigan">Give him a spin <span aria-hidden="true">↻</span></button>
+          <div className="mission-play" aria-label="Play with Wanigan">
+            <button type="button" onClick={event=>{setSpinEvent(n=>n+1);event.currentTarget.closest<HTMLElement>('[popover]')?.hidePopover();}} aria-label="Spin Wanigan">Give him a spin <span aria-hidden="true">↻</span></button>
+            {([{kind:'splash',label:'Make a splash',glyph:'≈'},{kind:'burst',label:'Bubble burst',glyph:'◌'},
+              {kind:'rain',label:'Little rainstorm',glyph:'☂'}] as const).map(action=><button key={action.kind} type="button"
+                onClick={event=>{setPlayEvent(previous=>({kind:action.kind,id:previous.id+1}));event.currentTarget.closest<HTMLElement>('[popover]')?.hidePopover();}}>
+                {action.label}<span aria-hidden="true">{action.glyph}</span>
+              </button>)}
+          </div>
+          <p className="mission-play-hint">Grab and flick his globe. His water remembers.<br />Arrow keys splash · S spins · B bubbles · R rains</p>
         </div>
       </div>
       <div className="mission-briefing">

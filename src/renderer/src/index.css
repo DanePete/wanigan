@@ -41,6 +41,8 @@
   --review-list-inset: 300px;
   --space-routes-h: 44px;
   --space-foot-h: 76px;
+  --companion-size: 64px;
+  --companion-caption-width: 144px;
   --mission-stage-h: 410px;
   --mission-orb-size: clamp(280px, min(28vw, 43vh), 370px);
   --mission-input-h: 62px;

@@ -6,6 +6,8 @@ import { DIGIT_ROUTES, SIDEBAR_GROUPS, TABS, TAB_ICONS, TAB_SHORTCUTS, labelForT
 import { bindingMatches, inTerminal, modalOpen } from './bindings';
 import Sessions from './views/Sessions';
 import MissionRoom from './views/MissionRoom';
+import CompanionPresence from './components/CompanionPresence';
+import { companionPresence, type PresenceRead } from '@shared/companion-presence';
 import { ProjectSpaces, SpaceRoutes, SpaceDock } from './components/SpaceNavigation';
 import Fleet from './views/Fleet';
 import Control from './views/Control';
@@ -53,10 +55,11 @@ type StartupStatus = {
  *
  *  - The PTY owns its keystrokes. ⌘1–9 switch views only when focus is outside
  *    a terminal; inside one, every key belongs to the agent.
- *  - Nothing animates around a live terminal. A view transition that fades or
+ *  - Pane transitions stay off around a live terminal. A transition that fades or
  *    slides a pane containing a running PTY fights xterm's own repaint, and the
  *    thing that ends up looking broken is the terminal. When either side of a
  *    view swap holds a live session, the swap is instant on purpose.
+ *    The companion has a separate, bounded GPU loop in the footer.
  *
  * The route table (TABS, TAB_SHORTCUTS) lives in shared/routes.ts as pure
  * data, and the key table in ./bindings.ts, so the rail, the palette, the
@@ -125,7 +128,7 @@ const NEED_MARK: Record<string, { glyph: string; tone: string; phrase: (n: numbe
 /** The only parts of a session list the shell reacts to. */
 const shape = (l: Session[]) => l.map((s) => `${s.id}:${s.status}:${s.projectId}`).join('|');
 /** Likewise for the ranked attention list: identity, kind and when it began. */
-const attentionShape = (l: Attention[]) => l.map((a) => `${a.sessionId}:${a.kind}:${a.since}`).join('|');
+const attentionShape = (l: Attention[]) => l.map((a) => `${a.sessionId}:${a.kind}:${a.since}:${a.transitionId}`).join('|');
 
 /**
  * How many notification cards the window will stack before the oldest drops.
@@ -237,6 +240,7 @@ export default function App() {
   // first, then longest wait. The counts above are derived from it; the rail
   // popover and the palette's session marks read it directly.
   const [attention, setAttention] = useState<Attention[]>([]);
+  const [attentionRead, setAttentionRead] = useState<PresenceRead>('loading');
   // Cards raised by main, newest first. Deliberately not derived from the
   // attention list above: that list is a poll of what is true now, and a card
   // is a record that a transition happened — a prompt answered thirty seconds
@@ -292,8 +296,10 @@ export default function App() {
 
   const tabRef = useRef<Tab>(tab); tabRef.current = tab;
   const sessionsRef = useRef<Session[]>(sessions); sessionsRef.current = sessions;
+  const tickRequest = useRef(0);
 
   const running = useMemo(() => sessions.filter((s) => s.status === 'running').length, [sessions]);
+  const presence = useMemo(() => companionPresence(sessions, attention, attentionRead), [sessions, attention, attentionRead]);
 
   /** Report a failure with the work that would undo it, so the operator has
    *  something to press rather than a sentence to read. */
@@ -405,17 +411,20 @@ export default function App() {
   // its own badge and no other; the batch badge additionally holds its last
   // observed value rather than reporting a zero it never read.
   const tick = useCallback(async () => {
+    const request = ++tickRequest.current;
     const [ss, flight, att] = await Promise.all([
-      window.wanigan.sessions.list().catch(() => [] as Session[]),
+      window.wanigan.sessions.list().catch(() => null),
       // null, not an empty read: a badge is a claim about what is running, and
       // a call that failed has observed nothing to claim it from.
       window.wanigan.batch.runsInFlight().catch(() => null),
-      window.wanigan.attention.list().catch(() => [] as Attention[]),
+      window.wanigan.attention.list().catch(() => null),
     ]);
+    if (request !== tickRequest.current) return;
     // Poll results are only allowed to re-render the app when they actually
     // differ — a new array every six seconds would re-render the view holding
     // the terminals for nothing.
-    setSessions((prev) => (shape(prev) === shape(ss) ? prev : ss));
+    if (ss) setSessions((prev) => (shape(prev) === shape(ss) ? prev : ss));
+    setAttentionRead(ss && att ? 'ready' : 'unavailable');
 
     // A failed read updates neither the badge nor the bar. Both are statements
     // about right now, and the last thing seen is closer to true than a zero.
@@ -432,6 +441,7 @@ export default function App() {
       });
     }
 
+    if (!ss || !att) return;
     const live = new Set(ss.map((s) => s.id));
     const liveAttention = att.filter((a) => live.has(a.sessionId));
     setAttention((prev) => (attentionShape(prev) === attentionShape(liveAttention) ? prev : liveAttention));
@@ -453,11 +463,18 @@ export default function App() {
 
   useEffect(() => {
     void tick();
+    let eventRefresh: ReturnType<typeof setTimeout> | undefined;
+    const offEvent = window.wanigan.on.sessionEvent(() => {
+      if (eventRefresh || document.hidden) return;
+      eventRefresh = setTimeout(() => { eventRefresh = undefined; void tick(); }, 250);
+    });
     const t = setInterval(() => { if (document.hidden) return; void tick(); }, 6000);
     const offBatch = window.wanigan.on.batchChanged(() => void tick());
-    const offList = window.wanigan.on.sessions((list) =>
-      setSessions((prev) => (shape(prev) === shape(list) ? prev : list)));
-    return () => { clearInterval(t); offBatch(); offList(); };
+    const offList = window.wanigan.on.sessions((list) => {
+      setSessions((prev) => (shape(prev) === shape(list) ? prev : list));
+      void tick();
+    });
+    return () => { clearInterval(t); clearTimeout(eventRefresh); offEvent(); offBatch(); offList(); };
   }, [tick]);
 
   // Branches move constantly; keep the shared project list honest. Handing
@@ -1382,7 +1399,7 @@ export default function App() {
               without mounting another, which is how a broken view's memory is
               marked for clearing before the next mount. */}
           <ViewMemoryScope view={tab}>
-          {tab === 'mission' && <MissionRoom projectId={spaceId} onOpenSession={openSession}
+          {tab === 'mission' && <MissionRoom projectId={spaceId} presence={presence} onOpenSession={openSession}
             onProject={(id) => { choose(id); go('sessions'); }} onAddProject={addProject}
             onNewSession={requestNewSession} onSettings={() => jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' })} />}
           {tab === 'sessions' && (
@@ -1433,7 +1450,9 @@ export default function App() {
       </div>
       </div>
 
-      <SpaceDock tab={tab} go={go} needs={needs.total} expanded={sidebarOpen} onMore={toggleSidebar} />
+      <SpaceDock tab={tab} go={go} needs={needs.total} expanded={sidebarOpen} onMore={toggleSidebar}
+        companion={tab === 'mission' ? undefined : <CompanionPresence presence={presence}
+          expanded={!!needAnchor?.closest('.companion-presence')} onAttention={setNeedAnchor} onHome={() => go('mission')} />} />
       {/* role=alert is itself an assertive live region; declaring aria-live as
           well made some VoiceOver builds read the message twice. */}
       {error && (
@@ -1523,7 +1542,8 @@ function NeedYouPopover({ anchor, attention, sessions, onOpen, onClose }: {
   const rect = anchor.getBoundingClientRect();
   const place = {
     '--pop-left': `${Math.max(8, Math.min(rect.left, window.innerWidth - 372))}px`,
-    '--pop-top': `${Math.round(rect.bottom + 6)}px`,
+    '--pop-top': rect.top > window.innerHeight / 2 ? 'auto' : `${Math.round(rect.bottom + 6)}px`,
+    '--pop-bottom': rect.top > window.innerHeight / 2 ? `${Math.round(window.innerHeight - rect.top + 6)}px` : 'auto',
   } as React.CSSProperties;
   return portal(
     <div {...backdropProps} className="overlay-backdrop clear">

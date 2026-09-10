@@ -1,0 +1,48 @@
+{
+  "recordedAt": "2026-09-10T13:56:06.014Z",
+  "rendererSha256": "5d214f67886bbcb9a91a18b7bc593c547472d7c0cc37614e0e982ccecd14ed73",
+  "wake": {
+    "before": 0,
+    "stirred": 1147.6105941534042,
+    "settled": 0.29388904571533203
+  },
+  "wax": {
+    "moved": 34.632561665959656,
+    "hot": 0.8258842825889587,
+    "cold": 0.49391666054725647,
+    "maxR": 0.7788078786164945
+  },
+  "rain": {
+    "quietSpeed": 0.10561981500990016,
+    "rainySpeed": 0.11729346386393022,
+    "transfer": {
+      "changed": 492,
+      "downward": -25.50333083485293,
+      "maxDelta": 0.7500142157077789
+    },
+    "splashCount": 10,
+    "ripples": {
+      "min": -0.05499267578125,
+      "max": 0.0198211669921875,
+      "energy": 0.4335899108089629,
+      "invalid": 0
+    },
+    "settled": {
+      "min": 0,
+      "max": 0,
+      "energy": 0,
+      "invalid": 0
+    }
+  },
+  "vortex": {
+    "beforeVortex": -0.0000247055809422535,
+    "afterVortex": 1.1180698356148224,
+    "maxWaterRadius": 0.9580830383798481
+  },
+  "performance": {
+    "medianMs": 27.099999994039536,
+    "p95Ms": 33.5
+  },
+  "errors": [],
+  "scope": "Isolated Electron real GPU; explicit test inputs, no agents or models"
+}

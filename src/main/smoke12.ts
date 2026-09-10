@@ -1,5 +1,6 @@
 import { db } from './db';
 import { companionFacts, createCompanionService } from './companion';
+import { companionPresence } from '../shared/companion-presence';
 import type { Attention, Project, Session } from '../shared/types';
 
 type Check = (ok:boolean,label:string,detail?:unknown)=>void;
@@ -13,6 +14,29 @@ export async function runCompanionSmoke(check:Check,say:(s:string)=>void) {
     exitCode:null,createdAt:2,endedAt:null,unread:0};
   const attention:Attention={sessionId:session.id,kind:'permission',transitionId:'test',since:3,
     label:'PRIVATE-ATTENTION-MARKER',detail:'PRIVATE-TRANSCRIPT-MARKER',tool:null};
+  const presence=(rows:Attention[])=>companionPresence([session],rows,'ready');
+  check(presence([attention]).signal==='permission'&&presence([attention]).needs===1,
+    'small companion follows a recorded permission request');
+  const finish={...attention,kind:'finished' as const,transitionId:'turn-finished'};
+  check(presence([finish]).signal==='finished'&&presence([finish]).label==='A turn finished',
+    'a finished turn is shown without claiming approved or successful work');
+  check(presence([{...attention,kind:'error'}]).signal==='error','a recorded session error changes the companion signal');
+  check(presence([{...attention,kind:'working'}]).signal==='working'&&presence([]).signal==='quiet',
+    'working requires an attention signal, never a running PID alone');
+  check(companionPresence([{...session,status:'exited'}] as Session[],[],'ready').signal==='quiet',
+    'a process exit without a finished signal does not invent a completion');
+  check(companionPresence([{...session,status:'exited'}],[finish],'ready').label==='A session ended',
+    'an exited process is not mislabeled as a completed turn');
+  check(presence([{...attention,sessionId:'removed'}]).needs===0,'removed sessions cannot keep the companion in an attention state');
+  check(presence([attention,attention]).needs===1,'duplicate attention rows do not inflate the companion count');
+  check(companionPresence([session],[finish],'unavailable').signal==='unavailable'
+    &&companionPresence([session],[],'loading').label==='Checking sessions',
+    'failed and initial status reads remain distinct from a quiet fleet');
+  const other={...session,id:'another-session'};
+  const mixed=companionPresence([session,other],[{...finish,sessionId:other.id},attention],'ready');
+  check(mixed.signal==='permission'&&mixed.needs===2,'permission takes priority over a finished turn while retaining both waiting sessions');
+  check(presence([finish]).events[0]!==presence([{...finish,transitionId:'next-turn'}]).events[0],
+    'a new finished-turn transition remains distinct from a repeated poll');
   const facts=(scope:string|null)=>companionFacts([project],[session],[attention],scope);
   const snapshot=facts(null),encoded=JSON.stringify(snapshot);
   check(snapshot.running===1&&snapshot.needsYou===1&&snapshot.projects[0].sessions[0].state==='permission',

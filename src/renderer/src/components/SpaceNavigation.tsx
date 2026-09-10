@@ -2,6 +2,7 @@ import type { Project } from '@shared/types';
 import { labelForTab, TAB_ICONS, type Tab } from '@shared/routes';
 import { areaFor, SPACE_AREAS, spaceLabel } from '@shared/spaces';
 import { Icon } from './bits';
+import type { ReactNode } from 'react';
 
 export function ProjectSpaces({ projects, selected, onSelect, onAdd }: {
   projects: Project[]; selected: string | null;
@@ -29,12 +30,12 @@ export function SpaceRoutes({ tab, go, projectName }: { tab: Tab; go: (tab: Tab)
   </nav>;
 }
 
-export function SpaceDock({ tab, go, needs, expanded, onMore }: {
-  tab: Tab; go: (tab: Tab) => void; needs: number; expanded: boolean; onMore: () => void;
+export function SpaceDock({ tab, go, needs, expanded, onMore, companion }: {
+  tab: Tab; go: (tab: Tab) => void; needs: number; expanded: boolean; onMore: () => void; companion?: ReactNode;
 }) {
   const current = areaFor(tab);
   return <footer className="space-foot">
-    <span className="space-foot-note">Local first. Your work, together.</span>
+    {companion ?? <span className="space-foot-note">Local first. Your work, together.</span>}
     <nav className="space-dock" aria-label="Workspace navigation">
       {SPACE_AREAS.slice(0, 5).map((area) => <button type="button" key={area.id}
         aria-label={area.label} aria-current={current.id === area.id ? 'page' : undefined} onClick={() => go(area.tabs[0])}>

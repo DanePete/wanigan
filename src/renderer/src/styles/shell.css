@@ -34,6 +34,7 @@ button.nav-mark:hover { filter: brightness(1.08); }
 /* The blocked list under "n need you": worst first, main's ranking untouched. */
 .need-popover {
   position: absolute; left: var(--pop-left, 16px); top: var(--pop-top, 100px);
+  bottom: var(--pop-bottom, auto);
   width: min(360px, calc(100vw - 24px)); padding: 8px;
   border: 1px solid var(--line); border-radius: var(--r-md);
   background: var(--bg-soft); box-shadow: var(--shadow-popover);

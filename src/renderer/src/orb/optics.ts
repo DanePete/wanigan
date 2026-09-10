@@ -1,7 +1,7 @@
 /** A refracting glass shell around the simulated volume. Analytic eye geometry
  * lives inside the shell; both water and glass distort the camera ray. */
 export const OPTICS = `
-struct View { size:vec2f, time:f32, light:f32, gaze:vec2f, blink:f32, thinking:f32, curiosity:f32, warmth:f32, energy:f32, pad:f32, pose:vec4f }
+struct View { size:vec2f, time:f32, light:f32, gaze:vec2f, blink:f32, thinking:f32, curiosity:f32, warmth:f32, energy:f32, signal:f32, pose:vec4f, play:vec4f }
 @group(0) @binding(0) var<uniform> u:View;
 @group(0) @binding(1) var liquid:texture_3d<f32>;
 @group(0) @binding(2) var vapor:texture_3d<f32>;
@@ -11,6 +11,11 @@ struct View { size:vec2f, time:f32, light:f32, gaze:vec2f, blink:f32, thinking:f
 @group(0) @binding(6) var backdrop:texture_2d<f32>;
 @group(0) @binding(7) var thermal:texture_3d<f32>;
 @group(0) @binding(8) var<storage,read> embers:array<vec4f>;
+@group(0) @binding(9) var wakes:texture_3d<f32>;
+@group(0) @binding(10) var wax:texture_3d<f32>;
+@group(0) @binding(11) var<storage,read> drops:array<vec4f>;
+@group(0) @binding(12) var<storage,read> bubbleGaze:array<vec4f>;
+@group(0) @binding(13) var rippleField:texture_2d<f32>;
 @vertex fn vs(@builtin(vertex_index) i:u32)->@builtin(position) vec4f {
  let p=array<vec2f,3>(vec2f(-1.,-1.),vec2f(3.,-1.),vec2f(-1.,3.));return vec4f(p[i],0.,1.);
 }
@@ -55,7 +60,11 @@ fn lighting(o:vec3f,d:vec3f)->vec3f {
  let captured=textureSampleLevel(environment,smoothSampler,uv,0.).rgb;
  return captured*.45 + studio(o,d)*.85;
 }
-fn rho(p:vec3f)->f32 {return textureSampleLevel(liquid,smoothSampler,clamp((p+1.)*.5,vec3f(0.),vec3f(1.)),0.).x;}
+fn rho(p:vec3f)->f32 {
+ let ripple=textureSampleLevel(rippleField,smoothSampler,(p.xz+1.)*.5,0.).x*smoothstep(-.5,-.25,p.y);
+ let displaced=p-vec3f(0.,ripple,0.);
+ return textureSampleLevel(liquid,smoothSampler,clamp((displaced+1.)*.5,vec3f(0.),vec3f(1.)),0.).x*(1.-u.play.x);
+}
 fn gradient(p:vec3f)->vec3f {
  let h=.032;
  return normalize(vec3f(rho(p-vec3f(h,0,0))-rho(p+vec3f(h,0,0)),
@@ -65,12 +74,17 @@ fn fresnel(cosine:f32, n1:f32,n2:f32)->f32 {
  let f=(n1-n2)/(n1+n2);return f*f+(1.-f*f)*pow(1.-clamp(cosine,0.,1.),5.);
 }
 fn rotateY(p:vec3f,angle:f32)->vec3f {let c=cos(angle);let s=sin(angle);return vec3f(c*p.x+s*p.z,p.y,-s*p.x+c*p.z);}
+fn handled(p:vec3f)->vec3f {
+ let c=cos(-u.play.y);let s=sin(-u.play.y);let q=vec3f(c*p.x-s*p.y,s*p.x+c*p.y,p.z);
+ let cx=cos(-u.play.z);let sx=sin(-u.play.z);return vec3f(q.x,cx*q.y-sx*q.z,sx*q.y+cx*q.z);
+}
 fn eyes(origin:vec3f,direction:vec3f)->vec4f {
- let o=rotateY(origin,-u.pose.x);let d=rotateY(direction,-u.pose.x);
+ let o=rotateY(handled(origin),-u.pose.x);let d=rotateY(handled(direction),-u.pose.x);
+ let gaze=mix(u.gaze,bubbleGaze[0].xy,bubbleGaze[0].z);
  var nearest=100.;var color=vec3f(0.);
  for(var i=0;i<2;i++){
   let side=f32(i)*2.-1.;
-  let center=vec3f(side*.18+u.gaze.x*.085,.12+u.gaze.y*.065+side*u.curiosity*.012,.80);
+  let center=vec3f(side*.18+gaze.x*.085,.12+gaze.y*.065+side*u.curiosity*.012,.80);
   let aperture=u.blink*(1.+side*u.curiosity*.14-u.warmth*.18);
   let scale=vec3f(.037+u.warmth*.003,max(.003,.051*aperture),.028);
   let ro=(o-center)/scale;let rd=d/scale;
@@ -108,7 +122,7 @@ fn hearthLight()->vec3f {
 }
 fn airBubbles(o:vec3f,d:vec3f)->vec4f {
  var result=vec4f(0.,0.,0.,100.);
- for(var i=0;i<32;i++){
+ for(var i=0;i<64;i++){
   let b=bubbles[i];if(b.w<=0.){continue;}
   let hit=sphere(o-b.xyz,d,b.w);
   if(hit.x>.002 && hit.x<result.w){
@@ -119,6 +133,31 @@ fn airBubbles(o:vec3f,d:vec3f)->vec4f {
   }
  }
  return result;
+}
+fn raindrops(o:vec3f,d:vec3f)->vec4f {
+ var result=vec4f(0.,0.,0.,100.);
+ for(var i=0;i<144;i++){
+  let drop=drops[i];if(drop.w<=0.){continue;}
+  let scale=vec3f(drop.w,drop.w*select(1.1,2.2,i<48),drop.w);
+  let ro=(o-drop.xyz)/scale;let rd=d/scale;
+  let a=dot(rd,rd);let b=dot(ro,rd);let h=b*b-a*(dot(ro,ro)-1.);
+  if(h>0.){
+   let t=(-b-sqrt(h))/a;
+   if(t>0.&&t<result.w){
+    let p=o+d*t;let n=normalize((p-drop.xyz)/(scale*scale));
+    let f=fresnel(-dot(d,n),1.,1.333);
+    result=vec4f(lighting(p,reflect(d,n))*f+studio(p,refract(d,n,1./1.333))*.45+vec3f(.015,.025,.03),t);
+   }
+  }
+ }
+ return result;
+}
+fn waxAt(p:vec3f)->vec2f{return textureSampleLevel(wax,smoothSampler,(p+1.)*.5,0.).xy;}
+fn waxNormal(p:vec3f)->vec3f {
+ let h=.035;
+ return normalize(vec3f(waxAt(p-vec3f(h,0,0)).x-waxAt(p+vec3f(h,0,0)).x,
+ waxAt(p-vec3f(0,h,0)).x-waxAt(p+vec3f(0,h,0)).x,
+ waxAt(p-vec3f(0,0,h)).x-waxAt(p+vec3f(0,0,h)).x)+vec3f(0.,.00001,0.));
 }
 fn exitGlass(p:vec3f,d:vec3f,inWater:bool)->vec3f {
  let n=-normalize(p);let eta=select(1.,1.333,inWater)/1.46;
@@ -149,7 +188,7 @@ fn display(color:vec3f,coverage:f32)->vec4f {
  if(innerHit.x<0.){return display(reflection,coverage);}
  var position=surface+ray*innerHit.x;
  var inWater=rho(position)>.4;
- let medium=select(1.,1.333,inWater);
+ let medium=select(1.,1.333,inWater||u.play.x>.5);
  ray=refract(ray,normalize(position),1.46/medium);
  if(dot(ray,ray)<.01){return display(reflection,coverage);}
  position+=ray*.008;
@@ -157,11 +196,14 @@ fn display(color:vec3f,coverage:f32)->vec4f {
  var steps=0;var crossings=0;
  var nextBubble=airBubbles(position,ray);
  var nextSpark=sparks(position,ray);
+ var nextRain=raindrops(position,ray);
+ var insideWax=false;
+ var waxShade=1.;
  let warmLight=hearthLight();
  for(var step=0;step<160;step++){
   let distanceToExit=sphere(position,ray,1.).y;
   if(distanceToExit<.016){
-   radiance+=throughput*exitGlass(normalize(position),ray,inWater);break;
+   radiance+=throughput*exitGlass(normalize(position),ray,inWater||u.play.x>.5);break;
   }
   let lengthStep=.017;
   let next=position+ray*lengthStep;
@@ -183,7 +225,7 @@ fn display(color:vec3f,coverage:f32)->vec4f {
     radiance+=throughput*lighting(position,reflect(ray,n))*f;
     throughput*=1.-f;ray=transmitted;position+=ray*.02;inWater=nextWater;
    }
-   nextBubble=airBubbles(position,ray);nextSpark=sparks(position,ray);crossings++;continue;
+   nextBubble=airBubbles(position,ray);nextSpark=sparks(position,ray);nextRain=raindrops(position,ray);crossings++;continue;
   }
   if(inWater && nextBubble.w<lengthStep){
    radiance+=throughput*nextBubble.xyz;
@@ -193,15 +235,35 @@ fn display(color:vec3f,coverage:f32)->vec4f {
    radiance+=throughput*nextSpark.xyz;
    let advance=nextSpark.w+.018;nextSpark=sparks(position+ray*advance,ray);nextSpark.w+=advance;
   }
+  if(!inWater && nextRain.w<lengthStep){
+   radiance+=throughput*nextRain.xyz;
+   throughput*=.75;
+   let advance=nextRain.w+.06;nextRain=raindrops(position+ray*advance,ray);nextRain.w+=advance;
+  }
+  if(u.play.x>.001){
+   let material=waxAt(position);let density=smoothstep(.35,.85,material.x)*u.play.x;
+   let color=mix(vec3f(.28,.02,.065),vec3f(1.7,.38,.025),smoothstep(.12,.65,material.y));
+   if(density>.15&&!insideWax){
+    let n=waxNormal(position);
+    waxShade=.28+.72*max(0.,dot(n,normalize(vec3f(-.5,.8,.7))));
+    radiance+=throughput*(lighting(position,reflect(ray,n))*.07+color*.28)*u.play.x;
+   }
+   insideWax=density>.15;
+   let transmitted=exp(-density*lengthStep*24.);
+   radiance+=throughput*(1.-transmitted)*color*(.3+waxShade*.7)*(.8+material.y*.9);throughput*=transmitted;
+  }
   if(inWater){
    let extinction=vec3f(.48,.15,.075);
    let transmittance=exp(-extinction*lengthStep);
    // Single-scattered studio fill gives clear water depth without an opaque tint.
-   let fill=vec3f(.025,.11,.18)+warmLight*exp(-dot(position-vec3f(0.,.05,-.14),position-vec3f(0.,.05,-.14))*2.);
+   let fill=vec3f(.025,.11,.18)+u.pose.yzw*u.signal*.9+warmLight*exp(-dot(position-vec3f(0.,.05,-.14),position-vec3f(0.,.05,-.14))*2.);
    radiance+=throughput*(1.-transmittance)*fill;throughput*=transmittance;
+   let glow=textureSampleLevel(wakes,smoothSampler,(position+1.)*.5,0.).x;
+   radiance+=throughput*vec3f(.035,1.2,1.7)*glow*lengthStep*4.;
   }
   else {
-   let smoke=textureSampleLevel(vapor,smoothSampler,(position+1.)*.5,0.).w;
+   radiance+=throughput*u.pose.yzw*u.signal*lengthStep*.24;
+   let smoke=textureSampleLevel(vapor,smoothSampler,(position+1.)*.5,0.).w*(1.-u.play.x);
    let heat=textureSampleLevel(thermal,smoothSampler,(position+1.)*.5,0.);
    let extinction=smoke*2.2+heat.z*4.;
    let transmission=exp(-extinction*lengthStep);
@@ -221,10 +283,18 @@ fn display(color:vec3f,coverage:f32)->vec4f {
   }
   let eyeHit=eyes(position,ray);
   if(eyeHit.w<lengthStep){radiance+=throughput*eyeHit.xyz;throughput=vec3f(0.);break;}
-  position=next;nextBubble.w-=lengthStep;nextSpark.w-=lengthStep;steps++;
-  if(step==159){radiance+=throughput*exitGlass(normalize(position),ray,inWater);}
+  position=next;nextBubble.w-=lengthStep;nextSpark.w-=lengthStep;nextRain.w-=lengthStep;steps++;
+  if(step==159){radiance+=throughput*exitGlass(normalize(position),ray,inWater||u.play.x>.5);}
  }
- let color=mix(radiance,reflection,glassF);
+ let signalLight=u.pose.yzw*u.signal*(.06+.55*pow(1.-abs(dot(normal,-direction)),2.));
+ var dew=vec3f(0.);
+ for(var i=144;i<176;i++){
+  let drop=drops[i];if(drop.w>=0.){continue;}
+  let delta=surface-drop.xyz;let radius=-drop.w;
+  let shape=exp(-dot(delta,delta)/max(radius*radius*3.,.00001));
+  dew+=vec3f(.45,.62,.72)*shape*.65;
+ }
+ let color=mix(radiance,reflection,glassF)+signalLight+dew;
  // Preserve HDR radiance for the camera's glow and final filmic response.
  return display(color,coverage);
 }`;
