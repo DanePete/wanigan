@@ -375,8 +375,9 @@ type Data = {
   errors: Errors;
 };
 
-export default function Context({ projectId, projects, projectsRead, onReloadProjects, onOpenLearning }: {
+export default function Context({ projectId, projects, projectsRead, onReloadProjects, onOpenLearning, onPickProject }: {
   projectId?: string;
+  onPickProject: (id: string) => void;
   projects: Project[];
   /** False until the shell's project list has come back at least once. An
    *  empty array on its own cannot tell "you have no projects" from "the read
@@ -386,31 +387,9 @@ export default function Context({ projectId, projects, projectsRead, onReloadPro
   onReloadProjects: () => Promise<void>;
   onOpenLearning: (tab: 'overview' | 'inbox' | 'knowledge' | 'optimize') => void;
 }) {
-  /* This view's own scope control.
-     `projectId` is the app's derived project, and its only setters are opening
-     a session, adding a project and Learning's scope picker — there is no
-     global switcher. A pick made here used to be overwritten the next time that
-     derived value moved, so pointing Context at another repository meant going
-     to Learning, changing the scope there, and navigating back.
-
-     `null` means "follow whatever the app is pointed at", which is an absence
-     of a choice rather than a choice; once someone picks here, this view stops
-     following. A pin whose project has since been removed falls back to
-     following rather than rendering an empty panel for a dangling id. */
-  const [pinned, setPinned] = useState<string | null>(null);
-  const pinnedLive = pinned !== null && projects.some((p) => p.id === pinned);
-
-  const project = useMemo(
-    () => (pinnedLive ? projects.find((p) => p.id === pinned) : undefined)
-      ?? projects.find((p) => p.id === projectId) ?? projects[0] ?? null,
-    [projects, pinned, pinnedLive, projectId],
-  );
-
-  /* Null unless this view has been deliberately pointed somewhere other than
-     the project the rest of the app is on — the only case worth a sentence. */
-  const strayFrom = pinnedLive && projectId && pinned !== projectId
-    ? projects.find((p) => p.id === projectId) ?? null
-    : null;
+  const project = useMemo(() => projects.find((p) => p.id === projectId) ?? projects[0] ?? null, [projects, projectId]);
+  const strayFrom = null;
+  const setPinned = (id: string | null) => { if (id) onPickProject(id); };
 
   const [d, setD] = useState<Data | null>(null);
   const [busy, setBusy] = useState(false);

@@ -160,8 +160,10 @@ function findFile(status: Status, path: string): { file: GFile; staged: boolean 
   return work ? { file: work, staged: false } : null;
 }
 
-export default function Git({ projects, projectsRead }: {
+export default function Git({ projects, projectsRead, selectedProjectId, onPickProject }: {
   projects: Project[];
+  selectedProjectId?: string;
+  onPickProject: (id: string) => void;
   /** Whether a project-list read has returned in the shell. The list seeds
       empty and a failed read leaves it empty, so its length alone cannot tell
       "you have no projects" from "nobody has looked yet". */
@@ -176,7 +178,9 @@ export default function Git({ projects, projectsRead }: {
   // pressing Commit. Remembering it does not weaken the rule below it: the
   // draft still belongs to one repository and is still cleared when the
   // selected project changes.
-  const [projectId, setProjectId] = useViewMemory('projectId', projects[0]?.id ?? '');
+  const [rememberedProjectId, rememberProjectId] = useViewMemory('projectId', projects[0]?.id ?? '');
+  const projectId = selectedProjectId ?? rememberedProjectId;
+  const setProjectId = onPickProject;
   // A folder picked from the empty state below. The shell owns the project list
   // and re-reads it on window focus; merging it here as well is what makes this
   // view usable in the frame after the dialog closes rather than one refresh later.
@@ -240,11 +244,12 @@ export default function Git({ projects, projectsRead }: {
   // a message written about the removed repository's changes must not be left
   // waiting over a different tree.
   useEffect(() => {
-    if (!project || project.id === projectId) return;
-    const hadProject = projectId !== '';
-    setProjectId(project.id);
-    if (hadProject) { setSel(null); setDetail(null); setMsg(''); }
-  }, [project, projectId, setProjectId, setSel, setMsg]);
+    if (!project) return;
+    const changed = rememberedProjectId !== project.id;
+    if (changed) rememberProjectId(project.id);
+    if (project.id !== projectId) setProjectId(project.id);
+    if (changed) { setSel(null); setDetail(null); setMsg(''); }
+  }, [project, projectId, rememberedProjectId, rememberProjectId, setProjectId, setSel, setMsg]);
 
   // `st` is not a cache of the last repository Wanigan managed to read: it is
   // the root every button on this page hands to the main process. So a read

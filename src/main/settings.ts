@@ -233,9 +233,9 @@ function explainerFlags(): Record<`explainer.${string}`, 'hidden' | 'shown'> {
   return out as Record<`explainer.${string}`, 'hidden' | 'shown'>;
 }
 
-/** 'open' unless the operator hid it; the shortcut and the toggle both write it. */
+/** The destination drawer starts closed; an explicit preference still wins. */
 export function navSidebar(): 'open' | 'closed' {
-  return getSetting('nav_sidebar', 'open') === 'closed' ? 'closed' : 'open';
+  return getSetting('nav_sidebar', 'closed') === 'open' ? 'open' : 'closed';
 }
 
 export function allSettings(): WaniganSettings {

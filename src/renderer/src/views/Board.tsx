@@ -70,11 +70,13 @@ function when(at: number): string {
   return `back ${new Date(at).toLocaleDateString()}`;
 }
 
-export default function Board({ projects, providers, projectId, onOpenGoal, onOpenSession }: {
+export default function Board({ projects, providers, projectId, selectedProjectId, onPickProject, onOpenGoal, onOpenSession }: {
   projects: Project[];
   providers: ProviderInfo[];
   /** The shell's selected project, used only as the interview's default. */
   projectId: string | null;
+  selectedProjectId: string | null;
+  onPickProject: (id: string | null) => void;
   onOpenGoal: (docketId: string) => void;
   onOpenSession: (sessionId: string) => void;
 }) {
@@ -100,7 +102,8 @@ export default function Board({ projects, providers, projectId, onOpenGoal, onOp
   // Null means every project. The board's whole point is the cross-project
   // view, so it starts there rather than inheriting the shell's selection —
   // but the filter is one click away for somebody who wants one repository.
-  const [scope, setScope] = useState<string | null>(null);
+  const scope = selectedProjectId;
+  const setScope = onPickProject;
 
   // Which read is the current one. Two are in flight whenever the operator
   // changes the filter while the five-second poll is out, and they come back in
@@ -262,7 +265,7 @@ export default function Board({ projects, providers, projectId, onOpenGoal, onOp
                     {rows.map((card) => (
                       <article key={card.node.id} className={`brd-card${card.risk === 'high' ? ' high' : ''}`}>
                         <button className="brd-card-title" type="button"
-                                title="Open this goal in Control"
+                                title="Open this goal in Review"
                                 onClick={() => onOpenGoal(card.docketId)}>
                           {card.node.title}
                         </button>

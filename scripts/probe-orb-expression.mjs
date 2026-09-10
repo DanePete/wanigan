@@ -1,0 +1,33 @@
+/** Deterministic motion checks, without Electron, network or a model call. */
+import {createRequire} from 'node:module';
+import {readFileSync} from 'node:fs';
+import assert from 'node:assert/strict';
+const require=createRequire(import.meta.url),ts=require('typescript');
+const source=readFileSync(new URL('../src/renderer/src/orb/expression.ts',import.meta.url),'utf8');
+const code=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText;
+const {spring,OrbExpression}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+const base={focused:false,thinking:false,answerEvent:0,attentionEvent:0,temperament:'water'};
+const advance=(orb,seconds)=>{for(let i=0;i<Math.round(seconds*120);i++)orb.step(1/120);return orb.frame();};
+const slow={position:-.4,velocity:2},fast={...slow};
+for(let i=0;i<30;i++)spring(slow,.8,1/30);
+for(let i=0;i<120;i++)spring(fast,.8,1/120);
+assert(Math.abs(slow.position-fast.position)<1e-10&&Math.abs(slow.velocity-fast.velocity)<1e-10,'spring retains the same trajectory across frame rates');
+const interrupted={...slow};spring(interrupted,-.8,0);assert.deepEqual(interrupted,slow,'retargeting at zero elapsed time cannot jump');
+const orb=new OrbExpression(base);orb.point(1,.4);let pose=advance(orb,.12);
+assert(pose.gazeX>pose.lean*2,'eyes reach toward the target before the material');
+advance(orb,.4);const fixated=orb.frame();orb.point(.85,.4);pose=advance(orb,.12);
+assert(Math.abs(pose.gazeX-fixated.gazeX)<.04,'small pointer jitter cannot drag a fixation around');
+orb.setContext({...base,focused:true,composer:{x:-.8,y:-.3}});pose=advance(orb,.2);
+assert(pose.gazeX<-.5,'conversation focus intentionally overrides incidental pointer position');
+orb.setContext({...base,thinking:true});advance(orb,4);const engaged=orb.frame().energy;advance(orb,30);
+assert(Math.abs(orb.frame().energy-engaged)<.001,'waiting longer cannot imply increasing progress');
+orb.setContext({...base,answerEvent:1});let minimum=1;
+for(let i=0;i<80;i++){minimum=Math.min(minimum,orb.step(1/120).blink);}
+assert(minimum<=.031,'an answer produces a complete blink');assert(orb.frame().warmth>0,'acknowledgment has a distinct expression');
+const frozen=orb.frame();orb.setContext({...base,answerEvent:2,temperament:'ember'},false);
+assert.deepEqual(orb.step(0),frozen,'motion off freezes eyes, pose and material transition together');
+assert(orb.spin());assert.equal(orb.spin(),false,'repeated clicks cannot enqueue unlimited spins');
+pose=advance(orb,2.4);assert(pose.yaw>6&&pose.yaw<6.6,'a spin completes one physical orientation turn');
+assert(Math.abs(pose.angularVelocity)<.1,'the globe settles after its turn');
+assert(pose.fire>.99,'temperament changes converge continuously');
+console.log('Orb expression checks passed: spring continuity, intention, fixation, blink, bounded waiting, pause and spin.');

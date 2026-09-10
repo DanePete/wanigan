@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
   ControlEvent, DocketAutopilot, DocketDetail, DocketNode, DocketNodeKind, DocketNodeStatus, DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
 } from '@shared/types';
-import { Chip, ConfirmNote, EmptyState, Explainer, Hint, Mark, Note, PageHead, Reading, SectionHead, ago, markOf, usd } from '../components/bits';
+import { Chip, ConfirmNote, EmptyState, Explainer, Hint, Icon, Mark, Note, PageHead, Reading, SectionHead, ago, markOf, usd } from '../components/bits';
 import type { MarkSpec } from '../components/bits';
 import PlanEditor, { planProblems, planRowsFromDefault, toPlanNodes } from '../components/PlanEditor';
 import type { PlanRow } from '../components/PlanEditor';
+import { useDialog } from '../components/useDialog';
 import { useViewMemory } from '../components/viewMemory';
 
 const errText = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -131,6 +132,7 @@ export default function Control({ projects, providers, onOpenSession }: {
 }) {
   const [dockets, setDockets] = useState<WorkDocket[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
   /**
    * Which status the goal list is filtered to. 'all' is the default and the
    * way back; a filter that cannot be cleared is a list that lies about size.
@@ -298,6 +300,7 @@ export default function Control({ projects, providers, onOpenSession }: {
     // last goal's custom graph loaded would silently apply it to the next one.
     setPlan(planRowsFromDefault()); setPlanOpen(false);
     await load(created.id);
+    setCreateOpen(false);
   }, 'Goal created. Start with a task that has no unfinished prerequisite; the rest stays blocked until theirs are complete.');
 
   // Control is reachable before any project exists, and every field on the
@@ -456,40 +459,19 @@ export default function Control({ projects, providers, onOpenSession }: {
   }, [plan]);
 
   return <div className="pane control-view">
-    {/* The h1 is the route label the rail and the window title use; the
-        sentence that used to be the title is the eyebrow above it. The hero
-        digit is gone: a 30px accent count of two statuses read as the headline
-        of the page and led nowhere. The same numbers are chips on the list
-        below, where pressing one filters the goals it counts. */}
-    <PageHead eyebrow="Proof before merge" title="Control"
-              lead="A goal is a durable work contract: task graph, worktree, claim, evidence, checkpoint, and human decision." />
-    {/* Four numbered steps, an example goal and a paragraph of definition —
-        a full screen of them, with the form that does the work 686px below.
-        That reading is right once there is a goal to read it against; with
-        none, the page opens by explaining a thing you have not done instead of
-        offering to do it. Folded only while there is nothing, and only until
-        the reader says otherwise. */}
-    <Explainer id="control-guide" title="How Control works" defaultHidden={ready && dockets.length === 0}>
-      <div className="control-guide-body">
-      <div><p>A <strong>goal</strong> is work you delegate without losing the reason for it, the evidence, or the final decision.</p></div>
-      <ol>
-        <li><strong>Define the contract.</strong> Choose a project, write the objective, then add observable acceptance checks. These become the shared definition of done. The task graph is the standard four phases until you open it and draw something else — parallel implement tasks with disjoint claims, reviewed by one task at the end.</li>
-        <li><strong>Work the graph, not a fixed list.</strong> Start any task that has no unfinished prerequisite. Each card names what it waits on and how those tasks stand, so a task held by a failed prerequisite is told apart from one whose prerequisite is still running. Claim paths such as <code>src/cart/total.ts</code> before parallel work touches them.</li>
-        <li><strong>Capture proof and continuity.</strong> Save a checkpoint before a handoff or interruption. In <em>Verify</em>, run the project review gate; a passing command result is required before the task can complete.</li>
-        <li><strong>Make the final call.</strong> The <em>Review</em> task can approve only after verification passed. Request changes or reject when the evidence does not meet the contract.</li>
-      </ol>
-      <div className="control-example"><span className="label">Example</span><p><strong>Title:</strong> “Prevent duplicate checkout charge”</p><p><strong>Objective:</strong> “Make checkout retries idempotent without changing successful order flow.”</p><p><strong>Acceptance:</strong> “A repeated payment callback is ignored; the existing checkout suite passes; the diff has a review decision.”</p><p className="faint">Start Plan with your preferred provider, claim the payment handler during Implement, run the configured review gate in Verify, then approve or request changes in Review.</p></div>
-      </div>
-    </Explainer>
-    {error && <Note tone="error" onDismiss={actionError ? () => setActionError(null) : undefined}>{error}</Note>}
+    <PageHead title="Review" lead="Your goals, the evidence, and the next decision."
+      actions={<button className="btn btn-primary" type="button" onClick={() => setCreateOpen(true)}><Icon name="plus" />New goal</button>} />
+    {error && !createOpen && <Note tone="error" onDismiss={actionError ? () => setActionError(null) : undefined}>{error}</Note>}
     {notice && <Note tone="ok">{notice}</Note>}
 
-    <section className="control-grid">
-      <article className="card control-create"><span className="label">New goal</span><h2>Define the contract</h2>
+    {createOpen && <GoalSheet onClose={() => { if (busy === null) setCreateOpen(false); }} busy={busy !== null}>
+      <div className="control-create">
+        <Hint>Choose the outcome and what will count as done. Creating a goal does not launch an agent.</Hint>
+        {actionError && <Note tone="error">{actionError}</Note>}
         <label><span className="label">Project</span><select className="field" value={projectId} aria-describedby={projectOptions.length === 0 ? 'control-no-projects' : undefined} onChange={(event) => setProjectId(event.target.value)}>{projectOptions.length === 0 && <option value="" disabled>No project added yet</option>}{projectOptions.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
         {projectOptions.length === 0 && <><p className="faint control-hint" id="control-no-projects">A goal is scoped to one repository, and no project folder has been added yet.</p>
         <button className="btn" onClick={() => void addProject()} disabled={busy !== null}>{busy === 'add-project' ? 'Choosing…' : 'Add your first project'}</button></>}
-        <label><span className="label">Title</span><input className="field" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Harden checkout retry" /></label>
+        <label><span className="label">Title</span><input className="field" data-initial-focus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Harden checkout retry" /></label>
         <label><span className="label">Objective</span><textarea className="field control-textarea" value={objective} onChange={(event) => setObjective(event.target.value)} placeholder="What must change, and why?" /></label>
         <label><span className="label">Acceptance checks · one per line</span><textarea className="field control-textarea" value={acceptance} onChange={(event) => setAcceptance(event.target.value)} placeholder={'Targeted tests pass\nFailure mode is covered\nDiff is reviewed'} /></label>
         <div className="control-inline"><label><span className="label">Risk</span><select className="field" value={risk} onChange={(event) => setRisk(event.target.value as DocketRisk)}>{risks.map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label><span className="label">Budget · USD</span><input className="field" inputMode="decimal" value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="optional" /></label></div>
@@ -515,9 +497,13 @@ export default function Control({ projects, providers, onOpenSession }: {
             : ''}
         </p>}
         <button className="btn btn-primary" disabled={busy !== null || missing.length > 0 || planFaults.length > 0} aria-describedby={missing.length > 0 || planFaults.length > 0 ? 'control-create-blocked' : undefined} onClick={() => void create()}>{busy === 'create' ? 'Creating…' : 'Create goal'}</button>
-      </article>
+      </div>
+    </GoalSheet>}
 
-      <article className="card control-list"><div className="control-card-head"><div><span className="label">Durable work</span><h2>Goals</h2></div><span className="faint">{dockets.length}</span></div>
+    <div className="control-workbench">
+
+
+      <aside className="control-list" aria-label="Goals"><SectionHead label="Goals" count={ready ? dockets.length : undefined} />
         {/* One chip per status actually present, each filtering the list it
             counts. Statuses with no goals are left out rather than turned into
             a taxonomy lesson. */}
@@ -542,21 +528,31 @@ export default function Control({ projects, providers, onOpenSession }: {
                       action={<button className="btn" type="button" onClick={() => void load()}>Try again</button>} />
         )}
         {ready && loadError === null && dockets.length === 0 && (
-          <p className="faint">Nothing is in flight. Create a goal before sending work to an agent.</p>
+          <p className="faint">No goals yet. Add an objective and its acceptance checks to start tracking work here.</p>
         )}
         {shownDockets.length === 0 && dockets.length > 0 && <p className="faint">No goal has that status right now. Press All to see every goal.</p>}
         {shownDockets.map((docket) => { const m = markOf(docket.status); return <button key={docket.id} className={`control-docket ${selected === docket.id ? 'selected' : ''}`} aria-current={selected === docket.id ? 'true' : undefined} onClick={() => void choose(docket.id)}><Mark glyph={m.glyph} word={m.word} tone={m.tone} /><strong>{docket.title}</strong><small>{docket.projectName} · {ago(docket.updatedAt)}</small></button>; })}
-      </article>
-    </section>
-
-    {detail && <section className="control-detail card" id={`goal-${detail.id}`}><div className="control-card-head"><div><span className="label">Goal · {detail.status} · {detail.risk} risk{detail.budgetUsd !== null ? ` · ${usd(detail.budgetUsd)} budget` : ''}</span><h2>{detail.title}</h2></div><div className="control-goal-meta">{detail.baseCommit
+      </aside>
+      <div className="control-reading">
+      {!detail && <EmptyState posture={loadError ? 'could-not-read' : 'nothing-yet'} title={loadError ? 'Your goals could not be read' : ready ? 'Make room for your next decision.' : 'Reading your goals…'}
+        cue={loadError ?? 'Keep an objective, its tasks, and the proof of what changed together.'}
+        action={ready && !loadError ? <button className="btn" type="button" onClick={() => setCreateOpen(true)}>Create your first goal</button> : undefined} />}
+    {detail && <section className="control-detail" id={`goal-${detail.id}`}><div className="control-card-head"><div><span className="label">Goal · {detail.status} · {detail.risk} risk{detail.budgetUsd !== null ? ` · ${usd(detail.budgetUsd)} budget` : ''}</span><h2>{detail.title}</h2></div><details className="control-goal-meta"><summary>Record details</summary><div>{detail.baseCommit
         ? <span className="mono">base {detail.baseCommit.slice(0, 10)}</span>
         /* A null base commit has several causes — no repository, a repository
            with no commit yet, a git read that failed — and the renderer has no
            way to tell them apart, so it reports the absence and does not name a
            cause it cannot observe. */
-        : <span className="faint">no base commit recorded</span>}<span className="mono">id {detail.id}</span><button className="btn" onClick={() => void copyGoalId(detail.id)} disabled={busy !== null}>Copy goal ID</button></div></div>
+        : <span className="faint">no base commit recorded</span>}<span className="mono">id {detail.id}</span><button className="btn" onClick={() => void copyGoalId(detail.id)} disabled={busy !== null}>Copy goal ID</button></div></details></div>
       <p>{detail.objective}</p><ol className="control-acceptance">{detail.acceptance.map((check, index) => <li key={index}>{check}</li>)}</ol>
+      <details className="control-execution">
+        <summary><span>Execution &amp; spending</span><Mark {...AUTOPILOT_MARKS[detail.autopilot.enabled ? 'armed' : detail.autopilot.haltedReason ? 'halted' : 'off']}
+          word={detail.autopilot.enabled ? 'Autopilot armed' : detail.autopilot.haltedReason ? 'Autopilot halted' : 'Autopilot off'} />
+          <span className="faint">{detail.autopilot.enabled
+            ? providers.find((provider) => provider.id === detail.autopilot.providerId)?.label ?? detail.autopilot.providerId
+            : enabledProviders.find((provider) => provider.id === providerId)?.label ?? 'No installed provider'}
+            {detail.autopilot.enabled && detail.budgetUsd !== null ? ` · ${usd(detail.budgetUsd)} cap` : ''}</span>
+        </summary>
       <div className="control-launch"><label><span className="label">Provider for next task</span><select className="field" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{enabledProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label><span className="label">Model override</span><input className="field" value={model} onChange={(event) => setModel(event.target.value)} placeholder="provider default" /></label></div>
       <AutopilotCard docket={detail} busy={busy} confirming={armAsk === detail.id}
         armWith={enabledProviders.find((provider) => provider.id === providerId)?.label ?? null} armWithModel={model}
@@ -565,6 +561,7 @@ export default function Control({ projects, providers, onOpenSession }: {
         onBudgetDraft={(value) => setBudgetDrafts((previous) => ({ ...previous, [detail.id]: value }))}
         onAsk={() => setArmAsk(detail.id)} onCancelAsk={() => setArmAsk(null)}
         onArm={() => void arm(detail)} onDisarm={() => void disarm(detail)} onSetBudget={() => void saveBudget(detail)} />
+      </details>
       <div className="control-nodes">{detail.nodes.map((node) => <NodeCard key={node.id} node={node} busy={busy} note={notes[node.id] ?? ''} claim={claims[node.id] ?? ''}
         prereqs={node.dependsOn.map((id) => detail.nodes.find((other) => other.id === id)).filter((other): other is DocketNode => !!other).map((other) => ({ title: other.title, status: other.status }))}
         onNote={(value) => setNotes((previous) => ({ ...previous, [node.id]: value }))} onClaim={(value) => setClaims((previous) => ({ ...previous, [node.id]: value }))}
@@ -574,6 +571,10 @@ export default function Control({ projects, providers, onOpenSession }: {
       <div className="control-claims"><span className="label">Active file claims</span>{detail.claims.filter((claim) => !claim.releasedAt).length === 0 ? <p className="faint">No paths claimed. Claims are optional but prevent overlapping parallel edits.</p> : detail.claims.filter((claim) => !claim.releasedAt).map((claim) => <span key={claim.id} className="control-claim">{claim.path} <button className="btn" onClick={() => void act(`release-${claim.id}`, async () => { await window.wanigan.control.releaseClaim(claim.id); await load(detail.id); })}>Release</button></span>)}</div>
     </section>}
 
+      </div>
+    </div>
+    <details className="control-support">
+      <summary>Events &amp; model evidence<span className="faint">{events.filter((event) => event.status === 'new').length} new events</span></summary>
     <section className="control-grid control-lower"><article className="card"><span className="label">Local event inbox</span><h2>Triage, don’t auto-run</h2><p className="faint">Use this for CI, incident, or issue signals. Remote webhooks are intentionally not opened until their identity and replay controls are designed.</p><div className="control-inline"><label><span className="label">Event source</span><input className="field" value={eventSource} onChange={(event) => setEventSource(event.target.value)} /></label><label><span className="label">Event kind</span><input className="field" value={eventKind} onChange={(event) => setEventKind(event.target.value)} /></label></div><textarea className="field control-textarea" aria-label="Event summary" value={eventSummary} onChange={(event) => setEventSummary(event.target.value)} placeholder="What happened? Include the observable failure, not a solution guess." /><button className="btn" disabled={busy !== null || !eventSummary.trim()} onClick={() => void addEvent()}>Add event</button>{/* Dismiss existed in main and in the preload and was reachable from
     nothing, so an event added by mistake could only be cleared by creating
     a Goal nobody wanted. Dismissed rows are also filtered out rather than
@@ -595,7 +596,36 @@ export default function Control({ projects, providers, onOpenSession }: {
           verb="Cancel task and stop the agent" onCancel={() => setConfirmCancel(null)}
           onRun={() => { const task = confirmCancel; setConfirmCancel(null); return cancelTask(task); }} />}
       </article></section>
+    </details>
+    {/* Secondary guidance stays reachable after the selected work. The
+        remembered disclosure still honors an operator who chose to open it. */}
+    <Explainer id="control-guide" title="How review works" defaultHidden>
+      <div className="control-guide-body">
+      <div><p>A <strong>goal</strong> is work you delegate without losing the reason for it, the evidence, or the final decision.</p></div>
+      <ol>
+        <li><strong>Define the contract.</strong> Choose a project, write the objective, then add observable acceptance checks. These become the shared definition of done. The task graph is the standard four phases until you open it and draw something else — parallel implement tasks with disjoint claims, reviewed by one task at the end.</li>
+        <li><strong>Work the graph, not a fixed list.</strong> Start any task that has no unfinished prerequisite. Each card names what it waits on and how those tasks stand, so a task held by a failed prerequisite is told apart from one whose prerequisite is still running. Claim paths such as <code>src/cart/total.ts</code> before parallel work touches them.</li>
+        <li><strong>Capture proof and continuity.</strong> Save a checkpoint before a handoff or interruption. In <em>Verify</em>, run the project review gate; a passing command result is required before the task can complete.</li>
+        <li><strong>Make the final call.</strong> The <em>Review</em> task can approve only after verification passed. Request changes or reject when the evidence does not meet the contract.</li>
+      </ol>
+      <div className="control-example"><span className="label">Example</span><p><strong>Title:</strong> “Prevent duplicate checkout charge”</p><p><strong>Objective:</strong> “Make checkout retries idempotent without changing successful order flow.”</p><p><strong>Acceptance:</strong> “A repeated payment callback is ignored; the existing checkout suite passes; the diff has a review decision.”</p><p className="faint">Start Plan with your preferred provider, claim the payment handler during Implement, run the configured review gate in Verify, then approve or request changes in Review.</p></div>
+      </div>
+    </Explainer>
   </div>;
+}
+
+/** Draft state stays in Control when this sheet closes. The shared dialog
+ * owns the focus trap, Escape and return focus; creation remains explicit. */
+function GoalSheet({ children, onClose, busy }: { children: ReactNode; onClose: () => void; busy: boolean }) {
+  const { portal, backdropProps, dialogProps } = useDialog<HTMLDivElement>({ onClose, initialFocus: 'first' });
+  return portal(<div {...backdropProps}>
+    <div {...dialogProps} className="control-sheet" aria-labelledby="control-sheet-title">
+      <div className="control-sheet-title"><h2 id="control-sheet-title">New goal</h2>
+        <button className="btn btn-sm" type="button" disabled={busy} onClick={onClose} aria-label="Close new goal"><Icon name="x" /></button>
+      </div>
+      {children}
+    </div>
+  </div>);
 }
 
 /**

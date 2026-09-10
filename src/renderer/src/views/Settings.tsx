@@ -3542,7 +3542,7 @@ const KIND_COPY: { id: keyof QueueSlots; label: string; detail: string; overLimi
     overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
   },
   {
-    id: 'node', label: 'Goal autopilot', detail: 'Unattended Goal tasks, armed per goal in Control.',
+    id: 'node', label: 'Goal autopilot', detail: 'Unattended Goal tasks, armed per goal in Review.',
     overLimit: 'Work past this limit waits in the queue below and starts on a later tick.',
   },
 ];

@@ -1,0 +1,57 @@
+Electron connected
+Window opened: file:///Users/dane/Projects/drupal/wanigan/out/renderer/index.html
+Real main/preload checks passed: composer attention, globe spin, native hide/pause/show, temperament persistence.
+seed: {"project":"prj_whvgsb59","docket":"doc_bf165fc0-401","candidate":"cand_3485a8d412484531be28"}
+shot dark/mission
+shot dark/sessions
+shot dark/fleet
+shot dark/control
+shot dark/batches
+shot dark/insights
+shot dark/learning
+shot dark/plugins
+shot dark/schedules
+shot dark/git
+shot dark/runs
+shot dark/usage
+shot dark/scout
+shot dark/settings
+shot dark/skills
+shot dark/context
+shot dark/board
+shot dark/companion-controls
+shot dark/overlay-new-goal
+shot dark/overlay-palette
+shot dark/overlay-new-session
+shot dark/overlay-shortcuts
+shot light/mission
+shot light/sessions
+shot light/fleet
+shot light/control
+shot light/batches
+shot light/insights
+shot light/learning
+shot light/plugins
+shot light/schedules
+shot light/git
+shot light/runs
+shot light/usage
+shot light/scout
+shot light/settings
+shot light/skills
+shot light/context
+shot light/board
+shot light/companion-controls
+shot light/overlay-new-goal
+shot light/overlay-palette
+shot light/overlay-new-session
+shot light/overlay-shortcuts
+Real review creation passed: main validation, visible error, correction, selected record, no agent launched.
+shot narrow/mission
+shot narrow/sessions
+shot narrow/control
+shot narrow/fleet
+shot narrow/learning
+shot narrow/settings
+Review checks passed: creation sheet, initial focus, Escape, draft retention, adjacent detail, both themes.
+done

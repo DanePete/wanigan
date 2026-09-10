@@ -1,6 +1,9 @@
 /* motion — owned by the motion phase. Tokens come from index.css; never redeclare a colour here.
 
-   ONE RULE: every animation is driven by a measurement.
+   Operational animation is driven by a measurement. The explicitly requested
+   companion is a decorative material: its water responds to input, while its
+   vapor and blink express personality, never agent progress. Its GPU loop owns
+   visibility cleanup and follows the same motion preference.
 
    Progress advances on real counts. An indicator breathes at the rate output
    actually arrives, and stops when it stops. Nothing spins to look busy, and
@@ -155,3 +158,15 @@
    Colour and background only, on chrome that is never next to a terminal. */
 .nav-tab { transition: color var(--mo-state) linear; }
 .nav-badge, .nav-mark { transition: color var(--mo-state) linear, background var(--mo-state) linear; }
+
+/* Input feedback on the companion's navigation and composer. */
+.space-dock button, .project-spaces button, .mission-composer button {
+  transition: background var(--mo-state) var(--mo-ease), transform var(--mo-state) var(--mo-ease);
+}
+.space-dock button:active, .mission-composer button:active { transform: scale(.96); }
+:root[data-motion='off'] .space-dock button:active,
+:root[data-motion='off'] .mission-composer button:active { transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion='full']) .space-dock button:active,
+  :root:not([data-motion='full']) .mission-composer button:active { transform: none; }
+}

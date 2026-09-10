@@ -110,6 +110,7 @@ export type MobileAbsentView = {
  * that holds the credentials.
  */
 export const MOBILE_ABSENT: readonly MobileAbsentView[] = [
+  { tab: 'mission', reason: 'The companion conversation and its live 3D scene stay on the Mac. This phone reads project and session status through Fleet and Projects.' },
   { tab: 'skills', reason: 'Writing and editing a skill is work against a repository, so the Skills screen stays on the Mac. Typing one you already have into a live agent is on the Agent screen.' },
   { tab: 'context', reason: 'Instructions, memory and configuration are edited against a working tree, which this device does not have.' },
   { tab: 'plugins', reason: 'Installing or trusting a plugin is a consent decision Wanigan only takes at the Mac.' },

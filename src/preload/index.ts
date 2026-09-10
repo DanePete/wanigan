@@ -1,3 +1,4 @@
+import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AwakeState,
@@ -38,6 +39,20 @@ async function call<T>(channel: string, ...args: unknown[]): Promise<T> {
 }
 
 const api = {
+  windowVisibility: {
+    current:()=>call<boolean>('window:visible'),
+    onChanged:(cb:(visible:boolean)=>void)=>{
+      const handler=(_event:unknown,visible:boolean)=>{if(typeof visible==='boolean')cb(visible);};
+      ipcRenderer.on('window:visibility',handler);
+      return ()=>ipcRenderer.removeListener('window:visibility',handler);
+    },
+  },
+  companion: {
+    snapshot: (projectId: string | null) => call<CompanionSnapshot>('companion:snapshot', projectId),
+    history: (projectId: string | null) => call<CompanionTurn[]>('companion:history', projectId),
+    ask: (input: CompanionAsk) => call<CompanionTurn>('companion:ask', input),
+    cancel: () => call<boolean>('companion:cancel'),
+  },
   // This stays available even when the main process has deliberately opened
   // the window in database-recovery mode. It contains no database content or
   // credentials — only the startup phase and its actionable error text.

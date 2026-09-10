@@ -1,3 +1,4 @@
+/// <reference types="@webgpu/types" />
 import type { WaniganApi } from '../../preload/index';
 
 declare global {

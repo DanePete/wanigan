@@ -194,6 +194,15 @@ export function migrateSchema(d: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_runs_created ON runs(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id);
     `);
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS companion_turns (
+        id TEXT PRIMARY KEY, scope_key TEXT NOT NULL, question TEXT NOT NULL,
+        answer TEXT, sources_json TEXT NOT NULL DEFAULT '[]', model TEXT NOT NULL,
+        at INTEGER NOT NULL, status TEXT NOT NULL, error TEXT,
+        input_tokens INTEGER, output_tokens INTEGER, cost_usd REAL
+      );
+      CREATE INDEX IF NOT EXISTS idx_companion_scope ON companion_turns(scope_key, at DESC);
+    `);
     migratePhases(d);
     d.exec('COMMIT');
   } catch (error) {

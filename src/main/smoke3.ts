@@ -3799,7 +3799,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // which is the third time in this codebase a finished lane had no entrance.
     const wiring = sourceOf('src/main/index.ts');
     const registered = [...wiring.matchAll(/registerHaltStopper\(\{[\s\S]{0,40}?name: '([a-z ]+)'/g)].map((m) => m[1]);
-    check(JSON.stringify(registered) === JSON.stringify(['schedules', 'queue', 'autopilots', 'batch polling', 'learning', 'sessions']),
+    check(JSON.stringify(registered) === JSON.stringify(['companion', 'schedules', 'queue', 'autopilots', 'batch polling', 'learning', 'sessions']),
       'every subsystem is registered with the halt, in the order that matters — dispatchers before the sessions they would otherwise relaunch',
       registered);
     check(halt.haltStopperNames().length >= 4,
@@ -6826,11 +6826,14 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
 
   // smoke.sh builds before it launches this process, so out/ is this tree.
   const rendererJs = filesUnder(path.join(appRoot(), 'out', 'renderer', 'assets')).filter((f) => f.endsWith('.js'));
-  const windowBundle = rendererJs.length === 1 ? fs.readFileSync(rendererJs[0], 'utf8') : '';
+  const viewEntries = rendererJs.filter((file) => /^index-/.test(path.basename(file)));
+  const windowBundle = viewEntries.length === 1 ? fs.readFileSync(viewEntries[0], 'utf8') : '';
   const windowDensity = windowBundle ? windowBundle.length / windowBundle.split('\n').length : 0;
   // Measured on this tree: unminified is ~53 chars per line, minified ~17,000.
-  check(rendererJs.length === 1 && windowDensity > 1000 && windowBundle.includes('"TerminalPane"'),
-    'the built window is one minified chunk that still carries its component names, so no view was made lazy and a crash stack stays readable',
+  check(viewEntries.length === 1 && windowDensity > 1000 && windowBundle.includes('"TerminalPane"')
+    && rendererJs.every((file) => /^(index|runtime)-/.test(path.basename(file)))
+    && !/React\.lazy|\blazy\(/.test(appSrc),
+    'views remain in one minified entry with component names intact; only the optional GPU runtime is split out',
     `${rendererJs.length} chunk(s), ${Math.round(windowDensity)} chars/line`);
 
   let mainBundle = '';
@@ -7561,8 +7564,10 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && /if \(restored\.current \|\| !st\?\.isRepo\) return;/.test(gitViewSrc)
     && gitViewSrc.includes("if (sel?.kind === 'commit' && commits.length === 0) return;")
     && gitViewSrc.includes('void syncSelection(st);')
-    && gitViewSrc.includes('if (!project || project.id === projectId) return;')
-    && gitViewSrc.includes('setProjectId(project.id);'),
+    && gitViewSrc.includes('if (!project) return;')
+    && gitViewSrc.includes('const changed = rememberedProjectId !== project.id;')
+    && gitViewSrc.includes('if (changed) rememberProjectId(project.id);')
+    && gitViewSrc.includes('if (project.id !== projectId) setProjectId(project.id);'),
   'a remembered Git selection is re-fetched on mount instead of being shown as a highlighted row over an empty pane, and a remembered project that has since been removed is rewritten rather than left naming a repository nothing is reading');
 
   // .gt-scroll is four elements, not one: the commit log on the left, and the
@@ -7706,8 +7711,8 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // about the thing that has not happened. Control put its first interactive
   // control 686px down the page and Schedules 596px, both behind a guide that
   // is the right reading only once there is something to read it against.
-  check(/<Explainer id="control-guide"[^>]*defaultHidden=\{ready && dockets\.length === 0\}/.test(controlViewSrc),
-    'Control folds its guide only once a read has returned and found no goals, so a slow read never hides it from someone who has some');
+  check(/<Explainer id="control-guide"[^>]*defaultHidden>/.test(controlViewSrc),
+    'Review keeps its remembered guide folded by default so existing goals and their evidence lead the reading flow');
   check(/<Explainer id="schedules-guide"[^>]*defaultHidden=\{list\.length === 0\}/.test(schedulesSrc),
     'Schedules folds its guide while nothing is scheduled');
 
@@ -7756,7 +7761,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // was two different facts and this pane printed only one of them.
   check(appSrc.includes('const [projectsRead, setProjectsRead] = useState(false);')
     && appSrc.includes('setProviders(pv); setProjects(pj); setHasKey(ks.present); setProjectsRead(true);')
-    && appSrc.includes('<Git projects={projects} projectsRead={projectsRead} />')
+    && /<Git\s[^>]*projects=\{projects\}[^>]*projectsRead=\{projectsRead\}/.test(appSrc)
     && gitViewSrc.includes('projectsRead: boolean;')
     && gitViewSrc.includes('title="Your project list has not been read yet"')
     && gitViewSrc.includes('title="No project to read git from"'),
@@ -8249,11 +8254,12 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !mainSrc.includes("title: 'Add this directory as a project?'")
     && !mainSrc.includes("handle('projects:add', (dir: string) => addProject(dir));"),
   'the validated allow-list every other guard reads cannot be widened by the renderer: projects:add refuses before it even looks at the path unless this process was launched for automation, which leaves the main-process folder picker as the operator’s only route to registering a root');
-  check(sourceOf('scripts/shots.mjs').includes("'--wanigan-automation'")
+  check(sourceOf('scripts/shots.mjs').includes('launchWanigan(electron,{root:REPO,userData:udd,env})')
+    && sourceOf('scripts/electron-harness.mjs').includes("'--wanigan-automation'")
     && sourceOf('CONTRIBUTING.md').includes('`--wanigan-automation`')
     && !sourceOf('scripts/smoke.sh').includes('--wanigan-automation'),
-  'the one caller that still needs a raw path is the screenshot run, it launches with the marker, CONTRIBUTING.md says so where it tells a contributor to run it — and the smoke launcher deliberately does not, because every suite registers its projects as a module call rather than over IPC',
-    sourceOf('scripts/shots.mjs').includes("'--wanigan-automation'"));
+  'the screenshot run uses the isolated launcher with the automation marker, CONTRIBUTING.md documents it, and the smoke launcher deliberately omits it because suites register projects as module calls rather than over IPC',
+    sourceOf('scripts/electron-harness.mjs').includes("'--wanigan-automation'"));
   // Four handlers that took the renderer's word while every sibling in the same
   // block validated first. assertManagedRoot is typed (root: unknown), so the
   // String() wrappers on the worktree pair were noise that turned a symbol into
@@ -8853,10 +8859,10 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     `th ${(mcpFn.match(/<th\b/g) ?? []).length}, colSpan7 ${(mcpFn.match(/colSpan=\{7\}/g) ?? []).length}`);
 
   // The Dispatcher row that caps a lane names the surface that arms it.
-  check(settingsSrc.includes('armed per goal in Control')
+  check(settingsSrc.includes('armed per goal in Review')
     && !settingsSrc.includes('Tasks a goal dispatches on its own, unattended.'),
     'the Dispatcher row that limits goal autopilot names the surface that switches it on, instead of describing a lane with no stated way in',
-    String(settingsSrc.includes('armed per goal in Control')));
+    String(settingsSrc.includes('armed per goal in Review')));
 
   // NEGATIVE. .set-jump is only ever worn as `className="link set-jump"`, and
   // .link (index.css) already supplies the accent and the underline at the same
