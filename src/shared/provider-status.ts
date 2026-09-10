@@ -55,6 +55,10 @@ const PROVIDER_TINT = new Map<string, string>([
   ['codex', 'var(--codex)'],
   ['glm', 'var(--glm)'],
   ['deepseek', 'var(--series-4)'],
+  // A series token rather than a new brand one: adding a colour would mean
+  // editing index.css for both themes, and the point of this table is that a
+  // provider without an entry silently draws no dot at all.
+  ['xai', 'var(--series-3)'],
 ]);
 
 /**

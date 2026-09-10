@@ -192,6 +192,9 @@ const api = {
     deepseekModels: (force?: boolean) =>
       call<{ models: { id: string; label: string; source: string }[]; note: string | null; fetchedAt: number | null }>('deepseek:models', force),
     deepseekVerify: () => call<{ ok: boolean; detail: string; models: { id: string; label: string; source: string }[] }>('deepseek:verify'),
+    xaiModels: (force?: boolean) =>
+      call<{ models: { id: string; label: string; source: string }[]; note: string | null; fetchedAt: number | null }>('xai:models', force),
+    xaiVerify: () => call<{ ok: boolean; detail: string; models: { id: string; label: string; source: string }[] }>('xai:verify'),
     clear: () => call<boolean>('key:clear'),
   },
 
