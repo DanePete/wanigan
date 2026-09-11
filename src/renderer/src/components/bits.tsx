@@ -418,7 +418,7 @@ export function Explainer({ id, title, compact, defaultHidden, children }: {
   }, [defaultHidden]);
   useEffect(() => {
     let live = true;
-    (async () => {
+    void (async () => {
       try {
         const all = await window.wanigan.prefs.all() as unknown as Record<string, unknown>;
         const v = all[explainerKey(id)];

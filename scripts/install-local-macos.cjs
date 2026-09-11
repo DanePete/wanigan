@@ -562,6 +562,8 @@ async function installVerifiedBundle(source, options = {}) {
   let stageCreated = false;
   let backupCreated = false;
   let promoted = false;
+  let failure;
+  let result;
 
   try {
     await assertVerifiedWaniganApp(source, { filesystem, execute });
@@ -635,20 +637,36 @@ async function installVerifiedBundle(source, options = {}) {
       }
     }
 
-    return { ...paths, backupCreated, promoted };
-  } finally {
-    // The only recursively removed location is a tokenized hidden staging
-    // directory that this process just created. It never includes the active
-    // app, the source bundle, or a prior bundle moved to Trash.
-    if (stageCreated) {
-      try {
-        await filesystem.rm(paths.stageRoot, { recursive: true, force: true });
-      } catch (error) {
-        if (!promoted) throw error;
+    result = { ...paths, backupCreated, promoted };
+  } catch (error) {
+    // Held rather than rethrown so the cleanup below cannot replace it. A
+    // `throw` inside `finally` discards whatever was already propagating, so
+    // an install that failed *and* could not tidy up reported the tidying
+    // failure — and the reason the install actually failed was gone.
+    failure = error;
+  }
+
+  // The only recursively removed location is a tokenized hidden staging
+  // directory that this process just created. It never includes the active
+  // app, the source bundle, or a prior bundle moved to Trash.
+  if (stageCreated) {
+    try {
+      await filesystem.rm(paths.stageRoot, { recursive: true, force: true });
+    } catch (error) {
+      if (failure) {
+        // Leftover staging costs disk; the install's own failure is what the
+        // operator needs to read, so that one stays the thrown error.
+        console.warn(`Could not remove hidden staging directory ${paths.stageRoot}: ${formatCommandFailure(error)}`);
+      } else if (!promoted) {
+        failure = error;
+      } else {
         console.warn(`Installed Wanigan, but could not remove hidden staging directory ${paths.stageRoot}: ${formatCommandFailure(error)}`);
       }
     }
   }
+
+  if (failure) throw failure;
+  return result;
 }
 
 function privilegedCommand(options) {

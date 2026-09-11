@@ -708,7 +708,10 @@ function createWindow(demo = storedDemoMode()) {
   });
 }
 
-app.whenReady().then(async () => {
+// A rejection here is the whole bootstrap failing, and with no handler it was
+// an unhandled rejection: the app sat half-started with nothing said. Reported
+// rather than swallowed, and not in smoke, where a modal would hang the run.
+void app.whenReady().then(async () => {
   if (smokeMode) {
     clearSmokeBootstrapWatchdog();
     traceSmokeBootstrap('Electron ready');
@@ -788,6 +791,12 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+}).catch((error: unknown) => {
+  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  console.error('[wanigan] startup failed:', detail);
+  // No modal in smoke: there is nobody there to dismiss it, and the run would
+  // hang on a box rather than report the failure it is meant to catch.
+  if (!smokeMode) dialog.showErrorBox('Wanigan could not finish starting', detail);
 });
 
 if (attendedUiInvocation && ownsUiInstance) {
@@ -1524,10 +1533,12 @@ function sameUrl(a: string, b: string): boolean {
 }
 
 /** This explicit copy action can write only authored text, in either workspace. */
-function copyDemoPrompt(id: unknown): void {
+async function copyDemoPrompt(id: unknown): Promise<void> {
   const prompt = DEMO_PROMPTS.find(item => item.id === id);
   if (!prompt) throw new Error('Choose a demo prompt from the list.');
-  clipboard.writeText(prompt.text);
+  // Electron's Clipboard is the async W3C-shaped one: writeText returns a
+  // promise. Discarded, a refused write left the renderer told it had copied.
+  await clipboard.writeText(prompt.text);
 }
 
 function registerIpc() {
@@ -1543,7 +1554,7 @@ function registerIpc() {
         // path, and unknown demo channels never invoke a production handler.
         if (channel === 'demo:state') return { ok: true, data: demoState(!!demo) };
         if (channel === 'demo:set') return { ok: true, data: switchDemoWindow(args[0]) };
-        if (channel === 'demo:copyPrompt') return { ok: true, data: copyDemoPrompt(args[0]) };
+        if (channel === 'demo:copyPrompt') return { ok: true, data: await copyDemoPrompt(args[0]) };
         if (channel === 'window:visible') return { ok: true, data: !!win?.isVisible() && !win?.isMinimized() };
         const data = demo ? demo.read(channel, args) : await fn(...args as never[]);
         if (demo && channel === 'settings:set' && args[0] === 'nav_sidebar') installApplicationMenu(() => win, args[1] === 'open');
