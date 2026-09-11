@@ -8835,7 +8835,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
 
   check(settingsSrc.includes('const servers = useLoad(() => window.wanigan.mcp.review(), [tick]);')
     && settingsSrc.includes('const use = useLoad(() => window.wanigan.mcp.status(), [tick]);')
-    && settingsSrc.includes('const useOf = (id: string) => (use.v.s === \'ok\' ? use.v.d.find((u) => u.id === id) ?? null : null);'),
+    && settingsSrc.includes('const usageOf = (id: string) => (use.v.s === \'ok\' ? use.v.d.find((u) => u.id === id) ?? null : null);'),
     'the MCP server list and the MCP call record are two independent reads, so a failed use read cannot blank the servers and cannot be mistaken for a server that was never called',
     String(settingsSrc.includes('const use = useLoad(() => window.wanigan.mcp.status(), [tick]);')));
 
