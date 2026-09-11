@@ -1,0 +1,85 @@
+name: Hygiene
+
+# Three checks that guard the parts of the repository `npm test` does not read:
+# the workflows themselves, the shell scripts, and everything ever committed.
+#
+# The workflow check is here because this repository has already shipped a
+# broken one — a heredoc at column zero inside a `run: |` block, which is valid
+# YAML right up until the shell sees it. `npm test` cannot see a workflow file,
+# and neither can review, reliably.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hygiene-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  workflows:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned, and downloaded as a release archive rather than piped from a
+      # script into bash. The upstream install instructions do the latter; a
+      # repository asking to be trusted should not fetch code it has not named
+      # and run it unread.
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.7
+        run: |
+          curl --fail --silent --show-error --location \
+            --output actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          tar --extract --gzip --file actionlint.tar.gz actionlint
+
+      - name: Check workflow files
+        run: ./actionlint -color
+
+  shell:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Preinstalled on the GitHub runner image, so there is nothing to fetch.
+      # The three scripts here are the ones a contributor actually runs:
+      # launch.sh, smoke.sh and cli.sh.
+      - name: Check shell scripts
+        run: shellcheck scripts/*.sh
+
+  secrets:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Every commit, not the default shallow clone: a credential removed in
+          # a later commit is still published in the earlier one, and that is
+          # exactly the case worth failing on.
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          curl --fail --silent --show-error --location \
+            --output gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar --extract --gzip --file gitleaks.tar.gz gitleaks
+
+      # `detect` rather than `dir`: it reads git history and so respects
+      # .gitignore. `dir` walks the working tree, which on a developer machine
+      # includes release/ and out/ — 2.23GB of build output and 42 findings,
+      # none of them in anything this repository publishes.
+      - name: Scan history
+        run: ./gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --verbose

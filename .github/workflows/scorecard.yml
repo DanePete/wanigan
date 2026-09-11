@@ -1,0 +1,49 @@
+name: Scorecard
+
+# OpenSSF Scorecard: a supply-chain posture report on this repository itself
+# rather than on its code — whether releases are signed, whether dependencies
+# are pinned, whether a branch can be force-pushed, whether anyone has ever
+# reviewed a change before it merged.
+#
+# It is here because a project asking strangers to run an Electron app that
+# spawns CLIs against their repositories should be able to show its answers
+# rather than assert them.
+
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: '27 5 * * 2'
+  push:
+    branches: [main]
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      security-events: write
+      id-token: write
+      contents: read
+      actions: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@v2.4.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Publishes to the public OpenSSF dataset, which is what makes the
+          # badge in README resolve. It publishes the score, never the code.
+          publish_results: true
+
+      - name: Upload to the Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif

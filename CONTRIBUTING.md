@@ -1,8 +1,14 @@
 # Contributing to Wanigan
 
-The working rules for this repository live in [CLAUDE.md](CLAUDE.md) — they
+The working rules for this repository live in [AGENTS.md](AGENTS.md) — they
 apply to people as much as to agents, and this file does not restate them. Read
-*Working in this repository* there first. What follows is the mechanical part.
+*Working in this repository* there first. (`CLAUDE.md` is a one-line import of
+that file, because Claude Code is the one harness that does not read
+`AGENTS.md` natively.) What follows is the mechanical part.
+
+How we treat each other is in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+Vulnerabilities have their own address and timeline in
+[SECURITY.md](SECURITY.md) — please do not open a public issue for one.
 
 ## Node
 
@@ -20,13 +26,15 @@ not. `scripts/launch.sh`, `scripts/cli.sh` and `scripts/smoke.sh` prepend the
 
 ## What `npm test` runs
 
-Six steps, in order, and all six must pass before a change is handed off:
+Eight steps, in order, and all eight must pass before a change is handed off:
 
 | Step | What it is |
 |---|---|
 | `npm run typecheck` | `tsconfig.node.json` (main + preload) then `tsconfig.web.json` (renderer) |
 | `npm run test:shared` | plain `node --test` over `src/shared/*.test.ts`: no Electron, no display, no database. Answers in well under a second |
 | `npm run test:renderer-style` | the renderer ratchets: inline style objects, `<style>` in TSX, literal font sizes and durations, modifiers a base rule shadows, form controls with no accessible name, native `title` tooltips |
+| `npm run test:dead-code` | knip over the entry points in `knip.json`: an unused file, an unused dependency, or one that is imported but never declared. The last is the reason it exists — `@electron/asar` was required by two suites on this list while nothing declared it, so it resolved only as a transitive dependency of electron-builder |
+| `npm run test:lint` | ESLint, and deliberately not a style tool. The type-aware half is the point: `no-floating-promises` needs the checker, and a `void somePromise()` that loses its `void` and its `.catch` swallows the rejection |
 | `npm run test:package-hooks` | fixture checks over the electron-builder hooks: node-pty rebuild cache, Electron fuses, asar integrity, sealed-signature parsing |
 | `npm run test:local-install` | fixture checks over the local macOS installer: argument parsing, verification order, quit/stage/promote sequence |
 | `npm run smoke` | the suite inside a real Electron main process against the mock runner |
@@ -36,9 +44,25 @@ The two packaging suites build no bundle, sign nothing and never read or write
 spends nothing: `scripts/smoke.sh` sets `WANIGAN_MOCK=1` and hands Electron a
 throwaway `--user-data-dir`.
 
-CI runs the same six steps, split by what each needs from the runner:
-typecheck, the shared tests, the style gate and smoke on Ubuntu under Xvfb, the
-two packaging suites on macOS.
+`eslint-suppressions.json` is the lint baseline, and obeys the same rule as
+every ratchet here: it records what the tree carried the day the gate landed so
+the gate could pass that day, and the only edit is downward. ESLint enforces
+that in both directions by itself — a new violation fails, and a suppression
+whose violation has since been fixed fails too until somebody runs `npm run
+lint:prune`. `npm run lint:debt` ranks what is left.
+
+CI runs the same eight steps, split by what each needs from the runner:
+typecheck, the shared tests, the style gate, the dead-code and lint gates and
+smoke on Ubuntu under Xvfb, the two packaging suites on macOS.
+
+Three more workflows guard what `npm test` cannot read. **Hygiene** runs
+actionlint over the workflow files, shellcheck over `scripts/*.sh`, and gitleaks
+over every commit ever made — the last with `.gitleaks.toml`, which allowlists
+the redaction suite's fixtures by value rather than by path, so a real
+credential pasted into a smoke file still fails. **CodeQL** asks whether
+untrusted input reaches somewhere it should not, and reports to the Security tab
+rather than failing a build. **Scorecard** reports this repository's own
+supply-chain posture.
 
 ## Where a test belongs
 

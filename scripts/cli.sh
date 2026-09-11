@@ -8,7 +8,9 @@
 #   npm run cli -- runs
 #   npm run cli -- status run_20260827_181500_a1b2
 set -uo pipefail
-cd "$(dirname "$0")/.."
+# Refuse rather than run every command below against whatever directory the
+# caller happened to be in.
+cd "$(dirname "$0")/.." || exit 1
 
 WANT="$(cat .nvmrc 2>/dev/null | tr -d 'v \n')"
 if [ -n "$WANT" ] && [ -d "$HOME/.nvm/versions/node/v$WANT/bin" ]; then

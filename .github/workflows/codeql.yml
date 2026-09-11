@@ -1,0 +1,54 @@
+name: CodeQL
+
+# GitHub's own static analysis, free on a public repository. It finds a
+# different class of defect from everything already in CI: `npm test` proves the
+# app does what it is supposed to, and CodeQL asks whether untrusted input can
+# reach somewhere it should not — the question that matters most in an app whose
+# whole job is running other people's CLIs against their repositories.
+#
+# Findings land in the Security tab rather than failing the build, so a new
+# query in an upgraded pack cannot turn a contributor's first pull request red
+# for a reason unrelated to their change.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, because the query packs improve even when this code does not.
+    - cron: '38 4 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No build step: the JavaScript/TypeScript extractor reads source
+      # directly, so this never compiles the native addons and never needs
+      # Electron.
+      - name: Initialise
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Analyse
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:javascript-typescript
