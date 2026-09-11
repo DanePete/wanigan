@@ -39,15 +39,30 @@ const errors = [];
  */
 const FIXTURE = `
   const base = window.wanigan;
-  const raw = new URLSearchParams(location.search).get('ctx');
+  const params = new URLSearchParams(location.search);
+  const raw = params.get('ctx');
+  const lim = params.get('lim');
   const reading = raw ? JSON.parse(decodeURIComponent(raw)) : null;
-  if (reading) window.wanigan = new Proxy(base, {
+  const known = lim ? JSON.parse(decodeURIComponent(lim)) : null;
+  const wrap = (name, method, value) => (target) => new Proxy(Reflect.get(target, name), {
+    get: (t, k) => (k === method ? (async () => value) : Reflect.get(t, k)),
+  });
+  // The harness session fixture carries accountLabel but no accountId, and the
+  // limit message attaches to an account id — so give it one here rather than
+  // changing the shared fixture out from under twenty other probes.
+  if (reading || known) window.wanigan = new Proxy(base, {
     get(target, key) {
-      if (key !== 'transcripts') return Reflect.get(target, key);
-      const inner = Reflect.get(target, key);
-      return new Proxy(inner, {
-        get: (t, k) => (k === 'context' ? (async () => reading) : Reflect.get(t, k)),
-      });
+      if (key === 'transcripts' && reading) return wrap('transcripts', 'context', reading)(target);
+      if (key === 'usage' && known) return wrap('usage', 'known', known)(target);
+      if (key === 'sessions' && known) {
+        const inner = Reflect.get(target, key);
+        return new Proxy(inner, {
+          get: (t, k) => (k === 'list'
+            ? (async () => (await t.list()).map((row) => (row.id === 's1' ? { ...row, accountId: 'work' } : row)))
+            : Reflect.get(t, k)),
+        });
+      }
+      return Reflect.get(target, key);
     },
   });
 `;
@@ -63,15 +78,28 @@ try {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   page.on('pageerror', (e) => errors.push(`${e.message} :: ${String(e.stack||'').split('\n')[1]||''}`.slice(0,200)));
 
+  // The harness's own session s1 runs as account 'work'; these fixtures speak
+  // about that account so the bubble has something to attach to.
+  const limitsFor = (percent, extra = []) => ({ at: Date.now(), limits: [
+    { accountId: 'work', accountLabel: 'Work', harness: 'claude-code', identity: null, state: 'ok',
+      detail: null, fetchedAt: Date.now(), plan: 'Max', factors: [],
+      windows: [{ kind: 'week', scope: null, usedPercent: percent, resetsAtText: 'Friday 4:15pm', resetsAt: Date.now() + 3600000 }] },
+    ...extra ] });
+
   const cases = [
-    ['a measured window at 90% speaks', ok(), true],
-    ['an assumed window stays silent', ok({ windowSource: 'assumed-200k' }), false],
-    ['a stale reading stays silent', ok({ at: Date.now() - 130_000 }), false],
-    ['an ordinary 50% stays silent', ok({ percent: 50, tokens: 100000 }), false],
+    ['a measured window at 90% speaks', ok(), true, undefined],
+    ['an assumed window stays silent', ok({ windowSource: 'assumed-200k' }), false, undefined],
+    ['a stale reading stays silent', ok({ at: Date.now() - 130_000 }), false, undefined],
+    ['an ordinary 50% stays silent', ok({ percent: 50, tokens: 100000 }), false, undefined],
+    ['a reached account limit speaks', ok({ percent: 50, tokens: 100000 }), true, limitsFor(96)],
+    ['stale limits stay silent', ok({ percent: 50, tokens: 100000 }), false,
+      { at: Date.now() - 11 * 60_000, limits: limitsFor(96).limits }],
   ];
 
-  for (const [label, reading, expected] of cases) {
-    await page.goto(`${rendererURL}?ctx=${encodeURIComponent(JSON.stringify(reading))}`);
+  for (const [label, reading, expected, limits] of cases) {
+    const q = [`ctx=${encodeURIComponent(JSON.stringify(reading))}`];
+    if (limits !== undefined) q.push(`lim=${encodeURIComponent(JSON.stringify(limits))}`);
+    await page.goto(`${rendererURL}?${q.join('&')}`);
     await page.waitForTimeout(1800);
     // The orb follows the *active* session, and nothing is active until one is
     // opened — so open it the way a person would.

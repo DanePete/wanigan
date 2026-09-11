@@ -2,7 +2,7 @@ import { db } from './db';
 import * as accounts from './accounts';
 import { allAccountLimits } from './limits';
 import { burnRate as claudeBurnRate, type BurnRate as ClaudeBurnRate } from './claude-usage';
-import type { ConsumptionPoint, ModelConsumption, UsageSnapshot } from '../shared/types';
+import type { AccountLimits, ConsumptionPoint, ModelConsumption, UsageSnapshot } from '../shared/types';
 
 /**
  * What was actually spent, per account and model.
@@ -111,9 +111,29 @@ export function daily(days = DEFAULT_DAYS): ConsumptionPoint[] {
  * `force` re-probes the providers; without it a reading younger than the
  * staleness bound is reused, because each probe starts a real CLI process.
  */
+/**
+ * The last limits a real read produced, for surfaces that must not cause one.
+ *
+ * `allAccountLimits` consults a 45-second cache and asks the agent when it is
+ * cold, so anything on a poll would spend a probe every time — and "opening and
+ * polling Mission Room never starts an account usage probe" is a rule this
+ * suite already pins. A companion that wants to say something about usage may
+ * therefore only repeat what somebody's own visit to Usage, or a deliberate
+ * refresh, already established.
+ *
+ * Empty until that has happened, which is the honest state: Wanigan has not
+ * asked, so it does not know, so it says nothing.
+ */
+let lastLimits: { at: number; limits: AccountLimits[] } | null = null;
+
+export function knownLimits(): { at: number; limits: AccountLimits[] } | null {
+  return lastLimits;
+}
+
 export async function snapshot(input?: { days?: number; force?: boolean }): Promise<UsageSnapshot> {
   const days = clampDays(input?.days);
   const limits = await allAccountLimits(input?.force === true);
+  lastLimits = { at: Date.now(), limits };
   return { limits, consumption: consumption(days), daily: daily(days), days };
 }
 

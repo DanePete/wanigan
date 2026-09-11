@@ -2131,6 +2131,12 @@ function registerIpc() {
 
 
   // ══ phase 1 · telemetry ═════════════════════════════════════════════
+  /*
+   * Limits somebody's own visit to Usage already established. Never probes:
+   * a surface on a poll must not spend an account probe, which is why this
+   * exists rather than a cheaper-looking usage:snapshot call.
+   */
+  handle('usage:known', () => usage.knownLimits());
   handle('usage:session', (id: string) => otel.usageFor(id));
   handle('usage:many', (ids: string[]) => otel.usageForMany(ids));
   handle('usage:events', (id: string, limit?: number) => otel.apiEvents(id, limit));

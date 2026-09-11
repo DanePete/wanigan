@@ -7,6 +7,7 @@ import type { HandoverBegun, HandoverFinished } from '../shared/handover';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  AccountLimits,
   AwakeState,
   ExpiringResults,
   LaunchOptions, PastSession, Project, ProviderInfo, Session, RunConfig, SourceConfig,
@@ -233,6 +234,8 @@ const api = {
   usage: {
     /** The whole Usage screen: live limit windows plus recorded consumption. */
     snapshot: (input?: { days?: number; force?: boolean }) => call<UsageSnapshot>('usage:snapshot', input),
+    /** What a previous read established, or null. Never causes a probe. */
+    known: () => call<{ at: number; limits: AccountLimits[] } | null>('usage:known'),
     session: (id: string) => call<SessionUsage>('usage:session', id),
     many: (ids: string[]) => call<Record<string, SessionUsage>>('usage:many', ids),
     events: (id: string, limit?: number) => call<ApiEvent[]>('usage:events', id, limit),
