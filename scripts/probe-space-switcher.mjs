@@ -3,7 +3,8 @@
 import {STUB,rendererURL} from './renderer-harness.mjs';
 import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
-import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {tmpdir} from 'node:os';
 import assert from 'node:assert/strict';
@@ -13,6 +14,21 @@ const before=process.argv.includes('--before');
 const outputArg=process.argv.find(arg=>arg.startsWith('--output='))?.slice(9);
 const out=outputArg?path.resolve(root,outputArg):path.join(root,'docs/visuals/space-switcher',before?'before':'after');
 mkdirSync(out,{recursive:true});
+// Which renderer this run actually drew, recorded rather than asserted. The
+// harness serves out/renderer off disk; --archive routes those same paths out
+// of a packaged asar instead. Both runs are "Electron with a synthetic bridge"
+// and produce screenshots that look identical, so without these hashes the
+// verification file cannot say which build it is evidence of — and a file that
+// cannot tell them apart is a claim rather than a measurement. It was one:
+// archiveSha256, rendererSha256 and source sat in committed JSON that no code
+// here ever wrote, so the next honest run silently dropped all three.
+const archiveAt=process.argv.indexOf('--archive');
+const archive=archiveAt>=0?path.resolve(process.argv[archiveAt+1]):null;
+const rendererFile=rel=>archive?require('@electron/asar').extractFile(archive,'out/renderer/'+rel):readFileSync(path.join(root,'out/renderer',rel));
+const sha256=buf=>createHash('sha256').update(buf).digest('hex');
+const provenance=()=>{const entry=String(rendererFile('index.html')).match(/src="\.?\/?(assets\/[^"]+\.js)"/)?.[1]??null;
+ return {source:archive?`packaged renderer from ${path.basename(archive)}, isolated synthetic bridge`:'local out/renderer build, isolated synthetic bridge',
+  ...(archive?{archiveSha256:sha256(readFileSync(archive))}:{}),rendererEntry:entry,rendererSha256:entry?sha256(rendererFile(entry)):null};};
 const dir=mkdtempSync(path.join(tmpdir(),'wanigan-presence-'));
 writeFileSync(path.join(dir,'main.cjs'),`const {app,BrowserWindow}=require('electron');app.whenReady().then(()=>{const w=new BrowserWindow({width:1440,height:900,titleBarStyle:'hiddenInset',webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});w.loadURL('about:blank');});`);
 const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
@@ -21,8 +37,7 @@ const app=await _electron.launch({executablePath:path.join(root,'node_modules/el
 const errors=[],checks=[];
 try{
  const page=await app.firstWindow();
- const archiveAt=process.argv.indexOf('--archive');
- if(archiveAt>=0){const asar=require('@electron/asar'),archive=process.argv[archiveAt+1];await page.route(rendererURL.replace('/index.html','/**'),route=>{const name='out/renderer'+new URL(route.request().url()).pathname;return route.fulfill({body:asar.extractFile(archive,name),contentType:({'.html':'text/html','.js':'text/javascript','.css':'text/css','.png':'image/png','.hdr':'application/octet-stream','.svg':'image/svg+xml'})[path.extname(name)]??'application/octet-stream'});});}
+ if(archive){const asar=require('@electron/asar');await page.route(rendererURL.replace('/index.html','/**'),route=>{const name='out/renderer'+new URL(route.request().url()).pathname;return route.fulfill({body:asar.extractFile(archive,name),contentType:({'.html':'text/html','.js':'text/javascript','.css':'text/css','.png':'image/png','.hdr':'application/octet-stream','.svg':'image/svg+xml'})[path.extname(name)]??'application/octet-stream'});});}
   page.on('pageerror',error=>errors.push(error.message));
  page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
  await page.addInitScript(STUB);
@@ -106,5 +121,5 @@ try{
   assert(await page.getByRole('button',{name:'Add a project space',exact:true}).isVisible());await page.keyboard.press('Escape');
   checks.push('Focus stays within the menu, backdrop dismissal restores focus, and an empty project list retains All spaces and Add space.');
  }
- assert.deepEqual(errors,[]);writeFileSync(path.join(out,'verification.json'),JSON.stringify({checks,errors,fixture:true,at:new Date().toISOString()},null,2)+'\n');console.log('Header checks passed:',checks.length);
+ assert.deepEqual(errors,[]);writeFileSync(path.join(out,'verification.json'),JSON.stringify({checks,errors,fixture:true,at:new Date().toISOString(),...provenance()},null,2)+'\n');console.log('Header checks passed:',checks.length);
 }catch(error){const page=await app.firstWindow();await page.screenshot({path:path.join(out,'failure.png')});console.error({error:String(error),errors,focus:await page.evaluate(()=>document.activeElement?.outerHTML.slice(0,600))});throw error;}finally{await app.close();rmSync(dir,{recursive:true,force:true});}
