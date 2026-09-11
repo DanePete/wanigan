@@ -26,6 +26,7 @@
     "dist:mac:arm64:install": "npm run dist:mac:arm64 && npm run install:mac:arm64",
     "test:shared": "node --test src/shared/*.test.ts",
     "test:renderer-style": "node scripts/check-renderer-style.cjs",
+    "test:dead-code": "knip --exclude exports,types,nsExports,nsTypes,enumMembers,classMembers,duplicates",
     "shots": "node scripts/shots.mjs",
     "shots:browser": "node scripts/shots-browser.mjs",
     "probe:chords": "node scripts/probe-chords.mjs",
@@ -38,8 +39,9 @@
     "app": "./scripts/launch.sh",
     "cli": "./scripts/cli.sh",
     "smoke": "./scripts/smoke.sh",
-    "test": "npm run typecheck && npm run test:shared && npm run test:renderer-style && npm run test:package-hooks && npm run test:local-install && npm run smoke",
-    "dist:mac:arm64": "electron-vite build && { electron-builder --mac --arm64; c=$?; npm run rebuild; exit $c; }"
+    "test": "npm run typecheck && npm run test:shared && npm run test:renderer-style && npm run test:dead-code && npm run test:package-hooks && npm run test:local-install && npm run smoke",
+    "dist:mac:arm64": "electron-vite build && { electron-builder --mac --arm64; c=$?; npm run rebuild; exit $c; }",
+    "dead-code:all": "knip"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
@@ -47,6 +49,7 @@
     "node-pty": "^1.0.0"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "@electron/fuses": "2.1.3",
     "@electron/rebuild": "4.2.0",
     "@types/better-sqlite3": "9.6.0",
@@ -56,12 +59,12 @@
     "@vitejs/plugin-react": "5.2.0",
     "@webgpu/types": "^0.1.72",
     "@xterm/addon-fit": "^0.10.0",
-    "@xterm/addon-search": "^0.15.0",
     "@xterm/addon-web-links": "^0.11.0",
     "@xterm/xterm": "^5.5.0",
     "electron": "44.0.0",
     "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
+    "knip": "5.66.2",
     "playwright-core": "1.62.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
