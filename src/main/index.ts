@@ -539,7 +539,6 @@ function marketplaceSource(value: unknown): string {
   if (source.startsWith('-')) {
     throw new Error('A marketplace source cannot begin with "-"; the CLI would read it as another flag, not a source.');
   }
-  // eslint-disable-next-line no-control-regex
   if (/\s/.test(source) || /[\u0000-\u001f\u007f]/.test(source)) {
     throw new Error('A marketplace source cannot contain spaces or control characters.');
   }
@@ -3215,9 +3214,14 @@ function registerIpc() {
 
 /** Streams a run's results to disk without materialising them in memory. */
 function writeExport(runId: string, format: 'jsonl' | 'csv', filePath: string): string {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // Deliberately lazy: this path runs during quit, after the module graph has
+  // already been torn down in some exit orders. typescript-eslint renamed the
+  // rule to no-require-imports in v8, which is why the old directive name here
+  // had stopped disabling anything.
+  /* eslint-disable @typescript-eslint/no-require-imports */
   const fs = require('node:fs') as typeof import('node:fs');
   const { db } = require('./db') as typeof import('./db');
+  /* eslint-enable @typescript-eslint/no-require-imports */
 
   const stmt = db().prepare(`
     SELECT custom_id, row_index, row_json, rendered, status, output_text,

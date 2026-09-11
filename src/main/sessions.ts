@@ -76,7 +76,7 @@ async function captureBaseline(cwd: string): Promise<Baseline> {
 
 // Required at runtime rather than imported, so the bundler leaves the native
 // addon alone.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const pty = require('node-pty') as typeof import('node-pty');
 
 /** Bytes of scrollback kept per session so a pane can be re-attached with history. */

@@ -24,10 +24,10 @@ as observed fact.
 
 - Use Node `22.23.2` from `.nvmrc`. Node 16 cannot build this project; use
   `nvm use` before `npm` commands.
-- Run `npm test` before handing off a code change. It is seven steps in order:
+- Run `npm test` before handing off a code change. It is eight steps in order:
   `typecheck`, `test:shared`, `test:renderer-style`, `test:dead-code`,
-  `test:package-hooks`, `test:local-install`, then the offline main-process
-  `smoke` suite. `test:shared`
+  `test:lint`, `test:package-hooks`, `test:local-install`, then the offline
+  main-process `smoke` suite. `test:shared`
   is plain `node --test` over `src/shared`, which is pure by construction: it
   answers in under a second, so a contract belongs there rather than in the
   thirty-second suite whenever it needs no process. `test:dead-code` is knip over
@@ -36,7 +36,16 @@ as observed fact.
   `@electron/asar` stayed a transitive dependency of electron-builder while two
   suites in `npm test` required it directly. Over-exports are excluded from the
   gate as a backlog rather than a regression; `npm run dead-code:all` lists
-  them. CI runs the same seven, splitting
+  them. `test:lint` is ESLint, and it is not a style tool — formatting is
+  settled by review and the renderer's structural rules belong to the style
+  gate. Every rule it runs catches something `strict` and the style gate cannot
+  see, and the type-aware half is the point: `no-floating-promises` needs the
+  checker, and a `void somePromise()` that loses its `void` and its `.catch`
+  swallows the rejection. `eslint-suppressions.json` is its baseline and obeys
+  the same rule as every other one here — ESLint fails a new violation, and also
+  fails a suppression whose violation has since been fixed, so the only edit is
+  downward. `npm run lint:debt` ranks what is left; `npm run lint:prune` takes
+  fixed entries off the books. CI runs the same eight, splitting
   the two macOS packaging suites onto a macOS runner. Run `git diff --check` for
   documentation and UI changes too.
 - Renderer UI is built from the shared frame and primitives, and the style gate
