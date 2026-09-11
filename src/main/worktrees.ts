@@ -3,7 +3,6 @@ import path from 'node:path';
 import { db, dataDir } from './db';
 import { runGit, head as headOf, repoState } from './git';
 import { listProjects } from './store';
-import { listSessions } from './sessions';
 import type { WorktreeInfo } from '../shared/types';
 
 /**
@@ -715,8 +714,12 @@ export async function removeWorktree(p: string, force: boolean): Promise<{ remov
  * about is a row in a list; the cost of hiding one is either lost work or a
  * disk that fills up for reasons nobody can see. Showing beats hiding.
  */
-export async function reconcileWorktrees(): Promise<WorktreeInfo[]> {
-  const live = new Set(listSessions().filter((s) => s.status !== 'exited').map((s) => s.id));
+// The live set is passed in rather than read here. Asking sessions.ts which
+// sessions are running made worktrees import it, and sessions.ts imports this
+// file to create and remove worktrees — the last two-module runtime cycle in
+// src/main. Both callers are in index.ts, which already knows both modules;
+// composing them there is where that belongs.
+export async function reconcileWorktrees(live: ReadonlySet<string>): Promise<WorktreeInfo[]> {
 
   const rows = db().prepare('SELECT * FROM worktrees WHERE removed_at IS NULL').all() as Row[];
 
