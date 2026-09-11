@@ -1,0 +1,251 @@
+{
+  "kind": "isolated interactive design prototype; sample data only",
+  "at": "2026-09-10T17:06:49.897Z",
+  "results": [
+    {
+      "width": 1024,
+      "theme": "dark",
+      "view": "sessions",
+      "scrollWidth": 1024,
+      "overflow": []
+    },
+    {
+      "width": 1024,
+      "theme": "dark",
+      "view": "changes",
+      "scrollWidth": 1024,
+      "overflow": []
+    },
+    {
+      "width": 1024,
+      "theme": "dark",
+      "view": "fleet",
+      "scrollWidth": 1024,
+      "overflow": []
+    },
+    {
+      "width": 1024,
+      "theme": "dark",
+      "view": "settings",
+      "scrollWidth": 1024,
+      "overflow": []
+    },
+    {
+      "width": 1024,
+      "theme": "light",
+      "view": "sessions",
+      "scrollWidth": 1024,
+      "overflow": []
+    },
+    {
+      "width": 1024,
+      "theme": "light",
+      "view": "changes",
+      "scrollWidth": 1024,
+      "overflow": []
+    },
+    {
+      "width": 1024,
+      "theme": "light",
+      "view": "fleet",
+      "scrollWidth": 1024,
+      "overflow": []
+    },
+    {
+      "width": 1024,
+      "theme": "light",
+      "view": "settings",
+      "scrollWidth": 1024,
+      "overflow": []
+    },
+    {
+      "width": 736,
+      "theme": "dark",
+      "view": "sessions",
+      "scrollWidth": 736,
+      "overflow": []
+    },
+    {
+      "width": 736,
+      "theme": "dark",
+      "view": "changes",
+      "scrollWidth": 736,
+      "overflow": []
+    },
+    {
+      "width": 736,
+      "theme": "dark",
+      "view": "fleet",
+      "scrollWidth": 736,
+      "overflow": []
+    },
+    {
+      "width": 736,
+      "theme": "dark",
+      "view": "settings",
+      "scrollWidth": 736,
+      "overflow": []
+    },
+    {
+      "width": 736,
+      "theme": "light",
+      "view": "sessions",
+      "scrollWidth": 736,
+      "overflow": []
+    },
+    {
+      "width": 736,
+      "theme": "light",
+      "view": "changes",
+      "scrollWidth": 736,
+      "overflow": []
+    },
+    {
+      "width": 736,
+      "theme": "light",
+      "view": "fleet",
+      "scrollWidth": 736,
+      "overflow": []
+    },
+    {
+      "width": 736,
+      "theme": "light",
+      "view": "settings",
+      "scrollWidth": 736,
+      "overflow": []
+    },
+    {
+      "width": 360,
+      "theme": "dark",
+      "view": "sessions",
+      "scrollWidth": 360,
+      "overflow": []
+    },
+    {
+      "width": 360,
+      "theme": "dark",
+      "view": "changes",
+      "scrollWidth": 360,
+      "overflow": []
+    },
+    {
+      "width": 360,
+      "theme": "dark",
+      "view": "fleet",
+      "scrollWidth": 360,
+      "overflow": []
+    },
+    {
+      "width": 360,
+      "theme": "dark",
+      "view": "settings",
+      "scrollWidth": 360,
+      "overflow": []
+    },
+    {
+      "width": 360,
+      "theme": "light",
+      "view": "sessions",
+      "scrollWidth": 360,
+      "overflow": []
+    },
+    {
+      "width": 360,
+      "theme": "light",
+      "view": "changes",
+      "scrollWidth": 360,
+      "overflow": []
+    },
+    {
+      "width": 360,
+      "theme": "light",
+      "view": "fleet",
+      "scrollWidth": 360,
+      "overflow": []
+    },
+    {
+      "width": 360,
+      "theme": "light",
+      "view": "settings",
+      "scrollWidth": 360,
+      "overflow": []
+    },
+    {
+      "width": 320,
+      "theme": "dark",
+      "view": "sessions",
+      "scrollWidth": 320,
+      "overflow": []
+    },
+    {
+      "width": 320,
+      "theme": "dark",
+      "view": "changes",
+      "scrollWidth": 320,
+      "overflow": []
+    },
+    {
+      "width": 320,
+      "theme": "dark",
+      "view": "fleet",
+      "scrollWidth": 320,
+      "overflow": []
+    },
+    {
+      "width": 320,
+      "theme": "dark",
+      "view": "settings",
+      "scrollWidth": 320,
+      "overflow": []
+    },
+    {
+      "width": 320,
+      "theme": "light",
+      "view": "sessions",
+      "scrollWidth": 320,
+      "overflow": []
+    },
+    {
+      "width": 320,
+      "theme": "light",
+      "view": "changes",
+      "scrollWidth": 320,
+      "overflow": []
+    },
+    {
+      "width": 320,
+      "theme": "light",
+      "view": "fleet",
+      "scrollWidth": 320,
+      "overflow": []
+    },
+    {
+      "width": 320,
+      "theme": "light",
+      "view": "settings",
+      "scrollWidth": 320,
+      "overflow": []
+    }
+  ],
+  "interactions": [
+    "view navigation",
+    "keyboard tabs",
+    "per-session drafts",
+    "activity visibility",
+    "file selection",
+    "local staging preview",
+    "fleet-to-session navigation",
+    "companion briefing",
+    "settings categories",
+    "appearance",
+    "companion visibility",
+    "new session preview"
+  ],
+  "semantics": {
+    "duplicateIds": [],
+    "unnamedInputs": [],
+    "icons": 13,
+    "images": true
+  },
+  "errors": []
+}

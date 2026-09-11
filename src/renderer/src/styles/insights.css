@@ -175,3 +175,42 @@
   .insights .ins-budgets { grid-template-columns: minmax(0, 1fr); }
   .insights .chart-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* A report workspace, with scope and source visible beside the selected reading. */
+.pane.insights { max-width: var(--page-wide); }
+.ins-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-3); }
+.ins-actions .field { width: auto; }
+.ins-actions > span { font-size: var(--t-small); }
+.ins-workspace { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: var(--s-5); align-items: start; }
+.ins-reports { position: sticky; top: calc(var(--s-6) * 3); min-width: 0; border-right: 1px solid var(--line-soft); padding-right: var(--s-4); }
+.ins-reports > button { width: 100%; display: flex; flex-direction: column; gap: var(--s-1); text-align: left; padding: var(--s-3); margin-bottom: var(--s-1); border: 1px solid transparent; border-radius: var(--r-md); }
+.ins-reports > button > strong { font-size: var(--t-body); }
+.ins-reports > button > span { font-size: var(--t-small); color: var(--text-dim); }
+.ins-reports > button:hover { background: var(--glass-fill); }
+.ins-reports > button[aria-current='true'] { background: var(--glass-selected); border-color: var(--glass-line); }
+.ins-sources { margin-top: var(--s-5); padding: var(--s-3); font-size: var(--t-small); color: var(--text-dim); }
+.ins-sources > summary, .ins-comparison > summary { cursor: pointer; }
+.ins-sources p { margin-top: var(--s-3); line-height: 1.55; }
+.ins-report-content, .ins-report { min-width: 0; }
+.ins-report { display: flex; flex-direction: column; gap: var(--s-5); }
+.ins-report[hidden] { display: none; }
+.ins-intro h2 { font-size: var(--t-display); }
+.ins-intro p { color: var(--text-dim); font-size: var(--t-body); margin-top: var(--s-2); }
+.ins-report > .chart-card, .ins-report > .chart-grid > .chart-card { border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; background: none; box-shadow: none; padding: var(--s-5) 0 0; }
+.ins-report > .chart-card > h3, .ins-report .ins-cardhead h3 { font-size: var(--t-lead); }
+.ins-report .stat-grid .stat-tile { background: var(--glass-fill); box-shadow: none; border-color: var(--glass-line); border-radius: var(--r-md); }
+.ins-report .ins-filters { padding: var(--s-3) var(--s-4); border-color: var(--glass-line); background: var(--glass-fill); border-radius: var(--r-md); }
+.ins-comparison > summary { padding-block: var(--s-3); color: var(--text-dim); font-size: var(--t-body); }
+.ins-comparison > .chart-card { margin-top: var(--s-3); }
+@media (max-width: 1050px) {
+  .ins-report .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ins-workspace { grid-template-columns: 160px minmax(0, 1fr); gap: var(--s-4); }
+}
+@media (max-width: 760px) {
+  .ins-workspace { grid-template-columns: 1fr; }
+  .ins-reports { position: static; display: flex; flex-wrap: wrap; gap: var(--s-1); border: 0; padding: 0; }
+  .ins-reports > button { width: auto; }
+  .ins-sources { width: 100%; margin-top: 0; }
+}
+
+.pane.insights > * { flex-shrink: 0; }

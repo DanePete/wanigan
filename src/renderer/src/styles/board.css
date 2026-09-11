@@ -1,116 +1,71 @@
-/* board — owned by the Board view. Tokens come from index.css; never redeclare a colour here. */
+/* Board: one continuous workspace, compact task tiles and a selected reader. */
+.board-view.pane { flex: 1; min-height: 0; overflow: hidden; }
+.board-view > .pane-head { flex: none; }
+.brd-toolbar { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; }
+.brd-search { display: flex; align-items: center; gap: var(--s-2); flex: 1; max-width: 440px; min-width: 220px; padding: 0 var(--s-3); border: 1px solid var(--glass-line); background: var(--bg-chrome); border-radius: var(--r-md); box-shadow: var(--shadow-input); }
+.brd-search .icon { color: var(--text-faint); flex: none; }
+.brd-search .field { background: transparent; box-shadow: none; border: 0; padding: var(--s-3) 0; min-width: 0; }
+.brd-search:focus-within { border-color: var(--accent); }
+.brd-search .field:focus-visible { outline: none; }
+.brd-toolbar .brd-scope { width: auto; min-width: 160px; }
+.brd-filters { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; }
+.brd-filters .link { font-size: var(--t-small); margin-left: var(--s-2); }
+.board-view > .brd { display: grid; grid-template-columns: repeat(6, minmax(204px, 1fr)); gap: var(--s-3); overflow: auto; padding: var(--s-1) var(--s-1) var(--s-3); flex: 1; min-height: 250px; align-items: stretch; width: 100%; max-width: none; overscroll-behavior: contain; }
+.board-view > .brd.brd-filtered { grid-template-columns: minmax(0, 540px); }
+.brd-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: var(--s-3); background: var(--glass-fill); border: 1px solid var(--glass-line); border-radius: var(--r-lg); }
+.brd-col > .sec-head { padding: var(--s-1) var(--s-1) 0; }
+.brd-col > .sec-head .label { color: var(--text); font-size: var(--t-body); letter-spacing: 0; text-transform: none; font-weight: 600; }
+.brd-col > .sec-head .sec-count { margin-left: auto; }
+.brd-col[data-column='blocked'] > .sec-head .label { color: var(--serious); }
+.brd-col[data-column='ready'] > .sec-head .label { color: var(--accent); }
+.brd-col-why { color: var(--text-faint); font-size: var(--t-micro); line-height: 1.5; padding: var(--s-1) var(--s-1) var(--s-3); }
+.brd-cards { display: flex; flex-direction: column; gap: var(--s-3); flex: 1; min-height: 0; overflow: auto; padding: var(--s-1); scrollbar-width: thin; }
+.brd-none { font-size: var(--t-small); color: var(--text-faint); border: 1px dashed var(--line); border-radius: var(--r-md); padding: var(--s-5) var(--s-3); text-align: center; }
+.brd-card { display: flex; flex-direction: column; flex: none; gap: var(--s-3); text-align: left; width: 100%; min-width: 0; padding: var(--s-4); border: 1px solid var(--glass-line); border-radius: var(--r-md); background: var(--bg-soft); box-shadow: var(--shadow-control); }
+.brd-card:hover { border-color: var(--text-faint); }
+.brd-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.brd-card.high { border-top-color: var(--warning); }
+.brd-card-title { font-size: var(--t-body); color: var(--text); font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.brd-meta { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--s-1); color: var(--text-faint); font-size: var(--t-micro); }
+.brd-where { color: var(--text-dim); font-weight: 500; }
+.brd-goal, .brd-age { color: var(--text-faint); font-size: var(--t-micro); line-height: 1.45; }
+.brd-status { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+.brd-card .mark, .brd-card .pill { font-size: var(--t-micro); }
+.brd-why { color: var(--serious); font-size: var(--t-small); line-height: 1.5; overflow-wrap: anywhere; }
+.brd-foot { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--s-2); color: var(--text-faint); font-size: var(--t-small); }
+.brd-guide { flex: none; max-height: 160px; overflow: auto; }
+.brd-guide .explainer { max-width: 90ch; }
 
-/* Columns scroll sideways as one row rather than wrapping. A board that
-   reflowed to two rows on a narrow window would put Done above Ready, which
-   destroys the only thing a column layout is for: left-to-right progression. */
-.brd {
-  display: grid;
-  /* An explicit five-track template, not grid-auto-flow with auto columns. An
-     implicit `1fr` track still resolves against its own content rather than the
-     container, so the fifth column ran past the right edge and sat there
-     half-clipped — and a board whose last column is always cut off trains you
-     to forget it exists, when that column is the one saying the work is done.
-     The floor keeps a card readable; below it the row scrolls instead. */
-  grid-template-columns: repeat(5, minmax(190px, 1fr));
-  gap: var(--s-3);
-  overflow-x: auto;
-  padding-bottom: var(--s-2);
-  align-items: start;
-}
-
-.brd-col {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  padding: var(--card-pad-tight);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-md);
-  background: var(--bg-sunk);
-}
-
-.brd-col-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-2); }
-.brd-col-head h2 { font-size: var(--t-body); font-weight: 600; }
-.brd-count { color: var(--text-dim); font-size: var(--t-small); font-variant-numeric: tabular-nums; }
-/* The sentence under a column heading is what stops "Blocked" being read as
-   "broken" and "Parked" as "dropped". It stays on screen rather than living in
-   a tooltip, because the person who needs it is the one who has not read the
-   board before. */
-.brd-col-why { margin: 3px 0 var(--s-2); color: var(--text-faint); font-size: var(--t-micro); line-height: 1.45; }
-
-.brd-cards { display: grid; gap: var(--s-2); }
-.brd-none { color: var(--text-faint); font-size: var(--t-small); padding: var(--s-2) 0; }
-
-.brd-card {
-  display: grid;
-  gap: 4px;
-  padding: var(--card-pad-tight);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--bg-soft);
-}
-/* High risk is the one property of a goal that changes how carefully a card
-   should be read, so it is the one the card colours for. */
-.brd-card.high { border-left-color: var(--warning); }
-
-/* A title that opens the goal. A button rather than a link because it routes
-   inside the app, and it keeps the text alignment of the paragraph it heads. */
-.brd-card-title {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--text);
-  font-size: var(--t-body);
-  font-weight: 600;
-  text-align: left;
-  line-height: 1.3;
-}
-.brd-card-title:hover { color: var(--accent); }
-
-.brd-meta { color: var(--text-dim); font-size: var(--t-micro); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.brd-where { font-weight: 600; }
-
-.brd-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
-.brd-chip {
-  padding: 1px 6px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-pill);
-  color: var(--text-dim);
-  font-size: var(--t-micro);
-}
-.brd-chip.warn { border-color: var(--warning); color: var(--warning); }
-
-.brd-why { color: var(--text-dim); font-size: var(--t-micro); line-height: 1.45; }
-
-.brd-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 3px; }
-.brd-acts:empty { display: none; }
-/* The park action, folded away. See the note at its call site: four buttons on
-   every card made the action row taller than the title it belonged to. */
-.brd-park-menu > summary {
-  display: inline-block;
-  padding: 1px 7px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-pill);
-  color: var(--text-faint);
-  font-size: var(--t-micro);
-  cursor: default;
-  list-style: none;
-}
+/* The task reader uses the shared modal boundary and keyboard contract. */
+.overlay-backdrop.brd-backdrop { display: flex; justify-content: flex-end; align-items: stretch; padding: var(--s-4); }
+.brd-sheet { display: flex; flex-direction: column; width: min(500px, 100%); min-width: 0; max-height: 100%; border: 1px solid var(--glass-line); border-radius: var(--r-xl); background: var(--bg-soft); color: var(--text); box-shadow: var(--shadow-modal); overflow: hidden; }
+.brd-sheet-toolbar { display: flex; align-items: center; justify-content: space-between; flex: none; padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--line-soft); font-size: var(--t-small); color: var(--text-dim); }
+.brd-sheet-body { display: flex; flex-direction: column; gap: var(--s-4); min-height: 0; overflow: auto; padding: var(--s-5); overscroll-behavior: contain; }
+.brd-sheet h2 { font-size: var(--t-display); line-height: 1.2; font-weight: 600; letter-spacing: -.03em; overflow-wrap: anywhere; }
+.brd-sheet-context { color: var(--text-faint); font-size: var(--t-body); line-height: 1.5; }
+.brd-detail { display: grid; gap: var(--s-3); padding-top: var(--s-4); border-top: 1px solid var(--line-soft); }
+.brd-detail > .sec-head .label { font-size: var(--t-body); letter-spacing: 0; text-transform: none; color: var(--text); }
+.brd-instructions { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-dim); line-height: 1.65; font-size: var(--t-body); }
+.brd-dependencies { list-style: none; display: grid; padding: 0; gap: var(--s-2); }
+.brd-dependencies button { display: flex; align-items: center; gap: var(--s-2); width: 100%; text-align: left; padding: var(--s-3); border: 1px solid var(--glass-line); background: var(--bg); border-radius: var(--r-md); font-size: var(--t-small); }
+.brd-dependencies button > span:first-child { flex: 1; min-width: 0; }
+.brd-dependencies button > .icon { flex: none; }
+.brd-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--s-2) var(--s-3); font-size: var(--t-small); line-height: 1.5; }
+.brd-facts dt { color: var(--text-faint); }
+.brd-facts dd { color: var(--text-dim); overflow-wrap: anywhere; }
+.brd-launch { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+.brd-launch .field { flex: 1; min-width: 150px; }
+.brd-acts { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+.brd-park-menu { color: var(--text-dim); font-size: var(--t-small); }
+.brd-park-menu > summary { display: flex; align-items: center; gap: var(--s-2); width: fit-content; cursor: pointer; list-style: none; }
 .brd-park-menu > summary::-webkit-details-marker { display: none; }
-.brd-park-menu > summary:hover { border-color: var(--accent); color: var(--accent); }
-.brd-park-menu[open] > summary { border-color: var(--accent); color: var(--accent); }
-.brd-park-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
-.brd-park {
-  padding: 1px 7px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-pill);
-  background: transparent;
-  color: var(--text-dim);
-  font-size: var(--t-micro);
+.brd-park-row { display: flex; flex-wrap: wrap; gap: var(--s-2); padding-top: var(--s-3); }
+@media (max-width: 980px) {
+  .brd-toolbar { gap: var(--s-2); }
+  .brd-search { min-width: 180px; }
+  .board-view > .brd { grid-template-columns: repeat(6, minmax(230px, 1fr)); }
+  .overlay-backdrop.brd-backdrop { padding: var(--s-2); }
 }
-.brd-park:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-
-.brd-scope { min-width: 180px; }
 
 /* ── the interview ───────────────────────────────────────────────────── */
 /* Reading width, not full width. This is a conversation: a question set across

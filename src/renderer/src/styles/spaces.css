@@ -1,0 +1,33 @@
+/* One bounded scope control, regardless of how many repositories are open. */
+.project-spaces { width: 280px; min-width: 0; flex-shrink: 1; margin: 0 auto; -webkit-app-region: no-drag; }
+.space-switch-trigger { anchor-name: --project-space-switch; display: flex; align-items: center; gap: var(--s-3); width: 100%; min-height: var(--control-h); padding: var(--s-2) var(--s-3); border: 1px solid var(--glass-line); border-radius: var(--r-pill); background: var(--glass-fill); color: var(--text); box-shadow: var(--shadow-control); text-align: left; }
+.space-switch-trigger:hover, .space-switch-trigger[aria-expanded='true'] { background: var(--glass-selected); }
+.space-switch-trigger > .icon { flex: none; color: var(--text-dim); }
+.space-switch-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-small); }
+.space-switch-count { color: var(--text-dim); font-size: var(--t-micro); font-variant-numeric: tabular-nums; border-left: 1px solid var(--glass-line); padding-left: var(--s-3); }
+.space-switch-chevron { color: var(--text-faint); }
+.overlay-backdrop.space-switch-backdrop { background: transparent; }
+.space-switcher { position: fixed; position-anchor: --project-space-switch; top: anchor(bottom); left: clamp(var(--s-3), calc(anchor(center) - 210px), calc(100vw - 420px - var(--s-3))); margin-top: var(--s-2); width: min(420px, calc(100vw - var(--s-3) * 2)); max-height: calc(100dvh - var(--space-topbar) - var(--s-5)); display: flex; flex-direction: column; min-height: 0; padding: var(--s-2); border: 1px solid var(--glass-line); border-radius: var(--r-lg); background: var(--bg-raised); color: var(--text); box-shadow: var(--shadow-popover); }
+.space-switch-intro { display: flex; align-items: center; justify-content: space-between; padding: var(--s-1) var(--s-2) var(--s-2); color: var(--text-dim); font-size: var(--t-small); }
+.space-switch-intro > span > span { margin-left: var(--s-2); color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.space-switch-close { display: grid; place-items: center; width: var(--control-h-sm); height: var(--control-h-sm); border-radius: var(--r-sm); color: var(--text-faint); }
+.space-switch-close:hover { background: var(--bg-sunk); color: var(--text); }
+.space-switch-search { display: flex; align-items: center; gap: var(--s-2); flex: none; margin: 0 var(--s-1) var(--s-2); padding: var(--s-3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); color: var(--text-faint); }
+.space-switch-search:focus-within { border-color: var(--accent); }
+.space-switch-search input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--text); background: transparent; font: inherit; font-size: var(--t-body); }
+.space-switch-search > .icon, .space-switch-search > button { flex: none; }
+.space-switch-search > button { display: grid; place-items: center; color: var(--text-dim); }
+.space-switch-list { overflow-y: auto; overscroll-behavior: contain; min-height: 0; max-height: 390px; scrollbar-width: thin; }
+.space-switch-option { display: flex; align-items: center; gap: var(--s-3); margin: var(--s-1) 0; padding: var(--s-3); border-radius: var(--r-md); cursor: pointer; }
+.space-switch-option[data-active='true'] { background: var(--bg-selected); }
+.space-switch-option > .icon { flex: none; color: var(--text-faint); }
+.space-switch-option[aria-selected='true'] > .icon, .space-switch-check { color: var(--accent); }
+.space-switch-description { display: grid; gap: var(--s-1); min-width: 0; flex: 1; }
+.space-switch-description strong { font-size: var(--t-body); font-weight: 500; }
+.space-switch-description > span { font-size: var(--t-micro); color: var(--text-faint); }
+.space-switch-description > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.space-switch-empty { padding: var(--s-5) var(--s-3); color: var(--text-dim); font-size: var(--t-small); line-height: 1.7; overflow-wrap: anywhere; }
+.space-switch-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); flex: none; border-top: 1px solid var(--line-soft); margin-top: var(--s-2); padding: var(--s-2) var(--s-1) var(--s-1); }
+.space-switch-footer button { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-2); font-size: var(--t-small); border-radius: var(--r-sm); color: var(--text); }
+.space-switch-footer button:hover { background: var(--bg-sunk); }
+.space-switch-footer > span { font-size: var(--t-micro); color: var(--text-faint); }

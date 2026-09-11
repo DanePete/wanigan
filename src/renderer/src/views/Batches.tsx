@@ -2,9 +2,10 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type {
   CacheTtl, EvalPair, EvalRowDiff, GoldenSet, Project, RunConfig, SourceConfig, UploadedFile, ExpiringResults } from '@shared/types';
 import { estimateTokens } from '@shared/tokens';
-import { Pill, Bar, ConfirmNote, Reading, Stat, Note, Section, num, usd, ago, until } from '../components/bits';
+import { Pill, Bar, Chip, ConfirmNote, EmptyState, PageHead, Segmented, Reading, Stat, Note, Section, num, usd, ago, until } from '../components/bits';
 import { useDialog } from '../components/useDialog';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
+import { useLiveViewMemory } from '../components/planningMemory';
 import '../styles/batches.css';
 
 type Preset = { id: string; label: string; blurb: string; config: Omit<RunConfig, 'name'> };
@@ -30,7 +31,7 @@ type Run = {
 type Page = { page: 'list' } | { page: 'new' } | { page: 'detail'; id: string };
 
 /** Which tab of the run detail is open. Refusals appears only when there are any. */
-type DetailTab = 'results' | 'refusals' | 'evals' | 'batches' | 'events' | 'config';
+type DetailTab = 'results' | 'refusals' | 'evals' | 'cache' | 'batches' | 'events' | 'config';
 
 /** A rescue run, as refusal.children() reports it. */
 type RescueChild = { id: string; name: string; status: string; model: string };
@@ -142,7 +143,7 @@ export default function Batches({ projects, hasKey, onNeedKey, seed, onSeedConsu
    * open — the page it was on is remembered now, and the builder below
    * remembers what was typed into it.
    */
-  const [view, setView] = useViewMemory<Page>('page', { page: 'list' });
+  const [view, setView] = useLiveViewMemory<Page>('page', { page: 'list' });
 
   // A session handing over its changed files opens the builder directly, and
   // outranks whatever page was remembered: a handed-over file list is an
@@ -154,8 +155,8 @@ export default function Batches({ projects, hasKey, onNeedKey, seed, onSeedConsu
                 seed={seed} onSeedConsumed={onSeedConsumed}
                 onDone={(id) => setView({ page: 'detail', id })} onCancel={() => setView({ page: 'list' })} />
       : view.page === 'detail'
-        ? <RunDetail id={view.id} onBack={() => setView({ page: 'list' })}
-                     onOpen={(id) => setView({ page: 'detail', id })} />
+        ? <RunDetail key={view.id} id={view.id} onBack={() => setView({ page: 'list' })}
+                     onOpen={(id) => setView(current => current.page === 'detail' && current.id === view.id ? { page: 'detail', id } : current)} />
         : <RunList onNew={() => setView({ page: 'new' })} onOpen={(id) => setView({ page: 'detail', id })} />;
 
   return page;
@@ -214,176 +215,51 @@ function RunList({ onNew, onOpen }: { onNew: () => void; onOpen: (id: string) =>
     return () => { off(); clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
   }, [load]);
 
-  const active = runs.filter((r) => ['in_progress', 'submitting', 'canceling'].includes(r.status));
-  const spent = runs.reduce((a, r) => a + (r.cost_usd || 0), 0);
-  // Main returns up to 200 runs and every row draws a progress bar, so the
-  // whole table re-lays out on an eight-second beat. Cut what is painted, say
-  // so, and keep the way through — the counters above still total all 200.
-  const listed = expanded ? runs : runs.slice(0, RUN_ROWS);
-  const hiddenRuns = runs.length - listed.length;
-
-  const head = (
-    <div className="pane-head">
-      <div>
-        <h1>Batches</h1>
-        <p className="dim">Bulk work across your repos, asynchronous, at half price.</p>
-      </div>
-      <button className="btn btn-primary" onClick={onNew}>New run</button>
-    </div>
-  );
-
-  // Nothing was counted, so nothing is totalled: the stats and the onboarding
-  // empty state below would both be claims about a database Wanigan could not read.
-  if (err && !runs.length) {
-    return (
-      <div className="pane">
-        {head}
-        <div className="card bx-state">
-          <h4>Could not read your runs</h4>
-          <p>{err}</p>
-          <p>
-            This is a failed read, not an empty workspace. Runs already submitted are untouched, and
-            none of them are counted above because none of them were seen.
-          </p>
-          <button className="btn" onClick={() => { setLoading(true); void load(); }}>Try again</button>
-        </div>
-      </div>
-    );
-  }
+  const [query, setQuery] = useViewMemory('history-query', '');
+  const [scope, setScope] = useViewMemory<'all' | 'active' | 'attention' | 'ended'>('history-scope', 'all');
+  const active = runs.filter(r => ['in_progress', 'submitting', 'canceling'].includes(r.status));
+  const spent = runs.reduce((a, r) => a + r.cost_usd, 0);
+  const filtered = runs.filter(r => {
+    if (scope === 'active' && !active.includes(r)) return false;
+    if (scope === 'attention' && !(r.failed > 0 || r.status === 'failed')) return false;
+    if (scope === 'ended' && active.includes(r)) return false;
+    return [r.name, r.model, r.project_name].some(t => t?.toLowerCase().includes(query.trim().toLowerCase()));
+  });
+  const listed = expanded ? filtered : filtered.slice(0, RUN_ROWS);
+  const hiddenRuns = filtered.length - listed.length;
 
   return (
-    <div className="pane" ref={paneRef}>
-      {head}
-
-      {err && (
-        <Note tone="warn">
-          <strong>Last refresh failed.</strong> {err} The runs below are from the previous read, so
-          their progress and cost may have moved since.{' '}
-          <button className="bx-f" style={{ textDecoration: 'underline' }} onClick={() => void load()}>Retry</button>
-        </Note>
-      )}
-
-      {/* The slow deadline, finally on screen. These runs read as "ended" in
-          the table below with no hint that anything is counting down, and the
-          only prior notice was a warn in each run's own event log — then, on
-          day 29, a post-mortem. Exporting writes the .jsonl locally, after
-          which the run drops off this list because it has nothing left to
-          lose. */}
-      {expiring.length > 0 && (
-        <Note tone="warn">
-          <strong>{expiring.length === 1 ? 'One run’s results expire soon.' : `${num(expiring.length)} runs’ results expire soon.`}</strong>{' '}
-          Results stay downloadable for 29 days after the batch was created. Export what you want to
-          keep — once the deadline passes the API has nothing left to return.
-          <ul className="bx-expiring">
-            {expiring.slice(0, 5).map((row) => (
-              <li key={row.runId}>
-                <button className="bx-f bx-expiring-run" onClick={() => onOpen(row.runId)}>{row.runName}</button>
-                {' — downloadable until '}{new Date(row.downloadableUntil).toLocaleDateString()}{' ('}{until(row.downloadableUntil).text}{')'}
-              </li>
-            ))}
-          </ul>
-          {expiring.length > 5 && <span className="faint">…and {num(expiring.length - 5)} more.</span>}
-        </Note>
-      )}
-
-      <div className="stat-grid">
-        <Stat label="Runs" value={num(runs.length)} />
-        <Stat label="Active" value={num(active.length)} tone={active.length ? 'var(--accent)' : undefined}
-              sub={active.reduce((a, r) => a + r.pending, 0) ? `${num(active.reduce((a, r) => a + r.pending, 0))} in flight` : 'nothing in flight'} />
-        <Stat label="Spent" value={usd(spent)} sub="batch rates" />
-        {/* Nobody was ever billed the synchronous price, so this is a modelled
-            counterfactual off the published 50% batch discount — arithmetic,
-            not an invoice line. It gets the same mark as every other number
-            here that has not been charged. */}
-        {/* No tone: this is arithmetic on a published discount, not money observed
-            arriving. A green figure reads as a win someone measured, and at $0
-            spent it was a green zero. */}
-        <Stat label="Saved vs sync" value={usdEst(spent)}
-              sub="est. · what the same work would list at, less what batch billed" />
+    <div className="pane bx-workspace bx-history" ref={paneRef}>
+      <PageHead title="Batches" lead="One prompt. A whole dataset. Every result accounted for."
+        actions={<><button className="btn" onClick={() => void load()}>Refresh runs</button><button className="btn btn-primary" onClick={onNew}>New batch</button></>} />
+      {err && <Note tone="error" action={{ label: 'Try again', run: load }}>Could not read your runs. {err}{runs.length > 0 && ' Showing the previous read.'}</Note>}
+      <div className="bx-history-summary">
+        <div><span className="label">In flight</span><strong>{loading ? '—' : num(active.length)}</strong><span>{num(active.reduce((a, r) => a + r.pending, 0))} requests outstanding</span></div>
+        <div><span className="label">Recorded cost</span><strong>{loading ? '—' : usd(spent)}</strong><span>Across {num(runs.length)} recent batches</span></div>
+        <p>Give the queue its work.<br />Come back to the evidence.</p>
       </div>
-
-      <div className="card scroll-x">
-        <table className="grid">
-          <thead>
-            <tr className="label">
-              <th>Run</th><th>Status</th><th className="r">Requests</th>
-              <th>Progress</th><th className="r">Cost</th><th className="r">Expires</th><th className="r">Created</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && <tr><td colSpan={7} className="dim center">Reading your batch runs…</td></tr>}
-            {!loading && !runs.length && (
-              <tr><td colSpan={7} className="center" style={{ padding: '46px 12px' }}>
-                <p className="dim">No runs yet.</p>
-                <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={onNew}>Build your first batch</button>
-              </td></tr>
-            )}
-            {listed.map((r) => {
-              const exp = until(r.expires_at);
-              return (
-                <tr key={r.id} onClick={() => onOpen(r.id)} className="clickable">
-                  <td>
-                    {/* The row click is for pointers only — a <tr> takes no focus
-                        and holds nothing that does, so run detail, results, the
-                        refusal lane and the evals tab had no keyboard route in at
-                        all. The name is the cell that identifies the run, so it is
-                        the one that becomes the button; .bx-f carries the focus
-                        ring the rest of this surface uses. */}
-                    <button className="bx-f" style={{ fontWeight: 500, textAlign: 'left' }}
-                            onClick={(e) => { e.stopPropagation(); onOpen(r.id); }}>{r.name}</button>
-                    <div className="faint mono" style={{ fontSize: 'var(--t-micro)', marginTop: 2 }}>
-                      {r.model}{r.project_name && ` · ${r.project_name}`}{r.parent_run_id && ' · retry'}
-                    </div>
-                  </td>
-                  <td><Pill status={r.status} /></td>
-                  <td className="r mono">{num(r.total_requests)}</td>
-                  <td style={{ minWidth: 140 }}>
-                    <Bar succeeded={r.succeeded} failed={r.failed} pending={r.pending} />
-                    <div className="faint mono" style={{ fontSize: 'var(--t-micro)', marginTop: 4, display: 'flex', gap: 8 }}>
-                      <span style={{ color: r.succeeded ? 'var(--ok)' : undefined }}>{num(r.succeeded)} ok</span>
-                      {r.failed > 0 && <span style={{ color: 'var(--bad)' }}>{num(r.failed)} failed</span>}
-                      {r.pending > 0 && <span>{num(r.pending)} pending</span>}
-                    </div>
-                  </td>
-                  <td className="r mono">
-                    {r.cost_usd
-                      ? usd(r.cost_usd)
-                      : <span className="faint" title="Priced before submission from a sampled token count. Nothing has been billed for this run yet.">
-                          {usdEst(r.est_cost_usd)} est.
-                        </span>}
-                  </td>
-                  <td className="r mono" style={{ color: exp.urgent ? 'var(--warn)' : undefined }}>
-                    {r.status === 'in_progress' ? exp.text : '—'}
-                  </td>
-                  <td className="r faint mono">{ago(r.created_at)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      {expiring.length > 0 && <Note tone="warn"><strong>Results need a place to stay.</strong> Export these before their download window closes.
+        <ul className="bx-expiring">{expiring.slice(0, 5).map(row => <li key={row.runId}><button className="bx-f bx-expiring-run" onClick={() => onOpen(row.runId)}>{row.runName}</button> — downloadable until {new Date(row.downloadableUntil).toLocaleDateString()}</li>)}</ul>
+        {expiring.length > 5 && <span>And {num(expiring.length - 5)} more.</span>}
+      </Note>}
+      <div className="bx-history-tools">
+        <Segmented label="Batch history" value={scope} onChange={setScope} options={[{ value: 'all', label: 'All runs' }, { value: 'active', label: 'In flight' }, { value: 'attention', label: 'Needs a look' }, { value: 'ended', label: 'Finished' }]} />
+        <input type="search" className="field" aria-label="Search batches" placeholder="Find a run, model, or project…" value={query} onChange={e => setQuery(e.target.value)} />
       </div>
-
-      {/* A table that stops without saying so reads as the whole history, and
-          the missing part is exactly the part nobody goes looking for. */}
-      {hiddenRuns > 0 && (
-        <div className="faint" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>
-          <span>
-            Showing {num(listed.length)} of {num(runs.length)} runs — the {num(hiddenRuns)} older ones
-            are not drawn. The counters above still total all {num(runs.length)}.
-          </span>
-          <button className="bx-f" style={{ textDecoration: 'underline' }} onClick={() => setExpanded(true)}>
-            Draw all {num(runs.length)}
-          </button>
+      {loading ? <Reading what="your batches" /> : !err && runs.length === 0 ? <EmptyState posture="nothing-yet" title="Let the first batch take shape" cue="Start with a recipe, bring a dataset, and check the cost before submitting." action={<button className="btn btn-primary" onClick={onNew}>Build your first batch</button>} /> : <>
+        <div className="bx-ledger" aria-label="Batch runs">
+          <div className="bx-ledger-labels" aria-hidden="true"><span>Run</span><span>Requests returned</span><span>Cost</span></div>
+          {listed.map(r => <button key={r.id} className="bx-run" data-batch-id={r.id} onClick={() => onOpen(r.id)}>
+            <span className="bx-run-identity"><strong>{r.name}</strong><span>{r.project_name || 'No project'} · {r.model}</span><span className="bx-run-meta"><Pill status={r.status} /><span>{ago(r.created_at)}{r.parent_run_id ? ' · retry' : ''}</span></span></span>
+            <span className="bx-run-progress"><span><strong>{num(r.succeeded + r.failed)}</strong> / {num(r.total_requests)}</span><Bar succeeded={r.succeeded} failed={r.failed} pending={r.pending} /><small>{num(r.succeeded)} succeeded{r.failed > 0 ? ` · ${num(r.failed)} failed` : ''}{r.pending > 0 ? ` · ${num(r.pending)} pending` : ''}</small></span>
+            <span className="bx-run-cost"><strong>{r.cost_usd ? usd(r.cost_usd) : `${usdEst(r.est_cost_usd)} est.`}</strong><small>{r.cost_usd ? 'From returned tokens' : 'Before submission'}</small>{r.status === 'in_progress' && <small>Expires {until(r.expires_at).text}</small>}</span>
+          </button>)}
         </div>
-      )}
-      {expanded && runs.length > RUN_ROWS && (
-        <div className="faint" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>
-          <span>Showing all {num(runs.length)} runs. Main returns at most 200; anything older is not read.</span>
-          <button className="bx-f" style={{ textDecoration: 'underline' }} onClick={() => setExpanded(false)}>
-            Back to {RUN_ROWS}
-          </button>
-        </div>
-      )}
+        {!filtered.length && runs.length > 0 && <EmptyState posture="nothing-in-scope" title="No runs match this view" cue="Try another name or return to all runs." />}
+        {(query || scope !== 'all') && <button className="btn bx-clear" onClick={() => { setQuery(''); setScope('all'); }}>Clear filters</button>}
+        {hiddenRuns > 0 && <button className="btn bx-clear" onClick={() => setExpanded(true)}>Show all {num(filtered.length)} matches — {num(hiddenRuns)} more</button>}
+        {runs.length >= 200 && <p className="bx-copy faint">The history contains the 200 most recent batch runs.</p>}
+      </>}
     </div>
   );
 }
@@ -396,6 +272,9 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   onSeedConsumed?: () => void;
   onDone: (id: string) => void; onCancel: () => void;
 }) {
+  const alive = useRef(false);
+  const [changing, setChanging] = useState(false);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [catalog, setCatalog] = useState<{ fetchedAt: number | null; stale: boolean }>({ fetchedAt: null, stale: true });
@@ -414,17 +293,18 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
    * measurement of a dataset nobody had looked at since. They start empty, so
    * the blockers ask for them again before this run can be submitted.
    */
-  const [cfg, setCfg] = useViewMemory<RunConfig | null>('newRunCfg', null);
+  const [cfg, setCfg] = useLiveViewMemory<RunConfig | null>('newRunCfg', null);
+  const [step, setStep] = useViewMemory<'recipe' | 'dataset' | 'prompt' | 'model'>('builder-step', 'recipe');
   const [preview, setPreview] = useState<any>(null);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [est, setEst] = useState<any>(null);
   const [estMeta, setEstMeta] = useState<{ warnings: string[]; errors: string[] } | null>(null);
   const [estimating, setEstimating] = useState(false);
-  const [dry, setDry] = useState<any>(null);
-  const [drying, setDrying] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitErr, setSubmitErr] = useState<string | null>(null);
+  const [dry, setDry] = useLiveViewMemory<any>('dry-result', null);
+  const [drying, setDrying] = useLiveViewMemory('drying', false);
+  const [submitting, setSubmitting] = useLiveViewMemory('submitting', false);
+  const [submitErr, setSubmitErr] = useLiveViewMemory<string | null>('submit-error', null);
   /**
    * The golden arm of the dataset picker. `fromGolden` is held rather than
    * derived because loading a set rewrites cfg.source to jsonl: derived, the
@@ -436,10 +316,10 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
    * which is exactly the drift a golden set exists to prevent, one tab swap
    * later.
    */
-  const [fromGolden, setFromGolden] = useViewMemory('fromGolden', false);
+  const [fromGolden, setFromGolden] = useLiveViewMemory('fromGolden', false);
   const [golden, setGolden] = useState<GoldenSet[] | null>(null);
   const [goldenErr, setGoldenErr] = useState<string | null>(null);
-  const [goldenId, setGoldenId] = useViewMemory('goldenId', '');
+  const [goldenId, setGoldenId] = useLiveViewMemory('goldenId', '');
   const [goldenBusy, setGoldenBusy] = useState(false);
 
   // Read the sets when the builder opens, not when the arm is clicked: the
@@ -464,7 +344,9 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
 
   useEffect(() => {
     const pid = seed?.projectId ?? projects[0]?.id;
+    let current = true;
     window.wanigan.batch.presets(pid).then((d) => {
+      if (!current) return;
       setBootErr(null);
       setPresets(d.presets); setModels(d.models);
       setCatalog({ fetchedAt: d.modelsFetchedAt, stale: d.modelsStale });
@@ -492,7 +374,8 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
         // handed over.
         setCfg((current) => current ?? { name: '', projectId: pid, ...d.presets[0].config });
       }
-    }).catch((e) => setBootErr(msg(e)));
+    }).catch(e => { if (current) setBootErr(msg(e)); });
+    return () => { current = false; };
     // Seeding is a one-shot handoff; re-running on every projects change would
     // clobber edits the user has already made.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -514,38 +397,52 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
     }
     finally { setRefreshingModels(false); }
   }
-  const patch = (p: Partial<RunConfig>) => setCfg((c) => (c ? { ...c, ...p } : c));
+  const patch = (p: Partial<RunConfig>) => {
+    if (p.userTemplate !== undefined || p.source !== undefined) setPreview(null);
+    setCfg(c => c ? { ...c, ...p } : c);
+  };
   const invalidate = () => { setEst(null); setDry(null); };
 
   /**
-   * The draft is spent — abandoned by the back button, or submitted and now a
+   * The draft is spent — explicitly discarded, or submitted and now a
    * run of its own. Either way it has to be dropped, because it outlives a tab
-   * swap: without this, "← Batches" would quietly mean "hide this until I come
+   * swap: without this, discarding would quietly mean "hide this until I come
    * back", and the next New run would open on the config of a batch that has
    * already been sent. The golden arm goes with it, since a remembered arm
    * over a freshly initialised config would show the pinned-set picker above a
    * preset's dataset.
    */
-  const forget = () => { setCfg(null); setFromGolden(false); setGoldenId(''); };
-  const leave = () => { forget(); onCancel(); };
+  const forget = () => { setCfg(null); setFromGolden(false); setGoldenId(''); setStep('recipe'); setDry(null); };
+  const leave = () => { if (!submitting) onCancel(); };
 
   async function applyPreset(id: string) {
-    const d = await window.wanigan.batch.presets(projectId);
-    const p = (d.presets as Preset[]).find((x) => x.id === id);
-    if (!p) return;
-    setCfg({ name: cfg?.name || '', projectId, ...p.config });
-    setFromGolden(false); setGoldenId('');
-    setPresets(d.presets); setPreview(null); setPreviewErr(null); invalidate();
+    if (changing) return;
+    setChanging(true); setBootErr(null);
+    try {
+      const d = await window.wanigan.batch.presets(projectId);
+      if (!alive.current) return;
+      const p = (d.presets as Preset[]).find(x => x.id === id);
+      if (!p) throw new Error('That recipe is no longer available.');
+      setCfg({ name: cfg?.name || '', projectId, ...p.config });
+      setFromGolden(false); setGoldenId(''); setPresets(d.presets);
+      setPreview(null); setPreviewErr(null); invalidate();
+    } catch (e) { if (alive.current) setBootErr(msg(e)); }
+    finally { if (alive.current) setChanging(false); }
   }
 
   async function changeProject(id: string) {
-    // Re-resolve presets so their example paths point at the new project.
-    const d = await window.wanigan.batch.presets(id);
-    setPresets(d.presets);
-    const p = (d.presets as Preset[]).find((x) => x.id === cfg?.preset);
-    setCfg((c) => (c ? { ...c, projectId: id, ...(p ? { source: p.config.source } : {}) } : c));
-    if (p) { setFromGolden(false); setGoldenId(''); }
-    setPreview(null); invalidate();
+    if (changing) return;
+    setChanging(true); setBootErr(null);
+    try {
+      const d = await window.wanigan.batch.presets(id);
+      if (!alive.current) return;
+      const p = (d.presets as Preset[]).find(x => x.id === cfg?.preset);
+      setPresets(d.presets);
+      setCfg(c => c ? { ...c, projectId: id, ...(p ? { source: p.config.source } : {}) } : c);
+      if (p) { setFromGolden(false); setGoldenId(''); }
+      setPreview(null); invalidate();
+    } catch (e) { if (alive.current) setBootErr(msg(e)); }
+    finally { if (alive.current) setChanging(false); }
   }
 
   /**
@@ -577,18 +474,20 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
     if (!id) { patch({ source: { kind: 'jsonl', text: '' } }); return; }
     setGoldenBusy(true);
     try {
-      patch({ source: await window.wanigan.evals.goldenSource(id) });
+      const source = await window.wanigan.evals.goldenSource(id);
+      if (alive.current) patch({ source });
     } catch (e) {
       // The set was deleted, or its stored rows no longer parse. Leaving the
       // previous source in place under the chosen set's name would submit one
       // dataset wearing another's label, so the selection is dropped with it.
+      if (!alive.current) return;
       setGoldenErr(msg(e)); setGoldenId('');
       patch({ source: { kind: 'jsonl', text: '' } });
     } finally { setGoldenBusy(false); }
   }
 
   async function loadPreview() {
-    if (!cfg) return;
+    if (!cfg || loadingPreview) return;
     setLoadingPreview(true); setPreviewErr(null); invalidate();
     try { setPreview(await window.wanigan.batch.preview(cfg.source, cfg.userTemplate)); }
     catch (e) { setPreviewErr(e instanceof Error ? e.message : String(e)); setPreview(null); }
@@ -596,7 +495,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   }
 
   async function runEstimate(observed?: number) {
-    if (!cfg) return;
+    if (!cfg || estimating || !alive.current) return;
     if (!hasKey) { onNeedKey(); return; }
     setEstimating(true);
     try {
@@ -608,7 +507,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   }
 
   async function runDry() {
-    if (!cfg) return;
+    if (!cfg || drying) return;
     if (!hasKey) { onNeedKey(); return; }
     setDrying(true); setDry(null);
     try {
@@ -621,8 +520,10 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   }
 
   async function submit() {
-    if (!cfg || !est) return;
-    setSubmitting(true); setSubmitErr(null);
+    if (!cfg || !est || submitting) return;
+    let claimed = false;
+    setSubmitting(previous => { if (!previous) claimed = true; return true; });
+    if (!claimed) return; setSubmitErr(null);
     try {
       const r = await window.wanigan.batch.submit(cfg, {
         // The ceiling, not the optimistic band: submit.ts gates the spend cap
@@ -634,7 +535,8 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
       });
       forget();
       onDone(r.runId);
-    } catch (e) { setSubmitErr(e instanceof Error ? e.message : String(e)); setSubmitting(false); }
+    } catch (e) { setSubmitErr(e instanceof Error ? e.message : String(e)); }
+    finally { setSubmitting(false); }
   }
 
   // The recipe grid and every capability line below are written against the
@@ -650,12 +552,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
     if (bootErr) {
       return (
         <div className="pane">
-          <div className="pane-head">
-            <div>
-              <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={leave}>← Batches</button>
-              <h1 style={{ marginTop: 2 }}>New run</h1>
-            </div>
-          </div>
+          <PageHead title="Prepare a batch" actions={<button className="btn" onClick={leave}>Back to batches</button>} />
           <div className="card bx-state">
             <h4>Could not load the recipes</h4>
             <p>{bootErr}</p>
@@ -665,7 +562,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
         </div>
       );
     }
-    return <div className="pane"><Reading what="this run" /></div>;
+    return <div className="pane bx-workspace"><PageHead title="Prepare a batch" actions={<button className="btn" onClick={leave}>Back to batches</button>} /><Reading what="recipes and models" /></div>;
   }
 
   const dryFailed = dry?.result && !dry.result.ok;
@@ -682,22 +579,21 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
   if (dryFailed) blockers.push('dry run failed');
 
   return (
-    <div className="pane builder">
-      <div className="builder-main">
-        <div className="pane-head">
-          <div>
-            <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={leave}>← Batches</button>
-            <h1 style={{ marginTop: 2 }}>New run</h1>
-            <p className="dim">Dataset in, one prompt across every row, results back at half price.</p>
-          </div>
-        </div>
-
+    <div className="pane bx-workspace bx-builder">
+      <PageHead title="Prepare a batch" lead="Shape the work together, then decide what to send."
+        actions={<><button className="btn" disabled={submitting} onClick={leave}>Back to batches</button><button className="btn" disabled={submitting} onClick={() => { forget(); setPreview(null); invalidate(); onCancel(); }}>Discard draft</button></>} />
+      {bootErr && <Note tone="error">Could not change the recipe. {bootErr}</Note>}
+      <fieldset className="bx-compose" disabled={submitting || changing || loadingPreview || estimating || drying || goldenBusy}>
+      <div className="bx-draft">
+        <Segmented label="Batch preparation" value={step} onChange={setStep} options={[
+          { value: 'recipe', label: '1 · Start' }, { value: 'dataset', label: '2 · Dataset' },
+          { value: 'prompt', label: '3 · Prompt' }, { value: 'model', label: '4 · Model' },
+        ]} />
+        <div className="bx-step" hidden={step !== 'recipe'}>
         <Section n={1} title="Recipe" hint="Presets are starting points — everything stays editable.">
           <div className="preset-grid">
             {presets.map((p) => (
-              <button key={p.id} onClick={() => applyPreset(p.id)} className="sunk preset"
-                      style={cfg.preset === p.id || (!cfg.preset && p.id === 'blank')
-                        ? { borderColor: 'var(--accent)', background: 'var(--accent-soft)' } : undefined}>
+              <button key={p.id} onClick={() => applyPreset(p.id)} className="sunk preset" aria-pressed={cfg.preset === p.id || (!cfg.preset && p.id === 'blank')}>
                 <div style={{ fontWeight: 600, fontSize: 'var(--t-small)' }}>{p.label}</div>
                 <div className="dim" style={{ fontSize: 'var(--t-micro)', marginTop: 4, lineHeight: 1.4 }}>{p.blurb}</div>
               </button>
@@ -720,6 +616,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           </div>
         </Section>
 
+        </div><div className="bx-step" hidden={step !== 'dataset'}>
         <Section n={2} title="Dataset" hint="One request per row. Load it first — every number below depends on it."
                  right={<button className="btn" onClick={loadPreview} disabled={loadingPreview}>
                    {loadingPreview ? 'Loading…' : preview ? 'Reload' : 'Load dataset'}</button>}>
@@ -763,6 +660,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           {(cfg.source.kind === 'glob' || cfg.source.kind === 'files') && <UploadCache />}
         </Section>
 
+        </div><div className="bx-step" hidden={step !== 'prompt'}>
         <Section n={3} title="Prompt"
                  hint="Cached blocks must be byte-identical on every request — that is why shared context lives here, not in the per-row template.">
           {cfg.system.map((b, i) => (
@@ -805,6 +703,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           ) : null}
         </Section>
 
+        </div><div className="bx-step" hidden={step !== 'model'}>
         <Section n={4} title="Model and output"
                  right={<button className="btn" onClick={refreshCatalog} disabled={refreshingModels}>
                    {refreshingModels ? 'Refreshing…' : 'Refresh models'}</button>}>
@@ -913,11 +812,14 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
                       onChange={(e) => { patch({ schemaJson: e.target.value }); invalidate(); }} />
           </details>
         </Section>
+        </div>
+        <div className="bx-step-footer"><span className="bx-copy faint">Your draft stays here when you visit another page.</span>{step !== 'model' && <button className="btn" onClick={() => setStep(step === 'recipe' ? 'dataset' : step === 'dataset' ? 'prompt' : 'model')}>Continue to {step === 'recipe' ? 'dataset' : step === 'dataset' ? 'prompt' : 'model'}</button>}</div>
       </div>
 
-      <aside className="builder-side">
-        <div className="card" style={{ padding: 15, display: 'flex', flexDirection: 'column', gap: 11 }}>
-          <h2 style={{ fontSize: 'var(--t-body)', fontWeight: 600 }}>Pre-flight</h2>
+      <aside className="bx-preflight">
+        <div className="bx-preflight-content">
+          <h2>Ready when you are</h2>
+          <p className="bx-copy faint">{preview ? `${num(preview.rowCount)} rows loaded` : 'Start by loading your dataset.'}</p>
           {!hasKey && <Note tone="warn">No API key yet — add one in Settings to estimate or submit.</Note>}
           <div style={{ display: 'flex', gap: 7 }}>
             <button className="btn" style={{ flex: 1, justifyContent: 'center' }}
@@ -964,9 +866,11 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
             </>
           )}
 
-          <CachePreflight cfg={cfg} requests={est?.requests ?? preview?.rowCount ?? 0}
-                          prefixTokens={est?.cachedPrefixTokens ?? 0}
-                          onUseTtl={(ttl) => { patch({ cacheTtl: ttl }); invalidate(); }} />
+          <details className="bx-fold"><summary>Cache behavior</summary>
+            <CachePreflight cfg={cfg} requests={est?.requests ?? preview?.rowCount ?? 0}
+                            prefixTokens={est?.cachedPrefixTokens ?? 0}
+                            onUseTtl={(ttl) => { patch({ cacheTtl: ttl }); invalidate(); }} />
+          </details>
 
           {dry?.result && (dry.result.ok
             ? <>
@@ -994,6 +898,7 @@ function NewRun({ projects, hasKey, onNeedKey, seed, onSeedConsumed, onDone, onC
           </div>
         </div>
       </aside>
+      </fieldset>
     </div>
   );
 }
@@ -1165,15 +1070,15 @@ function SourceEditor({ source, onChange }: { source: UploadableSource; onChange
 
 function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onOpen: (id: string) => void }) {
   const [d, setD] = useState<any>(null);
-  const [tab, setTab] = useState<DetailTab>('results');
+  const [tab, setTab] = useViewMemory<DetailTab>(`detail:${id}:tab`, 'results');
   const [rescues, setRescues] = useState<RescueChild[]>([]);
-  const [filter, setFilter] = useState('all');
-  const [q, setQ] = useState('');
+  const [filter, setFilter] = useViewMemory(`detail:${id}:filter`, 'all');
+  const [q, setQ] = useViewMemory(`detail:${id}:search`, '');
   const [rows, setRows] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [open, setOpen] = useState<any>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useLiveViewMemory<string | null>(`detail:${id}:busy`, null);
   const [detailErr, setDetailErr] = useState<string | null>(null);
   const [rowsErr, setRowsErr] = useState<string | null>(null);
   const [exportNote, setExportNote] = useState<{ tone: 'ok' | 'info' | 'error'; text: string } | null>(null);
@@ -1185,27 +1090,34 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
   // the render that had it, which is "Rendered more hooks than during the
   // previous render" — every run detail faulted into the ErrorBoundary instead
   // of painting.
-  const [actErr, setActErr] = useState<string | null>(null);
+  const [actErr, setActErr] = useLiveViewMemory<string | null>(`detail:${id}:action-error`, null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  const rowSeq = useRef(0), detailSeq = useRef(0);
+  const [rowsLoading, setRowsLoading] = useState(true);
+  useEffect(() => () => { rowSeq.current++; detailSeq.current++; }, []);
   const loadDetail = useCallback(async () => {
+    const seq = ++detailSeq.current;
     // A run that cannot be read is not a run that is still loading. Swallowing
     // this parked the whole view on "Loading…" with nothing to act on.
-    try { setD(await window.wanigan.batch.run(id)); setDetailErr(null); }
-    catch (e) { setDetailErr(msg(e)); }
+    try { const next = await window.wanigan.batch.run(id); if (seq !== detailSeq.current) return; setD(next); setDetailErr(null); }
+    catch (e) { if (seq === detailSeq.current) setDetailErr(msg(e)); }
     // Rescue runs are their own runs, so a merged rescue stays worth showing
     // after the parent's refused count has fallen back to zero.
-    try { setRescues(await window.wanigan.refusal.children(id)); } catch { /* pre-P15 database */ }
+    try { const next = await window.wanigan.refusal.children(id); if (seq === detailSeq.current) setRescues(next); } catch { /* pre-P15 database */ }
   }, [id]);
   const loadRows = useCallback(async () => {
+    const seq = ++rowSeq.current;
     try {
       const r = await window.wanigan.batch.results(id, filter, q, offset);
+      if (seq !== rowSeq.current) return;
       setRows(r.rows); setTotal(r.total); setRowsErr(null);
-    } catch (e) { setRowsErr(msg(e)); }
+    } catch (e) { if (seq === rowSeq.current) { setRowsErr(msg(e)); setRows([]); } }
+    finally { if (seq === rowSeq.current) setRowsLoading(false); }
   }, [id, filter, q, offset]);
 
   useEffect(() => { void loadDetail(); }, [loadDetail]);
-  useEffect(() => { void loadRows(); }, [loadRows]);
+  useEffect(() => { setRows([]); setOpen(null); setTotal(0); setRowsLoading(true); void loadRows(); return () => { rowSeq.current++; }; }, [loadRows]);
   useEffect(() => {
     if (!d) return;
     if (!['in_progress', 'submitting', 'canceling'].includes(d.run.status)) return;
@@ -1221,13 +1133,7 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
     if (detailErr) {
       return (
         <div className="pane">
-          <div className="pane-head">
-            <div>
-              <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={onBack}>← Batches</button>
-              <h1 style={{ marginTop: 2 }}>Run unavailable</h1>
-              <p className="faint mono" style={{ fontSize: 'var(--t-micro)', marginTop: 3 }}>{id}</p>
-            </div>
-          </div>
+          <PageHead title="Run unavailable" lead={id} actions={<button className="btn" onClick={onBack}>Back to batches</button>} />
           <div className="card bx-state">
             <h4>Could not read this run</h4>
             <p>{detailErr}</p>
@@ -1237,7 +1143,7 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
         </div>
       );
     }
-    return <div className="pane"><Reading what="this run" /></div>;
+    return <div className="pane bx-workspace"><PageHead title="Batch results" actions={<button className="btn" onClick={onBack}>Back to batches</button>} /><Reading what="this run" /></div>;
   }
 
   const { run, counts } = d;
@@ -1261,16 +1167,20 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
 
   const tabs: DetailTab[] = ['results'];
   if (refused > 0 || rescues.length > 0) tabs.push('refusals');
-  tabs.push('evals', 'batches', 'events', 'config');
+  tabs.push('evals', 'cache', 'batches', 'events', 'config');
   // Merging the last rescue can retire the refusals tab underneath the user.
   const activeTab: DetailTab = tabs.includes(tab) ? tab : 'results';
 
   async function act(fn: () => Promise<any>, label: string) {
-    setBusy(label); setActErr(null);
+    let claimed = false;
+    setBusy(previous => { if (!previous) claimed = true; return previous ?? label; });
+    if (!claimed) return false;
+    setActErr(null);
     try {
       const r = await fn();
-      if (r?.runId) { onOpen(r.runId); return; }
-      await loadDetail(); await loadRows();
+      if (r?.runId) { onOpen(r.runId); return true; }
+      if (label !== 'delete') { await loadDetail(); await loadRows(); }
+      return true;
     } catch (e) { setActErr(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(null); }
   }
@@ -1281,7 +1191,10 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
    * null when the dialog was dismissed, which is exactly that distinction.
    */
   async function exportResults(format: 'jsonl' | 'csv') {
-    setBusy(`export-${format}`); setExportNote(null);
+    let claimed = false;
+    setBusy(previous => { if (!previous) claimed = true; return previous ?? `export-${format}`; });
+    if (!claimed) return;
+    setExportNote(null);
     try {
       const path = await window.wanigan.batch.exportTo(id, format);
       setExportNote(path
@@ -1293,31 +1206,25 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
   }
 
   return (
-    <div className="pane">
-      <div className="pane-head">
-        <div style={{ minWidth: 0 }}>
-          <button className="faint" style={{ fontSize: 'var(--t-small)' }} onClick={onBack}>← Batches</button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 3 }}>
-            <h1>{run.name}</h1><Pill status={run.status} />
-          </div>
-          <p className="faint mono" style={{ fontSize: 'var(--t-micro)', marginTop: 3 }}>{run.id} · {run.model}</p>
-        </div>
-        <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
-          {live && <button className="btn btn-danger" disabled={busy === 'cancel'}
+    <div className="pane bx-workspace bx-detail">
+      <PageHead title={run.name} lead={<>{run.model} · {run.id}</>} actions={<button className="btn" onClick={onBack}>Back to batches</button>} />
+      <div className="bx-detail-actions"><Pill status={run.status} />
+        <div className="bx-action-buttons">
+          {live && <button className="btn btn-danger" disabled={Boolean(busy) || Boolean(detailErr)}
                            onClick={() => act(() => window.wanigan.batch.cancel(id), 'cancel')}>
             {busy === 'cancel' ? 'Canceling…' : 'Cancel run'}</button>}
-          {!live && failed > 0 && <button className="btn" disabled={busy === 'retry'}
+          {!live && failed > 0 && <button className="btn" disabled={Boolean(busy) || Boolean(detailErr)}
                            onClick={() => act(() => window.wanigan.batch.retry(id), 'retry')}>
             {busy === 'retry' ? 'Resubmitting…' : `Retry ${num(failed)} failed`}</button>}
-          <button className="btn" disabled={busy === 'export-jsonl'} onClick={() => void exportResults('jsonl')}>
+          <button className="btn" disabled={Boolean(busy)} onClick={() => void exportResults('jsonl')}>
             {busy === 'export-jsonl' ? 'Exporting…' : 'Export JSONL'}</button>
-          <button className="btn" disabled={busy === 'export-csv'} onClick={() => void exportResults('csv')}>
+          <button className="btn" disabled={Boolean(busy)} onClick={() => void exportResults('csv')}>
             {busy === 'export-csv' ? 'Exporting…' : 'Export CSV'}</button>
           {/* A run could be cancelled, retried and exported but never removed,
               so the list only ever grew. Hidden while `live` — which counts
               'canceling' — because deleting the local row does not reach the
               API, and a run that is still winding down is still spending. */}
-          {!live && <button className="btn" disabled={busy === 'delete'}
+          {!live && <button className="btn" disabled={Boolean(busy) || Boolean(detailErr)}
                             onClick={() => setConfirmDelete(true)}>Delete run…</button>}
         </div>
       </div>
@@ -1327,7 +1234,7 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
           what={`Delete “${run.name}” and its ${num(run.total_requests)} stored ${run.total_requests === 1 ? 'request' : 'requests'}. The results are removed from this machine and cannot be downloaded again.`}
           verb="Delete this run" busy={busy === 'delete'}
           onCancel={() => setConfirmDelete(false)}
-          onRun={async () => { setConfirmDelete(false); await act(() => window.wanigan.batch.remove(id), 'delete'); onBack(); }} />
+          onRun={async () => { if (await act(() => window.wanigan.batch.remove(id), 'delete')) { setConfirmDelete(false); onBack(); } }} />
       )}
 
       {actErr && <Note tone="error">{actErr}</Note>}
@@ -1345,7 +1252,7 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
         ))}.</Note>
       )}
 
-      <div className="stat-grid-5" style={refused ? { gridTemplateColumns: 'repeat(6, minmax(0, 1fr))' } : undefined}>
+      <div className="bx-metrics">
         <Stat label="Progress" value={`${pct}%`} sub={`${num(done)} of ${num(run.total_requests)} requests`} />
         <Stat label="Succeeded" value={num(succeeded)} tone={succeeded ? 'var(--ok)' : undefined} />
         <Stat label="Failed" value={num(failed)} tone={failed ? 'var(--bad)' : undefined} sub={failed ? 'retryable' : 'none'} />
@@ -1374,25 +1281,16 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
         </div>
       </div>
 
-      {run.submitted_at ? <CacheObserved runId={id} run={run} config={d.config} /> : null}
 
-      <div className="tabs">
-        {tabs.map((t) => (
-          <button key={t} onClick={() => setTab(t)} className={activeTab === t ? 'tab-on bx-f' : 'bx-f'}>
-            {t}
-            {t === 'results' && total ? ` (${num(total)})` : ''}
-            {t === 'refusals' && refused ? ` (${num(refused)})` : ''}
-          </button>
-        ))}
-      </div>
+      <Segmented label="Batch evidence" value={activeTab} onChange={setTab} options={tabs.map(t => ({ value: t, label: ({ results: 'Results', refusals: 'Refusals', evals: 'Compare', cache: 'Cache', batches: 'API batches', events: 'Activity', config: 'Configuration' })[t] }))} />
+      <div className="bx-evidence" key={activeTab}>
+      {activeTab === 'cache' && <CacheObserved runId={id} run={run} config={d.config} />}
 
       {activeTab === 'results' && (
         <>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             {['all', 'succeeded', 'failed', 'pending'].map((f) => (
-              <button key={f} className="pill" onClick={() => { setFilter(f); setOffset(0); }}
-                      style={filter === f ? { background: 'var(--accent)', color: 'var(--bg)' }
-                                          : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>{f}</button>
+              <Chip key={f} pressed={filter === f} onToggle={() => { setFilter(f); setOffset(0); }}>{f === 'all' ? 'All results' : f.charAt(0).toUpperCase() + f.slice(1)}</Chip>
             ))}
             <input className="field" aria-label="Search results" style={{ marginLeft: 'auto', maxWidth: 260 }} placeholder="Search prompts, output, errors…"
                    value={q} onChange={(e) => { setQ(e.target.value); setOffset(0); }} />
@@ -1406,10 +1304,10 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
           )}
           <div className="card scroll-x">
             <table className="grid">
-              <thead><tr className="label"><th>custom_id</th><th>Status</th><th>Output</th><th className="r">Tokens</th></tr></thead>
+              <thead><tr className="label"><th>Request</th><th>Status</th><th>Output</th><th className="r">Tokens</th></tr></thead>
               <tbody>
                 {!rows.length && <tr><td colSpan={4} className="dim center">
-                  {rowsErr ? 'Results could not be read — the message above says why.'
+                  {rowsLoading ? 'Reading these results…' : rowsErr ? 'Results could not be read — the message above says why.'
                     : pending ? 'Still processing — results land as batches end.' : 'No rows match.'}</td></tr>}
                 {rows.map((r) => (
                   <tr key={r.custom_id} className="clickable" onClick={() => setOpen(r)}>
@@ -1486,6 +1384,7 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
 
       {activeTab === 'config' && <pre className="card mono scroll-y" style={{ padding: 14, maxHeight: 560 }}>{JSON.stringify(d.config, null, 2)}</pre>}
 
+      </div>
       {open && <RequestDrawer row={open} onClose={() => setOpen(null)} />}
     </div>
   );
@@ -1519,7 +1418,7 @@ function RequestDrawer({ row, onClose }: { row: any; onClose: () => void }) {
 
   return portal(
     <div {...backdropProps}>
-      <div {...dialogProps} className="drawer" aria-labelledby={titleId}>
+      <div {...dialogProps} className="drawer bx-request" aria-labelledby={titleId}>
         <div style={{ display: 'flex', gap: 11, alignItems: 'center' }}>
           <h3 id={titleId} className="mono" style={{ fontSize: 'var(--t-body)', fontWeight: 600 }}>{row.custom_id}</h3>
           <Pill status={row.status} />
@@ -1768,7 +1667,7 @@ function CachePreflight({ cfg, requests, prefixTokens, onUseTtl }: {
         <KV k="Your cached prefix"
             v={prefixTokens > 0 ? `${num(prefixTokens)} tok` : '—'}
             note={prefixTokens > 0 ? 'from the estimate' : 'run the estimate'} />
-        <KV k="Recommended TTL" v={advice?.ttl ?? '—'} note={advice && advice.ttl !== cfg.cacheTtl ? `set to ${cfg.cacheTtl}` : 'matches'} />
+        <KV k="Recommended TTL" v={advice?.ttl ?? '—'} note={!advice ? 'not read' : advice.ttl !== cfg.cacheTtl ? `set to ${cfg.cacheTtl}` : 'matches'} />
       </div>
 
       {!cachedBlock && (
@@ -1784,9 +1683,9 @@ function CachePreflight({ cfg, requests, prefixTokens, onUseTtl }: {
           shows up as a flat 0%, not as a failure. Move more of the shared instructions into the cached block.
         </Note>
       )}
-      {cachedBlock && !underFloor && prefixTokens > 0 && (
+      {cachedBlock && minimum !== null && !err && !underFloor && prefixTokens > 0 && (
         <Note tone="ok">
-          The cached prefix clears the {num(minimum ?? 0)}-token floor for {cfg.model}, so an entry will be written.
+          The cached prefix clears the {num(minimum ?? 0)}-token floor for {cfg.model}. Cache reuse still depends on the provider.
         </Note>
       )}
 
@@ -1850,7 +1749,7 @@ function CacheObserved({ runId, run, config }: { runId: string; run: any; config
         {rate === undefined ? '…' : rate === null ? '—' : pctLabel(rate)}
       </div>
       <div className="hero-sub">
-        {rate === null ? (
+        {err ? <>{err} Reopen Cache to retry the measurement.</> : rate === null ? (
           <>Nothing to measure yet — no request in this run has reported usage. That is not a 0% hit rate, and
              reading it as one sends you rewriting a prompt that was never the problem.</>
         ) : rate === undefined ? (
@@ -1923,7 +1822,7 @@ function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
   const [examples, setExamples] = useState<Record<string, string>>({});
   const [models, setModels] = useState<Model[]>([]);
   const [pick, setPick] = useState('');
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useLiveViewMemory<string | null>(`rescue:${runId}:busy`, null);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
@@ -1980,16 +1879,21 @@ function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
   }, [runId, pick, run.model, live]);
 
   async function rescue() {
-    if (!pick) return;
-    setBusy('rescue'); setErr(null); setOk(null);
+    if (!pick || busy) return;
+    let claimed = false;
+    setBusy(previous => { if (!previous) claimed = true; return previous ?? 'rescue'; });
+    if (!claimed) return; setErr(null); setOk(null);
     try {
       const r = await window.wanigan.refusal.rescue(runId, pick);
       onOpen(r.runId);
-    } catch (e) { setErr(msg(e)); setBusy(null); }
+    } catch (e) { setErr(msg(e)); }
+    finally { setBusy(null); }
   }
 
   async function merge(child: RescueChild) {
-    setBusy(child.id); setErr(null); setOk(null);
+    let claimed = false;
+    setBusy(previous => { if (!previous) claimed = true; return previous ?? child.id; });
+    if (!claimed) return; setErr(null); setOk(null);
     try {
       const r = await window.wanigan.refusal.merge(child.id);
       setOk(`${num(r.merged)} rescued row${r.merged === 1 ? '' : 's'} folded back into this run. The rescue’s spend stays on ${child.id} — this run’s totals are unchanged, because the parent was billed for the refusal and the child for the answer.`);
@@ -2024,7 +1928,8 @@ function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
       {err && <Note tone="error">{err}</Note>}
       {ok && <Note tone="ok">{ok}</Note>}
 
-      {total === 0 && !loadErr && (
+      {!summary && !loadErr && <Reading what="refusals" />}
+      {summary && total === 0 && !loadErr && (
         <div className="card bx-state">
           <h4>No refusals in this run</h4>
           <p>
@@ -2042,7 +1947,7 @@ function RefusalLane({ runId, run, config, rescues, live, onOpen, onChanged }: {
             stop_reason “refusal”, so it is neither an error nor an answer — it is a decision this model made,
             and re-asking the same model costs money to hear it again.
           </p>
-          <svg className="chart-svg" viewBox="0 0 100 12" role="img"
+          <svg className="chart-svg" viewBox="0 0 100 12" preserveAspectRatio="none" role="img"
                aria-label={cats.map((c) => `${c.category} ${c.n}`).join(', ')}>
             {segments.map((s) => (
               <rect key={s.category} x={s.x} y="0" width={Math.max(0, s.w - 0.4)} height="9" rx="2" fill={s.colour}>
@@ -2212,14 +2117,17 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
    */
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [runsErr, setRunsErr] = useState<string | null>(null);
-  const [sel, setSel] = useState<string | null>(null);
+  const [sel, setSel] = useViewMemory<string | null>(`eval:${runId}:selected`, null);
+  const diffSeq = useRef(0), selectedPair = useRef(sel);
+  selectedPair.current = sel;
+  useEffect(() => () => { diffSeq.current++; }, []);
   const [diff, setDiff] = useState<any>(null);
   const [verdict, setVerdict] = useState<any>(null);
   const [diffErr, setDiffErr] = useState<string | null>(null);
   const [other, setOther] = useState('');
   const [name, setName] = useState('');
   const [pairErr, setPairErr] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useLiveViewMemory(`eval:${runId}:creating`, false);
   const [filter, setFilter] = useState<'all' | 'differs' | 'a' | 'b' | 'tie'>('all');
   const [limit, setLimit] = useState(15);
   /* The variant form. One field, one value, one name — the same rule
@@ -2228,11 +2136,11 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
   const [varField, setVarField] = useState<'model' | 'effort' | 'maxTokens' | 'temperature'>('model');
   const [varValue, setVarValue] = useState('');
   const [varName, setVarName] = useState('');
-  const [varBusy, setVarBusy] = useState(false);
+  const [varBusy, setVarBusy] = useLiveViewMemory(`eval:${runId}:varBusy`, false);
   const [varErr, setVarErr] = useState<string | null>(null);
   /* The judge form. A rubric is required by main; asking for it here means the
      refusal is a field that is empty rather than an error after a click. */
-  const [jModel, setJModel] = useState('');
+  const [jModel, setJModel] = useLiveViewMemory(`eval:${runId}:jModel`, '');
   /* The models this judge may run on. Read from the same presets catalogue the
      builder uses, so the picker cannot offer one the submit path would refuse. */
   const [judgeModels, setJudgeModels] = useState<Model[]>([]);
@@ -2243,8 +2151,8 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
       .catch(() => { /* the picker stays empty and the button stays disabled */ });
     return () => { alive = false; };
   }, [run?.project_id]);
-  const [jRubric, setJRubric] = useState('');
-  const [jBusy, setJBusy] = useState(false);
+  const [jRubric, setJRubric] = useLiveViewMemory(`eval:${runId}:jRubric`, '');
+  const [jBusy, setJBusy] = useLiveViewMemory(`eval:${runId}:jBusy`, false);
   const [judgeRun, setJudgeRun] = useState('');
   const [judgeNote, setJudgeNote] = useState<string | null>(null);
   const [judgeErr, setJudgeErr] = useState<string | null>(null);
@@ -2254,7 +2162,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
   const [gName, setGName] = useState('');
   const [gErr, setGErr] = useState<string | null>(null);
   const [gOk, setGOk] = useState<string | null>(null);
-  const [gBusy, setGBusy] = useState(false);
+  const [gBusy, setGBusy] = useLiveViewMemory(`eval:${runId}:gBusy`, false);
 
   /* Each of the three reads below used to leave an empty array behind a failed
      read, which turns "Wanigan could not read this" into "there is none of this"
@@ -2287,22 +2195,28 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
   useEffect(() => { void loadRuns(); }, [loadRuns]);
 
   const loadDiff = useCallback(async (pairId: string) => {
-    setDiffErr(null);
+    if (pairId !== selectedPair.current) return;
+    const seq = ++diffSeq.current;
+    setDiffErr(null); setDiff(null); setVerdict(null);
     try {
       const [d, s] = await Promise.all([window.wanigan.evals.diff(pairId), window.wanigan.evals.summary(pairId)]);
+      if (seq !== diffSeq.current || pairId !== selectedPair.current) return;
       setDiff(d); setVerdict(s);
-    } catch (e) { setDiffErr(msg(e)); setDiff(null); setVerdict(null); }
+    } catch (e) { if (seq === diffSeq.current) { setDiffErr(msg(e)); setDiff(null); setVerdict(null); } }
   }, []);
 
   useEffect(() => {
-    if (!sel) { setDiff(null); setVerdict(null); return; }
+    if (!sel) { diffSeq.current++; setDiff(null); setVerdict(null); return; }
     setLimit(15); setFilter('all');
     void loadDiff(sel);
+    return () => { diffSeq.current++; };
   }, [sel, loadDiff]);
 
   async function createPair() {
     if (!other) return;
-    setCreating(true); setPairErr(null);
+    let claimed = false;
+    setCreating(previous => { if (!previous) claimed = true; return true; });
+    if (!claimed) return; setPairErr(null);
     try {
       const bName = runs?.find((r) => r.id === other)?.name ?? other;
       const p = await window.wanigan.evals.createPair(name.trim() || `${run.name} vs ${bName}`, runId, other);
@@ -2315,7 +2229,9 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
 
   async function runVariant() {
     if (!varValue.trim()) return;
-    setVarBusy(true); setVarErr(null);
+    let claimed = false;
+    setVarBusy(previous => { if (!previous) claimed = true; return true; });
+    if (!claimed) return; setVarErr(null);
     try {
       const numeric = varField === 'maxTokens' || varField === 'temperature';
       const value = numeric ? Number(varValue) : varValue.trim();
@@ -2332,7 +2248,9 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
   }
 
   async function judge(pairId: string) {
-    setJBusy(true); setJudgeErr(null); setJudgeNote(null);
+    let claimed = false;
+    setJBusy(previous => { if (!previous) claimed = true; return true; });
+    if (!claimed) return; setJudgeErr(null); setJudgeNote(null);
     try {
       const r = await window.wanigan.evals.judge(pairId, { model: jModel, rubric: jRubric });
       setJudgeNote(`Judge run ${r.runId} submitted over ${num(r.rows)} row${r.rows === 1 ? '' : 's'}. Its scores land here once it ends — the judge sees A and B in a random order per row, and they are un-swapped on the way in.`);
@@ -2353,7 +2271,9 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
   }
 
   async function saveGolden() {
-    setGBusy(true); setGErr(null); setGOk(null);
+    let claimed = false;
+    setGBusy(previous => { if (!previous) claimed = true; return true; });
+    if (!claimed) return; setGErr(null); setGOk(null);
     try {
       const g = await window.wanigan.evals.saveGolden(gName.trim() || `${run.name} — snapshot`, runId);
       setGOk(`Pinned ${num(g.rows)} row${g.rows === 1 ? '' : 's'} as “${g.name}”. A comparison against it next month measures the config, not the tree.`);
@@ -2391,6 +2311,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
 
   return (
     <div className="bx-lane">
+      <details className="bx-fold" open={!pairs?.length}><summary>Set up a comparison</summary>
       <Section title="Pair this run with another"
                hint="Exactly one config field may differ. Two moving parts make a story, not a result.">
         {/* `&& !others` so a later failed refresh cannot take away a picker built
@@ -2474,6 +2395,9 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
           </>
         )}
 
+
+      </Section></details>
+
         {pairs && pairs.length > 0 && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 13 }}>
             {pairs.map((p) => (
@@ -2486,8 +2410,6 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
             ))}
           </div>
         )}
-      </Section>
-
       {!sel && pairs && pairs.length === 0 && others !== null && others.length > 0 && (
         <div className="card bx-state">
           <h4>No comparison yet</h4>
@@ -2515,7 +2437,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
 
           {judged > 0 && (
             <>
-              <svg className="chart-svg" viewBox="0 0 100 12" role="img"
+              <svg className="chart-svg" viewBox="0 0 100 12" preserveAspectRatio="none" role="img"
                    aria-label={wins.map((w) => `${w.key} ${w.n}`).join(', ')}>
                 {winSegments.map((s) => (
                   <rect key={s.key} x={s.x} y="0" width={Math.max(0, s.w - 0.4)} height="9" rx="2" fill={s.colour}>
@@ -2562,8 +2484,8 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
             </div>
           )}
 
-          <div className="sunk bx-lane" style={{ marginTop: 12, padding: 11, gap: 8 }}>
-            <span className="label">Score this pair with a judge</span>
+          <details className="bx-fold"><summary>Score this pair with a judge</summary>
+          <div className="bx-lane">
             <p className="faint" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.5 }}>
               A verdict without a judge is only “the outputs differ”. This submits a judge run over the pair:
               it sees A and B in a random order per row, and the scores are un-swapped on the way back in —
@@ -2600,7 +2522,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
             </details>
             {judgeErr && <Note tone="error">{judgeErr}</Note>}
             {judgeNote && <Note tone="ok">{judgeNote}</Note>}
-          </div>
+          </div></details>
         </div>
       )}
 
@@ -2693,6 +2615,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
         </Section>
       )}
 
+      <details className="bx-fold"><summary>Golden sets · pin and reuse a dataset</summary>
       <Section title="Golden sets"
                hint="A glob or a command source re-reads the world at submit time, so “the same dataset” is otherwise a hope.">
         <div className="row2" style={{ alignItems: 'end' }}>
@@ -2751,7 +2674,7 @@ function EvalsTab({ runId, run, onOpen }: { runId: string; run: any; onOpen: (id
             </div>
           )}
         </div>
-      </Section>
+      </Section></details>
     </div>
   );
 }

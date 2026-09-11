@@ -1,0 +1,11 @@
+{
+  "checks": [
+    "Setup follows observed readiness; discovery searches paths and preserves hidden selections after cancellation",
+    "Review checks reject late cross-project state, block unread recipes, preserve refused edits and record explicit runs",
+    "Team tasks and all stored message previews stay reachable; filters, dependency counts and stale-read recovery hold",
+    "Learning exposes full summaries, retained signals and contribution states; failed refreshes preserve the filtered view",
+    "No provider launch or terminal write occurred"
+  ],
+  "errors": [],
+  "provenance": "Isolated Electron renderer with authored fixtures. All actions terminate at fixture methods."
+}

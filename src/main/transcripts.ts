@@ -835,6 +835,7 @@ export function contextUsageFromTail(text: string): { tokens: number; model: str
 export function claudeContextUsage(cwd: string, conversationId: string | null, sinceMs: number): ClaudeContextUsage {
   const dirs = claudeProjectDirs(cwd);
   let file: string | null = conversationId ? exactIn(dirs, conversationId) : null;
+  const conversationMatch = file ? 'exact' : 'lifetime-fallback';
   if (!file) file = newestIn(dirs, Math.max(0, sinceMs - LIFETIME_GRACE_MS))?.path ?? null;
   if (!file) return { kind: 'no-transcript' };
 
@@ -871,6 +872,7 @@ export function claudeContextUsage(cwd: string, conversationId: string | null, s
     percent: window ? Math.min(100, Math.round((hit.tokens / window) * 100)) : null,
     model: hit.model,
     at: hit.at,
+    conversationMatch,
     windowSource: reported ? 'cli-reported' : assumed?.source ?? null,
     windowNote: reported
       ? `Window reported by the Claude CLI for this model, backend and account (headless run on ${new Date(reported.at).toISOString().slice(0, 10)}); reported, not measured.`

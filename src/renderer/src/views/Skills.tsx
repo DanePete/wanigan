@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ForgedSkill, Project, ProviderInfo, SkillDiagnostic, SkillInstallResult } from '@shared/types';
-import { Note, Section, Stat, ago, num } from '../components/bits';
+import { Chip, EmptyState, Hint, Icon, Mark, Note, PageHead, Reading, Section, SectionHead, Segmented, ago, num } from '../components/bits';
+import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
+import '../styles/skills.css';
 
 /**
  * The skills on this machine, as a catalogue you can fire into a running agent
@@ -53,7 +55,7 @@ type Catalogue = {
 /** Slot order IS the colourblind-safety mechanism — never reordered to suit meaning. */
 const SOURCES: { id: SkillSource; word: string; glyph: string; color: string; blurb: string }[] = [
   { id: 'user',    word: 'user',     glyph: '◆', color: 'var(--series-1)', blurb: 'yours, on this machine' },
-  { id: 'project', word: 'project',  glyph: '■', color: 'var(--series-2)', blurb: 'checked into the repo' },
+  { id: 'project', word: 'project',  glyph: '■', color: 'var(--series-2)', blurb: 'stored in this repository' },
   { id: 'plugin',  word: 'plugin',   glyph: '▲', color: 'var(--series-3)', blurb: 'installed by a plugin' },
   { id: 'builtin', word: 'built-in', glyph: '○', color: 'var(--series-4)', blurb: 'bundled with Claude Code' },
 ];
@@ -165,522 +167,152 @@ function fileSize(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-const listWords = (xs: string[]) =>
-  xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
-
-/** "user or plugin" — a negative sentence needs "or", not "and", to stay true. */
-const orWords = (xs: string[]) =>
-  xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} or ${xs[xs.length - 1]}`;
-
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /* ── view ────────────────────────────────────────────────────────────── */
 
 export default function Skills({ projectId, providers, activeSessionId }: {
-  projectId?: string;
-  /** Where an authored SKILL.md can be written. Shell state, already loaded. */
-  providers: ProviderInfo[];
-  activeSessionId?: string | null;
+  projectId?: string; providers: ProviderInfo[]; activeSessionId?: string | null;
 }) {
+  const [projects, setProjects] = useState<Project[] | null>(null);
+  const [projectsErr, setProjectsErr] = useState<string | null>(null);
+  const [projectRead, setProjectRead] = useState(0);
+  const [pinned, setPinned] = useViewMemory<string | null>('project-pin', null);
+  useEffect(() => {
+    let live = true;
+    window.wanigan.projects.list().then(list => { if (live) { setProjects(list); setProjectsErr(null); } })
+      .catch(error => { if (live) setProjectsErr(msg(error)); });
+    return () => { live = false; };
+  }, [projectRead]);
+  const pinnedLive = pinned !== null && (pinned === '' || projects === null || projects.some(p => p.id === pinned));
+  const scopeId = pinnedLive ? pinned || undefined : projectId;
+  const project = projects?.find(p => p.id === scopeId) ?? null;
+  return <SkillsWorkspace key={scopeId ?? 'personal'} scopeId={scopeId} project={project} projects={projects}
+    projectsErr={projectsErr} retryProjects={() => setProjectRead(n => n + 1)} providers={providers}
+    activeSessionId={activeSessionId} pinned={pinnedLive && pinned !== projectId} onPin={setPinned} />;
+}
+
+type SkillsArea = 'library' | 'write' | 'sources';
+
+function SkillsWorkspace({ scopeId, project, projects, projectsErr, retryProjects, providers, activeSessionId, pinned, onPin }: {
+  scopeId?: string; project: Project | null; projects: Project[] | null; projectsErr: string | null; retryProjects: () => void;
+  providers: ProviderInfo[]; activeSessionId?: string | null; pinned: boolean; onPin: (id: string | null) => void;
+}) {
+  const [area, setArea] = useViewMemory<SkillsArea>('area', 'library');
   const [cat, setCat] = useState<Catalogue | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
-
-  /* Which repository's `.claude/skills` this catalogue includes.
-     `projectId` is the app's derived project, and its only setters are opening
-     a session, adding a project and Learning's scope picker — so pointing this
-     view at another repository used to mean going to Learning, changing the
-     scope there, and coming back. `pinned` is this view's own answer and wins
-     once it is set: a choice made here must not be undone by a session
-     starting somewhere else. `projects` is read over IPC rather than taken as
-     a prop, because the shell does not pass one to this view.
-
-     `null` means "follow whatever the app is pointed at" — an absence of a
-     choice, which is not the same statement as the empty string, which is
-     someone deliberately asking for no project skills at all. */
-  const [projects, setProjects] = useState<Project[] | null>(null);
-  const [projectsErr, setProjectsErr] = useState<string | null>(null);
-  const [pinned, setPinned] = useState<string | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    window.wanigan.projects.list()
-      .then((list) => { if (live) { setProjects(list); setProjectsErr(null); } })
-      .catch((e) => { if (live) { setProjects(null); setProjectsErr(msg(e)); } });
-    return () => { live = false; };
-  }, []);
-
-  // A pin whose project has been removed is not a scope, it is a dangling id,
-  // so it falls back to following rather than silently scanning nothing.
-  const pinnedLive = pinned !== null
-    && (pinned === '' || projects === null || projects.some((p) => p.id === pinned));
-  const scopeId = pinnedLive ? (pinned || undefined) : projectId;
-  const scope = projects?.find((p) => p.id === scopeId) ?? null;
-
-  const [q, setQ] = useState('');
-  const [sources, setSources] = useState<Set<SkillSource>>(new Set());
+  const [q, setQ] = useViewMemory(`catalogue/${scopeId}/query`, '');
+  const [sources, setSources] = useViewMemory<Set<SkillSource>>(`catalogue/${scopeId}/sources`, new Set());
+  const [selectedPath, setSelectedPath] = useViewMemory<string | null>(`catalogue/${scopeId}/selected`, null);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
-  const [selected, setSelected] = useState<SkillInfo | null>(null);
-  const [flash, setFlash] = useState<{ name: string; tone: 'ok' | 'error'; text: string } | null>(null);
-
+  const [sending, setSending] = useState(false);
+  const [flash, setFlash] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const popRef = useRef<HTMLUListElement>(null);
   const optRefs = useRef<(HTMLLIElement | null)[]>([]);
-
-  const load = useCallback(async (rescan?: boolean) => {
+  const alive = useRef(true), sequence = useRef(0), sendLock = useRef(false);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; sequence.current++; }; }, []);
+  const load = useCallback(async (rescan = false) => {
+    const mine = ++sequence.current;
     setScanning(true);
     try {
       if (rescan) await window.wanigan.skills.refresh();
-      setCat((await window.wanigan.skills.list(scopeId)) as Catalogue);
-      setLoadErr(null);
-    } catch (e) {
-      setLoadErr(msg(e));
-    } finally {
-      setScanning(false);
-    }
+      const next = await window.wanigan.skills.list(scopeId) as Catalogue;
+      if (alive.current && mine === sequence.current) { setCat(next); setLoadErr(null); }
+    } catch (error) { if (alive.current && mine === sequence.current) setLoadErr(msg(error)); }
+    finally { if (alive.current && mine === sequence.current) setScanning(false); }
   }, [scopeId]);
-
   useEffect(() => { void load(); }, [load]);
-
-  // A confirmation that never leaves is a badge, not a confirmation.
-  useEffect(() => {
-    if (!flash) return;
-    const t = setTimeout(() => setFlash(null), 6000);
-    return () => clearTimeout(t);
-  }, [flash]);
-
+  useEffect(() => { if (!flash) return; const timer = setTimeout(() => setFlash(null), 6000); return () => clearTimeout(timer); }, [flash]);
   const query = q.trim().toLowerCase();
-
-  /** Everything the search kept, before the source chips get a say. */
   const matched = useMemo<Hit[]>(() => {
     if (!cat) return [];
-    if (!query) {
-      return cat.skills.map((skill) => ({ skill, tier: TIER.unfiltered, score: 0, nameHits: null, descHits: null }));
-    }
-    const hits: Hit[] = [];
-    for (const skill of cat.skills) {
-      const m = match(skill, query);
-      if (m) hits.push(m);
-    }
-    hits.sort((a, b) => a.tier - b.tier || b.score - a.score || a.skill.name.localeCompare(b.skill.name));
-    return hits;
+    if (!query) return cat.skills.map(skill => ({ skill, tier:TIER.unfiltered, score:0, nameHits:null, descHits:null }));
+    return cat.skills.map(skill => match(skill, query)).filter((hit): hit is Hit => hit !== null)
+      .sort((a,b) => a.tier - b.tier || b.score - a.score || a.skill.name.localeCompare(b.skill.name));
   }, [cat, query]);
-
-  /**
-   * Facet counts are computed against the search but NOT against the source
-   * chips, so each chip answers "how many would I add?" rather than "how many
-   * are showing?" — the count a user is actually asking for.
-   */
-  const facets = useMemo(() => {
-    const c: Record<SkillSource, number> = { user: 0, project: 0, plugin: 0, builtin: 0 };
-    for (const h of matched) c[h.skill.source]++;
-    return c;
-  }, [matched]);
-
-  const visible = useMemo(
-    () => (sources.size === 0 ? matched : matched.filter((h) => sources.has(h.skill.source))),
-    [matched, sources],
-  );
-
-  // The typeahead offers what the page below is already showing — a suggestion
-  // the source chips have excluded would be a promise the list cannot keep.
-  const suggestions = useMemo(
-    () => (query ? visible.slice(0, MAX_SUGGESTIONS) : []),
-    [visible, query],
-  );
-
-  // aria-activedescendant moves the VIRTUAL cursor; the browser scrolls nothing
-  // for it. Without this the active option walks off the bottom of the popup —
-  // and at 150% browser zoom it walks off after the second item.
+  const facets = useMemo(() => { const counts: Record<SkillSource, number> = {user:0, project:0, plugin:0, builtin:0}; for (const hit of matched) counts[hit.skill.source]++; return counts; }, [matched]);
+  const visible = useMemo(() => sources.size ? matched.filter(hit => sources.has(hit.skill.source)) : matched, [matched, sources]);
+  const suggestions = query ? visible.slice(0, MAX_SUGGESTIONS) : [];
+  const selected = visible.find(hit => hit.skill.path === selectedPath)?.skill ?? visible[0]?.skill ?? null;
+  const total = cat?.skills.length ?? 0;
+  const panelRef = useRememberedScrollRef(`skills/${scopeId}/${area}`);
   useEffect(() => {
     if (!open || active < 0) return;
-    const list = popRef.current;
-    const el = optRefs.current[active];
+    const list = popRef.current, el = optRefs.current[active];
     if (!list || !el) return;
-    const top = el.offsetTop;
-    const bottom = top + el.offsetHeight;
-    if (top < list.scrollTop) list.scrollTop = top;
-    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+    if (el.offsetTop < list.scrollTop) list.scrollTop = el.offsetTop;
+    else if (el.offsetTop + el.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = el.offsetTop + el.offsetHeight - list.clientHeight;
   }, [active, open, suggestions.length]);
-
   useEffect(() => { if (active >= suggestions.length) setActive(suggestions.length - 1); }, [suggestions.length, active]);
-
-  function choose(h: Hit) {
-    setSelected(h.skill);
-    setQ(h.skill.name);
-    setOpen(false);
-    setActive(-1);
-    inputRef.current?.focus();
-  }
-
-  /** W3C APG combobox: arrows move, Enter selects, Escape closes then clears — and DOM focus never leaves the input. */
-  function onKey(e: React.KeyboardEvent<HTMLInputElement>) {
+  const clear = () => { setQ(''); setSources(new Set()); setOpen(false); setActive(-1); };
+  const choose = (hit: Hit) => { setSelectedPath(hit.skill.path); setOpen(false); setActive(-1); inputRef.current?.focus(); };
+  const onKey = (event: React.KeyboardEvent<HTMLInputElement>) => {
     const n = suggestions.length;
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      if (!n) return;
-      e.preventDefault();
-      if (!open) { setOpen(true); setActive(e.key === 'ArrowDown' ? 0 : n - 1); return; }
-      setActive((i) => (e.key === 'ArrowDown' ? (i + 1) % n : (i <= 0 ? n - 1 : i - 1)));
-      return;
-    }
-    if (e.key === 'Home' && open && n) { e.preventDefault(); setActive(0); return; }
-    if (e.key === 'End' && open && n) { e.preventDefault(); setActive(n - 1); return; }
-    if (e.key === 'Enter') {
-      if (open && active >= 0 && suggestions[active]) { e.preventDefault(); choose(suggestions[active]); }
-      return;
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      if (open) { setOpen(false); setActive(-1); }
-      else if (q) setQ('');
-      return;
-    }
-    if (e.key === 'Tab' && open) { setOpen(false); setActive(-1); }
-  }
-
-  async function send(s: SkillInfo) {
-    if (!activeSessionId) return;
+    if (['ArrowDown','ArrowUp'].includes(event.key) && n) {
+      event.preventDefault();
+      if (!open) { setOpen(true); setActive(event.key === 'ArrowDown' ? 0 : n - 1); }
+      else setActive(i => event.key === 'ArrowDown' ? (i + 1) % n : (i <= 0 ? n - 1 : i - 1));
+    } else if (['Home','End'].includes(event.key) && open && n) { event.preventDefault(); setActive(event.key === 'Home' ? 0 : n - 1); }
+    else if (event.key === 'Enter' && open && active >= 0 && suggestions[active]) { event.preventDefault(); choose(suggestions[active]); }
+    else if (event.key === 'Escape') { event.preventDefault(); if (open) { setOpen(false); setActive(-1); } else setQ(''); }
+    else if (event.key === 'Tab') { setOpen(false); setActive(-1); }
+  };
+  const send = async (skill: SkillInfo) => {
+    if (!activeSessionId || sendLock.current || loadErr) return;
+    sendLock.current = true; setSending(true);
     try {
-      await window.wanigan.skills.send(activeSessionId, s.invoke);
-      setFlash({ name: s.name, tone: 'ok',
-                 text: `✓ Typed ${s.invoke} into the live session. It is not submitted — switch to Sessions and press Enter to run it.` });
-    } catch (e) {
-      setFlash({ name: s.name, tone: 'error',
-                 text: `✕ Could not type into that session: ${msg(e)}. It has probably exited — open a session in Sessions, then send again.` });
-    }
-  }
+      await window.wanigan.skills.send(activeSessionId, skill.invoke);
+      if (alive.current) setFlash({tone:'ok',text:`Typed ${skill.invoke} into the selected session. It is not submitted; press Enter in that session to run it.`});
+    } catch (error) { if (alive.current) setFlash({tone:'error',text:`Could not type ${skill.invoke}: ${msg(error)}`}); }
+    finally { sendLock.current = false; if (alive.current) setSending(false); }
+  };
+  const copy = async (skill: SkillInfo) => {
+    try { await navigator.clipboard.writeText(skill.invoke); if (alive.current) setFlash({tone:'ok',text:`Copied ${skill.invoke}.`}); }
+    catch (error) { if (alive.current) setFlash({tone:'error',text:`The clipboard could not be written: ${msg(error)}. Select the invocation and copy it manually.`}); }
+  };
 
-  async function copy(s: SkillInfo) {
-    try {
-      await navigator.clipboard.writeText(s.invoke);
-      setFlash({ name: s.name, tone: 'ok', text: `✓ Copied ${s.invoke} to the clipboard.` });
-    } catch (e) {
-      setFlash({ name: s.name, tone: 'error',
-                 text: `✕ The clipboard refused the write (${msg(e)}). Select ${s.invoke} above and copy it by hand.` });
-    }
-  }
-
-  /* ── states ────────────────────────────────────────────────────────── */
-
-  if (loadErr) {
-    return (
-      <div className="skills-view">
-        <div className="pane">
-          <div className="pane-head"><div><h1>Skills</h1></div></div>
-          <div className="card skills-state">
-            <h2>The skill scan did not finish</h2>
-            <p>
-              Wanigan could not read the skill directories: <span className="mono">{loadErr}</span>.
-              The catalogue is read straight off disk, so this is usually a permissions problem on
-              <span className="mono"> ~/.claude/skills</span>. Fix that, then scan again.
-            </p>
-            <button className="btn btn-primary" onClick={() => void load(true)}>Scan again</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!cat) {
-    return (
-      <div className="skills-view">
-        <div className="pane">
-          <div className="pane-head"><div><h1>Skills</h1></div></div>
-          <div className="card skills-state">
-            <h2>Scanning for skills…</h2>
-            <p>Reading SKILL.md frontmatter from your skills folder, this project, and every installed plugin.</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const total = cat.skills.length;
-  const searching = query.length > 0;
-  const chosen = SOURCES.filter((s) => sources.has(s.id));
-  const filtered = sources.size > 0;
-  const cutByQuery = total - matched.length;
-  const cutBySource = matched.length - visible.length;
-  const sourcesPresent = SOURCES.filter((s) => cat.counts[s.id] > 0);
-  const helperFiles = cat.skills.reduce((a, s) => a + s.extras, 0);
-
-  return (
-    <div className={`skills-view${selected ? ' reading' : ''}`}>
-      <div className="pane">
-        <div className="pane-head">
-          <div>
-            <h1>Skills</h1>
-            <p className="dim">
-              Every skill this machine can run — searchable, firable straight into a live agent, and
-              the place to write a new one.
-            </p>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            {/* This view's own scope control. Only the project source depends on
-                it — user, plugin and built-in skills are the same whichever
-                repository is picked — so the label says what it changes rather
-                than implying the whole catalogue swaps. */}
-            {projects && projects.length > 0 && (
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span className="label">Project skills from</span>
-                <select className="field" style={{ width: 'auto' }} value={scopeId ?? ''}
-                        aria-label="Which repository's project skills to include"
-                        onChange={(ev) => setPinned(ev.target.value)}>
-                  <option value="">No repository</option>
-                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-              </label>
-            )}
-            <span className="faint" style={{ fontSize: 'var(--t-small)', fontVariantNumeric: 'tabular-nums' }}>
-              scanned {ago(cat.scannedAt)}
-            </span>
-            <button className="btn" onClick={() => void load(true)} disabled={scanning}>
-              {scanning ? 'Scanning…' : 'Rescan disk'}
-            </button>
-          </div>
-        </div>
-
-        {/* The project list has three answers and they are not one: not read
-            yet (no picker, and nothing claimed about repositories), read and
-            empty (there are none to pick), and read but failed (the picker is
-            missing for a reason, and the reason is said out loud). */}
-        {projectsErr && (
-          <Note tone="warn">
-            <strong>⚠ The project list could not be read</strong> ({projectsErr}), so this view cannot offer a
-            repository picker. Project skills are still scanned for{' '}
-            {projectId ? 'whichever repository the app is pointed at' : 'nothing — no project is selected'}.
-          </Note>
-        )}
-        {projects !== null && projects.length === 0 && (
-          <Note tone="info">
-            No repositories registered, so nothing under a{' '}
-            <span className="mono">.claude/skills</span> directory in a repo is in this catalogue. Add a folder
-            in Sessions and it becomes pickable here.
-          </Note>
-        )}
-        {pinnedLive && projectId && pinned !== projectId && (
-          <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
-            {pinned === ''
-              ? <>Project skills are excluded here by choice. </>
-              : <>Pinned to <strong>{scope?.name ?? pinned}</strong> on this view. </>}
-            The rest of Wanigan is still pointed at another project, and this pick does not move it.{' '}
-            <button className="link" onClick={() => setPinned(null)}>Follow the app's project instead</button>
-          </p>
-        )}
-
-        <div className="stat-grid">
-          <Stat label="Skills catalogued" value={num(total)}
-                sub={`${total === 1 ? 'skill' : 'skills'}, after name shadowing`} />
-          <Stat label="Sources with skills" value={`${sourcesPresent.length} of 4`}
-                sub={sourcesPresent.length ? listWords(sourcesPresent.map((s) => s.word)) : 'nothing found yet'} />
-          <Stat label="Helper files" value={num(helperFiles)}
-                sub={`${helperFiles === 1 ? 'file' : 'files'} shipped alongside the SKILL.md`} />
-          <Stat label="Send target"
-                value={activeSessionId ? '◉ ready' : '○ none'}
-                tone={activeSessionId ? 'var(--good)' : 'var(--text-faint)'}
-                sub={activeSessionId ? 'one live session is selected' : 'no live session selected'} />
-        </div>
-
-        {!activeSessionId && (
-          <Note tone="info">
-            <strong>○ No live session, so sending is off.</strong> Wanigan types an invocation
-            straight into a running agent's terminal, so there has to be a terminal — open one in
-            Sessions and come back. Search, reading and copying all work without one.
-          </Note>
-        )}
-
-        {/* A search box over an empty catalogue is furniture, so it only
-            appears once there is something to search. */}
-        {total > 0 && (
-          <Section title="Find a skill"
-                   hint="Names rank first: prefix, then substring, then letters in order (vbc finds verification-before-completion). Descriptions rank last. Matched characters are marked so you can see why a result placed where it did.">
+  return <div className="pane wide skills-view">
+    <PageHead compact title="Skills" lead="Find the right workflow. Keep the craft close." actions={<>
+      {projects && projects.length > 0 && <select className="field skills-project" aria-label="Which repository's project skills to include" value={scopeId ?? ''} onChange={event => onPin(event.target.value)}>
+        <option value="">No repository</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>}
+      <button className="btn" disabled={scanning} onClick={() => void load(true)}>{scanning ? 'Scanning…' : 'Rescan disk'}</button>
+      <button className="btn btn-primary" onClick={() => setArea('write')}><Icon name="plus" />Write a skill</button>
+    </>} />
+    {projectsErr && <Note tone="warn">The project list could not be read: {projectsErr}. <button className="link" onClick={retryProjects}>Retry project list</button></Note>}
+    {pinned && <div className="skills-pin"><Hint>{scopeId ? `Project skills from ${project?.name ?? scopeId}.` : 'Project skills excluded.'} This choice stays within Skills.</Hint><button className="link" onClick={() => onPin(null)}>Follow the app’s project</button></div>}
+    {flash && <Note tone={flash.tone} onDismiss={() => setFlash(null)}>{flash.text}</Note>}
+    <div className="skills-workspace">
+      <div className="skills-navigation"><Segmented label="Skills workspace" value={area} onChange={setArea} options={[{value:'library',label:'Library'},{value:'write',label:'Write'},{value:'sources',label:'Sources'}]} /><Hint>{cat ? `${num(total)} Claude Code skills · scanned ${ago(cat.scannedAt)}` : 'Claude Code catalogue'}</Hint></div>
+      <div className="skills-scroll" data-area={area} ref={panelRef} tabIndex={0} aria-label={`${area === 'library' ? 'Skill library' : area === 'write' ? 'Skill writer' : 'Skill sources'}`}>
+        {loadErr && <Note tone="error">The skill scan did not finish: {loadErr}.{cat ? ' The last successful scan is still shown.' : ' No catalogue has been read.'} <button className="link" disabled={scanning} onClick={() => void load(true)}>Scan again</button></Note>}
+        {area === 'library' && (!cat ? !loadErr && <Reading what="skill directories" /> : <div className="skills-library">
+          <aside className="skills-directory" aria-label="Skill catalogue">
+            <SectionHead label="Your workflows" count={visible.length} />
             <div className="skills-search-wrap">
-              <span className="skills-search-glyph" aria-hidden="true">⌕</span>
-              <input
-                ref={inputRef}
-                className="field skills-search"
-                type="text"
-                role="combobox"
-                aria-expanded={open && suggestions.length > 0}
-                aria-controls="skills-typeahead"
-                aria-autocomplete="list"
-                aria-activedescendant={open && active >= 0 ? OPT_ID(active) : undefined}
-                aria-label="Search skills by name or description"
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="Search skills — try “vbc”"
-                value={q}
-                onChange={(e) => { setQ(e.target.value); setOpen(true); setActive(-1); }}
-                onKeyDown={onKey}
-                onFocus={() => { if (q) setOpen(true); }}
-                onBlur={() => { setOpen(false); setActive(-1); }}
-              />
-              {q && (
-                <button className="skills-search-clear" onClick={() => { setQ(''); setOpen(false); setActive(-1); inputRef.current?.focus(); }}>
-                  clear ⎋
-                </button>
-              )}
-              <ul
-                id="skills-typeahead"
-                className="skills-pop"
-                role="listbox"
-                aria-label="Skill matches"
-                ref={popRef}
-                hidden={!open || suggestions.length === 0}
-              >
-                {suggestions.map((h, i) => (
-                  <li
-                    key={h.skill.path}
-                    id={OPT_ID(i)}
-                    role="option"
-                    aria-selected={i === active}
-                    className={`skills-opt${i === active ? ' on' : ''}`}
-                    ref={(el) => { optRefs.current[i] = el; }}
-                    // Focus must stay in the input for aria-activedescendant to
-                    // mean anything, so the mousedown never gets to move it.
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => choose(h)}
-                  >
-                    <span aria-hidden="true" style={{ color: SRC[h.skill.source].color, fontSize: 'var(--t-micro)' }}>
-                      {SRC[h.skill.source].glyph}
-                    </span>
-                    <span className="skills-opt-name mono">
-                      <Marked text={h.skill.name} hits={h.nameHits} />
-                    </span>
-                    <span className="skills-opt-why">{TIER_WORD[h.tier]} · {SRC[h.skill.source].word}</span>
-                  </li>
-                ))}
-              </ul>
+              <input ref={inputRef} className="field skills-search" role="combobox" type="text" aria-label="Search skills by name or description" aria-expanded={open && suggestions.length > 0} aria-controls="skills-typeahead" aria-autocomplete="list" aria-activedescendant={open && active >= 0 ? OPT_ID(active) : undefined} autoComplete="off" spellCheck={false} placeholder="Find a skill…" value={q} onChange={event => { setQ(event.target.value); setOpen(true); setActive(-1); }} onKeyDown={onKey} onFocus={() => { if (q) setOpen(true); }} onBlur={() => { setOpen(false); setActive(-1); }} />
+              <ul id="skills-typeahead" className="skills-pop" role="listbox" aria-label="Skill matches" ref={popRef} hidden={!open || !suggestions.length}>{suggestions.map((hit,i) => <li key={hit.skill.path} id={OPT_ID(i)} role="option" aria-selected={active === i} className={`skills-opt${active === i ? ' on' : ''}`} ref={el => { optRefs.current[i] = el; }} onMouseDown={event => event.preventDefault()} onClick={() => choose(hit)}><strong><Marked text={hit.skill.name} hits={hit.nameHits} /></strong><small>{TIER_WORD[hit.tier]} · {SRC[hit.skill.source].word}</small></li>)}</ul>
             </div>
-            <p className="sr-only" role="status">
-              {open && suggestions.length ? `${suggestions.length} suggestions, use arrow keys` : ''}
-            </p>
-
-            <div className="skills-chips" style={{ marginTop: 11 }}>
-              {SOURCES.map((s) => {
-                const n = facets[s.id];
-                const on = sources.has(s.id);
-                return (
-                  <button
-                    key={s.id}
-                    className={`skills-chip${on ? ' on' : ''}`}
-                    aria-pressed={on}
-                    disabled={n === 0 && !on}
-                    title={n === 0
-                      ? `No ${s.word} skills in the current search, so this filter would empty the list.`
-                      : `${on ? 'Stop showing' : 'Show'} the ${n} ${s.word} ${n === 1 ? 'skill' : 'skills'} — ${s.blurb}.`}
-                    onClick={() => setSources((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(s.id)) next.delete(s.id); else next.add(s.id);
-                      return next;
-                    })}
-                  >
-                    <span aria-hidden="true" style={{ color: s.color, fontSize: 'var(--t-micro)' }}>{s.glyph}</span>
-                    {s.word}
-                    <span className="n">{num(n)}</span>
-                  </button>
-                );
-              })}
-              <button className="skills-chip-clear" disabled={!filtered && !q}
-                      onClick={() => { setSources(new Set()); setQ(''); setOpen(false); setActive(-1); }}>
-                Clear all
-              </button>
-            </div>
-
-            <p className="skills-count" aria-live="polite" style={{ marginTop: 10 }}>
-              {!searching && !filtered && <>All <strong>{num(total)}</strong> skills. Nothing is filtered out.</>}
-              {searching && !filtered && (
-                <>Showing <strong>{num(visible.length)}</strong> of <strong>{num(total)}</strong> skills:
-                  {' '}the search for “{q.trim()}” excluded <strong>{num(cutByQuery)}</strong>.</>
-              )}
-              {!searching && filtered && (
-                <>Showing <strong>{num(visible.length)}</strong> of <strong>{num(total)}</strong> skills:
-                  {' '}keeping only {listWords(chosen.map((s) => s.word))} hid <strong>{num(cutBySource)}</strong>.</>
-              )}
-              {searching && filtered && (
-                <>Showing <strong>{num(visible.length)}</strong> of <strong>{num(total)}</strong> skills:
-                  {' '}“{q.trim()}” matched <strong>{num(matched.length)}</strong>, then keeping only
-                  {' '}{listWords(chosen.map((s) => s.word))} removed <strong>{num(cutBySource)}</strong> of those.</>
-              )}
-            </p>
-          </Section>
-        )}
-
-        {total === 0 ? (
-          <div className="card skills-state">
-            <h2>No skills on this machine yet</h2>
-            <p>
-              Nothing exists to catalogue — not in your skills folder, this project, or any plugin.
-              Write one below and Wanigan creates
-              <span className="mono"> &lt;root&gt;/skills/&lt;name&gt;/SKILL.md</span> for you, or create that
-              file by hand with a <span className="mono">name</span> and <span className="mono">description</span>{' '}
-              in its frontmatter; either way it shows up here on the next scan. Skills committed under a
-              project's <span className="mono">.claude/skills</span> travel with the repo.
-            </p>
-            <button className="btn" onClick={() => void load(true)}>Scan again</button>
-          </div>
-        ) : visible.length === 0 ? (
-          <div className="card skills-state">
-            {matched.length === 0 ? (
-              <>
-                <h2>Nothing matches “{q.trim()}”</h2>
-                <p>
-                  All <strong>{num(total)}</strong> skills were excluded by the search: no name
-                  contains those letters in order, and no description contains that text.
-                </p>
-                <button className="btn btn-primary" onClick={() => { setQ(''); setOpen(false); setActive(-1); inputRef.current?.focus(); }}>
-                  Clear the search and show all {num(total)}
-                </button>
-              </>
-            ) : (
-              <>
-                <h2>Your source filter excluded every match</h2>
-                <p>
-                  {!searching ? (
-                    <>No skill comes from {orWords(chosen.map((s) => s.word))}.</>
-                  ) : matched.length === 1 ? (
-                    <>“{q.trim()}” matched one skill and it is
-                      a <strong>{SRC[matched[0].skill.source].word}</strong> skill, while the filter
-                      keeps only {orWords(chosen.map((s) => s.word))}.</>
-                  ) : (
-                    <>“{q.trim()}” matched <strong>{num(matched.length)}</strong> skills, and none of
-                      them are {orWords(chosen.map((s) => s.word))} skills.</>
-                  )}
-                </p>
-                <button className="btn btn-primary" onClick={() => setSources(new Set())}>
-                  Show all sources again
-                </button>
-              </>
-            )}
-          </div>
-        ) : (
-          <div className="skills-list">
-            {visible.map((h) => (
-              <SkillCard
-                key={h.skill.path}
-                hit={h}
-                selected={selected?.path === h.skill.path}
-                canSend={Boolean(activeSessionId)}
-                flash={flash && flash.name === h.skill.name ? flash : null}
-                onRead={() => setSelected((prev) => (prev?.path === h.skill.path ? null : h.skill))}
-                onSend={() => void send(h.skill)}
-                onCopy={() => void copy(h.skill)}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Authoring sits beside the catalogue it writes into, and directly
-            above Roots, which names the exact directories these files land in. */}
-        <SkillWriter project={scope} providers={providers} onInstalled={() => void load(true)} />
-
-        <Roots cat={cat} />
+            <div className="skills-filters">{SOURCES.map(source => <Chip key={source.id} pressed={sources.has(source.id)} count={facets[source.id]} disabled={!facets[source.id] && !sources.has(source.id)} onToggle={() => setSources(previous => { const next = new Set(previous); if (next.has(source.id)) next.delete(source.id); else next.add(source.id); return next; })}><span aria-hidden="true" style={{color:source.color}}>{source.glyph}</span>{source.word}</Chip>)}</div>
+            <div className="skills-count" role="status">{q || sources.size ? <><span>{visible.length} of {total} skills match</span><button className="link" onClick={clear}>Clear filters</button></> : <span>Names first, then descriptions. Matched letters are highlighted.</span>}</div>
+            {total === 0 ? <EmptyState posture="nothing-yet" title="No Claude Code skills found" cue="Write a skill, or check Sources to see which directories were scanned." action={<button className="btn" onClick={() => setArea('write')}>Write a skill</button>} />
+              : visible.length === 0 ? <EmptyState posture="nothing-in-scope" title={matched.length ? 'Sources hide every match' : 'No skill matches this search'} cue={matched.length ? 'Choose another source or clear the filters.' : 'Try part of a name, its initials, or a phrase from the description.'} action={<button className="btn" onClick={clear}>Clear filters</button>} />
+              : <div className="skills-list">{visible.map(hit => <SkillEntry key={hit.skill.path} hit={hit} selected={selected?.path === hit.skill.path} onRead={() => setSelectedPath(hit.skill.path)} />)}</div>}
+            <Hint>Project files take precedence over user and plugin skills with the same invocation. Built-ins show only those seen on disk.</Hint>
+          </aside>
+          {selected ? <Reader key={selected.path} skill={selected} scanAt={cat.scannedAt} canSend={!!activeSessionId && !loadErr} sending={sending} onSend={() => void send(selected)} onCopy={() => void copy(selected)} /> : <div className="skills-reader-empty"><EmptyState posture="nothing-in-scope" title="A workflow, in full" cue="Choose a skill to read its instructions, source, and invocation here." /></div>}
+        </div>)}
+        <div hidden={area !== 'write'}>{scopeId && !project
+          ? projects === null && !projectsErr ? <Reading what="project details" />
+            : <EmptyState posture="could-not-read" title="This repository is unavailable" cue="Choose an available repository, or choose No repository to write a personal skill." action={<button className="btn" onClick={retryProjects}>Retry project list</button>} />
+          : <SkillWriter key={project?.id ?? 'personal'} project={project} providers={providers} onInstalled={() => void load(true)} />}</div>
+        {area === 'sources' && (cat ? <Roots cat={cat} /> : !loadErr && <Reading what="skill sources" />)}
       </div>
-
-      {selected && <Reader skill={selected} onClose={() => setSelected(null)} />}
     </div>
-  );
+  </div>;
 }
 
 /* ── writing one ─────────────────────────────────────────────────────── */
@@ -713,7 +345,7 @@ type Draft =
 type Install =
   | { s: 'idle' }
   | { s: 'writing' }
-  | { s: 'err'; message: string }
+  | { s: 'err'; message: string; results: SkillInstallResult[] }
   | { s: 'done'; results: SkillInstallResult[] };
 
 const SEVERITY_MARK: Record<SkillDiagnostic['severity'], { glyph: string; color: string }> = {
@@ -730,13 +362,12 @@ function SkillWriter({ project, providers, onInstalled }: {
   providers: ProviderInfo[];
   onInstalled: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [trigger, setTrigger] = useState('');
-  const [steps, setSteps] = useState('Inspect the relevant files\nMake the smallest safe change\nRun the project review gate');
-  const [verification, setVerification] = useState('Run the relevant tests\nReview the final diff');
-  const [scope, setScope] = useState<'personal' | 'project'>('personal');
+  const [name, setName] = useViewMemory(`writer/${project?.id}/name`, '');
+  const [description, setDescription] = useViewMemory(`writer/${project?.id}/description`, '');
+  const [trigger, setTrigger] = useViewMemory(`writer/${project?.id}/trigger`, '');
+  const [steps, setSteps] = useViewMemory(`writer/${project?.id}/steps`, 'Inspect the relevant files\nMake the smallest safe change\nRun the project review gate');
+  const [verification, setVerification] = useViewMemory(`writer/${project?.id}/verification`, 'Run the relevant tests\nReview the final diff');
+  const [scope, setScope] = useViewMemory<'personal' | 'project'>(`writer/${project?.id}/scope`, 'personal');
   const [draft, setDraft] = useState<Draft>({ s: 'none' });
   const [install, setInstall] = useState<Install>({ s: 'idle' });
 
@@ -746,7 +377,7 @@ function SkillWriter({ project, providers, onInstalled }: {
      this view a fresh `providers` array on every window focus. Keying the seed
      to that array identity would tick a deliberately cleared checkbox back on
      every time you switched apps and came back. */
-  const [chosen, setChosen] = useState<string[] | null>(null);
+  const [chosen, setChosen] = useViewMemory<string[] | null>(`writer/${project?.id}/targets`, null);
   const detected = providers.map((p) => p.id);
   const detectedKey = detected.join('\u0000');
   useEffect(() => {
@@ -763,18 +394,24 @@ function SkillWriter({ project, providers, onInstalled }: {
   // "Project skill" selection pointing at nothing.
   useEffect(() => { if (!project) setScope('personal'); }, [project]);
 
+  const revision = useRef(0), writing = useRef(false), live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; revision.current++; }; }, []);
+  useEffect(() => { revision.current++; setDraft({s:'none'}); }, [project?.id, detectedKey]);
   const named = name.trim();
   const ready = named !== '' && description.trim() !== '' && trigger.trim() !== '';
 
   // A draft belongs to the words that produced it. Any edit invalidates it,
   // rather than leaving a stale preview beside a changed form.
   const edit = <T,>(set: (v: T) => void) => (v: T) => {
+    revision.current++;
     set(v);
     setDraft((d) => (d.s === 'none' ? d : { s: 'none' }));
     setInstall({ s: 'idle' });
   };
 
   async function build() {
+    if (writing.current) return;
+    const mine = ++revision.current;
     setInstall({ s: 'idle' });
     setDraft({ s: 'building' });
     try {
@@ -791,39 +428,39 @@ function SkillWriter({ project, providers, onInstalled }: {
       });
       // Checked against the repository so a path-sensitive diagnostic can be
       // real rather than generic.
+      if (!live.current || mine !== revision.current) return;
       const diagnostics = await window.wanigan.learning.doctorSkill(skill.skillMd, project?.path);
-      setDraft({ s: 'ok', skill, diagnostics });
+      if (live.current && mine === revision.current) setDraft({ s: 'ok', skill, diagnostics });
     } catch (e) {
-      setDraft({ s: 'err', message: msg(e) });
+      if (live.current && mine === revision.current) setDraft({ s: 'err', message: msg(e) });
     }
   }
 
   async function write(skill: ForgedSkill) {
+    if (writing.current || draft.s !== 'ok' || blocking || !targets.length) return;
+    const prior = install.s === 'done' || install.s === 'err' ? install.results : [];
+    const retryTargets = prior.length ? targets.filter(id => !prior.some(result => result.providerId === id && !result.error)) : targets;
+    if (!retryTargets.length) return;
+    writing.current = true;
     setInstall({ s: 'writing' });
     try {
       const results = await window.wanigan.learning.installSkill(
-        skill, targets, scope === 'project' ? project?.id ?? null : null);
-      setInstall({ s: 'done', results });
+        skill, retryTargets, scope === 'project' ? project?.id ?? null : null);
+      const merged = [...prior.filter(result => !retryTargets.includes(result.providerId)), ...results];
+      if (live.current) setInstall({ s: 'done', results: merged });
       // The catalogue above is now out of date by exactly this file.
       onInstalled();
     } catch (e) {
-      setInstall({ s: 'err', message: msg(e) });
-    }
+      if (live.current) setInstall({ s: 'err', message: msg(e), results: prior });
+    } finally { writing.current = false; }
   }
 
   const blocking = draft.s === 'ok' && draft.diagnostics.some((d) => d.severity === 'error');
 
   return (
-    <Section
-      title="Write a new skill"
-      hint="A form, not a recommendation. You type the words; Wanigan formats them into the Agent Skills SKILL.md shape and writes that file. It reads nothing from your sessions, transcripts or recorded signals."
-      right={
-        <button className="btn" type="button" aria-expanded={open} aria-controls="skills-writer"
-                onClick={() => setOpen((v) => !v)}>
-          {open ? 'Close the form' : 'Write a skill'}
-        </button>
-      }>
-      <div id="skills-writer" hidden={!open}>
+    <section className="skills-authoring">
+      <div className="skills-authoring-intro"><SectionHead label="Write a workflow" /><h2>Your method. Ready to reuse.</h2><p>Write the instructions, review the exact SKILL.md, then choose where to install it. Wanigan formats your words locally; this form does not read sessions or ask a model.</p></div>
+      <div id="skills-writer">
         {providers.length === 0 ? (
           <Note tone="warn">
             <strong>⚠ No agent runtime was detected</strong>, so there is no provider skills directory to
@@ -832,7 +469,8 @@ function SkillWriter({ project, providers, onInstalled }: {
           </Note>
         ) : (
           <div className="skills-writer">
-            <div className="skills-writer-form">
+            <fieldset className="skills-writer-form" disabled={install.s === 'writing'}>
+              <legend className="sr-only">Skill instructions and destinations</legend>
               <label>
                 <span className="label">Skill name</span>
                 <input className="field mono" value={name} placeholder="verification-before-completion"
@@ -867,7 +505,7 @@ function SkillWriter({ project, providers, onInstalled }: {
                   <select className="field" value={scope} disabled={!project}
                           onChange={(e) => edit(setScope)(e.target.value as 'personal' | 'project')}>
                     <option value="personal">My skills — this machine only</option>
-                    {project && <option value="project">Project skill — committed with {project.name}</option>}
+                    {project && <option value="project">Project skill — {project.name}</option>}
                   </select>
                 </label>
                 <fieldset className="skills-writer-targets">
@@ -892,7 +530,7 @@ function SkillWriter({ project, providers, onInstalled }: {
               )}
 
               <button className="btn btn-primary" type="button"
-                      disabled={!ready || draft.s === 'building' || targets.length === 0}
+                      disabled={!ready || draft.s === 'building' || targets.length === 0 || install.s === 'writing'}
                       onClick={() => void build()}>
                 {draft.s === 'building' ? 'Building…' : 'Build the SKILL.md'}
               </button>
@@ -909,9 +547,9 @@ function SkillWriter({ project, providers, onInstalled }: {
                   Pick at least one provider. Each one is written independently, into its own directory.
                 </p>
               )}
-            </div>
+            </fieldset>
 
-            <aside className="skills-writer-preview sunk">
+            <aside className="skills-writer-preview">
               <div className="label">
                 Preview
                 {draft.s === 'ok' && (
@@ -958,9 +596,9 @@ function SkillWriter({ project, providers, onInstalled }: {
                   )}
 
                   <button className="btn btn-primary" type="button"
-                          disabled={blocking || install.s === 'writing' || targets.length === 0}
+                          disabled={blocking || install.s === 'writing' || (install.s === 'done' && install.results.length > 0 && install.results.every(result => !result.error)) || targets.length === 0}
                           onClick={() => void write(draft.skill)}>
-                    {install.s === 'writing' ? 'Writing…' : `Write ${draft.skill.name} to disk`}
+                    {install.s === 'writing' ? 'Writing…' : install.s === 'done' && install.results.length > 0 && install.results.every(result => !result.error) ? 'Installed' : (install.s === 'done' || (install.s === 'err' && install.results.length > 0)) ? 'Retry failed providers' : `Write ${draft.skill.name} to disk`}
                   </button>
                   {blocking && (
                     <p style={{ color: 'var(--bad)', fontSize: 'var(--t-micro)', lineHeight: 1.5 }}>
@@ -969,9 +607,9 @@ function SkillWriter({ project, providers, onInstalled }: {
                   )}
 
                   {install.s === 'err' && (
-                    <Note tone="error"><strong>✕ Nothing was written.</strong> {install.message}</Note>
+                    <Note tone="error"><strong>The write did not complete.</strong> {install.message}</Note>
                   )}
-                  {install.s === 'done' && (
+                  {(install.s === 'done' || install.s === 'err') && install.results.length > 0 && (
                     <ul className="skills-writer-doctor">
                       {install.results.map((r) => (
                         <li key={r.providerId} style={{ color: r.error ? 'var(--bad)' : 'var(--good)' }}>
@@ -983,7 +621,7 @@ function SkillWriter({ project, providers, onInstalled }: {
                       ))}
                     </ul>
                   )}
-                  {install.s === 'done' && install.results.some((r) => !r.error) && (
+                  {(install.s === 'done' || install.s === 'err') && install.results.some((r) => !r.error) && (
                     <WriteAftermath results={install.results} />
                   )}
 
@@ -998,7 +636,7 @@ function SkillWriter({ project, providers, onInstalled }: {
           </div>
         )}
       </div>
-    </Section>
+    </section>
   );
 }
 
@@ -1021,7 +659,7 @@ function WriteAftermath({ results }: { results: SkillInstallResult[] }) {
           {unlisted.length === 1 ? 'one of these files' : `${num(unlisted.length)} of these files`} is on
           disk but will not appear in the list — {unlisted.map((r) => r.providerId).join(', ')}.</>
       )}
-      {' '}No git commit was made: a project skill is an untracked change until you commit it yourself.
+      {' '}No git commit was made. Review any project changes before committing them.
     </p>
   );
 }
@@ -1055,84 +693,30 @@ function Marked({ text, hits }: { text: string; hits: number[] | null }) {
  * description is windowed around its hit instead of clamped.
  */
 function Description({ text, hits }: { text: string; hits: number[] | null }) {
-  if (!hits || hits.length === 0) return <p className="skill-desc clamp">{text}</p>;
-  if (text.length <= 220) return <p className="skill-desc"><Marked text={text} hits={hits} /></p>;
+  if (!hits || hits.length === 0) return <span className="skill-desc clamp">{text}</span>;
+  if (text.length <= 220) return <span className="skill-desc"><Marked text={text} hits={hits} /></span>;
 
   const start = Math.max(0, hits[0] - 60);
   const end = Math.min(text.length, Math.max(hits[hits.length - 1] + 1, start + 170) + 50);
   const slice = text.slice(start, end);
   const shifted = hits.map((h) => h - start).filter((h) => h >= 0 && h < slice.length);
   return (
-    <p className="skill-desc">
+    <span className="skill-desc">
       {start > 0 && <span className="faint">… </span>}
       <Marked text={slice} hits={shifted} />
       {end < text.length && <span className="faint"> …</span>}
-    </p>
+    </span>
   );
 }
 
-function SkillCard({ hit, selected, canSend, flash, onRead, onSend, onCopy }: {
-  hit: Hit; selected: boolean; canSend: boolean;
-  flash: { tone: 'ok' | 'error'; text: string } | null;
-  onRead: () => void; onSend: () => void; onCopy: () => void;
-}) {
-  const s = hit.skill;
-  const src = SRC[s.source];
-  return (
-    <article className={`skill-card${selected ? ' sel' : ''}`} style={{ borderLeftColor: src.color }}>
-      <div className="skill-head">
-        <button className="skill-name mono" onClick={onRead}
-                title={selected ? 'Close the reading pane' : `Read ${s.name}/SKILL.md`}>
-          <Marked text={s.name} hits={hit.nameHits} />
-        </button>
-        <span className="skill-src" style={{ color: src.color }}>
-          <span aria-hidden="true">{src.glyph}</span>{src.word}
-        </span>
-        <span className="skill-invoke mono" style={{ marginLeft: 'auto' }}>{s.invoke}</span>
-      </div>
-
-      <Description text={s.description} hits={hit.descHits} />
-
-      <div className="skill-meta">
-        <span>{src.blurb}</span>
-        {s.plugin && <span>plugin {s.plugin}{s.marketplace ? ` · ${s.marketplace}` : ''}</span>}
-        <span>{num(s.extras)} helper {s.extras === 1 ? 'file' : 'files'}</span>
-        <span>{fileSize(s.bytes)}</span>
-        <span>edited {ago(s.modified)}</span>
-      </div>
-
-      {s.allowedTools.length > 0 && (
-        <div className="skill-tools">
-          <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>allowed tools:</span>
-          {s.allowedTools.map((t) => <span key={t} className="skill-tool mono">{t}</span>)}
-        </div>
-      )}
-
-      <div className="skill-actions">
-        {/* One head Note already says sending is off and why. Repeating it as a
-            disabled button on every card in the catalogue turned one fact into
-            thirty controls that cannot be pressed; the action simply is not
-            offered until there is a terminal to type into. */}
-        {canSend && (
-          <button
-            className="btn btn-primary"
-            title={`Type ${s.invoke} into the selected live session`}
-            onClick={onSend}
-          >
-            Send to session
-          </button>
-        )}
-        <button className="btn" onClick={onCopy} title={`Copy ${s.invoke} to the clipboard`}>
-          Copy <span className="mono">{s.invoke}</span>
-        </button>
-        <button className="btn" onClick={onRead}>
-          {selected ? 'Close SKILL.md' : 'Read SKILL.md'}
-        </button>
-      </div>
-
-      {flash && <Note tone={flash.tone === 'ok' ? 'ok' : 'error'}>{flash.text}</Note>}
-    </article>
-  );
+function SkillEntry({ hit, selected, onRead }: { hit: Hit; selected: boolean; onRead: () => void }) {
+  const skill = hit.skill, source = SRC[skill.source];
+  return <button type="button" className="skills-entry" aria-current={selected ? 'true' : undefined} data-skill-path={skill.path} onClick={onRead}>
+    <span className="skills-origin"><span aria-hidden="true" style={{color:source.color}}>{source.glyph}</span>{source.word}{skill.plugin ? ` · ${skill.plugin}` : ''}</span>
+    <strong><Marked text={skill.name} hits={hit.nameHits} /></strong>
+    <Description text={skill.description} hits={hit.descHits} />
+    <span className="skills-entry-meta"><code>{skill.invoke}</code><span>{skill.extras} helper {skill.extras === 1 ? 'file' : 'files'}</span></span>
+  </button>;
 }
 
 /**
@@ -1145,7 +729,7 @@ function Roots({ cat }: { cat: Catalogue }) {
   const W = 100;
 
   return (
-    <Section title="Where these came from"
+    <div className="skills-sources"><Section title="Where these came from"
              hint="A project skill shadows a user skill of the same name, which shadows a plugin's — only the file that actually runs is listed here.">
       {total > 0 && (
         <>
@@ -1236,70 +820,44 @@ function Roots({ cat }: { cat: Catalogue }) {
         chain, memory, rules, settings and hooks, and what carrying them costs per session — is the Context
         view: <span className="mono">⌘⇧C</span>, or ⌘K → Context.
       </p>
-    </Section>
+    </Section></div>
   );
 }
 
-function Reader({ skill, onClose }: { skill: SkillInfo; onClose: () => void }) {
-  const [body, setBody] = useState<{ text: string; truncated: boolean; bytes: number } | null>(null);
+function Reader({ skill, scanAt, canSend, sending, onSend, onCopy }: {
+  skill: SkillInfo; scanAt: number; canSend: boolean; sending: boolean; onSend: () => void; onCopy: () => void;
+}) {
+  const [body, setBody] = useState<{text:string; truncated:boolean; bytes:number} | null>(null);
   const [err, setErr] = useState<string | null>(null);
-
+  const [retry, setRetry] = useState(0);
+  const [area, setArea] = useViewMemory<'document' | 'details'>('reader-area', 'document');
+  const [revealErr, setRevealErr] = useState<string | null>(null);
   useEffect(() => {
-    let live = true;
-    setBody(null);
-    setErr(null);
-    window.wanigan.skills.body(skill.path)
-      .then((b) => { if (live) setBody(b); })
-      .catch((e) => { if (live) setErr(msg(e)); });
+    let live = true; setBody(null); setErr(null);
+    window.wanigan.skills.body(skill.path).then(next => { if (live) setBody(next); }).catch(error => { if (live) setErr(msg(error)); });
     return () => { live = false; };
-  }, [skill.path]);
-
-  const src = SRC[skill.source];
-
-  return (
-    <aside className="skills-reader" aria-label={`${skill.name} SKILL.md`}>
-      <div className="skills-reader-head">
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-          <span className="mono" style={{ fontSize: 'var(--t-body)', fontWeight: 600 }}>{skill.name}</span>
-          <span className="skill-src" style={{ color: src.color }}>
-            <span aria-hidden="true">{src.glyph}</span>{src.word}
-          </span>
-          <button className="faint" style={{ marginLeft: 'auto', fontSize: 'var(--t-lead)', lineHeight: 1 }}
-                  title="Close the reading pane" onClick={onClose}>×</button>
-        </div>
-        <div className="skills-path mono" title={skill.path}>{skill.path}</div>
-        <div className="skill-meta">
-          <span className="mono">{skill.invoke}</span>
-          <span>{fileSize(skill.bytes)}</span>
-          <span>edited {ago(skill.modified)}</span>
-          <button className="link" style={{ fontSize: 'var(--t-micro)' }}
-                  onClick={() => { window.wanigan.browse.reveal(skill.dir).catch(() => {}); }}>
-            reveal folder
-          </button>
-        </div>
-      </div>
-
-      <div className="skills-reader-body">
-        {err ? (
-          <Note tone="error">
-            ✕ Could not read this SKILL.md: {err}. The file may have been moved or deleted since the
-            last scan — press “Rescan disk” to rebuild the catalogue.
-          </Note>
-        ) : !body ? (
-          <p className="dim" style={{ fontSize: 'var(--t-small)' }}>Reading {skill.name}/SKILL.md…</p>
-        ) : (
-          <>
-            {body.truncated && (
-              <div style={{ marginBottom: 10 }}>
-                <Note tone="warn">
-                  ⚠ Showing the first 200 KB of a {fileSize(body.bytes)} file. Open the folder to read the rest.
-                </Note>
-              </div>
-            )}
-            <div className="skills-md">{body.text}</div>
-          </>
-        )}
-      </div>
-    </aside>
-  );
+  }, [skill.path, scanAt, retry]);
+  const source = SRC[skill.source];
+  return <aside className="skills-reader" aria-label={`${skill.name} SKILL.md`}>
+    <div className="skills-reader-intro">
+      <SectionHead label="Selected workflow" right={<Mark glyph={source.glyph} word={source.word} tone="quiet" />} />
+      <h2>{skill.name}</h2><p>{skill.description}</p>
+      <div className="skills-invocation"><code>{skill.invoke}</code><button className="btn btn-sm" onClick={onCopy}>Copy invocation</button>{canSend && <button className="btn btn-primary btn-sm" disabled={sending} onClick={onSend}>{sending ? 'Typing…' : 'Type into session'}</button>}</div>
+      <Hint>{canSend ? 'Types into the selected session without pressing Enter. Review it there before running.' : 'Copy the invocation to use it in a session. Reading and copying work here at any time.'}</Hint>
+    </div>
+    <Segmented label="Skill reader section" value={area} onChange={setArea} options={[{value:'document',label:'SKILL.md'},{value:'details',label:'Details'}]} />
+    <div className="skills-reader-content" key={area}>
+      {area === 'document' ? err ? <EmptyState posture="could-not-read" title="This skill could not be read" cue={err} action={<button className="btn" onClick={() => setRetry(n => n + 1)}>Retry reading</button>} /> : !body ? <Reading what="SKILL.md" /> : <>
+        {body.truncated && <Note tone="warn">Showing the first 200 KB of a {fileSize(body.bytes)} file. Reveal its folder to read the rest.</Note>}
+        <pre className="skills-md">{body.text}</pre>
+      </> : <div className="skills-details">
+        <SectionHead label="On disk" />
+        <dl><div><dt>Source</dt><dd>{source.word} · {source.blurb}</dd></div><div><dt>File</dt><dd><code>{skill.path}</code></dd></div><div><dt>Size</dt><dd>{fileSize(skill.bytes)}</dd></div><div><dt>Modified</dt><dd>{ago(skill.modified)}</dd></div><div><dt>Helper files</dt><dd>{skill.extras}</dd></div>{skill.plugin && <div><dt>Plugin</dt><dd>{skill.plugin}{skill.marketplace ? ` · ${skill.marketplace}` : ''}</dd></div>}</dl>
+        {skill.allowedTools.length > 0 && <><SectionHead label="Declared tools" /><div className="skills-tools">{skill.allowedTools.map(tool => <code key={tool}>{tool}</code>)}</div></>}
+        {source.id === 'builtin' && <Note tone="info">This is an extracted built-in observed on disk. The catalogue does not list every skill bundled with Claude Code.</Note>}
+      </div>}
+    </div>
+    <div className="skills-reader-footer"><Hint>Read from disk · {fileSize(body?.bytes ?? skill.bytes)}</Hint><button className="link" onClick={() => { setRevealErr(null); void window.wanigan.browse.reveal(skill.dir).catch(error => setRevealErr(msg(error))); }}>Reveal folder</button></div>
+    {revealErr && <Note tone="error">Could not reveal the folder: {revealErr}</Note>}
+  </aside>;
 }

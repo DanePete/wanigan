@@ -1,0 +1,15 @@
+{
+  "at": "2026-09-10T21:14:52.275Z",
+  "provenance": "Actual Electron renderer; synthetic account and session evidence; no real operations",
+  "checks": [
+    "live attention reordering retains selection; interrupt requires confirmation and reaches only the selected session",
+    "changing session clears stop confirmation; sorting preserves inspector; full metric table remains available and missing costs stay unreported",
+    "21-session fleet stays bounded and retains roster scroll across route changes",
+    "account selection uses identity across duplicate labels, never probes again, retains unsupported limits and never invents a zero cost",
+    "a late window response cannot replace the current window; a failed refresh retains the last account records",
+    "budget and reconciliation drafts survive report switches; only the deliberate budget save writes; navigation never reconciles",
+    "report visibility is exclusive; reporting window and meter controls remain functional and explain their scope",
+    "all three workspaces fit an 820px desktop window in both themes; selected account and reporting windows survive route changes"
+  ],
+  "errors": []
+}

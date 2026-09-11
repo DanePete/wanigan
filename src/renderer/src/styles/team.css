@@ -1,0 +1,28 @@
+/* Shared team observations: task ownership and dependencies carry the hierarchy. */
+.team-workspace { display: grid; gap: var(--s-3); margin-block: var(--s-4); padding: var(--s-5); border-block: 1px solid var(--line); background: var(--bg-raised); border-radius: var(--r-lg); min-width: 0; }
+.team-workspace .sec-head { margin: 0; }
+.team-summary { display: flex; align-items: center; gap: var(--s-4); flex-wrap: wrap; color: var(--text-dim); font-size: var(--t-small); }
+.team-summary > strong { color: var(--text); font-size: var(--t-body); font-weight: 550; }
+.team-note { margin: 0; color: var(--text-faint); font-size: var(--t-small); line-height: 1.5; max-width: 76ch; }
+.team-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); }
+.team-tools .field { flex: 1; min-width: 180px; }
+.team-detail { display: grid; gap: var(--s-3); min-width: 0; border-top: 1px solid var(--line); padding-block: var(--s-4); }
+.team-detail .sec-head .label { text-transform: none; letter-spacing: normal; font-size: var(--t-body); overflow-wrap: anywhere; }
+.team-members { display: flex; flex-wrap: wrap; gap: var(--s-4); list-style: none; margin: 0; padding: 0; }
+.team-members li { display: flex; gap: var(--s-2); font-size: var(--t-small); }
+.team-members strong { font-weight: 550; }.team-members span { color: var(--text-faint); }
+.team-tasks { list-style: none; padding: 0; margin: 0; }
+.team-tasks > li { display: flex; gap: var(--s-4); justify-content: space-between; align-items: start; padding-block: var(--s-3); border-bottom: 1px solid var(--line-soft); }
+.team-task-description { display: grid; gap: var(--s-1); min-width: 0; }
+.team-task-description strong { font-size: var(--t-body); font-weight: 500; overflow-wrap: anywhere; }
+.team-task-description > span { font-size: var(--t-small); color: var(--text-faint); }
+.team-blocker { margin: 0; color: var(--warning); font-size: var(--t-small); }
+.team-list-end { display: flex; justify-content: space-between; align-items: center; font-size: var(--t-small); color: var(--text-faint); }
+.team-mail { border-top: 1px solid var(--line); padding-top: var(--s-3); }
+.team-mail > summary { cursor: pointer; font-size: var(--t-small); font-weight: 550; }.team-mail > summary span { color: var(--text-faint); margin-left: var(--s-2); }
+.team-mail > .team-note { margin-top: var(--s-3); }
+.team-mail article { padding-block: var(--s-3); border-bottom: 1px solid var(--line-soft); }
+.team-mail article > div { display: flex; justify-content: space-between; gap: var(--s-3); font-size: var(--t-small); }
+.team-mail article strong { font-weight: 550; overflow-wrap: anywhere; }.team-mail time { color: var(--text-faint); flex-shrink: 0; }
+.team-mail article p { max-width: 76ch; margin-top: var(--s-2); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-dim); font-size: var(--t-body); line-height: 1.55; }
+@media (max-width: 800px) { .team-workspace { padding: var(--s-3); }.team-tasks > li { flex-direction: column; gap: var(--s-2); }.team-tools .seg { max-width: 100%; overflow-x: auto; } }

@@ -1,0 +1,20 @@
+{
+  "kind": "Electron renderer; synthetic fixtures; no real agent or repository operations",
+  "at": "2026-09-10T18:38:58.483Z",
+  "dimensions": {
+    "dark": {
+      "x": 261,
+      "y": 346.5234375,
+      "width": 1166,
+      "height": 350.4765625
+    },
+    "light": {
+      "x": 261,
+      "y": 346.5234375,
+      "width": 1166,
+      "height": 350.4765625
+    }
+  },
+  "checks": [],
+  "errors": []
+}

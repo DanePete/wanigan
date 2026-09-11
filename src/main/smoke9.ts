@@ -95,7 +95,7 @@ export async function runContextMeterSmoke(check: Check, say: Say): Promise<void
       'a reported window is keyed to the exact model spelling, backend and account, and answers for nothing else');
       write(`${convReported}.jsonl`, [usageLine({ in: 100_000 }, 'claude-opus-5')]);
       r = claudeContextUsage(cwd, convReported, since);
-      check(r.kind === 'ok' && r.window === 200_000 && r.windowSource === 'cli-reported' && /reported by the Claude CLI/.test(r.windowNote ?? '')
+      check(r.kind === 'ok' && r.window === 200_000 && r.conversationMatch === 'exact' && r.windowSource === 'cli-reported' && /reported by the Claude CLI/.test(r.windowNote ?? '')
         && /not measured/.test(r.windowNote ?? ''),
       'a session under the same model, backend and account uses the CLI-reported window and says it is reported, not measured', JSON.stringify(r));
       write(`${convReported}.jsonl`, [usageLine({ in: 100_000 }, 'claude-opus-5[1m]')]);
@@ -155,7 +155,7 @@ export async function runContextMeterSmoke(check: Check, say: Say): Promise<void
     fs.utimesSync(path.join(projectDir, 'old.jsonl'), old, old);
     fs.utimesSync(path.join(projectDir, 'new.jsonl'), fresh, fresh);
     r = claudeContextUsage(cwd, 'conv-gone', since);
-    check(r.kind === 'ok' && r.tokens === 22_000,
+    check(r.kind === 'ok' && r.tokens === 22_000 && r.conversationMatch === 'lifetime-fallback',
       'a missing conversation id falls back to the newest transcript written in this session\u2019s lifetime', JSON.stringify(r));
     check(claudeContextUsage(cwd, 'conv-gone', Date.now() + 3_600_000 + 300_000).kind === 'no-transcript',
       'a transcript older than the session is never claimed as this session\u2019s context');

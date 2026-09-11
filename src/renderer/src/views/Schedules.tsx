@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Project } from '@shared/types';
-import { ConfirmNote, Explainer, Note, Stat, ago, num, usd } from '../components/bits';
+import { Chip, ConfirmNote, EmptyState, Explainer, Note, PageHead, Pill, Reading, SectionHead, Segmented, ago, num, usd } from '../components/bits';
+import { useLiveViewMemory } from '../components/planningMemory';
+import { useViewMemory } from '../components/viewMemory';
 
 /* What a schedule can be created as.
    'session' is deliberately absent. An unattended PTY that nobody is watching
@@ -111,745 +113,250 @@ const namesOf = (projects: Project[], cap = 6): string =>
     ? projects.map((p) => p.name).join(', ')
     : `${projects.slice(0, cap).map((p) => p.name).join(', ')} and ${projects.length - cap} more`;
 
-export default function Schedules({ projects }: { projects: Project[] }) {
-  const [list, setList] = useState<Schedule[]>([]);
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+type Draft = { name:string; cron:string; kind:Kind; projectId:string; prompt:string; allProjects:boolean; rerunId:string };
+type Fire = { at:number; status:string; detail:string|null };
+type Preview = { cron:string; fires:number[]; describe:string };
+type Daemon = { supported:boolean; installed:boolean; detail:string };
+const errorText = (cause:unknown) => cause instanceof Error ? cause.message : String(cause);
+const promptOf = (row:Schedule) => row.payload && typeof row.payload === 'object' && 'prompt' in row.payload && typeof row.payload.prompt === 'string' ? row.payload.prompt : '';
+const newDraft = (projectId:string):Draft => ({name:'',cron:'3 3 * * *',kind:'headless',projectId,prompt:'',allProjects:false,rerunId:''});
+const fromSchedule = (row:Schedule):Draft => ({name:row.name,cron:row.cron,kind:row.kind==='batch'?'batch':'headless',projectId:row.projectId??'',prompt:promptOf(row),allProjects:declaresAllProjects(row.payload),rerunId:batchTarget(row.payload)?.runId??''});
+const needsAttention = (row:Schedule) => row.kind==='session' || (row.kind==='batch'&&!batchTarget(row.payload)) || (row.kind==='headless'&&!row.projectId&&!declaresAllProjects(row.payload)) || ['failed','unknown'].includes(row.lastStatus??'');
+const clockTime = (at:number|null) => at===null?'—':new Date(at).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+const calendarDay = (at:number|null) => at===null?'No date':new Date(at).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
 
-  const [name, setName] = useState('');
-  const [cron, setCron] = useState('3 3 * * *');
-  const [kind, setKind] = useState<Kind>('headless');
-  const [projectId, setProjectId] = useState('');
-  // Deliberately not defaulted to true. The whole point of the flag is that
-  // nothing but a person can set it.
-  const [allProjects, setAllProjects] = useState(false);
-  const [prompt, setPrompt] = useState('');
-  const [rerunId, setRerunId] = useState('');
-  const [runs, setRuns] = useState<RunOption[]>([]);
-  const [runsErr, setRunsErr] = useState<string | null>(null);
-  const [cap, setCap] = useState<number | null>(null);
-  const [preview, setPreview] = useState<{ fires: number[]; describe: string } | null>(null);
-  const [previewErr, setPreviewErr] = useState<string | null>(null);
-  const [hist, setHist] = useState<Record<string, { at: number; status: string; detail: string | null }[]>>({});
-  const [histErr, setHistErr] = useState<Record<string, string>>({});
-  const [daemon, setDaemon] = useState<{ supported: boolean; installed: boolean; detail: string } | null>(null);
-  const [checking, setChecking] = useState(false);
-  const [checked, setChecked] = useState<string | null>(null);
+export default function Schedules({ projects }: { projects:Project[] }) {
+  const [list,setList] = useLiveViewMemory<Schedule[]>('scheduleRows',[]);
+  const [selected,setSelected] = useLiveViewMemory<string|null>('selectedSchedule',null);
+  const [ready,setReady] = useState(false), [refreshing,setRefreshing] = useState(false);
+  const [readError,setReadError] = useState<string|null>(null);
+  const [actionError,setActionError] = useLiveViewMemory<string|null>('scheduleActionError',null);
+  const [notice,setNotice] = useLiveViewMemory<string|null>('scheduleNotice',null);
+  const [job,setJob] = useLiveViewMemory<string|null>('scheduleJob',null);
+  const [query,setQuery] = useViewMemory('scheduleQuery','');
+  const [filter,setFilter] = useViewMemory('scheduleFilter','all');
+  const [editor,setEditor] = useLiveViewMemory<string|null>('scheduleEditor',null);
+  const [drafts,setDrafts] = useLiveViewMemory<Record<string,Draft>>('scheduleDrafts',{});
+  const [confirmDelete,setConfirmDelete] = useState<string|null>(null);
+  const [cap,setCap] = useState<number|null>(null);
+  const [daemon,setDaemon] = useLiveViewMemory<Daemon|null>('scheduleDaemon',null);
+  const [daemonError,setDaemonError] = useState<string|null>(null);
+  const [revision,setRevision] = useLiveViewMemory('scheduleRevision',0);
+  const [runs,setRuns] = useState<RunOption[]>([]), [runsError,setRunsError] = useState<string|null>(null);
+  const [hist,setHist] = useState<Record<string,Fire[]>>({});
+  const [histError,setHistError] = useState<Record<string,string>>({});
+  const [histBusy,setHistBusy] = useState<string|null>(null);
+  const alive=useRef(true), readSequence=useRef(0), historySequence=useRef(0), lock=useRef(false);
+  const newButton=useRef<HTMLButtonElement>(null), inspector=useRef<HTMLDivElement>(null);
+  const selectedRef=useRef(selected);selectedRef.current=selected;
+  const ordered=[...list].sort((a,b)=>Number(b.enabled)-Number(a.enabled)||(a.enabled?(a.nextAt??Infinity)-(b.nextAt??Infinity):0)||a.name.localeCompare(b.name)||a.id.localeCompare(b.id));
+  const visible=ordered.filter(row=>(filter==='all'||filter==='enabled'&&row.enabled||filter==='paused'&&!row.enabled||filter==='attention'&&needsAttention(row))&&`${row.name} ${projects.find(project=>project.id===row.projectId)?.name??''} ${row.cron}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const current=list.find(row=>row.id===selected)??null;
+  const draft=editor ? drafts[editor] : undefined;
+  const enabled=list.filter(row=>row.enabled).length;
+  const mutationDisabled=!!job||!ready||!!readError;
+  const clearFilters=()=>{setQuery('');setFilter('all');};
 
-  // Editing in place, one row at a time. The form follows the create form's
-  // rules — in particular `allProjects` is never carried across an edit that
-  // removes the project pin; the operator ticks it again or the save is refused.
-  const [editing, setEditing] = useState<string | null>(null);
-  /**
-   * Which schedule is one click from being deleted.
-   *
-   * Delete used to fire on the first click. It removes the row and its run
-   * history and nothing in this view can put either back, while Git and Runs
-   * both confirm before their destructive actions — so this was the one place
-   * in the app where a misclick was permanent, and inconsistent as well as
-   * unsafe.
-   */
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState<string | null>(null);
-  const [edit, setEdit] = useState<{ name: string; cron: string; projectId: string; prompt: string; allProjects: boolean; rerunId: string }>(
-    { name: '', cron: '', projectId: '', prompt: '', allProjects: false, rerunId: '' });
-  const [editErr, setEditErr] = useState<string | null>(null);
-  const [editBusy, setEditBusy] = useState(false);
-  const editingKind = list.find((s) => s.id === editing)?.kind;
-
-  const load = useCallback(async () => {
-    try { setList(await window.wanigan.schedule.list()); setErr(null); }
-    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
-    // The cap lives in Settings and there is no settings-changed channel, so
-    // reading it once per view mount left this screen quoting a cap the user
-    // had already lowered. It rides the same beat as the list instead. Its own
-    // try: a settings read that fails must not blank the schedule list.
-    try { setCap((await window.wanigan.settings.get()).spendCapUsd); }
-    catch { /* the cap shown here is a warning; submit.ts holds the real one */ }
-  }, []);
-  // Two IPC reads a beat, forever, for a table that is one tab away. The
-  // scheduler keeps its own time either way — this poll only decides how fresh
-  // the screen is, so it stops while nobody is on it and catches up on return.
+  const load=useCallback(async()=>{
+    const request=++readSequence.current;setRefreshing(true);
+    try {
+      const rows:Schedule[]=await window.wanigan.schedule.list();
+      if(!alive.current||request!==readSequence.current)return;
+      setList(rows);setReadError(null);setReady(true);
+      if(!rows.some(row=>row.id===selectedRef.current)) {
+        const first=[...rows].sort((a,b)=>Number(b.enabled)-Number(a.enabled)||(a.nextAt??Infinity)-(b.nextAt??Infinity))[0];
+        setSelected(first?.id??null);setConfirmDelete(null);
+      }
+    }catch(cause){if(alive.current&&request===readSequence.current){setReadError(errorText(cause));setReady(true);}}
+    finally{if(alive.current&&request===readSequence.current)setRefreshing(false);}
+    try {const value=(await window.wanigan.settings.get()).spendCapUsd;if(alive.current&&request===readSequence.current)setCap(value);}
+    catch {if(alive.current&&request===readSequence.current)setCap(null);}
+  },[]);
+  useEffect(()=>{alive.current=true;return()=>{alive.current=false;readSequence.current++;historySequence.current++;};},[]);
   useEffect(() => {
     void load();
     const t = setInterval(() => { if (document.hidden) return; void load(); }, 15_000);
     const onVisible = () => { if (!document.hidden) void load(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVisible); };
-  }, [load]);
-  useEffect(() => { void window.wanigan.schedule.daemon().then(setDaemon).catch(() => {}); }, []);
+  }, [load,revision]);
+  const readDaemon=()=>window.wanigan.schedule.daemon().then(value=>{if(alive.current){setDaemon(value);setDaemonError(null);}}).catch(cause=>{if(alive.current)setDaemonError(errorText(cause));});
+  useEffect(()=>{void readDaemon();},[]);
+  useEffect(()=>{
+    if(draft?.kind!=='batch')return;
+    let live=true;
+    void window.wanigan.batch.runs().then((rows:RunOption[])=>{if(live){setRuns(rows.filter(row=>row.kind==='batch'));setRunsError(null);}}).catch(cause=>{if(live)setRunsError(errorText(cause));});
+    return()=>{live=false;};
+  },[draft?.kind]);
+  const history=useCallback(async(id:string)=>{
+    const request=++historySequence.current;setHistBusy(id);setHistError(values=>({...values,[id]:''}));
+    try {const rows=await window.wanigan.schedule.history(id,8);if(alive.current&&request===historySequence.current)setHist(values=>({...values,[id]:rows}));}
+    catch(cause){if(alive.current&&request===historySequence.current)setHistError(values=>({...values,[id]:errorText(cause)}));}
+    finally{if(alive.current&&request===historySequence.current)setHistBusy(null);}
+  },[]);
+  useEffect(()=>{if(selected)void history(selected);else historySequence.current++;},[selected,revision,history]);
+  useEffect(()=>{setConfirmDelete(null);inspector.current?.scrollTo({top:0});},[selected,editor]);
+  useEffect(()=>{if(editor)inspector.current?.querySelector<HTMLElement>('[data-schedule-initial]')?.focus();},[editor]);
 
-  /* The scheduler ticks every 20 seconds, and a fire that came due while
-     Wanigan was closed waits for the first tick after it opens. This runs that
-     tick now. It cannot pull a schedule forward past its own window — nothing
-     in the IPC surface can — so it says which of the two happened rather than
-     letting an empty result read as a broken button. */
-  async function runDue() {
-    setChecking(true); setChecked(null);
-    try {
-      const fired = await window.wanigan.schedule.tick();
-      await load();
-      setChecked(fired === 0
-        ? 'Nothing started: nothing was due, or the scheduler was already mid-tick. A schedule is never pulled forward past its own window.'
-        : `Started ${fired} fire${fired === 1 ? '' : 's'} — open History on a schedule for what it came to.`);
-      setErr(null);
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
-    finally { setChecking(false); }
-  }
-
-  async function toggleDaemon(on: boolean) {
-    try {
-      const next = on ? await window.wanigan.schedule.installDaemon() : await window.wanigan.schedule.uninstallDaemon();
-      setDaemon(next); setErr(null);
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
-  }
-
-  // Show the next five fires before anything is saved. A cron expression you
-  // cannot read is a schedule you cannot audit.
-  useEffect(() => {
-    let live = true;
-    window.wanigan.schedule.preview(cron)
-      .then((p) => { if (live) { setPreview(p); setPreviewErr(null); } })
-      .catch((e) => { if (live) { setPreview(null); setPreviewErr(e instanceof Error ? e.message : String(e)); } });
-    return () => { live = false; };
-  }, [cron]);
-
-  // Only fetched once a batch is actually being described. Both of these are
-  // database reads the headless path has no use for, and the run list carries
-  // every run's config with it.
-  useEffect(() => {
-    if (kind !== 'batch' && editingKind !== 'batch') return;
-    let live = true;
-    void (async () => {
-      try {
-        const rows = (await window.wanigan.batch.runs()) as RunOption[];
-        // Headless fan-outs live in the same runs table. A HeadlessConfig is not
-        // a RunConfig, so offering one here would build a schedule that submits
-        // nonsense at 03:00 rather than one that fails now.
-        if (live) { setRuns(rows.filter((r) => r.kind === 'batch')); setRunsErr(null); }
-      } catch (e) { if (live) setRunsErr(e instanceof Error ? e.message : String(e)); }
-    })();
-    return () => { live = false; };
-  }, [kind, editingKind]);
-
-  const chosen = runs.find((r) => r.id === rerunId) ?? null;
-  // Only claimed when the run's settled cost is already over the cap: the cap is
-  // checked against the ceiling of a fresh estimate, so a run that has actually
-  // billed more than the cap cannot come in under it by accident. The reverse
-  // inference would be a false green.
-  const overCap = chosen !== null && cap !== null && cap > 0 && chosen.cost_usd > cap;
-
-  /* A headless schedule with no repository pinned is a fan-out across the whole
-     registered list, now and every project added after it. That is the one
-     selection nothing downstream can tell apart from an accident, so this form
-     is where it is either declared or refused. A batch re-run ignores the
-     project entirely — it submits the run's own config — so none of this
-     applies to it. */
-  const unpinned = kind === 'headless' && !projectId;
-  const fanOut = unpinned && allProjects;
-  const noRepos = unpinned && projects.length === 0;
-  const needsIntent = unpinned && projects.length > 0 && !allProjects;
-  const fanOutCeilingUsd = PER_REPO_BUDGET_USD * projects.length;
-
-  async function create() {
-    setBusy(true);
-    try {
-      const target = kind === 'batch' ? runs.find((r) => r.id === rerunId) : undefined;
-      if (kind === 'batch' && !target) {
-        throw new Error('Pick the run this schedule re-submits. A batch is a dataset, a model and a template — a prompt box cannot carry one.');
-      }
-      await window.wanigan.schedule.create({
-        name: name.trim() || (target ? `re-run · ${target.name}` : `${kind} · ${cron}`),
-        cron: cron.trim(), kind,
-        // A batch is a whole RunConfig, so the payload names the run to
-        // re-submit and the runner reads that run's config when it fires.
-        // Copying the config in here instead would freeze the dataset at the
-        // moment the schedule was written and put a second copy of the prompt
-        // somewhere nobody would think to look for it.
-        //
-        // `allProjects` is stored on the schedule rather than decided when it
-        // fires: it is the operator's declaration, and the fire happens with
-        // nobody there to make one. It is written only for a schedule that
-        // really is unpinned, so a pinned row cannot carry a claim about a
-        // fan-out it will never do.
-        payload: target
-          ? { runId: target.id, runName: target.name }
-          : { prompt: prompt.trim(), allProjects: fanOut },
-        projectId: projectId || null,
-      });
-      setName(''); setPrompt(''); setRerunId(''); setAllProjects(false);
-      await load();
-      setErr(null);
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
-    finally { setBusy(false); }
-  }
-
-  async function toggle(s: Schedule) {
-    try { await window.wanigan.schedule.setEnabled(s.id, !s.enabled); await load(); }
-    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
-  }
-  async function remove(s: Schedule) {
-    setDeleting(s.id);
-    try { await window.wanigan.schedule.remove(s.id); setConfirmDelete(null); await load(); }
-    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
-    finally { setDeleting(null); }
-  }
-  function beginEdit(s: Schedule) {
-    const target = batchTarget(s.payload);
-    const payload = (s.payload && typeof s.payload === 'object' ? s.payload : {}) as { prompt?: unknown };
-    setEdit({
-      name: s.name, cron: s.cron, projectId: s.projectId ?? '',
-      prompt: typeof payload.prompt === 'string' ? payload.prompt : '',
-      allProjects: declaresAllProjects(s.payload), rerunId: target?.runId ?? '',
+  const mutate=async(label:string,work:()=>Promise<void>)=>{
+    if(lock.current||job)return;
+    lock.current=true;setJob(label);setActionError(null);setNotice(null);
+    try {await work();setRevision(value=>value+1);}
+    catch(cause){setActionError(errorText(cause));}
+    finally{lock.current=false;setJob(null);}
+  };
+  const choose=(id:string)=>{setSelected(id);setEditor(null);setConfirmDelete(null);setActionError(null);setNotice(null);};
+  const begin=(id:string)=>{
+    if(job)return;
+    const row=list.find(row=>row.id===id);
+    if(id!=='new'&&!row)return;
+    setDrafts(values=>values[id]?values:{...values,[id]:row?fromSchedule(row):newDraft(projects[0]?.id??'')});
+    setEditor(id);setConfirmDelete(null);setActionError(null);setNotice(null);
+  };
+  const closeEditor=()=>{
+    if(editor&&editor!=='new')setDrafts(values=>{const next={...values};delete next[editor];return next;});
+    setEditor(null);setActionError(null);requestAnimationFrame(()=>newButton.current?.focus());
+  };
+  const save=async()=>{
+    if(!editor||!draft||mutationDisabled)return;
+    const id=editor,value=draft,target=runs.find(row=>row.id===value.rerunId);
+    await mutate(id==='new'?'create':'save',async()=>{
+      if(value.kind==='batch'&&!target)throw new Error('Choose a saved batch run before saving.');
+      const payload=target&&value.kind==='batch'?{runId:target.id,runName:target.name}:{prompt:value.prompt.trim(),allProjects:!value.projectId&&value.allProjects};
+      const input={name:value.name.trim(),cron:value.cron.trim(),payload,projectId:value.projectId||null};
+      const saved:Schedule|null=id==='new'?await window.wanigan.schedule.create({...input,kind:value.kind}):await window.wanigan.schedule.update(id,input);
+      if(!saved)throw new Error('This schedule no longer exists. Your draft is still here.');
+      setList(rows=>[...rows.filter(row=>row.id!==saved.id),saved]);setSelected(saved.id);setEditor(null);clearFilters();
+      setDrafts(values=>{const next={...values};delete next[id];return next;});
+      setNotice(id==='new'?'Schedule created. Its next due time is shown below.':'Schedule updated.');
     });
-    setEditErr(null);
-    setEditing(s.id);
-  }
-  /** The save button names what will change, so a wrong edit is caught before it is written. */
-  function editChanges(s: Schedule): string[] {
-    const out: string[] = [];
-    if (edit.name.trim() && edit.name.trim() !== s.name) out.push(`name → “${edit.name.trim()}”`);
-    if (edit.cron.trim() !== s.cron) out.push(`cron ${s.cron} → ${edit.cron.trim()}`);
-    const newProject = edit.projectId || null;
-    if (newProject !== (s.projectId ?? null)) {
-      out.push(`project ${projects.find((p) => p.id === s.projectId)?.name ?? 'every repository'} → ${projects.find((p) => p.id === newProject)?.name ?? 'every repository'}`);
-    }
-    if (s.kind === 'headless') {
-      const payload = (s.payload && typeof s.payload === 'object' ? s.payload : {}) as { prompt?: unknown };
-      if (edit.prompt.trim() !== (typeof payload.prompt === 'string' ? payload.prompt : '')) out.push('prompt');
-      const willDeclare = !newProject && edit.allProjects;
-      if (willDeclare !== declaresAllProjects(s.payload)) out.push(willDeclare ? 'declares every repository' : 'no longer declares every repository');
-    } else if (s.kind === 'batch' && edit.rerunId !== (batchTarget(s.payload)?.runId ?? '')) {
-      out.push(`re-runs ${runs.find((r) => r.id === edit.rerunId)?.name ?? edit.rerunId}`);
-    }
-    return out;
-  }
-  async function saveEdit(s: Schedule) {
-    setEditBusy(true); setEditErr(null);
-    try {
-      const patch: { name?: string; cron?: string; payload?: unknown; projectId?: string | null } = {};
-      if (edit.name.trim() && edit.name.trim() !== s.name) patch.name = edit.name.trim();
-      if (edit.cron.trim() !== s.cron) patch.cron = edit.cron.trim();
-      const newProject = edit.projectId || null;
-      if (newProject !== (s.projectId ?? null)) patch.projectId = newProject;
-      if (s.kind === 'headless') {
-        // Written every time so a removed pin cannot leave a stale declaration behind.
-        patch.payload = { prompt: edit.prompt.trim(), allProjects: !newProject && edit.allProjects };
-      } else if (s.kind === 'batch') {
-        const target = runs.find((r) => r.id === edit.rerunId);
-        if (!target) throw new Error('Pick the run this schedule re-submits. A batch is a dataset, a model and a template — a prompt box cannot carry one.');
-        patch.payload = { runId: target.id, runName: target.name };
-      }
-      await window.wanigan.schedule.update(s.id, patch);
-      setEditing(null);
-      await load();
-    } catch (e) { setEditErr(e instanceof Error ? e.message : String(e)); }
-    finally { setEditBusy(false); }
-  }
-  async function history(s: Schedule) {
-    if (hist[s.id]) { setHist((h) => { const n = { ...h }; delete n[s.id]; return n; }); return; }
-    setHistErr((h) => { const n = { ...h }; delete n[s.id]; return n; });
-    try {
-      const rows = await window.wanigan.schedule.history(s.id, 8);
-      setHist((h) => ({ ...h, [s.id]: rows }));
-    } catch (e) {
-      // A schedule that has never fired resolves with zero rows and renders
-      // "Never fired yet." A read that failed is a different thing, and
-      // swallowing it made the History button look like a dead control.
-      setHistErr((h) => ({ ...h, [s.id]: e instanceof Error ? e.message : String(e) }));
-    }
-  }
-
-  const live = list.filter((s) => s.enabled);
-  const nextUp = live.filter((s) => s.nextAt).sort((a, b) => (a.nextAt ?? 0) - (b.nextAt ?? 0))[0];
-
-  /* Saved before the fan-out had to be declared, so nothing in the row says
-     what it meant. Counted at the top because the rows that carry it can be
-     anywhere in a long list, and a schedule that will refuse at 03:00 is worth
-     finding at 14:00. */
-  const undeclared = list.filter((s) => s.kind === 'headless' && !s.projectId && !declaresAllProjects(s.payload));
-
-  // Worst last word across every schedule, in the order an operator cares
-  // about. A failure outranks a fire nobody answered for, which outranks a
-  // clean one — and never having fired is not a clean one.
-  const firstWith = (status: string) => list.find((s) => s.lastStatus === status) ?? null;
-  const failed = firstWith('failed');
-  const unreported = firstWith('unknown');
-  const settled = firstWith('ok');
-  const worst = failed
-    ? { value: 'failed', tone: 'var(--bad)', sub: failed.name }
-    : unreported
-      ? { value: 'unreported', tone: 'var(--warning)', sub: `${unreported.name} — dispatched, no outcome recorded` }
-      : settled
-        ? { value: 'ok', tone: undefined, sub: settled.name }
-        : { value: '—', tone: undefined, sub: list.length ? 'no fire has reported an outcome yet' : 'nothing scheduled' };
-
-  return (
-    <div className="pane sc-wrap">
-      <div className="pane-head sc-head">
-        <h1>Schedules</h1>
-        <span className="n">{live.length} running · {list.length - live.length} paused</span>
+  };
+  const toggle=(row:Schedule)=>mutate(`toggle:${row.id}`,async()=>{
+    const updated:Schedule|null=await window.wanigan.schedule.setEnabled(row.id,!row.enabled);
+    if(!updated)throw new Error('This schedule no longer exists. Refresh schedules.');
+    setList(rows=>rows.map(item=>item.id===updated.id?updated:item));
+    setNotice(row.enabled?'Schedule paused. Work already started keeps running.':'Schedule resumed.');
+  });
+  const remove=(row:Schedule)=>mutate(`delete:${row.id}`,async()=>{
+    const removed=await window.wanigan.schedule.remove(row.id);
+    if(!removed)throw new Error('This schedule was already removed. Refresh schedules.');
+    setList(rows=>rows.filter(item=>item.id!==row.id));setConfirmDelete(null);setNotice('Schedule and its history deleted. Work already started keeps running.');
+  });
+  const runDue=()=>mutate('tick',async()=>{
+    const fired=await window.wanigan.schedule.tick();
+    setNotice(fired===0?'No new occurrences queued. Nothing was due, the fleet is halted, or a scheduler check was already in progress.':`${fired} due occurrence${fired===1?' was':'s were'} queued. Check the recorded history for the outcome.`);
+  });
+  const toggleDaemon=()=>mutate('daemon',async()=>{
+    if(!daemon) return;
+    setDaemon(daemon.installed?await window.wanigan.schedule.uninstallDaemon():await window.wanigan.schedule.installDaemon());
+  });
+  return <div className="pane wide sc-wrap">
+    <PageHead title="Schedules" lead={readError&&!list.length?'Schedule list unavailable':ready?`${enabled} enabled · ${list.length-enabled} paused · times are local to this Mac`:'Reading your schedules…'} actions={<>
+      <button className="btn" type="button" disabled={refreshing} onClick={()=>void load()}>Refresh schedules</button>
+      <button className="btn btn-primary" type="button" ref={newButton} disabled={mutationDisabled} onClick={()=>begin('new')}>New schedule</button>
+    </>} />
+    {readError&&<div className="sc-read-error"><Note tone="error">{readError}{list.length>0?' Showing the last readable records. Refresh before making changes.':''}</Note></div>}
+    {!editor&&actionError&&<Note tone="error">{actionError}</Note>}
+    {notice&&<Note>{notice}</Note>}
+    <div className="sc-workspace">
+      <aside className="sc-agenda" aria-label="Schedule agenda">
+        <SectionHead label="Up next" count={list.length} />
+        <input className="field" type="search" aria-label="Search schedules" value={query} placeholder="Find a schedule or project" onChange={event=>setQuery(event.target.value)} />
+        <Segmented label="Schedule filter" value={filter} onChange={setFilter} options={[{value:'all',label:'All'},{value:'enabled',label:'Enabled'},{value:'paused',label:'Paused'},{value:'attention',label:'Attention'}]} />
+        {(query||filter!=='all')&&<button className="btn btn-sm" type="button" onClick={clearFilters}>Clear filters</button>}
+        {!ready?<Reading what="schedules" />:visible.length===0?<EmptyState posture={readError?'could-not-read':list.length?'nothing-in-scope':'nothing-yet'} title={readError?'Schedule list unavailable':list.length?'No matching schedules':'Nothing scheduled yet'} cue={list.length?'Try another name or clear the filters.':undefined} />:
+          <div className="sc-agenda-list">{visible.map((row,index)=><div key={row.id}>
+            {(index===0||row.enabled!==visible[index-1].enabled)&&<p className="sc-group">{row.enabled?'Upcoming':'Paused'}</p>}
+            <button className="sc-entry" type="button" data-schedule-id={row.id} aria-pressed={selected===row.id&&!editor} onClick={()=>choose(row.id)}>
+              <span className="sc-time"><strong>{row.enabled?clockTime(row.nextAt):'Ⅱ'}</strong><small>{row.enabled?calendarDay(row.nextAt):'Paused'}</small></span>
+              <span className="sc-entry-copy"><strong>{row.name}</strong><span>{row.projectId?projects.find(project=>project.id===row.projectId)?.name??'Project unavailable':row.kind==='batch'?'Saved batch':declaresAllProjects(row.payload)?'Every repository':'Scope needs review'}</span>
+                <span className="sc-entry-state">{needsAttention(row)?'Needs attention':row.lastStatus?outcome(row.lastStatus).text:'Not run yet'}</span></span>
+            </button>
+          </div>)}</div>}
+      </aside>
+      <div className="sc-inspector" ref={inspector}>
+        {editor&&draft?<ScheduleEditor key={editor} draft={draft} setDraft={value=>setDrafts(values=>({...values,[editor]:value}))} projects={projects} runs={runs} runsError={runsError} cap={cap} existing={editor==='new'?null:list.find(row=>row.id===editor)??null} creating={editor==='new'} busy={!!job} disabled={mutationDisabled} error={actionError} onSave={()=>void save()} onCancel={closeEditor} />:
+        current?<div className="sc-reading" key={current.id}>
+          <div className="sc-identity"><Pill status={current.enabled?'Enabled':'Paused'} tone={current.enabled?'ok':'quiet'} /><span>{current.kind==='headless'?'Headless run':current.kind==='batch'?'Batch re-run':'Legacy terminal'}</span></div>
+          <h2 data-schedule-id={current.id}>{current.name}</h2>
+          <div className="sc-actions">
+            <button className="btn btn-sm" type="button" disabled={mutationDisabled} onClick={()=>void toggle(current)}>{job===`toggle:${current.id}`?(current.enabled?'Pausing…':'Resuming…'):current.enabled?'Pause':'Resume'}</button>
+            {current.kind!=='session'&&<button className="btn btn-sm" type="button" disabled={mutationDisabled} onClick={()=>begin(current.id)}>Edit</button>}
+            <button className="btn btn-sm" type="button" disabled={histBusy===current.id} onClick={()=>void history(current.id)}>Refresh history</button>
+            <button className="btn btn-danger btn-sm" type="button" disabled={mutationDisabled} aria-expanded={confirmDelete===current.id} onClick={()=>setConfirmDelete(confirmDelete===current.id?null:current.id)}>Delete…</button>
+          </div>
+          {confirmDelete===current.id&&<ConfirmNote tone="error" verb={job===`delete:${current.id}`?'Deleting…':'Delete schedule'} busy={!!job} onCancel={()=>setConfirmDelete(null)} onRun={()=>remove(current)} what={<>Delete <strong>{current.name}</strong> and its recorded history? This cannot be undone. Work already started keeps running.</>} />}
+          <div className="sc-timing"><div><span>{current.enabled?'Next due':'Schedule paused'}</span><strong>{current.enabled?clockTime(current.nextAt):'On your time.'}</strong><p>{current.enabled?calendarDay(current.nextAt):'Resume when you want this work to recur.'}</p></div><div><span>Cadence</span><strong>{current.describe}</strong><code>{current.cron}</code></div></div>
+          <SchedulePreview cron={current.cron} paused={!current.enabled} />
+          <section className="sc-section"><SectionHead label="What runs" />
+            {current.kind==='session'?<Note tone="warn">Session schedules are no longer supported. Recreate this as a headless run.</Note>:current.kind==='batch'?batchTarget(current.payload)?<p>Re-submits <strong>{batchTarget(current.payload)!.runName??batchTarget(current.payload)!.runId}</strong> using its saved configuration. File and command sources are read again when it fires.</p>:<Note tone="warn">Needs attention: this batch schedule names no saved run. Edit it and choose the run to re-submit.</Note>:<>
+              <p className="sc-prompt">{promptOf(current)||'No prompt recorded.'}</p>
+              <p className="sc-fine">{current.projectId?`Runs in ${projects.find(project=>project.id===current.projectId)?.name??'an unavailable project'}, with a ${usd(PER_REPO_BUDGET_USD)} per-run ceiling.`:declaresAllProjects(current.payload)?`Runs in every registered repository: ${namesOf(projects)||'none registered'}. ${projects.length} today, with a ${usd(PER_REPO_BUDGET_USD)} ceiling per repository (${usd(PER_REPO_BUDGET_USD*projects.length)} across the current list). New projects are included automatically.`:'No project is pinned and permission to run across every repository is not recorded.'}</p>
+              {!current.projectId&&!declaresAllProjects(current.payload)&&<Note tone="warn">Needs attention: edit this schedule to pin a project or explicitly allow every registered repository.{projects.length===1?' This legacy schedule can run against the single project today; adding another causes its runs to be refused.':' Its runs are refused until its scope is resolved.'}</Note>}
+            </>}
+          </section>
+          <section className="sc-section"><SectionHead label="Recorded history" count={current.runs} right={<span className="sc-fine">Latest 8 occurrences</span>} />
+            {current.lastStatus&&<div className="sc-last"><Pill status={current.lastStatus} /><span>{outcome(current.lastStatus).text}</span>{current.lastAt&&<span>{ago(current.lastAt)}</span>}{current.lastDetail&&<p>{current.lastDetail}</p>}</div>}
+            {histError[current.id]&&<Note tone="error">{histError[current.id]}</Note>}
+            {histBusy===current.id&&!hist[current.id]?<Reading what="schedule history" />:hist[current.id]?.length?<ol className="sc-history">{hist[current.id].map((fire,index)=><li key={`${fire.at}:${index}`}><time dateTime={new Date(fire.at).toISOString()}>{when(fire.at)}</time><Pill status={fire.status} /><p>{fire.detail??outcome(fire.status).text}</p></li>)}</ol>:!histError[current.id]&&<p className="sc-fine">No recorded occurrences yet.</p>}
+          </section>
+        </div>:ready&&!readError?<EmptyState posture="nothing-yet" title="Give the work a rhythm." cue="A nightly check. A familiar batch. Choose work you have already reviewed, then give it a time to return." action={<button className="btn btn-primary" type="button" disabled={mutationDisabled} onClick={()=>begin('new')}>Create your first schedule</button>} />:readError?<EmptyState posture="could-not-read" title="Schedule details unavailable" cue="Refresh schedules to try again." />:<Reading what="schedule details" />}
       </div>
-
-      {/* What a schedule is survives a quit as a guide, not as eight lines
-          above the form. The daemon state below it is a live fact and stays. */}
-      <Explainer id="schedules-guide" title="What a schedule is" defaultHidden={list.length === 0}>
-      <p className="dim">
-        A schedule is a row in your database, not a timer inside a session: it survives a quit and never expires.
-        While Wanigan is open, its own ticker fires whatever is due. With the background scheduler installed it
-        keeps firing with Wanigan closed — macOS starts the same app at login with no window, sharing this
-        database. Without it, anything that came due while Wanigan was closed fires once when you next open it,
-        not once for every tick that was missed. Claude Code's <span className="mono">/loop</span> lasts only as
-        long as its session and deletes itself after seven days; that is the right call for a terminal and the
-        wrong one for a machine you leave running.
-      </p>
-      </Explainer>
-
-      {daemon && (
-        <div className="sunk" style={{ marginTop: 10, padding: '9px 11px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', maxWidth: '74ch' }}>
-          <span className="faint">{daemon.detail}</span>
-          {daemon.supported && <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => void toggleDaemon(!daemon.installed)}>
-            {daemon.installed ? 'Stop background scheduler' : 'Fire schedules while Wanigan is closed'}
-          </button>}
-        </div>
-      )}
-
-      <div className="sc-actions" style={{ marginTop: 10, alignItems: 'center' }}>
-        <button className="btn" disabled={checking} onClick={() => void runDue()}>
-          {checking ? 'Checking…' : 'Run anything due now'}
-        </button>
-        <span className="faint" role="status" style={{ fontSize: 'var(--t-small)', lineHeight: 1.45, maxWidth: '58ch' }}>
-          {checked ?? 'Runs the tick immediately instead of waiting up to 20 seconds for the next one. A schedule that is not due yet is not pulled forward.'}
-        </span>
-      </div>
-
-      {err && <div style={{ marginTop: 10 }}><Note tone="error">{err}</Note></div>}
-
-      {undeclared.length > 0 && (
-        <div style={{ marginTop: 10, maxWidth: '74ch' }}>
-          <Note tone="warn">
-            <span aria-hidden="true">⚠ </span>
-            {undeclared.length === 1 ? 'One schedule pins no repository' : `${undeclared.length} schedules pin no repository`}
-            {' '}and {undeclared.length === 1 ? 'does' : 'do'} not say {undeclared.length === 1 ? 'it' : 'they'} meant
-            every registered one: {undeclared.map((s) => s.name).join(', ')}.
-            {projects.length > 1
-              ? ` Running an unattended agent across all ${projects.length} of your repositories now has to be asked`
-                + ' for, so every fire is refused until each is recreated.'
-              : ' Fanning out across every repository now has to be asked for, so each will be refused once you'
-                + ' register a second repository.'}
-            {' '}Each row below says what to do about it.
-          </Note>
-        </div>
-      )}
-
-      <div className="stat-grid" style={{ marginTop: 12 }}>
-        <Stat label="Running" value={num(live.length)}
-              sub={daemon?.installed ? 'counting down whether Wanigan is open or not' : 'counting down while Wanigan is open'} />
-        <Stat label="Next fire" value={nextUp ? when(nextUp.nextAt) : '—'} sub={nextUp?.name ?? 'nothing scheduled'} />
-        <Stat label="Total runs" value={num(list.reduce((a, s) => a + s.runs, 0))} sub="since you created them" />
-        {/* Unattended runs now write a real terminal status back onto the fire
-            they were spent on, so this reads those. 'ok' is claimed only when a
-            fire actually finished well: one nothing ever reported back on, and a
-            schedule that has never fired, are each said as themselves. */}
-        <Stat label="Last outcome" value={worst.value} tone={worst.tone} sub={worst.sub} />
-      </div>
-
-      <div className="sc-new">
-        <div className="label" style={{ margin: 0 }}>New schedule</div>
-        <div className="sc-row">
-          <div className="sc-f" style={{ flex: 2, minWidth: 200 }}>
-            <span className="label">Name</span>
-            <input className="field" aria-label="Schedule name" value={name} placeholder="Nightly audit"
-                   onChange={(e) => setName(e.target.value)} />
-          </div>
-          <div className="sc-f" style={{ flex: 1, minWidth: 150 }}>
-            <span className="label">Cron</span>
-            <input className="field mono" aria-label="Cron expression" value={cron} onChange={(e) => setCron(e.target.value)} />
-          </div>
-          <div className="sc-f" style={{ minWidth: 130 }}>
-            <span className="label">What runs</span>
-            <select className="field" aria-label="What runs" value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
-              <option value="headless">Headless run</option>
-              <option value="batch">Batch re-run</option>
-            </select>
-          </div>
-          <div className="sc-f" style={{ minWidth: 150 }}>
-            <span className="label">Project</span>
-            {/* "Every project" read like a convenience. It is a fan-out across
-                every repository registered now and every one added later, at a
-                budget per repository, so it says what it does. */}
-            <select className="field" aria-label="Project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              <option value="">Every registered repository</option>
-              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </div>
-        </div>
-
-        <div className="sc-presets">
-          {PRESETS.map((p) => (
-            <button key={p.cron} className="sc-preset" type="button" onClick={() => setCron(p.cron)}>{p.label}</button>
-          ))}
-        </div>
-
-        {kind === 'headless' ? (
-          <div className="sc-f">
-            <span className="label">Prompt</span>
-            <input className="field" aria-label="Prompt" value={prompt} placeholder="Audit every controller for N+1 queries"
-                   onChange={(e) => setPrompt(e.target.value)} />
-            <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
-              Every fire starts an unattended agent with this prompt and nothing else typed. What it is told
-              before that — the CLAUDE.md chain, memory, rules, hooks and their token cost — is the Context
-              view (<span className="mono">⌘⇧C</span>, or ⌘K → Context).
-            </p>
-
-            {/* The blast radius, before it is saved rather than after it has
-                fired. `projects.length` is the registered list this view was
-                handed, so the count is read, not guessed; the per-repository
-                ceiling is the mirrored constant above. */}
-            {unpinned && (noRepos ? (
-              <Note tone="warn">
-                No repository is pinned and none are registered, so every fire would fail with nothing to run
-                in. Add a folder in Sessions, or pin a repository above once you have one.
-              </Note>
-            ) : (
-              <div className="sc-preview sunk" style={{ padding: '10px 12px' }}>
-                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={allProjects} style={{ marginTop: 2 }}
-                         onChange={(e) => setAllProjects(e.target.checked)} />
-                  <span>
-                    <strong>Run in every registered repository.</strong>{' '}
-                    {projects.length > 1
-                      ? <>Without this, the fire is refused before it starts.</>
-                      : <>Without this, the fire is refused as soon as a second repository is registered.</>}
-                  </span>
-                </label>
-
-                <p style={{ marginTop: 8, lineHeight: 1.5 }}>
-                  {allProjects ? (
-                    <>
-                      Each fire starts one unattended agent in{' '}
-                      <strong>{projects.length === 1
-                        ? 'your 1 registered repository'
-                        : `all ${projects.length} registered repositories`}</strong>{' '}
-                      — {namesOf(projects)} — each held to the {usd(PER_REPO_BUDGET_USD)} per-repository
-                      ceiling Wanigan hands the CLI, so one fire is capped at {usd(fanOutCeilingUsd)} across
-                      the fan-out. Registering another project widens this on its own; nothing asks again.
-                    </>
-                  ) : (
-                    <>
-                      A schedule with no repository pinned means every repository you have registered, now and
-                      every one added later. A payload that leaves the repository out arrives at the runner
-                      looking exactly like one that meant a single repo, so the intent has to be said here.
-                      {projects.length > 1
-                        ? ` Right now that is all ${projects.length} of them, at ${usd(PER_REPO_BUDGET_USD)} per repository.`
-                        : ` Right now that is your one repository, at ${usd(PER_REPO_BUDGET_USD)} for the fire.`}
-                      {' '}Tick the box, or pin a repository above.
-                    </>
-                  )}
-                </p>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="sc-f">
-            <span className="label">Run to re-submit</span>
-            <select className="field" aria-label="Run to re-submit" value={rerunId} onChange={(e) => setRerunId(e.target.value)}>
-              <option value="">Pick a run…</option>
-              {runs.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name} · {num(r.total_requests)} requests · {r.model}
-                </option>
-              ))}
-            </select>
-
-            {runsErr ? (
-              <Note tone="error">{runsErr}</Note>
-            ) : runs.length === 0 ? (
-              <div className="sc-preview">
-                No batch runs to re-submit yet. Build one in Batches and read its results first — a schedule is for
-                work you have already checked once, which is the only kind worth firing at 03:00 with nobody watching.
-              </div>
-            ) : (
-              <div className="sc-preview">
-                {chosen ? (
-                  <>
-                    Every fire reads <strong>{chosen.name}</strong>'s own config and submits it again as a new run.
-                    {' '}
-                    {chosen.cost_usd > 0
-                      ? `It cost ${usd(chosen.cost_usd)} the last time it ran.`
-                      : `It has no settled cost yet — it was estimated at ${usd(chosen.est_cost_usd)}.`}
-                    {' '}
-                    A glob, files or command source re-reads your disk at fire time, so the rows will be whatever is
-                    there then; a pasted CSV or JSONL carries its own bytes and sends exactly the same rows again.
-                  </>
-                ) : (
-                  'The schedule stores the run id rather than a copy of its config, so editing the run changes what fires.'
-                )}
-              </div>
-            )}
-
-            {overCap && chosen && (
-              <Note tone="warn">
-                {chosen.name} billed {usd(chosen.cost_usd)}, which is over your {usd(cap ?? 0)} per-run spend cap.
-                Unless it prices lower at fire time the submission is refused and nothing is spent — raise the cap in
-                Settings, or schedule a smaller run.
-              </Note>
-            )}
-          </div>
-        )}
-
-        {previewErr ? (
-          <Note tone="error">{previewErr}</Note>
-        ) : preview && preview.fires.length > 0 ? (
-          <div className="sc-preview">
-            <strong>{preview.describe}</strong> — next:{' '}
-            {preview.fires.slice(0, 3).map((f, i) => (
-              <span key={f}><span className="when">{when(f)}</span>{i < 2 ? ', ' : ''}</span>
-            ))}
-          </div>
-        ) : (
-          <div className="sc-preview">That expression never matches a real date.</div>
-        )}
-
-        <div>
-          {/* An empty prompt, an unpicked run and an undeclared fan-out all make
-              a schedule that can only fail on its first fire, hours after the
-              person who wrote it has stopped looking at this screen. */}
-          <button className="btn btn-primary"
-                  disabled={busy || !preview?.fires.length || needsIntent || noRepos
-                            || (kind === 'batch' ? !chosen : !prompt.trim())}
-                  onClick={() => void create()}>
-            {busy ? 'Creating…' : fanOut && projects.length > 1
-              ? `Create schedule — ${projects.length} repositories per fire`
-              : 'Create schedule'}
-          </button>
-          {needsIntent && (
-            <span className="faint" style={{ marginLeft: 10, fontSize: 'var(--t-small)' }}>
-              Pin a repository, or tick “run in every registered repository”.
-            </span>
-          )}
-        </div>
-      </div>
-
-      {list.length === 0 ? (
-        <p className="faint" style={{ marginTop: 18, maxWidth: '64ch', lineHeight: 1.55 }}>
-          Nothing scheduled. Two are worth having first: a nightly headless run — pinned to one repository, or
-          across every registered one if you ask for that explicitly — and a batch you have already read the
-          results of, re-submitted overnight at half the synchronous price.
-        </p>
-      ) : (
-        <div className="sc-list">
-          {list.map((s) => {
-            // The row's own last word. Reading it from the same table as the
-            // history means a schedule cannot look armed here and queued there.
-            const last = s.lastStatus ? outcome(s.lastStatus) : null;
-            const target = s.kind === 'batch' ? batchTarget(s.payload) : null;
-            // Unpinned headless rows are the ones the blast-radius gate acts
-            // on. Split into "declared" and "never declared" here so the list
-            // can show the first as a fan-out and the second as needing work.
-            const fansOut = s.kind === 'headless' && !s.projectId;
-            const declared = fansOut && declaresAllProjects(s.payload);
-            return (
-              <div key={s.id} className={`sc-item${s.enabled ? '' : ' off'}`}>
-                <div className="sc-item-top">
-                  <span className="nm">{s.name}</span>
-                  <span className="cron">{s.cron}</span>
-                  <span className="kind">{s.kind}</span>
-                  <span className="dim" style={{ fontSize: 'var(--t-small)' }}>{s.describe}</span>
-                </div>
-                <div className="sc-meta">
-                  <span className={s.enabled ? 'due' : ''}>
-                    {s.enabled
-                      ? <><span aria-hidden="true">▸ </span>next {when(s.nextAt)}</>
-                      : <><span aria-hidden="true">‖ </span>paused</>}
-                  </span>
-                  <span>{num(s.runs)} run{s.runs === 1 ? '' : 's'}</span>
-                  {s.lastAt && <span>last {ago(s.lastAt)}</span>}
-                  {target && <span>re-submits {target.runName ?? target.runId}</span>}
-                  {last && (
-                    <span style={{ color: last.tone }}>
-                      <span aria-hidden="true">{last.glyph} </span>{last.text}
-                      {/* The detail is why a fire failed, was skipped, or was
-                          never answered for. On a clean one it is boilerplate
-                          about the run that already carries the outcome. */}
-                      {s.lastStatus !== 'ok' && s.lastDetail ? ` — ${s.lastDetail}` : ''}
-                    </span>
-                  )}
-                  {s.projectId && <span>{projects.find((p) => p.id === s.projectId)?.name ?? s.projectId}</span>}
-                  {/* Blast radius belongs on the row, not only in the form:
-                      this is the line that says a nightly job touches ten
-                      repositories rather than the one you were thinking of. */}
-                  {declared && (
-                    <span>every registered repository{projects.length ? ` — ${projects.length} today` : ''}</span>
-                  )}
-                </div>
-
-                {/* Two shapes of dead schedule that otherwise sit here looking
-                    armed: a session, which no runner has ever picked up, and a
-                    batch written before this form could name a run, whose
-                    payload is a bare prompt no batch can be built from. */}
-                {s.kind === 'session' && (
-                  <Note tone="warn">
-                    Session schedules were removed — an unattended terminal nobody is watching is more concurrency,
-                    not more review. This one has never started anything. Delete it, or recreate it as a headless run.
-                  </Note>
-                )}
-                {s.kind === 'batch' && !target && (
-                  <Note tone="warn">
-                    This one names no run to re-submit, so every fire fails. It was created when the form could only
-                    store a prompt, and a batch needs a dataset, a model and a template. Edit it and pick the run.
-                  </Note>
-                )}
-                {/* The behaviour change made visible. This schedule used to fan
-                    out across every repository silently; a fan-out now has to
-                    be declared, and one written before that flag existed has no
-                    declaration to read. Saying so here beats a row that looks
-                    armed until 03:00 and then reports a blast-radius refusal. */}
-                {fansOut && !declared && (
-                  <Note tone="warn">
-                    <strong>Needs attention:</strong> no repository is pinned, and nothing in this schedule says it
-                    meant every registered repository.
-                    {projects.length === 0
-                      ? ' There are none registered either, so every fire fails with nothing to run in.'
-                      : projects.length === 1
-                        ? ' It still fires today against your one registered repository. Register a second and every'
-                          + ' fire is refused instead: an unpinned schedule means every repository, and that is no'
-                          + ' longer inferred from an empty field.'
-                        : ` Every fire is now refused before it starts — it would run an unattended agent in all`
-                          + ` ${projects.length} of your registered repositories, and a payload that leaves the`
-                          + ` repository out cannot be told apart from one that meant a single repo.`}
-                    {' '}Edit this schedule and either pin a repository or tick “run in every registered repository”.
-                  </Note>
-                )}
-                <div className="sc-actions">
-                  <button className="btn btn-sm" onClick={() => void toggle(s)}>
-                    {s.enabled ? 'Pause' : 'Resume'}
-                  </button>
-                  {s.kind !== 'session' && (
-                    <button className="btn btn-sm"
-                            aria-expanded={editing === s.id}
-                            onClick={() => (editing === s.id ? setEditing(null) : beginEdit(s))}>
-                      {editing === s.id ? 'Cancel edit' : 'Edit'}
-                    </button>
-                  )}
-                  <button className="btn btn-sm" onClick={() => void history(s)}>
-                    {hist[s.id] ? 'Hide history' : 'History'}
-                  </button>
-                  <button className="btn btn-danger btn-sm" aria-expanded={confirmDelete === s.id}
-                          onClick={() => setConfirmDelete(confirmDelete === s.id ? null : s.id)}>
-                    {confirmDelete === s.id ? 'Cancel' : 'Delete…'}
-                  </button>
-                </div>
-                {/* Directly under the row it belongs to: a confirmation somewhere
-                    else on the page is a confirmation of nothing in particular. */}
-                {confirmDelete === s.id && (
-                  <ConfirmNote tone="error" verb={deleting === s.id ? 'Deleting…' : 'Delete schedule'}
-                               busy={deleting === s.id}
-                               onCancel={() => setConfirmDelete(null)}
-                               onRun={() => remove(s)}
-                               what={<>
-                                 Delete <strong>{s.name}</strong> ({s.cron})? Its run history goes with it and
-                                 nothing here can bring either back. Anything it already started keeps running.
-                               </>} />
-                )}
-                {editing === s.id && (() => {
-                  const changes = editChanges(s);
-                  const editUnpinned = !edit.projectId;
-                  return (
-                    <form className="sc-edit" onSubmit={(e) => { e.preventDefault(); void saveEdit(s); }}>
-                      <div className="sc-row">
-                        <div className="sc-f sc-f-name">
-                          <span className="label">Name</span>
-                          <input className="field" aria-label="Schedule name" value={edit.name} onChange={(e) => setEdit((v) => ({ ...v, name: e.target.value }))} />
-                        </div>
-                        <div className="sc-f sc-f-cron">
-                          <span className="label">Cron</span>
-                          <input className="field mono" aria-label="Cron expression" value={edit.cron} onChange={(e) => setEdit((v) => ({ ...v, cron: e.target.value }))} />
-                        </div>
-                        <div className="sc-f sc-f-proj">
-                          <span className="label">Project</span>
-                          <select className="field" aria-label="Project" value={edit.projectId}
-                                  onChange={(e) => {
-                                    const next = e.target.value;
-                                    // Removing the pin removes the declaration with it; it has to be ticked again.
-                                    setEdit((v) => ({ ...v, projectId: next, allProjects: next === '' && v.projectId !== '' ? false : v.allProjects }));
-                                  }}>
-                            <option value="">Every registered repository</option>
-                            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                          </select>
-                        </div>
-                      </div>
-                      <div className="sc-presets">
-                        {PRESETS.map((p) => (
-                          <button key={p.cron} className="sc-preset" type="button" onClick={() => setEdit((v) => ({ ...v, cron: p.cron }))}>{p.label}</button>
-                        ))}
-                      </div>
-                      {s.kind === 'headless' && (
-                        <div className="sc-f">
-                          <span className="label">Prompt</span>
-                          <input className="field" aria-label="Prompt" value={edit.prompt} onChange={(e) => setEdit((v) => ({ ...v, prompt: e.target.value }))} />
-                          {editUnpinned && (
-                            <label className="sc-check">
-                              <input type="checkbox" checked={edit.allProjects}
-                                     onChange={(e) => setEdit((v) => ({ ...v, allProjects: e.target.checked }))} />
-                              <span className="dim">
-                                <strong>Run in every registered repository.</strong> No repository is pinned, so the save is
-                                refused without this: a fan-out is declared, never inferred from an empty field.
-                              </span>
-                            </label>
-                          )}
-                        </div>
-                      )}
-                      {s.kind === 'batch' && (
-                        <div className="sc-f">
-                          <span className="label">Run to re-submit</span>
-                          <select className="field" aria-label="Run to re-submit" value={edit.rerunId} onChange={(e) => setEdit((v) => ({ ...v, rerunId: e.target.value }))}>
-                            <option value="">Pick a run…</option>
-                            {runs.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                          </select>
-                          {runsErr && <Note tone="error">{runsErr}</Note>}
-                        </div>
-                      )}
-                      {editErr && <Note tone="error">{editErr}</Note>}
-                      <div className="sc-actions">
-                        <button type="submit" className="btn btn-primary" disabled={editBusy || changes.length === 0}>
-                          {editBusy ? 'Saving…' : changes.length === 0 ? 'No changes yet' : `Save — changes: ${changes.join('; ')}`}
-                        </button>
-                        <button type="button" className="btn" onClick={() => setEditing(null)}>Cancel</button>
-                      </div>
-                    </form>
-                  );
-                })()}
-                {histErr[s.id] && (
-                  <Note tone="error">
-                    Could not read this schedule's fire history. {histErr[s.id]} Press History again to retry —
-                    the schedule itself is unaffected.
-                  </Note>
-                )}
-                {hist[s.id] && (
-                  <div className="sc-hist">
-                    {hist[s.id].length === 0
-                      ? <div>Never fired yet.</div>
-                      : hist[s.id].map((h, i) => {
-                        // A fire that was skipped, cancelled, still queued or
-                        // never reported on did not succeed; a green tick on
-                        // any of them reports work that never happened.
-                        const o = outcome(h.status);
-                        return (
-                          <div key={i}>
-                            <span style={{ width: 130 }}>{when(h.at)}</span>
-                            <span style={{ color: o.tone }}>{o.glyph} {h.status}</span>
-                            {h.detail && <span>{h.detail}</span>}
-                          </div>
-                        );
-                      })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
     </div>
-  );
+    <details className="sc-support"><summary>Scheduler settings</summary><div className="sc-support-body">
+      {daemonError&&<Note tone="error">{daemonError}<button className="btn btn-sm" type="button" onClick={()=>void readDaemon()}>Read scheduler status</button></Note>}
+      <p>{daemon?.detail??'Reading background scheduler status…'}</p>
+      {daemon?.supported&&<button className="btn" type="button" disabled={!!job} onClick={()=>void toggleDaemon()}>{job==='daemon'?'Updating background scheduler…':daemon.installed?'Stop background scheduler':'Fire schedules while Wanigan is closed'}</button>}
+      <div className="sc-tick"><button className="btn" type="button" disabled={mutationDisabled} onClick={()=>void runDue()}>{job==='tick'?'Checking…':'Run anything due now'}</button><p className="sc-fine">Checks the current due window now. This can launch unattended agents or submit batches; schedules that are not due stay untouched.</p></div>
+      <Explainer id="schedules-guide" title="How schedules run" defaultHidden><p>Schedules are stored in the local database. While Wanigan is open it checks for due work every 20 seconds. The background scheduler lets macOS run the same app without a window after login. Otherwise, missed work fires once on the next opening, rather than once for every missed occurrence. Pausing or deleting a schedule does not stop work that already started.</p></Explainer>
+    </div></details>
+  </div>;
+}
+
+function SchedulePreview({cron,paused=false,onReady}:{cron:string;paused?:boolean;onReady?:(valid:boolean)=>void}) {
+  const [preview,setPreview]=useState<Preview|null>(null),[error,setError]=useState<string|null>(null);
+  const notify=useRef(onReady);notify.current=onReady;
+  useEffect(()=>{
+    let live=true;setPreview(null);setError(null);notify.current?.(false);
+    const timer=setTimeout(()=>{void window.wanigan.schedule.preview(cron).then(value=>{if(live){setPreview({...value,cron});notify.current?.(value.fires.length>0);}}).catch(cause=>{if(live){setError(errorText(cause));notify.current?.(false);}});},180);
+    return()=>{live=false;clearTimeout(timer);};
+  },[cron]);
+  if(error)return <Note tone="error">{error}</Note>;
+  if(!preview||preview.cron!==cron)return <Reading what="next occurrences" />;
+  if(!preview.fires.length)return <Note tone="warn">This expression has no matching future date.</Note>;
+  return <section className="sc-preview"><SectionHead label={paused?'Cadence preview · currently paused':'Upcoming windows'} /><ol>{preview.fires.slice(0,3).map((at,index)=><li key={at}><span>{index+1}</span><strong>{calendarDay(at)}</strong><time dateTime={new Date(at).toISOString()}>{clockTime(at)}</time></li>)}</ol><p className="sc-fine">{preview.describe}. Local time on this Mac.{paused?' These windows will not run while paused.':' Due times are windows; the actual outcome appears in history.'}</p></section>;
+}
+
+function ScheduleEditor({draft,setDraft,projects,runs,runsError,cap,existing,creating,busy,disabled,error,onSave,onCancel}:{draft:Draft;setDraft:(draft:Draft)=>void;projects:Project[];runs:RunOption[];runsError:string|null;cap:number|null;existing:Schedule|null;creating:boolean;busy:boolean;disabled:boolean;error:string|null;onSave:()=>void;onCancel:()=>void}) {
+  const [validCron,setValidCron]=useState(false);
+  const [checkedCron,setCheckedCron]=useState('');
+  const patch=(change:Partial<Draft>)=>setDraft({...draft,...change});
+  const chosen=runs.find(row=>row.id===draft.rerunId);
+  const missingProject=!!draft.projectId&&!projects.some(project=>project.id===draft.projectId);
+  const unpinned=draft.kind==='headless'&&!draft.projectId;
+  const canSave=validCron&&checkedCron===draft.cron&&!!draft.name.trim()&&!missingProject&&(creating||!!existing)&&(draft.kind==='batch'?!!chosen:!!draft.prompt.trim()&&(!unpinned||draft.allProjects&&projects.length>0));
+  return <form className="sc-editor" onSubmit={event=>{event.preventDefault();if(canSave&&!disabled)onSave();}}>
+    <div className="sc-editor-title"><h2>{creating?'Give it a time to return.':'Shape the next run.'}</h2><button className="btn btn-sm" type="button" disabled={busy} onClick={onCancel}>{creating?'Back to schedules':'Cancel edit'}</button></div>
+    <p className="sc-fine">{creating?'Saving enables the schedule. Review the work, its scope and its next due times.':`Editing ${existing?.name??'a removed schedule'}. The next occurrence will use your saved changes.`}</p>
+    {error&&<Note tone="error">{error}</Note>}
+    <fieldset disabled={busy}>
+      <label>Schedule name<input className="field" aria-label="Schedule name" data-schedule-initial maxLength={180} value={draft.name} placeholder="Keep checkout honest" onChange={event=>patch({name:event.target.value})} /></label>
+      <div className="sc-fields-row"><label>What runs<select className="field" aria-label="What runs" value={draft.kind} disabled={!creating} onChange={event=>patch({kind:event.target.value as Kind})}><option value="headless">Headless run</option><option value="batch">Batch re-run</option></select></label>
+        <label>Project<select className="field" aria-label="Project" value={draft.projectId} onChange={event=>patch({projectId:event.target.value,allProjects:false})}><option value="">{draft.kind==='batch'?'No project label':'Every registered repository'}</option>{missingProject&&<option value={draft.projectId}>Project unavailable</option>}{projects.map(project=><option key={project.id} value={project.id}>{project.name}</option>)}</select></label></div>
+      {draft.kind==='headless'?<>
+        <label>What should the agent do?<textarea className="field" aria-label="Prompt" value={draft.prompt} placeholder="Review the checkout changes and report risks. Make no changes." onChange={event=>patch({prompt:event.target.value})} /></label>
+        <p className="sc-fine">Each occurrence starts an unattended agent with this prompt and the project's configured instructions, within a {usd(PER_REPO_BUDGET_USD)} per-repository ceiling.</p>
+        {unpinned&&<div className="sc-scope"><label className="sc-check"><input type="checkbox" checked={draft.allProjects} onChange={event=>patch({allProjects:event.target.checked})} /><span><strong>Run in every registered repository.</strong> New projects will be included automatically.</span></label><p>{projects.length?`${namesOf(projects)}. ${projects.length} repositories today, with a combined ${usd(projects.length*PER_REPO_BUDGET_USD)} ceiling per occurrence.`:'No repositories are registered. Add one before creating a schedule.'}</p>{!draft.allProjects&&<p>Choose a single project or explicitly allow every registered repository before saving.</p>}</div>}
+      </>:<>
+        <label>Run to re-submit<select className="field" aria-label="Run to re-submit" value={draft.rerunId} onChange={event=>patch({rerunId:event.target.value})}><option value="">Choose a saved batch…</option>{draft.rerunId&&!chosen&&<option value={draft.rerunId}>Saved run unavailable</option>}{runs.map(row=><option key={row.id} value={row.id}>{row.name} · {num(row.total_requests)} requests</option>)}</select></label>
+        {runsError&&<Note tone="error">{runsError}</Note>}
+        <p className="sc-fine">{chosen?`${chosen.name} is submitted again from its saved configuration. ${chosen.cost_usd>0?`Last recorded cost: ${usd(chosen.cost_usd)}.`:`No settled cost; previous estimate: ${usd(chosen.est_cost_usd)}.`}`:'Choose a batch whose results you have already reviewed.'} File and command sources read the disk again at run time; pasted data keeps the same rows. The project selection is a label here; the batch uses its saved configuration.</p>
+        {chosen&&cap!==null&&cap>0&&chosen.cost_usd>cap&&<Note tone="warn">The previous run cost {usd(chosen.cost_usd)}, above the current {usd(cap)} per-run cap. A fresh estimate must fit that cap before submission.</Note>}
+      </>}
+      <section className="sc-section"><SectionHead label="When it returns" /><div className="sc-presets">{PRESETS.map(preset=><Chip key={preset.cron} pressed={draft.cron===preset.cron} onToggle={()=>patch({cron:preset.cron})}>{preset.label}</Chip>)}</div><label>Cron expression<input className="field mono" aria-label="Cron expression" value={draft.cron} onChange={event=>patch({cron:event.target.value})} /></label>
+        <SchedulePreview cron={draft.cron} onReady={valid=>{setValidCron(valid);setCheckedCron(draft.cron);}} /></section>
+    </fieldset>
+    {!creating&&!existing&&<Note tone="error">This schedule was removed. Your draft is still here, but it cannot be saved to the removed schedule.</Note>}
+    <div className="sc-form-actions"><button className="btn btn-primary" type="submit" disabled={disabled||!canSave}>{busy?(creating?'Creating…':'Saving…'):creating?'Create schedule':'Save changes'}</button><p className="sc-fine">{!draft.name.trim()?'Give the schedule a name.':missingProject?'Choose an available project.':!canSave?'Complete the work, repository scope and timing above.':creating?'The schedule starts enabled; it can fire once its due window arrives.':'Work already started keeps its original instructions.'}</p></div>
+  </form>;
 }

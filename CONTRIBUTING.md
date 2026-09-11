@@ -20,12 +20,13 @@ not. `scripts/launch.sh`, `scripts/cli.sh` and `scripts/smoke.sh` prepend the
 
 ## What `npm test` runs
 
-Five steps, in order, and all five must pass before a change is handed off:
+Six steps, in order, and all six must pass before a change is handed off:
 
 | Step | What it is |
 |---|---|
 | `npm run typecheck` | `tsconfig.node.json` (main + preload) then `tsconfig.web.json` (renderer) |
-| `npm run test:renderer-style` | the renderer ratchets: inline style objects, `<style>` in TSX, literal font sizes and durations, modifiers a base rule shadows, form controls with no accessible name |
+| `npm run test:shared` | plain `node --test` over `src/shared/*.test.ts`: no Electron, no display, no database. Answers in well under a second |
+| `npm run test:renderer-style` | the renderer ratchets: inline style objects, `<style>` in TSX, literal font sizes and durations, modifiers a base rule shadows, form controls with no accessible name, native `title` tooltips |
 | `npm run test:package-hooks` | fixture checks over the electron-builder hooks: node-pty rebuild cache, Electron fuses, asar integrity, sealed-signature parsing |
 | `npm run test:local-install` | fixture checks over the local macOS installer: argument parsing, verification order, quit/stage/promote sequence |
 | `npm run smoke` | the suite inside a real Electron main process against the mock runner |
@@ -35,9 +36,21 @@ The two packaging suites build no bundle, sign nothing and never read or write
 spends nothing: `scripts/smoke.sh` sets `WANIGAN_MOCK=1` and hands Electron a
 throwaway `--user-data-dir`.
 
-CI runs the same five steps, split by what each needs from the runner:
-typecheck, the style gate and smoke on Ubuntu under Xvfb, the two packaging
-suites on macOS.
+CI runs the same six steps, split by what each needs from the runner:
+typecheck, the shared tests, the style gate and smoke on Ubuntu under Xvfb, the
+two packaging suites on macOS.
+
+## Where a test belongs
+
+`src/shared` is pure by construction — no Electron, no `node:fs`, no closures —
+so anything it decides can be tested beside it in `src/shared/<module>.test.ts`
+and answered in a tenth of a second. Put a contract there whenever it needs no
+process: what a surface may claim, how rows rank, what is selected by default.
+
+The smoke suite is for what only a real main process can answer — SQLite, IPC,
+the provider registry, native modules, this machine's actual paths. It costs
+about thirty seconds, which is the right price for those and the wrong one for
+a function that takes a record and returns three strings.
 See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## Adding a smoke check
@@ -125,3 +138,12 @@ before anything acts on it. See [docs/provider-packs.md](docs/provider-packs.md)
   handler the shell had already taken in the capture phase. Reading the two
   files did not show it. A new binding with no probe fails the run, so the sheet
   cannot grow a claim nobody pressed.
+- A change to how a pane attaches, primes, or forwards terminal input ships with
+  `npm run probe:terminal`. A terminal answers questions, and a captured
+  scrollback is the agent's own output — so the questions an agent TUI asks are
+  *in* the buffer. Replaying it re-runs them, xterm replies on its data channel,
+  and that channel goes to the live PTY: the running agent receives keystrokes
+  nobody pressed. Reading `TerminalPane.tsx` does not show it, because the reply
+  is generated inside xterm's parser and `write()` returns before the parser has
+  run — so the flag that should have gated it was already clear. The probe fails
+  if either half regresses.

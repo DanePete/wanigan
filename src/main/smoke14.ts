@@ -1,0 +1,53 @@
+import { OrbStoryDirector, contextPressure, type OrbStory, type ContextReading } from '../shared/orb-story';
+
+export function runOrbStorySmoke(check:(ok:boolean,label:string)=>void,say:(s:string)=>void){
+  say('── companion choreography · evidence, interruption and scope');
+  const now=1_000_000;
+  const reading:ContextReading={sessionId:'opaque:a:b',label:'A',ratio:.94,estimated:false,at:now,note:'Reported'};
+  check(contextPressure(reading,now)>.9,'a fresh reported occupancy can crowd the globe');
+  check(contextPressure({...reading,estimated:true},now)===0,'an assumed window cannot trigger a pressure performance');
+  check(contextPressure({...reading,at:now-120_001},now)===0,'an old context measurement cannot imply current pressure');
+  check(contextPressure({...reading,at:now+6_000},now)===0,'a future timestamp cannot imply fresh telemetry');
+  check(contextPressure({...reading,ratio:NaN},now)===0,'invalid occupancy cannot reach the physics');
+  check(contextPressure({...reading,ratio:.65},now)===0,'ordinary context occupancy leaves breathing room');
+  const base:OrbStory={conversationScope:'project:a',context:reading,failureEvent:0};
+  const advance=(d:OrbStoryDirector,seconds:number,float=false)=>{let frame=d.step(0);for(let i=0;i<seconds*60;i++)frame=d.step(1/60,float);return frame;};
+  const d=new OrbStoryDirector(base);
+  d.update({...base,reply:{id:'a',status:'failed'}},true,false,now);
+  check(advance(d,1).whirl<.001,'opening failed history does not replay the incident');
+  const pending={...base,reply:{id:'b',status:'pending'} as const};d.update(pending,true,true,now);
+  const failed={...base,reply:{id:'b',status:'failed'} as const};d.update(failed,true,false,now);
+  check(advance(d,1.5).whirl>.8,'an observed failed request drives a full fire whirl');
+  d.update(failed,true,false,now);check(advance(d,6).whirl<.01,'repeated polling does not restart the fire');
+  check(d.step(0).alarm,'the unresolved fault remains visible after the dramatic beat');
+  d.update({...base,reply:{id:'c',status:'cancelled'}},true,false,now);
+  check(advance(d,1).recovery===0,'cancellation is not a successful recovery');
+  d.update({...base,reply:{id:'d',status:'answered'}},true,false,now);
+  check(advance(d,.8).recovery>.9&&!d.step(0).alarm,'a subsequent answered request releases the fault with a blue core');
+  const silent=new OrbStoryDirector(base);
+  silent.update(pending,true,true,now);silent.update(failed,false,false,now);silent.update(failed,true,false,now);
+  check(advance(silent,2).whirl===0,'failures consumed with motion off do not replay');
+  d.update({...base,failureEvent:1},true,false,now);advance(d,1);
+  d.update({...base,conversationScope:'another-project'},true,false,now);
+  check(advance(d,2).recovery<.01,'switching conversations never invents a recovery');
+  const memory=new OrbStoryDirector(base);
+  const pre={...base,compaction:{id:10,sessionId:reading.sessionId,phase:'gathering'} as const};
+  memory.update(pre,true,false,now);check(advance(memory,1).gather>.9&&memory.step(0).memoryCount===0,'a pre-compaction hook gathers but creates no completed keepsake');
+  const post={...base,compaction:{id:11,sessionId:reading.sessionId,phase:'complete'} as const};memory.update(post,true,false,now);
+  memory.update(post,true,false,now);check(memory.step(0).memoryCount===1,'one completed compaction adds one bounded keepsake');
+  for(let i=12;i<40;i++)memory.update({...post,compaction:{...post.compaction,id:i}},true,false,now);
+  check(memory.step(0).memoryCount===6,'long sessions cannot create unbounded particles');
+  memory.update({...base,context:{...reading,sessionId:'other'}},true,false,now);
+  check(memory.step(0).memoryCount===0&&memory.step(0).pressure===0,'changing the followed session clears its visual history and pressure');
+  const remounted=new OrbStoryDirector({...base,compaction:{...post.compaction,completed:3}});
+  check(remounted.step(0).memoryCount===3&&remounted.step(0).gather===0,'a new companion view retains scoped keepsakes without replaying compaction');
+  const float=new OrbStoryDirector(base);const up=advance(float,3,true).float;
+  check(up>.99,'Float smoothly approaches microgravity');
+  check(float.step(0,false).float===up,'paused physics cannot jump when gravity is restored');
+  check(advance(float,3,false).float<.01,'restoring gravity converges without a reset');
+  const clustered=new OrbStoryDirector(base);
+  for(let i=1;i<=7;i++){clustered.update({...base,failureEvent:i,failed:true},true,false,now);advance(clustered,1);}
+  check(clustered.step(0).whirl<.01&&clustered.step(0).alarm,'a cluster of failures cannot keep restarting the fire storm');
+  const rates=[18,30,60].map(rate=>{const director=new OrbStoryDirector(base);director.update({...base,failureEvent:1},true,false,now);for(let i=0;i<rate;i++)director.step(1/rate);return director.step(0);});
+  check(Math.max(...rates.map(f=>f.whirl))-Math.min(...rates.map(f=>f.whirl))<.03,'miniature and large companions share the same incident timing');
+}

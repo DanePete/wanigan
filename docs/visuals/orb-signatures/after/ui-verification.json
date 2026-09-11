@@ -1,0 +1,12 @@
+{
+  "recordedAt": "2026-09-11T03:16:04.733Z",
+  "errors": [],
+  "checks": [
+    "Play produces a visible wink and tilt; conversation takes priority; all gestures so far made zero model calls.",
+    "Only explicit Send calls the fixture; answering acknowledges once and preserves the existing bounded waiting behavior.",
+    "A fresh permission request gets a double-take; a repeated poll does not replay it or celebrate.",
+    "The miniature shares completion and play expressions; navigation establishes a baseline and repeated completions stay quiet.",
+    "Off freezes motion, Auto respects reduced motion, paused events do not replay, and incidental interactions never send a question."
+  ],
+  "scope": "Isolated Electron GPU, synthetic project fixtures; one explicit fixture answer, zero real model calls"
+}

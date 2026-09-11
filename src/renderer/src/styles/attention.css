@@ -248,3 +248,18 @@
 @media (prefers-reduced-motion: reduce) {
   .alert-card { animation: none; }
 }
+
+/* Read the event first; urgency has a word and a symbol as well as a colour. */
+.alert-inbox { top: calc(var(--space-topbar, var(--topbar-h)) + var(--s-2)); max-height: calc(100vh - var(--space-topbar, var(--topbar-h)) - var(--s-5)); width: min(380px, calc(100vw - var(--s-5))); gap: var(--s-2); }
+.alert-inbox .alert-card { display: grid; gap: var(--s-3); padding: var(--s-4); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-popover); }
+.alert-inbox .alert-card.urgent { border-color: var(--warning); background: var(--bg-soft); }
+.alert-identity { display: flex; align-items: center; gap: var(--s-2); color: var(--text-faint); font-size: var(--t-micro); }
+.alert-identity > span { display: flex; align-items: center; gap: var(--s-2); }
+.alert-identity > span > span { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--line); border-radius: var(--r-pill); }
+.urgent .alert-identity > span { color: var(--warning); }
+.urgent .alert-identity > span > span { border-color: var(--warning); }
+.alert-identity time { margin-left: auto; font-variant-numeric: tabular-nums; }
+.alert-inbox .alert-card-x { min-width: 28px; min-height: 28px; padding: var(--s-1); display: grid; place-items: center; }
+.alert-inbox .alert-card-title { white-space: normal; line-height: 1.4; }
+.alert-inbox .alert-card-text { margin-top: var(--s-1); line-height: 1.5; }
+.alert-inbox .alert-card-acts:empty { display: none; }

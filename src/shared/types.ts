@@ -928,6 +928,8 @@ export type InterviewTurn = {
 
 /** What the interview proposes: a goal contract and the task graph under it. */
 export type InterviewProposal = {
+  /** Optional goal execution cap chosen by the operator, separate from planning spend. */
+  budgetUsd?: number | null;
   title: string;
   objective: string;
   risk: DocketRisk;
@@ -3248,6 +3250,8 @@ export type ClaudeContextUsage =
      * a headless run for the same model, backend and account — reported by the
      * CLI, still not measured. Absent means no window is claimed.
      */
+    /** Exact conversation lookup versus a best-effort transcript in its lifetime. */
+    conversationMatch?: 'exact' | 'lifetime-fallback';
     windowSource?: 'assumed-200k' | 'assumed-1m' | 'cli-reported' | null;
     /** A sentence the badge can show about the window, e.g. why none is claimed. */
     windowNote?: string | null;

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import type { SessionGoal } from '../shared/goal-journey';
 import { db } from './db';
 import { halted, refuseIfHalted } from './halt';
 import { headSync } from './git';
@@ -298,6 +299,18 @@ export function listDockets(projectId?: string | null, limit = 80): WorkDocket[]
 export function docket(id: string): DocketDetail {
   const base = mapDocket(docketRow(id));
   return { ...base, nodes: mapNodes(rawNodes(id)), claims: claimRows(id), proofs: proofRows(id), checkpoints: checkpointRows(id) };
+}
+
+/** Exact, bounded read; a same-project session is not necessarily goal work. */
+export function sessionGoal(sessionId: string): SessionGoal | null {
+  if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 200) throw new Error('A valid session ID is required.');
+  const rows = db().prepare('SELECT id, docket_id FROM work_nodes WHERE session_id=? LIMIT 2').all(sessionId) as { id: string; docket_id: string }[];
+  // Corrupt or ambiguous ownership must not offer a confident navigation link.
+  if (rows.length !== 1) return null;
+  const row = rows[0], goal = mapDocket(docketRow(row.docket_id));
+  const node = mapNodes(rawNodes(goal.id)).find(item => item.id === row.id)!;
+  return { goalId: goal.id, goalTitle: goal.title, goalStatus: goal.status,
+    nodeId: node.id, nodeTitle: node.title, nodeKind: node.kind, nodeStatus: node.status };
 }
 
 type PlannedNode = { kind: DocketNodeKind; title: string; instructions: string; dependsOn: number[]; claimPath: string | null };

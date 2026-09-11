@@ -1,0 +1,52 @@
+{
+  "capturedAt": "2026-09-11T04:03:09.424Z",
+  "realMainAndPreload": true,
+  "isolatedProfile": true,
+  "seededLocalRecords": true,
+  "tests": [
+    "composer-gaze",
+    "globe-spin",
+    "native-visibility-pause",
+    "temperament-persistence",
+    "popover-bounds-and-escape",
+    "review-adjacent-detail",
+    "planner-focus-return",
+    "planner-draft-retention",
+    "main-create-validation",
+    "main-create-success",
+    "creation-does-not-launch"
+  ],
+  "themes": [
+    "dark"
+  ],
+  "views": [
+    "Mission",
+    "Sessions",
+    "Fleet",
+    "Control",
+    "Batches",
+    "Insights",
+    "Learning",
+    "Plugins",
+    "Schedules",
+    "Git",
+    "Runs",
+    "Usage",
+    "Scout",
+    "Settings",
+    "Skills",
+    "Context",
+    "Board"
+  ],
+  "layoutMeasurements": [
+    {
+      "theme": "dark",
+      "width": 1440,
+      "height": 900,
+      "stageHeight": 421,
+      "shelfBottom": 954.5859375,
+      "workspaceBottom": 824
+    }
+  ],
+  "errors": []
+}

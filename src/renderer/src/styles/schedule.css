@@ -1,54 +1,85 @@
-/* schedules — tokens come from index.css; no colour is declared here. */
-
-/* .sc-wrap was a private copy of .pane — its own padding, its own scroll, its
-   own head — which is why Schedules had a different gutter, a different title
-   size and no sticky head. It is .pane now, head included: the count beside the
-   title aligns the way .pane-head aligns every other head. A private
-   `align-items: baseline` sat here and never applied, because index.css
-   @imports this sheet above its own .pane-head rule; it is deleted rather than
-   won back, because compact.css re-aligns .pane-head at 720px at one class of
-   specificity and a compound override would have made Schedules the one head
-   that ignores that step. Only .sc-head .n below is Schedules' own. */
-/* The page title is the page title everywhere: index.css sets it. Schedules
-   printed its own at 19px, Plugins at 19px and Runs at 20px, which is why three
-   adjacent screens looked like three products. */
-.sc-head .n { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--text-dim);
-              font-variant-numeric: tabular-nums; }
-
-.sc-new { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px;
-          padding: 14px 15px; margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
-.sc-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
-.sc-f { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.sc-f .label { margin: 0; }
-.sc-presets { display: flex; gap: 5px; flex-wrap: wrap; }
-.sc-preset { font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line);
-             background: var(--bg-sunk); color: var(--text-dim); cursor: pointer; }
-.sc-preset:hover { border-color: var(--accent); color: var(--accent); }
-.sc-preview { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
-.sc-preview .when { font-family: ui-monospace, Menlo, monospace; color: var(--accent);
-                    font-variant-numeric: tabular-nums; }
-
-.sc-list { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
-.sc-item { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px;
-           padding: 12px 15px; display: flex; flex-direction: column; gap: 7px; }
-.sc-item.off { opacity: .62; }
-.sc-item-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.sc-item-top .nm { font-size: 15px; font-weight: 600; }
-.sc-item-top .cron { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: var(--text-faint);
-                     background: var(--bg-sunk); border: 1px solid var(--line-soft); padding: 1px 7px; border-radius: 4px; }
-.sc-item-top .kind { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-faint); }
-.sc-meta { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-faint);
-           font-variant-numeric: tabular-nums; }
-.sc-meta .due { color: var(--accent); }
-.sc-meta .bad { color: var(--bad); }
-.sc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-.sc-edit { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--line-soft); border-radius: var(--r-md); background: var(--bg-sunk); }
-.sc-f-name { flex: 2; min-width: 200px; }
-.sc-f-cron { flex: 1; min-width: 150px; }
-.sc-f-proj { min-width: 150px; }
-.sc-check { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; margin-top: 6px; }
-.sc-check input { margin-top: 2px; }
-.sc-check span { font-size: var(--t-small); line-height: 1.5; }
-.sc-hist { border-top: 1px dashed var(--line); padding-top: 7px; display: flex; flex-direction: column; gap: 2px; }
-.sc-hist div { font-size: 11.5px; color: var(--text-faint); font-variant-numeric: tabular-nums;
-               display: flex; gap: 10px; }
+/* An agenda beside a schedule reader. Shared tokens supply both themes. */
+.pane.sc-wrap { overflow: hidden; }
+.sc-wrap > .pane-head, .sc-wrap > .sc-read-error, .sc-wrap > .note { flex: none; }
+.sc-workspace { display: grid; grid-template-columns: minmax(280px, .75fr) minmax(0, 1.25fr); flex: 1; min-height: 0; gap: var(--s-6); }
+.sc-agenda { display: flex; flex-direction: column; gap: var(--s-3); min-width: 0; min-height: 0; }
+.sc-agenda > .seg { width: fit-content; max-width: 100%; }
+.sc-agenda > .btn { align-self: flex-start; }
+.sc-agenda-list { min-height: 0; overflow-y: auto; padding-right: var(--s-2); scrollbar-gutter: stable; }
+.sc-group { font-size: var(--t-micro); color: var(--text-faint); margin: var(--s-4) 0 var(--s-2); }
+.sc-entry { position: relative; display: grid; grid-template-columns: 92px minmax(0, 1fr); width: 100%; min-width: 0; gap: var(--s-3); text-align: left; padding: var(--s-4) var(--s-3); border: 1px solid transparent; border-radius: var(--r-lg); background: transparent; color: var(--text-dim); cursor: pointer; }
+.sc-entry::before { content: ''; position: absolute; inset-block: var(--s-4); left: 105px; width: 1px; background: var(--line-soft); }
+.sc-entry:hover { background: var(--bg-soft); }
+.sc-entry[aria-pressed='true'] { background: var(--bg-selected); border-color: var(--line); color: var(--text); }
+.sc-entry[aria-pressed='true']::before { background: var(--accent); }
+.sc-time { display: grid; align-content: start; gap: var(--s-1); font-variant-numeric: tabular-nums; }
+.sc-time strong { font-size: var(--t-lead); font-weight: 500; letter-spacing: -.035em; }
+.sc-time small { font-size: var(--t-micro); color: var(--text-faint); }
+.sc-entry-copy { display: grid; gap: var(--s-1); min-width: 0; }
+.sc-entry-copy > strong { color: var(--text); font-size: var(--t-body); font-weight: 550; overflow-wrap: anywhere; }
+.sc-entry-copy > span { font-size: var(--t-small); overflow-wrap: anywhere; }
+.sc-entry-copy .sc-entry-state { color: var(--text-faint); font-size: var(--t-micro); }
+.sc-inspector { min-width: 0; min-height: 0; overflow-y: auto; padding: var(--s-2) var(--s-3) var(--s-6) var(--s-5); border-left: 1px solid var(--line-soft); scrollbar-gutter: stable; }
+.sc-reading, .sc-editor { display: grid; gap: var(--s-5); min-width: 0; }
+.sc-reading > h2, .sc-editor h2 { font-size: var(--t-display); font-weight: 450; line-height: 1.2; letter-spacing: -.035em; margin: 0; overflow-wrap: anywhere; }
+.sc-identity { display: flex; gap: var(--s-3); align-items: center; color: var(--text-faint); font-size: var(--t-small); }
+.sc-actions, .sc-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.sc-timing { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: var(--s-5); padding-block: var(--s-4); border-block: 1px solid var(--line-soft); }
+.sc-timing > div { display: grid; align-content: start; gap: var(--s-2); }
+.sc-timing span { font-size: var(--t-small); color: var(--text-faint); }
+.sc-timing strong { font-size: var(--t-title); line-height: 1.25; font-weight: 450; letter-spacing: -.03em; }
+.sc-timing > div:first-child strong { font-size: var(--t-display); font-variant-numeric: tabular-nums; }
+.sc-timing p, .sc-timing code { font-size: var(--t-small); margin: 0; color: var(--text-dim); overflow-wrap: anywhere; }
+.sc-preview { display: grid; gap: var(--s-3); }
+.sc-preview ol { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); list-style: none; padding: 0; margin: 0; gap: var(--s-3); }
+.sc-preview li { display: grid; gap: var(--s-1); border-left: 1px solid var(--line); padding-left: var(--s-3); }
+.sc-preview li > span { font-size: var(--t-micro); color: var(--accent); }
+.sc-preview li > strong { font-size: var(--t-small); color: var(--text); font-weight: 500; }
+.sc-preview time { color: var(--text-dim); font-size: var(--t-small); font-variant-numeric: tabular-nums; }
+.sc-fine { color: var(--text-faint); font-size: var(--t-small); line-height: 1.6; margin: 0; }
+.sc-section { min-width: 0; display: grid; gap: var(--s-3); border-top: 1px solid var(--line-soft); padding-top: var(--s-4); }
+.sc-section > p { margin: 0; line-height: 1.65; overflow-wrap: anywhere; }
+.sc-prompt { white-space: pre-wrap; color: var(--text-dim); }
+.sc-last { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-2); color: var(--text-dim); font-size: var(--t-small); }
+.sc-last > p { flex-basis: 100%; margin: 0; line-height: 1.55; }
+.sc-history { list-style: none; display: grid; gap: var(--s-3); padding: 0; margin: 0; }
+.sc-history li { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: var(--s-2); padding-top: var(--s-3); border-top: 1px solid var(--line-soft); }
+.sc-history time { font-size: var(--t-small); color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.sc-history p { grid-column: 1 / -1; margin: 0; line-height: 1.55; color: var(--text-dim); font-size: var(--t-small); overflow-wrap: anywhere; }
+.sc-editor-title { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--s-3); }
+.sc-editor-title > .btn { flex: none; }
+.sc-editor fieldset { display: grid; min-width: 0; gap: var(--s-4); margin: 0; padding: 0; border: 0; }
+.sc-editor label { display: grid; gap: var(--s-2); color: var(--text-dim); font-size: var(--t-small); min-width: 0; }
+.sc-editor textarea { min-height: 120px; resize: vertical; line-height: 1.6; }
+.sc-fields-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-4); }
+.sc-presets { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.sc-scope { display: grid; gap: var(--s-3); padding: var(--s-4); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-soft); }
+.sc-editor .sc-check { display: flex; align-items: flex-start; gap: var(--s-3); }
+.sc-check input { margin-top: var(--s-1); flex: none; }
+.sc-scope p { margin: 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.6; }
+.sc-form-actions { padding-top: var(--s-3); border-top: 1px solid var(--line-soft); }
+.sc-form-actions > p { flex: 1; min-width: 200px; }
+.sc-support { flex: none; border-top: 1px solid var(--line-soft); padding-top: var(--s-3); max-height: 40%; overflow-y: auto; }
+.sc-support > summary { cursor: pointer; color: var(--text-dim); font-size: var(--t-small); }
+.sc-support-body { display: grid; justify-items: start; gap: var(--s-3); padding-top: var(--s-3); }
+.sc-support-body > p { margin: 0; font-size: var(--t-small); color: var(--text-dim); }
+.sc-tick { display: flex; align-items: center; gap: var(--s-4); flex-wrap: wrap; }
+.sc-tick > p { flex: 1; min-width: 250px; }
+@media (max-width: 1050px) {
+  .sc-workspace { grid-template-columns: minmax(255px,.8fr) minmax(0,1.2fr); gap: var(--s-4); }
+  .sc-inspector { padding-left: var(--s-4); }
+  .sc-entry { grid-template-columns: 78px minmax(0,1fr); gap: var(--s-2); padding-inline: var(--s-2); }
+  .sc-entry::before { left: 85px; }
+  .sc-time strong { font-size: var(--t-body); }
+  .sc-reading > h2, .sc-editor h2 { font-size: var(--t-title); }
+  .sc-editor-title { flex-wrap: wrap; }
+}
+@media (max-width: 760px) {
+  .pane.sc-wrap { overflow-y: auto; }
+  .sc-workspace { display: flex; flex-direction: column; flex: none; gap: var(--s-5); }
+  .sc-agenda-list { max-height: 260px; }
+  .sc-entry { grid-template-columns: 95px minmax(0,1fr); }
+  .sc-entry::before { left: 100px; }
+  .sc-inspector { overflow: visible; padding: var(--s-4) 0 0; border-left: 0; border-top: 1px solid var(--line-soft); }
+  .sc-support { max-height: none; overflow: visible; }
+}

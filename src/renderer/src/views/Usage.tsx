@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountLimits, ConsumptionPoint, LimitWindow, ModelConsumption, UsageSnapshot } from '@shared/types';
 import { harnessLabel } from '@shared/types';
-import { EmptyState, Note } from '../components/bits';
+import { EmptyState, Note, PageHead, SectionHead, Stat } from '../components/bits';
 import { useViewMemory } from '../components/viewMemory';
 import '../styles/usage.css';
 
@@ -118,7 +118,7 @@ function Meter({ window, now }: { window: LimitWindow; now: number; delay: numbe
 function LimitCard({ limits, now }: { limits: AccountLimits; now: number }) {
   const stale = limits.fetchedAt !== null && now - limits.fetchedAt > 10 * 60_000;
   return (
-    <div className="sunk" style={{ padding: '14px 16px', display: 'grid', gap: 12, minWidth: 0 }}>
+    <div className="u-limit">
       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <strong style={{ fontSize: 'var(--t-body)' }}>{limits.accountLabel}</strong>
         {/* Which agent this login belongs to. "Personal" is the operator's word
@@ -275,8 +275,8 @@ function DailyChart({ points, account }: {
 function ConsumptionTable({ rows }: { rows: ModelConsumption[] }) {
   if (!rows.length) return <p className="faint" style={{ fontSize: 'var(--t-small)' }}>Nothing recorded in this window.</p>;
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 560, fontSize: 'var(--t-small)' }}>
+    <div className="u-scroll">
+      <table aria-label="Consumption by model" style={{ borderCollapse: 'collapse', width: '100%', minWidth: 560, fontSize: 'var(--t-small)' }}>
         <thead>
           <tr>
             {['Account', 'Model', 'Requests', 'In', 'Out', 'Cached', 'Cost'].map((head) => (
@@ -324,13 +324,17 @@ export default function Usage() {
   // selection had been dropped.
   const [days, setDays] = useViewMemory<number>('days', DEFAULT_WINDOW);
   const [now, setNow] = useState(Date.now());
+  const [accountKey, setAccountKey] = useViewMemory<string>('account', '');
+  const request = useRef(0);
+  useEffect(() => () => { request.current += 1; }, []);
 
   const load = useCallback((force: boolean) => {
+    const current = ++request.current;
     setBusy(true); setErr(null);
     window.wanigan.usage.snapshot({ days, force })
-      .then((next) => { setSnap(next); setNow(Date.now()); })
-      .catch((e) => setErr(msg(e)))
-      .finally(() => setBusy(false));
+      .then((next) => { if (current === request.current) { setSnap(next); setNow(Date.now()); } })
+      .catch((e) => { if (current === request.current) setErr(msg(e)); })
+      .finally(() => { if (current === request.current) setBusy(false); });
   }, [days]);
 
   useEffect(() => { load(false); }, [load]);
@@ -396,37 +400,30 @@ export default function Usage() {
     }
     return [...seen.values()];
   }, [snap]);
-  /** Only worth naming the agent when two accounts share a label. */
-  const ambiguousLabels = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const a of accountSeries) counts.set(a.label, (counts.get(a.label) ?? 0) + 1);
-    return new Set([...counts.entries()].filter(([, n]) => n > 1).map(([label]) => label));
-  }, [accountSeries]);
+  const keyOf = (a: { id: string | null; label: string }) => a.id ? `account:${a.id}` : `label:${a.label}`;
+  const selected = accountKey === 'all' ? null
+    : accountSeries.find((a) => keyOf(a) === accountKey) ?? accountSeries[0] ?? null;
+  const matches = (row: { accountId: string | null; accountLabel: string }) => !selected
+    || (selected.id ? row.accountId === selected.id : row.accountLabel === selected.label);
+  const limits = (snap?.limits ?? []).filter(matches);
+  const consumption = (snap?.consumption ?? []).filter(matches);
+  const series = selected ? [selected] : accountSeries;
+  const requests = consumption.reduce((n, r) => n + r.requests, 0);
+  const tokens = consumption.reduce((n, r) => n + r.inTokens + r.outTokens, 0);
 
   return (
-    <div className="pane">
-      {/* Roots on the shared pane frame so the gutter, title size and compact
-          breakpoints match every other document view; the old root class had
-          no rule anywhere and rendered flush to the window edge. */}
-      <header className="pane-head">
-        <div>
-          <div className="label-stencil">What is left, and what you spent</div>
-          <h1>Usage</h1>
-          <p className="dim" style={{ margin: 0, maxWidth: '70ch', lineHeight: 1.5 }}>
-            Limits are read live from each account, because a token count on this machine cannot tell you what a
-            plan has left. Consumption below is Wanigan's own record of what actually ran.
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+    <div className="pane wide usage-view">
+      <PageHead title="Usage" lead="Room to work. A record of what ran." actions={(
+        <div className="u-actions">
           <select className="field" value={days} onChange={(e) => setDays(Number(e.target.value))}
-                  style={{ width: 'auto' }} aria-label="Consumption window">
+                  aria-label="Consumption window">
             {WINDOWS.map((value) => <option key={value} value={value}>Last {value} days</option>)}
           </select>
           <button className="btn btn-primary" disabled={busy} onClick={() => load(true)}>
             {busy ? 'Reading…' : 'Refresh limits'}
           </button>
         </div>
-      </header>
+      )} />
 
       {/* An error beside the data, not instead of it: a refresh that fails after
           a good read must not throw away the reading already on screen. When the
@@ -460,95 +457,97 @@ export default function Usage() {
         </Note>
       )}
 
-      <section>
-        <div className="label">What is left</div>
-        <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', marginTop: 8 }}>
-          {/* Loading is not empty: until the first probe returns there is nothing
-              to say about any account, so say that instead of an empty grid. */}
-          {snap === null && !err && (
-            <p className="faint" style={{ fontSize: 'var(--t-small)' }}>Reading each account…</p>
-          )}
-          {snap === null && err && (
-            <EmptyState posture="could-not-read" title="Could not read your accounts" cue={err} />
-          )}
-          {(snap?.limits ?? []).map((limits) => <LimitCard key={limits.accountId} limits={limits} now={now} />)}
-          {snap && snap.limits.length === 0 && (
-            <p className="faint" style={{ fontSize: 'var(--t-small)' }}>No accounts are configured yet.</p>
+      <div className="u-workspace">
+        <nav className="u-accounts" aria-label="Usage accounts">
+          <SectionHead label="Accounts" count={accountSeries.length} />
+          <button className="u-account" aria-current={accountKey === 'all' ? 'true' : undefined}
+                  onClick={() => setAccountKey('all')}>
+            <strong>All accounts</strong><span>Combined local records</span>
+          </button>
+          {accountSeries.map((a) => (
+            <button className="u-account" key={keyOf(a)}
+                    aria-current={selected && keyOf(selected) === keyOf(a) ? 'true' : undefined}
+                    onClick={() => setAccountKey(keyOf(a))}>
+              <strong>{a.label}</strong><span>{a.harness ? harnessLabel(a.harness) : 'Unknown harness'}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="u-account-content">
+          <div className="u-account-title">
+            <div><h2>{selected?.label ?? 'All accounts'}</h2>
+              <p className="dim">{selected?.harness ? harnessLabel(selected.harness) : 'Across configured accounts'} · all projects</p>
+            </div>
+            <span className="faint">Consumption · last {snap?.days ?? days} days</span>
+          </div>
+          <div className="u-readings">
+            <section className="u-capacity" aria-label="Account limits">
+              <SectionHead label="What is left" />
+              <p className="u-provenance">Provider readings. Token counts cannot tell you what a plan has left.</p>
+              {snap === null && !err && <p className="faint">Reading each account…</p>}
+              {snap === null && err && <EmptyState posture="could-not-read" title="Could not read your accounts" cue={err} />}
+              {limits.map((limit) => <LimitCard key={limit.accountId} limits={limit} now={now} />)}
+              {snap && limits.length === 0 && <p className="faint">{selected ? 'No limit reading for this account.' : 'No accounts are configured yet.'}</p>}
+            </section>
+            <section className="u-consumption" aria-label="Recorded consumption">
+              <SectionHead label="What ran" />
+              <p className="u-provenance">Wanigan’s local session records. Costs appear only when reported.</p>
+              {snap === null && err ? (
+                <EmptyState posture="could-not-read" title="Could not read what you spent" cue={err} />
+              ) : snap === null ? (
+                <p className="faint">Reading Wanigan’s records for the last {days} days…</p>
+              ) : consumption.length === 0 ? (
+                <EmptyState posture="nothing-yet" title="No recorded requests in this window"
+                  cue="Sessions outside Wanigan or without telemetry leave no row here. Provider limit readings are independent." />
+              ) : (
+                <>
+                  <div className="u-totals">
+                    <Stat label="Requests" value={fmt.format(requests)} sub="recorded in Wanigan" />
+                    <Stat label="Tokens" value={compact(tokens)} sub="input + output" />
+                  </div>
+                  {series.filter((a) => (snap?.daily ?? []).some((point) => (
+                    a.id ? point.accountId === a.id : point.accountLabel === a.label)))
+                    .map((a) => (
+                      <div className="u-daily" key={keyOf(a)}>
+                        <h3>{selected ? 'Daily activity' : `${a.label}${a.harness ? ` · ${harnessLabel(a.harness)}` : ''}`}</h3>
+                        <DailyChart points={snap?.daily ?? []} account={a} />
+                      </div>
+                    ))}
+                  <ConsumptionTable rows={consumption} />
+                </>
+              )}
+            </section>
+          </div>
+
+          {limits.some((l) => l.factors.length > 0) && (
+            <details className="u-factors">
+              <summary>What contributed · provider breakdown</summary>
+              <p className="faint" style={{ fontSize: 'var(--t-micro)', margin: '4px 0 10px', lineHeight: 1.5, maxWidth: '80ch' }}>
+                The agent's own breakdown, quoted as given. It describes this as approximate and based only on sessions
+                on this machine — it does not include other devices or claude.ai — so it is shown as written rather
+                than reformatted into figures it did not claim.
+              </p>
+              <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))' }}>
+                {limits.flatMap((limits) => limits.factors.map((period) => (
+                  <div key={`${limits.accountId}:${period.label}`} className="sunk" style={{ padding: '12px 14px' }}>
+                    <div style={{ fontSize: 'var(--t-small)', fontWeight: 600 }}>
+                      {limits.accountLabel} · {period.label}
+                    </div>
+                    <div className="faint mono" style={{ fontSize: 'var(--t-micro)', margin: '3px 0 8px' }}>
+                      {period.requests !== null ? `${fmt.format(period.requests)} requests` : ''}
+                      {period.sessions !== null ? ` · ${fmt.format(period.sessions)} sessions` : ''}
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 4 }}>
+                      {period.lines.map((line) => (
+                        <li key={line} className="dim" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>{line}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )))}
+              </div>
+            </details>
           )}
         </div>
-      </section>
-
-      <section>
-        <div className="label">What you spent · last {snap?.days ?? days} days</div>
-        {snap === null && err ? (
-          // Three states, not two. Without this branch a rejected read left
-          // "Reading Wanigan's records…" on screen for good: a claim that a read
-          // is still in progress, made by a page that had already given up.
-          <EmptyState posture="could-not-read" title="Could not read what you spent" cue={err} />
-        ) : snap === null ? (
-          <p className="faint" style={{ fontSize: 'var(--t-small)', marginTop: 8 }}>
-            Reading Wanigan's records for the last {days} days…
-          </p>
-        ) : snap.consumption.length === 0 ? (
-          // One explanation, not a per-account chart plus an empty table plus a
-          // note all saying the same thing. An empty state repeated three times
-          // reads as three separate problems.
-          <p className="dim" style={{ fontSize: 'var(--t-small)', marginTop: 8, lineHeight: 1.55, maxWidth: '78ch' }}>
-            Nothing recorded yet. These figures come from agent telemetry Wanigan collects for the sessions it
-            starts, so a session run outside Wanigan — or before telemetry was switched on — leaves no row here.
-            The limit windows above are unaffected: they are read from the provider, not from this.
-          </p>
-        ) : (
-          <>
-            <div style={{ display: 'grid', gap: 20, marginTop: 8 }}>
-              {accountSeries
-                .filter((a) => (snap?.daily ?? []).some((point) => (
-                  a.id ? point.accountId === a.id : point.accountLabel === a.label)))
-                .map((a) => (
-                  <div key={a.id ?? `label:${a.label}`}>
-                    <div style={{ fontSize: 'var(--t-small)', fontWeight: 600, marginBottom: 6 }}>
-                      {a.label}
-                      {ambiguousLabels.has(a.label) && a.harness ? ` · ${harnessLabel(a.harness)}` : ''}
-                    </div>
-                    <DailyChart points={snap?.daily ?? []} account={a} />
-                  </div>
-                ))}
-            </div>
-            <div style={{ marginTop: 16 }}>
-              <ConsumptionTable rows={snap?.consumption ?? []} />
-            </div>
-          </>
-        )}
-      </section>
-
-      {(snap?.limits ?? []).some((l) => l.factors.length > 0) && (
-        <section>
-          <div className="label">What contributed</div>
-          <p className="faint" style={{ fontSize: 'var(--t-micro)', margin: '4px 0 10px', lineHeight: 1.5, maxWidth: '80ch' }}>
-            The agent's own breakdown, quoted as given. It describes this as approximate and based only on sessions
-            on this machine — it does not include other devices or claude.ai — so it is shown as written rather
-            than reformatted into figures it did not claim.
-          </p>
-          <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))' }}>
-            {(snap?.limits ?? []).flatMap((limits) => limits.factors.map((period) => (
-              <div key={`${limits.accountId}:${period.label}`} className="sunk" style={{ padding: '12px 14px' }}>
-                <div style={{ fontSize: 'var(--t-small)', fontWeight: 600 }}>
-                  {limits.accountLabel} · {period.label}
-                </div>
-                <div className="faint mono" style={{ fontSize: 'var(--t-micro)', margin: '3px 0 8px' }}>
-                  {period.requests !== null ? `${fmt.format(period.requests)} requests` : ''}
-                  {period.sessions !== null ? ` · ${fmt.format(period.sessions)} sessions` : ''}
-                </div>
-                <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 4 }}>
-                  {period.lines.map((line) => (
-                    <li key={line} className="dim" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>{line}</li>
-                  ))}
-                </ul>
-              </div>
-            )))}
-          </div>
-        </section>
-      )}
+      </div>
     </div>
   );
 }

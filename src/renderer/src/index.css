@@ -10,7 +10,6 @@
 @import './styles/fleet.css';
 @import './styles/timeline.css';
 @import './styles/queue.css';   /* plugins */
-@import './styles/evals.css';
 @import './styles/policy.css';
 @import './styles/schedule.css';
 @import './styles/pet.css';
@@ -42,6 +41,16 @@
   --space-routes-h: 44px;
   --space-foot-h: 76px;
   --companion-size: 64px;
+  /* Fixed light/dark samples in the appearance chooser. These preview both
+     palettes at once, independently of the currently resolved app theme. */
+  --preview-dark-bg: #171e24;
+  --preview-dark-chrome: #26313a;
+  --preview-dark-line: #526471;
+  --preview-dark-accent: #a6d9f8;
+  --preview-light-bg: #f4f6f8;
+  --preview-light-chrome: #e7edf2;
+  --preview-light-line: #c4cfd8;
+  --preview-light-accent: #1c608e;
   --companion-caption-width: 144px;
   --mission-stage-h: 410px;
   --mission-orb-size: clamp(280px, min(28vw, 43vh), 370px);
@@ -1075,14 +1084,24 @@ html { scrollbar-color: var(--line) transparent; }
 }
 .nav-progress > span { display: block; width: 100%; height: 100%; background: var(--accent); }
 
-/* Demo mode. The chrome is masked in the main process; a terminal cannot be,
-   because it has already drawn bytes the app never parsed. Blur is the only
-   honest option there, and it is opt-in because the terminal is usually the
-   thing worth photographing. */
-:root[data-demo-blur] .terminal-host .xterm-screen,
-:root[data-demo-blur] .terminal-host .xterm-rows { filter: blur(5px); }
-:root[data-demo-blur] .terminal-host::after {
-  content: 'terminal hidden for the screenshot';
-  position: absolute; inset: auto 0 12px 0; text-align: center;
-  font-size: var(--t-micro); color: var(--text-faint); pointer-events: none;
+/* Material preferences use renderer media features. They do not assume that
+   Electron exposes every native macOS appearance preference. */
+@media (prefers-contrast: more) {
+  :root, :root[data-theme='light'] { --line: #98aab8; --line-soft: #687d8d; --glass-line: #98aab8; --text-faint: #d4e0e9; --glass-fill: var(--bg-raised); --glass-selected: var(--bg-selected); }
+  :root[data-theme='light'] { --line: #526879; --line-soft: #8195a5; --glass-line: #526879; --text-faint: #354959; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root, :root[data-theme='light'] { --glass-fill: var(--bg-raised); --glass-selected: var(--bg-selected); --mission-backdrop: var(--bg); --scrim: var(--bg-chrome); --scrim-strong: var(--bg-chrome); }
+  .app-header, .space-dock, .overlay-backdrop, .command-backdrop, .code-reader-backdrop, [popover] { backdrop-filter: none; }
+}
+@media (forced-colors: active) {
+  :root, :root[data-theme='light'] { --bg: Canvas; --bg-soft: Canvas; --bg-raised: Canvas; --bg-sunk: Canvas; --bg-chrome: Canvas; --bg-selected: Canvas;
+    --text: CanvasText; --text-dim: CanvasText; --text-faint: CanvasText; --line: CanvasText; --line-soft: CanvasText; --glass-line: CanvasText;
+    --glass-fill: Canvas; --glass-selected: Canvas; --accent: LinkText; --accent-ink: Canvas; --accent-soft: Canvas; --shadow-control: none; --shadow-input: none; --shadow-dock: none;
+  }
+  /* Native forced colours suppress box shadows, including the search field’s
+     usual focus underline. A real outline must beat that field’s reset. */
+  :root :is(button, a, select, input, textarea, summary, [tabindex]):focus-visible:not(.terminal-host *) { outline: 2px solid Highlight; outline-offset: 3px; }
+  :where(button[aria-pressed='true'], [role='option'][aria-selected='true']) { outline: 2px solid Highlight; outline-offset: -2px; }
+  .code-reader .code-inspector-line[data-active-match='true'] { outline: 2px solid Highlight; outline-offset: -2px; }
 }

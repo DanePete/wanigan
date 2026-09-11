@@ -150,6 +150,13 @@ export function setNotificationsEnabled(on: boolean): void {
  * OS is done with it.
  */
 const live = new Set<Notification>();
+let desktopPrivacy = false;
+/** Keep operational desktop text out of a public demo without changing the
+ * operator's notification preference or their separately configured phone. */
+export function setDesktopPrivacy(on: boolean): void {
+  desktopPrivacy = on;
+  if (on) for (const notification of live) notification.close();
+}
 
 export function notify(opts: {
   title: string;
@@ -209,7 +216,7 @@ export function notify(opts: {
     );
   }
 
-  if (opts.desktop === false || !notificationsEnabled()) return;
+  if (desktopPrivacy || opts.desktop === false || !notificationsEnabled()) return;
 
   // The launchd scheduler is this same app with no window: a banner it shows
   // has nothing to raise and nobody in front of it, and the operator finds out

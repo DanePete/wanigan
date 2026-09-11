@@ -1,0 +1,40 @@
+{
+  "verifiedAt": "2026-09-11T03:18:51.491Z",
+  "arm64": {
+    "app": "/private/tmp/wanigan-orb-signatures.aaviju86/release/mac-arm64/Wanigan.app",
+    "runtimeSha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b",
+    "asarSha256": "cd407926bf80ca1a0e3aa02f898ed98106d3713840fa9812c8bd94101c29f52d",
+    "rendererPath": "/out/renderer/assets/index-mrsuFAyu.js",
+    "rendererSha256": "c00512c2130c9ef7868c9e8f48a0ff5616c4651b1176af3324a8e8d73c94f44d",
+    "signature": "strict sealed ad-hoc signature, hardened fuses, ASAR integrity and executable PTY helper verified"
+  },
+  "x64": {
+    "app": "/private/tmp/wanigan-orb-signatures.aaviju86/release/mac/Wanigan.app",
+    "runtimeSha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b",
+    "asarSha256": "b0c2a6abcc66b04fb7f83ac712ca996edc7848b06fe0ac739ca70c3e9f41188b",
+    "rendererPath": "/out/renderer/assets/index-mrsuFAyu.js",
+    "rendererSha256": "c00512c2130c9ef7868c9e8f48a0ff5616c4651b1176af3324a8e8d73c94f44d",
+    "signature": "strict sealed ad-hoc signature, hardened fuses, ASAR integrity and executable PTY helper verified"
+  },
+  "reviewCopies": {
+    "arm64": "/Users/dane/Projects/drupal/wanigan/release/orb-signatures/mac-arm64/Wanigan.app",
+    "x64": "/Users/dane/Projects/drupal/wanigan/release/orb-signatures/mac/Wanigan.app"
+  },
+  "verification": {
+    "smokeAssertions": 1594,
+    "smokeFailed": 0,
+    "signatureUiGroups": 4,
+    "personalityUiGroups": 5,
+    "gpuErrors": 0,
+    "scope": "Source snapshot, isolated main/renderer fixtures. No live provider calls."
+  },
+  "installed": {
+    "app": "/Applications/Wanigan.app",
+    "runtimeSha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b",
+    "asarSha256": "cd407926bf80ca1a0e3aa02f898ed98106d3713840fa9812c8bd94101c29f52d",
+    "rendererPath": "/out/renderer/assets/index-mrsuFAyu.js",
+    "rendererSha256": "c00512c2130c9ef7868c9e8f48a0ff5616c4651b1176af3324a8e8d73c94f44d",
+    "signature": "strict sealed ad-hoc signature, hardened fuses, ASAR integrity and executable PTY helper verified",
+    "verifiedAt": "2026-09-11T03:21:10.479Z"
+  }
+}

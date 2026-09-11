@@ -1,8 +1,10 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CodexAgentsChain, KnowledgeProjection, LearningOverview, LearningSettings, Project,
 } from '@shared/types';
-import { Note, Section, Stat, ago, num, usd } from '../components/bits';
+import { Chip, EmptyState, Explainer, Icon, Mark as SharedMark, Note, PageHead, Pill, Reading, SectionHead, Stat, ago, num, usd, type Tone } from '../components/bits';
+import ContextWorkspace, { ContextFileLink } from '../components/ContextWorkspace';
+import { useViewMemory } from '../components/viewMemory';
 
 /**
  * "What will my agent actually know when it starts?"
@@ -216,46 +218,17 @@ const KIND: Record<MemoryKind, { glyph: string; word: string; color: string }> =
   unknown:   { glyph: '·', word: 'unknown',   color: 'var(--text-faint)' },
 };
 
-function Mark({ glyph, word, color, title }: { glyph: string; word: string; color: string; title?: string }) {
-  return (
-    <span className="ctx-mark" style={{ color }} title={title}>
-      <span className="g" aria-hidden="true">{glyph}</span>{word}
-    </span>
-  );
+function Mark({glyph,word,color,title}: {glyph:string;word:string;color:string;title?:string}) {
+  const tones: Record<string,Tone> = {'var(--good)':'ok','var(--warning)':'warn','var(--serious)':'serious','var(--critical)':'bad'};
+  return <SharedMark glyph={glyph} word={word} tone={tones[color] ?? 'quiet'} title={title}/>;
 }
 
-/** Provenance, not judgment: this file was written by an approved knowledge projection. */
 function ManagedChip() {
-  return (
-    <span className="ctx-chip" style={{ color: 'var(--series-2)', borderColor: 'var(--series-2)' }}
-          title="This file (or a managed block inside it) was written by an approved knowledge projection. It is hash-guarded and reversible from the Learning view.">
-      ✎ Wanigan-managed
-    </span>
-  );
+  return <Pill status="Wanigan-managed" tone="quiet" reason="Written by an approved knowledge projection. Hash-guarded and reversible from Learning."/>;
 }
 
-/**
- * A warning with a title, a glyph and room for a paragraph of what to do about
- * it. <Note> is a one-line strip and stays the right shape for info and ok;
- * this view's warnings are its whole point and need to carry a fix, so they get
- * their own block on the --warning / --critical token pair.
- */
-function Callout({ level = 'warning', title, children }: {
-  level?: 'warning' | 'critical'; title: React.ReactNode; children?: React.ReactNode;
-}) {
-  const m = level === 'critical'
-    ? { bg: 'var(--critical-soft)', fg: 'var(--critical)', glyph: '✕' }
-    : { bg: 'var(--warning-soft)', fg: 'var(--warning)', glyph: '⚠' };
-  return (
-    <div style={{ background: m.bg, borderLeft: `3px solid ${m.fg}`, borderRadius: 'var(--r-sm)',
-                  padding: '10px 13px', display: 'flex', gap: 9 }}>
-      <span aria-hidden="true" style={{ color: m.fg, fontWeight: 700, lineHeight: 1.4 }}>{m.glyph}</span>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ color: m.fg, fontWeight: 650, fontSize: 'var(--t-small)', lineHeight: 1.45 }}>{title}</div>
-        {children ? <div className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 5 }}>{children}</div> : null}
-      </div>
-    </div>
-  );
+function Callout({level='warning',title,children}: {level?:'warning'|'critical';title:React.ReactNode;children?:React.ReactNode}) {
+  return <Note tone={level==='critical'?'error':'warn'}><div className="ctx-callout"><strong>{title}</strong>{children&&<div>{children}</div>}</div></Note>;
 }
 
 function Bullets({ items }: { items: string[] }) {
@@ -272,60 +245,11 @@ function Bullets({ items }: { items: string[] }) {
 }
 
 /** One failed channel, said in a sentence with the thing to do about it. */
-function PanelError({ channel, detail, onRetry }: { channel: string; detail: string; onRetry: () => void }) {
-  return (
-    <Callout level="critical" title={`Wanigan could not read this. The ${channel} call failed.`}>
-      <p className="mono" style={{ fontSize: 'var(--t-small)', marginTop: 2, wordBreak: 'break-word' }}>{detail}</p>
-      <p style={{ marginTop: 6 }}>
-        If the message says there is no handler, the main process has not registered{' '}
-        <span className="mono">{channel}</span> yet — the reader module exists, the IPC channel does not.
-        Otherwise the folder moved or is unreadable: check it still exists, then try again.
-      </p>
-      <button className="btn" style={{ marginTop: 8 }} onClick={onRetry}>Try again</button>
-    </Callout>
-  );
-}
-
-/* ── file reading ────────────────────────────────────────────────────── */
-
-type Body =
-  | { state: 'loading' }
-  | { state: 'ok'; text: string; truncated: boolean; bytes: number }
-  | { state: 'err'; detail: string };
-
-function FileBody({ path, kind }: { path: string; kind: 'instruction' | 'memory' }) {
-  const [b, setB] = useState<Body>({ state: 'loading' });
-
-  useEffect(() => {
-    let live = true;
-    setB({ state: 'loading' });
-    const p = kind === 'memory'
-      ? window.wanigan.context.memoryBody(path)
-      : window.wanigan.context.read(path);
-    p.then((r) => { if (live) setB({ state: 'ok', ...r }); })
-     .catch((e) => { if (live) setB({ state: 'err', detail: msg(e) }); });
-    return () => { live = false; };
-  }, [path, kind]);
-
-  if (b.state === 'loading') return <div className="ctx-read"><pre className="dim">Reading {fileName(path)}…</pre></div>;
-  if (b.state === 'err') {
-    return (
-      <Callout level="warning" title={`Could not read ${fileName(path)}.`}>
-        <p className="mono" style={{ fontSize: 'var(--t-small)', wordBreak: 'break-word' }}>{b.detail}</p>
-        <p style={{ marginTop: 5 }}>The chain still lists it, so the file was there when the scan ran. Re-scan to pick up a rename or a deletion.</p>
-      </Callout>
-    );
-  }
-  return (
-    <div className="ctx-read">
-      <div className="ctx-read-head">
-        <span className="mono">{path}</span>
-        <span style={{ marginLeft: 'auto' }}>{bytes(b.bytes)}</span>
-        {b.truncated && <span style={{ color: 'var(--warning)' }}>⚠ truncated for display</span>}
-      </div>
-      <pre>{b.text}</pre>
-    </div>
-  );
+function PanelError({channel,detail,onRetry}: {channel:string;detail:string;onRetry:()=>void}) {
+  return <Callout level="critical" title="This part of the context could not be read.">
+    <p>{detail}</p><p>Check that the project folder is available, then re-scan.</p>
+    <button className="btn" type="button" onClick={onRetry} aria-label={`Retry ${channel}`}>Try again</button>
+  </Callout>;
 }
 
 /* ── the seven slots, for the empty state ────────────────────────────── */
@@ -361,6 +285,7 @@ const SLOTS: { n: number; key: SlotKey; title: string; what: string; how: string
 type Errors = Partial<Record<'instructions' | 'memory' | 'config' | 'agents' | 'budget', string>>;
 
 type Data = {
+  readAt: number;
   chain: InstructionChain | null;
   memory: MemoryState | null;
   config: ProjectConfig | null;
@@ -375,7 +300,12 @@ type Data = {
   errors: Errors;
 };
 
-export default function Context({ projectId, projects, projectsRead, onReloadProjects, onOpenLearning, onPickProject }: {
+export default function Context(props: Parameters<typeof ContextProject>[0]) {
+  const project = props.projects.find(row=>row.id===props.projectId) ?? props.projects[0];
+  return <ContextProject key={project ? `${project.id}:${project.path}` : 'no-project'} {...props}/>;
+}
+
+function ContextProject({ projectId, projects, projectsRead, onReloadProjects, onOpenLearning, onPickProject }: {
   projectId?: string;
   onPickProject: (id: string) => void;
   projects: Project[];
@@ -388,10 +318,14 @@ export default function Context({ projectId, projects, projectsRead, onReloadPro
   onOpenLearning: (tab: 'overview' | 'inbox' | 'knowledge' | 'optimize') => void;
 }) {
   const project = useMemo(() => projects.find((p) => p.id === projectId) ?? projects[0] ?? null, [projects, projectId]);
-  const strayFrom = null;
   const setPinned = (id: string | null) => { if (id) onPickProject(id); };
 
   const [d, setD] = useState<Data | null>(null);
+  const read = useRef(0);
+  const alive = useRef(true);
+  const sending = useRef(false);
+  const [initBusy,setInitBusy] = useState(false);
+  useEffect(()=>{alive.current=true;return()=>{alive.current=false;read.current+=1;};},[]);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const [initMsg, setInitMsg] = useState<{ tone: 'ok' | 'info'; text: string } | null>(null);
@@ -409,10 +343,12 @@ export default function Context({ projectId, projects, projectsRead, onReloadPro
 
   const load = useCallback(async (rescan: boolean) => {
     if (!path) { setD(null); return; }
+    const mine=++read.current;
     setBusy(true);
     // A stale cache is not worth an error banner of its own.
     if (rescan) { try { await window.wanigan.context.refresh(path); } catch { /* ignore */ } }
 
+    if(mine!==read.current || !alive.current)return;
     const errors: Errors = {};
     // The three learning reads are additive colour on this view, not its
     // subject, so they degrade silently: a failure hides the badge or section
@@ -432,6 +368,7 @@ export default function Context({ projectId, projects, projectsRead, onReloadPro
       window.wanigan.learning.overview(pid ?? null),
     ]);
 
+    if(mine!==read.current || !alive.current)return;
     const chain = ri.status === 'fulfilled' ? (ri.value as InstructionChain) : null;
     if (ri.status === 'rejected') errors.instructions = msg(ri.reason);
     const memory = rm.status === 'fulfilled' ? (rm.value as MemoryState) : null;
@@ -471,7 +408,8 @@ export default function Context({ projectId, projects, projectsRead, onReloadPro
       }
     }
 
-    setD({ chain, memory, config, agents, codexAgents, budget, managed, learn, errors });
+    if(mine!==read.current || !alive.current)return;
+    setD({ readAt:Date.now(), chain, memory, config, agents, codexAgents, budget, managed, learn, errors });
     setBusy(false);
   }, [path, pid]);
 
@@ -506,9 +444,11 @@ export default function Context({ projectId, projects, projectsRead, onReloadPro
   }, [pid]);
 
   async function runInit() {
-    if (!project) return;
+    if (!project || sending.current) return;
+    sending.current=true;setInitBusy(true);
     try {
       const list = await window.wanigan.sessions.list();
+      if(!alive.current)return;
       // The session must be on the Claude Code harness: /init is its command,
       // and skills:send refuses every other harness by name. Picking the first
       // running session regardless meant a project whose only live agent was
@@ -525,7 +465,7 @@ export default function Context({ projectId, projects, projectsRead, onReloadPro
         `Typed /init into the running session in ${project.name}. Switch to Sessions and press Enter to run it — it writes a CLAUDE.md from what is actually in the repo, and you review the diff before it lands.` });
     } catch (e) {
       setInitMsg({ tone: 'info', text: `Could not reach a session: ${msg(e)}. Run /init yourself in a session in ${project.name}.` });
-    }
+    } finally {sending.current=false;setInitBusy(false);}
   }
 
   /* Empty: no projects at all. Not the same as a project with nothing in it —
@@ -564,17 +504,13 @@ export default function Context({ projectId, projects, projectsRead, onReloadPro
             </>,
           };
     return (
-      <div className="pane ctx">
-        <Head project={null} projects={projects} onPick={setPinned} strayFrom={strayFrom} onFollow={() => setPinned(null)}
+      <div className="pane wide ctx ctx-view">
+        <Head project={null} projects={projects} onPick={setPinned}
               onRescan={() => load(true)} busy={busy} />
-        <div className="card" style={{ padding: 18, maxWidth: 680 }}>
-          <h2 style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>{empty.title}</h2>
-          <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 6 }}>{empty.body}</p>
-          <button className="btn" style={{ marginTop: 12 }} disabled={checking}
-                  onClick={() => void checkProjects()}>
-            {checking ? 'Reading projects…' : 'Check for projects'}
-          </button>
-        </div>
+        <EmptyState posture={!projectsRead?'could-not-read':'nothing-yet'} title={empty.title} cue={empty.body}
+          action={<button className="btn" type="button" disabled={checking} onClick={()=>void checkProjects()}>
+            {checking?'Reading projects…':'Check for projects'}</button>}/>
+
       </div>
     );
   }
@@ -582,12 +518,11 @@ export default function Context({ projectId, projects, projectsRead, onReloadPro
   /* Loading: a real state, not an empty one. */
   if (!d) {
     return (
-      <div className="pane ctx">
-        <Head project={project} projects={projects} onPick={setPinned} strayFrom={strayFrom} onFollow={() => setPinned(null)}
+      <div className="pane wide ctx ctx-view">
+        <Head project={project} projects={projects} onPick={setPinned}
               onRescan={() => load(true)} busy={busy} />
-        <div className="card chart-empty">
-          Reading the instruction chain, memory and settings for <span className="mono">{project.path}</span>…
-        </div>
+        <Reading what="the instruction chain, memory and settings"/>
+
       </div>
     );
   }
@@ -597,15 +532,13 @@ export default function Context({ projectId, projects, projectsRead, onReloadPro
 
   if (allFailed) {
     return (
-      <div className="pane ctx" key={project.id}>
-        <Head project={project} projects={projects} onPick={setPinned} strayFrom={strayFrom} onFollow={() => setPinned(null)}
+      <div className="pane wide ctx ctx-view" key={project.id}>
+        <Head project={project} projects={projects} onPick={setPinned}
               onRescan={() => load(true)} busy={busy} />
         <Callout level="critical" title={`Wanigan could not read anything about ${project.name}.`}>
           <p>
-            All four context readers failed. If every message below says there is no handler, the main
-            process modules are present but their IPC channels are not registered yet — that is a wiring
-            gap, not a broken project. If they name a path instead, the folder moved: re-add the project
-            in Sessions, or pick the folder you actually launch sessions in.
+            Check that the project folder is still available and readable. Choose another project,
+            or try the scan again.
           </p>
           <ul style={{ listStyle: 'none', marginTop: 8, display: 'flex', flexDirection: 'column', gap: 3 }}>
             {([['context:instructions', e.instructions], ['context:memory', e.memory],
@@ -673,495 +606,141 @@ export default function Context({ projectId, projects, projectsRead, onReloadPro
   };
   const unfilled = SLOTS.filter((s) => !filled[s.key] && !errored[s.key]);
 
-  /* Where the setup card goes.
-
-     `nothing` already puts it first, because a repo that owns none of this is
-     a repo whose page is the offer to create it. The half that was missing is
-     the ordinary case in between: two slots filled and five empty rendered the
-     two — opening the page on a section numbered 3, with nothing above it to
-     say why — and left "here is what is missing, and here is /init" below seven
-     sections. The numbers are stable slot identities and stay as they are; what
-     moves is the card, up to the top whenever most of the list is still empty. */
-  const setupLeads = unfilled.length > SLOTS.length / 2;
-  const nothing = !Object.values(shows).some(Boolean) && Object.keys(e).length === 0;
-
-  return (
-    <div className="pane ctx" key={project.id}>
-      <Head project={project} projects={projects} onPick={setPinned} strayFrom={strayFrom} onFollow={() => setPinned(null)}
-              onRescan={() => load(true)} busy={busy} />
-
-      {nothing ? (
-        <Setup full project={project} slots={SLOTS} onInit={runInit} initMsg={initMsg} />
-      ) : (
-        <>
-          {setupLeads && unfilled.length > 0 && (
-            <Setup project={project} slots={unfilled} onInit={runInit} initMsg={initMsg} />
-          )}
-
-          {(shows.chain || errored.chain) && (
-            <Section n={1} title="Instructions"
-                     hint="The CLAUDE.md chain in load order. Everything above the project is loaded before it."
-                     right={chain ? <span className="ctx-chip">{plural(chain.atLaunch.length, 'file')} at launch</span> : undefined}>
-              {e.instructions
-                ? <PanelError channel="context:instructions" detail={e.instructions} onRetry={() => load(true)} />
-                : chain && <InstructionsPanel chain={chain} managed={d.managed} />}
-            </Section>
-          )}
-
-          {shows.rules && chain && (
-            <Section n={2} title="Rules"
-                     hint="What loads at launch, and what waits for a matching path. A rule that matches nothing never loads at all.">
-              <RulesPanel rules={rules} root={project.path} managed={d.managed} />
-            </Section>
-          )}
-
-          {(shows.agents || errored.agents) && (
-            <Section n={3} title="AGENTS.md"
-                     hint="Claude Code does not read AGENTS.md on its own — it reaches context only by import or symlink.">
-              {e.agents
-                ? <PanelError channel="context:agentsMd" detail={e.agents} onRetry={() => load(true)} />
-                : d.agents && <AgentsPanel a={d.agents} managed={d.managed} root={project.path} />}
-              {/* The other harness. This section used to end at "Codex reads
-                  AGENTS.md natively", which is true and leaves the operator
-                  with no way to see WHICH files Wanigan's own Codex compiler
-                  wrote, or the one thing it can detect and nothing could show:
-                  that it wrote a personal instruction into a directory this
-                  account's Codex does not read. */}
-              {d.codexAgents && <CodexAgentsPanel c={d.codexAgents} />}
-            </Section>
-          )}
-
-          {(shows.memory || errored.memory) && (
-            <Section n={4} title="Memory"
-                     hint="MEMORY.md is an index and only its head is loaded: the first 200 lines or 25 KB, whichever comes first."
-                     right={d.memory ? <span className="ctx-chip">{plural(d.memory.files.length, 'file')}</span> : undefined}>
-              {e.memory
-                ? <PanelError channel="context:memory" detail={e.memory} onRetry={() => load(true)} />
-                : d.memory && <MemoryPanel m={d.memory} />}
-            </Section>
-          )}
-
-          {(shows.config || errored.config) && (
-            <Section n={5} title="Settings and hooks"
-                     hint="Four layers stack up. Every key names the layer that won it and the layers it beat.">
-              {e.config
-                ? <PanelError channel="context:config" detail={e.config} onRetry={() => load(true)} />
-                : d.config && <ConfigPanel c={d.config} />}
-            </Section>
-          )}
-
-          {/* No "≈ estimate" chip on section 6 any more. One claim gets one
-              notation: an estimated value carries a tilde and the word est.
-              where the number is, so a chip on the section header was a second
-              grammar for the same statement and a reader had to learn both. */}
-          {(shows.budget || errored.budget) && (
-            <Section n={6} title="Startup budget"
-                     hint="What carrying all of that costs at the start of every session. An estimate, not a measurement.">
-              {e.budget
-                ? <PanelError channel="context:budget" detail={e.budget} onRetry={() => load(true)} />
-                : d.budget && <BudgetPanel b={d.budget} />}
-            </Section>
-          )}
-
-          {shows.learning && (
-            <Section n={7} title="Learning briefing"
-                     hint="Injected at launch by Wanigan, on top of everything above. Not included in the file totals.">
-              <LearningPanel settings={d.learn.settings} overview={d.learn.overview}
-                             onOpenLearning={onOpenLearning} />
-            </Section>
-          )}
-
-          {!setupLeads && unfilled.length > 0 && (
-            <Setup project={project} slots={unfilled} onInit={runInit} initMsg={initMsg} />
-          )}
-        </>
-      )}
-    </div>
-  );
+  const emptyArea = (key:SlotKey) => <Setup project={project} slots={SLOTS.filter(slot=>slot.key===key)}
+    onInit={runInit} initMsg={initMsg} busy={initBusy}/>;
+  const panels = {
+    chain:e.instructions?<PanelError channel="instructions" detail={e.instructions} onRetry={()=>load(true)}/>
+      :shows.chain&&chain?<InstructionsPanel chain={chain} managed={d.managed}/>:emptyArea('chain'),
+    rules:e.instructions?<PanelError channel="rules" detail={e.instructions} onRetry={()=>load(true)}/>
+      :shows.rules?<RulesPanel rules={rules} root={project.path} managed={d.managed} chain={chain!}/>:emptyArea('rules'),
+    agents:<>{e.agents?<PanelError channel="AGENTS.md" detail={e.agents} onRetry={()=>load(true)}/>
+      :d.agents?.present?<AgentsPanel a={d.agents} managed={d.managed} root={project.path}/>:emptyArea('agents')}
+      {d.codexAgents&&<CodexAgentsPanel c={d.codexAgents}/>}</>,
+    memory:e.memory?<PanelError channel="memory" detail={e.memory} onRetry={()=>load(true)}/>
+      :shows.memory&&d.memory?<MemoryPanel m={d.memory}/>:emptyArea('memory'),
+    config:e.config?<PanelError channel="settings" detail={e.config} onRetry={()=>load(true)}/>
+      :shows.config&&d.config?<ConfigPanel c={d.config}/>:emptyArea('config'),
+    budget:e.instructions?<PanelError channel="instructions for the budget" detail={e.instructions} onRetry={()=>load(true)}/>
+      :e.budget?<PanelError channel="budget" detail={e.budget} onRetry={()=>load(true)}/>
+      :shows.budget&&d.budget?<BudgetPanel b={d.budget}/>:emptyArea('budget'),
+    learning:<LearningPanel settings={d.learn.settings} overview={d.learn.overview} onOpenLearning={onOpenLearning}/>,
+  };
+  const knownSources=[...(chain?.files.filter(file=>file.exists).map(file=>file.path)??[]),
+    ...(d.memory?.files.map(file=>file.path)??[]),...(d.memory?.index?[d.memory.index.path]:[])];
+  return <div className="pane wide ctx ctx-view">
+    <Head project={project} projects={projects} onPick={setPinned} onRescan={()=>load(true)} busy={busy}/>
+    <ContextWorkspace projectId={project.id} panels={panels} scan={d.readAt} knownSources={knownSources}
+      hints={{chain:'The Claude Code instruction chain, in the order it is resolved.',
+        rules:'Which instructions load at launch, and which wait for matching files.',
+        agents:'How AGENTS.md reaches Claude Code, plus Wanigan’s Codex compiler targets.',
+        memory:'Claude Code’s launch index and the topic files it leads to. This is a read-only view.',
+        config:'Claude Code’s winning settings, their source layers, and commands that can run.',
+        budget:'Estimated instruction-file input for Claude Code. These figures are not measured usage.',
+        learning:'Approved knowledge available to the launch-time briefing.'}}
+      counts={{chain:chain?.files.length,rules:chain?rules.length:undefined,
+        memory:d.memory?.files.length,config:d.config?.settings.length}}
+      issues={{chain:!!e.instructions||!!chain?.files.some(file=>file.warnings.length),
+        rules:!!e.instructions||rules.some(rule=>rule.conditional?.matchingFiles===0),
+        agents:!!e.agents||!!(d.agents?.present&&!d.agents.imported&&!d.agents.symlinked),
+        memory:!!e.memory||!!d.memory?.indexBudget?.overBudget,
+        config:!!e.config,budget:!!e.budget||!!e.instructions}}
+      guide={<Explainer id="context-reading-guide" title="About this reading" defaultHidden>
+        This predicts the Claude Code loader from local files, including profiles that use that harness.
+        It does not measure a running session. Codex’s launch order is not predicted here.
+        Readers may use a short-lived cache; Re-scan requests a fresh reading.
+        {unfilled.length>0&&<p>{unfilled.length} areas have no project-owned content. Select an area for its setup guidance.</p>}
+      </Explainer>}/>
+  </div>;
 }
 
-function Head({ project, projects, onPick, onRescan, busy, strayFrom, onFollow }: {
-  project: Project | null; projects: Project[];
-  onPick: (id: string) => void; onRescan: () => void; busy: boolean;
-  /** The app's own project, when this view has been pinned away from it. */
-  strayFrom?: Project | null;
-  onFollow?: () => void;
+function Head({project,projects,onPick,onRescan,busy}: {
+  project:Project|null;projects:Project[];onPick:(id:string)=>void;onRescan:()=>void;busy:boolean;
 }) {
-  return (
-    <div className="pane-head">
-      <div>
-        <h1>Context</h1>
-        <p className="dim">
-          {/* Whose loader this is, said once at the top. `chain.harness` is
-              'claude-code' and always has been — instructions.ts says so in its
-              header — so a project whose sessions are all Codex was reading a
-              prediction about a launch that never happens there, under a
-              heading that claimed it was about every session. GLM and DeepSeek
-              run the same harness, so they are named too. */}
-          {project
-            ? <>What a <strong>Claude Code</strong> session launched in <span className="mono">{project.path}</span> is
-                told before you type anything. Claude, GLM and DeepSeek profiles all load this way;
-                Codex reads its own AGENTS.md natively and is not predicted here.</>
-            : <>What a Claude Code session is told before you type anything.</>}
-        </p>
-        {/* A pick made here is this view's alone. Saying so is the difference
-            between a scope control and a control that looks broken because the
-            rest of the app did not move with it. */}
-        {strayFrom && onFollow && (
-          <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5, marginTop: 3 }}>
-            Pinned on this view only — the rest of Wanigan is pointed at <strong>{strayFrom.name}</strong>.{' '}
-            <button className="link" onClick={onFollow}>Follow the app's project instead</button>
-          </p>
-        )}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        {projects.length > 1 && project && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span className="label">Project</span>
-            <select className="field" style={{ width: 'auto' }} value={project.id}
-                    onChange={(ev) => onPick(ev.target.value)}>
-              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </label>
-        )}
-        {/* Re-scan reads a project's disk; with no project there is nothing it
-            owns, so it is absent rather than disabled at the wrong owner. */}
-        {project && (
-          <button className="btn" onClick={onRescan} disabled={busy}
-                  title={busy ? 'A scan of this project is already running.' : undefined}>
-            {busy ? 'Re-scanning…' : 'Re-scan'}
-          </button>
-        )}
-      </div>
-    </div>
-  );
+  return <PageHead compact title="Context" lead="The files and knowledge behind your next session."
+    actions={<>{project&&<select className="field field-inline" aria-label="Context project" value={project.id}
+      onChange={event=>onPick(event.target.value)}>{projects.map(row=><option key={row.id} value={row.id}>{row.name}</option>)}</select>}
+      {project&&<button className="btn" type="button" disabled={busy} onClick={onRescan}><Icon name="clock"/>{busy?'Re-scanning…':'Re-scan'}</button>}</>}/>;
 }
 
 /* ── 1 · instructions ────────────────────────────────────────────────── */
 
-function InstructionsPanel({ chain, managed }: { chain: InstructionChain; managed: Map<string, KnowledgeProjection> }) {
-  const [q, setQ] = useState('');
-  const [only, setOnly] = useState<'all' | Loads>('all');
-  const [open, setOpen] = useState<string | null>(null);
-
-  const ordered = useMemo(() => [...chain.files].sort((a, b) => a.order - b.order), [chain]);
-  const loadsOf = useMemo(() => {
-    const launch = new Set(chain.atLaunch.map((f) => f.order));
-    const demand = new Set(chain.onDemand.map((f) => f.order));
-    // duplicate before the 4 MiB fallback: a duplicated file is inert because
-    // its content already loaded once, not because it is oversized.
-    return (f: InstructionFile): Loads =>
-      launch.has(f.order) ? 'launch'
-        : demand.has(f.order) ? 'demand'
-        : f.excludedBy ? 'excluded'
-        : !f.exists ? 'missing'
-        : f.duplicate ? 'duplicate'
-        : 'skipped';
-  }, [chain]);
-
-  const present = useMemo(() => {
-    const seen = new Set<Loads>();
-    for (const f of ordered) seen.add(loadsOf(f));
-    return (['launch', 'demand', 'excluded', 'missing', 'duplicate', 'skipped'] as Loads[]).filter((k) => seen.has(k));
-  }, [ordered, loadsOf]);
-
-  const rank = useMemo(() => new Map(ordered.map((f, i) => [f, i + 1])), [ordered]);
-
-  const shown = ordered.filter((f) =>
-    (only === 'all' || loadsOf(f) === only) &&
-    (!q.trim() || f.path.toLowerCase().includes(q.trim().toLowerCase())));
-
-  const ancestors = ordered.filter((f) => f.scope === 'ancestor').length;
-  const filtering = only !== 'all' || !!q.trim();
-
-  return (
-    <>
-      <div className="stat-grid">
-        <Stat label="Loads at launch" value={num(chain.atLaunch.length)}
-              sub={`of ${plural(chain.files.length, 'file')} found`} />
-        <Stat label="Lines at launch" value={num(chain.totalLines)} sub="before anyone types a word" />
-        <Stat label="Bytes at launch" value={bytes(chain.totalBytes)} sub="loaded in full, every session" />
-        <Stat label="From above this project" value={num(ancestors)}
-              tone={ancestors ? 'var(--warning)' : undefined}
-              sub={ancestors ? 'ancestor files load first' : 'nothing inherited from parents'} />
-      </div>
-
-      {ancestors > 0 && (
-        <div style={{ marginTop: 12 }}>
-          <Callout level="warning" title={`${plural(ancestors, 'instruction file')} from directories ABOVE this project load before its own.`}>
-            They are marked <Mark {...SCOPE.ancestor} /> below. They apply to every project under that
-            directory, so a rule written for one repo is being read in all of them. Remove them with{' '}
-            <span className="mono">claudeMdExcludes</span>, or move them down into the repo that needs them.
-          </Callout>
-        </div>
-      )}
-
-      <div className="ctx-filters" style={{ marginTop: 14 }}>
-        <button className={`ctx-filter${only === 'all' ? ' on' : ''}`} onClick={() => setOnly('all')}>
-          All {ordered.length}
-        </button>
-        {present.map((k) => (
-          <button key={k} className={`ctx-filter${only === k ? ' on' : ''}`} onClick={() => setOnly(k)}
-                  title={LOADS[k].blurb}>
-            <span aria-hidden="true">{LOADS[k].glyph}</span> {LOADS[k].word}{' '}
-            {ordered.filter((f) => loadsOf(f) === k).length}
-          </button>
-        ))}
-        <input className="field" style={{ width: 200, marginLeft: 'auto' }} value={q}
-               placeholder="Filter by path" aria-label="Filter instruction files by path"
-               onChange={(ev) => setQ(ev.target.value)} />
-      </div>
-
-      <div className="ctx-scroll" style={{ marginTop: 10 }}>
-        <table className="grid">
-          <thead>
-            <tr>
-              <th className="ctx-ord">#</th>
-              <th>Loads</th>
-              <th>Scope</th>
-              <th>File</th>
-              <th className="r">Lines</th>
-              <th className="r">Size</th>
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((f) => {
-              const l = LOADS[loadsOf(f)];
-              const s = SCOPE[f.scope];
-              const isOpen = open === f.path;
-              return (
-                <Fragment key={f.path + f.order}>
-                  <tr>
-                    <td className="ctx-ord">{rank.get(f)}</td>
-                    <td><Mark {...l} title={l.blurb} /></td>
-                    <td><Mark {...s} title={s.blurb} /></td>
-                    <td>
-                      <div style={{ paddingLeft: Math.min(f.depth, 4) * 16 }}>
-                        <button className="ctx-open" aria-expanded={isOpen}
-                                onClick={() => setOpen(isOpen ? null : f.path)}>
-                          <span className="caret" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
-                          <span className="ctx-path">
-                            {f.depth > 0 && <span className="ctx-dir" aria-hidden="true">↳ </span>}
-                            <span className="ctx-dir">{dirName(f.path)}</span>{fileName(f.path)}
-                          </span>
-                        </button>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 4 }}>
-                          {f.depth > 0 && <span className="ctx-chip faint">import depth {f.depth}</span>}
-                          {f.importedBy && (
-                            <span className="ctx-chip faint">imported by {fileName(f.importedBy)}</span>
-                          )}
-                          {f.external && (
-                            <span className="ctx-chip" style={{ color: 'var(--warning)', borderColor: 'var(--warning)' }}
-                                  title="This import resolves outside the project directory, so what is in context is not what the repo appears to contain.">
-                              ⚠ external import
-                            </span>
-                          )}
-                          {f.excludedBy && (
-                            <span className="ctx-chip" style={{ color: 'var(--serious)', borderColor: 'var(--serious)' }}>
-                              ⊘ excluded by {f.excludedBy}
-                            </span>
-                          )}
-                          {f.duplicate && (
-                            <span className="ctx-chip faint"
-                                  title="A second reference to content that already loaded once — an import reached from two files, or the losing half of the CLAUDE.md / .claude/CLAUDE.md pair. Claude Code reads the content once; this copy never loads and its bytes are not counted again.">
-                              ◇ duplicate — inert
-                            </span>
-                          )}
-                          {managed.has(f.path) && <ManagedChip />}
-                          {f.conditional && (
-                            <span className="ctx-chip faint mono">{f.conditional.globs.join(', ')}</span>
-                          )}
-                        </div>
-                        {f.warnings.map((w) => (
-                          <div className="ctx-warn" key={w}><span className="g" aria-hidden="true">⚠</span><span>{w}</span></div>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="r">{f.exists ? num(f.lines) : '—'}</td>
-                    <td className="r">{f.exists ? bytes(f.bytes) : '—'}</td>
-                  </tr>
-                  {isOpen && (
-                    <tr>
-                      <td colSpan={6}><FileBody path={f.path} kind="instruction" /></td>
-                    </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-            {shown.length === 0 && (
-              <tr>
-                <td colSpan={6} className="center">
-                  <p className="dim">
-                    No file in the chain matches {q.trim() ? <>“<span className="mono">{q.trim()}</span>”</> : 'this filter'}
-                    {only !== 'all' && <> in the <strong>{LOADS[only].word}</strong> set</>}.
-                    {' '}All {plural(ordered.length, 'file')} are still listed.
-                  </p>
-                  <button className="btn" style={{ marginTop: 10 }}
-                          onClick={() => { setQ(''); setOnly('all'); }}>Clear the filter</button>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {filtering && shown.length > 0 && (
-        <p className="faint" style={{ fontSize: 'var(--t-small)', marginTop: 6 }}>
-          Showing {shown.length} of {ordered.length}. Numbers are positions in the full load order.
-        </p>
-      )}
-
-      {chain.notes.length > 0 && (
-        <>
-          <h3 className="ctx-sub">What the scan found</h3>
-          <Bullets items={chain.notes} />
-        </>
-      )}
-    </>
-  );
+function fileLoad(chain:InstructionChain,file:InstructionFile):Loads {
+  return chain.atLaunch.some(row=>row.order===file.order)?'launch'
+    :chain.onDemand.some(row=>row.order===file.order)?'demand'
+    :file.excludedBy?'excluded':!file.exists?'missing':file.duplicate?'duplicate':'skipped';
 }
 
-/* ── 2 · rules ───────────────────────────────────────────────────────── */
+function InstructionsPanel({chain,managed}: {chain:InstructionChain;managed:Map<string,KnowledgeProjection>}) {
+  const [q,setQ]=useViewMemory(`${chain.root}/query`,'');
+  const [only,setOnly]=useViewMemory<'all'|Loads>(`${chain.root}/load-state`,'all');
+  const ordered=[...chain.files].sort((a,b)=>a.order-b.order);
+  const present=(Object.keys(LOADS) as Loads[]).filter(key=>ordered.some(file=>fileLoad(chain,file)===key));
+  const shown=ordered.filter(file=>(only==='all'||fileLoad(chain,file)===only)&&file.path.toLowerCase().includes(q.trim().toLowerCase()));
+  const ancestors=ordered.filter(file=>file.scope==='ancestor').length;
+  return <>
+    <div className="stat-grid">
+      <Stat label="At launch" value={num(chain.atLaunch.length)} sub={`of ${plural(chain.files.length,'file')} found`}/>
+      <Stat label="Lines" value={num(chain.totalLines)} sub="loaded at launch"/>
+      <Stat label="Size" value={bytes(chain.totalBytes)} sub="loaded at launch"/>
+      <Stat label="Inherited" value={num(ancestors)} sub="from parent directories"/>
+    </div>
+    {ancestors>0&&<Callout title={`${plural(ancestors,'ancestor file')} load before this project’s instructions.`}>
+      These files apply to projects below their directory. Review their scope before changing them.
+    </Callout>}
+    <div className="ctx-search"><Icon name="search"/><input className="field" type="search" value={q}
+      placeholder="Find an instruction file" aria-label="Filter instruction files by path" onChange={event=>setQ(event.target.value)}/></div>
+    <div className="ctx-filters" role="group" aria-label="Instruction load states">
+      <Chip pressed={only==='all'} count={ordered.length} onToggle={()=>setOnly('all')}>All files</Chip>
+      {present.map(key=><Chip key={key} pressed={only===key} count={ordered.filter(file=>fileLoad(chain,file)===key).length}
+        onToggle={()=>setOnly(only===key?'all':key)}>{LOADS[key].word}</Chip>)}
+    </div>
+    <SectionHead label="Load order" count={shown.length}/>
+    {!shown.length?<EmptyState posture="nothing-in-scope" title="No instruction files match."
+      cue="The full chain is still available." action={<button className="btn" type="button" onClick={()=>{setQ('');setOnly('all');}}>Clear the filter</button>}/>
+      :<ol className="ctx-file-list">{shown.map(file=><li key={file.path+file.order} className="ctx-instruction-row">
+        <span className="ctx-ord" aria-label={`Position ${ordered.indexOf(file)+1}`}>{ordered.indexOf(file)+1}</span>
+        <div><ContextFileLink path={file.path} disabled={!file.exists}>
+          <strong>{fileName(file.path)}</strong><small>{dirName(file.path)}</small>
+        </ContextFileLink>
+        <div className="ctx-file-meta"><Mark {...LOADS[fileLoad(chain,file)]} title={LOADS[fileLoad(chain,file)].blurb}/>
+          <Mark {...SCOPE[file.scope]} title={SCOPE[file.scope].blurb}/>
+          {file.exists&&<span>{file.bytes>4*1024*1024?'Lines not counted':plural(file.lines,'line')} · {bytes(file.bytes)}</span>}
+          {managed.has(file.path)&&<ManagedChip/>}
+        </div>
+        <div className="ctx-file-meta">
+          {file.importedBy&&<span>Imported by {fileName(file.importedBy)} · depth {file.depth}</span>}
+          {file.external&&<Pill status="External import" tone="warn"/>}
+          {file.excludedBy&&<Pill status={`Excluded by ${file.excludedBy}`} tone="serious"/>}
+          {file.conditional&&<span className="mono">{file.conditional.globs.join(', ')}</span>}
+        </div>
+        {file.warnings.map(warning=><p className="ctx-warn" key={warning}><span aria-hidden="true">!</span>{warning}</p>)}
+        </div>
+      </li>)}</ol>}
+    {(only!=='all'||q)&&shown.length>0&&<p className="ctx-fine faint">Showing {shown.length} of {ordered.length}. Positions keep the full load order.</p>}
+    {chain.notes.length>0&&<details className="ctx-disclosure"><summary>Scan notes</summary><Bullets items={chain.notes}/></details>}
+  </>;
+}
 
-function RulesPanel({ rules, root, managed }: {
-  rules: InstructionFile[]; root: string; managed: Map<string, KnowledgeProjection>;
+function RulesPanel({rules,root,managed,chain}: {
+  rules:InstructionFile[];root:string;managed:Map<string,KnowledgeProjection>;chain:InstructionChain;
 }) {
-  const [open, setOpen] = useState<string | null>(null);
-  const launch = rules.filter((r) => !r.conditional);
-  const demand = rules.filter((r) => r.conditional);
-  const dead = demand.filter((r) => (r.conditional?.matchingFiles ?? 0) === 0);
-  const max = Math.max(1, ...demand.map((r) => r.conditional?.matchingFiles ?? 0));
-  const rel = (p: string) => (p.startsWith(root) ? p.slice(root.length + 1) : p);
-
-  return (
-    <>
-      {dead.length > 0 && (
-        <Callout level="warning"
-                 title={`${plural(dead.length, 'path-scoped rule')} match no file in this project, so ${dead.length === 1 ? 'it never loads' : 'they never load'}.`}>
-          A rule only enters context when Claude touches a file its globs match. Zero matches means the
-          instructions in it have never been read and never will be. Check each glob against the paths that
-          actually exist — a leading <span className="mono">./</span>, a missing{' '}
-          <span className="mono">**/</span>, or a directory that was renamed are the usual causes.
-        </Callout>
-      )}
-
-      <h3 className="ctx-sub">Loads at launch — {plural(launch.length, 'file')}</h3>
-      {launch.length === 0 ? (
-        <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
-          No rule loads at launch. Every rule here is path-scoped, so none of them costs anything until
-          Claude opens a matching file.
-        </p>
-      ) : (
-        <>
-          <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
-            These have no <span className="mono">paths:</span> key, so they are part of every prompt in this
-            project, exactly like a CLAUDE.md.
-          </p>
-          <div className="ctx-scroll" style={{ marginTop: 8 }}>
-            <table className="grid">
-              <thead><tr><th>Scope</th><th>File</th><th className="r">Lines</th><th className="r">Size</th></tr></thead>
-              <tbody>
-                {launch.map((r) => (
-                  <tr key={r.path}>
-                    <td><Mark {...SCOPE[r.scope]} title={SCOPE[r.scope].blurb} /></td>
-                    <td>
-                      <span className="ctx-path">{rel(r.path)}</span>
-                      {managed.has(r.path) && <span style={{ marginLeft: 6 }}><ManagedChip /></span>}
-                    </td>
-                    <td className="r">{num(r.lines)}</td>
-                    <td className="r">{bytes(r.bytes)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-
-      <h3 className="ctx-sub">Loads on demand — {plural(demand.length, 'file')}</h3>
-      {demand.length === 0 ? (
-        <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
-          Nothing is path-scoped in this project. Everything above is paid for on every session.
-        </p>
-      ) : (
-        <>
-          <div className="ctx-bars" style={{ marginTop: 10 }}>
-            {demand.map((r) => {
-              const n = r.conditional?.matchingFiles ?? 0;
-              const pct = (n / max) * 100;
-              return (
-                <div key={r.path}>
-                  <div className="ctx-bar-label">
-                    <span className="ctx-path">{rel(r.path)}</span>
-                    <span className="v">
-                      {n === 0
-                        ? <Mark glyph="⚠" word="matches 0 files" color="var(--warning)" />
-                        : `${plural(n, 'file')} match`}
-                    </span>
-                  </div>
-                  <div style={{ height: 7, borderRadius: 'var(--r-sm)', background: 'var(--bg-sunk)', overflow: 'hidden' }}>
-                    <div style={{ width: `${Math.max(pct, n > 0 ? 1 : 0)}%`, height: '100%',
-                                  borderRadius: 'var(--r-sm)', background: SERIES[0] }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="ctx-scroll" style={{ marginTop: 12 }}>
-            <table className="grid">
-              <thead>
-                <tr>
-                  <th>Scope</th><th>File</th><th>Globs</th>
-                  <th className="r">Matches</th><th className="r">Lines</th><th className="r">Size</th>
-                </tr>
-              </thead>
-              <tbody>
-                {demand.map((r) => {
-                  const n = r.conditional?.matchingFiles ?? 0;
-                  const isOpen = open === r.path;
-                  return (
-                    <Fragment key={r.path}>
-                      <tr>
-                        <td><Mark {...SCOPE[r.scope]} title={SCOPE[r.scope].blurb} /></td>
-                        <td>
-                          <button className="ctx-open" aria-expanded={isOpen}
-                                  onClick={() => setOpen(isOpen ? null : r.path)}>
-                            <span className="caret" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
-                            <span className="ctx-path">{rel(r.path)}</span>
-                          </button>
-                          {managed.has(r.path) && <span style={{ marginLeft: 6 }}><ManagedChip /></span>}
-                        </td>
-                        <td className="mono" style={{ fontSize: 'var(--t-small)' }}>
-                          {(r.conditional?.globs ?? []).join(', ')}
-                        </td>
-                        <td className="r">
-                          {n === 0
-                            ? <Mark glyph="⚠" word="0 — never loads" color="var(--warning)" />
-                            : num(n)}
-                        </td>
-                        <td className="r">{num(r.lines)}</td>
-                        <td className="r">{bytes(r.bytes)}</td>
-                      </tr>
-                      {isOpen && (
-                        <tr>
-                          <td colSpan={6}><FileBody path={r.path} kind="instruction" /></td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <p className="faint" style={{ fontSize: 'var(--t-small)', marginTop: 6, lineHeight: 1.5 }}>
-            Match counts come from a walk of the project that skips node_modules, .git and build output,
-            so they count the files a rule would realistically fire on.
-          </p>
-        </>
-      )}
-    </>
-  );
+  const rel=(path:string)=>path.startsWith(root+'/')||path.startsWith(root+'\\')?path.slice(root.length+1):path;
+  return <>{[false,true].map(conditional=>{
+    const group=rules.filter(file=>!!file.conditional===conditional);
+    return <section className="ctx-rule-group" key={String(conditional)}>
+      <SectionHead label={conditional?'Path-scoped rules':'Unscoped rules'} count={group.length}/>
+      {!group.length?<p className="dim">No {conditional?'path-scoped':'unscoped'} rules were found.</p>
+        :<ul className="ctx-file-list">{group.map(file=><li key={file.path+file.order}>
+          <ContextFileLink path={file.path} disabled={!file.exists}><strong>{fileName(file.path)}</strong><small>{rel(file.path)}</small></ContextFileLink>
+          <div className="ctx-file-meta"><Mark {...LOADS[fileLoad(chain,file)]}/><Mark {...SCOPE[file.scope]}/>
+            {managed.has(file.path)&&<ManagedChip/>}<span>{plural(file.lines,'line')} · {bytes(file.bytes)}</span></div>
+          {file.conditional&&<div className="ctx-rule-matches"><code>{file.conditional.globs.join(', ')}</code>
+            {file.conditional.matchingFiles===0?<Pill status="Matches 0 files" tone="warn"/>:<span>{plural(file.conditional.matchingFiles,'matching file')}</span>}</div>}
+          {file.excludedBy&&<p className="ctx-warn">Excluded by {file.excludedBy}</p>}
+          {file.warnings.map(warning=><p className="ctx-warn" key={warning}>{warning}</p>)}
+        </li>)}</ul>}
+    </section>;
+  })}<p className="ctx-fine faint">Matching-file counts come from the project scan, which skips dependency folders, Git metadata and build output. Load labels follow the resolved instruction chain.</p></>;
 }
 
 /* ── 3 · AGENTS.md ───────────────────────────────────────────────────── */
@@ -1184,7 +763,7 @@ function CodexAgentsPanel({ c }: { c: CodexAgentsChain }) {
   const mismatch = c.note.includes('does not read');
   return (
     <div className="ctx-codex">
-      <h3 className="ctx-sub">Codex — the AGENTS.md files Wanigan writes to</h3>
+      <SectionHead label="Codex — the AGENTS.md files Wanigan writes to"/>
       {mismatch && (
         <Callout level="critical" title="Wanigan is writing personal Codex instructions somewhere Codex will not read them.">
           {c.note}
@@ -1243,7 +822,7 @@ function AgentsPanel({ a, managed, root }: {
         Claude Code session. Codex reads AGENTS.md natively, so this is about Claude Code, GLM and
         DeepSeek sessions only.
       </Callout>
-      <h3 className="ctx-sub">Two fixes, either one is enough</h3>
+      <SectionHead label="Two fixes, either one is enough"/>
       <ol style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 9 }}>
         <li className="sunk" style={{ padding: '10px 13px' }}>
           <div style={{ fontSize: 'var(--t-small)', fontWeight: 600 }}>1 · Import it — keeps both files</div>
@@ -1266,126 +845,29 @@ function AgentsPanel({ a, managed, root }: {
 
 /* ── 4 · memory ──────────────────────────────────────────────────────── */
 
-function MemoryPanel({ m }: { m: MemoryState }) {
-  const [open, setOpen] = useState<string | null>(null);
-  const topics = m.files.filter((f) => !f.isIndex);
-  const WHERE: Record<MemoryState['derivedFrom'], string> = {
-    'git-repo': 'keyed off the git repository, so every worktree and subdirectory shares it',
-    'project-root': 'keyed off this directory, because it is not inside a git repository',
-    'setting-override': 'set by autoMemoryDirectory in your settings',
-  };
-
-  return (
-    <>
-      <div className="stat-2">
-        <Stat label="Memory directory" value={<span className="mono" style={{ fontSize: 'var(--t-small)' }}>{m.dir}</span>}
-              sub={WHERE[m.derivedFrom]} />
-        <Stat label="Auto memory"
-              value={m.enabled
-                ? <Mark glyph="●" word="enabled" color="var(--good)" />
-                : <Mark glyph="○" word="disabled" color="var(--text-faint)" />}
-              sub={m.enabled ? 'Claude saves and reads memories here' : 'nothing here is loaded into a session'} />
-      </div>
-
-      <h3 className="ctx-sub">MEMORY.md budget</h3>
-      {m.indexBudget ? <IndexMeter b={m.indexBudget} /> : (
-        <Note tone="info">
-          There is no MEMORY.md in this directory, so nothing indexes the memories below. Claude reads
-          the index first — an unindexed memory is only found if something names it directly.
-        </Note>
-      )}
-
-      {m.danglingLinks.length > 0 && (
-        <div style={{ marginTop: 12 }}>
-          <Callout level="warning" title={`${plural(m.danglingLinks.length, 'link')} point at a memory that does not exist.`}>
-            <span className="mono">{m.danglingLinks.map((l) => `[[${l}]]`).join('  ')}</span>
-            <p style={{ marginTop: 5 }}>
-              Claude follows links out of the index. A dead one costs a read to discover and returns
-              nothing. Either write the memory or take the link out.
-            </p>
-          </Callout>
-        </div>
-      )}
-
-      {m.orphans.length > 0 && (
-        <div style={{ marginTop: 10 }}>
-          <Note tone="info">
-            <strong>{plural(m.orphans.length, 'memory', 'memories')} nothing links to:</strong>{' '}
-            <span className="mono">{m.orphans.join(', ')}</span>. They are on disk but the index does not
-            lead to them, so they load only if Claude already knows the name.
-          </Note>
-        </div>
-      )}
-
-      <h3 className="ctx-sub">Topic files — {plural(topics.length, 'file')}</h3>
-      {topics.length === 0 ? (
-        <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
-          No topic files yet. Claude writes them as it learns things worth keeping; the index above stays
-          small because the detail lives out here.
-        </p>
-      ) : (
-        <div className="ctx-scroll" style={{ marginTop: 8 }}>
-          <table className="grid">
-            <thead>
-              <tr>
-                <th>Kind</th><th>Memory</th>
-                <th className="r">Lines</th><th className="r">Size</th>
-                <th className="r">Modified</th><th className="r">Links</th>
-              </tr>
-            </thead>
-            <tbody>
-              {topics.map((f) => {
-                const k = KIND[f.kind] ?? KIND.unknown;
-                const isOpen = open === f.path;
-                const broken = f.links.filter((l) => !l.exists).length;
-                return (
-                  <Fragment key={f.path}>
-                    <tr>
-                      <td><Mark {...k} /></td>
-                      <td>
-                        <button className="ctx-open" aria-expanded={isOpen}
-                                onClick={() => setOpen(isOpen ? null : f.path)}>
-                          <span className="caret" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
-                          <span style={{ minWidth: 0 }}>
-                            <span className="ctx-path" style={{ display: 'block' }}>{f.name}</span>
-                            {f.description && (
-                              <span className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.45, display: 'block', marginTop: 2 }}>
-                                {f.description}
-                              </span>
-                            )}
-                          </span>
-                        </button>
-                      </td>
-                      <td className="r">{num(f.lines)}</td>
-                      <td className="r">{bytes(f.bytes)}</td>
-                      <td className="r" title={fullDate(f.modified)}>{ago(f.modified)}</td>
-                      <td className="r">
-                        {broken > 0
-                          ? <Mark glyph="⚠" word={`${broken} dead`} color="var(--warning)" />
-                          : num(f.links.length)}
-                      </td>
-                    </tr>
-                    {isOpen && (
-                      <tr>
-                        <td colSpan={6}><FileBody path={f.path} kind="memory" /></td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {m.notes.length > 0 && (
-        <>
-          <h3 className="ctx-sub">What the scan found</h3>
-          <Bullets items={m.notes} />
-        </>
-      )}
-    </>
-  );
+function MemoryPanel({m}: {m:MemoryState}) {
+  const topics=m.files.filter(file=>!file.isIndex);
+  const where={'git-repo':'Shared by this repository’s worktrees','project-root':'Scoped to this project directory','setting-override':'Set by autoMemoryDirectory'};
+  return <>
+    <div className="ctx-memory-location"><Mark glyph={m.enabled?'●':'○'} word={m.enabled?'Auto memory enabled':'Auto memory disabled'} color={m.enabled?'var(--good)':'var(--text-faint)'}/>
+      <p className="ctx-path">{m.dir}</p><p className="ctx-fine faint">{where[m.derivedFrom]}</p></div>
+    <SectionHead label="Launch index"/>
+    {m.index?<div className="ctx-index-file"><ContextFileLink path={m.index.path} kind="memory"><strong>{m.index.name}</strong><small>Read the index, including content beyond the launch limit</small></ContextFileLink>
+      <div className="ctx-file-meta"><span>{plural(m.index.lines,'line')} · {bytes(m.index.bytes)}</span><span title={fullDate(m.index.modified)}>Modified {ago(m.index.modified)}</span></div></div>
+      :<Note tone="info">No MEMORY.md index was found. Topic files can still exist, but no launch index leads to them.</Note>}
+    {m.indexBudget&&<IndexMeter b={m.indexBudget}/>}
+    {m.danglingLinks.length>0&&<Callout title={`${plural(m.danglingLinks.length,'link')} point to missing memories.`}>{m.danglingLinks.join(', ')}</Callout>}
+    {m.orphans.length>0&&<Note tone="info"><strong>Not linked from the index:</strong> {m.orphans.join(', ')}</Note>}
+    <SectionHead label="Topic files" count={topics.length}/>
+    {!topics.length?<p className="dim">No topic files have been recorded.</p>:<ul className="ctx-file-list">
+      {topics.map(file=><li key={file.path}><ContextFileLink path={file.path} kind="memory"><strong>{file.name}</strong><small>{file.description}</small></ContextFileLink>
+        <div className="ctx-file-meta"><Mark {...(KIND[file.kind]??KIND.unknown)}/><span>{plural(file.lines,'line')} · {bytes(file.bytes)}</span>
+          <span title={fullDate(file.modified)}>Modified {ago(file.modified)}</span><span>{plural(file.links.length,'link')}</span>
+          {file.links.some(link=>!link.exists)&&<Pill status={`${file.links.filter(link=>!link.exists).length} missing links`} tone="warn"/>}</div>
+      </li>)}
+    </ul>}
+    {m.notes.length>0&&<details className="ctx-disclosure"><summary>Scan notes</summary><Bullets items={m.notes}/></details>}
+  </>;
 }
 
 /**
@@ -1393,80 +875,22 @@ function MemoryPanel({ m }: { m: MemoryState }) {
  * runs past it is over, and the part past it is what gets dropped — silently,
  * on every session, which is why it is called out in words too.
  */
-function IndexMeter({ b }: { b: IndexBudget }) {
-  const rows = [
-    { key: 'Lines', used: b.lines, limit: b.lineLimit,
-      loaded: b.loadedLines, dropped: b.droppedLines, fmt: (n: number) => num(n) },
-    { key: 'Bytes', used: b.bytes, limit: b.byteLimit,
-      loaded: Math.min(b.bytes, b.byteLimit), dropped: Math.max(0, b.bytes - b.byteLimit), fmt: bytes },
-  ];
-
-  return (
-    <>
-      <div className="ctx-bars">
-        {rows.map((r) => {
-          const max = Math.max(r.limit, r.used, 1);
-          const w = (n: number) => (n / max) * 100;
-          return (
-            <div key={r.key} className="ctx-meter">
-              <div className="ctx-meter-head">
-                <strong>{r.key}</strong>
-                <span className="dim">{r.fmt(r.used)} used</span>
-                {r.dropped > 0
-                  ? <Mark glyph="⚠" word={`${r.fmt(r.dropped)} dropped`} color="var(--warning)" />
-                  : <Mark glyph="●" word="fits" color="var(--good)" />}
-                <span className="cap">limit {r.fmt(r.limit)}</span>
-              </div>
-              <svg className="chart-svg" viewBox="0 0 100 10" style={{ marginTop: 0 }} role="img"
-                   aria-label={`${r.key}: ${r.fmt(r.used)} used of a ${r.fmt(r.limit)} limit, ${r.fmt(r.dropped)} dropped`}>
-                <rect x="0" y="2" width="100" height="6" rx="3" fill="var(--bg-sunk)" />
-                <rect x="0" y="2" width={Math.max(0.5, w(r.loaded))} height="6" rx="3" fill={SERIES[0]}>
-                  <title>{`${r.fmt(r.loaded)} reaches the model`}</title>
-                </rect>
-                {r.dropped > 0 && (
-                  <rect x={w(r.loaded)} y="2" width={w(r.dropped)} height="6" fill="var(--warning)">
-                    <title>{`${r.fmt(r.dropped)} never reaches the model`}</title>
-                  </rect>
-                )}
-                <line x1={w(r.limit)} x2={w(r.limit)} y1="0" y2="10" stroke="var(--text)" strokeWidth="0.4" />
-              </svg>
-            </div>
-          );
-        })}
-      </div>
-
-      <table className="viz-table">
-        <thead>
-          <tr>
-            <th>Measure</th>
-            <th style={{ textAlign: 'right' }}>In the file</th>
-            <th style={{ textAlign: 'right' }}>Limit</th>
-            <th style={{ textAlign: 'right' }}>Loads</th>
-            <th style={{ textAlign: 'right' }}>Dropped</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.key}>
-              <td>{r.key}</td>
-              <td className="n">{r.fmt(r.used)}</td>
-              <td className="n">{r.fmt(r.limit)}</td>
-              <td className="n">{r.fmt(r.loaded)}</td>
-              <td className="n" style={{ color: r.dropped > 0 ? 'var(--warning)' : 'var(--text-dim)' }}>
-                {r.dropped > 0 ? `⚠ ${r.fmt(r.dropped)}` : '0'}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <div style={{ marginTop: 10 }}>
-        {b.overBudget
-          ? <Callout level="warning" title="MEMORY.md is over budget.">{b.note}</Callout>
-          : <Note tone="info">{b.note}</Note>}
-      </div>
-    </>
-  );
+function IndexMeter({b}: {b:IndexBudget}) {
+  const scale=Math.max(b.lines,b.lineLimit,1);
+  return <div className="ctx-index-budget">
+    <div className="ctx-meter-head"><strong>{num(b.loadedLines)} lines load</strong>
+      {b.droppedLines>0?<Mark glyph="!" word={`${num(b.droppedLines)} lines dropped`} color="var(--warning)"/>
+        :<Mark glyph="✓" word="Within the limit" color="var(--good)"/>}</div>
+    <svg className="ctx-index-meter" viewBox="0 0 100 6" preserveAspectRatio="none" role="img" aria-label={`${b.loadedLines} lines load and ${b.droppedLines} lines are dropped`}>
+      <rect width="100" height="6" rx="3" fill="var(--bg-sunk)"/>
+      <rect width={b.loadedLines/scale*100} height="6" rx="3" fill="var(--series-1)"/>
+      {b.droppedLines>0&&<rect x={b.loadedLines/scale*100} width={b.droppedLines/scale*100} height="6" fill="var(--warning)"/>}
+    </svg>
+    <table className="viz-table"><thead><tr><th>Measure</th><th className="r">In the file</th><th className="r">Limit</th></tr></thead>
+      <tbody><tr><td>Lines</td><td className="n">{num(b.lines)}</td><td className="n">{num(b.lineLimit)}</td></tr>
+        <tr><td>Bytes</td><td className="n">{bytes(b.bytes)}</td><td className="n">{bytes(b.byteLimit)}</td></tr></tbody></table>
+    {b.overBudget?<Callout title="The index exceeds its launch budget.">{b.note}</Callout>:<Note tone="info">{b.note}</Note>}
+  </div>;
 }
 
 /* ── 5 · settings and hooks ──────────────────────────────────────────── */
@@ -1491,7 +915,7 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
 
   return (
     <>
-      <h3 className="ctx-sub">The layers, lowest precedence first</h3>
+      <SectionHead label="The layers, lowest precedence first"/>
       <div className="ctx-scroll">
         <table className="grid">
           <thead><tr><th>Layer</th><th>File</th><th>On disk</th><th className="r">Keys</th></tr></thead>
@@ -1510,7 +934,7 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
         </table>
       </div>
 
-      <h3 className="ctx-sub">Which layer won each key</h3>
+      <SectionHead label="Which layer won each key"/>
       {c.settings.length === 0 ? (
         <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5 }}>
           No settings are set in any layer, so Claude Code runs on its own defaults here.
@@ -1543,7 +967,7 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
         </div>
       )}
 
-      <h3 className="ctx-sub">Hooks — {plural(c.hooks.length, 'hook')}</h3>
+      <SectionHead label="Hooks" count={c.hooks.length}/>
       {shared.length > 0 && (
         <div style={{ marginBottom: 10 }}>
           <Callout level="warning"
@@ -1595,10 +1019,10 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
 
       {c.permissions.length > 0 && (
         <>
-          <h3 className="ctx-sub">Permission rules</h3>
+          <SectionHead label="Permission rules"/>
           <div className="ctx-scroll">
             <table className="grid">
-              <thead><tr><th>Layer</th><th className="r">Allow</th><th className="r">Ask</th><th className="r">Deny</th><th>Denied</th></tr></thead>
+              <thead><tr><th>Layer</th><th className="r">Allow</th><th className="r">Ask</th><th className="r">Deny</th><th>Rule details</th></tr></thead>
               <tbody>
                 {c.permissions.map((p) => (
                   <tr key={p.from}>
@@ -1607,7 +1031,10 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
                     <td className="r">{num(p.ask.length)}</td>
                     <td className="r">{num(p.deny.length)}</td>
                     <td className="mono faint" style={{ fontSize: 'var(--t-small)', wordBreak: 'break-word' }}>
-                      {p.deny.length === 0 ? '—' : p.deny.slice(0, 6).join(', ') + (p.deny.length > 6 ? ` +${p.deny.length - 6} more` : '')}
+                      <details className="ctx-disclosure"><summary>View rules</summary>
+                        {(['allow','ask','deny'] as const).map(kind=><div key={kind}><strong>{kind}</strong>
+                          <ul>{p[kind].length?p[kind].map(rule=><li key={rule}>{rule}</li>):<li>None</li>}</ul></div>)}
+                      </details>
                     </td>
                   </tr>
                 ))}
@@ -1619,7 +1046,7 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
 
       {also.length > 0 && (
         <>
-          <h3 className="ctx-sub">Also injected — {plural(also.length, 'entry', 'entries')}</h3>
+          <SectionHead label="Also injected" count={also.length}/>
           <div className="ctx-scroll">
             <table className="grid">
               <thead><tr><th>Kind</th><th>Name</th><th>Scope</th><th>Detail</th></tr></thead>
@@ -1650,7 +1077,7 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
 
       {c.notes.length > 0 && (
         <>
-          <h3 className="ctx-sub">What the scan found</h3>
+          <SectionHead label="What the scan found"/>
           <Bullets items={c.notes} />
         </>
       )}
@@ -1805,18 +1232,17 @@ function LearningPanel({ settings, overview, onOpenLearning }: {
               value={overview ? num(overview.quarantined) : '—'}
               tone={overview && overview.quarantined > 0 ? 'var(--warning)' : undefined}
               sub={overview ? 'excluded until re-validated' : 'count not read this scan'} />
-        {/* The ceiling is a setting, but it is denominated in estimated tokens,
-            so it wears the same mark as every other estimated number here. */}
+        {/* This is a configured ceiling; only calculated estimates wear ~. */}
         <Stat label="Budget ceiling"
-              value={settings ? <Est>{num(settings.briefingMaxTokens)}</Est> : '—'}
-              sub={settings ? 'tokens per task' : 'settings not read this scan'} />
+              value={settings ? num(settings.briefingMaxTokens) : '—'}
+              sub={settings ? 'configured limit in estimated tokens' : 'settings not read this scan'} />
         <Stat label="Briefing"
               value={!settings ? '—'
                 : settings.enabled
                   ? <Mark glyph="●" word="on" color="var(--good)" />
                   : <Mark glyph="○" word="paused" color="var(--text-faint)" />}
               sub={!settings ? 'settings not read this scan'
-                : settings.enabled ? 'a capsule is retrieved for every task'
+                : settings.enabled ? 'retrieval enabled for supported launches'
                 : 'no briefing will be injected'} />
       </div>
 
@@ -1830,10 +1256,10 @@ function LearningPanel({ settings, overview, onOpenLearning }: {
       )}
 
       <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 12, maxWidth: 660 }}>
-        Retrieval is query-scoped at launch: the first prompt is the query, and the capsule packs only
-        matching items — with their citations — under the ceiling above. Items whose cited files have
-        changed are quarantined before injection, and the capsule rides in on the invocation itself
-        (argv or hook) — it never edits files in this repository.
+        Retrieval uses the optional New Session prompt at launch. An empty prompt provides an empty
+        query. Matching items and their citations fit under the configured limit; stale citations are
+        quarantined before delivery. Briefings are delivered only through supported harnesses and
+        do not edit instruction files in this repository.
       </p>
       <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5, marginTop: 5 }}>
         Counts are read from stored knowledge items.
@@ -1854,61 +1280,16 @@ function LearningPanel({ settings, overview, onOpenLearning }: {
 
 /* ── the empty state ─────────────────────────────────────────────────── */
 
-function Setup({ full, project, slots, onInit, initMsg }: {
-  full?: boolean;
-  project: Project;
-  slots: typeof SLOTS;
-  onInit: () => void;
-  initMsg: { tone: 'ok' | 'info'; text: string } | null;
+function Setup({project,slots,onInit,initMsg,busy}: {
+  project:Project;slots:typeof SLOTS;onInit:()=>void;initMsg:{tone:'ok'|'info';text:string}|null;busy:boolean;
 }) {
-  const offerInit = slots.some((s) => s.key === 'chain');
-  return (
-    <section className="card" style={{ padding: 16 }}>
-      <h2 style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>
-        {full ? `Nothing is loaded in ${project.name} yet` : 'Slots that are still empty'}
-      </h2>
-      <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 5, maxWidth: 660 }}>
-        {full
-          ? <>A session started here right now would begin with no project instructions, no memories and no
-              project settings — only what your home directory and machine policy contribute. Here is what
-              each slot would do once it exists.</>
-          : <>Each panel above shows what is actually loading. These slots have nothing of{' '}
-              <strong>this project’s</strong> own in them yet — a panel above may still be showing what the
-              repo inherits from your home directory or a parent folder.</>}
-      </p>
-
-      <div className="ctx-slots" style={{ marginTop: 12 }}>
-        {slots.map((s) => (
-          <div key={s.key} className="ctx-slot">
-            <span style={{ marginTop: 1, width: 19, height: 19, flex: 'none', borderRadius: 'var(--r-pill)',
-                           display: 'grid', placeItems: 'center', fontSize: 'var(--t-micro)', fontWeight: 700,
-                           background: 'var(--bg-sunk)', color: 'var(--text-faint)' }}>{s.n}</span>
-            <h4 className="mono">{s.title}</h4>
-            <div style={{ minWidth: 0 }}>
-              <p>{s.what}</p>
-              <p className="how">{s.how}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {offerInit && (
-        <>
-          <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
-            <button className="btn btn-primary" onClick={onInit}>Type /init into a session</button>
-          </div>
-          <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.5, marginTop: 7, maxWidth: 660 }}>
-            /init reads the repository and drafts a CLAUDE.md from what is actually in it. Wanigan types the
-            command into a running session in {project.name} and stops there — you press Enter, and you review
-            the file it writes.
-          </p>
-        </>
-      )}
-      {initMsg && (
-        <div style={{ marginTop: 10 }}>
-          <Note tone={initMsg.tone === 'ok' ? 'ok' : 'info'}>{initMsg.text}</Note>
-        </div>
-      )}
-    </section>
-  );
+  const offerInit=slots.some(slot=>slot.key==='chain');
+  return <div className="ctx-setup">
+    <EmptyState posture="nothing-yet" title={offerInit?'No instruction files were found.':'Nothing recorded in this area.'}
+      cue={`This reading is for ${project.name}. Files inherited from outside the project are included when the scanner finds them.`}
+      action={offerInit?<button className="btn btn-primary" type="button" disabled={busy} onClick={onInit}>{busy?'Finding a session…':'Type /init into a session'}</button>:undefined}/>
+    {offerInit&&<p className="ctx-fine dim">This types /init into a running Claude Code session. You press Enter to run it and review any file changes.</p>}
+    {initMsg&&offerInit&&<Note tone={initMsg.tone}>{initMsg.text}</Note>}
+    {slots.map(slot=><details key={slot.key} className="ctx-disclosure"><summary>{slot.title}</summary><p>{slot.what}</p><p>{slot.how}</p></details>)}
+  </div>;
 }

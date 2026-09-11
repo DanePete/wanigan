@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-11T03:38:33.556Z",
+  "installed": false,
+  "packages": [
+    {
+      "arch": "mac-arm64",
+      "app": "/private/tmp/wanigan-space-switcher-tob53be9/release/mac-arm64/Wanigan.app",
+      "asarSha256": "299ee6f993ad6adae006cf5a63715b1cf662a5a109ef83555a9132f326f75c0e",
+      "rendererPath": "/out/renderer/assets/index-DM3gP_S1.js",
+      "rendererSha256": "b897f0d28ad2afe0f89eff96a03ea62e648cac27f5ad9f02df494c05fbef85b1",
+      "runtimeSha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b",
+      "signature": "strict ad-hoc resource seal, hardened fuses, ASAR integrity and executable PTY helper verified",
+      "stagedApp": "/Users/dane/Projects/drupal/wanigan/release/space-switcher/mac-arm64/Wanigan.app"
+    },
+    {
+      "arch": "mac",
+      "app": "/private/tmp/wanigan-space-switcher-tob53be9/release/mac/Wanigan.app",
+      "asarSha256": "05dbade38fef8dcf4e0646d33b9d419c0ad253d8dd5bd55c6593f3f2867bb9ac",
+      "rendererPath": "/out/renderer/assets/index-DM3gP_S1.js",
+      "rendererSha256": "b897f0d28ad2afe0f89eff96a03ea62e648cac27f5ad9f02df494c05fbef85b1",
+      "runtimeSha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b",
+      "signature": "strict ad-hoc resource seal, hardened fuses, ASAR integrity and executable PTY helper verified",
+      "stagedApp": "/Users/dane/Projects/drupal/wanigan/release/space-switcher/mac/Wanigan.app"
+    }
+  ],
+  "packagedUiVerifiedAt": "2026-09-11T03:38:57.230Z"
+}

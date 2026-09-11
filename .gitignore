@@ -14,3 +14,9 @@ release/
 
 # Worktree history rail — local scratch, can reach gigabytes.
 .wt-history-rail/
+
+# A separate git repository with its own history, currently without a remote.
+# `git add .` stages it as a gitlink to a commit no clone can resolve, so the
+# directory arrives empty and unfixable. Decide it deliberately — a submodule
+# with a real remote, or its own repository — rather than by staging sweep.
+/marketing/

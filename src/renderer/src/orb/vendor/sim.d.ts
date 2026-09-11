@@ -2,7 +2,7 @@ export interface LiquidParams {
   box: number[]; spacing: number; restDensity: number; gravity: number;
   substeps: number; iterations: number; cfmEpsilonRel: number; sCorrK: number;
   sCorrDq: number; xsphC: number; omega: number; sorAverage: boolean;
-  surfaceTensionK: number; bodies: string[]; pour: boolean;
+  surfaceTensionK: number; bodies: string[]; bodySize?:number; pour: boolean;
 }
 export class Sim {
   constructor(device: GPUDevice);

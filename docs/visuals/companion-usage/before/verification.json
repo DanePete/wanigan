@@ -1,0 +1,8 @@
+{
+  "at": "2026-09-10T19:54:10.745Z",
+  "provenance": "Electron renderer with synthetic conversation and usage; no API calls",
+  "checks": [
+    "before screenshots in both themes"
+  ],
+  "errors": []
+}

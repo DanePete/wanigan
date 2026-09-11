@@ -1,0 +1,24 @@
+{
+  "checks": [
+    "Knowledge selection, evidence, version history, citation checks and keyboard navigation retain their context.",
+    "Late item responses are discarded; a failed item read exposes a working Retry.",
+    "Scoped search survives navigation, reports failures, ignores a canceled search and combines with status filters.",
+    "Personal and project scope changes clear prior records immediately; delayed and failed scopes never impersonate an empty store.",
+    "Proposal drafts survive selection and failed saves; approval is serialized and writing a provider file still requires its separate Apply action.",
+    "Teaching retains input focus and its draft; closing is read-only and submitting creates one explicit proposal.",
+    "Retirement names the selected item, requires a reason and retains its record after the explicit status change.",
+    "Briefing previews show exact payloads and estimated token costs; delayed responses cannot cross provider selections.",
+    "A failed refresh disables controls until Retry; window changes and one-shot Inbox links retain the intended filter across remounts.",
+    "Motion follows Off, Auto and Full preferences; the narrow desktop stays within its viewport.",
+    "Observed empty libraries and Inbox lists have distinct, actionable empty states."
+  ],
+  "errors": [],
+  "dimensions": [
+    {
+      "width": 1024,
+      "page": 1024,
+      "panel": 933,
+      "panelScroll": 933
+    }
+  ]
+}

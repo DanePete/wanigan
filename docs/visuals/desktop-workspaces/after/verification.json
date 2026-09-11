@@ -1,0 +1,27 @@
+{
+  "kind": "Electron renderer; synthetic fixtures; no real agent or repository operations",
+  "at": "2026-09-10T18:48:20.370Z",
+  "dimensions": {
+    "dark": {
+      "x": 261,
+      "y": 318.5234375,
+      "width": 1166,
+      "height": 423.4765625
+    },
+    "light": {
+      "x": 261,
+      "y": 318.5234375,
+      "width": 1166,
+      "height": 423.4765625
+    }
+  },
+  "checks": [
+    "history and file selection use the full reader; commit draft survives pane changes",
+    "session controls preserve terminal nodes and send only the chosen command to the selected session",
+    "switching sessions preserves all terminal hosts",
+    "gate drafts persist across disclosure; push still requires explicit confirmation",
+    "failed project switch cannot act on the previous repository",
+    "narrow desktop keeps the reader visible and the keyboard session switcher closes correctly"
+  ],
+  "errors": []
+}

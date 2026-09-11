@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { BudgetState, Project, Reconciliation, UnifiedSpendDay } from '@shared/types';
-import { Note, Stat, num, usd } from '../components/bits';
+import { Note, PageHead, Segmented, Stat, num, usd } from '../components/bits';
 import '../styles/insights.css';
+import { useViewMemory } from '../components/viewMemory';
 
 /**
  * Where the money went, across all three surfaces — and by which meter.
@@ -403,7 +404,8 @@ export default function InsightsView({ onOpenRun, projects: given }: {
    */
   projects?: Project[];
 }) {
-  const [days, setDays] = useState(30);
+  const [days, setDays] = useViewMemory<number>('days', 30);
+  const [report, setReport] = useViewMemory<'spending' | 'activity' | 'budgets' | 'batch'>('report', 'spending');
   const [batch, setBatch] = useState<BatchInsights | null>(null);
   const [unified, setUnified] = useState<UnifiedSpendDay[]>([]);
   const [sync, setSync] = useState<SyncRow[]>([]);
@@ -417,7 +419,7 @@ export default function InsightsView({ onOpenRun, projects: given }: {
   const [codexUsage, setCodexUsage] = useState<CodexUsage | null>(null);
   const [transcripts, setTranscripts] = useState<TranscriptMeter | null>(null);
   const [burn, setBurn] = useState<BurnWindow[]>([]);
-  const [meterMode, setMeterMode] = useState<MeterMode>('both');
+  const [meterMode, setMeterMode] = useViewMemory<MeterMode>('meter', 'both');
   const [errs, setErrs] = useState<{ batch?: string; spend?: string; budgets?: string }>({});
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -675,22 +677,22 @@ export default function InsightsView({ onOpenRun, projects: given }: {
     (transcripts?.requests ?? 0) > 0;
 
   const head = (
-    <div className="pane-head">
-      <div>
-        <h1>Insights</h1>
-        <p className="dim">Where the tokens and the money actually went — across all three surfaces.</p>
+    <PageHead title="Insights" lead="The bigger picture of your agent work." actions={(
+      <div className="ins-actions">
+        <select className="field" aria-label="Reporting window in days" value={days}
+                onChange={(e) => setDays(Number(e.target.value))}>
+          {WINDOWS.map((d) => <option key={d} value={d}>Last {d} days</option>)}
+        </select>
+        <span className="faint">{busy ? 'Refreshing…' : 'Checks for updates every 15s'}</span>
       </div>
-      <div className="faint" style={{ fontSize: 'var(--t-small)' }}>
-        {busy ? 'Refreshing…' : 'Refreshes every 15s'}
-      </div>
-    </div>
+    )} />
   );
 
   /* Four distinct states. Loading is not empty; empty is not zero-results. */
 
   if (!ready) {
     return (
-      <div className="pane insights">
+      <div className="pane wide insights">
         {head}
         <div className="card chart-empty">
           <p>Reading the ledger…</p>
@@ -706,7 +708,7 @@ export default function InsightsView({ onOpenRun, projects: given }: {
   const fatal = errs.batch && errs.spend && errs.budgets;
   if (fatal) {
     return (
-      <div className="pane insights">
+      <div className="pane wide insights">
         {head}
         <Note tone="error">
           <strong>Could not read any spend data.</strong> {errs.spend}
@@ -725,7 +727,7 @@ export default function InsightsView({ onOpenRun, projects: given }: {
 
   if (!everSpent && buds.length === 0) {
     return (
-      <div className="pane insights">
+      <div className="pane wide insights">
         {head}
         <div className="card" style={{ padding: 22 }}>
           <h2 style={{ fontSize: 'var(--t-lead)', fontWeight: 600 }}>Nothing has been billed yet</h2>
@@ -757,7 +759,7 @@ export default function InsightsView({ onOpenRun, projects: given }: {
   }
 
   return (
-    <div className="pane insights">
+    <div className="pane wide insights">
       {head}
 
       <div aria-live="polite">
@@ -786,110 +788,110 @@ export default function InsightsView({ onOpenRun, projects: given }: {
         </Note>
       )}
 
-      <Note tone="info">
-        <strong>Two meters, not one.</strong> Session and headless costs are the CLI's own
-        accounting; batch costs are Wanigan's arithmetic over its local pricing table. They measure
-        different things and will not agree to the cent — a model newer than the table falls back to
-        a default rate, and the CLI's figure covers turns Wanigan never sees token counts for. Every
-        chart that mixes them names both sources underneath.
-      </Note>
-
-      {codexUsage && codexUsage.totalTokens > 0 && (
-        <CodexActivity usage={codexUsage} />
-      )}
-
-      {/* One filter row, above everything it scopes. */}
-      <div className="ins-filters">
-        <span className="label">Window</span>
-        <div className="ins-seg" role="group" aria-label="Reporting window in days">
-          {WINDOWS.map((d) => (
-            <button key={d} type="button" aria-pressed={d === days} onClick={() => setDays(d)}>
-              {d} days
+      <div className="ins-workspace">
+        <nav className="ins-reports" aria-label="Insights reports">
+          {([
+            ['spending', 'Spending', 'Trends and projects'],
+            ['activity', 'Tokens & pace', 'Activity, effort and cache'],
+            ['budgets', 'Budgets', 'Month-to-date limits'],
+            ['batch', 'Batch reports', 'Outcomes and reconciliation'],
+          ] as const).map(([id, title, hint]) => (
+            <button key={id} aria-current={report === id ? 'true' : undefined}
+                    aria-controls={`ins-report-${id}`} onClick={() => setReport(id)}>
+              <strong>{title}</strong><span>{hint}</span>
             </button>
           ))}
+          <details className="ins-sources">
+            <summary>About the meters</summary>
+            <p>Session and headless costs use CLI accounting. Batch costs use Wanigan’s local
+              pricing table and may fall back to a default rate for newer models. Every chart
+              names its sources; these figures may differ from your bill.</p>
+          </details>
+        </nav>
+        <div className="ins-report-content">
+          {/* Keep reports mounted: changing a report must not discard a budget or reconciliation draft. */}
+          <section id="ins-report-spending" className="ins-report" hidden={report !== 'spending'} aria-label="Spending report">
+            <div className="ins-intro"><h2>Spending</h2><p>Recorded costs across your projects · last {days} days</p></div>
+            <div className="ins-filters">
+              <span className="label">Meter</span>
+              <Segmented label="Which meter the totals below are read from" value={meterMode} onChange={setMeterMode}
+                         options={METER_MODES.map((m) => ({value: m.value, label: m.label}))} />
+              <span className="faint ins-filter-note">
+                Scopes the totals and two time-series charts. Project spend includes both meters.
+                {meterMode !== 'both' && <> The other meter reads zero by choice here, not because nothing was spent.</>}
+              </span>
+            </div>
+            <TwoSpeeds win={win} days={days} unmetered={unmetered} />
+
+            <SurfaceOverTime rows={rows} days={days} onWiden={() => setDays(90)} />
+
+            <SpendByProject rows={byProject} days={days} />
+            <details className="ins-comparison">
+              <summary>Compare with synchronous pricing</summary>
+              <SyncComparison rows={rows} days={days} totals={win} onWiden={() => setDays(90)} />
+            </details>
+          </section>
+          <section id="ins-report-activity" className="ins-report" hidden={report !== 'activity'} aria-label="Tokens and pace report">
+            <div className="ins-intro"><h2>Tokens &amp; pace</h2><p>Live provider windows, {days}-day transcripts, and all-time effort and cache.</p></div>
+            <BurnRate windows={burn} />
+            <TranscriptMeterCard meter={transcripts} days={days} />
+            {codexUsage && codexUsage.totalTokens > 0 && <CodexActivity usage={codexUsage} />}
+            <EffortDistribution rows={effort} />
+            <UnifiedCache rows={cache} />
+          </section>
+          <section id="ins-report-budgets" className="ins-report" hidden={report !== 'budgets'} aria-label="Budgets report">
+            <div className="ins-intro"><h2>Budgets</h2><p>Month-to-date spend and the limits you set. Independent of the reporting window.</p></div>
+            <Budgets buds={buds} projects={projects} onSaved={(next) => {
+              setBuds(next);
+              window.wanigan.budgets.breached().then((b) => { if (alive.current) setBreached(b); }).catch(() => {});
+            }} />
+
+          </section>
+          <section id="ins-report-batch" className="ins-report" hidden={report !== 'batch'} aria-label="Batch report">
+            <div className="ins-intro"><h2>Batch reports</h2><p>All-time results, estimates and a separate reconciliation window.</p></div>
+            <div className="ins-divider">
+              <span className="label">Batch runs · Wanigan meter</span>
+              <span className="faint">
+                {METER.wanigan.glyph} Priced locally from returned token counts. The reconciliation card
+                at the foot of this page is what tests those figures against the bill.
+              </span>
+            </div>
+
+            {!hasBatch ? (
+              <div className="card chart-empty">
+                No batch runs have been submitted yet. Build one in Batches — bulk work is billed at half
+                of list, which is the whole reason the comparison above exists.
+              </div>
+            ) : (
+              <>
+                <div className="chart-grid">
+                  {/* The sentence carries the whole claim. The two-bar picture that
+                      used to sit here drew batch at exactly 50% every time, because
+                      the comparison is defined as spent × 2 — a shape that can never
+                      vary is decoration, not evidence. */}
+                  <HeroCard
+                    title="Total batch spend"
+                    hero={usd(t.cost ?? 0)}
+                    sub={<>Batch rates are exactly half of list, so the same work run synchronously
+                          would have cost <strong>{usd((t.cost ?? 0) * 2)}</strong>.</>}
+                  />
+
+                  <BatchCacheCard totals={t} />
+                </div>
+
+                <TokenFlow totals={t} />
+                <SpendByModel rows={batch?.byModel ?? []} />
+                <Outcomes rows={batch?.outcomes ?? []} />
+                <SpendOverTime runs={batch?.perRun ?? []} onOpenRun={onOpenRun} />
+              </>
+            )}
+
+            <Reconcile />
+
+            <EstimateAccuracy rows={acc} />
+          </section>
         </div>
-        <span className="label">Meter</span>
-        <div className="ins-seg" role="group" aria-label="Which meter the totals below are read from">
-          {METER_MODES.map((m) => (
-            <button key={m.value} type="button" aria-pressed={m.value === meterMode}
-              onClick={() => setMeterMode(m.value)}>
-              {m.label}
-            </button>
-          ))}
-        </div>
-        <span className="faint ins-filter-note">
-          Scopes the two time-series charts and the totals beside them. Effort, cache and estimator
-          accuracy are all-time; budgets are month-to-date.
-          {meterMode !== 'both' && (
-            <> Showing <strong>{meterMode === 'cli'
-              ? 'only what the CLI reported for itself'
-              : 'only what Wanigan priced from token counts'}</strong> — the other meter reads zero
-              here by choice, not because nothing was spent.</>
-          )}
-        </span>
       </div>
-
-      <TwoSpeeds win={win} days={days} unmetered={unmetered} />
-
-      <BurnRate windows={burn} />
-
-      <TranscriptMeterCard meter={transcripts} days={days} />
-
-      <SurfaceOverTime rows={rows} days={days} onWiden={() => setDays(90)} />
-
-      <SyncComparison rows={rows} days={days} totals={win} onWiden={() => setDays(90)} />
-
-      <SpendByProject rows={byProject} days={days} />
-
-      <Budgets buds={buds} projects={projects} onSaved={(next) => {
-        setBuds(next);
-        window.wanigan.budgets.breached().then((b) => { if (alive.current) setBreached(b); }).catch(() => {});
-      }} />
-
-      <EffortDistribution rows={effort} />
-
-      <UnifiedCache rows={cache} />
-
-      <div className="ins-divider">
-        <span className="label">Batch runs · Wanigan meter</span>
-        <span className="faint">
-          {METER.wanigan.glyph} Priced locally from returned token counts. The reconciliation card
-          at the foot of this page is what tests those figures against the bill.
-        </span>
-      </div>
-
-      {!hasBatch ? (
-        <div className="card chart-empty">
-          No batch runs have been submitted yet. Build one in Batches — bulk work is billed at half
-          of list, which is the whole reason the comparison above exists.
-        </div>
-      ) : (
-        <>
-          <div className="chart-grid">
-            {/* The sentence carries the whole claim. The two-bar picture that
-                used to sit here drew batch at exactly 50% every time, because
-                the comparison is defined as spent × 2 — a shape that can never
-                vary is decoration, not evidence. */}
-            <HeroCard
-              title="Total batch spend"
-              hero={usd(t.cost ?? 0)}
-              sub={<>Batch rates are exactly half of list, so the same work run synchronously
-                    would have cost <strong>{usd((t.cost ?? 0) * 2)}</strong>.</>}
-            />
-
-            <BatchCacheCard totals={t} />
-          </div>
-
-          <TokenFlow totals={t} />
-          <SpendByModel rows={batch?.byModel ?? []} />
-          <Outcomes rows={batch?.outcomes ?? []} />
-          <SpendOverTime runs={batch?.perRun ?? []} onOpenRun={onOpenRun} />
-        </>
-      )}
-
-      <Reconcile />
-
-      <EstimateAccuracy rows={acc} />
     </div>
   );
 }

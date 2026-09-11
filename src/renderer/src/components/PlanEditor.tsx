@@ -1,9 +1,9 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { DocketNodeKind, DocketPlanNode } from '@shared/types';
 import {
   DEFAULT_DOCKET_PLAN, DOCKET_NODE_KINDS, MAX_DOCKET_NODE_DEPENDENCIES, MAX_DOCKET_PLAN_NODES,
 } from '@shared/types';
-import { Chip, Hint, SectionHead } from './bits';
+import { Chip, Hint } from './bits';
 
 /**
  * Draw a goal's task graph before the goal exists.
@@ -285,6 +285,7 @@ const KIND_HINT: Record<DocketNodeKind, string> = {
  * The editor itself: rows in graph order, each waiting only on rows above it.
  */
 export default function PlanEditor({ rows, onChange }: { rows: PlanRow[]; onChange: (rows: PlanRow[]) => void }) {
+  const [expanded, setExpanded] = useState<number | null>(null);
   const problems = useMemo(() => planProblems(rows), [rows]);
   const graphProblems = problems.filter((problem) => problem.row === null);
   const reviewCount = rows.filter((row) => row.kind === 'review').length;
@@ -300,11 +301,8 @@ export default function PlanEditor({ rows, onChange }: { rows: PlanRow[]; onChan
   };
 
   return <div className="control-plan">
-    <SectionHead label="Task graph" count={rows.length} />
     <p className="control-plan-lead">
-      Every goal gets the same four phases unless you draw something else here — for example two implement
-      tasks with disjoint claim paths, both reviewed by one task at the end. A task can only wait on a task
-      above it, which is what keeps a graph you draw here from deadlocking.
+      Open a task to shape its instructions and prerequisites. The final review brings the work back to you.
     </p>
     <div className="control-plan-rows">
       {rows.map((row, index) => {
@@ -313,7 +311,9 @@ export default function PlanEditor({ rows, onChange }: { rows: PlanRow[]; onChan
         const down = reordered(rows, index, index + 1);
         const onlyReview = row.kind === 'review' && reviewCount === 1;
         const depsFull = row.dependsOn.length >= MAX_DOCKET_NODE_DEPENDENCIES;
-        return <div className="control-plan-row" key={index}>
+        return <details className="control-plan-row" key={index} open={expanded === index}>
+          <summary className="control-plan-summary" onClick={event => { event.preventDefault(); setExpanded(expanded === index ? null : index); }}><span>{index + 1}</span><strong>{row.title.trim() || 'Name this task'}</strong><small>{row.kind}{rowProblems.length > 0 ? ' · needs detail' : ''}</small></summary>
+          <div className="control-plan-edit">
           <div className="control-plan-top">
             <span className="label">Task {index + 1}</span>
             <div className="control-plan-actions">
@@ -321,17 +321,17 @@ export default function PlanEditor({ rows, onChange }: { rows: PlanRow[]; onChan
                       title={index === 0 ? 'This is already the first task.'
                         : up === null ? `Task ${index + 1} waits on task ${index}, so it cannot move above it.`
                         : `Move this task above task ${index}.`}
-                      onClick={() => up && onChange(up)}>Move up</button>
+                      onClick={() => { if (up) { onChange(up); setExpanded(index - 1); } }}>Move up</button>
               <button className="btn btn-sm" type="button" disabled={down === null}
                       title={index === rows.length - 1 ? 'This is already the last task.'
                         : down === null ? `Task ${index + 2} waits on this one, so it cannot move below it.`
                         : `Move this task below task ${index + 2}.`}
-                      onClick={() => down && onChange(down)}>Move down</button>
+                      onClick={() => { if (down) { onChange(down); setExpanded(index + 1); } }}>Move down</button>
               <button className="btn btn-sm" type="button" disabled={rows.length < 2 || onlyReview}
                       title={rows.length < 2 ? 'A goal needs at least one task.'
                         : onlyReview ? 'This is the goal’s only review task, and a goal is accepted through its review.'
                         : 'Remove this task; everything that waited on it stops waiting.'}
-                      onClick={() => onChange(withoutRow(rows, index))}>Remove</button>
+                      onClick={() => { onChange(withoutRow(rows, index)); setExpanded(null); }}>Remove</button>
             </div>
           </div>
           <div className="control-inline">
@@ -382,16 +382,17 @@ export default function PlanEditor({ rows, onChange }: { rows: PlanRow[]; onChan
           {rowProblems.map((problem, at) => <p className="control-plan-problem" key={at}>
             <span className="glyph" aria-hidden="true">✕</span>{problem.message}
           </p>)}
-        </div>;
+          </div>
+        </details>;
       })}
     </div>
     <div className="control-plan-add">
       <button className="btn btn-sm" type="button" disabled={atCap}
               title={atCap ? `A goal holds at most ${MAX_DOCKET_PLAN_NODES} tasks.` : 'Add a task above the review, and make the review wait on it.'}
-              onClick={() => onChange(withRow(rows))}>Add task</button>
+              onClick={() => { onChange(withRow(rows)); setExpanded(rows.at(-1)?.kind === 'review' ? rows.length - 1 : rows.length); }}>Add task</button>
       <button className="btn btn-sm" type="button"
               title="Go back to the four phases every goal gets by default."
-              onClick={() => onChange(planRowsFromDefault())}>Reset to the default four</button>
+              onClick={() => { onChange(planRowsFromDefault()); setExpanded(null); }}>Reset to the default four</button>
     </div>
     {atCap && <Hint>This graph holds the maximum {MAX_DOCKET_PLAN_NODES} tasks. Past that, split the work across goals.</Hint>}
     {graphProblems.map((problem, at) => <p className="control-plan-problem" key={at}>

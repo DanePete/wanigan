@@ -122,7 +122,7 @@ try{
   }
   const thermal=await orb.inspectThermal(),flow=await orb.inspectGas(),embers=[...await orb.inspectEmbers()];
   const particles=await orb.inspectParticles();const frozenEmbers=await orb.inspectEmbers();
-  await orb.render({dt:0,time:80,light:false,gazeX:.35,gazeY:.1,blink:1,thinking:false,fire:0});
+  await orb.render({dt:0,time:80,light:false,gazeX:.35,gazeY:.1,blink:1,thinking:false,fire:0,material:1});
   const pausedThermal=await orb.inspectThermal(),pausedEmbers=await orb.inspectEmbers(),pausedParticles=await orb.inspectParticles();
   const pausePreserved=JSON.stringify(thermal)===JSON.stringify(pausedThermal)&&frozenEmbers.every((v,i)=>v===pausedEmbers[i])&&particles.every((v,i)=>v===pausedParticles[i]);
   durations.sort((a,b)=>a-b);

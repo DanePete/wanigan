@@ -50,7 +50,7 @@ function accelerator(tab: Tab): string | undefined {
  * knowledge of what is on screen; main knowing any of that would be a second
  * copy of it that drifts.
  */
-export function buildApplicationMenu(getWindow: () => BrowserWindow | null): Menu {
+export function buildApplicationMenu(getWindow: () => BrowserWindow | null, sidebar?: boolean): Menu {
   const send = (route: MenuRoute) => () => {
     const w = getWindow();
     if (!w || w.isDestroyed()) return;
@@ -113,7 +113,7 @@ export function buildApplicationMenu(getWindow: () => BrowserWindow | null): Men
         // preference, and installApplicationMenu is called again when it
         // changes so the tick is never a frame behind the window.
         {
-          label: 'Destination List', type: 'checkbox', checked: navSidebar() === 'open',
+          label: 'Destination List', type: 'checkbox', checked: sidebar ?? navSidebar() === 'open',
           accelerator: 'Alt+CommandOrControl+S', registerAccelerator: false,
           click: send({ kind: 'sidebar' }),
         },
@@ -152,6 +152,6 @@ export function buildApplicationMenu(getWindow: () => BrowserWindow | null): Men
   return Menu.buildFromTemplate(template);
 }
 
-export function installApplicationMenu(getWindow: () => BrowserWindow | null) {
-  Menu.setApplicationMenu(buildApplicationMenu(getWindow));
+export function installApplicationMenu(getWindow: () => BrowserWindow | null, sidebar?: boolean) {
+  Menu.setApplicationMenu(buildApplicationMenu(getWindow, sidebar));
 }

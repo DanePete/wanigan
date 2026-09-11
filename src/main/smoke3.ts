@@ -704,7 +704,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // size as the thing that was pinned. A replay that quietly loses rows is
   // worse than no replay, because the comparison still looks like one.
   const batchesViewSrc = sourceOf('src/renderer/src/views/Batches.tsx');
-  check(/source: await window\.wanigan\.evals\.goldenSource\(/.test(batchesViewSrc),
+  check(/(?:source:|const source =) await window\.wanigan\.evals\.goldenSource\(/.test(batchesViewSrc),
     'the batch builder reads a pinned set back through evals.goldenSource and makes it the run’s source');
   check(/'command', 'golden'\] as const/.test(batchesViewSrc),
     'and it is offered as an arm of the dataset picker, beside CSV, JSONL, Files and Command');
@@ -713,11 +713,11 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // scrolled were all component state: opening a run from row 140 and pressing
   // back returned to the top of a 60-row table, which reads as runs having
   // gone missing rather than as a view that forgot where it was.
-  check(/useViewMemory<Page>\('page', \{ page: 'list' \}\)/.test(batchesViewSrc)
+  check(/useLiveViewMemory<Page>\('page', \{ page: 'list' \}\)/.test(batchesViewSrc)
     && /useViewMemory\('expanded', false\)/.test(batchesViewSrc)
     && !/const \[expanded, setExpanded\] = useState/.test(batchesViewSrc)
     && /const paneRef = useRememberedScrollRef\('runs'\);/.test(batchesViewSrc)
-    && /<div className="pane" ref=\{paneRef\}>/.test(batchesViewSrc)
+    && /<div className="pane bx-workspace bx-history" ref=\{paneRef\}>/.test(batchesViewSrc)
     && /if \(seed\) setView\(\{ page: 'new' \}\)/.test(batchesViewSrc),
     'Batches reopens on the screen it was left on, with the run list still drawn in full and scrolled where it was — while a session handing over its changed files still overrides that and opens the builder');
   check(/sets\.length === 0[\s\S]{0,200}Nothing pinned yet/.test(batchesViewSrc),
@@ -727,7 +727,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // at the session whose changed files it was going to review threw the lot
   // away, with nothing on the way back to say a builder had ever been open.
   // Source contract, because the smoke process has no renderer to swap tabs in.
-  check(batchesViewSrc.includes("useViewMemory<RunConfig | null>('newRunCfg', null)")
+  check(batchesViewSrc.includes("useLiveViewMemory<RunConfig | null>('newRunCfg', null)")
     && /import \{ useRememberedScrollRef, useViewMemory \} from '\.\.\/components\/viewMemory';/.test(batchesViewSrc)
     && !/const \[cfg, setCfg\] = useState/.test(batchesViewSrc)
     && /if \(!cfg \|\| !presets\.length\)/.test(batchesViewSrc),
@@ -737,10 +737,11 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // until I come back”, and a draft kept after submission would open the next
   // New run on the config of a batch that has already been sent.
   check(/const forget = \(\) => \{[^}]*setCfg\(null\)[^}]*\};/.test(batchesViewSrc)
-    && /const leave = \(\) => \{\s*forget\(\);\s*onCancel\(\);\s*\};/.test(batchesViewSrc)
+    && batchesViewSrc.includes('Discard draft</button>')
+    && /const leave = \(\) => \{ if \(!submitting\) onCancel\(\); \};/.test(batchesViewSrc)
     && /forget\(\);\s*onDone\(r\.runId\);/.test(batchesViewSrc)
     && !/onClick=\{onCancel\}/.test(batchesViewSrc),
-    'Cancel means cancel: both back buttons and a successful submit drop the remembered draft, so the next New run opens blank rather than on an abandoned or already-submitted one');
+    'Back preserves the preparation draft; explicit Discard and a successful submit clear it, and a pending submit cannot be abandoned through the back control');
 
   // React matches hooks by call order, so a hook below an early return is
   // called on the render that has data and skipped on the render that does not.
@@ -775,9 +776,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // run detail, results, the refusal lane and the evals tab were all reachable
   // by pointer only. The row click stays for pointers; the identifying cell
   // becomes the button.
-  check(batchesViewSrc.includes('onClick={(e) => { e.stopPropagation(); onOpen(r.id); }}>{r.name}</button>')
+  check(batchesViewSrc.includes('data-batch-id={r.id} onClick={() => onOpen(r.id)}')
     && batchesViewSrc.includes('onClick={(e) => { e.stopPropagation(); setOpen(r); }}>{r.custom_id}</button>'),
-    'both of Batches’ clickable tables put a real button on their identifying cell, so a run and a result row can each be opened from the keyboard without the row losing its pointer click',
+    'Batches uses native buttons for run entries and request identifiers, so both open from the keyboard',
     `run name button ${batchesViewSrc.includes('}}>{r.name}</button>')} · custom_id button ${batchesViewSrc.includes('}}>{r.custom_id}</button>')}`);
   // Three reads on the Evals tab answered a rejection with an empty array, which
   // turns "Wanigan could not read this" into "there is none of this" — and the
@@ -3633,8 +3634,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       const docket = interview.commitInterview(iv.id, {
         ...iv.proposal!,
         title: 'MNA Offers rollout (edited)',
+        budgetUsd: 12,
       });
-      check(docket.title === 'MNA Offers rollout (edited)' && docket.nodes.length === plan.length,
+      check(docket.title === 'MNA Offers rollout (edited)' && docket.nodes.length === plan.length && docket.budgetUsd === 12,
         'accepting writes the operator’s edit, and one ticket per task in the graph',
         { title: docket.title, nodes: docket.nodes.length });
       check(interview.interview(iv.id).docketId === docket.id
@@ -4885,6 +4887,19 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       'the default docket plan still ends in review, and its four node kinds are declared once for both processes');
     const planNode = docket.nodes.find((node) => node.kind === 'plan')!;
     const implementNode = docket.nodes.find((node) => node.kind === 'implement')!;
+    check(control.sessionGoal('unlinked-session') === null && control.sessionGoal("' OR 1=1 --") === null,
+      'the session goal trail never infers ownership from a project or treats an ID as SQL');
+    let badGoalSession = false;
+    try { control.sessionGoal('x'.repeat(201)); } catch { badGoalSession = true; }
+    check(badGoalSession, 'the session goal read rejects an oversized renderer ID');
+    db().prepare('UPDATE work_nodes SET session_id=? WHERE id=?').run('journey-smoke', implementNode.id);
+    const sessionLink = control.sessionGoal('journey-smoke');
+    check(sessionLink?.goalId === docket.id && sessionLink.nodeId === implementNode.id && sessionLink.nodeStatus === 'blocked',
+      'a session links to its exact stored goal and task with dependency-derived status');
+    db().prepare('UPDATE work_nodes SET session_id=? WHERE id=?').run('journey-smoke', planNode.id);
+    check(control.sessionGoal('journey-smoke') === null, 'ambiguous session ownership cannot produce a confident goal link');
+    db().prepare('UPDATE work_nodes SET session_id=NULL WHERE id IN (?, ?)').run(planNode.id, implementNode.id);
+    check(control.sessionGoal('journey-smoke') === null, 'clearing the stored relationship removes the session goal link');
     control.claimPath(implementNode.id, 'src/control.ts');
     let overlapRefused = false;
     try {
@@ -6045,7 +6060,6 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const CASCADE_COMPOUNDED: Record<string, string> = {
     'src/renderer/src/styles/ui.css': '.field.field-inline {',
     'src/renderer/src/styles/timeline.css': '.field.tl-search {',
-    'src/renderer/src/styles/evals.css': '.field.skills-search {',
     'src/renderer/src/styles/git.css': '.field.gt-filter {',
     'src/renderer/src/styles/control.css': '.field.control-textarea {',
     'src/renderer/src/styles/runs.css': '.stat-grid.hr-stats {',
@@ -6054,7 +6068,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     .filter(([file, selector]) => !sourceOf(file).includes(selector))
     .map(([file]) => path.basename(file));
   check(cascadeCollapsed.length === 0,
-  'every modifier that had to beat a base rule still names both classes in its selector, because a bare .field-inline, .tl-search, .skills-search, .gt-filter, .control-textarea or .hr-stats loses on source order to .field, .stat-grid or .pane and renders nothing at all — which is the state each of these was found in',
+  'every remaining modifier that has to beat a base rule still names both classes in its selector, because a bare .field-inline, .tl-search, .gt-filter, .control-textarea or .hr-stats loses on source order to .field, .stat-grid or .pane',
   `sheets whose compound selector was collapsed back to one class: ${cascadeCollapsed.join(', ') || 'none'}`);
 
   // The negative half. A collapsed selector is the likeliest regression here,
@@ -6062,7 +6076,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // the bundle, and deleting the second class is a one-character edit that no
   // type, test or gate would otherwise notice.
   const CASCADE_BARE: [string, string][] = [
-    ['ui.css', 'field-inline'], ['timeline.css', 'tl-search'], ['evals.css', 'skills-search'],
+    ['ui.css', 'field-inline'], ['timeline.css', 'tl-search'], ['skills.css', 'skills-search'],
     ['git.css', 'gt-filter'], ['control.css', 'control-textarea'], ['runs.css', 'hr-stats'],
   ];
   const cascadeBareBack = CASCADE_BARE
@@ -6070,7 +6084,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       .test(cascadeRules(sourceOf(`src/renderer/src/styles/${sheet}`))))
     .map(([sheet, cls]) => `${sheet} .${cls}`);
   check(cascadeBareBack.length === 0,
-  'no sheet has re-opened a one-class rule head for any of the six modifiers that need two, so a future edit cannot quietly restore a declaration that loses every value it sets while still reading like working CSS',
+  'no sheet reopens a bare modifier that loses its declarations; Skills search now inherits the shared field without a private override',
   `one-class rule heads found: ${cascadeBareBack.join(', ') || 'none'}`);
 
   // runs.css is imported from HeadlessRuns.tsx rather than index.css, so the
@@ -6179,7 +6193,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const consentAt = pluginsViewSrc2.indexOf('<strong>Install {confirming.name}?</strong>');
   const originAt = pluginsViewSrc2.indexOf('{origin(confirming.source, confirming.marketplace)}');
   check(consentAt > 0 && originAt > consentAt
-    && originAt < pluginsViewSrc2.indexOf('This dialog is that prompt.')
+    && originAt < pluginsViewSrc2.indexOf('This confirmation is that prompt.')
     && pluginsViewSrc2.includes('enabled: null, source: a.source,')
     && !/source: null/.test(pluginsViewSrc2),
     'the plugin’s origin is named inside the install confirmation itself, before the sentence explaining what pressing Install accepts, and the offline catalog row no longer throws away the source the disk scan read',
@@ -6755,7 +6769,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(runsViewSrc.includes(`<Reading what="this run's repositories" />`)
     && runsViewSrc.includes(`posture="could-not-read" title="Could not read this run's repositories"`)
     && runsViewSrc.includes('onClick={() => setRowsNonce((n) => n + 1)}>Try again</button>')
-    && /\}, \[selected, signature, rowsNonce\]\);/.test(runsViewSrc)
+    && /\}, \[selected, signature, rowsNonce, revision\]\);/.test(runsViewSrc)
     && !/rows\(selected\)/.test(runsViewSrc),
   'a failed read of one run repositories is reported in the rows region itself, with the error and its own retry, instead of an error banner over the previous run table');
 
@@ -7150,7 +7164,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(!scoutViewSrc.includes('aria-live')
     && scoutViewSrc.includes('<section className="scout-results">')
     && scoutViewSrc.includes('<p className="scout-filter-status" role="status">{filterStatus}</p>')
-    && scoutViewSrc.includes('<h3>{suggestions.length} proposal')
+    && scoutViewSrc.includes('<SectionHead label="Proposals" count={suggestions.length} />')
     && /if \(loading\) return 'Reading local Scout records/.test(scoutViewSrc)
     && scoutViewSrc.includes("if (suggestions.length === 0) return 'Nothing proposed yet.'")
     && scoutViewSrc.includes("if (filteredSuggestions.length === 0) return 'No proposal matches these filters.'")
@@ -7398,7 +7412,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(terminalPaneSrc.includes('if (!entry || entry.priming) return;')
     && terminalPaneSrc.includes('entry.priming = true;')
     && terminalPaneSrc.includes('if (pool.get(sessionId) !== pane) return;')
-    && terminalPaneSrc.includes('if (buf) pane.term.write(buf);'),
+    // The callback form, not the bare write: see the outbound check below for
+    // why opening the gate on write()'s return is the whole bug.
+    && terminalPaneSrc.includes('pane.term.write(buf, () => finishPrime(pane));'),
   'a terminal drops broadcast chunks only while its one scrollback prime is in flight, so bytes that land during the mount round trip are written once — by the buffer that already carries them — instead of twice',
   `entry.priming mentions: ${terminalPaneSrc.split('entry.priming').length - 1}`);
 
@@ -7406,10 +7422,26 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // priming forever writes nothing again for the life of the session, and a
   // scrollback that rejects is exactly when that would happen.
   check(terminalPaneSrc.includes('if (pool.get(sessionId) === pane) finishPrime(pane);')
-    && terminalPaneSrc.split('finishPrime(pane)').length - 1 === 2
+    // Three call sites now: the write callback, the empty-buffer branch beside
+    // it, and this one. The empty branch matters — a session with no history
+    // would otherwise never open its gate at all.
+    && terminalPaneSrc.split('finishPrime(pane)').length - 1 === 3
+    && terminalPaneSrc.includes('else finishPrime(pane);')
     && terminalPaneSrc.includes('pane.priming = false;'),
   'a refused scrollback opens the gate it shut, so a pane whose history could not be read still shows everything the agent prints after that',
   `finishPrime call sites: ${terminalPaneSrc.split('finishPrime(pane)').length - 1}`);
+
+  // The outbound half of the prime gate, which the inbound half above does not
+  // imply. A captured scrollback carries the device queries the agent's own TUI
+  // emitted; replaying it makes xterm answer them on its data channel, and that
+  // channel is the live PTY. A probe measured four replies escaping — ESC[6n,
+  // ESC[c, ESC[>c, ESC[5n — arriving at a running agent as keystrokes nobody
+  // pressed. `npm run probe:terminal` fails if either half regresses; this
+  // check is what stops the two lines being tidied away between probe runs.
+  check(terminalPaneSrc.includes('if (pool.get(sessionId)?.priming) return;')
+    && !terminalPaneSrc.includes('if (buf) pane.term.write(buf);'),
+  'a pane forwards nothing to the PTY while it is priming, so replaying a scrollback cannot answer its own device queries into the running agent',
+  `outbound guard present: ${terminalPaneSrc.includes('if (pool.get(sessionId)?.priming) return;')}`);
 
   // Negative, and the one that catches a revert: both one-liners this replaced
   // are short enough to come back as a "tidy-up" without anyone noticing.
@@ -7447,7 +7479,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && sessionsMainSrc.includes("broadcast('session:unread'")
     && sessionsMainSrc.includes('export function setFocusedSession')
     && mainSrc.includes('setFocusedSession(sessionId)')
-    && preloadSrc.includes("ipcRenderer.on('session:unread'")
+    && preloadSrc.includes("listen('session:unread'")
     // The whole session list must not be pushed per burst of PTY output: the
     // channel carries the counts that moved, and nothing else.
     && !sessionsMainSrc.includes("s.meta.unread = 0; broadcast('session:list'"),
@@ -7504,22 +7536,18 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // repository's changes must not be waiting in the box over another's tree.
   const gitViewSrc = sourceOf('src/renderer/src/views/Git.tsx');
 
-  // Two surfaces name this view: the page head a person reads on arrival, and
-  // the palette hint they search to get there. They are not one string — a head
-  // may say what a hint must not, and this head adds that Wanigan only reads the
-  // repository until a button is pressed — but they must not describe different
-  // views, and the palette hint is MATCHED, not merely printed, so a word that
-  // drifts out of it stops being a way to find this screen. What is pinned is
-  // the list of things both promise, not the sentence either wraps it in.
+  // The compact heading names the work and its project. The browser labels
+  // expose the repository destinations; the command palette still searches
+  // their full vocabulary without a permanent instructional paragraph.
   const gitNouns = ['working tree', 'branches', 'stashes', 'review gate'];
-  const gitLead = /lead="([^"]+)"/.exec(gitViewSrc)?.[1] ?? '';
   const gitHint = /\{ id: 'git',[^}]*hint: '([^']+)'/.exec(routesSrc)?.[1] ?? '';
-  check(gitLead.length > 0 && gitHint.length > 0
-    && gitNouns.every((noun) => gitLead.toLowerCase().includes(noun) && gitHint.toLowerCase().includes(noun))
-    && /histor/i.test(gitLead) && /histor/i.test(gitHint)
-    && !/worktree/i.test(gitHint),
-    'the Git page head and the Git palette hint name the same five things this view holds, so neither can be rewritten into a description of a different screen, and the hint still does not claim the worktree UI that lives in Settings',
-    JSON.stringify({ lead: gitLead.slice(0, 70), hint: gitHint.slice(0, 70) }));
+  check(gitHint.length > 0 && gitNouns.every((noun) => gitHint.toLowerCase().includes(noun))
+    && /histor/i.test(gitHint) && !/worktree/i.test(gitHint)
+    && gitViewSrc.includes('title="Changes"')
+    && gitViewSrc.includes('Review the work in ${project.name}.')
+    && ['changes', 'history', 'branches', 'stash'].every((view) => gitViewSrc.includes(`value: '${view}'`))
+    && gitViewSrc.includes('<summary>Review gate'),
+    'the Changes heading names the selected project, its repository browser retains every destination, and the palette still searches all five repository capabilities');
   check(gitViewSrc.length > 500
     && gitViewSrc.includes('await syncSelection(await load())')
     && gitViewSrc.includes('function findFile(status: Status, path: string)')
@@ -7538,7 +7566,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && gitViewSrc.includes("useViewMemory('commitFilter', '')")
     && gitViewSrc.includes("useViewMemory('commitMsg', '')")
     && gitViewSrc.includes("useViewMemory('showAll', true)")
-    && gitViewSrc.includes("useViewMemory<'changes' | 'branches' | 'stash'>('pane', 'changes')")
+    && gitViewSrc.includes("useViewMemory<'changes' | 'history' | 'branches' | 'stash'>('pane', 'changes')")
     && /import \{ useRememberedScrollRef, useViewMemory \} from '\.\.\/components\/viewMemory';/.test(gitViewSrc)
     && !/const \[sel, setSel\] = useState/.test(gitViewSrc)
     && !/const \[msg, setMsg\] = useState/.test(gitViewSrc)
@@ -7599,14 +7627,14 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const gitCssSrc = sourceOf('src/renderer/src/styles/git.css');
   check((gitViewSrc.match(/\{head\}/g) ?? []).length === 3
     && gitViewSrc.includes('<PageHead')
-    && gitViewSrc.includes('title="Git"')
+    && gitViewSrc.includes('title="Changes"')
     && (gitViewSrc.match(/className="pane gt-view"/g) ?? []).length === 3
     // No state may fall back to the bare document pane: that is the measure
     // this view exists outside of.
     && !/className="pane"/.test(gitViewSrc)
-    && gitCssSrc.includes('.pane.gt-view { padding: 0; }')
+    && gitCssSrc.includes('.mission-shell .body .pane.gt-view { padding: 0; gap: 0; overflow: hidden; }')
     && gitCssSrc.includes('.pane.gt-view > * { max-width: none; }')
-    && gitCssSrc.includes('.pane.gt-view > .pane-head:first-child { padding: var(--s-3); }'),
+    && gitCssSrc.includes('.pane.gt-view > .pane-head:first-child { padding: var(--s-4) var(--s-5); }'),
   'every Git state opens with the shared page head, and its workbench runs to the window edge rather than stopping at the prose measure');
 
   // `st` is not a cache of the last repository Wanigan managed to read — it is the root every button
@@ -7713,28 +7741,12 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // is the right reading only once there is something to read it against.
   check(/<Explainer id="control-guide"[^>]*defaultHidden>/.test(controlViewSrc),
     'Review keeps its remembered guide folded by default so existing goals and their evidence lead the reading flow');
-  check(/<Explainer id="schedules-guide"[^>]*defaultHidden=\{list\.length === 0\}/.test(schedulesSrc),
-    'Schedules folds its guide while nothing is scheduled');
+  check(/<Explainer id="schedules-guide"[^>]*defaultHidden>/.test(schedulesSrc),
+    'Schedules keeps its guide folded so the agenda and recorded outcomes lead the view');
 
-  // Context numbers its seven slots as stable identities, so a repo that owns
-  // only the third and fourth opens on a section headed 3 with nothing above it
-  // saying why — and the card that names what is missing and offers /init sat
-  // below all seven. The numbers stay; the card moves up whenever most of the
-  // list is still empty. `nothing` already led with it; this is the ordinary
-  // case in between, which is most repositories.
-  //
-  // Asserted here rather than in the browser harness because that harness
-  // answers every context.* read with a shape-agnostic proxy, so every slot
-  // computes as filled and `unfilled` is empty — it cannot reach this path at
-  // all, and a green sweep says nothing about it.
-  const contextViewSrc = sourceOf('src/renderer/src/views/Context.tsx');
-  const setupBefore = contextViewSrc.indexOf('{setupLeads && unfilled.length > 0 && (');
-  const firstSection = contextViewSrc.indexOf('<Section n={1} title="Instructions"');
-  const setupAfter = contextViewSrc.indexOf('{!setupLeads && unfilled.length > 0 && (');
-  check(contextViewSrc.includes('const setupLeads = unfilled.length > SLOTS.length / 2;')
-    && setupBefore > 0 && firstSection > setupBefore && setupAfter > firstSection,
-  'Context puts its setup card above the numbered slots while most of them are still empty, and below them once they are not',
-  JSON.stringify({ setupBefore, firstSection, setupAfter }));
+  // Context now has seven navigable areas rather than numbered sections in a
+  // long report. Its empty-area setup and explicit /init routing are exercised
+  // by scripts/probe-context-workspace.mjs with realistic recording fixtures.
 
   // The flag has to keep following the data until something says otherwise.
   // Read once in the useState initialiser it was decided while the view was
@@ -7775,7 +7787,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && gitViewSrc.includes("{st ? commits.length : '—'}")
     && gitViewSrc.includes('<Reading what="this repository" />')
     && gitViewSrc.includes('<Reading what="the working tree, branches and stashes" />')
-    && gitViewSrc.includes("{p === 'stash' && st ? ` ${stash.length}` : ''}"),
+    && gitViewSrc.includes("label: st ? `Stash ${stash.length}` : 'Stash'"),
   'the Git view prints no count and no “No commits yet.” until a status read has actually returned: before one does it says it is reading, and after one fails it says the read failed rather than leaving a zero and an empty-history sentence standing beside the error',
   JSON.stringify({ unguardedCommitCountGone: !gitViewSrc.includes('<span className="c">{commits.length}</span>') }));
 
@@ -7986,7 +7998,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && !menuCode.includes("role: 'reload'") && !menuCode.includes("role: 'forceReload'")
     && menuCode.includes("w.webContents.send('menu:route', route)")
     && mainSrc.includes('installApplicationMenu(() => win)')
-    && preloadSrc.includes("ipcRenderer.on('menu:route'")
+    && preloadSrc.includes("listen('menu:route'")
     && appSrc.includes('window.wanigan.on.menuRoute(')
     && appSrc.includes("case 'tab': go(route.tab); break;"),
   'the macOS menu bar is built from the same route table, prints chords without taking them from the window, and cannot reload a renderer that owns live PTYs');
@@ -8374,13 +8386,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // plan → implement → verify → review. Source contract because the smoke
   // process has no renderer to look at.
   const controlCssSrc = sourceOf('src/renderer/src/styles/control.css');
-  check(controlViewSrc.includes('prereqs: { title: string; status: DocketNodeStatus }[]')
-    && /prereqs=\{node\.dependsOn\.map\(/.test(controlViewSrc)
-    && controlViewSrc.includes('className="control-node-waits">Waits on ')
-    && /prereqs\.map\(\(prereq, index\) => \{ const mark = markOf\(prereq\.status\)/.test(controlViewSrc)
-    && controlCssSrc.includes('.control-node-waits {')
-    && !controlViewSrc.includes('Start <em>Plan</em> first.'),
-    'every task card names the prerequisites it waits on and how each one stands, so a blocked task reads as "reopen that one" or "wait for that one" rather than a single ambiguous word');
+  // The former inline prerequisite sentence is now an interactive task journey.
+  // probe-review-workspace.mjs checks dependency status, navigation and focus
+  // against the actual renderer rather than pinning its private JSX spelling.
 
   // Control was the only view whose scroll container floated in the middle of a
   // wide window. control.css capped .control-view at 1500px and centred it with
@@ -8464,7 +8472,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(rendererSources.length > 40
     && stillNamingOne.length === 0
     && !/\.btn-small\s*\{/.test(withoutComments(sourceOf('src/renderer/src/styles/control.css')))
-    && !/\.skills-btn-sm\s*\{/.test(withoutComments(sourceOf('src/renderer/src/styles/evals.css'))),
+    && !/\.skills-btn-sm\s*\{/.test(withoutComments(sourceOf('src/renderer/src/styles/skills.css'))),
     'no renderer source claims a .btn-small or .skills-btn-sm button, and neither sheet declares one, because neither class ever moved a pixel: .btn redeclares padding, font-size and border-radius from later in the same stylesheet',
     stillNamingOne);
 
@@ -8564,13 +8572,14 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // editor's rows to that same call, seeded from DEFAULT_DOCKET_PLAN, so a goal
   // created without opening the editor is the goal Control always created. Source
   // contract because the smoke process has no renderer to press a button in.
+  const planningViewSrc = sourceOf('src/renderer/src/views/Interview.tsx');
   const planEditorSrc = sourceOf('src/renderer/src/components/PlanEditor.tsx');
   const planTypesSrc = sourceOf('src/shared/types.ts');
   check(planEditorSrc.length > 2000
-    && controlViewSrc.includes("import PlanEditor, { planProblems, planRowsFromDefault, toPlanNodes } from '../components/PlanEditor';")
-    && controlViewSrc.includes('useState<PlanRow[]>(planRowsFromDefault)')
-    && controlViewSrc.includes('plan: toPlanNodes(plan)')
-    && controlViewSrc.includes('<PlanEditor rows={plan} onChange={setPlan} />')
+    && planningViewSrc.includes("import PlanEditor, { planProblems, planRowsFromDefault, toPlanNodes } from '../components/PlanEditor';")
+    && planningViewSrc.includes('plan:planRowsFromDefault()') && controlViewSrc.includes('<Interview projects={projects}')
+    && planningViewSrc.includes('plan:toPlanNodes(draft.plan)')
+    && planningViewSrc.includes('<PlanEditor rows={draft.plan} onChange={plan => edit({plan})} />')
     && planEditorSrc.includes('return DEFAULT_DOCKET_PLAN.map((node) => ({')
     && preloadSrc.includes('plan?: DocketPlanNode[]')
     && controlSrc.includes('const planned = buildPlan(input.plan?.length ? input.plan : DEFAULT_PLAN);'),
@@ -8612,9 +8621,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   // exported list the editor renders, so it is never disabled for a reason nobody
   // can see. A validator that only speaks after the press is the rule stated twice
   // and heard once, with the goal already discarded by the time it is read.
-  check(controlViewSrc.includes('const planFaults = useMemo(() => planProblems(plan), [plan]);')
-    && controlViewSrc.includes('disabled={busy !== null || missing.length > 0 || planFaults.length > 0}')
-    && controlViewSrc.includes("aria-describedby={missing.length > 0 || planFaults.length > 0 ? 'control-create-blocked' : undefined}")
+  check(planningViewSrc.includes('const planFaults = planProblems(draft.plan);')
+    && planningViewSrc.includes('disabled={busy !== null || problems.length > 0}')
+    && planningViewSrc.includes("aria-describedby={problems.length ? 'planning-problems' : undefined}")
     && planEditorSrc.includes('export function planProblems(rows: PlanRow[]): PlanProblem[] {')
     && planEditorSrc.includes('A goal needs one review task; the human decision is its final gate.')
     && controlSrc.includes('A goal needs one review task; the human decision is its final gate.')
@@ -8639,11 +8648,11 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && /import \{ useRememberedScrollRef, useViewMemory \} from '\.\.\/components\/viewMemory';/.test(fleetViewSrc)
     && !/const \[sort, setSort\] = useState/.test(fleetViewSrc)
     && !/const \[only, setOnly\] = useState/.test(fleetViewSrc)
-    // The offset is remembered on the element that owns one. .fleet-grid is a
-    // CSS grid with no overflow, so a scroll ref there would attach a listener
+    // The offset is remembered on the pane that owns it. A ref on the
+    // inner roster instead would attach a listener
     // that never fires and restore nothing while looking implemented.
-    && fleetViewSrc.includes('<div className="pane" ref={paneRef}>'),
-    'Fleet remembers its sort, its status filter and how far down the grid the operator had scrolled, so opening a blocked agent and coming back does not silently re-sort the fleet and scroll it to the top');
+    && /<div className="pane(?: [^"]*)?" ref=\{paneRef\}>/.test(fleetViewSrc),
+    'Fleet remembers its sort, its status filter and how far down the roster the operator had scrolled, so opening a blocked agent and coming back does not silently re-sort the fleet and scroll it to the top');
 
   // Learning unmounts on every tab swap like every other view, so an operator
   // reading the Inbox came back to Overview, at the top, with no notice that
@@ -8752,8 +8761,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   check(settingsSrc.includes('<PageHead compact title="Settings"')
     && !settingsSrc.includes('set-hero') && !settingsSrc.includes('set-kicker')
     && !settingsSheet.includes('.set-hero') && !settingsSheet.includes('.set-save-guide')
-    // The per-panel kicker is a section label, not the page eyebrow, and stays.
-    && settingsSrc.includes('set-panel-kicker') && settingsSheet.includes('.set-panel-kicker'),
+    && !settingsSrc.includes('set-panel-kicker') && !settingsSheet.includes('.set-panel-kicker'),
   'Settings heads with the shared compact PageHead and no eyebrow, and neither the view nor its sheet keeps the old hero');
 
   // Settings' Dispatcher shipped a "slots" row for the 'node' lane — Goal
@@ -8864,17 +8872,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'the Dispatcher row that limits goal autopilot names the surface that switches it on, instead of describing a lane with no stated way in',
     String(settingsSrc.includes('armed per goal in Review')));
 
-  // NEGATIVE. .set-jump is only ever worn as `className="link set-jump"`, and
-  // .link (index.css) already supplies the accent and the underline at the same
-  // specificity and the same values. Restating them there is a private duplicate
-  // of a base class, which is the shape that has bitten this repo three times.
-  const setJumpRule = /\.set-jump \{[^}]*\}/.exec(settingsSheet)?.[0] ?? '';
-  check(setJumpRule.length > 20
-    && !setJumpRule.includes('color:') && !setJumpRule.includes('text-decoration:')
-    && setJumpRule.includes('padding: 0')
-    && settingsSrc.includes('className="link set-jump"'),
-    'the settings jump link takes its colour and underline from .link rather than restating them at equal specificity, and keeps only the button reset .link does not provide',
-    setJumpRule);
+  // Settings now uses shared buttons for its section index. The removed
+  // .set-jump reset has no remaining callers; the renderer probe exercises
+  // the actual destination and keyboard focus instead of pinning its markup.
 
   const kindDecl = /type Kind = ([^;]+);/.exec(schedulesSrc)?.[1] ?? '';
   check(kindDecl.includes("'batch'") && !kindDecl.includes("'session'"),
@@ -8899,84 +8899,22 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'every button in a schedule action row takes its height from .btn-sm rather than an inline copy of part of it, and a coarse pointer still gets a 44px target',
     scButtons.join(' | '));
 
-  /* -- demo mode: partial masking is the failure ---------------------- */
+  /* -- demo mode: authored samples, never personal records ------------ */
   say('-- demo mode');
   const wasOn = demo.demoOn();
   demo.setDemo(true);
-
-  const home = os.homedir();
-  const user = home.split('/').filter(Boolean).pop() ?? 'user';
-  const sample = {
-    name: 'wanigan',
-    path: home + '/Projects/drupal/wanigan',
-    nested: [{ msg: `failed to read ${home}/Projects/drupal/wanigan/src/main/git.ts` }],
-    email: 'alex@example.com',
-  };
-  const masked = demo.maskOut(sample) as typeof sample;
-
-  check(!JSON.stringify(masked).includes(home), 'the home directory is gone from a masked response');
-  check(!JSON.stringify(masked).includes('@gmail.com'), 'a real email address is gone');
-  check(masked.nested[0].msg.includes('/Users/demo'), 'masking reaches nested values, not just top-level fields',
-    masked.nested[0].msg);
-  // The round trip is what keeps the app working while a demo is running.
-  const back = demo.unmaskIn(masked) as typeof sample;
-  check(back.path === sample.path, 'a masked path unmasks back to the real one', back.path);
-
+  check(JSON.stringify(demo.demoState()) === '{"on":true,"source":"fictional"}',
+    'demo state carries no original paths or mapping');
+  let refusedDemo = false;
+  try { demo.setDemo('false'); } catch { refusedDemo = true; }
+  check(refusedDemo && demo.demoOn(), 'non-boolean input is refused without changing demo intent');
   demo.setDemo(false);
-  const passthrough = demo.maskOut(sample) as typeof sample;
-  check(passthrough.path === sample.path, 'nothing is masked when demo mode is off');
-  check(demo.maskOut('/plain/string') === '/plain/string', 'strings pass through untouched when off');
+  check(demo.demoState().source === 'live', 'returning to real data is explicitly labelled');
   demo.setDemo(wasOn);
-
-  /* -- the blur is a stored preference, not a browser flag ------------ */
-  const wasBlurred = demo.demoBlur();
-  demo.setDemoBlur(true);
-  check(demo.demoBlur() === true && demo.demoState().blurTerminals === true,
-    'blurring terminals is remembered in the settings table and handed back beside the switch in one demo:state answer, so the reload demo:set performs can restore both instead of coming back with masked names over an unblurred terminal',
-    JSON.stringify({ blur: demo.demoBlur(), state: demo.demoState().blurTerminals }));
-
-  let refusedBlur = '';
-  try { demo.setDemoBlur('yes' as unknown as boolean); }
-  catch (e) { refusedBlur = e instanceof Error ? e.message : String(e); }
-  check(refusedBlur === 'Blur terminals is either on or off.' && demo.demoBlur() === true,
-    'a non-boolean arriving from the renderer is refused by name and leaves the stored preference exactly where it was, because a value that is neither on nor off would read back as off on precisely the launch someone was about to share their screen',
-    `${refusedBlur} · still ${demo.demoBlur()}`);
-
-  demo.setDemoBlur(false);
-  check(demo.demoState().blurTerminals === false && demo.demoState().on === demo.demoOn(),
-    'turning the blur off leaves demo mode itself alone: both halves of demo:state come from the same settings table but remain two separate answers, so the preference survives demo mode being switched off and on again',
-    JSON.stringify(demo.demoState()));
-  demo.setDemoBlur(wasBlurred);
-
-  check(appSrc.includes("toggleAttribute('data-demo-blur'")
-    && appSrc.includes('blur(true);')
-    && appSrc.includes('blur(s.on && s.blurTerminals)'),
-    'the always-mounted shell re-applies the terminal blur from the stored answer and starts blurred before that answer arrives, so the window between mount and the first demo:state reply cannot be the one where a shared screen shows raw agent output',
-    String(appSrc.includes('blur(true);')));
-
-  check(appSrc.includes("localStorage.removeItem('wanigan.demo.blurTerminal')")
-    && !settingsSrc.includes("localStorage.getItem('wanigan.demo.blurTerminal')")
-    && !settingsSrc.includes("localStorage.setItem('wanigan.demo.blurTerminal'"),
-    'the legacy browser flag is carried over once by App and read nowhere else, so an operator who had already ticked Blur terminals keeps it while Settings can no longer write a second copy of a preference the settings table now owns',
-    String(settingsSrc.includes('wanigan.demo.blurTerminal')));
-
-  check(!settingsSrc.includes('const [blur, setBlur] = useState')
-    && settingsSrc.includes('checked={state.blurTerminals}')
-    && settingsSrc.includes('window.wanigan.demo.setBlur(next)'),
-    'the demo panel holds no second copy of the blur: the checkbox is drawn from the state the main process returned and a failed write leaves it where it was rather than showing a preference that was never stored',
-    String(settingsSrc.includes('const [blur, setBlur] = useState')));
-
-  check(settingsSrc.includes('useState<DemoState | null>(null)')
-    && settingsSrc.includes('if (!state) return;')
-    && !settingsSrc.includes('{ on: false, blurTerminals: false, map: [] }'),
-    'the demo panel holds no answer until demo:state replies and writes the global data-demo-blur attribute only from an answer, so opening Settings can no longer clear the blur the always-mounted shell applied by turning a seeded {on:false, blurTerminals:false} into a claim about the stored preference',
-    String(settingsSrc.includes('useState<DemoState | null>(null)')));
-
-  check(!settingsSrc.includes('demo.state().then(setState).catch(() => {})')
-    && settingsSrc.includes('setReadErr(msg(e))')
-    && settingsSrc.includes('<PanelError what="whether demo mode is on"'),
-    'a rejected demo:state read is named on the panel with a Try again button instead of being swallowed by an empty catch, because the swallowed rejection used to leave terminals unblurred for the rest of the session while main-process masking kept inventing project names over them',
-    String(settingsSrc.includes('setReadErr(msg(e))')));
+  const { runDemoChecks } = await import('./smoke-demo');
+  runDemoChecks(check);
+  check(settingsSrc.includes('setReadErr(msg(e))') && settingsSrc.includes('<PanelError what="whether demo mode is on"'),
+    'demo settings reports failed reads and writes');
 
   check(!settingsSrc.includes('Every tool call an agent made was allowed or asked')
     && settingsSrc.includes("const counts = summary.v.s === 'ok' ? summary.v.d : null;"),

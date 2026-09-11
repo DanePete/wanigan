@@ -1,10 +1,10 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, session } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, session, clipboard } from 'electron';
 import type { WebContents, WebFrameMain } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  detectProviders, effectiveProviderBackendId, launchFieldsFor, providerById, providerPackRegistry, refreshProviderPacks,
+  detectProviders, effectiveProviderBackendId, launchFieldsFor, missingCredentialIds, providerById, providerPackRegistry, refreshProviderPacks,
   runsClaudeCli, usesAnthropicAccount,
 } from './providers';
 import {
@@ -63,7 +63,11 @@ import { deepseekModels, verifyDeepSeekKey } from './deepseek';
 import { xaiModels, verifyXaiKey } from './xai';
 import * as gitOps from './git';
 import * as gh from './gh';
-import { demoOn, setDemo, demoState, setDemoBlur, maskOut, unmaskIn, noteAuthors } from './demo';
+import { demoOn, setDemo, demoState } from './demo';
+import { readPreflight } from './preflight';
+import { discoverProjects, wasDiscovered } from './discovery';
+import { createDemoWorkspace, type DemoWorkspace } from './demo-workspace';
+import { DEMO_PROMPTS, DEMO_UNAVAILABLE } from '../shared/demo';
 import * as schedule from './schedule';
 import * as observed from './observed';
 import { egressReport } from './egress';
@@ -227,7 +231,7 @@ function announceHalt(state: ReturnType<typeof haltState>): void {
  * reads that list — not to the act of clearing an unrelated emergency.
  */
 function queueChanged(): void {
-  const w = win;
+  const w = liveWindow();
   if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
 }
 
@@ -253,7 +257,7 @@ function startPoller() {
     try {
       const s = await batch.pollOnce();
       if (s.ended || s.ingested) {
-        const w = win;
+        const w = liveWindow();
         if (w && !w.isDestroyed()) w.webContents.send('batch:changed', s);
       }
     } catch { /* transient; the next tick retries */ }
@@ -320,6 +324,20 @@ const SCHEDULED_BUDGET_USD = 2;
 const SCHEDULED_TIMEOUT_MS = 15 * 60_000;
 
 let win: BrowserWindow | null = null;
+const demoWindows = new WeakMap<WebContents, DemoWorkspace>();
+let demoWindowSequence = 0;
+let changingDemoWindow = false;
+
+/** All operational event producers receive no window during a demo. */
+function liveWindow(): BrowserWindow | null {
+  return win && !win.isDestroyed() && !demoWindows.has(win.webContents) && !changingDemoWindow ? win : null;
+}
+
+function storedDemoMode(): boolean {
+  if (process.argv.includes('--wanigan-demo')) return true;
+  try { return demoOn(); }
+  catch { return true; } // Unknown privacy preference must never expose data.
+}
 /** Slower than the dispatcher: a goal becomes eligible when work finishes. */
 const AUTOPILOT_SWEEP_MS = 10_000;
 let autopilotTimer: NodeJS.Timeout | null = null;
@@ -358,7 +376,7 @@ function startupSnapshot(): StartupState {
 
 function publishStartupState(next: StartupState): StartupState {
   startupState = next;
-  const w = win;
+  const w = liveWindow();
   if (w && !w.isDestroyed()) w.webContents.send('startup:changed', startupSnapshot());
   return startupSnapshot();
 }
@@ -382,7 +400,7 @@ function enterStartupRecovery(stage: string, error: unknown): StartupState {
 function showStartupRecoveryNotice(state: StartupState = startupSnapshot()): void {
   if (state.phase !== 'recovery') return;
   const show = () => {
-    const w = win;
+    const w = liveWindow();
     if (!w || w.isDestroyed()) return;
     void dialog.showMessageBox(w, {
       type: 'warning',
@@ -393,7 +411,7 @@ function showStartupRecoveryNotice(state: StartupState = startupSnapshot()): voi
       detail: `${state.stage ?? 'Startup'}: ${state.message ?? 'Unknown error.'}\n\nNo data was changed by this recovery screen. Fix the reported local-data problem, then use Retry in the banner or restart Wanigan.`,
     }).catch((error) => console.warn('[wanigan] could not show startup recovery notice:', error));
   };
-  const w = win;
+  const w = liveWindow();
   if (!w || w.isDestroyed()) return;
   if (w.isVisible()) show();
   else w.once('ready-to-show', show);
@@ -613,7 +631,8 @@ function openSafeExternal(raw: string): boolean {
   return false;
 }
 
-function createWindow() {
+function createWindow(demo = storedDemoMode()) {
+  notify.setDesktopPrivacy(demo);
   win = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -624,6 +643,8 @@ function createWindow() {
     backgroundColor: '#0c0e12',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
+      additionalArguments: demo ? ['--wanigan-demo-window'] : [],
+      ...(demo ? { partition: `wanigan-demo-${++demoWindowSequence}` } : {}),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -633,8 +654,11 @@ function createWindow() {
     },
   });
 
-  win.on('ready-to-show', () => win?.show());
   const window=win;
+  if (demo) demoWindows.set(window.webContents, createDemoWorkspace());
+  window.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  window.webContents.session.setPermissionCheckHandler(() => false);
+  window.on('ready-to-show', () => { if (!window.isDestroyed()) window.show(); });
   const publishVisibility=()=>{
     if(!window.isDestroyed()&&!window.webContents.isDestroyed())
       window.webContents.send('window:visibility',window.isVisible()&&!window.isMinimized());
@@ -646,7 +670,7 @@ function createWindow() {
   // Re-checking here lets a Mac banner that was intentionally quiet while the
   // session was visible fire once the operator moves to another app.
   win.on('blur', announceCurrentAttention);
-  win.on('closed', () => { win = null; });
+  win.on('closed', () => { if (win === window) win = null; });
 
   // External links open in the real browser, never inside the app shell.
   // This shell never navigates away from its bundled renderer.  Links belong
@@ -655,7 +679,7 @@ function createWindow() {
   win.webContents.on('will-navigate', (event) => event.preventDefault());
   win.webContents.on('will-attach-webview', (event) => event.preventDefault());
   win.webContents.setWindowOpenHandler(({ url }) => {
-    openSafeExternal(url);
+    if (!demo) openSafeExternal(url);
     return { action: 'deny' };
   });
 
@@ -663,7 +687,7 @@ function createWindow() {
   // is set once for the application rather than per window: macOS shows one
   // menu bar, and rebuilding it on each window would be a second source of the
   // route table.
-  installApplicationMenu(() => win);
+  installApplicationMenu(() => win, demo ? false : undefined);
 
   const devRenderer = developmentRendererUrl();
   if (devRenderer) {
@@ -741,7 +765,9 @@ app.whenReady().then(async () => {
     return;
   }
 
-  if (startupState.phase !== 'recovery') {
+  if (demoWindows.has(win!.webContents)) {
+    // A demo-only launch needs no account discovery, collectors, or pollers.
+  } else if (startupState.phase !== 'recovery') {
     const state = await startAttendedServices();
     if (state.phase === 'recovery') showStartupRecoveryNotice(state);
   } else {
@@ -796,7 +822,8 @@ app.on('before-quit', (event) => {
         defaultId: 0,
         cancelId: 0,
         title: 'Stop live agents?',
-        message: `${summary} will be stopped.`,
+        message: win && demoWindows.has(win.webContents)
+          ? 'Live work in your private workspace will be stopped.' : `${summary} will be stopped.`,
         detail: 'Projects, settings and saved transcripts remain, but a live agent cannot survive a full app quit.',
       });
       if (choice !== 1) return;
@@ -852,7 +879,7 @@ async function startServices() {
   // refresh without polling. User-initiated mutations reload via their own
   // IPC round trip and do not need it.
   learning.setLearningChangedNotifier(() => {
-    const w = win;
+    const w = liveWindow();
     if (w && !w.isDestroyed()) w.webContents.send('learning:changed');
   });
 
@@ -867,7 +894,7 @@ async function startServices() {
   // independently of that listener.
   stopHookEventListener?.();
   stopHookEventListener = hooks.onHookEvent((e) => {
-    const w = win;
+    const w = liveWindow();
     if (w && !w.isDestroyed()) w.webContents.send('session:event', e);
     const s = listSessions().find((x) => x.id === e.sessionId);
     try { learning.observeSessionEvent(e, s); }
@@ -1046,7 +1073,7 @@ async function startServices() {
   if (!smokeMode) autopilotTimer = setInterval(() => {
     try {
       if (control.sweepAutopilot() > 0) {
-        const w = win;
+        const w = liveWindow();
         if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
       }
     } catch (e) {
@@ -1088,7 +1115,7 @@ async function startServices() {
       // An agent that can spend money with no human in the loop is a budget
       // incident waiting for a bad prompt, so submission always asks.
       mcpServer.setConfirmHandler(async (req) => {
-        const w = win;
+        const w = liveWindow();
         if (!w || w.isDestroyed()) return false;
         const r = await dialog.showMessageBox(w, {
           type: 'question',
@@ -1295,7 +1322,7 @@ async function startAttendedServices(): Promise<StartupState> {
   let stage = 'session recovery';
   const attempt = (async () => {
     try {
-      initSessions(() => win);
+      initSessions(liveWindow);
       setSessionExitObserver((value) => {
         // A session ending is the one event that changes the Recent list, and
         // it is the moment somebody is most likely to be looking at that list —
@@ -1312,7 +1339,7 @@ async function startAttendedServices(): Promise<StartupState> {
         // until the app was restarted.
         try {
           if (control.onSessionExit(value.id)) {
-            const w = win;
+            const w = liveWindow();
             if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
           }
         } catch (error) {
@@ -1323,7 +1350,7 @@ async function startAttendedServices(): Promise<StartupState> {
       // missing. Without a route the operator lands on whichever tab happened
       // to be open and still has to hunt for the agent they were told about.
       notify.setNotificationOpener((target) => {
-        const w = win;
+        const w = liveWindow();
         if (!w || w.isDestroyed()) return;
         w.webContents.send('notify:open', target);
       });
@@ -1332,7 +1359,7 @@ async function startAttendedServices(): Promise<StartupState> {
       // because the window is the one place a notification cannot be silently
       // swallowed by a Focus mode nobody remembers switching on.
       notify.setInAppAlertSink((alert) => {
-        const w = win;
+        const w = liveWindow();
         if (!w || w.isDestroyed()) return;
         w.webContents.send('notify:alert', alert);
       });
@@ -1431,39 +1458,38 @@ function stopServices() {
   try { mcpServer.stopMcpServer(); } catch { /* already down */ }
 }
 
-/**
- * Whether demo masking is on, without asking SQLite twice per IPC call.
- *
- * unmaskIn and maskOut each call demoOn(), which calls getSetting(), which
- * compiles a fresh prepared statement every time. Two of those wrap all 291
- * handlers, so the Sessions tab alone paid for roughly 280 prepare-and-query
- * pairs a minute to learn that a screenshot mode nobody had switched on was
- * still off. demo.ts is the only writer and there is exactly one of it in this
- * process — the demo:set handler below — so the memo is invalidated there; the
- * short window is belt and braces for a writer this file does not know about.
- */
-const DEMO_MODE_TTL_MS = 1_000;
-let demoModeCheckedAt = 0;
-let demoModeCached = false;
-
-function demoMasking(): boolean {
-  const now = Date.now();
-  if (demoModeCheckedAt && now - demoModeCheckedAt < DEMO_MODE_TTL_MS) return demoModeCached;
+/** Switch storage partitions by replacing only the window. The live sessions
+ * stay in main; their event sink is suspended before the old window is hidden.
+ * A demo's storage is in memory and never shares drafts with the live profile. */
+function switchDemoWindow(on: unknown) {
+  if (typeof on !== 'boolean') throw new Error('Demo mode is either on or off.');
+  if (changingDemoWindow) throw new Error('The workspace is already changing.');
+  if (win && demoWindows.has(win.webContents) === on) return demoState(on);
+  changingDemoWindow = true;
+  const previous = win;
   try {
-    demoModeCached = demoOn();
+    // Construct the replacement before retiring the only usable window. A
+    // failed construction is a refused switch, never an uncaught timer error
+    // that takes down the main process and its running agents.
+    createWindow(on);
+    if (previous && !previous.isDestroyed()) win!.setBounds(previous.getBounds());
+    setDemo(on);
   } catch {
-    // This runs before the handler's own try, and in recovery mode the database
-    // holding the setting is the thing that could not be opened. Masking off is
-    // the only answer available, and it keeps startup:status — the one handler
-    // that has to work here — from failing with a message about SQLite.
-    demoModeCached = false;
+    const failed = win;
+    win = previous;
+    if (failed && failed !== previous && !failed.isDestroyed()) failed.destroy();
+    notify.setDesktopPrivacy(!!previous && demoWindows.has(previous.webContents));
+    changingDemoWindow = false;
+    throw new Error('The workspace could not be opened. Your current workspace is unchanged. Try again.');
   }
-  demoModeCheckedAt = now;
-  return demoModeCached;
-}
-
-function forgetDemoMasking(): void {
-  demoModeCheckedAt = 0;
+  previous?.hide();
+  // The old sender must live long enough to receive its IPC acknowledgement.
+  setTimeout(() => {
+    if (previous && !previous.isDestroyed()) previous.destroy();
+    changingDemoWindow = false;
+    if (!on && !attendedServicesStarted) void startAttendedServices();
+  }, 0);
+  return demoState(on);
 }
 
 /**
@@ -1486,24 +1512,33 @@ function sameUrl(a: string, b: string): boolean {
   return a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
 }
 
+/** This explicit copy action can write only authored text, in either workspace. */
+function copyDemoPrompt(id: unknown): void {
+  const prompt = DEMO_PROMPTS.find(item => item.id === id);
+  if (!prompt) throw new Error('Choose a demo prompt from the list.');
+  clipboard.writeText(prompt.text);
+}
+
 function registerIpc() {
   const handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => {
     ipcMain.handle(channel, async (event, ...args) => {
       if (!trustedSender(event.sender, event.senderFrame)) {
         return { ok: false, error: 'Untrusted IPC sender.' };
       }
-      // Demo mode is bidirectional on purpose: a masked path handed back to
-      // git has to become real again, or every action fails while the demo
-      // is running — which is exactly when nobody can debug it. While it is
-      // off, neither walk is entered at all.
-      const masking = demoMasking();
+      const demo = demoWindows.get(event.sender);
       try {
-        const real = masking ? (unmaskIn(args) as never[]) : (args as never[]);
-        const data = await fn(...real);
-        return { ok: true, data: masking ? maskOut(data) : data };
+        // A window's source is frozen for its lifetime, including requests
+        // finishing after a toggle. No fake value is translated into a real
+        // path, and unknown demo channels never invoke a production handler.
+        if (channel === 'demo:state') return { ok: true, data: demoState(!!demo) };
+        if (channel === 'demo:set') return { ok: true, data: switchDemoWindow(args[0]) };
+        if (channel === 'demo:copyPrompt') return { ok: true, data: copyDemoPrompt(args[0]) };
+        if (channel === 'window:visible') return { ok: true, data: !!win?.isVisible() && !win?.isMinimized() };
+        const data = demo ? demo.read(channel, args) : await fn(...args as never[]);
+        if (demo && channel === 'settings:set' && args[0] === 'nav_sidebar') installApplicationMenu(() => win, args[1] === 'open');
+        return { ok: true, data };
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { ok: false, error: masking ? maskOut(msg) : msg };
+        return { ok: false, error: demo ? DEMO_UNAVAILABLE : e instanceof Error ? e.message : String(e) };
       }
     });
   };
@@ -1521,19 +1556,68 @@ function registerIpc() {
   handle('startup:retry', () => startAttendedServices());
 
   handle('demo:state', () => demoState());
-  handle('demo:set', (on: boolean) => {
-    setDemo(on);
-    forgetDemoMasking();
-    return demoState();
-  });
-  // setDemoBlur does its own validation: the renderer is untrusted here, and a
-  // stored value that is neither on nor off reads back as off.
-  handle('demo:setBlur', (on: boolean) => {
-    setDemoBlur(on);
-    return demoState();
-  });
+  handle('demo:set', (on: boolean) => switchDemoWindow(on));
+  handle('demo:copyPrompt', (id: unknown) => copyDemoPrompt(id));
 
   handle('providers:list', () => detectProviders());
+  /*
+   * The first-run checklist's one read. Read-only and side-effect free, and
+   * deliberately a single channel: resolution re-scans the filesystem on every
+   * call and the version cache is keyed on the resolved path plus its size and
+   * mtime, so a CLI installed after launch resolves to a key that has never
+   * been cached. A separate "recheck" would have had nothing to invalidate.
+   */
+  handle('preflight:read', () => readPreflight());
+  /*
+   * Candidate projects read out of Claude and Codex history. Read-only: it
+   * registers nothing and widens no root. Importing still goes through
+   * projects:add, which validates each path in main, so this only ever
+   * proposes — the renderer cannot turn a scan result into a managed root on
+   * its own.
+   */
+  handle('discovery:scan', () => discoverProjects());
+  /*
+   * Register several discovered projects at once.
+   *
+   * projects:add refuses a path the interface names, and that rule stands: the
+   * renderer still cannot widen the managed-root set by naming a directory.
+   * What it may do here is choose from a set *main itself* produced — every
+   * path is re-checked against this process's own most recent scan, so a path
+   * the renderer invented is refused — and a person then confirms the whole
+   * list in a main-process dialog before anything is registered. Main decides,
+   * with the operator, exactly as the folder picker arranges today.
+   */
+  handle('discovery:import', async (raw: unknown) => {
+    if (!Array.isArray(raw) || raw.some((entry) => typeof entry !== 'string')) {
+      throw new Error('Choose projects from the discovered list.');
+    }
+    const wanted = [...new Set((raw as string[]).map((entry) => path.resolve(entry)))];
+    const refused = wanted.filter((dir) => !wasDiscovered(dir));
+    if (refused.length) {
+      throw new Error('Wanigan only imports directories it found in your agent history. Run the scan again and choose from that list.');
+    }
+    if (!wanted.length || !win) return listProjects();
+
+    const shown = wanted.slice(0, 12).map((dir) => `· ${dir}`).join('\n');
+    const more = wanted.length > 12 ? `\n· …and ${wanted.length - 12} more` : '';
+    const answer = await dialog.showMessageBox(win, {
+      type: 'question',
+      buttons: ['Add projects', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'Add projects',
+      message: `Add ${wanted.length} ${wanted.length === 1 ? 'project' : 'projects'} to Wanigan?`,
+      detail: `Wanigan will be able to run agents in ${wanted.length === 1 ? 'this directory' : 'these directories'}.\n\n${shown}${more}`,
+    });
+    if (answer.response !== 0) return listProjects();
+
+    for (const dir of wanted) {
+      // Re-check at the moment of writing: a directory can vanish between the
+      // scan and the confirmation, and addProject validates again besides.
+      try { await addProject(dir); } catch { /* skip one bad path, keep the rest */ }
+    }
+    return listProjects();
+  });
   /*
    * The catalogue for one profile's model field.
    *
@@ -1667,7 +1751,7 @@ function registerIpc() {
     if (pack.manifestSha256 !== sha256) {
       throw new Error('The provider manifest changed after inspection. Review the new digest before trusting it.');
     }
-    const w = win;
+    const w = liveWindow();
     if (!w || w.isDestroyed()) {
       throw new Error('Trusting a provider pack needs the Wanigan window open to confirm it.');
     }
@@ -1710,7 +1794,7 @@ function registerIpc() {
     if (inspected.sha256 !== sha256) {
       throw new Error('The adapter changed after it was inspected. Review the new digest before trusting it.');
     }
-    const w = win;
+    const w = liveWindow();
     if (!w || w.isDestroyed()) {
       throw new Error('Trusting a provider pack needs the Wanigan window open to confirm it.');
     }
@@ -1941,6 +2025,15 @@ function registerIpc() {
       fingerprint: providerKeyFingerprint(id),
     };
   });
+  /*
+   * Which credentials a profile declares and does not have, so the new-session
+   * dialog can ask for the right one in place instead of sending the operator
+   * to Settings to guess. Read-only, and it names ids the operator already sees
+   * — never a key, a fingerprint or a path. The id is validated here because it
+   * arrives from the renderer.
+   */
+  handle('key:missingFor', (rawId: unknown) =>
+    (typeof rawId === 'string' && rawId.trim() ? missingCredentialIds(rawId.trim()) : []));
   handle('key:setProvider', async (rawId: string, key: string) => {
     const id = managedProviderCredentialId(rawId);
     if (id === 'glm') {
@@ -2143,7 +2236,7 @@ function registerIpc() {
     if (review.sha256 !== sha256) {
       throw new Error('This server changed after it was reviewed. Read the new command, arguments and scope before trusting them.');
     }
-    const w = win;
+    const w = liveWindow();
     if (!w || w.isDestroyed()) {
       throw new Error('Trusting an MCP server command needs the Wanigan window open to confirm it.');
     }
@@ -2430,7 +2523,6 @@ function registerIpc() {
   handle('git:status', (root: string) => gitOps.status(gitRoot(root)));
   handle('git:log', async (root: string, opts?: { limit?: number; all?: boolean }) => {
     const cs = await gitOps.log(gitRoot(root), opts);
-    noteAuthors(cs.map((c) => c.author));
     return cs;
   });
   handle('git:branches', (root: string) => gitOps.branches(gitRoot(root)));
@@ -2553,6 +2645,7 @@ function registerIpc() {
   });
   handle('control:list', (projectId?: string | null, limit?: number) => control.listDockets(projectId, limit));
   handle('control:get', (id: string) => control.docket(id));
+  handle('control:sessionGoal', (id: string) => control.sessionGoal(id));
   handle('control:create', (input: {
     projectId: string; title: string; objective: string; acceptance?: string[];
     risk?: 'low' | 'elevated' | 'high'; budgetUsd?: number | null; plan?: DocketPlanNode[];
@@ -2647,7 +2740,7 @@ function registerIpc() {
   // is not a step a compromised renderer can decline to render.
   handle('plugins:marketAdd', async (source: unknown): Promise<plugins.PluginAction> => {
     const value = marketplaceSource(source);
-    const w = win;
+    const w = liveWindow();
     if (!w || w.isDestroyed()) {
       throw new Error('Adding a marketplace needs the Wanigan window open to confirm it.');
     }
@@ -2975,7 +3068,7 @@ function registerIpc() {
     return backup.inspectBackup(res.filePaths[0]);
   });
   handle('backup:restore', async (): Promise<BackupRestoreSummary | null> => {
-    const w = win;
+    const w = liveWindow();
     if (!w || w.isDestroyed()) return null;
 
     // A restore swaps the database file out from under this process. Anything
@@ -3067,10 +3160,10 @@ function registerIpc() {
 
   // Hot-path traffic: fire-and-forget, no round trip.
   ipcMain.on('sessions:write', (event, id: string, data: string) => {
-    if (trustedSender(event.sender, event.senderFrame)) writeSession(id, data);
+    if (trustedSender(event.sender, event.senderFrame) && !demoWindows.has(event.sender) && !changingDemoWindow) writeSession(id, data);
   });
   ipcMain.on('sessions:resize', (event, id: string, cols: number, rows: number) => {
-    if (trustedSender(event.sender, event.senderFrame)) resizeSession(id, cols, rows);
+    if (trustedSender(event.sender, event.senderFrame) && !demoWindows.has(event.sender) && !changingDemoWindow) resizeSession(id, cols, rows);
   });
 }
 

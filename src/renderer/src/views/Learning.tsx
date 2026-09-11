@@ -23,7 +23,7 @@ import type {
   ProviderInfo,
 } from '@shared/types';
 import { EFFORT_LEVELS, PROJECTABLE_KINDS } from '@shared/types';
-import { Explainer, ago } from '../components/bits';
+import { Chip, EmptyState, Explainer, Hint, Icon, Mark, Note, PageHead, SectionHead, Segmented, ago } from '../components/bits';
 import { useDialog } from '../components/useDialog';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import '../styles/learning.css';
@@ -87,6 +87,7 @@ const TARGET_TAB: Record<string, LearningTab> = {
 // Consume-once across remounts: the deep-link target lives in App state, so a
 // later visit to Learning must not replay a jump this nonce already made.
 let consumedTargetNonce = 0;
+let inboxPresetNonce = 0;
 
 const EMPTY_OVERVIEW: LearningOverview = {
   pending: 0,
@@ -300,7 +301,7 @@ function Define({ term, children }: { term: string; children: ReactNode }) {
   return <p className="define"><b>{term}</b> {children}</p>;
 }
 
-export default function Learning({ projectId, projects, providers, onPickProject, initialTarget }: {
+type LearningProps = {
   projectId?: string;
   projects: Project[];
   providers: ProviderInfo[];
@@ -312,6 +313,26 @@ export default function Learning({ projectId, projects, providers, onPickProject
   /** One-shot deep link from Context; consumed by nonce. `optimize` is the
    * pre-rename id and still resolves, so an older caller is not stranded. */
   initialTarget?: { tab: 'overview' | 'inbox' | 'knowledge' | 'optimize' | 'context'; nonce: number } | null;
+};
+
+export default function Learning(props: LearningProps) {
+  const { projectId } = props;
+  const [scopeSel, setScopeSel] = useState<ScopeSel>(() => {
+    try { const stored = localStorage.getItem(SCOPE_KEY); if (stored === 'all' || stored === 'personal' || stored === 'project') return stored; } catch { /* use the current project */ }
+    return projectId ? 'project' : 'all';
+  });
+  useEffect(() => { if (scopeSel === 'project' && !projectId) setScopeSel('all'); }, [scopeSel, projectId]);
+  const setScope = useCallback((next: ScopeSel) => {
+    setScopeSel(next);
+    try { localStorage.setItem(SCOPE_KEY, next); } catch { /* storage unavailable */ }
+  }, []);
+  const effectiveScope = scopeSel === 'project' && !projectId ? 'all' : scopeSel;
+  const scopeParam = toScopeParam(effectiveScope, projectId);
+  return <LearningWorkspace key={`${effectiveScope}:${scopeParam ?? ''}`} {...props} scopeSel={effectiveScope} scopeParam={scopeParam} setScope={setScope} />;
+}
+
+function LearningWorkspace({ projectId, projects, providers, onPickProject, initialTarget, scopeSel, scopeParam, setScope }: LearningProps & {
+  scopeSel: ScopeSel; scopeParam: string | null | undefined; setScope: (next: ScopeSel) => void;
 }) {
   // Remembered per view, not per mount. App unmounts this whole view on every
   // tab swap, so a reader who was working the Inbox came back to Overview and
@@ -319,14 +340,6 @@ export default function Learning({ projectId, projects, providers, onPickProject
   // the deep link from Context is consumed by a module-level nonce, so a
   // remount cannot replay a stale jump over the tab that was remembered.
   const [tab, setTab] = useViewMemory<LearningTab>('tab', 'overview');
-  const [scopeSel, setScopeSel] = useState<ScopeSel>(() => {
-    try {
-      const stored = localStorage.getItem(SCOPE_KEY);
-      if (stored === 'all' || stored === 'personal' || stored === 'project') return stored;
-    } catch { /* storage unavailable — fall through to the derived default */ }
-    // Default to the app-derived project when one exists, never silently personal-only.
-    return projectId ? 'project' : 'all';
-  });
   const [overview, setOverview] = useState<LearningOverview>(EMPTY_OVERVIEW);
   const [settings, setSettings] = useState<LearningSettings>(DEFAULT_SETTINGS);
   const [signals, setSignals] = useState<LearningSignal[]>([]);
@@ -355,27 +368,17 @@ export default function Learning({ projectId, projects, providers, onPickProject
   // A funnel click carries intent: the target Inbox filter rides along, keyed by
   // a nonce so a repeat click re-applies it even when the value is unchanged.
   const [inboxPreset, setInboxPreset] = useState<{ status: string; key: number } | null>(null);
-  const presetSeq = useRef(0);
   // The glossary opens over the tab in view. Jumping to Overview to read one
   // word cost the reader their place, which is the opposite of a reference.
   const [glossaryOpen, setGlossaryOpen] = useState(false);
 
-  // Project scope with no project left (all projects removed) degrades visibly
-  // to Everything rather than silently narrowing to personal-only.
-  useEffect(() => {
-    if (scopeSel === 'project' && !projectId) setScopeSel('all');
-  }, [scopeSel, projectId]);
-
-  const setScope = useCallback((next: ScopeSel) => {
-    setScopeSel(next);
-    try { localStorage.setItem(SCOPE_KEY, next); } catch { /* storage unavailable */ }
-  }, []);
-
-  // The one scope value every read below shares — overview, signals, candidates,
-  // knowledge, diagnostics, experiments, pipeline, search, and briefing preview.
-  const scopeParam = toScopeParam(scopeSel, projectId);
+  const alive = useRef(true);
+  const readSequence = useRef(0);
+  const actionLock = useRef(false);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; readSequence.current++; }; }, []);
 
   const load = useCallback(async (quiet = false) => {
+    const sequence = ++readSequence.current;
     // A deliberate re-read clears the last failure so the panes flip back to
     // "reading" — Retry with no visible change is indistinguishable from a
     // dead button. A quiet background refresh leaves the failure standing.
@@ -390,6 +393,7 @@ export default function Learning({ projectId, projects, providers, onPickProject
         window.wanigan.learning.diagnostics(scopeParam),
         window.wanigan.learning.experiments({ projectId: scopeParam, limit: 80 }),
       ]);
+      if (!alive.current || sequence !== readSequence.current) return;
       setOverview(ov);
       setSettings(st);
       setSignals(sg);
@@ -401,10 +405,10 @@ export default function Learning({ projectId, projects, providers, onPickProject
       setReadErr(null);
       setError(null);
     } catch (e) {
+      if (!alive.current || sequence !== readSequence.current) return;
       setReadErr(message(e));
-      setError(message(e));
     } finally {
-      setLoading(false);
+      if (alive.current && sequence === readSequence.current) setLoading(false);
     }
   }, [scopeParam]);
 
@@ -441,25 +445,27 @@ export default function Learning({ projectId, projects, providers, onPickProject
   }, [load]);
 
   const act = useCallback<Act>(async (key, fn, done) => {
-    setBusy(key);
+    if (actionLock.current) return false;
+    actionLock.current = true; setBusy(key);
     setError(null);
     try {
       const result = await fn();
+      if (!alive.current) return true;
       setNotice({ text: typeof done === 'function' ? done(result) : done, key: ++noticeSeq.current });
       setRefreshTick((t) => t + 1);
       await load(true);
       return true;
     } catch (e) {
-      setError(message(e));
+      if (alive.current) setError(message(e));
       return false;
     } finally {
-      setBusy(null);
+      actionLock.current = false; if (alive.current) setBusy(null);
     }
   }, [load]);
 
 
   const navigate = useCallback((next: LearningTab, inboxStatus?: string) => {
-    if (inboxStatus) setInboxPreset({ status: inboxStatus, key: ++presetSeq.current });
+    if (inboxStatus) setInboxPreset({ status: inboxStatus, key: ++inboxPresetNonce });
     setTab(next);
   }, []);
 
@@ -508,83 +514,34 @@ export default function Learning({ projectId, projects, providers, onPickProject
   const panelRef = useRememberedScrollRef(`panel:${tab}`);
 
   return (
-    <div className="learning-view">
-      <div className="learning-head">
-        <div>
-          <span className="label">Wanigan Compound</span>
-          <h1>Learning</h1>
-          <p>
-            Reuse what your agents prove, keep the evidence, and load only what this task needs.{' '}
-            {scopeSel === 'all' && 'Showing everything — every project plus personal knowledge.'}
-            {scopeSel === 'personal' && 'Showing personal knowledge only — items that apply in every project.'}
-            {scopeSel === 'project' && <>Showing <strong>{project?.name ?? 'this project'}</strong> plus personal items. Signals and briefings count this project only.</>}
-          </p>
-          <Define term="Scope">
-            is where an artifact applies — personal (everywhere), one project, or one path inside a
-            project. It decides what retrieval may inject, and it frames every count on this page.
-          </Define>
-        </div>
-        <div className="learning-head-actions">
-          <label className="learning-scope">
-            <span className="label">Scope</span>
-            <select className="field" value={scopeSel === 'project' ? `p:${projectId ?? ''}` : scopeSel}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (v === 'all' || v === 'personal') { setScope(v); return; }
-                      setScope('project');
-                      onPickProject?.(v.slice(2));
-                    }}>
-              <option value="all">Everything — all projects + personal</option>
-              <option value="personal">Personal only</option>
-              {projects.map((p) => <option key={p.id} value={`p:${p.id}`}>{p.name}</option>)}
-            </select>
-          </label>
-          <button className="btn" disabled={loading || busy !== null} onClick={() => { setRefreshTick((t) => t + 1); void load(); }}>
-            {loading ? 'Reading…' : 'Refresh'}
-          </button>
-          <TeachButton project={project} providers={availableProviders} busy={busy}
-                       onRun={(fn) => act('teach', fn, 'Added to the Learning Inbox with its source attached.')} />
-        </div>
-      </div>
-
-      <PipelineSpine overview={overview} pipeline={pipeline} pipelineBusy={pipelineBusy}
-                     read={read} windowDays={windowDays} onNavigate={navigate} />
-
-      {/* The hint sits beside the tablist rather than inside it: it is the
-          question the open tab answers, so it is read out like any other text —
-          and a tablist may not hold a focusable child that is not a tab. */}
-      <div className="learning-tabs">
-        <div className="learning-tablist" role="tablist" aria-label="Learning workspace"
-             onKeyDown={(e) => {
-               if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
-               e.preventDefault();
-               const i = tabs.findIndex((t) => t.id === tab);
-               const next = e.key === 'Home' ? 0
-                 : e.key === 'End' ? tabs.length - 1
-                 : e.key === 'ArrowLeft' ? (i - 1 + tabs.length) % tabs.length
-                 : (i + 1) % tabs.length;
-               setTab(tabs[next].id);
-               document.getElementById(`learning-tab-${tabs[next].id}`)?.focus();
-             }}>
-          {tabs.map((item) => (
-            <button key={item.id} role="tab" aria-selected={tab === item.id}
-                    id={`learning-tab-${item.id}`} aria-controls="learning-panel"
-                    tabIndex={tab === item.id ? 0 : -1} title={item.hint}
-                    className={tab === item.id ? 'on' : ''} onClick={() => setTab(item.id)}>
-              <span>{item.label}</span>
-              {item.id === 'inbox' && overview.pending > 0 && <b>{overview.pending}</b>}
-            </button>
-          ))}
-        </div>
-        <p className="tab-hint">
-          {tabs.find((t) => t.id === tab)?.hint} ·{' '}
-          <button className="learning-link" onClick={() => setGlossaryOpen(true)}>glossary</button>
-        </p>
-      </div>
-
-      {error && <div className="learning-banner error" role="alert">{error}</div>}
-      {notice && <div className="learning-banner ok" role="status" key={notice.key}>{notice.text}</div>}
-
+    <div className="pane wide learning-view">
+      <PageHead compact title="Learning" lead="Knowledge with a source. Ready for the next task." actions={<>
+        <select className="field learning-scope-select" aria-label="Learning scope" value={scopeSel === 'project' ? `p:${projectId ?? ''}` : scopeSel} onChange={event => {
+          const value = event.target.value;
+          if (value === 'all' || value === 'personal') { setScope(value); return; }
+          setScope('project'); onPickProject?.(value.slice(2));
+        }}><option value="all">Everything</option><option value="personal">Personal only</option>{projects.map(project => <option key={project.id} value={`p:${project.id}`}>{project.name}</option>)}</select>
+        <button className="btn" disabled={loading || busy !== null} onClick={retry}>{loading ? 'Reading…' : 'Refresh'}</button>
+        <TeachButton project={scopeSel === 'personal' ? null : project} providers={availableProviders} busy={busy} onRun={fn => act('teach', fn, 'Added to the Learning Inbox with its source attached.')} />
+      </>} />
+      {error && <Note tone="error" onDismiss={() => setError(null)}>{error}</Note>}
+      {notice && <Note tone="ok" key={notice.key}>{notice.text}</Note>}
+      <div className="learning-workspace">
+        <aside className="learning-directory" aria-label="Learning sections">
+          <SectionHead label="Learning" />
+          <div className="learning-tablist" role="tablist" aria-label="Learning workspace" onKeyDown={event => {
+            const at = tabs.findIndex(item => item.id === tab);
+            const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : ['ArrowRight', 'ArrowDown'].includes(event.key) ? (at + 1) % tabs.length : ['ArrowLeft', 'ArrowUp'].includes(event.key) ? (at + tabs.length - 1) % tabs.length : -1;
+            if (next < 0) return;
+            event.preventDefault(); setTab(tabs[next].id); document.getElementById(`learning-tab-${tabs[next].id}`)?.focus();
+          }}>{tabs.map(item => <button type="button" key={item.id} role="tab" aria-selected={tab === item.id} id={`learning-tab-${item.id}`} aria-controls="learning-panel" tabIndex={tab === item.id ? 0 : -1} onClick={() => setTab(item.id)}>
+            <Icon name={item.id === 'overview' ? 'compass' : item.id === 'inbox' ? 'layers' : item.id === 'knowledge' ? 'book' : item.id === 'context' ? 'sliders' : 'chart'} />
+            <span><strong>{item.label}</strong><small>{item.id === 'overview' ? 'What is happening' : item.id === 'inbox' ? 'Proposals to review' : item.id === 'knowledge' ? 'The knowledge library' : item.id === 'context' ? 'Briefings and controls' : 'Recorded comparisons'}</small></span>
+            {item.id === 'inbox' && read.observed && overview.pending > 0 && <span className="sec-count">{overview.pending}</span>}
+          </button>)}</div>
+          <div className="learning-scope-note"><span className="label">In this scope</span><strong>{scopeWords}</strong><Hint>{scopeSel === 'project' ? 'Knowledge includes personal items. Signals and briefings concern this project.' : scopeSel === 'personal' ? 'Items that apply across projects.' : 'Every project and personal knowledge.'}</Hint></div>
+          <button className="btn btn-sm" onClick={() => setGlossaryOpen(true)}><Icon name="book" />Glossary</button>
+        </aside>
       {/* tabIndex makes the panel focusable, which is what lets a keyboard
           scroll it at all; without it the arrow keys had nothing to act on.
 
@@ -595,36 +552,39 @@ export default function Learning({ projectId, projects, providers, onPickProject
           reference the composer's skill menu and the plan editor's slot are
           each written to avoid. Settings is the other tablist here and renders
           all of its panels, so its per-tab ids do resolve. */}
-      <div className="learning-scroll" ref={panelRef} tabIndex={0} role="tabpanel" id="learning-panel" aria-labelledby={`learning-tab-${tab}`}>
-        {tab === 'overview' && (
+      <div className="learning-scroll" ref={panelRef} data-area={tab} tabIndex={0} role="tabpanel" id="learning-panel" aria-labelledby={`learning-tab-${tab}`}>
+        {!read.observed && <Pane read={read} what="this learning scope"><></></Pane>}
+        {read.observed && read.phase === 'error' && <ReadFailed what="this learning scope" read={read} />}
+        {read.observed && tab === 'overview' && (
           <Overview overview={overview} settings={settings} pipeline={pipeline} read={read}
                     pipelineErr={pipelineErr} pipelineBusy={pipelineBusy}
                     windowDays={windowDays} onWindow={setWindowDays}
                     candidates={candidates} knowledge={knowledge}
-                    scopeSel={scopeSel} scopeParam={scopeParam} busy={busy} act={act}
+                    scopeSel={scopeSel} scopeParam={scopeParam} busy={read.phase === 'error' ? 'unavailable' : busy} act={act}
                     onNavigate={navigate} onRetry={retry} />
         )}
-        {tab === 'inbox' && (
+        {read.observed && tab === 'inbox' && (
           <Inbox candidates={candidates} signals={signals} providers={availableProviders}
-                 busy={busy} act={act} initialStatus={inboxPreset} read={read}
-                 scoped={scopeSel !== 'all'} onShowAll={() => setScope('all')} emptyFrame={emptyFrame} />
+                 busy={read.phase === 'error' ? 'unavailable' : busy} act={act} initialStatus={inboxPreset} read={read}
+                 memoryKey={String(scopeParam)} scoped={scopeSel !== 'all'} onShowAll={() => setScope('all')} emptyFrame={emptyFrame} />
         )}
-        {tab === 'knowledge' && (
+        {read.observed && tab === 'knowledge' && (
           <Knowledge items={knowledge} signals={signals} providers={availableProviders}
                      project={scopeSel === 'personal' ? null : project}
                      scopeParam={scopeParam} emptyFrame={emptyFrame} settings={settings}
-                     read={read} busy={busy} act={act} refreshTick={refreshTick}
+                     read={read} busy={read.phase === 'error' ? 'unavailable' : busy} act={act} refreshTick={refreshTick}
                      onNavigate={navigate} />
         )}
-        {tab === 'context' && (
+        {read.observed && tab === 'context' && (
           <ContextTab diagnostics={diagnostics} settings={settings} providers={availableProviders}
                       scopeParam={scopeParam} emptyFrame={emptyFrame} read={read}
-                      busy={busy} act={act} onNavigate={navigate} />
+                      busy={read.phase === 'error' ? 'unavailable' : busy} act={act} onNavigate={navigate} />
         )}
-        {tab === 'experiments' && (
+        {read.observed && tab === 'experiments' && (
           <Experiments experiments={experiments} candidates={candidates} project={project} providers={availableProviders}
                        busy={busy} act={act} read={read} emptyFrame={emptyFrame} />
         )}
+      </div>
       </div>
       {glossaryOpen && <GlossaryModal onClose={() => setGlossaryOpen(false)} />}
     </div>
@@ -809,38 +769,18 @@ function Overview({ overview, settings, pipeline, read, pipelineErr, pipelineBus
   }
 
   return (
-    <div className="learning-stack">
-      {windowControl}
-      {pipelineErr && (
-        <p className="faint">
-          These counts may be stale — the last refresh failed: {pipelineErr}{' '}
-          <button className="learning-link" onClick={onRetry}>Retry</button>
-        </p>
-      )}
-
-      <HowItWorks pipeline={pipeline} windowDays={windowDays} onNavigate={onNavigate} />
-
-      <Define term="Signal">
-        is one bounded, credential-redacted record of something a session did — a tool result, a
-        gate outcome, a turn ending. Shell command text is discarded: a signal is a summary plus
-        structured detail, never a transcript. Every bar below counts stored signal rows.
-      </Define>
-
-      <SignalsPerDay pipeline={pipeline} windowDays={windowDays}
-                     onWiden={windowDays < 90 ? () => onWindow(90) : null} />
-
-      <section className="learning-grid two">
-        <Heartbeat runs={pipeline.consolidationRuns} storedTotal={pipeline.consolidationRunsTotal}
-                   settings={settings} scopeParam={scopeParam} busy={busy} act={act} />
-        <RetrievalCard settings={settings} pipeline={pipeline} windowDays={windowDays}
-                       candidates={candidates} onNavigate={onNavigate} />
-      </section>
-
-      <AutoPromotion pipeline={pipeline} windowDays={windowDays} onNavigate={onNavigate} />
-
+    <div className="learning-stack learning-overview">
+      <section className="learning-overview-intro"><div><SectionHead label="Your learning ledger" /><h2>What carries forward.</h2><p>Review the proposals, keep their sources, and choose what future sessions can use.</p></div>
+        <Mark glyph={settings.enabled ? '●' : '○'} word={settings.enabled ? 'Learning active' : 'Learning paused'} tone={settings.enabled ? 'ok' : 'quiet'} /></section>
       <NeedsAttention overview={overview} settings={settings} candidates={candidates} onNavigate={onNavigate} />
-
-      <PrivacyCard />
+      {windowControl}
+      {pipelineErr && <Note tone="warn">These counts may be stale: {pipelineErr} <button className="btn btn-sm" onClick={onRetry}>Retry</button></Note>}
+      <PipelineSpine overview={overview} pipeline={pipeline} pipelineBusy={pipelineBusy} read={read} windowDays={windowDays} onNavigate={onNavigate} />
+      <SignalsPerDay pipeline={pipeline} windowDays={windowDays} onWiden={windowDays < 90 ? () => onWindow(90) : null} />
+      <section className="learning-grid two"><Heartbeat runs={pipeline.consolidationRuns} storedTotal={pipeline.consolidationRunsTotal} settings={settings} scopeParam={scopeParam} busy={busy} act={act} />
+        <RetrievalCard settings={settings} pipeline={pipeline} windowDays={windowDays} candidates={candidates} onNavigate={onNavigate} /></section>
+      <HowItWorks pipeline={pipeline} windowDays={windowDays} onNavigate={onNavigate} />
+      <Explainer id="learning-automation-policy" title="Automatic promotion and privacy" defaultHidden><AutoPromotion pipeline={pipeline} windowDays={windowDays} onNavigate={onNavigate} /><PrivacyCard /></Explainer>
     </div>
   );
 }
@@ -1240,7 +1180,7 @@ function NeedsAttention({ overview, settings, candidates, onNavigate }: {
   overview: LearningOverview;
   settings: LearningSettings;
   candidates: KnowledgeCandidate[];
-  onNavigate: (tab: LearningTab) => void;
+  onNavigate: (tab: LearningTab, inboxStatus?: string) => void;
 }) {
   const pending = candidates.filter((c) => c.status === 'pending');
   const oldest = pending.length ? Math.min(...pending.map((c) => c.createdAt)) : null;
@@ -1250,7 +1190,7 @@ function NeedsAttention({ overview, settings, candidates, onNavigate }: {
           text: `${overview.quarantined} knowledge item${pl(overview.quarantined)} ${overview.quarantined === 1 ? 'is' : 'are'} excluded from every briefing until re-validated.`,
           tab: 'knowledge', action: 'Open Knowledge' }
       : { key: 'q', ok: true, word: 'none quarantined',
-          text: 'Every active knowledge item is eligible for briefings.', tab: 'knowledge', action: 'Open Knowledge' },
+          text: 'No knowledge items are currently quarantined. Each briefing still checks relevance and citations.', tab: 'knowledge', action: 'Open Knowledge' },
     pending.length > 0
       ? { key: 'p', ok: false, word: `${pending.length} waiting`,
           text: pending.length === 1
@@ -1269,14 +1209,14 @@ function NeedsAttention({ overview, settings, candidates, onNavigate }: {
   return (
     <section className="card learning-card">
       <div className="learning-card-head">
-        <div><span className="label">Needs attention</span><h2>Observed states, not a score</h2></div>
+        <SectionHead label="Worth your attention" />
       </div>
       <div className="attention-list">
         {rows.map((r) => (
           <div key={r.key} className={`attention-row ${r.ok ? 'ok' : 'warn'}`}>
             <span className="attention-mark"><span aria-hidden="true">{r.ok ? '✓' : '⚠'}</span> {r.word}</span>
             <p>{r.text}</p>
-            <button className="btn" onClick={() => onNavigate(r.tab)}>{r.action}</button>
+            <button className="btn" onClick={() => onNavigate(r.tab, r.tab === 'inbox' ? 'open' : undefined)}>{r.action}</button>
           </div>
         ))}
       </div>
@@ -1406,16 +1346,8 @@ function TeachButton({ project, providers, busy, onRun }: {
     if (!ok) return; // a failed teach keeps the modal and the typed knowledge
     setOpen(false); setTitle(''); setText('');
   };
-  // The dialog body is its own component so useDialog is called unconditionally.
-  // A hook cannot live behind `{open && …}`, and the trigger button has to stay
-  // mounted while the dialog is open — it is the control focus returns to.
-  const Dialog = () => {
-    const { portal, backdropProps, dialogProps } = useDialog<HTMLElement>({
-      onClose: () => setOpen(false), initialFocus: 'least-destructive',
-    });
-    return portal(
-      <div {...backdropProps}>
-        <section {...dialogProps} className="learning-modal card" aria-label="Teach Wanigan">
+  const dialog = (
+        <LearningSheet onClose={() => { if (busy === null) setOpen(false); }}>
             <div className="learning-card-head"><div><span className="label">Explicit signal</span><h2>Teach Wanigan</h2></div><button className="btn" onClick={() => setOpen(false)}>Close</button></div>
             <p>This creates a cited Inbox proposal. It does not edit a skill, memory, or project file yet.</p>
           <label><span className="label">Title</span><input className="field" data-initial-focus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What should be remembered?" /></label>
@@ -1427,16 +1359,19 @@ function TeachButton({ project, providers, busy, onRun }: {
             </div>
             {scope === 'path' && <label><span className="label">Path pattern</span><input className="field mono" value={pathScope} onChange={(e) => setPathScope(e.target.value)} placeholder="src/payments/**" /></label>}
           <div className="learning-actions"><button className="btn btn-primary" disabled={busy !== null || !title.trim() || !text.trim()} onClick={() => void submit()}>{busy === 'teach' ? 'Adding…' : 'Add to Inbox'}</button></div>
-        </section>
-      </div>,
-    );
-  };
+        </LearningSheet>
+  );
   return (
     <>
       <button className="btn btn-primary" onClick={() => setOpen(true)}>Teach Wanigan</button>
-      {open && <Dialog />}
+      {open && dialog}
     </>
   );
+}
+
+function LearningSheet({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+  const { portal, backdropProps, dialogProps } = useDialog<HTMLElement>({ onClose, initialFocus: 'first' });
+  return portal(<div {...backdropProps}><section {...dialogProps} className="learning-modal card" aria-label="Teach Wanigan">{children}</section></div>);
 }
 
 /* ── Inbox ─────────────────────────────────────────────────────────────── */
@@ -1447,7 +1382,8 @@ function TeachButton({ project, providers, busy, onRun }: {
 // reviewed_at inside its window, so this filter lists those and older ones too.
 const DECIDED_STATUSES = ['approved', 'rejected', 'promoted', 'applied', 'superseded'];
 
-function Inbox({ candidates, signals, providers, busy, act, initialStatus, read, scoped, onShowAll, emptyFrame }: {
+function Inbox({ candidates, signals, providers, busy, act, initialStatus, read, scoped, onShowAll, emptyFrame, memoryKey }: {
+  memoryKey: string;
   candidates: KnowledgeCandidate[];
   signals: LearningSignal[];
   providers: ProviderInfo[];
@@ -1464,8 +1400,11 @@ function Inbox({ candidates, signals, providers, busy, act, initialStatus, read,
   onShowAll: () => void;
   emptyFrame: string;
 }) {
-  const [status, setStatus] = useState(initialStatus?.status ?? 'open');
-  useEffect(() => { if (initialStatus) setStatus(initialStatus.status); }, [initialStatus]);
+  const [status, setStatus] = useViewMemory<string>(`${memoryKey}/inbox/status`, initialStatus?.status ?? 'open');
+  const [query, setQuery] = useViewMemory(`${memoryKey}/inbox/query`, '');
+  const [selectedId, setSelectedId] = useViewMemory<string | null>(`${memoryKey}/inbox/selected`, null);
+  const [consumedPreset, setConsumedPreset] = useViewMemory<number | null>(`${memoryKey}/inbox/preset`, null);
+  useEffect(() => { if (initialStatus && initialStatus.key !== consumedPreset) { setStatus(initialStatus.status); setConsumedPreset(initialStatus.key); } }, [initialStatus, consumedPreset]);
 
   // The rows no decision can resolve. Counted rather than assumed, and offered
   // as one action: on the database this was measured against, 42 of 66 pending
@@ -1479,10 +1418,12 @@ function Inbox({ candidates, signals, providers, busy, act, initialStatus, read,
       .catch(() => setUnactionable(0));
   }, []);
   useEffect(() => { countUnactionable(); }, [countUnactionable, candidates]);
-  const visible = candidates.filter((c) => status === 'all'
+  const visible = candidates.filter(c => `${c.title} ${c.proposedText}`.toLowerCase().includes(query.trim().toLowerCase())).filter((c) => status === 'all'
     || (status === 'open' ? ['pending', 'approved', 'snoozed', 'failed'].includes(c.status)
       : status === 'decided' ? DECIDED_STATUSES.includes(c.status)
       : c.status === status));
+
+  const selected = visible.find(candidate => candidate.id === selectedId) ?? visible[0] ?? null;
 
   // A narrow scope must never impersonate an empty engine: with nothing open in
   // this scope, one all-scope probe (no projectId key) checks for proposals elsewhere.
@@ -1540,7 +1481,7 @@ function Inbox({ candidates, signals, providers, busy, act, initialStatus, read,
   }, [decided, approvedN, rejectedN, otherN, median]);
 
   return (
-    <div className="learning-stack">
+    <div className="learning-stack learning-inbox">
       <section className="learning-toolbar card">
         {/* '…' while the read is in flight, '—' when it failed, a count only
             once one was observed — the same treatment Overview gives a number. */}
@@ -1551,7 +1492,7 @@ function Inbox({ candidates, signals, providers, busy, act, initialStatus, read,
         {historyLine && <small className="inbox-history-line" title="Counted from stored candidate decisions. A snoozed proposal is not one.">{historyLine}</small>}
         {unactionable > 0 && (
           <small className="inbox-history-line">
-            {unactionable} unauthored nomination{pl(unactionable)} record a repeated success, so no
+            {unactionable} unauthored nomination{pl(unactionable)} across all scopes record a repeated success, so no
             review of {unactionable === 1 ? 'it' : 'them'} could reach a claim.{' '}
             <button className="learning-link" disabled={!!busy} onClick={() => {
               void act('inbox-sweep',
@@ -1565,15 +1506,9 @@ function Inbox({ candidates, signals, providers, busy, act, initialStatus, read,
         )}
         <label><span className="label">Status</span><select className="field" value={status} onChange={(e) => setStatus(e.target.value)}><option value="open">Needs a decision</option><option value="decided">Decided</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="snoozed">Snoozed</option><option value="rejected">Rejected</option><option value="promoted">Promoted</option><option value="applied">Applied</option><option value="all">All</option></select></label>
       </section>
-      <Define term="Candidate">
-        is a proposal, and nothing more: consolidation writes one when an observation repeats across
-        independent tasks, and “Teach Wanigan” writes one from your own words. A candidate is
-        inert until you approve it. Its <b>evidence</b> is the stored signals, files and commits it
-        came from — what lets its claim be checked again later.
-      </Define>
       <Pane read={read} what="the proposal list">
         <>
-          {visible.length === 0 && (candidates.length === 0
+          {visible.length === 0 && (query.trim() ? <Empty title="No proposal matches your search" body="Clear the search or try a different phrase." /> : candidates.length === 0
             ? <Empty title="No proposals have ever been created in this scope"
                      body="Run a session — tool activity records signals, and repeats across independent tasks become proposals here. Teach Wanigan directly for an immediate proposal, or run a review gate."
                      frame={emptyFrame}>{elsewhereHint}</Empty>
@@ -1582,15 +1517,21 @@ function Inbox({ candidates, signals, providers, busy, act, initialStatus, read,
                        frame={emptyFrame}>{elsewhereHint}</Empty>
               : <Empty title="No proposals match this filter" body="Proposals exist in other states — another status filter will show them."
                        frame={emptyFrame} />)}
-          <div className="candidate-list">
-            {visible.map((candidate) => <CandidateCard key={candidate.id} candidate={candidate} providers={providers} busy={busy} act={act} />)}
-          </div>
+          {visible.length > 0 && <div className="learning-proposals">
+            <aside className="learning-proposal-list" aria-label="Proposals"><input className="field" type="search" aria-label="Search proposals" value={query} onChange={event => setQuery(event.target.value)} placeholder="Find a proposal…" />
+              {visible.map(candidate => <button type="button" className="learning-proposal" key={candidate.id} data-candidate-id={candidate.id} aria-current={selected?.id === candidate.id ? 'true' : undefined} onClick={() => setSelectedId(candidate.id)}>
+                <span className="label">{candidate.targetKind}</span><strong>{candidate.title}</strong><span><Mark glyph={candidate.status === 'pending' ? '·' : '○'} word={candidate.status} tone={candidate.status === 'pending' ? 'warn' : 'quiet'} />{candidate.evidenceCount} sources</span>
+              </button>)}
+            </aside>
+            <div className="learning-proposal-reader" aria-label="Selected proposal">{selected && <CandidateCard key={selected.id} candidate={selected} providers={providers} busy={busy} act={act} />}</div>
+          </div>}
+          {visible.length === 0 && query && <div className="learning-actions"><input className="field" type="search" aria-label="Search proposals" value={query} onChange={event => setQuery(event.target.value)} /><button className="btn" onClick={() => setQuery('')}>Clear search</button></div>}
           {candidates.length === 100 && (
             <p className="faint">Showing the newest 100 proposals — older ones are not listed here.</p>
           )}
         </>
       </Pane>
-      <section className="card learning-card">
+      <Explainer id="learning-signals" title="Recent operational signals" defaultHidden><section className="card learning-card">
         <div className="learning-card-head"><div><span className="label">Recent evidence stream</span><h2>Operational signals</h2></div><span className="learning-status muted">content bounded</span></div>
         <Pane read={read} what="the signal stream">
           <>
@@ -1607,7 +1548,7 @@ function Inbox({ candidates, signals, providers, busy, act, initialStatus, read,
             )}
           </>
         </Pane>
-      </section>
+      </section></Explainer>
     </div>
   );
 }
@@ -1620,16 +1561,16 @@ function CandidateCard({ candidate, providers, busy, act }: {
   busy: string | null;
   act: Act;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [title, setTitle] = useState(candidate.title);
-  const [text, setText] = useState(candidate.proposedText);
+  const [editing, setEditing] = useViewMemory(`candidate/${candidate.id}/editing`, false);
+  const [title, setTitle] = useViewMemory(`candidate/${candidate.id}/title`, candidate.title);
+  const [text, setText] = useViewMemory(`candidate/${candidate.id}/text`, candidate.proposedText);
   // What the proposal should become. Consolidation routes a cluster by what its
   // template wrote, but a template cannot read a repository — a person can, and
   // until now could not say so: updateCandidate has always accepted targetKind,
   // scope and pathScope, and the editor only ever sent the title and the text.
-  const [kind, setKind] = useState<KnowledgeKind>(candidate.targetKind);
-  const [selector, setSelector] = useState(candidate.pathScope ?? '');
-  const [target, setTarget] = useState(candidate.providerId ?? providers[0]?.id ?? 'claude');
+  const [kind, setKind] = useViewMemory<KnowledgeKind>(`candidate/${candidate.id}/kind`, candidate.targetKind);
+  const [selector, setSelector] = useViewMemory(`candidate/${candidate.id}/selector`, candidate.pathScope ?? '');
+  const [target, setTarget] = useViewMemory(`candidate/${candidate.id}/target`, candidate.providerId ?? providers[0]?.id ?? 'claude');
   const [whyOpen, setWhyOpen] = useState(false);
   const [why, setWhy] = useState<CandidateExplanation | null>(null);
   const [whyErr, setWhyErr] = useState<string | null>(null);
@@ -1655,7 +1596,7 @@ function CandidateCard({ candidate, providers, busy, act }: {
     if (!undecided || why || whyErr) return;
     let live = true;
     window.wanigan.learning.candidateExplain(candidate.id)
-      .then((v) => { if (live) { setWhy(v); setWhyOpen(true); } })
+      .then((v) => { if (live) { setWhy(v); } })
       .catch((e) => { if (live) setWhyErr(message(e)); });
     return () => { live = false; };
   }, [candidate.id, undecided, why, whyErr]);
@@ -1778,7 +1719,7 @@ function CandidateCard({ candidate, providers, busy, act }: {
         <p><span className="label">Activation</span><br />Canonical after approval; written to the selected provider only after Apply. New sessions see it after validation.</p>
       </div>
       <div className="learning-actions">
-        {editing ? <><button className="btn btn-primary" disabled={busy !== null || !title.trim() || !text.trim() || !retargetReady} title={retargetReady ? undefined : 'A rule needs a path selector, such as src/main/learning/**'} onClick={() => void save()}>Save edit</button><button className="btn" onClick={() => setEditing(false)}>Cancel</button></>
+        {editing ? <><button className="btn btn-primary" disabled={busy !== null || !title.trim() || !text.trim() || !retargetReady} title={retargetReady ? undefined : 'A rule needs a path selector, such as src/main/learning/**'} onClick={() => void save().then(ok => { if (ok) setEditing(false); })}>Save edit</button><button className="btn" onClick={() => setEditing(false)}>Cancel</button></>
           : <button className="btn" disabled={busy !== null || !undecided} onClick={() => setEditing(true)}>Edit</button>}
         {candidate.status !== 'promoted' && candidate.status !== 'applied' && <button className="btn btn-primary" disabled={busy !== null || candidate.conflicts.length > 0} onClick={() => void approve()}>{busy === key ? 'Working…' : 'Approve to knowledge'}</button>}
         {PROJECTABLE_KINDS.includes(candidate.targetKind) && ['approved', 'promoted'].includes(candidate.status) && <button className="btn btn-primary" disabled={busy !== null || !target} onClick={() => void act(key, () => window.wanigan.learning.applyCandidate(candidate.id, target), 'Validated and applied. The exact prior content is available for Undo.')}>Apply to {providers.find((p) => p.id === target)?.label ?? target}</button>}
@@ -1854,15 +1795,19 @@ function PayloadPanel({ providers, scopeParam, settings, items, read, onNavigate
     if (!providerId && providers[0]) setProviderId(providers[0].id);
   }, [providerId, providers]);
 
+  const request = useRef(0);
+  useEffect(() => () => { request.current++; }, []);
   const run = useCallback(async (task: string) => {
     if (!providerId) return;
-    setRunning(true); setErr(null); setAskedWithQuery(task.length > 0);
+    const mine = ++request.current;
+    setResult(null); setRunning(true); setErr(null); setAskedWithQuery(task.length > 0);
     try {
-      setResult(await window.wanigan.learning.briefing({ query: task, providerId, projectId: scopeParam }));
+      const next = await window.wanigan.learning.briefing({ query: task, providerId, projectId: scopeParam });
+      if (mine === request.current) setResult(next);
     } catch (e) {
-      setErr(message(e));
+      if (mine === request.current) setErr(message(e));
     } finally {
-      setRunning(false);
+      if (mine === request.current) setRunning(false);
     }
   }, [providerId, scopeParam]);
   // A prompt-less launch is the default because it needs no input to be true,
@@ -2005,28 +1950,41 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
   /** Bumped by every successful act() and every learningChanged push. */
   refreshTick: number;
 }) {
-  const [grouping, setGrouping] = useState<'list' | 'path'>('list');
-  const [query, setQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | KnowledgeStatus>('all');
-  const [onlyUnsynthesized, setOnlyUnsynthesized] = useState(false);
+  const [grouping, setGrouping] = useViewMemory<'list' | 'path'>(`library/${scopeParam}/grouping`, 'list');
+  const [query, setQuery] = useViewMemory(`library/${scopeParam}/query`, '');
+  const [statusFilter, setStatusFilter] = useViewMemory<'all' | KnowledgeStatus>(`library/${scopeParam}/status`, 'all');
+  const [onlyUnsynthesized, setOnlyUnsynthesized] = useViewMemory(`library/${scopeParam}/text-filter`, false);
   // Ids, not items: the picked rows are re-read from the reloaded list so a
   // selection can never act on a stale snapshot of an item.
   const [picked, setPicked] = useState<string[]>([]);
   const [retiring, setRetiring] = useState<KnowledgeItem[] | null>(null);
   const [results, setResults] = useState<KnowledgeItem[] | null>(null);
-  const [selected, setSelected] = useState<KnowledgeItem | null>(null);
+  const [selected, setSelected] = useViewMemory<KnowledgeItem | null>(`library/${scopeParam}/selected`, null);
   const [detail, setDetail] = useState<Awaited<ReturnType<typeof window.wanigan.learning.item>> | null>(null);
   const [relations, setRelations] = useState<KnowledgeRelation[] | null>(null);
   const [freshness, setFreshness] = useState<FreshnessReport | null>(null);
   const [freshBusy, setFreshBusy] = useState(false);
   const [detailErr, setDetailErr] = useState<string | null>(null);
-  // Monotonic fetch id: a stale response (selection switched) is dropped.
-  const seq = useRef(0);
+  const [readerArea, setReaderArea] = useViewMemory<'text' | 'evidence' | 'history'>(`library/${scopeParam}/reader`, 'text');
+  const [searchBusy, setSearchBusy] = useState(false);
+  const [searchErr, setSearchErr] = useState<string | null>(null);
+  const seq = useRef(0), searchSeq = useRef(0), freshSeq = useRef(0);
+  useEffect(() => () => { seq.current++; searchSeq.current++; freshSeq.current++; }, []);
+  const clearSearch = () => { searchSeq.current++; setQuery(''); setResults(null); setSearchBusy(false); setSearchErr(null); };
   const search = async () => {
-    if (!query.trim()) { setResults(null); return; }
-    const found = await window.wanigan.learning.search(query.trim(), { projectId: scopeParam, limit: 80 });
-    setResults(found.map((r) => r.item));
+    const mine = ++searchSeq.current;
+    if (!query.trim()) { setResults(null); setSearchBusy(false); setSearchErr(null); return; }
+    setSearchBusy(true); setSearchErr(null);
+    try {
+      const found = await window.wanigan.learning.search(query.trim(), { projectId: scopeParam, limit: 80 });
+      if (mine === searchSeq.current) setResults(found.map((r) => r.item));
+    } catch (error) {
+      if (mine === searchSeq.current) setSearchErr(message(error));
+    } finally {
+      if (mine === searchSeq.current) setSearchBusy(false);
+    }
   };
+  useEffect(() => { if (query.trim()) void search(); }, [refreshTick]); // Restore a scoped search on return; refresh it after recorded changes.
   /** Fetches detail + relations through the seq guard without clearing what is
    * on screen, so a background refresh never flashes the pane empty. */
   const refetch = useCallback(async (itemId: string) => {
@@ -2045,29 +2003,26 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
   }, []);
   const choose = (item: KnowledgeItem) => {
     setSelected(item); setDetail(null); setRelations(null); setFreshness(null); setFreshBusy(false); setDetailErr(null);
-    void refetch(item.id);
+    freshSeq.current++;
+    if (item.id === selected?.id) void refetch(item.id);
   };
-  // After any successful act() or a learningChanged push, silently re-read the
-  // open item so Undo, status, and versions stay truthful without a reselect.
-  // Deliberately keyed on refreshTick alone: selection changes fetch via choose().
+  // Selection, returning to this tab, and recorded changes all re-read the item.
   useEffect(() => {
-    const id = selected?.id;
-    if (!id) return;
-    void refetch(id);
-  }, [refreshTick]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (selected?.id) void refetch(selected.id);
+  }, [refreshTick, selected?.id, refetch]);
   const recheck = async () => {
     if (!selected) return;
-    const mine = ++seq.current; // a later choose() invalidates this check too
+    const mine = ++freshSeq.current;
     setFreshBusy(true);
     try {
       const report = await window.wanigan.learning.freshness(selected.id);
-      if (seq.current !== mine) return;
+      if (freshSeq.current !== mine) return;
       setFreshness(report);
     } catch (e) {
-      if (seq.current !== mine) return;
+      if (freshSeq.current !== mine) return;
       setDetailErr(message(e));
     } finally {
-      if (seq.current === mine) setFreshBusy(false);
+      if (freshSeq.current === mine) setFreshBusy(false);
     }
   };
   const titleOf = (id: string) => items.find((i) => i.id === id)?.title ?? id;
@@ -2116,26 +2071,17 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
   };
   // The reloaded list is fresher than the click-time snapshot: status and text
   // shown in the detail header follow it, not the stale selection object.
-  const sel = selected ? items.find((i) => i.id === selected.id) ?? selected : null;
+  const sel = selected && listed.length > 0 ? (detail?.item?.id === selected.id ? detail.item : items.find((i) => i.id === selected.id) ?? selected) : null;
   return (
     <div className="knowledge-tab">
-      <Define term="Knowledge item">
-        is a canonical, versioned record with its evidence — the source of truth. Provider files are
-        reversible copies of it, never a second database. Retirement is a status change, not a
-        deletion: a <b>retired</b> item keeps every version, citation and projection, and simply
-        stops being retrieved and injected.
-      </Define>
-      <PayloadPanel providers={providers} scopeParam={scopeParam} settings={settings}
-                    items={items} read={read} onNavigate={onNavigate} />
+      <SectionHead label="The knowledge library" count={items.length} right={<Hint>Versioned · cited · local</Hint>} />
+      <Explainer id="learning-payload" title="Preview a session briefing" defaultHidden>
+        <PayloadPanel providers={providers} scopeParam={scopeParam} settings={settings}
+                      items={items} read={read} onNavigate={onNavigate} />
+      </Explainer>
       <div className="learning-split">
       <section className="learning-list-pane">
-        <div className="knowledge-groupbar card" role="group" aria-label="Group knowledge">
-          <span className="label">Group</span>
-          <div className="learning-seg">
-            <button type="button" aria-pressed={grouping === 'list'} onClick={() => setGrouping('list')}>List</button>
-            <button type="button" aria-pressed={grouping === 'path'} onClick={() => { setGrouping('path'); setPicked([]); }}>By path</button>
-          </div>
-        </div>
+        <Segmented label="Group knowledge" value={grouping} options={[{value:'list', label:'List'}, {value:'path', label:'By path'}]} onChange={value => { setGrouping(value); setPicked([]); }} />
         {!read.observed ? (
           read.phase === 'error'
             ? <ReadFailed what="the knowledge store" read={read} />
@@ -2144,7 +2090,9 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
           <ProjectMap project={project} items={items} signals={signals} onSelect={(item) => void choose(item)} />
         ) : (
           <>
-            <div className="learning-search card"><input className="field" aria-label="Search canonical knowledge" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void search(); }} placeholder="Search canonical knowledge and path scopes…" /><button className="btn" onClick={() => void search()}>Search</button></div>
+            <div className="learning-search"><input className="field" type="search" aria-label="Search canonical knowledge" value={query} onChange={(e) => { setQuery(e.target.value); if (!e.target.value) clearSearch(); }} onKeyDown={(e) => { if (e.key === 'Enter') void search(); }} placeholder="Search the library…" /><button className="btn" disabled={searchBusy} onClick={() => void search()}>{searchBusy ? 'Searching…' : 'Search'}</button></div>
+            {(query || results || searchErr) && <button className="learning-link" onClick={clearSearch}>Clear search</button>}
+            {searchErr && <Note tone="error">{searchErr} · The previous list is still shown.</Note>}
             <div className="knowledge-filterbar card">
               <label className="knowledge-filter-status">
                 <span className="label">Status</span>
@@ -2156,6 +2104,7 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
                   <option value="retired">Retired</option>
                 </select>
               </label>
+              <Explainer id="learning-text-quality" title="Text checks & bulk selection" defaultHidden>
               <label className="learning-check">
                 <input type="checkbox" checked={onlyUnsynthesized}
                        onChange={(e) => setOnlyUnsynthesized(e.target.checked)} />
@@ -2177,6 +2126,7 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
                     </>
                   : <>No active item {results ? 'in these search results' : 'in this scope'} has canonical text identical to its title, or text that is only a filesystem path.</>}
               </p>
+              </Explainer>
             </div>
             {pickedItems.length > 0 && (
               <div className="knowledge-bulkbar card">
@@ -2207,7 +2157,7 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
                   <input type="checkbox" className="knowledge-pick" checked={picked.includes(item.id)}
                          aria-label={`Select “${item.title}” to retire`}
                          onChange={(e) => toggle(item.id, e.target.checked)} />
-                  <button className={`knowledge-row card ${selected?.id === item.id ? 'on' : ''}`} onClick={() => void choose(item)}>
+                  <button aria-current={selected?.id === item.id ? 'true' : undefined} data-item-id={item.id} className={`knowledge-row ${selected?.id === item.id ? 'on' : ''}`}  onClick={() => void choose(item)}>
                     <span className="label">{item.kind} · {item.scope}</span>
                     <strong>{item.title}</strong>
                     <p>{item.canonicalText.slice(0, 170)}</p>
@@ -2226,7 +2176,7 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
           </>
         )}
       </section>
-      <aside className="learning-detail card">
+      <aside className="learning-detail" aria-label="Knowledge reader">
         {!sel ? <Empty title="Select a knowledge item" body="Its full text, evidence, versions and freshness appear here. Relations, projection history and measured ROI appear only once that item has any — they are optional records, not missing ones." />
           : detailErr && !detail ? (
             <>
@@ -2239,6 +2189,9 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
             <div><span className="label">{sel.kind} · {sel.scope}</span><h2>{sel.title}</h2></div>
             <KMark status={sel.status} />
           </div>
+          <Segmented label="Knowledge reader section" value={readerArea} onChange={setReaderArea} options={[{value:'text',label:'Text'},{value:'evidence',label:'Evidence'},{value:'history',label:'History'}]} />
+          <div className="learning-reading" key={`${sel.id}:${readerArea}`}>
+          {readerArea === 'text' && <>
           <pre className="candidate-patch">{sel.canonicalText}</pre>
           {unsynthesizedMark(sel.title, sel.canonicalText) && (
             <p className="faint">
@@ -2262,21 +2215,11 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
             </span>
           </div>
 
+          </>}
+          {readerArea === 'evidence' && <>
           <h3>Evidence</h3>
           <div className="evidence-list">{detail.evidence.map((e) => <div key={e.id}><strong>{e.citation}</strong><small>{e.sourceType} · {when(e.observedAt)} · weight {e.weight}</small></div>)}{detail.evidence.length === 0 && <p className="faint">No evidence rows are attached.</p>}</div>
           {detail.evidence.length === 200 && <p className="faint">Showing the newest 200 citations — older ones are not listed here.</p>}
-
-          <h3>Version history</h3>
-          <div className="evidence-list">
-            {[...detail.versions].sort((a, b) => b.version - a.version).map((v) => (
-              <div key={v.id}>
-                <strong><span className="mono">v{v.version}</span> · {v.createdBy}</strong>
-                <small>{ago(v.createdAt)}{v.previousVersionId ? '' : ' · first version'}</small>
-              </div>
-            ))}
-            {detail.versions.length === 0 && <p className="faint">No versions are recorded.</p>}
-          </div>
-          {detail.versions.length === 50 && <p className="faint">Showing the newest 50 versions — older versions are not listed here.</p>}
 
           {relations && relations.length > 0 && (
             <>
@@ -2335,6 +2278,20 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
               </>
             ))}
 
+          </>}
+          {readerArea === 'history' && <>
+          <h3>Version history</h3>
+          <div className="evidence-list">
+            {[...detail.versions].sort((a, b) => b.version - a.version).map((v) => (
+              <div key={v.id}>
+                <strong><span className="mono">v{v.version}</span> · {v.createdBy}</strong>
+                <small>{ago(v.createdAt)}{v.previousVersionId ? '' : ' · first version'}</small>
+              </div>
+            ))}
+            {detail.versions.length === 0 && <p className="faint">No versions are recorded.</p>}
+          </div>
+          {detail.versions.length === 50 && <p className="faint">Showing the newest 50 versions — older versions are not listed here.</p>}
+
           {/* Both wings below appear only when they hold rows. A permanent
               “no projections were written for this item” reads as a defect in
               the item, when projecting is an optional step nobody has taken;
@@ -2364,6 +2321,8 @@ function Knowledge({ items, signals, providers, project, scopeParam, emptyFrame,
               </p>
             </>
           )}
+          </>}
+          </div>
         </>}
       </aside>
       </div>
@@ -2551,16 +2510,20 @@ function BriefingInspector({ providers, scopeParam, settings, onNavigate }: {
   useEffect(() => {
     if (!providerId && providers[0]) setProviderId(providers[0].id);
   }, [providerId, providers]);
+  const request = useRef(0);
+  useEffect(() => { request.current++; setResult(null); setErr(null); setRunning(false); return () => { request.current++; }; }, [providerId, scopeParam]);
   const run = async () => {
     if (!providerId) return;
     const task = query.trim();
-    setRunning(true); setErr(null); setAskedWithQuery(task.length > 0);
+    const mine = ++request.current;
+    setResult(null); setRunning(true); setErr(null); setAskedWithQuery(task.length > 0);
     try {
-      setResult(await window.wanigan.learning.briefing({ query: task, providerId, projectId: scopeParam }));
+      const next = await window.wanigan.learning.briefing({ query: task, providerId, projectId: scopeParam });
+      if (mine === request.current) setResult(next);
     } catch (e) {
-      setErr(message(e));
+      if (mine === request.current) setErr(message(e));
     } finally {
-      setRunning(false);
+      if (mine === request.current) setRunning(false);
     }
   };
   const max = Math.max(1, settings.briefingMaxTokens);
@@ -2898,7 +2861,7 @@ function ContextTab({ diagnostics, settings, providers, scopeParam, emptyFrame, 
       </section>
 
       <section className="learning-grid two">
-        <article className="card learning-card"><span className="label">Adaptive context router</span><h2>Load less, later</h2><p>Structured project/path scope and full-text ranking run locally first. Progressive skills and mission briefings receive a hard token ceiling.</p><label><span className="label">Briefing ceiling · tokens</span><input className="field" type="number" min={200} max={8000} value={ceilingDraft} onChange={(e) => setCeilingDraft(e.target.value)} onBlur={commitCeiling} onKeyDown={(e) => { if (e.key === 'Enter') commitCeiling(); }} /></label><label className="learning-check"><input type="checkbox" className="learning-switch" checked={settings.consolidationEnabled} onChange={(e) => void save({ consolidationEnabled: e.target.checked })} /> Consolidate while Wanigan or its daemon is active</label></article>
+        <article className="card learning-card"><span className="label">Adaptive context router</span><h2>Load less, later</h2><p>Structured project/path scope and full-text ranking run locally first. Progressive skills and mission briefings receive a hard token ceiling.</p><label><span className="label">Briefing ceiling · tokens</span><input className="field" disabled={busy !== null} type="number" min={200} max={8000} value={ceilingDraft} onChange={(e) => setCeilingDraft(e.target.value)} onBlur={commitCeiling} onKeyDown={(e) => { if (e.key === 'Enter') commitCeiling(); }} /></label><label className="learning-check"><input type="checkbox" className="learning-switch" checked={settings.consolidationEnabled} disabled={busy !== null} onChange={(e) => void save({ consolidationEnabled: e.target.checked })} /> Consolidate while Wanigan or its daemon is active</label></article>
         <ModelAssistCard settings={settings} providers={providers} busy={busy} act={act} save={save} />
       </section>
 

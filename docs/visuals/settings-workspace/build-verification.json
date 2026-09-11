@@ -1,0 +1,37 @@
+{
+  "verifiedAt": "2026-09-10T22:50:05.308Z",
+  "arm64": {
+    "app": "/Users/dane/Projects/drupal/wanigan/release/mac-arm64/Wanigan.app",
+    "asarSha256": "d3ea1084ceec00dcac49a7926b8cc5b50ba6a0f35072c61eca9e1c8a8b31b979",
+    "rendererPath": "/out/renderer/assets/index-BI0U2WXg.js",
+    "rendererSha256": "3229bdf883301ee231a120a06f3d7b39e0a375117211bdb7f034632924292d1d",
+    "signature": "strict sealed ad-hoc signature, hardened fuses, ASAR integrity and executable PTY helper verified"
+  },
+  "x64": {
+    "app": "/Users/dane/Projects/drupal/wanigan/release/mac/Wanigan.app",
+    "asarSha256": "1eaba895fc6efb3d4c1e4c12365bc33c8e243b34aae89ca8a879d786a5f03cb1",
+    "rendererPath": "/out/renderer/assets/index-BI0U2WXg.js",
+    "rendererSha256": "3229bdf883301ee231a120a06f3d7b39e0a375117211bdb7f034632924292d1d",
+    "signature": "strict sealed ad-hoc signature, hardened fuses, ASAR integrity and executable PTY helper verified"
+  },
+  "installed": {
+    "app": "/Applications/Wanigan.app",
+    "asarSha256": "d3ea1084ceec00dcac49a7926b8cc5b50ba6a0f35072c61eca9e1c8a8b31b979",
+    "rendererPath": "/out/renderer/assets/index-BI0U2WXg.js",
+    "rendererSha256": "3229bdf883301ee231a120a06f3d7b39e0a375117211bdb7f034632924292d1d",
+    "signature": "strict sealed ad-hoc signature, hardened fuses, ASAR integrity and executable PTY helper verified",
+    "verifiedAt": "2026-09-10T22:50:35.829Z"
+  },
+  "nativeVerification": {
+    "app": "/Applications/Wanigan.app",
+    "pid": 66585,
+    "observed": [
+      "Installed Settings directory and section shortcuts visible",
+      "Agents category renders real installed runtimes and accounts",
+      "App category renders the three theme previews and motion controls"
+    ],
+    "method": "Native accessibility tree and screenshot after relaunch",
+    "leftOn": "Settings > App",
+    "preferenceWrites": "No theme, motion, account, credential or demo preference changed during native inspection"
+  }
+}

@@ -482,9 +482,10 @@ export type IconName =
   // it, never the only way: every row prints its word beside the glyph.
   | 'terminal' | 'grid' | 'target' | 'layers' | 'chart' | 'brain' | 'plug'
   | 'clock' | 'branch' | 'play' | 'gauge' | 'book' | 'file-text' | 'compass' | 'sliders'
-  | 'columns';
+  | 'columns' | 'refresh';
 
 const ICON_PATHS: Record<IconName, React.ReactNode> = {
+  refresh: <><path d="M20 7v5h-5" /><path d="M4 17v-5h5" /><path d="M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1" /></>,
   'chevron-right': <path d="m9 18 6-6-6-6" />,
   'chevron-down': <path d="m6 9 6 6 6-6" />,
   plus: <><path d="M5 12h14" /><path d="M12 5v14" /></>,

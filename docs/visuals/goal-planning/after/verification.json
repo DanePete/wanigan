@@ -1,0 +1,23 @@
+{
+  "at": "2026-09-11T04:02:18.980Z",
+  "provenance": "Real Electron renderer and GPU with deterministic synthetic bridge; no paid model calls or agent launches",
+  "checks": [
+    "Both entry points use an open planning page; idea focus, typing ripples and intentional gaze work with the full GPU companion, without a model call.",
+    "Manual planning retains edits across navigation, validates budgets, edits task instructions, preserves a failed save and celebrates only a confirmed goal.",
+    "The existing AI interview drives questions, recorded spend and editable proposals; duplicate shortcuts make one request, errors retain answers, and saving never launches tasks.",
+    "No-model state keeps manual planning available; 960 and 720 layouts fit both themes, and Off / system Reduce Motion stop continuous GPU animation."
+  ],
+  "errors": [],
+  "dimensions": [
+    {
+      "width": 960,
+      "client": 919,
+      "scroll": 919
+    },
+    {
+      "width": 720,
+      "client": 687,
+      "scroll": 687
+    }
+  ]
+}

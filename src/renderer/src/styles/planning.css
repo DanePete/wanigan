@@ -1,0 +1,55 @@
+/* The companion shares an open work surface with the person making the plan. */
+.pane.planning-table { overflow-y: auto; }
+.planning-table > .pane-head { flex: none; }
+.planning-layout { display: grid; grid-template-columns: minmax(250px, .7fr) minmax(0, 1.3fr); align-items: start; gap: var(--s-6); width: 100%; }
+.planning-companion { position: sticky; top: calc(var(--control-h) + var(--s-6)); display: grid; justify-items: center; align-content: start; padding: var(--s-5) 0; text-align: center; min-width: 0; }
+.planning-orbit { width: min(100%, 350px); }
+.planning-orbit .wanigan-orb { width: 100%; }
+.planning-voice { max-width: 26ch; margin: var(--s-4) 0 var(--s-2); font-size: var(--t-title); font-weight: 450; letter-spacing: -.025em; color: var(--text); line-height: 1.4; text-wrap: balance; }
+.planning-play { font-size: var(--t-micro); color: var(--text-faint); margin: 0; }
+.planning-journey { display: grid; gap: var(--s-4); list-style: none; padding: var(--s-6) 0 0; margin: 0; text-align: left; }
+.planning-journey li { display: flex; gap: var(--s-3); align-items: center; font-size: var(--t-small); color: var(--text-faint); }
+.planning-journey li > span { width: var(--control-h-sm); height: var(--control-h-sm); display: grid; place-items: center; border: 1px solid var(--line-soft); border-radius: var(--r-pill); font-size: var(--t-micro); }
+.planning-journey li[aria-current] { color: var(--text); }
+.planning-journey li[aria-current] > span { background: var(--bg-selected); border-color: var(--accent); color: var(--accent); }
+.planning-work { min-width: 0; display: grid; gap: var(--s-5); padding: var(--s-5) 0 var(--s-6); }
+.planning-work h2 { font-size: var(--t-display); font-weight: 450; letter-spacing: -.04em; line-height: 1.2; margin: 0; text-wrap: balance; }
+.planning-work h3 { font-size: var(--t-title); font-weight: 500; letter-spacing: -.02em; margin: 0; }
+.planning-work p { line-height: 1.65; }
+.planning-work label { display: grid; min-width: 0; gap: var(--s-2); color: var(--text-dim); font-size: var(--t-small); }
+.planning-work textarea { resize: vertical; min-height: 100px; font: inherit; line-height: 1.6; }
+.planning-work .planning-seed { min-height: 150px; padding: var(--s-4); font-size: var(--t-lead); background: var(--glass-fill); border-radius: var(--r-lg); }
+.planning-fields { margin: 0; padding: 0; border: 0; min-width: 0; display: grid; gap: var(--s-4); }
+.planning-inline { display: flex; flex-wrap: wrap; gap: var(--s-4); align-items: end; }
+.planning-inline > label { flex: 1; min-width: 150px; }
+.planning-actions { display: flex; flex-wrap: wrap; gap: var(--s-3); align-items: center; }
+.planning-actions .btn { min-height: var(--control-h); }
+.planning-settings, .planning-history { padding: var(--s-4) 0; border-block: 1px solid var(--line-soft); }
+.planning-settings > summary, .planning-history > summary { cursor: pointer; font-size: var(--t-small); color: var(--text-dim); }
+.planning-settings > .planning-fields { padding-top: var(--s-4); }
+.planning-fine { font-size: var(--t-small); color: var(--text-faint); margin: 0; }
+.planning-history ol { padding-left: var(--s-5); }
+.planning-history li { padding: var(--s-3) 0; color: var(--text-dim); }
+.planning-history li p { margin: var(--s-2) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.planning-resume { display: grid; gap: var(--s-2); }
+.planning-resume button { display: grid; gap: var(--s-1); padding: var(--s-3); border-radius: var(--r-md); background: var(--bg-soft); color: var(--text-dim); text-align: left; }
+.planning-resume button:hover { background: var(--bg-selected); }
+.planning-resume small { color: var(--text-faint); font-size: var(--t-micro); }
+.planning-plan { min-width: 0; display: grid; gap: var(--s-4); border-top: 1px solid var(--line-soft); padding-top: var(--s-5); }
+.planning-plan .plan-editor { min-width: 0; }
+.planning-saved { display: grid; gap: var(--s-4); padding-block: var(--s-6); }
+.shell:has(.planning-table) .companion-presence { display: none; }
+.shell:has(.planning-table) .space-dock { grid-column: 2; }
+@media (max-width: 980px) {
+  .planning-layout { grid-template-columns: minmax(210px, .65fr) minmax(0, 1.35fr); gap: var(--s-4); }
+  .planning-work h2 { font-size: var(--t-title); }
+}
+@media (max-width: 720px) {
+  .planning-layout { grid-template-columns: minmax(0, 1fr); gap: var(--s-3); }
+  .planning-companion { position: static; grid-template-columns: 120px minmax(0, 1fr); text-align: left; justify-items: start; padding: 0; gap: var(--s-3); }
+  .planning-orbit { grid-row: span 2; }
+  .planning-voice { align-self: end; font-size: var(--t-lead); margin: 0; }
+  .planning-play { align-self: start; }
+  .planning-journey { display: none; }
+  .planning-work { padding-top: var(--s-2); }
+}

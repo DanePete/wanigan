@@ -1,0 +1,142 @@
+{
+  "at": "2026-09-10T22:49:56.368Z",
+  "provenance": "Actual Electron renderer; synthetic services; no production operations",
+  "checks": [
+    "all seven categories render exclusively in both themes without renderer errors",
+    "category changes preserve the same mounted credential field and spend-cap draft; only deliberate Save writes the entered cap",
+    "search and section shortcuts reach the exact named control, move keyboard focus, and keep category scroll independent of the fixed directory",
+    "category tabs retain roving focus and Home/End keyboard navigation",
+    "appearance previews use the real preference callback, lock during a pending save, roll back failed saves, and support arrow-key choice",
+    "full motion gives category transitions a duration; Off and system Reduce Motion suppress them",
+    "all seven categories fit an 820px desktop window in both themes, with horizontally navigable tabs and no automatic demo switch"
+  ],
+  "measurements": [
+    {
+      "theme": "dark",
+      "tab": "agents",
+      "width": 1414,
+      "scrollWidth": 1414
+    },
+    {
+      "theme": "dark",
+      "tab": "projects",
+      "width": 1414,
+      "scrollWidth": 1414
+    },
+    {
+      "theme": "dark",
+      "tab": "automation",
+      "width": 1414,
+      "scrollWidth": 1414
+    },
+    {
+      "theme": "dark",
+      "tab": "connections",
+      "width": 1414,
+      "scrollWidth": 1414
+    },
+    {
+      "theme": "dark",
+      "tab": "privacy",
+      "width": 1414,
+      "scrollWidth": 1414
+    },
+    {
+      "theme": "dark",
+      "tab": "backup",
+      "width": 1414,
+      "scrollWidth": 1414
+    },
+    {
+      "theme": "dark",
+      "tab": "app",
+      "width": 1414,
+      "scrollWidth": 1414
+    },
+    {
+      "theme": "light",
+      "tab": "agents",
+      "width": 1414,
+      "scrollWidth": 1414
+    },
+    {
+      "theme": "light",
+      "tab": "projects",
+      "width": 1414,
+      "scrollWidth": 1414
+    },
+    {
+      "theme": "light",
+      "tab": "automation",
+      "width": 1414,
+      "scrollWidth": 1414
+    },
+    {
+      "theme": "light",
+      "tab": "connections",
+      "width": 1414,
+      "scrollWidth": 1414
+    },
+    {
+      "theme": "light",
+      "tab": "privacy",
+      "width": 1414,
+      "scrollWidth": 1414
+    },
+    {
+      "theme": "light",
+      "tab": "backup",
+      "width": 1414,
+      "scrollWidth": 1414
+    },
+    {
+      "theme": "light",
+      "tab": "app",
+      "width": 1414,
+      "scrollWidth": 1414
+    },
+    {
+      "tab": "agents",
+      "width": 729,
+      "scrollWidth": 729,
+      "height": 520
+    },
+    {
+      "tab": "projects",
+      "width": 729,
+      "scrollWidth": 729,
+      "height": 520
+    },
+    {
+      "tab": "automation",
+      "width": 729,
+      "scrollWidth": 729,
+      "height": 520
+    },
+    {
+      "tab": "connections",
+      "width": 729,
+      "scrollWidth": 729,
+      "height": 520
+    },
+    {
+      "tab": "privacy",
+      "width": 729,
+      "scrollWidth": 729,
+      "height": 520
+    },
+    {
+      "tab": "backup",
+      "width": 729,
+      "scrollWidth": 729,
+      "height": 520
+    },
+    {
+      "tab": "app",
+      "width": 729,
+      "scrollWidth": 729,
+      "height": 520
+    }
+  ],
+  "errors": []
+}

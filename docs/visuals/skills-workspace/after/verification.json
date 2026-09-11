@@ -1,0 +1,36 @@
+{
+  "checks": [
+    "Search keeps visible match ranking, source facets and keyboard typeahead; selection and reader sections survive workspace navigation.",
+    "Delayed file reads cannot replace the selected skill; read failures have Retry and truncated files remain explicitly labelled.",
+    "Project changes clear old records immediately; a failed rescan keeps dated records and removes session typing until the scan succeeds.",
+    "Copy, reveal and session typing require deliberate actions; typing is serialized, stays unsubmitted and reports the main process refusal.",
+    "Authoring keeps its draft across sections; editing or changing targets invalidates previews, late builds are discarded and error diagnostics block installation.",
+    "Install uses the reviewed bytes and project; partial receipts stay visible, retries target only failed providers and duplicate writes are disabled.",
+    "Writer inputs and scope pins survive leaving Skills; switching projects restores the correct draft and requires a fresh preview.",
+    "Motion respects Off, Auto and Full; all three areas fit a narrow desktop and an empty scan offers a clear next action."
+  ],
+  "errors": [],
+  "dimensions": [
+    {
+      "name": "Library",
+      "width": 1024,
+      "page": 1024,
+      "panel": 948,
+      "scroll": 948
+    },
+    {
+      "name": "Write",
+      "width": 1024,
+      "page": 1024,
+      "panel": 933,
+      "scroll": 933
+    },
+    {
+      "name": "Sources",
+      "width": 1024,
+      "page": 1024,
+      "panel": 948,
+      "scroll": 948
+    }
+  ]
+}

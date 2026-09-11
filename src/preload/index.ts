@@ -1,3 +1,7 @@
+import type { DemoPromptId, DemoState } from '../shared/demo';
+import type { SessionGoal } from '../shared/goal-journey';
+import type { Preflight } from '../shared/preflight';
+import type { DiscoveryResult } from '../shared/discovery';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
@@ -38,12 +42,20 @@ async function call<T>(channel: string, ...args: unknown[]): Promise<T> {
   return res.data;
 }
 
+// Main fixes this flag when it creates the isolated demo window. The page
+// cannot change argv. Suppress operational streams even if a future producer
+// accidentally sends one directly instead of using main's live window sink.
+const demoWindow = process.argv.includes('--wanigan-demo-window');
+function listen(channel: string, handler: (...args: any[]) => void): void {
+  if (!demoWindow || channel === 'window:visibility' || channel === 'menu:route') ipcRenderer.on(channel, handler);
+}
+
 const api = {
   windowVisibility: {
     current:()=>call<boolean>('window:visible'),
     onChanged:(cb:(visible:boolean)=>void)=>{
       const handler=(_event:unknown,visible:boolean)=>{if(typeof visible==='boolean')cb(visible);};
-      ipcRenderer.on('window:visibility',handler);
+      listen('window:visibility',handler);
       return ()=>ipcRenderer.removeListener('window:visibility',handler);
     },
   },
@@ -198,6 +210,8 @@ const api = {
       call<{ detail: string; batches: boolean; fingerprint: string | null }>('key:set', k, workspaceId),
     verify: () => call<{ ok: boolean; detail: string; batches: boolean }>('key:verify'),
     provider: (id: string) => call<{ present: boolean; fingerprint: string | null }>('key:provider', id),
+    /** Credential ids this profile declares and does not have. Empty for Claude and Codex. */
+    missingFor: (providerId: string) => call<string[]>('key:missingFor', providerId),
     setProvider: (id: string, key: string) =>
       call<{ present: boolean; fingerprint: string | null }>('key:setProvider', id, key),
     clearProvider: (id: string) => call<boolean>('key:clearProvider', id),
@@ -414,10 +428,18 @@ const api = {
     body: (p: string) => call<{ text: string; truncated: boolean; bytes: number }>('skills:body', p),
     send: (sessionId: string, invoke: string) => call<boolean>('skills:send', sessionId, invoke),
   },
+  /** The first-run checklist's one read. Read-only; the Re-check button calls it again. */
+  preflight: {
+    read: () => call<Preflight>('preflight:read'),
+    /** Projects found in agent history. Proposes only; projects:add still decides. */
+    discover: () => call<DiscoveryResult>('discovery:scan'),
+    /** Import chosen candidates. Main re-checks each against its own scan and confirms with the operator. */
+    importProjects: (paths: string[]) => call<Project[]>('discovery:import', paths),
+  },
   demo: {
-    state: () => call<{ on: boolean; blurTerminals: boolean; map: { real: string; fake: string }[] }>('demo:state'),
-    set: (on: boolean) => call<{ on: boolean; blurTerminals: boolean; map: { real: string; fake: string }[] }>('demo:set', on),
-    setBlur: (on: boolean) => call<{ on: boolean; blurTerminals: boolean; map: { real: string; fake: string }[] }>('demo:setBlur', on),
+    state: () => call<DemoState>('demo:state'),
+    set: (on: boolean) => call<DemoState>('demo:set', on),
+    copyPrompt: (id: DemoPromptId) => call<void>('demo:copyPrompt', id),
   },
   // ── phase 28 · git ───────────────────────────────────────────────────
   git: {
@@ -508,6 +530,7 @@ const api = {
     listForProvider: (providerId: string) => call<AgentAccount[]>('accounts:listForProvider', providerId),
   },
   control: {
+    sessionGoal: (id: string) => call<SessionGoal | null>('control:sessionGoal', id),
     list: (projectId?: string | null, limit?: number) => call<WorkDocket[]>('control:list', projectId, limit),
     get: (id: string) => call<DocketDetail>('control:get', id),
     create: (input: { projectId: string; title: string; objective: string; acceptance: string[]; risk?: DocketRisk; budgetUsd?: number | null; plan?: DocketPlanNode[] }) =>
@@ -781,47 +804,47 @@ const api = {
   on: {
     startupChanged: (cb: (state: { phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }) => void) => {
       const h = (_e: unknown, state: { phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }) => cb(state);
-      ipcRenderer.on('startup:changed', h);
+      listen('startup:changed', h);
       return () => ipcRenderer.removeListener('startup:changed', h);
     },
     batchChanged: (cb: () => void) => {
       const h = () => cb();
-      ipcRenderer.on('batch:changed', h);
+      listen('batch:changed', h);
       return () => ipcRenderer.removeListener('batch:changed', h);
     },
     learningChanged: (cb: () => void) => {
       const h = () => cb();
-      ipcRenderer.on('learning:changed', h);
+      listen('learning:changed', h);
       return () => ipcRenderer.removeListener('learning:changed', h);
     },
     data: (cb: (p: { sessionId: string; data: string }) => void) => {
       const h = (_e: unknown, p: { sessionId: string; data: string }) => cb(p);
-      ipcRenderer.on('session:data', h);
+      listen('session:data', h);
       return () => ipcRenderer.removeListener('session:data', h);
     },
     exit: (cb: (p: { sessionId: string; exitCode: number }) => void) => {
       const h = (_e: unknown, p: { sessionId: string; exitCode: number }) => cb(p);
-      ipcRenderer.on('session:exit', h);
+      listen('session:exit', h);
       return () => ipcRenderer.removeListener('session:exit', h);
     },
     sessionEvent: (cb: (e: SessionEvent) => void) => {
       const h = (_e: unknown, p: SessionEvent) => cb(p);
-      ipcRenderer.on('session:event', h);
+      listen('session:event', h);
       return () => ipcRenderer.removeListener('session:event', h);
     },
     queueChanged: (cb: () => void) => {
       const h = () => cb();
-      ipcRenderer.on('queue:changed', h);
+      listen('queue:changed', h);
       return () => ipcRenderer.removeListener('queue:changed', h);
     },
     sessions: (cb: (s: Session[]) => void) => {
       const h = (_e: unknown, s: Session[]) => cb(s);
-      ipcRenderer.on('session:list', h);
+      listen('session:list', h);
       return () => ipcRenderer.removeListener('session:list', h);
     },
     unread: (cb: (counts: Record<string, number>) => void) => {
       const h = (_e: unknown, counts: Record<string, number>) => cb(counts);
-      ipcRenderer.on('session:unread', h);
+      listen('session:unread', h);
       return () => ipcRenderer.removeListener('session:unread', h);
     },
     // A clicked notification. Main has already raised the window; this says
@@ -829,7 +852,7 @@ const api = {
     // instead of on whichever tab happened to be open.
     notificationOpened: (cb: (route: NotificationRoute) => void) => {
       const h = (_e: unknown, route: NotificationRoute) => cb(route);
-      ipcRenderer.on('notify:open', h);
+      listen('notify:open', h);
       return () => ipcRenderer.removeListener('notify:open', h);
     },
     // The same notification, delivered to the window instead of to macOS. Both
@@ -838,7 +861,7 @@ const api = {
     // surface Wanigan can promise an operator who is looking at it.
     notificationRaised: (cb: (alert: InAppAlert) => void) => {
       const h = (_e: unknown, alert: InAppAlert) => cb(alert);
-      ipcRenderer.on('notify:alert', h);
+      listen('notify:alert', h);
       return () => ipcRenderer.removeListener('notify:alert', h);
     },
     // A menu item was chosen. Main builds the menu bar from the route table but
@@ -847,7 +870,7 @@ const api = {
     // and this window decides what that means.
     menuRoute: (cb: (route: MenuRoute) => void) => {
       const h = (_e: unknown, route: MenuRoute) => cb(route);
-      ipcRenderer.on('menu:route', h);
+      listen('menu:route', h);
       return () => ipcRenderer.removeListener('menu:route', h);
     },
   },

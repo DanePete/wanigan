@@ -171,16 +171,17 @@ for (const theme of themes) {
   await goTo('Control'); await page.waitForSelector('.control-detail');
   const newGoal=page.getByRole('button',{name:'New goal',exact:true});
   await newGoal.click();
-  const sheet=page.getByRole('dialog',{name:'New goal',exact:true});
+  const sheet=page.locator('.planning-table');
   await sheet.waitFor();
-  assert.equal(await sheet.getByLabel('Title',{exact:true}).evaluate(el=>el===document.activeElement),true,'creation sheet focuses Title');
-  await sheet.getByLabel('Title',{exact:true}).fill('Review sheet draft');
-  await page.keyboard.press('Escape');
-  assert.equal(await newGoal.evaluate(el=>el===document.activeElement),true,'Escape returns focus to New goal');
+  if(await sheet.getByRole('button',{name:'I’ll write the plan',exact:true}).count())await sheet.getByRole('button',{name:'I’ll write the plan',exact:true}).click();
+  assert.equal(await sheet.getByLabel('Title',{exact:true}).first().evaluate(el=>el===document.activeElement),true,'planning page focuses Title');
+  await sheet.getByLabel('Title',{exact:true}).first().fill('Review sheet draft');
+  await sheet.getByRole('button',{name:'Back to goals',exact:true}).click();
+  assert.equal(await newGoal.evaluate(el=>el===document.activeElement),true,'Back returns focus to New goal');
   await newGoal.click();
-  assert.equal(await sheet.getByLabel('Title',{exact:true}).inputValue(),'Review sheet draft','closing retains the draft');
-  await shot(theme,'overlay-new-goal');
-  await page.keyboard.press('Escape');
+  assert.equal(await sheet.getByLabel('Title',{exact:true}).first().inputValue(),'Review sheet draft','closing retains the draft');
+  await shot(theme,'goal-planning');
+  await sheet.getByRole('button',{name:'Back to goals',exact:true}).click();
   assert.equal(await page.getByRole('dialog').count(),0);
   const reviewGeometry=await page.evaluate(()=>{
     const list=document.querySelector('.control-list').getBoundingClientRect();
@@ -198,16 +199,16 @@ for (const theme of themes) {
 // goal is created: no session, model request or worktree is started.
 await goTo('Control'); await page.waitForSelector('.control-detail');
 await page.getByRole('button',{name:'New goal',exact:true}).click();
-const creation=page.getByRole('dialog',{name:'New goal',exact:true});
-await creation.getByLabel('Title',{exact:true}).fill('Validate the review workspace');
-await creation.getByLabel('Objective',{exact:true}).fill('Keep the selected work visible and the draft recoverable.');
-await creation.getByLabel('Acceptance checks · one per line',{exact:true}).fill('Creation validates through main\nThe selected record opens beside the list');
-await creation.getByLabel('Budget · USD',{exact:true}).fill('-1');
+const creation=page.locator('.planning-table');
+await creation.getByLabel('Title',{exact:true}).first().fill('Validate the review workspace');
+await creation.getByRole('textbox',{name:'Objective',exact:true}).fill('Keep the selected work visible and the draft recoverable.');
+await creation.getByRole('textbox',{name:'Acceptance checks · one per line',exact:true}).fill('Creation validates through main\nThe selected record opens beside the list');
+await creation.getByLabel('Goal budget · USD',{exact:true}).fill('-1');
+assert(await creation.getByRole('button',{name:'Create goal',exact:true}).isDisabled(),'invalid budget is rejected before submission');
+assert((await creation.locator('#planning-problems').innerText()).includes('budget'),'budget correction is visible');
+await creation.getByLabel('Goal budget · USD',{exact:true}).fill('2');
 await creation.getByRole('button',{name:'Create goal',exact:true}).click();
-await creation.locator('.note.tone-error').waitFor();
-assert((await creation.locator('.note.tone-error').innerText()).length>0,'validation error stays inside the sheet');
-await creation.getByLabel('Budget · USD',{exact:true}).fill('2');
-await creation.getByRole('button',{name:'Create goal',exact:true}).click();
+await creation.getByRole('button',{name:'Open goal',exact:true}).click();
 await creation.waitFor({state:'detached'});
 await page.waitForFunction(()=>document.querySelector('.control-detail h2')?.textContent==='Validate the review workspace');
 assert.equal(await page.locator('.control-docket').count(),2,'successful creation adds one goal');
@@ -222,9 +223,9 @@ for (const label of ['Mission', 'Sessions', 'Control', 'Fleet', 'Learning', 'Set
 assert.deepEqual(errors,[]);
 writeFileSync(path.join(OUT,'verification.json'),JSON.stringify({
   capturedAt:new Date().toISOString(),realMainAndPreload:true,isolatedProfile:true,seededLocalRecords:true,
-  tests:['composer-gaze','globe-spin','native-visibility-pause','temperament-persistence','popover-bounds-and-escape','review-adjacent-detail','sheet-focus-return','sheet-draft-retention','main-create-validation','main-create-success','creation-does-not-launch'],
+  tests:['composer-gaze','globe-spin','native-visibility-pause','temperament-persistence','popover-bounds-and-escape','review-adjacent-detail','planner-focus-return','planner-draft-retention','main-create-validation','main-create-success','creation-does-not-launch'],
   themes,views:VIEWS,layoutMeasurements,errors,
 },null,2)+'\n');
-log('Review checks passed: creation sheet, initial focus, Escape, draft retention, adjacent detail, both themes.');
+log('Review checks passed: planning page, initial focus, Back, draft retention, adjacent detail, both themes.');
 log('done');
 }finally{await app.close();rmSync(udd, { recursive: true, force: true });}

@@ -24,7 +24,10 @@ export function deriveSendState(input: {
   attention: AttentionKind | null;
 }): ComposerSendState {
   if (input.status !== 'running') {
-    return { mode: 'blocked', reason: 'This session has exited, so there is no prompt to type into.' };
+    return { mode: 'blocked', reason: input.status === 'starting'
+      ? 'This session is starting. Its prompt is not ready yet.'
+      : input.status === 'exited' ? 'This session has exited, so there is no prompt to type into.'
+        : 'This session is no longer available.' };
   }
   switch (input.attention) {
     case 'idle':

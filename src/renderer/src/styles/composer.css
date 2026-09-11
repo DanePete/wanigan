@@ -137,3 +137,51 @@
 .shortcut-group table { width: 100%; border-collapse: collapse; font-size: var(--t-small); }
 .shortcut-group td { padding: 3px 0; vertical-align: baseline; }
 .shortcut-keys { width: 76px; white-space: nowrap; color: var(--text-dim); padding-right: 12px; }
+
+/* A reference you can search, with the same canonical bindings as the app. */
+.shortcut-sheet.shortcut-browser { width: min(880px, calc(100vw - var(--s-6))); padding: 0; border-radius: var(--r-xl); overflow: hidden; display: flex; flex-direction: column; max-height: calc(100vh - var(--s-6)); }
+.shortcut-browser .shortcut-head { padding: var(--s-5); margin: 0; }
+.shortcut-browser .shortcut-head h2 { font-size: var(--t-title); letter-spacing: -.025em; font-weight: 550; }
+.shortcut-search { display: flex; align-items: center; gap: var(--s-3); padding: 0 var(--s-5) var(--s-4); }
+.shortcut-search > .icon { color: var(--text-faint); }
+.shortcut-search .field { flex: 1; }
+.shortcut-layout { display: grid; grid-template-columns: 190px minmax(0, 1fr); min-height: 0; border-top: 1px solid var(--line-soft); }
+.shortcut-sections { display: flex; flex-direction: column; align-items: stretch; gap: var(--s-1); padding: var(--s-4); background: var(--bg-chrome); }
+.shortcut-sections .btn { justify-content: flex-start; border: 0; background: transparent; box-shadow: none; color: var(--text-dim); }
+.shortcut-sections .btn[aria-pressed=true] { background: var(--bg-selected); color: var(--text); }
+.shortcut-browser .shortcut-groups { display: block; overflow: auto; padding: var(--s-5); }
+.shortcut-browser .shortcut-group + .shortcut-group { margin-top: var(--s-6); }
+.shortcut-browser .shortcut-group h3 { text-transform: none; font-size: var(--t-lead); letter-spacing: 0; color: var(--text); }
+.shortcut-browser .shortcut-note { font-size: var(--t-small); line-height: 1.6; margin-block: var(--s-3); max-width: 65ch; }
+.shortcut-browser .shortcut-group td { padding-block: var(--s-3); vertical-align: top; }
+.shortcut-browser .shortcut-keys { width: 150px; }
+.shortcut-browser kbd { display: inline-block; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: var(--r-sm); padding: var(--s-1) var(--s-2); background: var(--bg-raised); color: var(--text); font-family: var(--font-ui); font-size: var(--t-small); white-space: nowrap; }
+.shortcut-results { margin: 0; padding: var(--s-3) var(--s-5); border-top: 1px solid var(--line-soft); color: var(--text-faint); font-size: var(--t-small); }
+.shortcut-empty { color: var(--text-dim); line-height: 1.6; padding: var(--s-5) 0; }
+@media (max-width: 720px) { .shortcut-layout { grid-template-columns: minmax(0, 1fr); } .shortcut-sections { flex-direction: row; overflow: auto; padding: var(--s-2); } .shortcut-sections .btn { flex: none; } .shortcut-browser .shortcut-groups { padding: var(--s-4); } }
+
+/* Drafting has a writing surface and a separate, quiet action line. */
+.composer.composer-workspace { position: relative; padding: var(--s-3); background: var(--bg-soft); border-top: 1px solid var(--line-soft); }
+.composer-identity { display: flex; justify-content: space-between; gap: var(--s-3); padding: 0 var(--s-1) var(--s-2); color: var(--text-faint); font-size: var(--t-micro); }
+.composer-workspace .composer-row { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-raised); box-shadow: var(--shadow-input); }
+.composer-workspace .composer-row:focus-within { border-color: var(--accent); }
+.composer-workspace .composer-field { width: 100%; }
+.composer-workspace .composer-area { border: 0; border-radius: var(--r-md); padding: var(--s-3); background: transparent; font-size: var(--t-body); line-height: 1.65; box-shadow: none; resize: vertical; min-height: 64px; max-height: 220px; }
+.composer-workspace .composer-area:focus { outline: none; box-shadow: none; }
+.composer-workspace .composer-actions { width: 100%; align-items: center; gap: var(--s-2); padding: 0 var(--s-2) var(--s-2); }
+.composer-workspace .composer-actions > .btn { font-size: var(--t-small); min-height: var(--control-h-sm); }
+.composer-key-hint { display: flex; align-items: center; gap: var(--s-1); margin-right: auto; color: var(--text-faint); font-size: var(--t-micro); white-space: nowrap; }
+.composer-workspace kbd { font-family: var(--font-ui); color: var(--text-dim); }
+.composer-workspace .composer-stash { display: flex; gap: var(--s-1); align-items: center; }
+.composer-workspace .composer-stash .icon { width: 13px; height: 13px; }
+.composer-workspace .composer-stash-pop { position: absolute; z-index: 6; inset: auto var(--s-3) calc(100% - var(--s-2)); width: auto; max-height: min(420px, 65vh); display: flex; flex-direction: column; padding: var(--s-4); border-radius: var(--r-lg); background: var(--bg-soft); box-shadow: var(--shadow-popover); overflow: hidden; }
+.composer-saved-intro { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); margin-bottom: var(--s-3); }
+.composer-saved-intro strong { font-size: var(--t-lead); font-weight: 550; }
+.composer-saved-list { overflow: auto; min-height: 0; margin-top: var(--s-3); }
+.composer-workspace .composer-stash-row { padding: var(--s-2) 0; border-bottom: 1px solid var(--line-soft); }
+.composer-workspace .composer-stash-restore { padding: var(--s-2); white-space: normal; line-height: 1.6; max-height: 108px; overflow: hidden; font-size: var(--t-small); }
+.composer-workspace .composer-stash-restore:hover { background: var(--bg-sunk); border-radius: var(--r-sm); }
+.composer-saved-note { color: var(--text-faint); font-size: var(--t-micro); line-height: 1.6; margin-top: var(--s-3); }
+@container composer (max-width: 680px) { .composer-key-hint { display: none; } .composer-workspace .composer-actions { justify-content: flex-end; } }
+
+.composer-workspace { container-type: inline-size; container-name: composer; }

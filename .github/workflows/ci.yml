@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 # The two jobs below are `npm test` split by what each step actually needs from
-# the runner, and nothing else. Together they run the same five steps in the
+# the runner, and nothing else. Together they run the same six steps in the
 # same order: typecheck, test:renderer-style, test:package-hooks,
 # test:local-install, smoke. A CI that ran a smaller set than the command
 # contributors are told to run is how a required build script stayed untracked
@@ -44,6 +44,13 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      # Plain Node over src/shared, which is pure by construction: no Electron,
+      # no display, no database. It runs before the slower gates because it is
+      # the one step that answers in under a second, and a contract broken here
+      # is not worth waiting thirty seconds to hear about.
+      - name: Shared contract tests
+        run: npm run test:shared
 
       # Plain Node over the renderer sources: no Electron, no display, no
       # install beyond what is already here. It sits on this job because it is

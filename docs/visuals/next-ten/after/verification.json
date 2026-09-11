@@ -1,0 +1,19 @@
+{
+  "checks": [
+    "Command search preserves caret keys and scopes projects",
+    "Async transcript results retain selection, ignore stale replies and show failure honestly",
+    "Shortcut help filters canonical actions, clears empty results and contains focus",
+    "Launch summary matches its payload; short windows keep Start visible; refused launch preserves input",
+    "Saved prompts search, restore without sending, fit above composer and return focus",
+    "Timeline leads with events and keeps timing and filter recovery available",
+    "Code reader cycles and wraps matching lines, toggles wrapping and returns focus",
+    "Compact details and its shortcut preserve the mounted terminal and unsent draft",
+    "Notifications preserve focus and distinguish expiring updates from persistent urgent events",
+    "Injected view error is contained; Reload remounts only the failed view",
+    "Reduced motion, increased contrast, forced colours and reduced transparency are exercised in Chromium",
+    "Visible play controls select real GPU materials, rain uses water, and motion-off stays still",
+    "The entire renderer probe made no PTY writes"
+  ],
+  "errors": [],
+  "provenance": "Real Electron renderer with authored fixtures, including one deliberately invalid project name to exercise the error boundary. No live app session, provider call, or repository action."
+}

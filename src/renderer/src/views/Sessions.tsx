@@ -12,10 +12,11 @@ import Composer from '../components/Composer';
 import NewSessionDialog from '../components/NewSessionDialog';
 import CodePanel from '../components/CodePanel';
 import AttentionQueue from '../components/AttentionQueue';
+import SessionGoalTrail from '../components/SessionGoalTrail';
 import Timeline from '../components/Timeline';
 import SessionLearning from '../components/SessionLearning';
 import Pet from '../components/Pet';
-import { ConfirmNote, EmptyState, Explainer, Mark, Note, ago, num, usd } from '../components/bits';
+import { ConfirmNote, EmptyState, Explainer, Icon, Mark, Note, PageHead, ago, num, usd } from '../components/bits';
 import type { Tone } from '../components/bits';
 import { useDialog } from '../components/useDialog';
 import { bindingMatches, modalOpen } from '../bindings';
@@ -163,7 +164,7 @@ FocusBtn.displayName = 'FocusBtn';
 
 export default function Sessions({
   providers, projects: allProjects, selectedProjectId, onAddProject, onError, activeId, onActiveChange,
-  newSessionRequest, onNewSessionRequestConsumed, onSendToBatch,
+  newSessionRequest, onNewSessionRequestConsumed, onSendToBatch, onOpenGoal,
 }: {
   providers: ProviderInfo[]; projects: Project[]; selectedProjectId: string | null;
   onAddProject: () => Promise<void>; onError: (m: string) => void;
@@ -172,6 +173,7 @@ export default function Sessions({
   newSessionRequest: number | null;
   onNewSessionRequestConsumed: () => void;
   onSendToBatch: (seed: { projectId: string; root: string; paths: string[] }) => void;
+  onOpenGoal: (goalId: string, nodeId?: string) => void;
 }) {
   const projects = useMemo(() => selectedProjectId ? allProjects.filter((p) => p.id === selectedProjectId) : allProjects, [allProjects, selectedProjectId]);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -203,6 +205,13 @@ export default function Sessions({
   // later. Starting expanded would flash two rails into a view that has no room
   // for them, which is the exact failure this measurement exists to prevent.
   const [compactLayout, setCompactLayout] = useState(true);
+  const [compactDetails, setCompactDetails] = useState(false);
+  const detailReader = useRef<HTMLDivElement>(null);
+  useEffect(() => { setCompactDetails(false); }, [activeId, compactLayout]);
+  useEffect(() => {
+    if (compactLayout && compactDetails) detailReader.current?.querySelector<HTMLButtonElement>('button')?.focus();
+  }, [compactLayout, compactDetails]);
+  const returnToTerminal = () => { setCompactDetails(false); focusVisibleSessionTerminal(); };
   const [sessionPickerCompact, setSessionPickerCompact] = useState(true);
   const [sessionPickerOpen, setSessionPickerOpen] = useState(false);
   const [railPane, setRailPane] = useState<Record<string, RailPane>>(readPanes);
@@ -447,11 +456,14 @@ export default function Sessions({
       if (e.key === 't') { e.preventDefault(); setDialog(true); return; }
       if (e.key === 'b') {
         e.preventDefault();
-        setShowRail((v) => { localStorage.setItem('wanigan.code', v ? '0' : '1'); return !v; });
+        if (compactLayout) {
+          if (compactDetails) returnToTerminal(); else setCompactDetails(true);
+        } else setShowRail((v) => { localStorage.setItem('wanigan.code', v ? '0' : '1'); return !v; });
         return;
       }
       if (e.key === 'e') {
         e.preventDefault();
+        if (compactDetails) setCompactDetails(false);
         setComposerOpen((v) => {
           localStorage.setItem('wanigan.composer', v ? '0' : '1');
           if (!v) requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.composer-area')?.focus());
@@ -556,6 +568,7 @@ export default function Sessions({
   );
   const pane = (active && railPane[active.id]) || 'code';
   const railOpen = showRail && !compactLayout;
+  const detailsVisible = railOpen || (compactLayout && compactDetails);
 
   const setPane = useCallback((sessionId: string, next: RailPane) => {
     const merged = { ...railPane, [sessionId]: next };
@@ -599,7 +612,7 @@ export default function Sessions({
   const att = useAttachments(active?.id ?? null);
 
   return (
-    <div className="sessions-view" style={{ flex: 1, display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0, minHeight: 0 }}>
+    <div className="pane sessions-view">
       {/* P3 · who is blocked, worst wait first. Above everything, because the
           answer to "where do I go next" outranks the rail and the terminal. */}
       <AttentionQueue onJump={select} />
@@ -882,47 +895,42 @@ export default function Sessions({
         )}
 
         <div className="session-main">
-          <div className="tabbar">
-            <FocusBtn ref={sessionPickerButtonRef} className={`tab session-picker-trigger${sessionPickerOpen ? ' active' : ''}`}
-                      aria-controls="wanigan-session-picker" aria-expanded={sessionPickerCompact ? sessionPickerOpen : undefined}
-                      aria-label={active
-                        ? `Choose a session. Current session: ${nameOf(active) || active.projectName}`
-                        : 'Choose a session'}
-                      title={active
-                        ? `Choose a session — currently ${nameOf(active) || active.projectName}`
-                        : 'Choose a session'}
-                      onClick={() => setSessionPickerOpen((open) => !open)}>
-              <span aria-hidden="true" className="session-picker-glyph">☰</span>
-              <span>Sessions</span>
-              {active && <span className="session-picker-trigger-current">{nameOf(active) || active.projectName}</span>}
-              <span className="session-picker-count" aria-hidden="true">{scopedSessions.length}</span>
-            </FocusBtn>
-            {scopedSessions.map((s) => (
-              <div key={s.id} className={`session-tab-wrap${s.id === activeId ? ' active' : ''}`}>
-                <FocusBtn className={`tab session-tab${s.id === activeId ? ' active' : ''}`} onClick={() => select(s.id)}
-                          aria-current={s.id === activeId ? 'page' : undefined}
-                          title={nameOf(s) ? `${nameOf(s)} — ${s.title}` : s.title}
-                          aria-label={`${nameOf(s) || s.projectName}, ${s.status === 'running' ? 'running' : 'exited'} session`}>
-                  <span className="dot" style={{ width: 6, height: 6, borderRadius: 'var(--r-pill)',
-                                                 background: s.status === 'running' ? providerTint(s.providerId) : 'var(--text-faint)' }} />
-                  {nameOf(s) || s.projectName}
+          <div className="session-toolbar">
+            <PageHead compact title={active ? nameOf(active) || active.projectName : 'Sessions'}
+              lead={active ? <>
+                {active.providerProfile?.label ?? providers.find((provider) => provider.id === active.providerId)?.label ?? active.providerId}
+                <span className="session-context-separator" aria-hidden="true">/</span>
+                <span title={active.worktree ?? active.projectPath}>
+                  {active.worktree ? 'Isolated worktree' : active.projectName}
+                </span>
+                <span className="session-context-separator" aria-hidden="true">/</span>
+                {active.status === 'running' ? 'Running' : `Exited ${active.exitCode ?? '—'}`}
+              </> : 'Choose a conversation or start something new.'}
+              actions={<>
+                <FocusBtn ref={sessionPickerButtonRef} className="btn session-picker-trigger"
+                  aria-controls="wanigan-session-picker" aria-expanded={sessionPickerCompact ? sessionPickerOpen : undefined}
+                  aria-label={active ? `Choose a session. Current session: ${nameOf(active) || active.projectName}` : 'Choose a session'}
+                  onClick={() => setSessionPickerOpen((open) => !open)}>
+                  <Icon name="panel" /> Sessions
                 </FocusBtn>
-                {s.status === 'exited' && (
-                  <FocusBtn className="session-tab-close faint" title="Close exited session (⌘⌫)"
-                            aria-label={`Close exited session for ${s.projectName}`}
-                            onClick={() => void closeTab(s.id)}>×</FocusBtn>
-                )}
-              </div>
-            ))}
-            <FocusBtn className="tab tab-new-session faint" onClick={() => setDialog(true)} title="New session (⌘T)"
-                      aria-label="New session (Command T)">+<span className="tab-new-session-text"> New</span></FocusBtn>
-            <FocusBtn className={`tab session-side-panel-toggle faint${railOpen ? ' active' : ''}`} style={{ marginLeft: 'auto' }}
-                      title={compactLayout ? 'The side panel is collapsed on tablets so the terminal stays readable.' : 'Toggle the side panel (⌘B)'}
-                      disabled={compactLayout || !active}
-                      onClick={() => setShowRail((v) => { localStorage.setItem('wanigan.code', v ? '0' : '1'); return !v; })}>
-              {compactLayout ? 'terminal full width' : railOpen ? '⟨ hide' : `${pane} ⟩`}
-            </FocusBtn>
+                {active?.status === 'exited' && <FocusBtn className="btn session-tab-close"
+                  title="Close exited session (⌘⌫)" aria-label={`Close exited session for ${active.projectName}`}
+                  onClick={() => void closeTab(active.id)}>Close session</FocusBtn>}
+                <FocusBtn className="btn tab-new-session" onClick={() => setDialog(true)}
+                  title="New session (⌘T)" aria-label="New session (Command T)"><Icon name="plus" /> New session</FocusBtn>
+                <FocusBtn className="btn session-side-panel-toggle" aria-pressed={detailsVisible}
+                  title={compactLayout ? 'Read session details at full width (⌘B)' : 'Toggle the side panel (⌘B)'}
+                  disabled={!active}
+                  onClick={() => {
+                    if (compactLayout) { if (compactDetails) returnToTerminal(); else setCompactDetails(true); }
+                    else setShowRail((value) => { localStorage.setItem('wanigan.code', value ? '0' : '1'); return !value; });
+                  }}>
+                  <Icon name="panel" /> {compactLayout && compactDetails ? 'Terminal' : railOpen ? 'Hide details' : 'Details'}
+                </FocusBtn>
+              </>} />
           </div>
+
+          {active && <SessionGoalTrail key={`goal-${active.id}`} sessionId={active.id} onOpen={onOpenGoal} />}
 
           {active && (
             <SessionHeader key={active.id} session={active} defaultTrust={defaultTrust} onRefresh={refresh}
@@ -936,7 +944,7 @@ export default function Sessions({
           ) : listErr ? (
             <div className="empty">
               <div style={{ maxWidth: 460 }}>
-                <h1 style={{ fontSize: 'var(--t-title)', fontWeight: 600 }}>The session list did not load</h1>
+                <h2 style={{ fontSize: 'var(--t-title)', fontWeight: 600 }}>The session list did not load</h2>
                 <p className="dim" style={{ marginTop: 6, lineHeight: 1.55 }}>{listErr}</p>
                 <p className="faint" style={{ marginTop: 6, lineHeight: 1.5 }}>
                   Wanigan could not read its own list of live sessions. Any agent already running is still
@@ -949,7 +957,7 @@ export default function Sessions({
           ) : sessions.length === 0 ? (
             <div className="empty">
               <div>
-                <h1 style={{ fontSize: 'var(--t-title)', fontWeight: 600 }}>No sessions running</h1>
+                <h2 style={{ fontSize: 'var(--t-title)', fontWeight: 600 }}>No sessions running</h2>
                 <p className="dim" style={{ marginTop: 6, maxWidth: 460, lineHeight: 1.55 }}>
                   Each session is a real terminal, so permission prompts and the full TUI work exactly
                   as they do in your shell.
@@ -986,7 +994,7 @@ export default function Sessions({
               )}
             </div>
           ) : (
-            <div className={railOpen && active ? 'term-split' : 'term-full'}>
+            <div className={railOpen && active ? 'term-split' : 'term-full'} data-detail-focus={compactLayout && compactDetails || undefined}>
               <div className="term-col">
                 {/* P21 · the terminal is the drop target: the file is for the
                     agent you are looking at, so it lands where you are looking. */}
@@ -1035,8 +1043,9 @@ export default function Sessions({
                 ))}
               </div>
 
-              {railOpen && active && (
-                <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
+              {(detailsVisible || (showRail && compactLayout)) && active && (
+                <div className="session-detail-reader" ref={detailReader} hidden={!detailsVisible}>
+                  {compactLayout && <div className="session-detail-return"><button className="btn" type="button" onClick={returnToTerminal}><Icon name="terminal" /> Back to terminal</button><span>{active.projectName}</span></div>}
                   {/* P8 · one rail, two readings of the same session: what the
                       repo looks like now, and what the agent actually did. */}
                   <div className="code-head" style={{ borderLeft: '1px solid var(--line)' }} role="group"
@@ -1342,24 +1351,32 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
   // collaboration mode.  Treating it as Claude made this whole useful row
   // disappear merely because it does not accept Claude slash commands.
   const codexControls = harness === 'codex' && session.status === 'running';
-  if (!elevated && !session.worktree && !tunable && !codexControls) return null;
+  const hasControls = !!session.worktree || tunable || codexControls || declaresTuning;
+  if (!elevated && !hasControls) return null;
 
   return (
-    <div style={{ borderBottom: '1px solid var(--line)', background: 'var(--bg-soft)' }}>
+    <div className="session-config">
       {elevated && trust && defaultTrust && (
         <TrustBanner level={trust} fallback={defaultTrust} running={session.status !== 'exited'} />
       )}
-      {session.worktree && <WorktreeBar session={session} path={session.worktree} onRefresh={onRefresh} />}
-      {tunable && <RunConfigBar session={session} provider={provider} />}
-      {/* Honest unsupported beats a control that types Claude's slash commands
-          into a CLI that never agreed to read them. */}
-      {declaresTuning && (
-        <div className="session-tuning-absent">
-          <Mark glyph="⊘" word="model and effort cannot be changed here" tone="quiet"
+      {hasControls && <details className="session-controls">
+        <summary>Session controls<span className="faint">
+          {tunable || codexControls ? `Model & effort${session.worktree ? ', worktree' : ''}`
+            : session.worktree ? 'Worktree' : 'Provider capabilities'}
+        </span></summary>
+        <div className="session-controls-content">
+          {session.worktree && <WorktreeBar session={session} path={session.worktree} onRefresh={onRefresh} />}
+          {tunable && <RunConfigBar session={session} provider={provider} />}
+          {/* Keep unsupported controls explicit without sending another harness's commands. */}
+          {declaresTuning && (
+            <div className="session-tuning-absent">
+              <Mark glyph="⊘" word="model and effort cannot be changed here" tone="quiet"
                 title={`This profile declares a model or effort field, but Wanigan has no verified way to change either on a running ${harness} session. Start a new session to change them.`} />
+            </div>
+          )}
+          {codexControls && <CodexControlBar session={session} />}
         </div>
-      )}
-      {codexControls && <CodexControlBar session={session} />}
+      </details>}
     </div>
   );
 }
@@ -2158,7 +2175,7 @@ function AttachStrip({ session, att }: { session: Session; att: AttachState }) {
         // an operator spends the day in — and it is a lesson learned once. The
         // remembered one-liner keeps it for a newcomer and gives it back to
         // everyone else as a "Show:" link.
-        <Explainer id="attach-how" title="How attachments work" compact>
+        <Explainer id="attach-how" title="How attachments work" compact defaultHidden>
           Drop a file on the terminal, paste a screenshot with ⌘V, or add one. Wanigan copies it where
           this project's agent can read it and writes the path into your prompt, so all you add is the
           question. Sent files leave this strip.

@@ -282,11 +282,7 @@ export const STUB = `
       running: false, localUrl: 'http://127.0.0.1:47831', pairingUrl: '', pairingCode: '',
       tokenFingerprint: '', error: null, lastPushAt: null, lastPushError: null,
     },
-    // DemoState.map is a list, but 'map' is also on Array.prototype, so the
-    // empty-array target answered state.map with Array.prototype.map itself
-    // and state.map.slice(0, 12) read .slice off a function. A field named
-    // after an array method is the one shape anything() cannot fake.
-    'demo.state': { on: false, blurTerminals: false, map: [] },
+    'demo.state': { on: false, source: 'live' },
     // The model-assist card renders its consent branch off status.consent and
     // prints providerId into the DOM. anything() answers that with a Proxy,
     // which is truthy, so the card would take the approved branch and then die
@@ -357,6 +353,7 @@ export const STUB = `
       },
       apply(_t, _this, args) {
         const key = pathParts.join('.');
+        if (key === 'control.sessionGoal') return Promise.resolve(null);
         if (key === 'windowVisibility.current') return Promise.resolve(true);
         if (key === 'windowVisibility.onChanged') return () => {};
         if (key === 'companion.snapshot') return Promise.resolve(companionSnapshot(args[0]));

@@ -1,14 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ago, num } from './bits';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Hint, Mark, Note, SectionHead, Segmented, ago, markOf, num } from './bits';
+import '../styles/team.css';
 
 type Member = { name: string; agentId: string | null; agentType: string | null; isLead: boolean };
 type Task = {
   id: string; title: string; status: string; assignee: string | null;
   dependsOn: string[]; blocked: boolean;
-  /** Dependencies that have not completed — counted in main, where the
-   *  rule for a finished status lives. Not `dependsOn.length`. */
-  blockedBy: number;
-  updatedAt: number | null;
+  /** Counted by main: unfinished dependencies, not the total declared. */
+  blockedBy: number; updatedAt: number | null;
 };
 type Msg = { to: string; from: string | null; at: number | null; kind: string; preview: string };
 type Team = {
@@ -16,140 +15,81 @@ type Team = {
   counts: { pending: number; inProgress: number; completed: number; blocked: number };
   updatedAt: number | null;
 };
+type TeamState = { teams: Team[]; enabled: boolean; note: string | null };
+type Filter = 'all' | 'unfinished' | 'blocked' | 'completed';
+const completed = (task: Task) => task.status === 'complete' || task.status === 'completed';
 
-/**
- * Agent teams, seen from outside.
- *
- * Inside a terminal you see one agent's view. The shared task list and the
- * mailboxes are the only place the team exists as a team, and they are plain
- * files — so this needs no protocol and no cooperation from the CLI.
- */
+/** Read-only task and mailbox observations. No assignments or messages are sent. */
 export default function TeamPanel() {
-  const [state, setState] = useState<{ teams: Team[]; enabled: boolean; note: string | null } | null>(null);
+  const [state, setState] = useState<TeamState | null>(null);
   const [open, setOpen] = useState(false);
-
+  const [error, setError] = useState<string | null>(null);
+  const [reading, setReading] = useState(false);
+  const [readAt, setReadAt] = useState<number | null>(null);
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<Filter>('all');
+  const sequence = useRef(0);
+  const inFlight = useRef(0);
   const load = useCallback(async () => {
-    try { setState(await window.wanigan.teams.read()); } catch { /* absent is the normal case */ }
+    if (inFlight.current && inFlight.current === sequence.current) return;
+    const request = ++sequence.current;
+    inFlight.current = request;
+    setReading(true);
+    try {
+      const value = await window.wanigan.teams.read();
+      if (request === sequence.current) { setState(value); setError(null); setReadAt(Date.now()); }
+    } catch (e) {
+      if (request === sequence.current) setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (inFlight.current === request) inFlight.current = 0;
+      if (request === sequence.current) setReading(false);
+    }
   }, []);
   useEffect(() => {
     void load();
-    // A hidden window is a window nobody is reading, and this poll is not
-    // cheap: `teams.read` walks every account's teams and tasks directories
-    // synchronously in the main process, reading and parsing each JSON file it
-    // finds. Skipping it while hidden shows nothing stale, because the
-    // visibility handler reads once the moment the window comes back — the
-    // same guard the surrounding Fleet view puts on its own two timers.
-    const t = setInterval(() => { if (!document.hidden) void load(); }, 6000);
+    const timer = setInterval(() => { if (!document.hidden) void load(); }, 6000);
     const onVisible = () => { if (!document.hidden) void load(); };
     document.addEventListener('visibilitychange', onVisible);
-    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVisible); };
+    return () => { sequence.current++; clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
   }, [load]);
 
-  // Nothing running and teams switched off: stay out of the way entirely.
-  if (!state || (state.teams.length === 0 && !state.enabled)) return null;
-
-  const total = state.teams.reduce((a, t) => a + t.tasks.length, 0);
-  const blocked = state.teams.reduce((a, t) => a + t.counts.blocked, 0);
-  const waiting = state.teams.reduce((a, t) => a + t.pending.length, 0);
-
-  return (
-    <div className="card" style={{ padding: 13, marginBottom: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-        <h3 style={{ fontSize: 'var(--t-body)', fontWeight: 600 }}>
-          {state.teams.length === 1 ? 'Agent team' : `Agent teams (${state.teams.length})`}
-        </h3>
-        <span className="faint" style={{ fontSize: 'var(--t-small)', fontVariantNumeric: 'tabular-nums' }}>
-          {num(total)} task{total === 1 ? '' : 's'}
-          {blocked > 0 && <> · <span style={{ color: 'var(--warning)' }}>{blocked} blocked</span></>}
-          {waiting > 0 && <> · {waiting} message{waiting === 1 ? '' : 's'} waiting</>}
-        </span>
-        {state.teams.length > 0 && (
-          <button className="btn" style={{ marginLeft: 'auto', fontSize: 'var(--t-small)', padding: '3px 9px' }}
-                  aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-            {open ? 'Hide' : 'Show tasks'}
-          </button>
-        )}
+  if (!error && (!state || (state.teams.length === 0 && !state.enabled))) return null;
+  const total = state?.teams.reduce((n, team) => n + team.tasks.length, 0) ?? 0;
+  const blocked = state?.teams.reduce((n, team) => n + team.counts.blocked, 0) ?? 0;
+  const waiting = state?.teams.reduce((n, team) => n + team.pending.length, 0) ?? 0;
+  return <section className="team-workspace" aria-label="Agent teams">
+    <SectionHead label="Agent teams" count={state?.teams.length} right={<button className="btn btn-sm" type="button" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? 'Hide tasks' : 'Show tasks'}</button>} />
+    <div className="team-summary"><strong>{num(total)} shared {total === 1 ? 'task' : 'tasks'}</strong>{blocked > 0 && <Mark {...markOf('blocked')} word={`${blocked} blocked`} />}{waiting > 0 && <span>{waiting} messages waiting</span>}</div>
+    {error && <Note tone="warn" action={{ label: reading ? 'Reading teams…' : 'Retry team read', run: load }}>{state ? 'Team update unavailable. Showing the last successful read. ' : 'Team information unavailable. '}{error}</Note>}
+    {state?.note && <p className="team-note">{state.note}</p>}
+    {open && <>
+      <div className="team-tools">
+        <input className="field" type="search" aria-label="Search team tasks" placeholder="Find a task, teammate or team" value={query} onChange={event => setQuery(event.target.value)} />
+        <Segmented<Filter> label="Team task status" value={filter} onChange={setFilter} options={[{value:'all',label:'All'},{value:'unfinished',label:'Unfinished'},{value:'blocked',label:'Blocked'},{value:'completed',label:'Completed'}]} />
       </div>
+      {state?.teams.length === 0 && <Hint>No shared teams have been recorded.</Hint>}
+      {state?.teams.map(team => <TeamDetail key={team.name} team={team} query={query} filter={filter} onClear={() => { setQuery(''); setFilter('all'); }} />)}
+      <p className="team-note">{readAt ? `Read ${ago(readAt)}. ` : ''}Task and inbox files only; this view does not send messages or assign work.</p>
+    </>}
+  </section>;
+}
 
-      {state.note && (
-        <p className="dim" style={{ fontSize: 'var(--t-small)', marginTop: 6, lineHeight: 1.5, maxWidth: '76ch' }}>{state.note}</p>
-      )}
-
-      {open && state.teams.map((t) => (
-        <div key={t.name} style={{ marginTop: 12, borderTop: '1px solid var(--line)', paddingTop: 10 }}>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
-            <span className="mono" style={{ fontSize: 'var(--t-small)' }}>{t.name}</span>
-            {t.members.map((m) => (
-              <span key={m.name} className="pill"
-                    style={m.isLead
-                      ? { background: 'var(--accent-soft)', color: 'var(--accent)' }
-                      : { background: 'var(--bg-sunk)', color: 'var(--text-dim)' }}>
-                {m.isLead ? '◆ ' : '◇ '}{m.name}{m.agentType && !m.isLead ? ` · ${m.agentType}` : ''}
-              </span>
-            ))}
-            {t.updatedAt && <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>updated {ago(t.updatedAt)}</span>}
-          </div>
-
-          {t.tasks.length === 0 ? (
-            <p className="faint" style={{ fontSize: 'var(--t-small)', marginTop: 8 }}>
-              No shared tasks. Teammates without the Task tools coordinate by message instead.
-            </p>
-          ) : (
-            <table className="viz-table" style={{ marginTop: 8 }}>
-              <thead>
-                <tr><th>Task</th><th>Status</th><th>Claimed by</th></tr>
-              </thead>
-              <tbody>
-                {t.tasks.slice(0, 24).map((task) => (
-                  <tr key={task.id}>
-                    <td style={{ maxWidth: 420 }}>
-                      {task.title}
-                      {/* The single most useful thing here: a pending task whose
-                          dependency has not completed cannot be claimed, and a
-                          stalled team usually has exactly one. So the count is
-                          the outstanding dependencies, not every dependency the
-                          task ever declared — one left of three is one task from
-                          claimable, and printing 3 buried that. */}
-                      {task.blocked && (
-                        <span style={{ color: 'var(--warning)', marginLeft: 7, fontSize: 'var(--t-micro)' }}>
-                          <span aria-hidden="true">⚠ </span>
-                          {`blocked — ${task.blockedBy} of ${task.dependsOn.length} unfinished`}
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ whiteSpace: 'nowrap',
-                                 color: task.status.startsWith('complet') ? 'var(--good)'
-                                   : task.status.includes('progress') ? 'var(--accent)' : 'var(--text-dim)' }}>
-                      <span aria-hidden="true" style={{ marginRight: 5 }}>
-                        {task.status.startsWith('complet') ? '✓' : task.status.includes('progress') ? '▶' : '○'}
-                      </span>
-                      {task.status}
-                    </td>
-                    <td className="mono" style={{ fontSize: 'var(--t-micro)' }}>{task.assignee ?? '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-
-          {t.pending.length > 0 && (
-            <>
-              <div className="label" style={{ marginTop: 10 }}>Messages waiting in inboxes</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 4 }}>
-                {t.pending.slice(0, 8).map((m, i) => (
-                  <div key={i} style={{ fontSize: 'var(--t-small)', color: 'var(--text-dim)', display: 'flex', gap: 8 }}>
-                    <span className="mono" style={{ fontSize: 'var(--t-micro)', flex: 'none', color: 'var(--accent)' }}>
-                      {m.from ?? '?'} → {m.to}
-                    </span>
-                    <span className="trunc" style={{ maxWidth: 520 }}>{m.preview}</span>
-                    {m.at && <span className="faint" style={{ fontSize: 'var(--t-micro)', marginLeft: 'auto' }}>{ago(m.at)}</span>}
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      ))}
-    </div>
-  );
+function TeamDetail({ team, query, filter, onClear }: { team: Team; query: string; filter: Filter; onClear: () => void }) {
+  const [limit, setLimit] = useState(24);
+  useEffect(() => setLimit(24), [query, filter]);
+  const needle = query.trim().toLowerCase();
+  const tasks = team.tasks.filter(task => (`${team.name} ${task.title} ${task.id} ${task.assignee ?? ''}`).toLowerCase().includes(needle)
+    && (filter === 'all' || filter === 'blocked' && task.blocked || filter === 'completed' && completed(task) || filter === 'unfinished' && !completed(task)));
+  return <article className="team-detail">
+    <SectionHead label={team.name} right={team.updatedAt ? <span>Updated {ago(team.updatedAt)}</span> : undefined} />
+    <ul className="team-members" aria-label={`${team.name} members`}>{team.members.map(member => <li key={member.name}><strong>{member.name}</strong><span>{member.isLead ? 'Lead' : member.agentType ?? 'Teammate'}</span></li>)}</ul>
+    {team.tasks.length === 0 ? <Hint>No shared tasks. Teammates may coordinate through messages.</Hint> : tasks.length === 0 ? <Hint>No tasks match this view. <button type="button" className="btn btn-sm" onClick={onClear}>Clear task filters</button></Hint> : <>
+      <ol className="team-tasks" aria-label={`${team.name} tasks`}>{tasks.slice(0,limit).map(task => <li key={task.id}>
+        <div className="team-task-description"><strong>{task.title}</strong><span>{task.assignee ? `Claimed by ${task.assignee}` : 'Unclaimed'}</span>{task.blocked && <p className="team-blocker">Waiting on {task.blockedBy} of {task.dependsOn.length} dependencies</p>}</div>
+        <Mark {...markOf(completed(task) ? 'completed' : task.status.includes('progress') ? 'running' : 'pending')} word={task.status.replaceAll('_',' ')} />
+      </li>)}</ol>
+      <div className="team-list-end"><span>{Math.min(limit,tasks.length)} of {tasks.length} matching tasks</span>{tasks.length > limit && <button type="button" className="btn btn-sm" onClick={() => setLimit(value => value + 24)}>Show more tasks</button>}</div>
+    </>}
+    {team.pending.length > 0 && <details className="team-mail"><summary>Waiting messages <span>{team.pending.length}</span></summary><p className="team-note">Stored previews from the team inboxes.</p>{team.pending.map((message,index) => <article key={`${message.to}-${message.at}-${index}`}><div><strong>{message.from ?? 'Unknown sender'} → {message.to}</strong>{message.at && <time>{ago(message.at)}</time>}</div><p>{message.preview || 'No preview recorded.'}</p></article>)}</details>}
+  </article>;
 }

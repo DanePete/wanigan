@@ -5,14 +5,14 @@ import { Thermal } from './thermal';
 const SIZE = 64;
 const COMMON = `
 const N:f32=${SIZE}.;
-struct Params { dt:f32, time:f32, impulse:f32, fire:f32, direction:vec4f }
+struct Params { dt:f32, time:f32, impulse:f32, fire:f32, direction:vec4f, story:vec4f }
 @group(0) @binding(0) var<uniform> u:Params;
 @group(0) @binding(1) var source:texture_3d<f32>;
 @group(0) @binding(2) var destination:texture_storage_3d<rgba16float,write>;
 @group(0) @binding(3) var linearSampler:sampler;
 @group(0) @binding(4) var water:texture_3d<f32>;
 fn open(p:vec3f)->bool {
- return length(p-vec3f(.5)) < .485 && textureSampleLevel(water,linearSampler,p,0.).x < .35;
+ return length(p-vec3f(.5)) < .485 && (u.fire>.5 || textureSampleLevel(water,linearSampler,p,0.).x < .35);
 }
 fn at(c:vec3i)->vec4f {return textureLoad(source,clamp(c,vec3i(0),vec3i(${SIZE-1})),0);}
 `;
@@ -53,7 +53,7 @@ fn curl(c:vec3i)->vec3f {
  value = vec4f(value.xyz * exp(-u.dt*.22), value.w);
  // Buoyancy and a slow submerged-source plume; actual transport follows velocity.
  let heat=textureLoad(thermal,id,0);
- value.y += u.dt * (value.w*.045+heat.y*.32-heat.z*.03);
+ value.y += u.dt * (value.w*.045+heat.y*.42-heat.z*.03);
  let position=uv-vec3f(.5,.49,.49);
  let emitter=exp(-dot(position,position*vec3f(1.,.45,1.))*850.);
  value.w = min(1.8,value.w*exp(-u.dt*.22)+emitter*u.dt*.7*(1.-u.fire));
@@ -65,17 +65,24 @@ fn curl(c:vec3i)->vec3f {
  // A bounded stirring force excites vortices; projection removes divergence.
  let q=uv-vec3f(.49,.69,.5);
  let vortex=vec3f(-q.y,q.x,.02*sin(u.time*.4))*mix(.5,.14,u.fire)*exp(-dot(q,q)*12.);
+ // Vertical fire whirl: radial entrainment, a rotating updraft and a broad
+ // return flow. Projection, wall contact and transported fuel shape the flame.
+ let axis=uv-vec3f(.5+.025*sin(u.time*1.7)*u.story.x,.25,.48);
+ let r2=dot(axis.xz,axis.xz);let core=exp(-r2*95.);
+ let swirl=cross(vec3f(0.,1.,0.),axis)*7.*exp(-r2*16.);
+ let funnel=vec3f(-axis.x*.8*core,core*.95-.09,-axis.z*.8*core);
+ value=vec4f(value.xyz+u.dt*(swirl+funnel)*max(u.story.x,u.story.y*.5),value.w);
  let c=vec3i(id);let omega=curl(c);
  let eta=vec3f(length(curl(c+vec3i(1,0,0)))-length(curl(c-vec3i(1,0,0))),
    length(curl(c+vec3i(0,1,0)))-length(curl(c-vec3i(0,1,0))),
    length(curl(c+vec3i(0,0,1)))-length(curl(c-vec3i(0,0,1))));
- let confinement=(.0125+min(heat.y,1.)*.006)*cross(eta/max(length(eta),.00001),omega);
+ let confinement=(.0125+min(heat.y,1.)*.013)*cross(eta/max(length(eta),.00001),omega);
  // A bounded divergence-free stirring field seeds flame eddies. This is an
  // art-directed body force; visible density/heat still come from transport.
  let phase=u.time*2.3;let p=uv*28.;
  let eddies=vec3f(sin(p.y+phase)*cos(p.z-phase*.7),
    sin(p.z+phase*.8)*cos(p.x-phase),sin(p.x+phase*.7)*cos(p.y+phase));
- value=vec4f(value.xyz+u.dt*eddies*min(heat.y,1.)*.20,value.w);
+ value=vec4f(value.xyz+u.dt*eddies*min(heat.y,1.)*.60,value.w);
  value = vec4f(value.xyz + u.dt*(vortex+confinement+vec3f(u.direction.x*.055,u.direction.y*.015,0.)*exp(-dot(q,q)*12.)), value.w);
  let contact=smoothstep(.39,.48,length(uv-.5));
  let wall=cross(vec3f(0.,u.direction.z,0.),uv-.5);
@@ -156,19 +163,19 @@ export class Gas {
     seedPass.setPipeline(seed);seedPass.setBindGroup(0,device.createBindGroup({layout:seed.getBindGroupLayout(0),
       entries:[{binding:0,resource:this.texture.createView()}]}));seedPass.dispatchWorkgroups(SIZE/4,SIZE/4,SIZE/4);seedPass.end();
     device.queue.submit([seedEncoder.finish()]);
-    this.uniform = device.createBuffer({size:32,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
+    this.uniform = device.createBuffer({size:48,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
     const sampler = device.createSampler({minFilter:'linear',magFilter:'linear'});
     const compile = (label: string, code: string) => device.createComputePipeline({label, layout:'auto',
       compute:{module:device.createShaderModule({label,code}),entryPoint:'main'}});
     const predicted=make('Vapor advection predictor');
     const advect = compile('Gas advection',ADVECT), correct=compile('Gas advection correction',CORRECT), divergence = compile('Gas divergence',DIVERGENCE),
       pressure = compile('Gas pressure Jacobi',PRESSURE), project = compile('Gas projection',PROJECT);
-    const bind = (pipeline:GPUComputePipeline, input:GPUTexture, output:GPUTexture, usesTime=false, extra?:GPUTexture) => {
+    const bind = (pipeline:GPUComputePipeline, input:GPUTexture, output:GPUTexture, _usesTime=false, extra?:GPUTexture) => {
       // Auto layouts omit resources unused by each entry point.
       const entries: GPUBindGroupEntry[] = [
         {binding:1,resource:input.createView()},{binding:2,resource:output.createView()},
         {binding:3,resource:sampler},{binding:4,resource:water.createView()}];
-      if(usesTime) entries.push({binding:0,resource:{buffer:this.uniform}});
+      entries.push({binding:0,resource:{buffer:this.uniform}});
       if(extra) entries.push({binding:5,resource:extra.createView()});
       if(pipeline===correct)entries.push({binding:6,resource:thermal.createView()});
       return {pipeline,group:device.createBindGroup({layout:pipeline.getBindGroupLayout(0),entries})};
@@ -220,9 +227,9 @@ export class Gas {
       return {before:Math.sqrt(before/n),after:Math.sqrt(after/n),maxSpeed,maxDye,invalid};
     }finally{storage.destroy();read.destroy();}
   }
-  step(encoder:GPUCommandEncoder, dt:number, time:number, impulse:number, fire:number, direction:number, energy:number, angularVelocity:number,weather=0) {
-    this.thermal.step(encoder,dt,time,fire,energy,direction);
-    this.device.queue.writeBuffer(this.uniform,0,new Float32Array([dt,time,impulse,fire,direction,energy,Math.max(-6,Math.min(6,angularVelocity)),weather]));
+  step(encoder:GPUCommandEncoder, dt:number, time:number, impulse:number, fire:number, direction:number, energy:number, angularVelocity:number,weather=0,whirl=0,recovery=0) {
+    this.thermal.step(encoder,dt,time,fire,energy,direction,Math.max(whirl,recovery));
+    this.device.queue.writeBuffer(this.uniform,0,new Float32Array([dt,time,impulse,fire,direction,energy,Math.max(-6,Math.min(6,angularVelocity)),weather,whirl,recovery,0,0]));
     for(const {pipeline,group} of this.passes) {
       const pass=encoder.beginComputePass();pass.setPipeline(pipeline);pass.setBindGroup(0,group);
       pass.dispatchWorkgroups(SIZE/4,SIZE/4,SIZE/4);pass.end();

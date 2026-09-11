@@ -1,0 +1,126 @@
+{
+  "recordedAt": "2026-09-10T16:03:18.894Z",
+  "rendererSha256": "ecc9c1622af079452cfccb500826f51f1ecee2aaf751399cc1d57f42b621abe5",
+  "reports": {
+    "water": {
+      "renderMs": {
+        "median": 30.5,
+        "p95": 38.099999994039536,
+        "frames": 99,
+        "includesGpuWait": true,
+        "pixels": 900
+      }
+    },
+    "fire": {
+      "switching": {
+        "heatBeforeSwitch": 2.3984375,
+        "identical": true
+      },
+      "renderMs": {
+        "median": 12.599999994039536,
+        "p95": 17.30000001192093,
+        "frames": 239,
+        "includesGpuWait": true,
+        "pixels": 900
+      }
+    },
+    "lava": {
+      "renderMs": {
+        "median": 25.69999998807907,
+        "p95": 30.5,
+        "frames": 239,
+        "includesGpuWait": true,
+        "pixels": 900
+      }
+    },
+    "ferro": {
+      "rest": {
+        "min": -0.6396484375,
+        "max": -0.6162109375,
+        "mean": -0.6378696730345335,
+        "invalid": 0
+      },
+      "attracted": {
+        "min": -0.669921875,
+        "max": 0.11328125,
+        "mean": -0.6322750551222354,
+        "invalid": 0
+      },
+      "renderMs": {
+        "median": 14.200000017881393,
+        "p95": 19.69999998807907,
+        "frames": 359,
+        "includesGpuWait": true,
+        "pixels": 900
+      }
+    },
+    "ink": {
+      "amount": 233.67522221803665,
+      "centerY": -0.4567226112905705,
+      "peak": 0.60693359375,
+      "active": 2381,
+      "invalid": 0,
+      "transfer": {
+        "downward": -1.2912425168306072,
+        "changed": 1065
+      },
+      "renderMs": {
+        "median": 31.19999998807907,
+        "p95": 39.20000001788139,
+        "frames": 99,
+        "includesGpuWait": true,
+        "pixels": 900
+      }
+    },
+    "jelly": {
+      "beforeY": -0.6814988497644663,
+      "kickedY": -0.050198357756016776,
+      "maxRadius": 0.3982195524129779,
+      "renderMs": {
+        "median": 14.099999994039536,
+        "p95": 19.599999994039536,
+        "frames": 119,
+        "includesGpuWait": true,
+        "pixels": 900
+      }
+    },
+    "honey": {
+      "beforeY": -0.7354172263294458,
+      "kickedY": -0.31049847789108753,
+      "maxRadius": 0.43895608016108223,
+      "renderMs": {
+        "median": 15.099999994039536,
+        "p95": 20.099999994039536,
+        "frames": 119,
+        "includesGpuWait": true,
+        "pixels": 900
+      }
+    },
+    "pearls": {
+      "centers": [
+        -0.44637444615364075,
+        -0.11657477915287018,
+        0.02377641387283802,
+        0.15000000596046448,
+        0.08000392466783524,
+        -0.20378930866718292,
+        -0.0040466696955263615,
+        0.15000000596046448,
+        0.11967922002077103,
+        -0.8010048866271973,
+        0.01295926421880722,
+        0.15000000596046448
+      ],
+      "particleCount": 8387,
+      "renderMs": {
+        "median": 33.29999998211861,
+        "p95": 40.599999994039536,
+        "frames": 359,
+        "includesGpuWait": true,
+        "pixels": 900
+      }
+    }
+  },
+  "errors": [],
+  "scope": "Isolated Electron, actual GPU simulations; no sessions or model calls"
+}

@@ -11,19 +11,6 @@
 .fleet-updated { font-size: 11px; font-variant-numeric: tabular-nums; }
 
 .fleet-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.fleet-chip {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 4px 10px; border-radius: 999px;
-  border: 1px solid var(--line); background: var(--bg-soft);
-  font-size: 12px; color: var(--text-dim);
-}
-.fleet-chip:hover { border-color: var(--text-faint); color: var(--text); }
-.fleet-chip.on { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
-.fleet-chip-n {
-  padding: 0 5px; border-radius: 999px; background: var(--bg-sunk);
-  font-size: 10.5px; font-weight: 700; font-variant-numeric: tabular-nums;
-}
-
 /* Buttons living inside prose — the blocked banner and the stalled-poll note. */
 .fleet-inline {
   color: inherit; font-weight: 600; text-decoration: underline;
@@ -126,7 +113,7 @@
   display: flex; align-items: center; gap: 8px;
   font-size: 10.5px; font-variant-numeric: tabular-nums;
 }
-.fleet-open { margin-left: auto; color: var(--accent); font-weight: 600; }
+.fleet-open { margin-left: auto; }
 
 /* ── table ───────────────────────────────────────────────────────────── */
 /* Wide by design: thirteen columns of one agent each. It scrolls inside this
@@ -162,3 +149,45 @@
 .fleet-retry:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px;
 }
+
+/* Fleet is a roster and an inspection surface, with the ledger one step away. */
+.fleet-view { max-width: var(--page-wide); }
+.fleet-view > .stat-grid { gap: var(--s-5); border-block: 1px solid var(--line-soft); padding-block: var(--s-2); }
+.fleet-view > .stat-grid .stat-tile { background: none; border: 0; box-shadow: none; padding: var(--s-1) var(--s-2); }
+.fleet-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--s-3); }
+.fleet-workspace { display: grid; grid-template-columns: minmax(240px, .36fr) minmax(0, .64fr); border: 1px solid var(--glass-line); border-radius: var(--r-lg); background: var(--bg-soft); overflow: hidden; }
+.fleet-roster { max-height: 560px; overflow-y: auto; min-width: 0; padding: var(--s-3); background: var(--glass-fill); border-right: 1px solid var(--line-soft); }
+.fleet-entry { display: flex; flex-direction: column; gap: var(--s-2); width: 100%; padding: var(--s-4); text-align: left; border-radius: var(--r-md); border: 1px solid transparent; transition: background var(--mo-state) var(--mo-ease); }
+.fleet-entry:hover { background: var(--glass-fill); }
+.fleet-entry[aria-pressed='true'] { background: var(--glass-selected); border-color: var(--glass-line); }
+.fleet-entry:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.fleet-entry-top, .fleet-entry-state { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-2); }
+.fleet-entry-top strong { font-size: var(--t-lead); overflow-wrap: anywhere; }
+.fleet-entry-top > span, .fleet-entry-state { font-size: var(--t-small); color: var(--text-dim); }
+.fleet-entry-task { color: var(--text-dim); font-size: var(--t-body); overflow-wrap: anywhere; }
+.fleet-entry-state { font-variant-numeric: tabular-nums; }
+.fleet-inspector { min-width: 0; }
+.fleet-inspector .fleet-card { min-height: 100%; padding: var(--s-5); gap: var(--s-3); background: none; border: 0; border-radius: 0; }
+.fleet-inspector .fleet-card:hover { background: none; }
+.fleet-task { font-size: var(--t-display); line-height: 1.15; overflow-wrap: anywhere; }
+.fleet-inspector .fleet-detail { display: block; font-size: var(--t-lead); min-height: 0; overflow-wrap: anywhere; }
+.fleet-inspector .fleet-meta { font-size: var(--t-small); }
+.fleet-inspector .fleet-spark, .fleet-inspector .fleet-spark-plot { height: 60px; }
+.fleet-inspector .fleet-metrics { gap: var(--s-3); }
+.fleet-inspector .fleet-metric { padding: var(--s-3); background: var(--glass-fill); }
+.fleet-inspector .fleet-foot { margin-top: auto; flex-wrap: wrap; gap: var(--s-3); }
+.fleet-ledger > summary { cursor: pointer; padding: var(--s-3) var(--s-1); font-size: var(--t-body); }
+.fleet-ledger > .card { margin-top: var(--s-2); }
+@media (max-width: 1000px) {
+  .fleet-workspace { grid-template-columns: minmax(200px, .37fr) minmax(0, .63fr); }
+  .fleet-inspector .fleet-card { padding: var(--s-4); }
+  .fleet-inspector .fleet-metrics { grid-template-columns: 1fr; }
+}
+@media (max-width: 680px) {
+  .fleet-workspace { grid-template-columns: 1fr; }
+  .fleet-roster { border-right: 0; border-bottom: 1px solid var(--line-soft); max-height: 280px; overflow: auto; }
+}
+
+.pane.fleet-view > * { flex-shrink: 0; }
+
+.pane.fleet-view { gap: var(--s-3); }

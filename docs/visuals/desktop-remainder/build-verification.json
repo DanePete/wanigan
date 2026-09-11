@@ -1,0 +1,33 @@
+{
+  "at": "2026-09-11T04:55:29.369Z",
+  "builds": [
+    {
+      "architecture": "mac-arm64",
+      "appPath": "/private/tmp/wanigan-desktop-remainder-62louv61/release/mac-arm64/Wanigan.app",
+      "executable": "/private/tmp/wanigan-desktop-remainder-62louv61/release/mac-arm64/Wanigan.app/Contents/MacOS/Wanigan",
+      "helper": "/private/tmp/wanigan-desktop-remainder-62louv61/release/mac-arm64/Wanigan.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty/build/Release/spawn-helper",
+      "bundleIdentifier": "io.deadnorth.wanigan",
+      "signatureMetadata": "\nExecutable=/private/tmp/wanigan-desktop-remainder-62louv61/release/mac-arm64/Wanigan.app/Contents/MacOS/Wanigan\nIdentifier=io.deadnorth.wanigan\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20400 size=301 flags=0x2(adhoc) hashes=3+3 location=embedded\nVersionPlatform=1\nVersionMin=851968\nVersionSDK=1705216\nHash type=sha256 size=32\nCandidateCDHash sha256=0346ea5c73d39e6a9a0f0e9ce5488d91a3e930f9\nCandidateCDHashFull sha256=0346ea5c73d39e6a9a0f0e9ce5488d91a3e930f9645eb2839c034da9a938a20f\nHash choices=sha256\nCMSDigest=0346ea5c73d39e6a9a0f0e9ce5488d91a3e930f9645eb2839c034da9a938a20f\nCMSDigestType=2\nExecutable Segment base=0\nExecutable Segment limit=16384\nExecutable Segment flags=0x1\nPage size=16384\nCDHash=0346ea5c73d39e6a9a0f0e9ce5488d91a3e930f9\nSignature=adhoc\nInfo.plist entries=35\nTeamIdentifier=not set\nSealed Resources version=2 rules=13 files=264\nInternal requirements count=0 size=12\n",
+      "asarSha256": "bab8682883f47d8cdbda4175adeeb8a44125d7aad956ee2f9943fcc7225edae6",
+      "renderer": "/out/renderer/assets/index-FkK3t_vZ.js",
+      "rendererSha256": "24ef0cf407bb805b450000e52947e357d8043f8b8f72ad95cbaaf7ae63b4003e",
+      "runtime": "/out/renderer/assets/runtime-DPC_1S4f.js",
+      "runtimeSha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b",
+      "stagedPath": "/Users/dane/Projects/drupal/wanigan/release/desktop-redesign/mac-arm64/Wanigan.app"
+    },
+    {
+      "architecture": "mac",
+      "appPath": "/private/tmp/wanigan-desktop-remainder-62louv61/release/mac/Wanigan.app",
+      "executable": "/private/tmp/wanigan-desktop-remainder-62louv61/release/mac/Wanigan.app/Contents/MacOS/Wanigan",
+      "helper": "/private/tmp/wanigan-desktop-remainder-62louv61/release/mac/Wanigan.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty/build/Release/spawn-helper",
+      "bundleIdentifier": "io.deadnorth.wanigan",
+      "signatureMetadata": "\nExecutable=/private/tmp/wanigan-desktop-remainder-62louv61/release/mac/Wanigan.app/Contents/MacOS/Wanigan\nIdentifier=io.deadnorth.wanigan\nFormat=app bundle with Mach-O thin (x86_64)\nCodeDirectory v=20400 size=333 flags=0x2(adhoc) hashes=4+3 location=embedded\nVersionPlatform=1\nVersionMin=851968\nVersionSDK=1705216\nHash type=sha256 size=32\nCandidateCDHash sha256=720e4ad9012c44d2b748a1f99c5f79ae8f65ae8e\nCandidateCDHashFull sha256=720e4ad9012c44d2b748a1f99c5f79ae8f65ae8e6b21a59800560a5ad28c7511\nHash choices=sha256\nCMSDigest=720e4ad9012c44d2b748a1f99c5f79ae8f65ae8e6b21a59800560a5ad28c7511\nCMSDigestType=2\nExecutable Segment base=0\nExecutable Segment limit=8192\nExecutable Segment flags=0x1\nPage size=4096\nCDHash=720e4ad9012c44d2b748a1f99c5f79ae8f65ae8e\nSignature=adhoc\nInfo.plist entries=35\nTeamIdentifier=not set\nSealed Resources version=2 rules=13 files=264\nInternal requirements count=0 size=12\n",
+      "asarSha256": "9439b1cbb92dfbe47f41a4c4fb50034542e46477e07e1b43a61b14c5265ffbf8",
+      "renderer": "/out/renderer/assets/index-FkK3t_vZ.js",
+      "rendererSha256": "24ef0cf407bb805b450000e52947e357d8043f8b8f72ad95cbaaf7ae63b4003e",
+      "runtime": "/out/renderer/assets/runtime-DPC_1S4f.js",
+      "runtimeSha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b",
+      "stagedPath": "/Users/dane/Projects/drupal/wanigan/release/desktop-redesign/mac/Wanigan.app"
+    }
+  ]
+}

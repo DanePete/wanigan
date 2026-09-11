@@ -1,0 +1,24 @@
+{
+  "at": "2026-09-11T04:20:58.620Z",
+  "checks": [
+    "The agenda leads with the next due schedule and adjacent evidence; queued, failed and legacy states remain distinct, and selection makes no mutation.",
+    "Search, selection and edit drafts survive navigation; removing a project pin requires explicit fan-out intent, deletion stays confirmed, and a pending pause cannot repeat.",
+    "The inline composer renders the cron preview response, retains failed and pending drafts, and saves only on explicit submission.",
+    "History and list failures have explicit recovery; stale records disable mutations. Scheduler ticks and background setup occur only on their named actions.",
+    "Both themes fit 960/720 windows, reduced motion disables the reader reveal, and confirmed emptiness has its own creation path."
+  ],
+  "errors": [],
+  "dimensions": [
+    {
+      "width": 960,
+      "client": 934,
+      "scroll": 934
+    },
+    {
+      "width": 720,
+      "client": 687,
+      "scroll": 687
+    }
+  ],
+  "provenance": "Actual renderer with synthetic schedules; no real scheduler tick, agent launch, provider call or daemon change"
+}

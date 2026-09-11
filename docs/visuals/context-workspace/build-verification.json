@@ -1,0 +1,37 @@
+{
+  "verifiedAt": "2026-09-10T23:22:59.493Z",
+  "arm64": {
+    "app": "/Users/dane/Projects/drupal/wanigan/release/mac-arm64/Wanigan.app",
+    "asarSha256": "45d8b8ac337b9cd802d7cd823eeb73aa5bc874445554a290eb8bb8ee2bef3a78",
+    "rendererPath": "/out/renderer/assets/index-DsQmmZ0O.js",
+    "rendererSha256": "53678ff926a4c68ceb2ec8c903ea70102b5af1d86cb490e7bf4dd6fdb757562a",
+    "signature": "strict sealed ad-hoc signature, hardened fuses, ASAR integrity and executable PTY helper verified"
+  },
+  "x64": {
+    "app": "/Users/dane/Projects/drupal/wanigan/release/mac/Wanigan.app",
+    "asarSha256": "3ebdad880ad02717b3662ea24ae00cbc295cede3c483f1137b024c73e45d980e",
+    "rendererPath": "/out/renderer/assets/index-DsQmmZ0O.js",
+    "rendererSha256": "53678ff926a4c68ceb2ec8c903ea70102b5af1d86cb490e7bf4dd6fdb757562a",
+    "signature": "strict sealed ad-hoc signature, hardened fuses, ASAR integrity and executable PTY helper verified"
+  },
+  "installed": {
+    "app": "/Applications/Wanigan.app",
+    "asarSha256": "45d8b8ac337b9cd802d7cd823eeb73aa5bc874445554a290eb8bb8ee2bef3a78",
+    "rendererPath": "/out/renderer/assets/index-DsQmmZ0O.js",
+    "rendererSha256": "53678ff926a4c68ceb2ec8c903ea70102b5af1d86cb490e7bf4dd6fdb757562a",
+    "signature": "strict sealed ad-hoc signature, hardened fuses, ASAR integrity and executable PTY helper verified",
+    "verifiedAt": "2026-09-10T23:23:23.186Z"
+  },
+  "nativeInspection": {
+    "launchPid": 52886,
+    "method": "Native accessibility and screenshot inspection of /Applications/Wanigan.app",
+    "observed": [
+      "Seven-area Context directory",
+      "Instruction chain with real scan results",
+      "Real CLAUDE.md source read through the existing main-process reader",
+      "Read-only source with path, bytes, wrapping, and focus"
+    ],
+    "leftOpen": "Context, Instructions, existing selected project, CLAUDE.md source reader",
+    "operations": "Navigation and destination-list visibility only; no task commands, model calls, source edits, or provider-setting changes"
+  }
+}

@@ -218,6 +218,10 @@ export async function runSmoke(): Promise<void> {
     await runClaudeMeterSmoke(check, say);
     const { runCompanionSmoke } = await import('./smoke12');
     await runCompanionSmoke(check, say);
+    const { runPreflightSmoke } = await import('./smoke13');
+    await runPreflightSmoke(check, say);
+    const { runOrbStorySmoke } = await import('./smoke14');
+    runOrbStorySmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

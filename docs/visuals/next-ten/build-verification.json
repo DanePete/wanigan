@@ -1,0 +1,31 @@
+{
+  "recordedAt": "2026-09-11T07:34:43.989Z",
+  "node": "v22.23.2",
+  "packages": [
+    {
+      "architecture": "arm64",
+      "archive": "release/mac-arm64/Wanigan.app/Contents/Resources/app.asar",
+      "outputFilesMatched": 25,
+      "asarSha256": "c66533225896ab83d286405b1a4c3d4a01f070314c73d6eda7ffd670dbb8edec"
+    },
+    {
+      "architecture": "x64",
+      "archive": "release/mac/Wanigan.app/Contents/Resources/app.asar",
+      "outputFilesMatched": 25,
+      "asarSha256": "d8a894fae99d8a7e6fce88249bf50b79bfef085856defcbc35b2b6c3468d7e46"
+    }
+  ],
+  "installers": [
+    {
+      "file": "release/Wanigan-0.1.0-arm64.dmg",
+      "bytes": 143149957,
+      "sha256": "92cc4043b4e31498e9bc8867fc26ae3847413a2eedb4bf8d3bfaa08c4b3d2985"
+    },
+    {
+      "file": "release/Wanigan-0.1.0.dmg",
+      "bytes": 149927883,
+      "sha256": "ebc3727f00755f6f8936c4e5ae4e2ab2c2f8a701eaa5ea2b62289d296c57bf39"
+    }
+  ],
+  "installed": false
+}

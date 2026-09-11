@@ -24,9 +24,12 @@ as observed fact.
 
 - Use Node `22.23.2` from `.nvmrc`. Node 16 cannot build this project; use
   `nvm use` before `npm` commands.
-- Run `npm test` before handing off a code change. It is five steps in order:
-  `typecheck`, `test:renderer-style`, `test:package-hooks`, `test:local-install`,
-  then the offline main-process `smoke` suite. CI runs the same five, splitting
+- Run `npm test` before handing off a code change. It is six steps in order:
+  `typecheck`, `test:shared`, `test:renderer-style`, `test:package-hooks`,
+  `test:local-install`, then the offline main-process `smoke` suite. `test:shared`
+  is plain `node --test` over `src/shared`, which is pure by construction: it
+  answers in under a second, so a contract belongs there rather than in the
+  thirty-second suite whenever it needs no process. CI runs the same six, splitting
   the two macOS packaging suites onto a macOS runner. Run `git diff --check` for
   documentation and UI changes too.
 - Renderer UI is built from the shared frame and primitives, and the style gate

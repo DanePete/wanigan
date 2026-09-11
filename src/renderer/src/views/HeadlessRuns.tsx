@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   HeadlessRowSummary, HeadlessRun, HeadlessStartRequest, Project, ProviderId, ProviderInfo,
 } from '@shared/types';
-import { ConfirmNote, EmptyState, Note, Reading, Stat, ago, num, usd } from '../components/bits';
+import { ConfirmNote, EmptyState, Note, PageHead, Pill, Reading, SectionHead, Segmented, Stat, ago, num, usd } from '../components/bits';
 import '../styles/runs.css';
+import { useLiveViewMemory } from '../components/planningMemory';
 
 const TIMEOUTS = [5, 15, 30, 60] as const;
 const msg = (e: unknown) => e instanceof Error ? e.message : String(e);
@@ -75,14 +76,25 @@ function rowCost(row: HeadlessRowSummary): string {
  */
 export default function HeadlessRuns({ projects, providers }: { projects: Project[]; providers: ProviderInfo[] }) {
   const [runs, setRuns] = useState<HeadlessRun[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useLiveViewMemory<string | null>('runSelected', null);
+  const [launching, setLaunching] = useLiveViewMemory('runComposer', false);
+  const [query, setQuery] = useLiveViewMemory('runQuery', '');
+  const [filter, setFilter] = useLiveViewMemory('runFilter', 'all');
+  const [revision, setRevision] = useLiveViewMemory('runRevision', 0);
+  const [defaultsKey, setDefaultsKey] = useLiveViewMemory('runProviderDefaults', '');
+  const active = useRef(true), readSequence = useRef(0), actionLock = useRef(false);
+  const composer = useRef<HTMLFieldSetElement>(null);
+  const reader = useRef<HTMLElement>(null);
+  useEffect(() => { reader.current?.scrollTo({top: 0}); }, [selected]);
+  useEffect(() => { active.current = true; return () => { active.current = false; readSequence.current++; }; }, []);
+  useEffect(() => { if (launching) composer.current?.querySelector<HTMLInputElement>('input')?.focus(); }, [launching]);
   const [rowsState, setRowsState] = useState<RowsState | null>(null);
   /** Bumped by the rows region's own retry, so a failed read can be asked again. */
   const [rowsNonce, setRowsNonce] = useState(0);
   // Output and errors are fetched per row, on expand, and kept keyed by
   // project id so collapsing and reopening a row does not re-cross IPC.
   const [details, setDetails] = useState<Record<string, RowDetailState>>({});
-  const [providerId, setProviderId] = useState<ProviderId>('claude');
+  const [providerId, setProviderId] = useLiveViewMemory<ProviderId>('runProvider', 'claude');
   // Empty on purpose. Seeding every registered project made the widest and most
   // expensive run the resting state of a form nobody had touched — the same
   // "nobody chose this" shape the fan-out guard in headless.ts exists to refuse
@@ -90,7 +102,7 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   // submit every time, by a message naming an intent this view could not state.
   // The operator names the repositories; "Select all projects" is still one
   // click away, and now it is a choice rather than a starting position.
-  const [chosen, setChosen] = useState<Set<string>>(() => new Set());
+  const [chosen, setChosen] = useLiveViewMemory<Set<string>>('runProjects', new Set());
   /**
    * The operator saying "every registered repository" out loud.
    *
@@ -114,16 +126,16 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   const asked = useRef<Set<string>>(new Set());
   /** So a detail response that outlives its run can be discarded. */
   const selectedRef = useRef<string | null>(null);
-  const [name, setName] = useState('');
-  const [prompt, setPrompt] = useState('');
-  const [model, setModel] = useState('');
-  const [effort, setEffort] = useState('');
-  const [providerOptions, setProviderOptions] = useState<Record<string, string | boolean>>({});
-  const [budget, setBudget] = useState('2');
-  const [minutes, setMinutes] = useState<number>(15);
-  const [isolate, setIsolate] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [name, setName] = useLiveViewMemory('runName', '');
+  const [prompt, setPrompt] = useLiveViewMemory('runPrompt', '');
+  const [model, setModel] = useLiveViewMemory('runModel', '');
+  const [effort, setEffort] = useLiveViewMemory('runEffort', '');
+  const [providerOptions, setProviderOptions] = useLiveViewMemory<Record<string, string | boolean>>('runOptions', {});
+  const [budget, setBudget] = useLiveViewMemory('runBudget', '2');
+  const [minutes, setMinutes] = useLiveViewMemory<number>('runMinutes', 15);
+  const [isolate, setIsolate] = useLiveViewMemory('runIsolate', true);
+  const [busy, setBusy] = useLiveViewMemory('runBusy', false);
+  const [err, setErr] = useLiveViewMemory<string | null>('runActionError', null);
   /**
    * Whether the run list has ever come back, and why the last attempt did not.
    *
@@ -153,6 +165,9 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   const readRows = rowsFor?.rows ?? null;
 
   useEffect(() => {
+    const key = `${providerId}:${launchFieldsKey}`;
+    if (defaultsKey === key) return;
+    setDefaultsKey(key);
     setModel(typeof modelField?.defaultValue === 'string' ? modelField.defaultValue : '');
     setEffort(typeof effortField?.defaultValue === 'string' ? effortField.defaultValue : '');
     const defaults: Record<string, string | boolean> = {};
@@ -168,7 +183,7 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   // fresh objects each time — so switching to a terminal and back reset the
   // operator's model, effort and every provider option to their defaults,
   // mid-form, and re-disabled Start behind a requirement they had met.
-  }, [providerId, launchFieldsKey]);
+  }, [providerId, launchFieldsKey, defaultsKey]);
 
   useEffect(() => {
     if (!installed.some((candidate) => candidate.id === providerId)) {
@@ -194,7 +209,11 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   const painted = useRef('');
 
   const load = useCallback(async () => {
-    const next = await window.wanigan.headless.runs(50);
+    const sequence = ++readSequence.current;
+    let next: HeadlessRun[];
+    try { next = await window.wanigan.headless.runs(50); }
+    catch (error) { if (active.current && sequence === readSequence.current) throw error; return; }
+    if (!active.current || sequence !== readSequence.current) return;
     // A beat that would paint the same list keeps the array it already has.
     // The comparison is against the fingerprint of the array in state, not
     // against `prior` inside an updater: the updater runs after this function
@@ -211,7 +230,7 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   // a read has ever landed the failure is the only thing this screen can
   // honestly show, and the three-second beat, while the window is visible, is
   // also the automatic retry standing behind the button in the history panel.
-  const reload = useCallback(() => void load().catch((e) => setLoadFailed(msg(e))), [load]);
+  const reload = useCallback(() => void load().catch((e) => { if (active.current) setLoadFailed(msg(e)); }), [load]);
 
   useEffect(() => {
     reload();
@@ -226,7 +245,7 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
     const onVisible = () => { if (!document.hidden) reload(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVisible); };
-  }, [reload]);
+  }, [reload, revision]);
 
   const signature = runSignature(current);
   useEffect(() => {
@@ -259,7 +278,7 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
     // poll replaces every three seconds. `runs` is deliberately absent;
     // `rowsNonce` is the rows region's own Try again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, signature, rowsNonce]);
+  }, [selected, signature, rowsNonce, revision]);
 
   // Detail belongs to the run it was fetched for; switching runs must not leave
   // one repository's output hanging under another run's row of the same name.
@@ -281,11 +300,11 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
     setDetails((prior) => ({ ...prior, [projectId]: { loading: true, output: null, error: null, failed: null } }));
     try {
       const d = await window.wanigan.headless.rowDetail(runId, projectId);
-      if (selectedRef.current !== runId) return;   // the operator moved on mid-flight
+      if (!active.current || selectedRef.current !== runId) return;   // the operator moved on mid-flight
       setDetails((prior) => ({ ...prior, [projectId]: { loading: false, output: d.output, error: d.error, failed: null } }));
     } catch (e) {
       asked.current.delete(projectId);
-      if (selectedRef.current !== runId) return;
+      if (!active.current || selectedRef.current !== runId) return;
       setDetails((prior) => ({ ...prior, [projectId]: { loading: false, output: null, error: null, failed: msg(e) } }));
     }
   }, [selected]);
@@ -319,11 +338,13 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   });
   /** What the budget field will actually send, so the copy below cannot quote a different figure. */
   const perRepoBudget = Math.max(0, Number(budget) || 0);
-  const canStart = !!provider?.path && prompt.trim().length > 0 && chosen.size > 0
-    && !missingRequired && !needsIntent && !busy;
+  const budgetValid = provider?.capabilities.headlessBudget === false || (budget.trim() !== '' && Number.isFinite(Number(budget)) && Number(budget) >= 0);
+  const canStart = !!provider?.path && !!provider.capabilities.headlessJson && prompt.trim().length > 0 && chosen.size > 0
+    && !missingRequired && !needsIntent && budgetValid && !busy;
 
   async function start() {
-    if (!canStart) return;
+    if (!canStart || actionLock.current) return;
+    actionLock.current = true;
     setBusy(true); setErr(null);
     const cfg: HeadlessStartRequest = {
       name: name.trim() || `fan-out · ${new Date().toLocaleString()}`,
@@ -338,15 +359,17 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
     try {
       const result = await window.wanigan.headless.start(cfg);
       // The declaration was spent on this run. The next one is asked again.
-      setPrompt(''); setName(''); setDeclared(false); setSelected(result.runId); await load();
+      setPrompt(''); setName(''); setDeclared(false); setSelected(result.runId); setLaunching(false); setQuery(''); setFilter('all'); setRevision(value => value + 1);
     } catch (e) { setErr(msg(e)); }
-    finally { setBusy(false); }
+    finally { actionLock.current = false; setBusy(false); }
   }
 
   async function cancel() {
-    if (!current) return;
-    try { await window.wanigan.headless.cancel(current.id); await load(); }
+    if (!current || canceling || actionLock.current || loadFailed) return;
+    actionLock.current = true; setCanceling(current.id); setErr(null);
+    try { await window.wanigan.headless.cancel(current.id); setConfirmCancel(null); setRevision(value => value + 1); }
     catch (e) { setErr(msg(e)); }
+    finally { actionLock.current = false; setCanceling(null); }
   }
 
   // Merging a worktree into the project branch rewrites the branch and cannot
@@ -354,7 +377,10 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   // waits for a second, deliberate press. (CLAUDE.md: destructive git work is
   // never one click.)
   const [confirmMerge, setConfirmMerge] = useState<string | null>(null);
-  const [merging, setMerging] = useState<string | null>(null);
+  const [merging, setMerging] = useLiveViewMemory<string | null>('runMerging', null);
+  const [canceling, setCanceling] = useLiveViewMemory<string | null>('runCanceling', null);
+  const [confirmCancel, setConfirmCancel] = useState<string | null>(null);
+  useEffect(() => { setConfirmCancel(null); }, [selected]);
   // An armed confirmation belongs to the run it was armed on. It is held by
   // project id, and two runs over the same repository share that id, so
   // switching runs used to re-arm it on the other run's row of the same
@@ -364,7 +390,8 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   // protection here, so it is asked again per run.
   useEffect(() => { setConfirmMerge(null); }, [selected]);
   async function merge(row: HeadlessRowSummary) {
-    if (!row.worktree) return;
+    if (!row.worktree || merging || actionLock.current || rowsFor?.error || loadFailed) return;
+    actionLock.current = true; setErr(null);
     // The name in a squash commit is written into the project's branch and
     // cannot be corrected by looking again, so it comes from the row's own
     // `runId` rather than from whichever run happens to be selected. The
@@ -376,9 +403,9 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
       const r = await window.wanigan.worktrees.merge(row.worktree, { squash: true, message: `wanigan: ${runName} · ${row.projectName}` });
       if (!r.merged) throw new Error(r.detail);
       setConfirmMerge(null);
-      await load();
+      setRowsNonce(value => value + 1); setRevision(value => value + 1);
     } catch (e) { setErr(msg(e)); }
-    finally { setMerging(null); }
+    finally { actionLock.current = false; setMerging(null); }
   }
 
   // Both figures below are sums over the rows, so both are null until the rows
@@ -417,30 +444,28 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
     ? "this run's repositories could not be read"
     : "reading this run's repositories";
 
+  const filteredRuns = runs.filter(run => (!query.trim() || `${run.name} ${run.model}`.toLowerCase().includes(query.trim().toLowerCase())) && (filter === 'all' || filter === 'active' && run.open > 0 || filter === 'attention' && (run.failed > 0 || run.blocked > 0 || run.status === 'failed')));
+
   return (
-    <main className="pane hr-view">
-      <header className="hr-head">
-        <div className="hr-head-copy">
-          <span className="label-stencil">Headless runs · unattended workflows</span>
-          <h1>Runs</h1>
-          <p className="dim">
-            One prompt × selected repositories. Each repository gets its own timeout, and its own
-            CLI budget where the agent takes one; isolated worktrees stay on by default so review
-            and merge remain deliberate.
-          </p>
-        </div>
-        <span className="hr-head-status">{projects.length} project{projects.length === 1 ? '' : 's'} available</span>
-      </header>
+    <main className="pane wide hr-view">
+      <PageHead title="Runs" lead={launching ? 'One assignment. Each repository works independently.' : 'Unattended work, ready for your review.'} actions={<>
+        {launching ? <button className="btn" disabled={busy} onClick={() => setLaunching(false)}>Back to runs</button> : <>
+          <button className="btn" onClick={reload}>Refresh runs</button>
+          <button className="btn btn-primary" disabled={!!merging || !!canceling} onClick={() => { setLaunching(true); setErr(null); }}>New run</button>
+        </>}
+      </>} />
       {err && <Note tone="error">{err}</Note>}
 
-      <section className="card hr-launch" aria-labelledby="headless-launch-title">
-        <div className="hr-section-head">
-          <div><span className="label">Configure</span><h2 id="headless-launch-title">Start a fan-out</h2><p className="dim">Choose the agent and guardrails first, then pick the repositories that receive the same task.</p></div>
-          <span className="hr-step">1 of 2</span>
-        </div>
+      {!launching && loaded && loadFailed && <Note tone="warn">Recent runs could not refresh: {loadFailed}. Showing the last readable records; refresh before canceling or merging.</Note>}
+      {launching ? <fieldset className="hr-compose" ref={composer} disabled={busy}>
+      <section className="hr-launch" aria-labelledby="headless-launch-title">
+        <SectionHead label="The assignment" />
+        <h2 id="headless-launch-title">Give the work some room.</h2>
+        <p className="hr-cue">Set one clear task. Choose the agent, then the repositories you want it to work in.</p>
+        {installed.length === 0 && <Note tone="warn">No installed provider has verified headless support. Configure a supported provider in Settings before starting a run.</Note>}
         <div className="hr-form-grid">
           <label className="hr-field"><span className="label">Run name <em>optional</em></span><input className="field" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nightly repository audit" /></label>
-          <label className="hr-field"><span className="label">Provider</span><select className="field" value={providerId} onChange={(e) => setProviderId(e.target.value as ProviderId)}>
+          <label className="hr-field"><span className="label">Provider</span><select className="field" aria-label="Provider" value={providerId} onChange={(e) => setProviderId(e.target.value as ProviderId)}>
             {installed.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
           </select></label>
           {provider?.supports.model && <label className="hr-field"><span className="label">{modelField?.label ?? 'Model'}{modelField?.required ? ' · required' : ''}</span>{modelField?.kind === 'select' ? (
@@ -455,17 +480,15 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
               {(effortField.options ?? []).map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
             </select>
           ) : <input className="field" value={effort} onChange={(e) => setEffort(e.target.value)} placeholder={effortField?.label ?? 'Reasoning effort'} />}</label>}
-          <label className="hr-field"><span className="label">Timeout per repository</span><select className="field" value={minutes} onChange={(e) => setMinutes(Number(e.target.value))}>
-            {TIMEOUTS.map((m) => <option key={m} value={m}>{m} minutes</option>)}
-          </select></label>
+
         </div>
-        <label className="hr-field hr-prompt"><span className="label">Task for every repository</span><textarea className="field" value={prompt} onChange={(e) => setPrompt(e.target.value)}
+        <label className="hr-field hr-prompt"><span className="label">Task for every repository</span><textarea className="field" aria-label="Task for every repository" value={prompt} onChange={(e) => setPrompt(e.target.value)}
                   placeholder="Audit this repository, make the requested change, run the relevant checks, and report what you verified." />
-          <span className="faint">Use one self-contained request. Wanigan launches an isolated worker for each selected repository.</span></label>
+          <span className="faint">Use one self-contained request. Each selected repository receives its own worker. Worktree isolation is controlled below.</span></label>
         {(provider?.launchFields ?? []).filter((field) => !['model', 'effort', 'permissionMode'].includes(field.id)).length > 0 && (
           <div className="hr-provider-fields" aria-label="Provider-specific options">
             {(provider?.launchFields ?? []).filter((field) => !['model', 'effort', 'permissionMode'].includes(field.id)).map((field) => (
-              <label key={field.id} className="hr-provider-field sunk">
+              <label key={field.id} className="hr-provider-field">
                 <span className="label">{field.label}{field.required ? ' · required' : ''}</span>
                 {field.description && <span className="faint">{field.description}</span>}
                 {field.kind === 'boolean' ? (
@@ -487,32 +510,41 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
             ))}
           </div>
         )}
+        {!budgetValid && <Note tone="warn">Enter a finite budget of 0 or more. Zero passes no cost ceiling to the CLI.</Note>}
+        {missingRequired && <Note tone="warn">{missingRequired.label} is required by this provider profile.</Note>}
+        {!provider?.capabilities.policy && provider && <Note tone="warn">{provider.label} is allowed only when this project is Trusted: Wanigan cannot enforce its Claude-style unattended policy boundary yet.</Note>}
+      </section>
+        <aside className="hr-project-picker" aria-label="Select repositories for this run">
+          <SectionHead label="Where it goes" count={chosen.size} />
+          <h2>{chosen.size ? `${chosen.size} ${chosen.size === 1 ? 'repository' : 'repositories'}, one assignment.` : 'Choose its destination.'}</h2>
+          <p className="hr-cue">Each selected repository receives the same task and its own timeout.</p>
+          <button className="btn" onClick={() => { setDeclared(false); setChosen(allPicked ? new Set() : new Set(projects.map((p) => p.id))); }}>{allPicked ? 'Clear projects' : 'Select all projects'}</button>
+          {!projects.length && <Note>Add a project before starting a run.</Note>}
+          <div className="hr-projects">
+            {projects.map((p) => <button key={p.id} className={`hr-project${chosen.has(p.id) ? ' on' : ''}`} aria-pressed={chosen.has(p.id)} onClick={() => toggleProject(p.id)}><span aria-hidden="true" className="hr-project-mark">{chosen.has(p.id) ? '✓' : '+'}</span>{p.name}</button>)}
+          </div>
         <div className="hr-launch-footer">
           {/* Shown only where the protocol takes one. Codex's headless mode has
               no budget flag, so this field promised every Codex fan-out a
               ceiling that was never passed and the row then reported no cost
               either. What actually bounds a Codex row is the timeout. */}
           {provider?.capabilities.headlessBudget !== false ? (
-            <label className="hr-budget"><span className="label">CLI budget / repository</span><div><span aria-hidden="true">$</span><input className="field" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} /></div></label>
+            <label className="hr-budget"><span className="label">CLI budget / repository</span><div><span aria-hidden="true">$</span><input className="field" aria-label="CLI budget / repository" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} /></div></label>
           ) : (
             <div className="hr-budget">
               <span className="label">CLI budget / repository</span>
-              <p className="dim">{provider.label} takes no budget flag. The timeout below is the only ceiling on a repository.</p>
+              <p className="dim">{provider.label} takes no budget flag. The timeout limits worker duration, not cost.</p>
             </div>
           )}
+          <label className="hr-field"><span className="label">Timeout per repository</span><select className="field" aria-label="Timeout per repository" value={minutes} onChange={(e) => setMinutes(Number(e.target.value))}>
+            {TIMEOUTS.map((m) => <option key={m} value={m}>{m} minutes</option>)}
+          </select></label>
           <label className="hr-check"><input type="checkbox" checked={isolate} onChange={(e) => setIsolate(e.target.checked)} /> isolate in worktrees</label>
           {/* Selecting every repository is a selection, not a declaration: this
               button deliberately does not tick the box below, and clears a tick
               that was already there. */}
-          <button className="btn" onClick={() => { setDeclared(false); setChosen(allPicked ? new Set() : new Set(projects.map((p) => p.id))); }}>{allPicked ? 'Clear projects' : 'Select all projects'}</button>
+
         </div>
-        {missingRequired && <Note tone="warn">{missingRequired.label} is required by this provider profile.</Note>}
-        {!provider?.capabilities.policy && provider && <Note tone="warn">{provider.label} is allowed only when this project is Trusted: Wanigan cannot enforce its Claude-style unattended policy boundary yet.</Note>}
-        <div className="hr-project-picker" role="group" aria-label="Select repositories for this run">
-          <div className="hr-project-picker-head"><div><span className="label">Repositories</span><p className="dim">{chosen.size} selected · each receives the same task independently.</p></div><span className="hr-step">2 of 2</span></div>
-          <div className="hr-projects">
-            {projects.map((p) => <button key={p.id} className={`hr-project${chosen.has(p.id) ? ' on' : ''}`} aria-pressed={chosen.has(p.id)} onClick={() => toggleProject(p.id)}><span aria-hidden="true" className="hr-project-mark">{chosen.has(p.id) ? '✓' : '+'}</span>{p.name}</button>)}
-          </div>
           {/* The declaration sits with the repositories it is about: their names
               are the chips directly above, so this counts them rather than
               listing them again. The figure is the budget field's own value,
@@ -524,25 +556,27 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
               <input type="checkbox" checked={declared} onChange={(e) => setDeclared(e.target.checked)} />
               <span>
                 <strong>Run in every registered repository.</strong>{' '}
-                {declared ? (perRepoBudget > 0
-                  ? <>All {projects.length} start one unattended agent each, carrying the {usd(perRepoBudget)} per-repository budget Wanigan hands the CLI — up to {usd(perRepoBudget * projects.length)} across the fan-out if every one spends it. The CLI enforces that flag; Wanigan does not.</>
-                  : <>All {projects.length} start one unattended agent each, and the budget is 0, so Wanigan passes no budget flag at all — nothing here caps what they spend.</>
-                ) : (perRepoBudget > 0
-                  ? <>Selecting every repository is the one request that reaches the runner looking exactly like a payload that named none, so it is said here rather than inferred. Right now that is all {projects.length} of them, at {usd(perRepoBudget)} each.</>
-                  : <>Selecting every repository is the one request that reaches the runner looking exactly like a payload that named none, so it is said here rather than inferred. Right now that is all {projects.length} of them, with no budget flag passed.</>)}
+                All {projects.length} repositories will receive an unattended agent.{' '}
+                {provider?.capabilities.headlessBudget === false
+                  ? <>{provider.label} takes no budget flag. The {minutes}-minute timeout bounds each worker's duration, not its cost.</>
+                  : perRepoBudget > 0
+                    ? <>Each CLI receives a {usd(perRepoBudget)} budget, up to {usd(perRepoBudget * projects.length)} across this selection. The CLI enforces its budget flag.</>
+                    : <>A zero budget passes no cost ceiling to the CLI.</>}
               </span>
             </label>
           )}
-          <div className="hr-submit-row"><span className="faint">{canStart ? 'Ready to start the selected agents.' : needsIntent ? 'This selection is every repository Wanigan has registered. Tick the declaration above, or drop one repository from the run.' : 'Add a task, select at least one repository, and complete provider requirements.'}</span><button className="btn btn-primary" disabled={!canStart} onClick={() => void start()}>{busy ? 'Starting…' : `Run in ${chosen.size} repo${chosen.size === 1 ? '' : 's'}`}</button></div>
-        </div>
-      </section>
-
-      <div className="hr-workspace">
-        <section className="card hr-history" aria-labelledby="headless-history-title">
+          <div className="hr-submit-row"><span className="faint">{canStart ? 'Start launches real agents in the selected repositories.' : needsIntent ? 'Confirm every repository above, or narrow the selection.' : 'Add a task, choose repositories, and complete the agent settings.'}</span><button className="btn btn-primary" disabled={!canStart} onClick={() => void start()}>{busy ? 'Starting…' : `Run in ${chosen.size} repo${chosen.size === 1 ? '' : 's'}`}</button></div>
+        </aside>
+      </fieldset> : <div className="hr-workspace">
+        <section className="hr-history" aria-label="Recent runs">
           {/* The count is a claim about the database, so it waits for the read
               too: a bare 0 beside "Recent runs" is indistinguishable from a
               history nobody has fetched. */}
-          <div className="hr-section-head"><div><span className="label">History</span><h2 id="headless-history-title">Recent runs</h2></div><span className="hr-count">{loaded ? runs.length : '—'}</span></div>
+          <SectionHead label="Recent runs" count={loaded ? runs.length : undefined} />
+          <input className="field" type="search" aria-label="Search runs" placeholder="Find a run or model" value={query} onChange={event => setQuery(event.target.value)} />
+          <Segmented label="Run filter" value={filter} onChange={setFilter} options={[{value:'all',label:'All'},{value:'active',label:'Active'},{value:'attention',label:'Attention'}]} />
+          {(query || filter !== 'all') && <button className="btn btn-sm" onClick={() => { setQuery(''); setFilter('all'); }}>Clear filters</button>}
+          <div className="hr-run-list">
           {!loaded ? (
             loadFailed === null
               ? <Reading what="recent runs" />
@@ -552,16 +586,17 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
           ) : runs.length === 0 ? (
             <EmptyState posture="nothing-yet" title="Nothing has run yet"
                         cue="A completed fan-out stays here for review, with its cost and every repository's outcome." />
-          ) : runs.map((r) => (
-            <button key={r.id} className={`hr-run${r.id === selected ? ' on' : ''}`} onClick={() => setSelected(r.id)} aria-pressed={r.id === selected}>
+          ) : filteredRuns.length === 0 ? <EmptyState posture="nothing-in-scope" title="No matching runs" cue="Try another name or clear the filters." /> : filteredRuns.map((r) => (
+            <button key={r.id} className={`hr-run${r.id === selected ? ' on' : ''}`} data-run-id={r.id} onClick={() => setSelected(r.id)} aria-pressed={r.id === selected}>
               <strong>{r.name}</strong>
-              <span>{r.succeeded} passed · {r.failed} failed · {r.blocked} blocked · {r.open} open</span>
+              <span>{r.succeeded} succeeded · {r.failed} failed · {r.blocked} blocked · {r.open} open</span>
               <small>{r.costStatus === 'unreported' ? 'no cost reported'
                 : r.costStatus === 'partial' ? `≥ ${usd(r.costUsd)}` : usd(r.costUsd)} · {ago(r.createdAt)}</small>
             </button>
           ))}
+          </div>
         </section>
-        <section className="card hr-detail">
+        <section className="hr-detail" aria-label="Selected run" ref={reader}>
           {/* Nothing to inspect until a run exists: an inspector panel with no
               subject is a card that can only say it is empty. Which of its two
               empty sentences is the true one depends on the history read, so it
@@ -575,17 +610,19 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
           ) : !current ? (
             runs.length === 0
               ? <EmptyState posture="nothing-yet" title="No run selected"
-                            cue="Start a fan-out above; its repositories, outputs and costs appear here." />
+                            cue="Create a run when you have an assignment ready. Its repository outcomes and output will appear here." action={<button className="btn btn-primary" onClick={() => setLaunching(true)}>Prepare a run</button>} />
               : <EmptyState posture="nothing-in-scope" title="No run selected"
                             cue="Choose a run on the left to inspect the repositories it touched." />
-          ) : <>
+          ) : <div className="hr-reading" key={current.id}>
             {/* Only the outcome line is announced. The panel below it is
                 replaced by a three-second poll, and a live region around all of
                 it would re-read every repository, its output and its cost on
                 every beat. */}
-            <div className="hr-detail-title"><div><span className="label">Run review</span><h2>{current.name}</h2><p className="faint" aria-live="polite" aria-atomic="true">{current.model} · {current.status} · {current.open} open</p></div>
-              {current.open > 0 && <button className="btn btn-danger" onClick={() => void cancel()}>Cancel run</button>}
+            <div className="hr-detail-title"><div><Pill status={current.status} /><h2>{current.name}</h2><p className="faint" aria-live="polite" aria-atomic="true">{current.model} · {current.open} open · {ago(current.createdAt)}</p></div>
+              {current.open > 0 && <button className="btn btn-danger" disabled={!!canceling || !!merging || !!loadFailed} aria-expanded={confirmCancel === current.id} onClick={() => setConfirmCancel(confirmCancel === current.id ? null : current.id)}>Cancel run…</button>}
             </div>
+            {confirmCancel === current.id && <ConfirmNote what={<>Cancel the remaining work in <strong>{current.name}</strong>? Active workers will stop; recorded output remains available.</>} verb="Cancel run" busy={!!canceling} onRun={cancel} onCancel={() => setConfirmCancel(null)} />}
+            {current.error && <Note tone="error">{current.error}</Note>}
             <div className="stat-grid hr-stats">
               <Stat label="Succeeded" value={num(current.succeeded)} sub={`${num(current.failed)} failed · ${num(current.blocked)} blocked`} />
               <Stat label="Changed" value={totals ? num(totals.changed) : '—'}
@@ -636,10 +673,10 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
                 const d = details[row.projectId];
                 const expandable = row.hasError || row.hasOutput;
                 return (
-                  <article key={row.projectId} className="hr-row">
+                  <article key={`${row.runId}:${row.projectId}`} className="hr-row">
                     <div className="hr-row-head"><div><strong>{row.projectName}</strong><span className="faint">{row.status} · {row.filesChanged} files · {rowCost(row)}</span></div>
                       {row.worktree && row.status === 'succeeded' && (
-                        <button className="btn" aria-expanded={confirmMerge === row.projectId}
+                        <button className="btn btn-sm" disabled={!!merging || !!canceling || !!rowsFor?.error || !!loadFailed} aria-expanded={confirmMerge === row.projectId}
                                 onClick={() => setConfirmMerge(confirmMerge === row.projectId ? null : row.projectId)}>
                           Squash merge…
                         </button>
@@ -685,9 +722,9 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
                 );
               })}</div>
             </>}
-          </>}
+          </div>}
         </section>
-      </div>
+      </div>}
     </main>
   );
 }

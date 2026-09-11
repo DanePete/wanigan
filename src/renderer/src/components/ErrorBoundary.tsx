@@ -1,5 +1,6 @@
 import { Component, Fragment } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
+import { Icon, PageHead } from './bits';
 
 /**
  * This window is the only visible surface of agents whose processes live in
@@ -62,32 +63,19 @@ export default class ErrorBoundary extends Component<Props, State> {
     const { error, stack, attempt } = this.state;
     if (!error) return <Fragment key={attempt}>{this.props.children}</Fragment>;
     return (
-      <section className="empty" role="alert">
-        <div style={{ maxWidth: 520, textAlign: 'left' }}>
-          <h1 style={{ fontSize: 'var(--t-title)', fontWeight: 600 }}>
-            The {this.props.label} view stopped rendering
-          </h1>
-          <p className="dim" style={{ marginTop: 6, lineHeight: 1.55 }}>
-            {error.message || 'The view threw while rendering and has no message.'}
-          </p>
-          <p className="faint" style={{ marginTop: 6, lineHeight: 1.5 }}>
-            Only this view is affected. Agent processes run outside the window, so a session that
-            was running is still running and its terminal reattaches with its scrollback. Reload
-            the view, or move to another one and come back.
-          </p>
-          {stack && (
-            <details style={{ marginTop: 10 }}>
-              <summary className="faint" style={{ fontSize: 'var(--t-small)', cursor: 'pointer' }}>
-                Component stack
-              </summary>
-              <pre className="mono faint" style={{
-                marginTop: 6, maxHeight: 180, overflow: 'auto', whiteSpace: 'pre-wrap',
-                fontSize: 'var(--t-micro)', lineHeight: 1.45,
-              }}>{stack.trim()}</pre>
-            </details>
-          )}
+      <section className="pane view-recovery" role="alert">
+        <div className="view-recovery-content">
+          <span className="view-recovery-symbol" aria-hidden="true"><Icon name="refresh" /></span>
+          <PageHead eyebrow={this.props.label} title="Let’s try this view again."
+            lead="Something interrupted the display. You can reload this view or use the navigation to open another one." />
+          <button className="btn btn-primary" type="button" onClick={this.reload}>Reload view <Icon name="refresh" /></button>
+          <p className="view-recovery-note">Reloading this view does not stop agent processes. Open Sessions to check their current state.</p>
+          <details className="view-recovery-details">
+            <summary>Technical details</summary>
+            <p>{error.message || 'The view threw while rendering and has no message.'}</p>
+            {stack && <pre>{stack.trim()}</pre>}
+          </details>
         </div>
-        <button className="btn btn-primary" type="button" onClick={this.reload}>Reload view</button>
       </section>
     );
   }
