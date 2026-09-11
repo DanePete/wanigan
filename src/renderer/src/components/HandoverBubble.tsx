@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { OrbStory } from '@shared/orb-story';
-import {
-  HANDOVER_INVITATION, handoverMessage, handoverState,
-} from '@shared/context-handover';
+import { companionSays, type CompanionSays } from '@shared/companion-says';
+import type { AccountLimits } from '@shared/types';
 
 type Phase = 'idle' | 'asking' | 'carrying';
 
@@ -25,6 +24,9 @@ export default function HandoverBubble({ story, onOpened, onError }: {
 }) {
   const reading = story?.context;
   const sessionId = reading?.sessionId ?? null;
+  const [says, setSays] = useState<CompanionSays | null>(null);
+  const [limits, setLimits] = useState<{ at: number; limits: AccountLimits[] } | null>(null);
+  const [accountId, setAccountId] = useState<string | null>(null);
   const [showing, setShowing] = useState(false);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
@@ -33,10 +35,34 @@ export default function HandoverBubble({ story, onOpened, onError }: {
   // what is on screen — and a stale closure would make the band flap.
   const showingRef = useRef(showing); showingRef.current = showing;
 
+  // Limits are never polled for: reading them spends a probe, and the rule
+  // that opening a view must not start one is already pinned in the suite.
+  // This repeats what somebody's own visit to Usage established, or nothing.
   useEffect(() => {
-    const state = handoverState(reading, Date.now(), showingRef.current);
-    setShowing(state === 'suggest');
-  }, [reading]);
+    let alive = true;
+    const read = () => {
+      window.wanigan.usage.known()
+        .then((next) => { if (alive) setLimits(next); })
+        .catch(() => { if (alive) setLimits(null); });
+      if (sessionId) {
+        window.wanigan.sessions.list()
+          .then((rows) => { if (alive) setAccountId(rows.find((r) => r.id === sessionId)?.accountId ?? null); })
+          .catch(() => { if (alive) setAccountId(null); });
+      }
+    };
+    read();
+    const timer = window.setInterval(read, 20_000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [sessionId]);
+
+  useEffect(() => {
+    const next = companionSays({
+      reading, limits: limits?.limits ?? null, limitsAt: limits?.at ?? null,
+      sessionAccountId: accountId, now: Date.now(), showingContext: showingRef.current,
+    });
+    setSays(next);
+    setShowing(next?.kind === 'context');
+  }, [reading, limits, accountId]);
 
   // A compaction genuinely reclaims context, so a dismissal is spent: asking
   // again after one is a new question rather than a repeat of the old one.
@@ -77,27 +103,33 @@ export default function HandoverBubble({ story, onOpened, onError }: {
     }
   }, [sessionId, onOpened, onError]);
 
-  if (!reading || !showing || dismissed === sessionId) return null;
-  const matched = !reading.note.includes('match unconfirmed');
+  if (!says || dismissed === sessionId) return null;
+  // A limit message with nowhere roomier to go can only report; the carry
+  // action belongs to the context case and to a limit that has somewhere to go.
+  const canCarry = says.kind === 'context' || !!says.accountId;
 
   return (
-    <div className="handover-bubble" role="status">
-      <p className="handover-said">{handoverMessage(reading, matched)}</p>
-      <p className="handover-ask">{HANDOVER_INVITATION}</p>
+    <div className="handover-bubble" role="status" data-kind={says.kind}>
+      <p className="handover-said">{says.said}</p>
+      {says.ask && <p className="handover-ask">{says.ask}</p>}
       {note && <p className="handover-note">{note}</p>}
       <div className="handover-actions">
-        <button className="btn btn-sm btn-primary" type="button" disabled={phase !== 'idle'}
-                onClick={() => void carry()}>
-          {phase === 'asking' ? 'Asking for a note…' : phase === 'carrying' ? 'Opening…' : 'Carry it across'}
-        </button>
+        {canCarry && (
+          <button className="btn btn-sm btn-primary" type="button" disabled={phase !== 'idle'}
+                  onClick={() => void carry()}>
+            {phase === 'asking' ? 'Asking for a note…' : phase === 'carrying' ? 'Opening…' : 'Carry it across'}
+          </button>
+        )}
         <button className="btn btn-sm" type="button" disabled={phase !== 'idle'}
                 onClick={() => setDismissed(sessionId)}>
-          Not now
+          {canCarry ? 'Not now' : 'Got it'}
         </button>
       </div>
-      <p className="handover-why">
-        The agent writes a handover note, then a new session opens with it. This one stays open.
-      </p>
+      {canCarry && (
+        <p className="handover-why">
+          The agent writes a handover note, then a new session opens with it. This one stays open.
+        </p>
+      )}
     </div>
   );
 }
