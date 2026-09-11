@@ -19,7 +19,7 @@ import { agentsChain } from './codex-sessions';
 import { listProjects, addProject, removeProject, refreshBranches, projectById } from './store';
 import * as batch from './batch';
 import * as code from './code';
-import { getSetting, setSetting, setTheme, setUserPreference, spendCap } from './settings';
+import { setSetting, setTheme, setUserPreference, spendCap } from './settings';
 import { hasKey, setKey, clearKey, keyFingerprint, verifyKey, encryptionAvailable, getWorkspaceId,
          hasProviderKey, setProviderKey, clearProviderKey, providerKeyFingerprint } from './keys';
 import type {
@@ -27,7 +27,7 @@ import type {
   BackupCheck, BackupRestoreSummary, BackupSummary, DocketPlanNode,
   HeadlessRowDetail, HeadlessRowSummary, HeadlessStartRequest, HookInput,
   InteractiveSessionLoad, LaunchOptions, McpServerConfig, PluginScope,
-  ProviderInfo, ProviderManifestInspection, QueueSlots, RunConfig, Session,
+  ProviderManifestInspection, QueueSlots, RunConfig, Session,
   SourceConfig, ThemeSetting, TrustLevel,
 } from '../shared/types';
 import { assertManagedRoot, assertOpenablePath } from './roots';
@@ -66,6 +66,7 @@ import * as gh from './gh';
 import { demoOn, setDemo, demoState } from './demo';
 import { readPreflight } from './preflight';
 import { discoverProjects, wasDiscovered } from './discovery';
+import { handoffConversation, handoffPlan } from './handoff';
 import { createDemoWorkspace, type DemoWorkspace } from './demo-workspace';
 import { DEMO_PROMPTS, DEMO_UNAVAILABLE } from '../shared/demo';
 import * as schedule from './schedule';
@@ -690,11 +691,16 @@ function createWindow(demo = storedDemoMode()) {
   installApplicationMenu(() => win, demo ? false : undefined);
 
   const devRenderer = developmentRendererUrl();
-  if (devRenderer) {
-    win.loadURL(devRenderer);
-  } else {
-    win.loadFile(rendererEntryPath());
-  }
+  // Both of these reject — a dev server that is not up yet, a packaged bundle
+  // whose renderer entry is missing or unreadable. Unhandled, that rejection
+  // is the one startup failure in this file that reports nothing: the window
+  // is already on screen, so the operator watches an empty frame while every
+  // neighbouring failure gets showErrorBox or recovery mode.
+  const loaded = devRenderer ? win.loadURL(devRenderer) : win.loadFile(rendererEntryPath());
+  loaded.catch((error: unknown) => {
+    console.error('[wanigan] the window could not load its renderer:', error);
+    dialog.showErrorBox('Wanigan could not open its window', startupErrorMessage(error));
+  });
 }
 
 app.whenReady().then(async () => {
@@ -1587,6 +1593,25 @@ function registerIpc() {
    * list in a main-process dialog before anything is registered. Main decides,
    * with the operator, exactly as the folder picker arranges today.
    */
+  /*
+   * Continuing one conversation on another Codex account, for when the one it
+   * started on runs out of usage. Read-only: it reports what could be done and
+   * why not, so a surface never draws a control that cannot work.
+   */
+  handle('handoff:plan', (sessionId: unknown) =>
+    (typeof sessionId === 'string' && sessionId.trim() ? handoffPlan(sessionId.trim()) : {
+      threadId: null, fromAccountId: null, targets: [], unavailable: 'No session was named.',
+    }));
+  /*
+   * The write half. main decides: the account must be one of the targets this
+   * conversation actually has, the source is never moved or removed, and the
+   * account it started on can still continue it afterwards.
+   */
+  handle('handoff:move', (sessionId: unknown, accountId: unknown) => {
+    if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('No session was named.');
+    if (typeof accountId !== 'string' || !accountId.trim()) throw new Error('No account was chosen.');
+    return handoffConversation(sessionId.trim(), accountId.trim());
+  });
   handle('discovery:import', async (raw: unknown) => {
     if (!Array.isArray(raw) || raw.some((entry) => typeof entry !== 'string')) {
       throw new Error('Choose projects from the discovered list.');
