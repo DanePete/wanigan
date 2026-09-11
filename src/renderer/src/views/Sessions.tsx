@@ -140,6 +140,26 @@ function size(n: number): string {
 const plural = (n: number, one: string) => `${num(n)} ${one}${n === 1 ? '' : 's'}`;
 
 /**
+ * Where a Recent row's name came from, said out loud on hover.
+ *
+ * Most of these names were not written by the person reading them: Claude Code
+ * titles its own conversations, and Wanigan now shows that title rather than
+ * repeating the project name on every row. So the row says whose words they
+ * are. An agent's title is a characterisation of the work, not a measurement
+ * of it, and a row that quietly passed one off as the operator's own label
+ * would be the estimate-as-fact mistake wearing a new hat.
+ *
+ * It rides the tooltip the row already had, which also makes it where the full
+ * text of a clipped ninety-character name can be read.
+ */
+function pastNameNote(p: PastSession): string {
+  if (!p.title || p.titleSource === 'named') return '';
+  if (p.titleSource === 'agent') return `“${p.title}” — the agent’s own name for this conversation.\n`;
+  if (p.titleSource === 'prompt') return `“${p.title}” — the first thing asked in this conversation.\n`;
+  return '';
+}
+
+/**
  * index.css owns the global focus styles and this view does not; every button
  * it hand-styles therefore carries its own ring. :focus-visible is asked of the
  * element rather than tracked, so a mouse click never draws one and a Tab does.
@@ -751,30 +771,46 @@ export default function Sessions({
                 <div key={p.id} className={forgetting === p.id ? 'past-row past-row-confirming' : 'past-row'}>
                   <FocusBtn className="past-main" disabled={!p.live || resuming !== null}
                             title={p.live
-                              ? `Resume this exact conversation in ${p.projectPath}`
+                              ? `${pastNameNote(p)}Resume this exact conversation in ${p.projectPath}`
                               : 'Project folder no longer exists'}
                             onClick={() => resume(p)}>
                     <span style={{ minWidth: 0, flex: 1 }}>
-                      <span style={{ display: 'block', fontSize: 'var(--t-small)' }}>
+                      <span className="past-name">
                         {p.pinnedAt != null && (
                           <span aria-label="pinned" title="Pinned" style={{ color: 'var(--accent)' }}>★ </span>
                         )}
                         {p.title ?? p.projectName}
                         {!p.live && <span className="faint"> · missing</span>}
                       </span>
-                      <span className="faint mono" style={{ fontSize: 'var(--t-micro)' }}>
-                        {p.title ? `${p.projectName} · ` : ''}
-                        {providers.find((x) => x.id === p.providerId)?.label ?? p.providerId}
-                        {p.model && ` · ${p.model}`}
-                        {p.effort && ` · ${p.effort}`}
-                        {p.continuationCount > 1 && ` · ${p.continuationCount} launches`}
-                        {' · '}{ago(p.startedAt)}
+                      {/* Two parts, because they are not equally droppable. The
+                          rail is narrow and this line now carries the project
+                          too — the name above took its place — so the detail
+                          clips and the timestamp never does. Letting the whole
+                          string wrap cost three lines a row and a third of the
+                          conversations that used to fit on screen. */}
+                      <span className="past-meta faint mono">
+                        <span className="past-meta-detail">
+                          {p.title ? `${p.projectName} · ` : ''}
+                          {providers.find((x) => x.id === p.providerId)?.label ?? p.providerId}
+                          {p.model && ` · ${p.model}`}
+                          {p.effort && ` · ${p.effort}`}
+                          {p.continuationCount > 1 && ` · ${p.continuationCount} launches`}
+                        </span>
+                        <span className="past-when">{ago(p.startedAt)}</span>
                       </span>
                     </span>
                     <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>
                       {resuming === p.id ? '…' : '↻'}
                     </span>
                   </FocusBtn>
+                  {/* Pin, settle and forget are occasional and, for the last
+                      one, destructive — and together they were taking 71px of
+                      a 231px row, permanently, leaving the conversation's own
+                      name 120px. On a mouse they now wait until the row is
+                      hovered or holds keyboard focus. On a touch screen there
+                      is no hover to wait for, so they stay exactly as they
+                      were; see the coarse-pointer rule in index.css. */}
+                  <div className="past-actions">
                   <FocusBtn className="past-x faint"
                             title={p.pinnedAt != null
                               ? 'Unpin — back to its place by recency'
@@ -801,6 +837,7 @@ export default function Sessions({
                             onClick={() => setForgetting(p.id)}>
                     ×
                   </FocusBtn>
+                  </div>
                   {forgetting === p.id && (
                     <ConfirmNote
                       tone="error"

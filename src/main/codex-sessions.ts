@@ -521,6 +521,74 @@ function propagateUniqueLineageIds(rows: SessionRow[]): Set<string> {
 }
 
 /** Backfill legacy rows and propagate the exact UUID through resume lineages. */
+/** Codex files a rollout by year/month/day, so four levels is the whole tree. */
+const ROLLOUT_SCAN_DEPTH = 4;
+
+function scanForRollouts(dir: string, wanted: Set<string>, found: Map<string, string>, depth: number): void {
+  if (depth > ROLLOUT_SCAN_DEPTH || wanted.size === 0) return;
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const entry of entries) {
+    if (wanted.size === 0) return;
+    // Never follow a link out of the sessions tree: one placed there would
+    // otherwise make this walk somebody else's filesystem.
+    if (entry.isSymbolicLink()) continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      scanForRollouts(full, wanted, found, depth + 1);
+      continue;
+    }
+    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
+    const name = entry.name.toLowerCase();
+    for (const id of wanted) {
+      if (!name.includes(id)) continue;
+      found.set(id, full);
+      wanted.delete(id);
+      break;
+    }
+  }
+}
+
+/**
+ * Each named conversation's rollout file, by index first and by name second.
+ *
+ * `codexRolloutPaths` reads Codex's own state database, which is the right
+ * answer when it is there — its comment is explicit that a partial or
+ * unavailable one "simply leaves that thread unmetered". Unmetered is a fine
+ * outcome for a spend column and a bad one for anything that has to find the
+ * file: it would report a conversation plainly sitting on disk as absent.
+ *
+ * So when the index cannot answer, look for the file. Codex names a rollout
+ * `rollout-<timestamp>-<uuid>.jsonl`, and the uuid is the thread id, so the
+ * name is evidence rather than a guess — the scan matches the id and the
+ * extension, never a date or a position.
+ *
+ * Batched deliberately. The scan is one walk per home for everything still
+ * missing, not one walk per conversation: a list of forty unindexed rows would
+ * otherwise re-read the same tree forty times to answer forty questions about
+ * it.
+ */
+export function codexRolloutFiles(ids: readonly string[]): Map<string, string> {
+  const found = new Map<string, string>();
+  const wanted = new Set(ids.map((id) => String(id ?? '').toLowerCase()).filter(Boolean));
+  if (wanted.size === 0) return found;
+
+  try {
+    for (const [id, file] of codexRolloutPaths([...wanted])) {
+      if (wanted.delete(id)) found.set(id, file);
+    }
+  } catch { /* the index is optional; the scan below is the answer without it */ }
+  if (wanted.size === 0) return found;
+
+  let roots: string[] = [];
+  try { roots = accounts.readRoots('codex'); } catch { /* accounts table unavailable */ }
+  for (const home of roots) {
+    scanForRollouts(path.join(home, 'sessions'), wanted, found, 0);
+    if (wanted.size === 0) break;
+  }
+  return found;
+}
+
 export function backfillCodexThreadIds(): number {
   const rows = codexRows();
   if (!rows.length) return 0;

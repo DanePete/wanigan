@@ -297,6 +297,9 @@ export type LaunchOptions = {
 };
 
 /** A finished session, recoverable after a quit. */
+/** Where a Recent row's name came from. Wanigan authors none of these. */
+export type SessionTitleSource = 'named' | 'agent' | 'prompt';
+
 export type PastSession = {
   id: string;
   conversationId: string | null;
@@ -322,6 +325,14 @@ export type PastSession = {
   settledAt: number | null;
   /** The user-facing name; null falls back to the project name. */
   title: string | null;
+  /**
+   * Where `title` came from, so a surface never has to guess how much the name
+   * is worth. `named` is a person's own rename and always wins; `agent` is the
+   * harness's own title record; `prompt` is the first thing that person typed.
+   * Null means neither the row nor any transcript offered one — Wanigan
+   * composes no name of its own, and does not pay a model to invent one.
+   */
+  titleSource: SessionTitleSource | null;
 };
 
 /**
