@@ -20,7 +20,11 @@ for v in $(env | grep -oE '^VSCODE_[A-Z_]+' || true); do unset "$v"; done
 # runs stale code and you debug a bug you already fixed.
 npm run build
 
-NEWEST_SRC=$(find src -name '*.ts' -o -name '*.tsx' | xargs stat -f '%m' | sort -n | tail -1)
+# -exec ... + rather than xargs, and parenthesised so the exec applies to
+# both -name branches rather than only the second. A source path containing a
+# space would otherwise be split into two arguments and stat would fail on
+# both halves, making this guard compare against the wrong timestamp.
+NEWEST_SRC=$(find src \( -name '*.ts' -o -name '*.tsx' \) -exec stat -f '%m' {} + | sort -n | tail -1)
 BUILT=$(stat -f '%m' out/main/index.js)
 if [ "$BUILT" -lt "$NEWEST_SRC" ]; then
   echo "Refusing to launch: out/ is older than src/ after a build."

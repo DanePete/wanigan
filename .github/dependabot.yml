@@ -11,3 +11,13 @@ updates:
           - electron
           - electron-builder
           - electron-vite
+
+  # The workflows pin every action to a version, and the two binaries the
+  # Hygiene workflow downloads pin theirs in `env:`. Pinning without something
+  # watching it is how a security tool quietly stops being updated, so this
+  # watches the action versions too.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

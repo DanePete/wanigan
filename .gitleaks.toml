@@ -1,0 +1,38 @@
+# Secret scanning for a repository whose test suite is partly about secrets.
+#
+# Wanigan redacts credentials out of transcripts and evidence before they are
+# stored, and the only way to test that is to feed it things shaped exactly like
+# credentials. So the smoke suite contains a GitHub token, a JWT, an AWS key id
+# and a PEM block on purpose, and a scanner that did not know this would report
+# 28 leaks on a clean tree — which is how a scanner gets switched off.
+#
+# The fixture allowlist is by VALUE, not by path. Allowing a path would mean a
+# real credential pasted into a smoke file is waved through, and that was not a
+# guess — the path-scoped version of this file was tested with a real-shaped
+# GitHub token planted inside smoke3.ts and did not report it. Matching the four
+# literal fixture strings instead means a real credential fails wherever it is
+# committed, smoke files included.
+#
+# Verified before it was written: all 28 findings across 167 commits were
+# examined individually. The private key's body reads "smokekeymaterial", the
+# JWT is jwt.io's own published example, the GitHub token is
+# ghp_abcdefghij0123456789ABCDEFGHIJ, and the manifest hits are SHA-256 content
+# hashes of source files. None is a credential.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Content hashes in the visual-regression manifests are 64-hex digests, not keys."
+paths = ['''docs/visuals/.*/source-manifest\.json''']
+
+[[allowlists]]
+description = "The redaction suite's fixtures, by value: published examples and obvious placeholders."
+regexes = [
+  '''smokekeymaterial''',
+  '''ghp_abcdefghij0123456789ABCDEFGHIJ''',
+  '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiIxMjM0NSJ9''',
+  # gitleaks matches an allowlist regex against the extracted secret, not the
+  # surrounding line, so this is the value alone rather than `token=…`.
+  '''^abc123def456$''',
+]

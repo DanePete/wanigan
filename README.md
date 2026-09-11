@@ -1,5 +1,10 @@
 # Wanigan
 
+[![CI](https://github.com/DanePete/wanigan/actions/workflows/ci.yml/badge.svg)](https://github.com/DanePete/wanigan/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/DanePete/wanigan/actions/workflows/codeql.yml/badge.svg)](https://github.com/DanePete/wanigan/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/DanePete/wanigan/badge)](https://scorecard.dev/viewer/?uri=github.com/DanePete/wanigan)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A desktop control surface for AI work across your repos. Three things in one window:
 
 - **Sessions** — Claude Code, Codex and GLM running as real terminals, one per project

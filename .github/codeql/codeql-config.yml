@@ -1,0 +1,15 @@
+name: Wanigan CodeQL configuration
+
+# security-extended over the default pack. The default set is tuned to keep
+# noise low on any repository; this one is worth the extra queries because the
+# main process spawns CLIs, writes files under a user's home, and serves a
+# paired phone over HTTP.
+queries:
+  - uses: security-extended
+
+paths-ignore:
+  # Third-party numeric code kept byte-identical with upstream. Patching a
+  # finding here would be patching a vendored file.
+  - src/renderer/src/orb/vendor
+  # Screenshots, reports and manifests. No executable source.
+  - docs
