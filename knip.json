@@ -1,0 +1,20 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src/main/index.ts",
+    "src/preload/index.ts",
+    "src/renderer/src/main.tsx",
+    "src/renderer/src/theme-boot.ts",
+    "electron.vite.config.ts",
+    "src/shared/*.test.ts",
+    "scripts/*.{mjs,cjs,js}"
+  ],
+  "project": ["src/**/*.{ts,tsx}", "scripts/**/*.{mjs,cjs,js}"],
+  "paths": {
+    "@shared/*": ["src/shared/*"],
+    "@/*": ["src/renderer/src/*"]
+  },
+  "ignore": ["**/*.d.ts"],
+  "ignoreDependencies": ["@webgpu/types"],
+  "ignoreUnresolved": ["./runtime.js"]
+}

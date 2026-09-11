@@ -61,6 +61,18 @@ jobs:
       - name: Renderer style gate
         run: npm run test:renderer-style
 
+      # What `noUnusedLocals` cannot see: a package two suites in `npm test`
+      # require but nothing declares. `@electron/asar` was exactly that — it
+      # resolved only as a transitive dependency of electron-builder, so
+      # test:package-hooks and test:local-install would have broken on the
+      # release that stopped hoisting it, on a fresh clone, for a reason no
+      # contributor could have read off the diff. The gate covers the
+      # categories that are clean today; over-exports are excluded as a
+      # backlog rather than a regression, and `npm run dead-code:all` lists
+      # them.
+      - name: Dead code and undeclared dependencies
+        run: npm run test:dead-code
+
       - name: Install Xvfb
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
 

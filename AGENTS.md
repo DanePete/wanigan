@@ -24,12 +24,19 @@ as observed fact.
 
 - Use Node `22.23.2` from `.nvmrc`. Node 16 cannot build this project; use
   `nvm use` before `npm` commands.
-- Run `npm test` before handing off a code change. It is six steps in order:
-  `typecheck`, `test:shared`, `test:renderer-style`, `test:package-hooks`,
-  `test:local-install`, then the offline main-process `smoke` suite. `test:shared`
+- Run `npm test` before handing off a code change. It is seven steps in order:
+  `typecheck`, `test:shared`, `test:renderer-style`, `test:dead-code`,
+  `test:package-hooks`, `test:local-install`, then the offline main-process
+  `smoke` suite. `test:shared`
   is plain `node --test` over `src/shared`, which is pure by construction: it
   answers in under a second, so a contract belongs there rather than in the
-  thirty-second suite whenever it needs no process. CI runs the same six, splitting
+  thirty-second suite whenever it needs no process. `test:dead-code` is knip over
+  the entry points in `knip.json`: it fails on an unused file, an unused
+  dependency, or one that is imported but never declared — the last being how
+  `@electron/asar` stayed a transitive dependency of electron-builder while two
+  suites in `npm test` required it directly. Over-exports are excluded from the
+  gate as a backlog rather than a regression; `npm run dead-code:all` lists
+  them. CI runs the same seven, splitting
   the two macOS packaging suites onto a macOS runner. Run `git diff --check` for
   documentation and UI changes too.
 - Renderer UI is built from the shared frame and primitives, and the style gate
