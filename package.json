@@ -32,6 +32,7 @@
     "probe:preflight": "node scripts/probe-preflight.mjs",
     "probe:terminal": "node scripts/probe-terminal-replay.mjs",
     "probe:handover": "node scripts/probe-handover.mjs",
+    "probe:recent": "node scripts/probe-recent-names.mjs",
     "test:package-hooks": "node scripts/test-package-hooks.cjs",
     "test:local-install": "node scripts/test-local-macos-install.cjs",
     "app": "./scripts/launch.sh",

@@ -5,6 +5,7 @@ import * as accounts from './accounts';
 import { runsClaudeCli } from './providers';
 import { getSetting, setSetting } from './settings';
 import { redactCredentials } from './redact';
+import { titleFromTranscriptText, type ReadTitle } from '../shared/session-title';
 import type { ClaudeContextUsage, ProviderId, TranscriptHit, TranscriptRecall, TranscriptTurn } from '../shared/types';
 
 /* ── where Claude Code keeps its transcripts ─────────────────────────── */
@@ -581,6 +582,70 @@ export function searchTranscripts(q: string, limit = 50): TranscriptHit[] {
  * not be read", because a caller about to seed a new session with this needs to
  * tell an empty answer apart from a failed one.
  */
+/**
+ * A conversation's own name, read from the transcript the agent already keeps.
+ *
+ * Everything decidable from text is decided in `shared/session-title.ts`, which
+ * documents why this exists and what it refuses to invent. What is here is the
+ * part that touches a disk: which file belongs to a conversation, how much of
+ * it to read, and not reading it twice.
+ *
+ * Exact matches only. `transcriptPathFor` falls back to the newest transcript
+ * in the project when an id is gone, and the context reader can afford that
+ * because it labels the result "match unconfirmed" in the same breath. A list
+ * of names cannot: the fallback would quietly caption an old conversation with
+ * a newer one's title, which is worse than the project name it replaced.
+ *
+ * Bounded and cached: the head of the file, keyed on its size and mtime, so a
+ * list of forty costs forty small reads once and nothing on any later render.
+ * 256 KiB reaches well past the opening turns of a conversation without ever
+ * pulling a multi-megabyte transcript into memory to read one line of it.
+ */
+const TITLE_HEAD_BYTES = 256 * 1024;
+
+const titleCache = new Map<string, { stamp: string; read: ReadTitle }>();
+
+export type { ReadTitle, TitleSource } from '../shared/session-title';
+
+function headOf(file: string, bytes: number): string {
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(file, 'r');
+    const buffer = Buffer.allocUnsafe(bytes);
+    const read = fs.readSync(fd, buffer, 0, bytes, 0);
+    return buffer.subarray(0, read).toString('utf8');
+  } catch {
+    return '';
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd); } catch { /* already closed */ } }
+  }
+}
+
+/** A name for one transcript file, read from its head and remembered. */
+export function titleFromTranscript(file: string): ReadTitle {
+  let stamp: string;
+  try {
+    const stat = fs.statSync(file);
+    if (!stat.isFile()) return null;
+    stamp = `${stat.size}:${stat.mtimeMs}`;
+  } catch {
+    return null;
+  }
+  const hit = titleCache.get(file);
+  if (hit && hit.stamp === stamp) return hit.read;
+
+  const read = titleFromTranscriptText(headOf(file, TITLE_HEAD_BYTES));
+  titleCache.set(file, { stamp, read });
+  return read;
+}
+
+/** The Claude conversation's own name, by exact id only. */
+export function conversationTitle(projectPath: string, conversationId: string | null): ReadTitle {
+  if (!conversationId) return null;
+  const file = exactIn(claudeProjectDirs(projectPath), conversationId);
+  return file ? titleFromTranscript(file) : null;
+}
+
 export function lastAssistantTurn(projectPath: string, conversationId: string | null): string | null {
   const file = transcriptPathFor(projectPath, conversationId);
   if (!file) return null;

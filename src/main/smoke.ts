@@ -206,8 +206,9 @@ export async function runSmoke(): Promise<void> {
     await runScoutSmoke(check, say);
     const { runCheckpointSmoke } = await import('./smoke6');
     await runCheckpointSmoke(check, say);
-    const { runLifecycleSmoke } = await import('./smoke7');
+    const { runLifecycleSmoke, runSessionTitleSmoke } = await import('./smoke7');
     await runLifecycleSmoke(check, say);
+    await runSessionTitleSmoke(check, say);
     const { runGhSmoke } = await import('./smoke8');
     await runGhSmoke(check, say);
     const { runContextMeterSmoke } = await import('./smoke9');

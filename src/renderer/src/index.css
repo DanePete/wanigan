@@ -1031,11 +1031,43 @@ html { scrollbar-color: var(--line) transparent; }
   .code-inspector-actions { margin-left: 0; }
 }
 
-.past-row { display: flex; align-items: stretch; gap: 2px; }
+.past-row { display: flex; align-items: stretch; gap: 2px; position: relative; }
+.past-actions { display: flex; align-items: stretch; gap: 2px; }
+/* Reclaim the row for the thing it is about. With a mouse these three wait
+   until the row is hovered or holds focus, so the name and the detail get the
+   whole width instead of two thirds of it. They keep their place in the tab
+   order — opacity hides them, it does not remove them — and focus-within
+   brings them back the moment one is tabbed to. */
+@media (hover: hover) and (pointer: fine) {
+  .past-actions {
+    position: absolute; top: 0; right: 0; bottom: 0;
+    align-items: center;
+    padding-left: 8px;
+    border-radius: var(--r-sm);
+    background: linear-gradient(to right, transparent, var(--bg-sunk) 8px);
+    opacity: 0;
+  }
+  .past-row:hover .past-actions,
+  .past-row:focus-within .past-actions { opacity: 1; }
+}
 .past-main {
   flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
   padding: 4px 8px; border-radius: var(--r-sm); text-align: left;
 }
+/* An agent-written name runs to ninety characters where a project name ran to
+   ten, so both lines of a Recent row clip rather than wrap. Wrapping cost
+   three lines a row in a 240px rail, which is a third of the conversations
+   that used to fit on screen. */
+.past-name {
+  display: block; font-size: var(--t-small);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The two halves are not equally droppable: "which agent, which model" is
+   detail, "when" is how you find the conversation you mean. So the detail
+   clips and the timestamp is never allowed to shrink or be clipped away. */
+.past-meta { display: flex; align-items: baseline; gap: 6px; font-size: var(--t-micro); min-width: 0; }
+.past-meta-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.past-when { flex: none; margin-left: auto; }
 .past-main:hover:not(:disabled) { background: var(--bg-sunk); }
 .past-main:disabled { opacity: .45; cursor: not-allowed; }
 .past-x { padding: 0 6px; border-radius: var(--r-sm); font-size: var(--t-lead); line-height: 1; }

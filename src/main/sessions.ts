@@ -20,7 +20,7 @@ import { otelEnv } from './otel';
 import * as accounts from './accounts';
 import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './hooks';
 import { finalizeSessionCheckpoints, forgetSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
-import { archiveSession } from './transcripts';
+import { archiveSession, conversationTitle, titleFromTranscript, type ReadTitle } from './transcripts';
 import { createWorktree, removeWorktree, repoRootFor, worktreeStatus } from './worktrees';
 import { trustFor } from './policy';
 import { slots } from './queue';
@@ -34,7 +34,8 @@ import { redactCredentials } from './redact';
 import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } from './learning';
 import {
   assertCodexThreadWriterUnlocked, backfillCodexThreadIds, captureNewCodexThreadId,
-  codexThreadIdForSession, discoverCodexThreadId, normalizeCodexThreadId, validateExactCodexThread,
+  codexRolloutFiles, codexThreadIdForSession, discoverCodexThreadId, normalizeCodexThreadId,
+  validateExactCodexThread,
 } from './codex-sessions';
 
 const exec = promisify(execFile);
@@ -1752,7 +1753,7 @@ function savedConversationId(row: SessionLogRow): string | null {
  * Conversation IDs belong to harnesses, not presentation profiles. This keeps
  * a thread from appearing twice after a provider-pack rename or migration.
  */
-function conversationKey(row: SessionLogRow, conversationId: string): string {
+function harnessOf(row: SessionLogRow): string {
   const stored = typeof row.harness_id === 'string' && row.harness_id.trim()
     ? row.harness_id
     : null;
@@ -1760,9 +1761,12 @@ function conversationKey(row: SessionLogRow, conversationId: string): string {
   // records. Their built-in provider IDs are reliable migration aliases; a
   // generic/third-party profile remains scoped to its own opaque provider ID.
   const legacy = String(row.provider_id);
-  const harness = stored
+  return stored
     ?? (legacy === 'codex' ? 'codex' : legacy === 'claude' || legacy === 'glm' ? 'claude-code' : `provider:${legacy}`);
-  return `${harness}:conversation:${conversationId}`;
+}
+
+function conversationKey(row: SessionLogRow, conversationId: string): string {
+  return `${harnessOf(row)}:conversation:${conversationId}`;
 }
 
 /**
@@ -1876,7 +1880,13 @@ export function pastSessions(limit = 40): PastSession[] {
   const active = entries.filter(([key]) => flagsOf(key).pinnedAt == null && flagsOf(key).settledAt == null).slice(0, limit);
   const settled = entries.filter(([key]) => flagsOf(key).pinnedAt == null && flagsOf(key).settledAt != null).slice(0, limit);
 
-  return [...pinned, ...active, ...settled]
+  const shown = [...pinned, ...active, ...settled];
+  // Deliberately after the cap: this is the only part of Recent that touches
+  // the filesystem per row, and reading a name for all 154 conversations ever
+  // recorded to show forty of them would be work nobody sees.
+  const read = readTitles(shown);
+
+  return shown
     .map(([key, r]) => ({
       id: String(r.id),
       conversationId: savedConversationId(r),
@@ -1895,8 +1905,55 @@ export function pastSessions(limit = 40): PastSession[] {
       live: fs.existsSync(String(r.project_path)),
       pinnedAt: flagsOf(key).pinnedAt,
       settledAt: flagsOf(key).settledAt,
-      title: r.title ? String(r.title) : null,
+      title: r.title ? String(r.title) : read.get(String(r.id))?.title ?? null,
+      titleSource: r.title ? 'named' : read.get(String(r.id))?.source ?? null,
     }));
+}
+
+/**
+ * A name for each conversation about to be shown, from the agent's own record.
+ *
+ * Neither harness is asked for anything and no model is paid: Claude Code
+ * already writes an `ai-title` into its transcript, and both record the prompt
+ * the person typed. This only reads what is there, so a conversation that kept
+ * no such record keeps its null and renders exactly as it did before.
+ *
+ * Codex ids are resolved in one batch, because the fallback when Codex's state
+ * index cannot answer is a walk of its sessions tree, and asking once per row
+ * would walk that same tree once per row. A row already renamed by hand is
+ * skipped entirely — that name wins, so reading a second one is wasted work.
+ *
+ * Every read is guarded. A name is presentation; a transcript that has been
+ * deleted, truncated or is being written to right now costs this row its title
+ * and never the list.
+ */
+function readTitles(shown: Array<[string, SessionLogRow]>): Map<string, NonNullable<ReadTitle>> {
+  const out = new Map<string, NonNullable<ReadTitle>>();
+  const codex = new Map<string, string>(); // thread id → session_log row id
+  for (const [, r] of shown) {
+    if (r.title) continue;
+    const conversationId = savedConversationId(r);
+    if (!conversationId) continue;
+    if (harnessOf(r) === 'codex') {
+      codex.set(conversationId.toLowerCase(), String(r.id));
+      continue;
+    }
+    try {
+      const found = conversationTitle(String(r.project_path), conversationId);
+      if (found) out.set(String(r.id), found);
+    } catch { /* unnamed is the honest fallback */ }
+  }
+  if (codex.size) {
+    try {
+      const paths = codexRolloutFiles([...codex.keys()]);
+      for (const [threadId, rowId] of codex) {
+        const file = paths.get(threadId);
+        const found = file ? titleFromTranscript(file) : null;
+        if (found) out.set(rowId, found);
+      }
+    } catch { /* Codex's index is optional, and so is a name */ }
+  }
+  return out;
 }
 
 /**
