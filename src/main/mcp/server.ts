@@ -45,22 +45,23 @@ const MAX_PAGE_SIZE = 200;
  */
 const CONFIRM_TIMEOUT_MS = 5 * 60_000;
 
-/** Safe to expose to the renderer: this contains no credential. */
-export type McpServerInfo = { port: number; url: string };
-/** Issued only into one generated session config; never sent over IPC. */
-export type McpSessionCapability = McpServerInfo & { token: string };
-type McpCapabilityBinding = { sessionId: string; projectId: string };
+// The capability store is a leaf module so that registry.ts can issue a token
+// without importing this file, which imports sessions, which imports registry.
+import {
+  capabilityFor, forgetCapability, issueMcpSessionCapability,
+  mcpServerInfo, revokeMcpSessionCapabilities, setMcpServerInfo,
+  type McpCapabilityBinding, type McpServerInfo, type McpSessionCapability,
+} from './capabilities';
+export { issueMcpSessionCapability, mcpServerInfo, revokeMcpSessionCapabilities };
+export type { McpServerInfo, McpSessionCapability };
 type McpCaller = McpCapabilityBinding & { projectPath: string; worktree: string | null };
 type ConfirmRequest = { tool: string; summary: string; costUsd: number };
 type Pending = { id: string; tool: string; summary: string; costUsd: number; at: number };
 
 let server: http.Server | null = null;
-let info: McpServerInfo | null = null;
 let confirmHandler: ((req: ConfirmRequest) => Promise<boolean>) | null = null;
 const sockets = new Set<Socket>();
 const pending = new Map<string, Pending>();
-/** Opaque per-session capabilities; process memory makes them die on restart. */
-const sessionCapabilities = new Map<string, McpCapabilityBinding>();
 
 /* ── JSON-RPC ────────────────────────────────────────────────────────── */
 
@@ -954,12 +955,12 @@ function originAllowed(req: http.IncomingMessage): boolean {
 }
 
 function authenticate(req: http.IncomingMessage): McpCaller | null {
-  if (!info) return null;
+  if (!mcpServerInfo()) return null;
   const header = req.headers.authorization;
   if (typeof header !== 'string') return null;
   const m = /^Bearer\s+(\S+)$/i.exec(header.trim());
   if (!m) return null;
-  const caller = sessionCapabilities.get(m[1]);
+  const caller = capabilityFor(m[1]);
   if (!caller) return null;
 
   // A copied config is not an enduring identity. The capability is valid only
@@ -969,7 +970,7 @@ function authenticate(req: http.IncomingMessage): McpCaller | null {
      WHERE id=? AND origin='wanigan' AND ended_at IS NULL
   `).get(caller.sessionId) as { project_id: string | null; project_path: string; worktree: string | null } | undefined;
   if (!row || row.project_id !== caller.projectId) {
-    sessionCapabilities.delete(m[1]);
+    forgetCapability(m[1]);
     return null;
   }
   return {
@@ -1090,7 +1091,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 /* ── lifecycle ───────────────────────────────────────────────────────── */
 
 export async function startMcpServer(): Promise<McpServerInfo> {
-  if (info && server) return info;
+  const already = mcpServerInfo();
+  if (already && server) return already;
 
   const s = http.createServer((req, res) => {
     void handle(req, res).catch(() => {
@@ -1138,8 +1140,9 @@ export async function startMcpServer(): Promise<McpServerInfo> {
   s.on('error', (e) => { console.warn('[wanigan] MCP server socket error (ignored):', e); });
 
   server = s;
-  info = { port: addr.port, url: `http://127.0.0.1:${addr.port}/mcp` };
-  return info;
+  const started: McpServerInfo = { port: addr.port, url: `http://127.0.0.1:${addr.port}/mcp` };
+  setMcpServerInfo(started);
+  return started;
 }
 
 export function stopMcpServer(): void {
@@ -1148,33 +1151,10 @@ export function stopMcpServer(): void {
   for (const sock of sockets) sock.destroy();
   sockets.clear();
   pending.clear();
-  sessionCapabilities.clear();
+  // Clearing the info also drops every outstanding capability.
+  setMcpServerInfo(null);
   server?.close();
   server = null;
-  info = null;
-}
-
-export function mcpServerInfo(): McpServerInfo | null {
-  return info ? { ...info } : null;
-}
-
-/**
- * Creates an unguessable capability for one generated session config. The
- * server validates the session row on every request, so an old copied config
- * dies at exit even if the process is otherwise still listening.
- */
-export function issueMcpSessionCapability(sessionId: string, projectId: string): McpSessionCapability | null {
-  if (!info || !server || !sessionId || !projectId) return null;
-  const token = randomBytes(32).toString('base64url');
-  sessionCapabilities.set(token, { sessionId, projectId });
-  return { ...info, token };
-}
-
-/** Revokes every in-memory capability for an ended or failed launch. */
-export function revokeMcpSessionCapabilities(sessionId: string): void {
-  for (const [token, caller] of sessionCapabilities) {
-    if (caller.sessionId === sessionId) sessionCapabilities.delete(token);
-  }
 }
 
 export function setConfirmHandler(fn: ((req: ConfirmRequest) => Promise<boolean>) | null): void {
