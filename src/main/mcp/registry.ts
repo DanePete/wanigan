@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { db, dataDir, ensurePrivateDir, ensurePrivateFile } from '../db';
 import { projectById } from '../store';
-import { issueMcpSessionCapability, revokeMcpSessionCapabilities } from './server';
+import { issueMcpSessionCapability, revokeMcpSessionCapabilities } from './capabilities';
 import type {
   McpApprovedCommand, McpServerClassification, McpServerConfig, McpServerReview,
   McpServerStatus, McpServerTrustState,
