@@ -9,8 +9,9 @@
   ],
   "errors": [],
   "fixture": true,
-  "at": "2026-09-11T03:38:57.230Z",
-  "archiveSha256": "299ee6f993ad6adae006cf5a63715b1cf662a5a109ef83555a9132f326f75c0e",
-  "rendererSha256": "b897f0d28ad2afe0f89eff96a03ea62e648cac27f5ad9f02df494c05fbef85b1",
-  "source": "packaged arm64 renderer, isolated synthetic bridge"
+  "at": "2026-09-11T21:17:22.671Z",
+  "source": "packaged renderer from app.asar, isolated synthetic bridge",
+  "archiveSha256": "f29a96210b60b4671b36c3f33fe883023e86296fcb942c7c5ec90ff9dcb5d2d2",
+  "rendererEntry": "assets/index-BirL5I_5.js",
+  "rendererSha256": "c77c4004cfe45602685d52adaccd381d8f3d61f4a9285230c22fbcf7ff5ae396"
 }
