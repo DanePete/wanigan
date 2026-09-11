@@ -18,9 +18,11 @@ perform at all on an estimated window, a stale reading or a future timestamp.
 
 `CompanionPresence` is mounted on every view except Mission room and is already
 handed that story; it already reads the context note to a screen reader.
-`Stop` arrives on the renderer's session-event stream. `transcriptFor` returns
-typed turns. Sessions launch with `initialPrompt`, which is typed into the
-session once it is ready.
+`Stop` arrives on the renderer's session-event stream. `transcriptPathFor`
+resolves the CLI's own live transcript for a conversation and `parseTranscript`
+turns it into typed turns — the pair the context reader already uses, and the
+only pair that works while a session is still running. Sessions launch with
+`initialPrompt`, which is typed into the session once it is ready.
 
 So this adds a threshold, a visible message, and one orchestration. It adds no
 new measurement, and it must not contradict the measurement that is there.
@@ -63,7 +65,12 @@ One click, then four steps Wanigan already has the parts for:
 1. Send a handover prompt to the running session, through the same bounded PTY
    write everything else uses.
 2. Wait for that session's `Stop` event on the existing stream.
-3. Read the last assistant turn from `transcriptFor`.
+3. Read the last assistant turn from the CLI's own live transcript, resolved by
+   `transcriptPathFor(projectPath, conversationId)` and parsed by the same
+   `parseTranscript` the archive reader uses. Not `transcriptFor`: that reads
+   the `transcripts` table, which `archiveSession` fills when a session *exits*,
+   so for a live session it answers "No transcript was archived for this
+   session." The conversation being handed over is by definition still running.
 4. Create a session with the same project, provider and account, and that text
    as `initialPrompt`, then focus it.
 
@@ -107,9 +114,13 @@ assumed window.
 message text as pure functions of a reading — testable in a tenth of a second,
 beside the `contextPressure` rules it inherits.
 
-`src/main/handover.ts` owns the orchestration: prompt, wait, read, launch. It
-lives in main because it writes to a PTY and creates a session, and because the
-renderer must not be able to launch a session from a text blob it composed.
+`src/main/handover.ts` owns both privileged halves: `handover:begin` writes the
+prompt to the PTY, and `handover:finish` reads the note and creates the session.
+The renderer only times the gap, because it already receives `Stop` on the
+session-event stream and main has no listener of its own there. What matters is
+preserved by the split: the renderer never supplies the note. It names a
+session, and main reads the text out of that session's own transcript, so a
+renderer cannot launch a session carrying a blob it composed.
 
 `CompanionPresence` and Mission room's orb render the bubble from the shared
 function. Rules go in the existing sheets, with no colour or size literal.
