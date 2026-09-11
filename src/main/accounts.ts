@@ -425,10 +425,12 @@ export function launchEnv(account: AgentAccount | null): Record<string, string> 
   // So the account that *is* the default contributes no variable at all, which
   // reproduces exactly what running the CLI by hand does.
   //
-  // Codex has not been probed for the same quirk (no Codex binary was on the
-  // machine that wrote this). The guard is kept for it anyway because setting
-  // nothing is the one choice that cannot differ from the by-hand CLI; probe
-  // `CODEX_HOME=~/.codex codex login status` before relaxing it.
+  // Codex was probed on 2026-09-11 with codex-cli 0.153.4, which is what that
+  // note asked for: `codex login status` answers "Logged in using ChatGPT"
+  // both with CODEX_HOME unset and with it set to ~/.codex. So Codex does not
+  // share the quirk — for it this guard is harmless rather than necessary, and
+  // it stays because setting nothing is still the one choice that cannot
+  // differ from the by-hand CLI.
   if (account.configDir === platformDefaultDir(account.harness)) return {};
   return { [key]: account.configDir };
 }

@@ -72,4 +72,72 @@ export async function runPreflightSmoke(check: Check, say: Say): Promise<void> {
   } catch (error) {
     check(false, 'the project discovery checks ran without throwing', String(error));
   }
+
+  // ── accounts, for every harness that keeps configuration in a directory ──
+  // The Settings panel was hardcoded to 'claude-code', so a second Codex login
+  // could not be added at all — while main had supported it the whole time.
+  // Nothing asserted the Codex path, which is how a one-word constant in the
+  // renderer hid a whole provider's accounts. These check the half the panel
+  // depends on.
+  say('── accounts · both harnesses, not just the one the panel used to name');
+  try {
+    const accounts = await import('./accounts');
+    const { dataDir } = await import('./db');
+    const path = await import('node:path');
+
+    check(accounts.supportsAccounts('claude-code') && accounts.supportsAccounts('codex'),
+      'both built-in harnesses keep their configuration somewhere Wanigan can point');
+    check(!accounts.supportsAccounts('generic-cli') && !accounts.supportsAccounts(''),
+      'a harness with no known configuration directory supports no accounts, rather than pretending to');
+
+    // list() seeds the adopted account on first read, per harness.
+    const codex = accounts.list('codex');
+    check(codex.length >= 1 && codex.some((row) => row.isDefault),
+      'listing Codex accounts seeds and returns its adopted account', codex.map((r) => r.label));
+    check(accounts.list('claude-code').length >= 1,
+      'and Claude Code still does too');
+    check(accounts.list('generic-cli').length === 0,
+      'an unsupported harness lists nothing, which is how the panel knows not to draw a group');
+
+    // A second Codex account: the thing that could not be done at all.
+    const dir = path.join(dataDir(), 'smoke-codex-second');
+    const made = accounts.create({ harness: 'codex', label: 'Smoke Second', configDir: dir });
+    check(made.harness === 'codex' && !made.isDefault && !made.adopted,
+      'a second Codex account is created, non-default and not adopted', made);
+    check(accounts.list('codex').length >= 2,
+      'and it joins the list beside the first');
+
+    // The launch environment is what makes it a different account at all.
+    const env = accounts.launchEnv(made);
+    check(env.CODEX_HOME === dir,
+      'launching as that account points CODEX_HOME at its own directory', env);
+    // The account that *is* the platform default contributes no variable at
+    // all, and that is deliberate rather than an omission: launchEnv's own
+    // comment records that CLAUDE_CONFIG_DIR=~/.claude makes Claude Code read
+    // ~/.claude/.claude.json instead of ~/.claude.json and report a signed-in
+    // operator as logged out.
+    //
+    // Asserted against a constructed account rather than whichever row happens
+    // to be adopted: earlier phases of this suite create their own Codex
+    // accounts, so "the adopted one" is not ~/.codex by the time this runs, and
+    // a check that assumed otherwise failed for a reason that had nothing to do
+    // with the rule it meant to pin.
+    const os = await import('node:os');
+    const atDefault = { ...made, configDir: path.join(os.homedir(), '.codex'), adopted: true };
+    check(Object.keys(accounts.launchEnv(atDefault)).length === 0,
+      'an account sitting at the platform default sets no variable, so a launch matches running the CLI by hand',
+      JSON.stringify(accounts.launchEnv(atDefault)));
+
+    // Two accounts sharing one directory would share one login.
+    let refused = false;
+    try { accounts.create({ harness: 'codex', label: 'Clash', configDir: dir }); }
+    catch { refused = true; }
+    check(refused, 'a second account cannot claim a directory another already uses');
+
+    accounts.remove(made.id);
+    check(accounts.list('codex').every((row) => row.id !== made.id),
+      'and forgetting it leaves the list as it was');
+  } catch (error) {
+    check(false, 'the accounts checks ran without throwing', String(error));
+  }
 }

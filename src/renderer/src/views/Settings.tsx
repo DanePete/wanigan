@@ -8,9 +8,10 @@ import type {
   ProviderPackInfo, ProviderProfileInfo, QueueItem, QueueSlots, QueueState,
   TranscriptHit, TranscriptTurn, TrustLevel, UploadedFile, WorktreeInfo,
 } from '@shared/types';
+import { harnessLabel, proposeAccountDir, signInCommand } from '@shared/accounts';
 import { TRUST_COPY, TRUST_LEVELS, trustCopy } from '@shared/types';
 import { DEMO_PROMPTS } from '@shared/demo';
-import { ConfirmNote, Explainer, Icon, Note, PageHead, Reading, Section, Stat, ago, num } from '../components/bits';
+import { ConfirmNote, Explainer, Icon, Note, PageHead, Reading, Section, SectionHead, Stat, ago, num } from '../components/bits';
 import type { IconName } from '../components/bits';
 import { useRememberedScroll } from '../components/viewMemory';
 import ThemeControl from '../components/ThemeControl';
@@ -428,13 +429,15 @@ function SettingsTabPanel({ tab, active, children }: {
 
 export default function Settings({
   providers, projects, onKeyChange, onRemoveProject, onAddProject,
-  themePreference, resolvedTheme, onThemeChange, jump,
+  themePreference, resolvedTheme, onThemeChange, jump, onOpenSession,
 }: {
   providers: ProviderInfo[];
   projects: Project[];
   onKeyChange: () => void;
   onRemoveProject: (id: string) => void;
   onAddProject: () => void;
+  /** Focus a session this view started, so a sign-in does not open out of sight. */
+  onOpenSession?: (id: string) => void;
   themePreference: ThemeSetting;
   resolvedTheme: ResolvedTheme;
   onThemeChange: (preference: ThemeSetting) => Promise<ThemeSetting>;
@@ -805,7 +808,7 @@ export default function Settings({
               ))}
             </Section>
 
-            <Accounts />
+            <Accounts providers={providers} projects={projects} onOpenSession={onOpenSession} />
             <ProviderPacks providers={providers} />
             <Section title="Claude Platform API key"
                      hint="Needed for Batches — estimating, dry runs, and submitting. Agent sessions do not use it; they authenticate through their own CLI.">
@@ -3629,25 +3632,76 @@ function SlotMeter({ load, limit, enforcedLimit, source }: {
  * browser sign-in belongs to the agent, and the copy says so rather than
  * offering a button that could not work.
  */
-function Accounts() {
-  const HARNESS = 'claude-code';
+/**
+ * One group per harness that can hold accounts.
+ *
+ * This panel was hardcoded to `claude-code`, so a second Codex login could not
+ * be added at all — while the main process had supported it the whole time:
+ * `accounts:list` takes the harness, and HARNESS_CONFIG_ENV names both
+ * CLAUDE_CONFIG_DIR and CODEX_HOME. Nothing here is a list of harnesses either.
+ * It asks each harness the installed providers report, and a harness whose
+ * accounts main will not manage answers with an empty list and draws nothing.
+ */
+function Accounts({ providers, projects, onOpenSession }: {
+  providers: ProviderInfo[];
+  projects: Project[];
+  onOpenSession?: (id: string) => void;
+}) {
+  const harnesses = useMemo(() => {
+    const byHarness = new Map<string, string[]>();
+    for (const provider of providers) {
+      const harness = provider.harnessId?.trim();
+      if (!harness) continue;
+      byHarness.set(harness, [...(byHarness.get(harness) ?? []), provider.label]);
+    }
+    return [...byHarness.entries()].map(([harness, labels]) => ({ harness, labels }));
+  }, [providers]);
+
+  return (
+    <Section title="Accounts"
+             hint="Run a work login and a personal login side by side, on any agent that keeps its configuration in a directory. Each account is its own directory, and the agent keys its stored sign-in to that directory — so two sessions can be signed in as two different people at once.">
+      {harnesses.map(({ harness, labels }) => (
+        <AccountGroup key={harness} harness={harness} labels={labels}
+                      projects={projects} providers={providers} onOpenSession={onOpenSession} />
+      ))}
+      {harnesses.length === 0 && (
+        <Note tone="warn">No agent is installed yet, so there is nothing to hold an account.</Note>
+      )}
+      <p className="faint set-accounts-foot">
+        A session picks its account from the launcher, then the project&rsquo;s saved account, then the default.
+        An <code>ANTHROPIC_API_KEY</code> or <code>ANTHROPIC_AUTH_TOKEN</code> in Wanigan&rsquo;s environment outranks
+        every stored sign-in; the launcher says so when one is set.
+      </p>
+    </Section>
+  );
+}
+
+function AccountGroup({ harness, labels, projects, providers, onOpenSession }: {
+  harness: string;
+  labels: string[];
+  projects: Project[];
+  providers: ProviderInfo[];
+  onOpenSession?: (id: string) => void;
+}) {
   const [rows, setRows] = useState<AgentAccount[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [label, setLabel] = useState('');
-  const [dir, setDir] = useState('');
+  // Empty means "use the proposal". A path is only ever typed by somebody who
+  // wants a different one, which is the whole point of the change.
+  const [dirOverride, setDirOverride] = useState('');
+  const [showDir, setShowDir] = useState(false);
   const [seed, setSeed] = useState(true);
   const [busy, setBusy] = useState(false);
-  // Rename happens where the label is, not in a native prompt that steals
-  // focus from the window: Enter saves, Escape or blur cancels.
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
+  const [signingIn, setSigningIn] = useState<string | null>(null);
 
   const load = () => {
-    window.wanigan.accounts.list(HARNESS)
+    window.wanigan.accounts.list(harness)
       .then((next) => { setRows(next); setErr(null); })
       .catch((e) => setErr(msg(e)));
   };
-  useEffect(load, []);
+  useEffect(load, [harness]);
 
   const act = async (run: () => Promise<unknown>, ok: string) => {
     setBusy(true); setNote(null);
@@ -3656,18 +3710,45 @@ function Accounts() {
     finally { setBusy(false); }
   };
 
+  // A harness main will not manage accounts for seeds no rows and draws nothing.
+  if (rows !== null && rows.length === 0 && !err) return null;
+
   const defaultAccount = rows?.find((row) => row.isDefault) ?? null;
+  const base = defaultAccount?.configDir ?? rows?.[0]?.configDir ?? '';
+  const taken = (rows ?? []).map((row) => row.configDir);
+  const proposed = proposeAccountDir(base, label, taken);
+  const dir = dirOverride.trim() || proposed;
+  const signIn = signInCommand(harness);
+  // The sign-in has to run somewhere: a session is launched into a project.
+  const signInProject = projects[0] ?? null;
+  const provider = providers.find((p) => p.harnessId === harness && p.path) ?? null;
+
+  const startSignIn = async (account: AgentAccount) => {
+    if (!provider || !signInProject || !signIn) return;
+    setSigningIn(account.id); setNote(null);
+    try {
+      const session = await window.wanigan.sessions.create({
+        providerId: provider.id, projectId: signInProject.id,
+        accountId: account.id, initialPrompt: signIn,
+      });
+      onOpenSession?.(session.id);
+    } catch (e) {
+      setNote({ tone: 'error', text: msg(e) });
+    } finally {
+      setSigningIn(null);
+    }
+  };
 
   return (
-    <Section title="Accounts"
-             hint="Run a work login and a personal login side by side. Each account is its own configuration directory, and the agent keys its stored sign-in to that directory — so two sessions can be signed in as two different people at the same time.">
+    <div className="set-account-group">
+      <SectionHead label={harnessLabel(harness, labels)} count={rows?.length} />
       {err && <Note tone="error">{err}</Note>}
       {rows && (
         <>
-          <div style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
+          <div className="set-account-rows">
             {rows.map((row) => (
-              <div key={row.id} className="sunk" style={{ padding: '10px 12px', display: 'grid', gap: 6 }}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+              <div key={row.id} className="sunk set-account-row">
+                <div className="set-account-head">
                   {renaming?.id === row.id ? (
                     <input className="field field-inline" autoFocus value={renaming.value} aria-label="Account label"
                            onChange={(e) => setRenaming({ id: row.id, value: e.target.value })}
@@ -3682,31 +3763,35 @@ function Accounts() {
                              }
                            }} />
                   ) : (
-                    <strong style={{ fontSize: 'var(--t-small)' }}>{row.label}</strong>
+                    <strong className="set-account-name">{row.label}</strong>
                   )}
-                  {row.isDefault && <span className="pill" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>Default</span>}
-                  {row.adopted && <span className="pill" title="This directory existed before Wanigan knew about it. Removing the account never deletes it.">Adopted</span>}
-                  {!row.present && <span className="pill" style={{ color: 'var(--bad)' }}>Directory missing</span>}
+                  {row.isDefault && <span className="pill set-account-default">Default</span>}
+                  {row.adopted && <span className="pill">Adopted</span>}
+                  {!row.present && <span className="pill set-account-gone">Directory missing</span>}
                 </div>
-                <div className="faint mono" style={{ fontSize: 'var(--t-micro)', wordBreak: 'break-all' }}>{row.configDir}</div>
-                <div className="dim" style={{ fontSize: 'var(--t-micro)', lineHeight: 1.45 }}>
+                <div className="faint mono set-account-dir">{row.configDir}</div>
+                <div className="dim set-account-note">
                   {row.signedIn === 'yes'
                     ? 'A sign-in has been stored for this directory. Whether it is still valid, and which organisation it belongs to, are inside the credential itself — Wanigan does not hold it and cannot read it.'
-                    : 'Wanigan cannot tell whether this directory is signed in. On macOS the credential lives in the Keychain, keyed to the directory, and Wanigan neither holds it nor reads it. If a session here asks you to sign in, run /login once — the browser flow belongs to the agent, not to Wanigan.'}
+                    : `Wanigan cannot tell whether this directory is signed in. The credential can live in the Keychain, keyed to the directory, and Wanigan neither holds it nor reads it.${signIn ? ` If a session here asks you to sign in, run ${signIn} once — the browser flow belongs to the agent, not to Wanigan.` : ''}`}
                 </div>
-                <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 2 }}>
+                <div className="set-account-actions">
+                  {signIn && provider && signInProject && (
+                    <button className="btn btn-sm" disabled={busy || signingIn !== null}
+                            onClick={() => void startSignIn(row)}>
+                      {signingIn === row.id ? 'Opening…' : `Sign in with ${signIn}`}
+                    </button>
+                  )}
                   {!row.isDefault && (
-                    <button className="btn" disabled={busy} style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
+                    <button className="btn btn-sm" disabled={busy}
                             onClick={() => act(() => window.wanigan.accounts.setDefault(row.id), `New sessions now use ${row.label} unless a project or launch says otherwise.`)}>
                       Make default
                     </button>
                   )}
-                  <button className="btn" disabled={busy} style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
-                          onClick={() => setRenaming({ id: row.id, value: row.label })}>
+                  <button className="btn btn-sm" disabled={busy} onClick={() => setRenaming({ id: row.id, value: row.label })}>
                     Rename
                   </button>
-                  <button className="btn" disabled={busy} style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
-                          title="Wanigan stops using this directory. The directory, its sign-in and its history stay on disk."
+                  <button className="btn btn-sm" disabled={busy}
                           onClick={() => act(
                             () => window.wanigan.accounts.remove(row.id),
                             `Wanigan will not use ${row.label} any more. Its directory is untouched — delete it yourself if you meant to.`,
@@ -3714,52 +3799,64 @@ function Accounts() {
                     Forget
                   </button>
                 </div>
+                {signIn && provider && !signInProject && (
+                  <p className="dim set-account-note">
+                    Signing in runs <code>{signIn}</code> in a session, and a session runs inside a project.
+                    Add a project first, or run it yourself in a terminal with the directory above.
+                  </p>
+                )}
               </div>
             ))}
           </div>
 
-          <div className="label">Add an account</div>
-          <div style={{ display: 'grid', gap: 7, marginBottom: 8 }}>
-            <input className="field" aria-label="Account label" placeholder="Label, such as Work" value={label}
+          <label className="label" htmlFor={`add-account-${harness}`}>Add another {harnessLabel(harness, labels)} account</label>
+          <div className="set-account-add">
+            <input className="field" id={`add-account-${harness}`} placeholder="Name it, such as Personal" value={label}
                    onChange={(e) => setLabel(e.target.value)} />
-            <input className="field mono" aria-label="Account configuration directory" placeholder="~/.claude-work" value={dir}
-                   onChange={(e) => setDir(e.target.value)} />
+            {proposed && !showDir && (
+              <p className="faint set-account-proposed">
+                Its directory will be <code>{proposed}</code>.{' '}
+                <button type="button" className="linklike" onClick={() => { setShowDir(true); setDirOverride(proposed); }}>
+                  Choose a different one
+                </button>
+              </p>
+            )}
+            {showDir && (
+              <input className="field mono" aria-label="Account configuration directory" value={dirOverride}
+                     onChange={(e) => setDirOverride(e.target.value)} />
+            )}
             {defaultAccount && (
-              <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 'var(--t-small)', lineHeight: 1.45 }}>
-                <input type="checkbox" checked={seed} onChange={(e) => setSeed(e.target.checked)}
-                       style={{ marginTop: 3, accentColor: 'var(--accent)', width: 14, height: 14, flex: 'none' }} />
+              <label className="set-account-seed">
+                <input type="checkbox" checked={seed} onChange={(e) => setSeed(e.target.checked)} />
                 <span>
-                  Copy settings, skills, commands and subagents from <strong>{defaultAccount.label}</strong>.
-                  <span className="dim" style={{ display: 'block', marginTop: 2 }}>
-                    A new directory is otherwise empty. Copied, not linked, so editing one account's skills never
-                    edits the other's. Sign-ins are never copied — that is the point of a second account — and
+                  Copy settings and skills from <strong>{defaultAccount.label}</strong>.
+                  <span className="dim set-account-seed-why">
+                    A new directory is otherwise empty. Copied, not linked, so editing one account&rsquo;s skills never
+                    edits the other&rsquo;s. Sign-ins are never copied — that is the point of a second account — and
                     neither is conversation history.
                   </span>
                 </span>
               </label>
             )}
             <div>
-              <button className="btn btn-primary" disabled={busy || !label.trim() || !dir.trim()}
+              <button className="btn btn-primary" disabled={busy || !label.trim() || !dir}
                       onClick={() => act(async () => {
                         await window.wanigan.accounts.create({
-                          harness: HARNESS, label: label.trim(), configDir: dir.trim(),
+                          harness, label: label.trim(), configDir: dir,
                           seedFromAccountId: seed ? defaultAccount?.id ?? null : null,
                         });
-                        setLabel(''); setDir('');
-                      }, 'Account added. Start a session on it and run /login once to sign in.')}>
+                        setLabel(''); setDirOverride(''); setShowDir(false);
+                      }, signIn
+                        ? `Account added. Use Sign in with ${signIn} on its row to finish.`
+                        : 'Account added.')}>
                 Add account
               </button>
             </div>
           </div>
           {note && <Note tone={note.tone === 'ok' ? 'ok' : 'error'}>{note.text}</Note>}
-          <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 9, lineHeight: 1.45 }}>
-            A session picks its account from the launcher, then the project's saved account, then the default.
-            An <code>ANTHROPIC_API_KEY</code> or <code>ANTHROPIC_AUTH_TOKEN</code> in Wanigan's environment outranks
-            every stored sign-in; the launcher says so when one is set.
-          </p>
         </>
       )}
-    </Section>
+    </div>
   );
 }
 
@@ -4171,7 +4268,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
   // serverStatuses() returns one row per configured server, keyed by the same id
   // the config list uses, so a server with nothing on record is present with a
   // zero rather than absent.
-  const useOf = (id: string) => (use.v.s === 'ok' ? use.v.d.find((u) => u.id === id) ?? null : null);
+  const usageOf = (id: string) => (use.v.s === 'ok' ? use.v.d.find((u) => u.id === id) ?? null : null);
   // The two use columns exist only when the table does: the server-list read has
   // to have come back, and it has to have rows. The caption and the failed-read
   // note below both explain those columns, so they are gated on the same
@@ -4475,7 +4572,7 @@ function Mcp({ projects, prefs, pending, setFlag }: {
                   {list.map((s) => {
                     const scopePath = s.projectId ? projects.find((p) => p.id === s.projectId)?.path ?? null : null;
                     const line = commandLines(s);
-                    const u = useOf(s.id);
+                    const u = usageOf(s.id);
                     return (
                       <Fragment key={s.id}>
                         <tr>
