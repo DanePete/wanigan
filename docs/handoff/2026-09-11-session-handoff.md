@@ -223,3 +223,119 @@ npm run dead-code:all        # including the 212 over-exports
 npm run probe:recent         # Recent names, against a copy of the real database
 npm run dist:mac:arm64:install   # rebuild and install; refuses while the app runs
 ```
+
+---
+
+# Update — later on 11 September 2026
+
+Everything above describes the branch before it merged. **Most of it is now
+historical**, and three statements in *Read this first* are actively false. The
+current state is below; where the two disagree, this section is right.
+
+## What changed
+
+`feat/xai-grok-provider` merged to `main` (PR #3) and eight more PRs followed.
+`main` is now the working branch and **branch protection is on**.
+
+| | Then | Now |
+|---|---|---|
+| Branch | 19 commits ahead of `origin/main` | merged; `main` is the branch |
+| Working tree | 35 modified files, uncommitted | clean — see *the stash* below |
+| Branch protection | not set | on, and exercised by 8 merges (#4–#11) |
+| CodeQL / Scorecard | never run | both green on `main` |
+| Runtime import cycles in `src/main` | 19 | **2** |
+| Suppressed lint violations | 73 across 36 files | 68 across 34 |
+
+**The three corrections to *Read this first*:**
+
+1. **The working tree is yours now, and it is empty.** The 35 files were two
+   finished changes plus two batches of probe output. Both changes landed (PR
+   #5); the probe output was superseded by better runs (PRs #6, #7). What was in
+   the tree is preserved in `git stash` as `stash@{0}`, labelled — `git stash
+   pop` if you want it, `git stash drop` when you are satisfied.
+2. **Point 2 still stands and is still the most useful thing here.** A green
+   `npm test` locally does not mean a green HEAD. The detached-worktree recipe
+   above is correct; use it.
+3. **Everything is live on `main`.** CodeQL, Scorecard, Hygiene and CI all run
+   there and all pass.
+
+## Open items, restated
+
+**1. ~~Branch protection.~~ Done.** Exactly the config quoted above. Both
+required contexts were checked against real job names first — a context string
+that never reports deadlocks `main` permanently. Note that `Hygiene` *does*
+report on `main` (it triggers on unfiltered `push`), so the reasoning above for
+excluding it was wrong even though the outcome was fine; it could be required.
+
+**2. ~~Merge to `main`.~~ Done**, PR #3.
+
+**3. ~~`conduct@deadnorth.io`.~~ Done.** `CODE_OF_CONDUCT.md` points at
+`support@deadnorth.io`, which exists. No alias needed.
+
+**4. Partly done, and two of the three are recommendations not to proceed.**
+
+- **Import cycles: 19 → 2.** The "22 chains" figure conflated two things. Type-
+  only imports erase and cannot close a runtime loop (13 of the original cycles
+  were one barrel re-importing a type from its own children), and the rest were
+  three edges, one of which sat under sixteen. See
+  `src/main/mcp/capabilities.ts`. **The remaining 2 are deliberate**: both run
+  `notify → mobile`, and `smoke3.ts` explicitly asserts that notify calls
+  `deliverMobileAlert` directly — *"notify() reaches both phone channels through
+  one call rather than picking one"*. Cutting them means overruling that.
+- **The 36 `react-hooks/exhaustive-deps`: do not sweep.** All 36 were read. 18
+  are the ref-in-cleanup warning where every ref is a sequence counter
+  (`readSequence`, `rowSeq`, `diffSeq`) — the stale-response guard, where reading
+  `.current` in cleanup *is* the mechanism; that rule targets DOM-node refs. Most
+  of the rest are `useState` setters, which React guarantees stable. The few
+  naming real values are commented decisions. The one genuine case,
+  `HandoverBubble`, was found because it misbehaved and fixed by hand. That is
+  the right model for this rule here.
+- **The 212 over-exports** are public surface, not dead code. Unchanged.
+
+## What was found that was not on the list
+
+Three green signals that were not evidence. This is the pattern worth carrying
+forward more than any individual fix.
+
+- **Scorecard passed review and died on `docker pull`.** Its first real run
+  failed in under 30 seconds: `ossf/scorecard-action@v2.4.0` resolves to
+  `gcr.io/openssf/...`, and OpenSSF's billing on that Google project is off.
+  v2.4.1 moved the image to `ghcr.io`. Pinned at v2.4.4 (PR #4).
+- **Two probes passed every assertion while saving the wrong artifact.**
+  `probe-handover.mjs` has two scenarios that both wrote `bubble-1280.png`, so
+  the account-limit bubble overwrote the handover one every run and
+  `docs/visuals/context-handover/` documented the wrong feature (PR #7).
+  `probe-space-switcher.mjs` wrote a `verification.json` whose
+  `archiveSha256`/`rendererSha256`/`source` appeared in four committed JSON files
+  and **zero generators** — typed by hand (PR #6). A probe's assertions cover the
+  state when they run; they say nothing about whether the file it saved is of
+  that state. **Open the artifact.**
+- **Four lint suppressions were each discarding an error.**
+  `install-local-macos.cjs` threw from inside `finally`, so an install that
+  failed *and* could not clean up reported the cleanup failure and lost the real
+  reason. `index.ts` ran the entire bootstrap with no rejection handler. `index.ts`
+  also discarded `clipboard.writeText`'s promise — **Electron's `Clipboard` is
+  the async W3C-shaped interface**, so a refused copy still returned
+  `{ ok: true }` (PR #10).
+
+## CodeQL's 52 alerts, assessed
+
+Not a to-do list. The 2 criticals are `js/code-injection` on `proc.write(prompt)`
+— the operator's own prompt reaching their own agent's PTY, which is the
+product. Checked whether the mobile surface could reach that path: it cannot
+reach session creation at all. The one place `js/insecure-randomness` would be
+real — the mobile pairing token — uses `randomBytes`, `createHmac` and
+`timingSafeEqual`, with **zero** hits in any secret/token/auth file.
+
+## Traps worth adding to the list above
+
+- **`node` on this machine is v16.** `test:shared` fails all seven files with
+  "Cannot use import statement outside a module" and nothing else runs. `nvm use`
+  first, every time — the `.nvmrc` pin is 22.23.2 and `AGENTS.md` says so.
+- **The smoke tty failure is intermittent, not absolute.** `npm run smoke` ran
+  clean four times from an agent shell and hit `tcgetattr/ioctl: Operation not
+  supported on socket` once. Retry it standalone before concluding anything about
+  the change under test.
+- **`git stash` beats `git restore`** for clearing a tree full of somebody
+  else's work. Same end state, recoverable, and it does not trip the guard that
+  exists precisely because `AGENTS.md` says to preserve working-tree changes.
