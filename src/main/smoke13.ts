@@ -180,6 +180,59 @@ export async function runPreflightSmoke(check: Check, say: Say): Promise<void> {
       plan.unavailable);
     check(plan.threadId === null,
       'and it names no conversation it could not find');
+
+    // ── the populated path, end to end on real files ───────────────────
+    // Everything above is derivation. This is the thing itself: two accounts,
+    // a rollout on one of them, and a conversation that afterwards resumes
+    // from the other. It runs on the state database being unavailable, which
+    // is the ordinary case in this suite — and is exactly why rolloutFor falls
+    // back to the filename, whose uuid is the thread id.
+    const { handoffConversation } = await import('./handoff');
+    const accountsMod = await import('./accounts');
+    const { db } = await import('./db');
+    const { dataDir } = await import('./db');
+    const fs = await import('node:fs');
+
+    const from = accountsMod.create({ harness: 'codex', label: 'Handoff From', configDir: path.join(dataDir(), 'handoff-from') });
+    const to = accountsMod.create({ harness: 'codex', label: 'Handoff To', configDir: path.join(dataDir(), 'handoff-to') });
+    const thread = '01a08f10-0f63-7453-b33e-d71285fbd389';
+    const rollout = path.join(from.configDir, 'sessions', '2026', '09', '11', `rollout-2026-09-11T01-03-09-${thread}.jsonl`);
+    fs.mkdirSync(path.dirname(rollout), { recursive: true });
+    fs.writeFileSync(rollout, JSON.stringify({ type: 'session_meta', payload: { id: thread, cwd: '/tmp' } }) + '\n');
+
+    const sid = 's_handoff_smoke';
+    db().prepare(`INSERT OR REPLACE INTO session_log
+        (id, project_id, project_path, project_name, provider_id, harness_id, origin, conversation_id, started_at)
+      VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(sid, 'prj_handoff', '/tmp/handoff', 'handoff', 'codex', 'codex', 'wanigan', thread, Date.now());
+
+    const live = handoffPlan(sid);
+    check(live.threadId === thread && live.targets.some((t) => t.accountId === to.id),
+      'a session with a conversation on one account offers the other as a target',
+      JSON.stringify({ threadId: live.threadId, targets: live.targets.map((t) => t.label), why: live.unavailable }));
+    check(live.fromAccountId === from.id,
+      'and knows which account it is currently readable from', live.fromAccountId);
+
+    const moved = handoffConversation(sid, to.id);
+    const landed = path.join(to.configDir, 'sessions', '2026', '09', '11', path.basename(rollout));
+    check(fs.existsSync(landed), 'the conversation is now readable from the other account', moved.linkedTo);
+    check(fs.statSync(landed).ino === fs.statSync(rollout).ino,
+      'linked rather than copied, so a rollout of any size costs nothing',
+      { landed: fs.statSync(landed).ino, source: fs.statSync(rollout).ino });
+    check(fs.existsSync(rollout),
+      'and the account it started on can still continue it — the source is never moved');
+
+    // Running it twice must not fail: an operator can click again.
+    const again = handoffConversation(sid, to.id);
+    check(again.linkedTo === moved.linkedTo, 'handing the same conversation over twice is a no-op, not an error');
+
+    // An account that is not one of this conversation's targets is refused.
+    let refusedTarget = false;
+    try { handoffConversation(sid, 'acct_not_a_target'); } catch { refusedTarget = true; }
+    check(refusedTarget, 'main refuses an account the renderer named that is not one of this conversation’s own');
+
+    db().prepare('DELETE FROM session_log WHERE id = ?').run(sid);
+    accountsMod.remove(from.id); accountsMod.remove(to.id);
   } catch (error) {
     check(false, 'the handoff checks ran without throwing', String(error));
   }

@@ -251,19 +251,26 @@ const NO_ACCESSIBLE_NAME_BASELINE = {};
 // 8. Native title tooltips, per renderer .tsx. These are the counts the tree
 //    carried the day the check landed, and like every baseline here they are a
 //    debt rather than a permit: a file may only ever go down, and a file not
-//    listed is allowed zero. Replacing one means putting its sentence on the
+//    listed is allowed zero.
+//
+//    These numbers went UP once, from 126 to 149, and that was not a ceiling
+//    being raised to let tooltips in — it was the count being wrong. The first
+//    version of the check looked only at lowercase tags and so could not see
+//    the 23 that reach a <button> through FocusBtn. Nothing was added to the
+//    tree; the gate simply started measuring what was already there. Any future
+//    rise needs the same kind of explanation. Replacing one means putting its sentence on the
 //    screen — a Note, a cue, a line under the control — not moving it to
 //    aria-label, which leaves a sighted keyboard user with nothing.
 const TITLE_TOOLTIP_BASELINE = {
   "App.tsx": 8,
   "components/AttentionQueue.tsx": 1,
-  "components/CodePanel.tsx": 10,
-  "components/Composer.tsx": 9,
-  "components/NewSessionDialog.tsx": 1,
+  "components/CodePanel.tsx": 8,
+  "components/Composer.tsx": 8,
+  "components/NewSessionDialog.tsx": 3,
   "components/ObservedBand.tsx": 2,
   "components/Pet.tsx": 8,
   "components/PlanEditor.tsx": 6,
-  "components/SessionLearning.tsx": 11,
+  "components/SessionLearning.tsx": 4,
   "components/SpaceNavigation.tsx": 2,
   "components/ThemeControl.tsx": 1,
   "components/Timeline.tsx": 2,
@@ -275,9 +282,8 @@ const TITLE_TOOLTIP_BASELINE = {
   "views/Git.tsx": 14,
   "views/Insights.tsx": 14,
   "views/Learning.tsx": 4,
-  "views/Plugins.tsx": 0,
-  "views/Sessions.tsx": 9,
-  "views/Settings.tsx": 5,
+  "views/Sessions.tsx": 30,
+  "views/Settings.tsx": 3,
   "views/Skills.tsx": 1,
   "views/Usage.tsx": 4,
 };
@@ -467,12 +473,36 @@ const TITLE_IS_A_NAME = new Set(['embed', 'frame', 'iframe', 'math', 'object']);
 const OPEN_TAG = /<([a-zA-Z][\w.]*)((?:[^>"']|"[^"]*"|'[^']*')*?)>/g;
 const TITLE_ATTR = /(?<![\w-])title\s*=/;
 
+//    A component counts too when it forwards its props onto an element. This
+//    file's first version only looked at lowercase tags, which missed 23 real
+//    tooltips: both `FocusBtn` helpers in this tree spread `{...rest}` onto a
+//    <button>, so `<FocusBtn title="…">` renders exactly the tooltip the check
+//    was written to stop, and wrapping a button in a component was enough to
+//    walk past the gate. Rather than name FocusBtn, find the shape: a
+//    component whose body spreads a rest parameter into an intrinsic tag.
+const SPREAD_IN_TAG = /<([a-z][\w.]*)((?:[^>"']|"[^"]*"|'[^']*')*?)\{\s*\.\.\.\s*(rest|props)\s*\}/gs;
+const FUNCTION_NAME = /function\s+([A-Z][\w]*)\s*\(/g;
+
+/** Components in this file that hand their leftover props to a DOM element. */
+function forwardingComponents(src) {
+  const names = new Set();
+  for (const spread of src.matchAll(SPREAD_IN_TAG)) {
+    // The enclosing component is the last capitalised function declared above.
+    let owner = null;
+    for (const fn of src.slice(0, spread.index).matchAll(FUNCTION_NAME)) owner = fn[1];
+    if (owner) names.add(owner);
+  }
+  return names;
+}
+
 function titleTooltips(src) {
+  const forwarding = forwardingComponents(src);
   let n = 0;
   for (const m of src.matchAll(OPEN_TAG)) {
     const [, tag, attrs] = m;
-    if (tag[0] !== tag[0].toLowerCase()) continue;   // a component, not an element
-    if (TITLE_IS_A_NAME.has(tag)) continue;
+    const intrinsic = tag[0] === tag[0].toLowerCase();
+    if (!intrinsic && !forwarding.has(tag)) continue;   // an ordinary component prop
+    if (intrinsic && TITLE_IS_A_NAME.has(tag)) continue;
     if (TITLE_ATTR.test(attrs)) n += 1;
   }
   return n;
