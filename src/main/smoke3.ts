@@ -4328,10 +4328,23 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     setSetting('spend_cap_usd', '0.0001');
     const runsBefore = batch.listRuns().length;
     let refusal = '';
+    // The throw is the whole answer only to somebody watching a form. A queue
+    // dispatch and a schedule firing at 03:00 catch it into a history row, so
+    // the refusal has to reach a person by itself or the night's work simply
+    // did not happen and nothing said so. This process is the windowless case
+    // by construction, which is why the evidence is the held digest rather
+    // than an in-app card: a banner raised here would go to an empty room.
+    setSetting('notifications.held', '[]');
     try { await batch.createAndSubmitRun(capCfg); }
     catch (e) { refusal = e instanceof Error ? e.message : String(e); }
     check(/exceeds/.test(refusal) && /spend cap/.test(refusal),
       'a run nobody priced is priced here and refused against the cap', refusal);
+    const capHeld = (JSON.parse(getSetting('notifications.held', '[]')) as
+      { title: string; body: string; urgent: boolean }[]).filter((h) => /spend cap/i.test(h.title));
+    check(capHeld.length === 1 && capHeld[0].urgent
+      && capHeld[0].body.includes(capCfg.name) && /Nothing was submitted/.test(capHeld[0].body),
+      'and the refusal announces itself urgently, naming the run and saying nothing was submitted, and a windowless process keeps it for the next launch rather than showing it to an empty room — a cap trip nobody is told about reads as a batch still running',
+      getSetting('notifications.held', '[]'));
     check(/priced here/i.test(refusal),
       'the refusal says the price was worked out at submit time rather than taken on trust');
     check(batch.listRuns().length === runsBefore,

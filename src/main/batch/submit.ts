@@ -86,6 +86,15 @@ export async function createAndSubmitRun(
 
   const projected = est?.cost ?? 0;
   if (cap > 0 && projected > cap) {
+    // The throw below is the whole answer only when somebody is looking at a
+    // form. The paths this file already names — retryFailed, and a schedule
+    // firing at 03:00 through the queue — catch it into a history row and tell
+    // nobody, which is the failure announceSpendCapTrip was written for: work
+    // that did NOT happen reads as work still running. Imported lazily because
+    // notify reaches back into batch through mobile, and a static edge here
+    // would close that loop at module-evaluation time.
+    const { announceSpendCapTrip } = await import('../notify');
+    announceSpendCapTrip(cfg.name, projected, cap);
     throw new Error(
       `Estimated cost $${projected.toFixed(2)} exceeds your $${cap.toFixed(2)} per-run spend cap. ` +
       (pricedHere ? 'Nothing had priced this run, so it was priced here before anything was sent. ' : '') +
