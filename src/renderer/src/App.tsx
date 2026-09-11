@@ -1433,7 +1433,8 @@ export default function App() {
 
       <SpaceDock tab={tab} go={go} needs={needs.total} expanded={sidebarOpen} onMore={toggleSidebar}
         companion={tab === 'mission' ? undefined : <CompanionPresence story={orbStory} presence={presence}
-          expanded={!!needAnchor?.closest('.companion-presence')} onAttention={setNeedAnchor} onHome={() => go('mission')} />} />
+          expanded={!!needAnchor?.closest('.companion-presence')} onAttention={setNeedAnchor} onHome={() => go('mission')}
+          onOpenSession={openSession} onError={(message) => setError({ message, goTo: 'sessions' })} />} />
       {/* role=alert is itself an assertive live region; declaring aria-live as
           well made some VoiceOver builds read the message twice. */}
       {error && (

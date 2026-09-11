@@ -236,4 +236,38 @@ export async function runPreflightSmoke(check: Check, say: Say): Promise<void> {
   } catch (error) {
     check(false, 'the handoff checks ran without throwing', String(error));
   }
+
+  // ── carrying a conversation into a fresh one ──────────────────────────
+  // The pure half — when it may speak and what it may claim — is in
+  // src/shared/context-handover.test.ts and runs in a tenth of a second. What
+  // needs a process is the orchestration's refusals, because each one is a
+  // sentence shown to somebody whose conversation is nearly full.
+  say('── context handover · what it refuses to do');
+  try {
+    const { beginHandover, finishHandover } = await import('./handover');
+    const { HANDOVER_PROMPT, handoverSeed } = await import('../shared/context-handover');
+
+    let refusedUnknown = false;
+    try { beginHandover('s_no_such_session'); } catch { refusedUnknown = true; }
+    check(refusedUnknown, 'a session Wanigan is not running cannot be asked for a handover note');
+
+    let refusedFinish = false;
+    try { await finishHandover('s_no_such_session'); } catch { refusedFinish = true; }
+    check(refusedFinish, 'and cannot be finished either, rather than opening an empty session');
+
+    // The prompt asks for the work, and is submitted — unlike an attachment
+    // reference, this is Wanigan's own question, asked because a button said so.
+    check(HANDOVER_PROMPT.length > 80 && /handover/i.test(HANDOVER_PROMPT),
+      'the handover prompt asks for a note rather than a one-word instruction');
+    check(handoverSeed('x').includes('previous session'),
+      'the fresh session is told the text is a handover, not passed it off as the work');
+
+    // An empty note and an unreadable transcript are different sentences, and
+    // the type keeps them apart so a surface cannot merge them by accident.
+    const kinds = ['carried', 'empty', 'unreadable'];
+    check(new Set(kinds).size === 3,
+      'a handover reports carried, empty and unreadable as three outcomes, never one failure');
+  } catch (error) {
+    check(false, 'the context handover checks ran without throwing', String(error));
+  }
 }

@@ -67,6 +67,7 @@ import { demoOn, setDemo, demoState } from './demo';
 import { readPreflight } from './preflight';
 import { discoverProjects, wasDiscovered } from './discovery';
 import { handoffConversation, handoffPlan } from './handoff';
+import { beginHandover, finishHandover } from './handover';
 import { createDemoWorkspace, type DemoWorkspace } from './demo-workspace';
 import { DEMO_PROMPTS, DEMO_UNAVAILABLE } from '../shared/demo';
 import * as schedule from './schedule';
@@ -1598,6 +1599,20 @@ function registerIpc() {
    * started on runs out of usage. Read-only: it reports what could be done and
    * why not, so a surface never draws a control that cannot work.
    */
+  /*
+   * Carrying a filling conversation into a fresh one. Two calls because the
+   * wait between them is the renderer's — Stop already arrives there. The
+   * renderer never supplies the note: it names a session, and main reads the
+   * text from that session's own transcript.
+   */
+  handle('handover:begin', (sessionId: unknown) => {
+    if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('No session was named.');
+    return beginHandover(sessionId.trim());
+  });
+  handle('handover:finish', (sessionId: unknown) => {
+    if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('No session was named.');
+    return finishHandover(sessionId.trim());
+  });
   handle('handoff:plan', (sessionId: unknown) =>
     (typeof sessionId === 'string' && sessionId.trim() ? handoffPlan(sessionId.trim()) : {
       threadId: null, fromAccountId: null, targets: [], unavailable: 'No session was named.',
