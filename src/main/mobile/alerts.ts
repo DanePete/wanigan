@@ -1,7 +1,6 @@
 import { mobilePushProbe, sendMobilePush, testMobilePush } from './push';
 import { sendWebPush, testWebPush, webPushProbe } from './webpush';
-import type { MobilePushInput, MobilePushProbe, MobilePushResult } from './push';
-import type { MobileWebPushProbe } from './webpush';
+import type { MobilePushInput, MobilePushResult } from './push';
 import type { MobileAlertChannels, MobileAlertTest } from '../../shared/types';
 
 /**

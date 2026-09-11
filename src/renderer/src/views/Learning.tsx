@@ -23,7 +23,7 @@ import type {
   ProviderInfo,
 } from '@shared/types';
 import { EFFORT_LEVELS, PROJECTABLE_KINDS } from '@shared/types';
-import { Chip, EmptyState, Explainer, Hint, Icon, Mark, Note, PageHead, SectionHead, Segmented, ago } from '../components/bits';
+import { Explainer, Hint, Icon, Mark, Note, PageHead, SectionHead, Segmented, ago } from '../components/bits';
 import { useDialog } from '../components/useDialog';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import '../styles/learning.css';

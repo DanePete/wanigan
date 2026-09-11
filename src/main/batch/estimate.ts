@@ -181,7 +181,10 @@ export async function estimate(
  * Batch validation is asynchronous — a malformed params object is not reported
  * until the whole batch finishes, so this is the only cheap way to fail fast.
  */
-export async function dryRun(cfg: RunConfig, req: BuiltRequest) {
+// No cfg parameter: buildRequests has already baked the config into
+// req.params, so a second one here could only disagree with what is
+// actually about to be sent.
+export async function dryRun(req: BuiltRequest) {
   if (isMock()) {
     return {
       ok: true as const,

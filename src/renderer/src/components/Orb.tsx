@@ -36,7 +36,7 @@ export default function Orb({ thinking = false, focused=false, inputEvent=0, ans
     const el=canvas.current;if(!el)return;
     let runtime:OrbRuntime|undefined,disposed=false,visible=true,nativeVisible=true,frame=0,busy=false,dirty=false;
     let lastTyping=-Infinity,listeningRipples=0;
-    let last=0,lastInteraction=-Infinity,elapsed=0,targetX=0,targetY=0;
+    let last=0,lastInteraction=-Infinity,elapsed=0;
     let drag:{id:number;x:number;y:number;lastX:number;lastY:number;moved:boolean}|undefined;
     const expression=new OrbExpression(context.current);
     const director=new OrbStoryDirector(storyRef.current);
@@ -123,7 +123,6 @@ export default function Orb({ thinking = false, focused=false, inputEvent=0, ans
         drag.lastX=event.clientX;drag.lastY=event.clientY;
       }
       runtime?.point(x,y,event.clientX>=rect.left&&event.clientX<=rect.right&&event.clientY>=rect.top&&event.clientY<=rect.bottom);
-      targetX=x;targetY=y;
       expression.point(x,y);
     };
     const nudge=()=>{if(!compact&&!suppressClick.current&&motion()){lastInteraction=performance.now();expression.nudge();runtime?.nudge(-.25,-.25,.75,.38);redraw();}};

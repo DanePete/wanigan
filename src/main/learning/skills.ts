@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
-  ForgeSkillInput, ForgedSkill, LearningSignal, SkillDiagnostic, SkillStep,
+  ForgeSkillInput, ForgedSkill, SkillDiagnostic, SkillStep,
 } from './types';
 import { estimateTokens, uniqueStrings } from './util';
 

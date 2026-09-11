@@ -8,6 +8,16 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
     "strict": true,
+    // Beyond `strict`, which says nothing about code that is merely unused or
+    // unreachable. These four found 24 dead imports, locals and parameters, a
+    // write-only pair in the Orb pointer handler, and one function that fell
+    // off its own end — none of which `strict` reports. They cost nothing at
+    // runtime and keep `npm run typecheck` the gate that catches the next one.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "allowUnreachableCode": false,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "noEmit": true,
