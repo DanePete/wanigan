@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Build and upload nothing — proves the pipeline without publishing'
+        description: 'Build and verify without publishing a release'
         type: boolean
         default: false
 
@@ -33,7 +33,7 @@ permissions:
 
 jobs:
   macos:
-    name: macOS · signed, notarised
+    name: macOS · dmg + zip
     runs-on: macos-latest
     timeout-minutes: 60
 
@@ -51,15 +51,16 @@ jobs:
         run: npm ci
 
       # A release must not be the first place a regression is noticed, and
-      # these are the same five steps a contributor is told to run. The two
-      # macOS packaging suites are fixture-only and touch no /Applications.
+      # these are the same six steps a contributor is told to run.
       - name: Test
         run: npm test
 
-      # Fail before a 40-minute build rather than after it. An unsigned or
-      # un-notarised bundle is not a release, and electron-builder would
-      # otherwise happily produce one and only trip at the notarise step.
-      - name: Check signing credentials
+      # Signed or not, but never by accident. An unsigned build is a real thing
+      # to ship — the packaging hooks already carry a deliberate ad-hoc seal for
+      # exactly this. What must not happen is shipping one while believing it
+      # was notarised, so the mode is decided here and the notes say which.
+      - name: Resolve signing mode
+        id: signing
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -71,36 +72,66 @@ jobs:
           for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
             [ -n "${!name}" ] || missing+=("$name")
           done
-          if [ ${#missing[@]} -gt 0 ]; then
-            printf 'Missing release secrets: %s\n' "${missing[*]}" >&2
-            printf 'electron-builder.yml sets notarize: true, so a build without these is not shippable.\n' >&2
+          if [ "${#missing[@]}" -eq 0 ]; then
+            echo "mode=notarized" >> "$GITHUB_OUTPUT"
+            echo "Signing and notarising with the stored Developer ID."
+          elif [ "${#missing[@]}" -eq 5 ]; then
+            echo "mode=unsigned" >> "$GITHUB_OUTPUT"
+            echo "No signing secrets set. Building an ad-hoc sealed, un-notarised app."
+          else
+            # Half a credential set is the dangerous state: electron-builder
+            # would sign and then fail to notarise, or notarise nothing, and
+            # the result looks shippable without being it.
+            printf 'Partial signing configuration. Set all five or none; missing: %s\n' "${missing[*]}" >&2
             exit 1
           fi
 
-      # Both architectures, dmg and zip, per electron-builder.yml. The rebuild
-      # that dist:mac runs afterwards restores the local ABI; on a throwaway
-      # runner it is harmless and keeps one command doing one thing.
-      - name: Build, sign and notarise
+      # Both architectures, dmg and zip, per electron-builder.yml.
+      - name: Build
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run dist:mac
 
-      # Proof the artifact is actually sealed, rather than trusting that the
-      # build step would have failed. `spctl` is what Gatekeeper itself runs.
+      # Proof the bundle is actually sealed, rather than trusting that the build
+      # step would have failed. `spctl` is what Gatekeeper itself runs, and an
+      # un-notarised app is *expected* to be rejected by it — so that assessment
+      # is a gate in notarised mode and a report in unsigned mode.
       - name: Verify the signature
+        env:
+          MODE: ${{ steps.signing.outputs.mode }}
         run: |
           app=$(find release -maxdepth 2 -name 'Wanigan.app' -print -quit)
           if [ -z "$app" ]; then echo 'No Wanigan.app in release/' >&2; exit 1; fi
           codesign --verify --deep --strict --verbose=2 "$app"
-          spctl --assess --type execute --verbose=4 "$app"
+          if [ "$MODE" = "notarized" ]; then
+            spctl --assess --type execute --verbose=4 "$app"
+          else
+            echo 'Unsigned build; Gatekeeper rejection below is expected.'
+            spctl --assess --type execute --verbose=4 "$app" || true
+          fi
+
+      # A person downloading an un-notarised app meets a dialog saying Apple
+      # could not verify it. Saying so in the notes, with the exact way through,
+      # is the difference between a build people install and one they assume is
+      # broken. The text lives in its own file: a heredoc written at column 0
+      # inside this scalar would terminate the block and break the workflow.
+      - name: Compose the release notes
+        env:
+          MODE: ${{ steps.signing.outputs.mode }}
+        run: |
+          if [ "$MODE" = "notarized" ]; then
+            echo 'Signed and notarised with Apple. Download, open, drag to Applications.' > NOTES.md
+          else
+            cp .github/RELEASE_NOTES_UNSIGNED.md NOTES.md
+          fi
+          cat NOTES.md
 
       - name: List artifacts
-        run: ls -lh release/*.dmg release/*.zip 2>/dev/null || true
+        run: ls -lh release/*.dmg release/*.zip || true
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -113,8 +144,8 @@ jobs:
           retention-days: 14
 
       # Only a tag publishes. A manual run builds, verifies and uploads to the
-      # run's artifacts, which is how the pipeline gets exercised without
-      # putting a half-considered version in front of anybody.
+      # run's artifacts, which exercises the pipeline without putting a
+      # half-considered version in front of anybody.
       - name: Publish the release
         if: ${{ startsWith(github.ref, 'refs/tags/v') && !inputs.dry_run }}
         env:
@@ -122,6 +153,6 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
-            --generate-notes \
+            --notes-file NOTES.md \
             --verify-tag \
             release/*.dmg release/*.zip
