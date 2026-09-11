@@ -843,6 +843,12 @@ export function announceSpendCapTrip(name: string, projected: number, cap: numbe
     title: 'Stopped at the spend cap',
     body: `${name} is estimated at ${usd(projected)}, above your ${usd(cap)} cap. Nothing was submitted — raise the cap in Settings or cut the dataset down.`,
     urgent: true,
+    // A cap trip is the other thing the windowless scheduler may keep: the
+    // name is one the operator typed, and the two figures are their own cap
+    // and a price this process worked out. Nothing an agent wrote. Without
+    // this, the 03:00 fire that is the whole reason for an urgent alert shows
+    // a banner to an empty room and is gone by morning.
+    hold: true,
     // No target, for the same reason there is no run id above: the refusal
     // happens before the row exists, so there is nothing to deep-link to. The
     // window still comes forward, on the form the operator was last using.
