@@ -176,6 +176,11 @@ let quitDraining = false;
 let quitReady = false;
 let stopHookEventListener: (() => void) | null = null;
 
+/** Every session that has not exited — what reconcileWorktrees calls an owner. */
+function liveSessionIds(): ReadonlySet<string> {
+  return new Set(listSessions().filter((s) => s.status !== 'exited').map((s) => s.id));
+}
+
 /**
  * Tell awake.ts what is running, so it can hold or release the Mac.
  *
@@ -1138,7 +1143,7 @@ async function startServices() {
   }
 
   // Worktrees survive a crash; a stale one costs disk forever, so surface them.
-  void worktrees.reconcileWorktrees().catch(() => {});
+  void worktrees.reconcileWorktrees(liveSessionIds()).catch(() => {});
   // A goal task left 'running' by a crash describes an agent that no longer
   // exists — and holds path claims nobody can release until it is reopened.
   try {
@@ -2196,7 +2201,7 @@ function registerIpc() {
   // worktree at the path at all, so ok:false here is the rare case.
   handle('worktrees:merge', (p: string, opts?: { squash?: boolean; message?: string }) =>
     worktrees.mergeWorktree(assertManagedRoot(p, 'That worktree'), opts));
-  handle('worktrees:orphans', () => worktrees.reconcileWorktrees());
+  handle('worktrees:orphans', () => worktrees.reconcileWorktrees(liveSessionIds()));
   handle('worktrees:relink', (p: string) => worktrees.relinkWorktree(assertManagedRoot(p, 'That worktree')));
   handle('worktrees:forSession', (id: string) => worktrees.worktreeForSession(id));
 
