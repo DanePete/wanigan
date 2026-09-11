@@ -73,6 +73,16 @@ jobs:
       - name: Dead code and undeclared dependencies
         run: npm run test:dead-code
 
+      # Type-aware, which is the reason it exists: `no-floating-promises` needs
+      # the checker, and `void somePromise()` is an idiom used throughout main.
+      # One that loses its `void` and its `.catch` swallows the rejection
+      # entirely. `eslint-suppressions.json` is the baseline — a debt, not a
+      # permit — and ESLint enforces it both ways on its own: a new violation
+      # fails, and a suppression whose violation has since been fixed also
+      # fails until somebody runs `npm run lint:prune`.
+      - name: Lint
+        run: npm run test:lint
+
       - name: Install Xvfb
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
 

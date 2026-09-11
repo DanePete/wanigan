@@ -1,0 +1,194 @@
+{
+  "scripts/check-renderer-style.cjs": {
+    "no-regex-spaces": {
+      "count": 5
+    }
+  },
+  "scripts/install-local-macos.cjs": {
+    "no-unsafe-finally": {
+      "count": 1
+    }
+  },
+  "scripts/probe-goal-planning.mjs": {
+    "no-empty": {
+      "count": 1
+    }
+  },
+  "scripts/probe-orb-materials.mjs": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "scripts/probe-orb-play-ui.mjs": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "scripts/probe-orb-play.mjs": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "scripts/probe-orb-signatures.mjs": {
+    "no-unused-vars": {
+      "count": 2
+    }
+  },
+  "scripts/renderer-harness.mjs": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "scripts/shots.mjs": {
+    "no-empty": {
+      "count": 1
+    }
+  },
+  "src/main/git.ts": {
+    "prefer-const": {
+      "count": 1
+    }
+  },
+  "src/main/index.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 2
+    },
+    "@typescript-eslint/no-misused-promises": {
+      "count": 1
+    }
+  },
+  "src/main/learning/compilers.ts": {
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
+  "src/main/mobile/git.ts": {
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
+  "src/main/sessions.ts": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    },
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
+  "src/main/smoke11.ts": {
+    "prefer-const": {
+      "count": 1
+    }
+  },
+  "src/main/smoke3.ts": {
+    "no-new-func": {
+      "count": 2
+    },
+    "prefer-const": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/components/AttentionQueue.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/components/CodePanel.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/components/Orb.tsx": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 3
+    }
+  },
+  "src/renderer/src/components/ReviewGate.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/components/SessionGoalTrail.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/components/SessionLearning.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/components/TeamPanel.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/components/bits.tsx": {
+    "@typescript-eslint/no-floating-promises": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/components/useDialog.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/orb/context-story.ts": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 3
+    }
+  },
+  "src/renderer/src/views/Batches.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 3
+    }
+  },
+  "src/renderer/src/views/Control.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "src/renderer/src/views/HeadlessRuns.tsx": {
+    "@typescript-eslint/no-unused-expressions": {
+      "count": 1
+    },
+    "react-hooks/exhaustive-deps": {
+      "count": 5
+    }
+  },
+  "src/renderer/src/views/ImprovementScout.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/views/Interview.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 3
+    }
+  },
+  "src/renderer/src/views/Learning.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 6
+    }
+  },
+  "src/renderer/src/views/MissionRoom.tsx": {
+    "@typescript-eslint/no-misused-promises": {
+      "count": 3
+    }
+  },
+  "src/renderer/src/views/Plugins.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/renderer/src/views/Schedules.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 4
+    }
+  },
+  "src/renderer/src/views/Skills.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 4
+    }
+  }
+}

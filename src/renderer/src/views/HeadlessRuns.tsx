@@ -277,7 +277,6 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
     // Keyed to what the selected run reports about itself, not to the array the
     // poll replaces every three seconds. `runs` is deliberately absent;
     // `rowsNonce` is the rows region's own Try again.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, signature, rowsNonce, revision]);
 
   // Detail belongs to the run it was fetched for; switching runs must not leave

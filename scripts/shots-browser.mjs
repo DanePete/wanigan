@@ -64,7 +64,7 @@ if (MEASURE) {
     };
   });
   console.log(JSON.stringify(info, null, 2));
-  await browser.close(); server.close(); process.exit(0);
+  await close(); process.exit(0);
 }
 // Every destination, in sidebar order, in both palettes — a view is only
 // reviewed when both of its themes have been looked at, and half of what goes

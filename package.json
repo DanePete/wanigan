@@ -39,9 +39,14 @@
     "app": "./scripts/launch.sh",
     "cli": "./scripts/cli.sh",
     "smoke": "./scripts/smoke.sh",
-    "test": "npm run typecheck && npm run test:shared && npm run test:renderer-style && npm run test:dead-code && npm run test:package-hooks && npm run test:local-install && npm run smoke",
+    "test": "npm run typecheck && npm run test:shared && npm run test:renderer-style && npm run test:dead-code && npm run test:lint && npm run test:package-hooks && npm run test:local-install && npm run smoke",
     "dist:mac:arm64": "electron-vite build && { electron-builder --mac --arm64; c=$?; npm run rebuild; exit $c; }",
-    "dead-code:all": "knip"
+    "dead-code:all": "knip",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "lint:prune": "eslint . --prune-suppressions",
+    "lint:debt": "node scripts/lint-debt.cjs",
+    "test:lint": "eslint ."
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
@@ -52,6 +57,8 @@
     "@electron/asar": "3.4.1",
     "@electron/fuses": "2.1.3",
     "@electron/rebuild": "4.2.0",
+    "@eslint/compat": "^2.1.1",
+    "@eslint/js": "9.39.5",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
@@ -64,11 +71,15 @@
     "electron": "44.0.0",
     "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^17.12.0",
     "knip": "5.66.2",
     "playwright-core": "1.62.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.7.2",
+    "typescript-eslint": "^8.70.0",
     "vite": "7.3.6"
   }
 }
