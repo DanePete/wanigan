@@ -1,0 +1,16 @@
+{
+  "checks": [
+    "Name/path search reaches hidden projects; Enter changes scope and restores focus to the header.",
+    "No-match, clear-on-reopen, All spaces, arrow selection and close behavior work without changing scope accidentally.",
+    "Space selection scopes Sessions, Changes and Context; All spaces returns project-only views to Mission room.",
+    "80 projects stay reachable, header width stays bounded, and 1280/960/720 windows contain the panel and long names.",
+    "Add space calls the existing add flow exactly once after dismissing the switcher.",
+    "Focus stays within the menu, backdrop dismissal restores focus, and an empty project list retains All spaces and Add space."
+  ],
+  "errors": [],
+  "fixture": true,
+  "at": "2026-09-11T03:38:57.230Z",
+  "archiveSha256": "299ee6f993ad6adae006cf5a63715b1cf662a5a109ef83555a9132f326f75c0e",
+  "rendererSha256": "b897f0d28ad2afe0f89eff96a03ea62e648cac27f5ad9f02df494c05fbef85b1",
+  "source": "packaged arm64 renderer, isolated synthetic bridge"
+}

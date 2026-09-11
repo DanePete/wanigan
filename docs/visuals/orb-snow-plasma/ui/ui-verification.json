@@ -1,0 +1,23 @@
+{
+  "recordedAt": "2026-09-10T16:06:44.864Z",
+  "errors": [],
+  "checks": [
+    "Snow and plasma at both sizes in both themes",
+    "Snow retained across navigation",
+    "Miniature snow uses elapsed time",
+    "All ten visible material choices",
+    "Picker fits viewport",
+    "Ink action selects a visible material",
+    "No automatic model calls for materials",
+    "Shared lava material",
+    "Play controls",
+    "Captured drag/release at both sizes",
+    "Pending request vortex",
+    "Exactly one answer burst",
+    "No replayed session events",
+    "Motion off",
+    "No automatic model calls"
+  ],
+  "scope": "Isolated Electron GPU, synthetic project fixtures",
+  "rendererSha256": "9a9ee27636db1dfead6ac59f3342246c806299b9ad36cbe93427769a04356b19"
+}

@@ -1,6 +1,6 @@
 /** Reduced wax dynamics: cohesive particles with heat-dependent buoyancy and
  * cooling, reconstructed as a smooth density field. Not a multiphase solver. */
-const COUNT=48,SIZE=48;
+const COUNT=64,SIZE=48;
 export class Wax {
   readonly texture:GPUTexture;
   readonly particles:GPUBuffer;
@@ -15,9 +15,9 @@ export class Wax {
     this.particles=device.createBuffer({size:COUNT*32,usage});this.next=device.createBuffer({size:COUNT*32,usage});
     const initial=new Float32Array(COUNT*8);
     for(let i=0;i<COUNT;i++){
-      const cluster=Math.floor(i/12),angle=i*2.399,ring=.045*Math.sqrt(i%12);
+      const small=i>=48,cluster=small?Math.floor((i-48)/4):Math.floor(i/12),angle=i*2.399,ring=(small?.022:.045)*Math.sqrt(i%(small?4:12));
       initial.set([Math.cos(cluster*1.9)*.48+Math.cos(angle)*ring,-.67+(i%3)*.065,
-        Math.sin(cluster*1.9)*.40+Math.sin(angle)*ring,.18+cluster*.16,0,0,0,0],i*8);
+        Math.sin(cluster*1.9)*.40+Math.sin(angle)*ring,small?.65:.18+cluster*.16,0,0,0,0],i*8);
     }
     device.queue.writeBuffer(this.particles,0,initial);
     this.uniform=device.createBuffer({size:32,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
@@ -44,14 +44,15 @@ export class Wax {
             // Four cohesive parcels exchange heat and repel on contact. Weak
             // adhesion between parcels lets a shared neck detach as they heat
             // differently, instead of collapsing all wax into one rigid ball.
-            let adhesion=select(.12,1.2,i/12u==j/12u);
+            let parcelI=select(i/12u,4u+(i-48u)/4u,i>=48u);let parcelJ=select(j/12u,4u+(j-48u)/4u,j>=48u);
+            let adhesion=select(.25,1.2,parcelI==parcelJ)*(1.-heat*.32);
             let magnitude=select((d-.13)*adhesion*(1.-smoothstep(.22,.34,d)),(d-.13)*18.,d<.13);
             force+=delta/d*magnitude;
             exchange+=(particles[j].p.w-heat)*(1.-d/.34);neighbors+=1.;
           }
         }
         heat=clamp(heat+exchange*dt*.25/max(1.,neighbors),0.,1.);
-        force.y+=(heat-.37)*2.2;
+        force.y+=(heat-.37)*2.2+u[1].z*2.;
         v=(v+force*dt)*exp(-dt*.65);v*=min(1.,.8/max(length(v),.00001));p+=v*dt;
         if(length(p)>.80){let n=normalize(p);p=n*.80;v-=n*max(0.,dot(v,n))*1.35;}
         next[i].p=vec4f(p,heat);next[i].v=vec4f(v,0.);
@@ -63,7 +64,7 @@ export class Wax {
       @compute @workgroup_size(4,4,4) fn main(@builtin(global_invocation_id) id:vec3u){
         let p=(vec3f(id)+.5)/${SIZE}.*2.-1.;var density=0.;var heat=0.;
         for(var i=0u;i<${COUNT}u;i++){
-          let delta=p-particles[i].p.xyz;let q=max(0.,1.-dot(delta,delta)/.0676);
+          let delta=p-particles[i].p.xyz;let q=max(0.,1.-dot(delta,delta)/select(.0676,.0361,i>=48u));
           let weight=q*q*q;density+=weight;heat+=weight*particles[i].p.w;
         }
         textureStore(field,id,vec4f(density,heat/max(density,.0001),0.,0.));
@@ -73,8 +74,8 @@ export class Wax {
     this.fieldGroup=device.createBindGroup({layout:this.field.getBindGroupLayout(0),entries:[
       {binding:1,resource:{buffer:this.particles}},{binding:2,resource:this.texture.createView()}]});
   }
-  step(encoder:GPUCommandEncoder,dt:number,ax:number,ay:number){
-    this.device.queue.writeBuffer(this.uniform,0,new Float32Array([dt,0,0,0,ax,ay,0,0]));
+  step(encoder:GPUCommandEncoder,dt:number,ax:number,ay:number,kick=0){
+    this.device.queue.writeBuffer(this.uniform,0,new Float32Array([dt,0,0,0,ax,ay,kick,0]));
     const move=encoder.beginComputePass();move.setPipeline(this.move);move.setBindGroup(0,this.moveGroup);move.dispatchWorkgroups(1);move.end();
     encoder.copyBufferToBuffer(this.next,0,this.particles,0,COUNT*32);
     const field=encoder.beginComputePass();field.setPipeline(this.field);field.setBindGroup(0,this.fieldGroup);

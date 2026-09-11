@@ -1,130 +1,179 @@
-/* Control sits on the shared .pane frame (index.css) so the gutter, the h1, the
-   measure and the compact shelves all come from one place; the old private
-   padding and 28px title were the visible half of "Control at 18px while .pane
-   was at 24". The last private rule capped and centred the scroll container
-   itself at 1500px, which did two wrong things: Control was the only view whose
-   content floated in the middle of a wide window while the list beside it
-   stayed left, and the cap counted the two 24px gutters, so the content column
-   it was meant to protect never got past 1452px. index.css caps Control's
-   children instead, at --page-wide, through .pane.control-view > * — which is
-   why the control-view class on the view still earns its keep even though no
-   rule in this sheet reads it any more. Remove it there and the cap goes too. */
-.control-card-head, .control-inline, .control-launch, .control-evidence, .control-node, .control-review-actions { display: flex; gap: 14px; }
-.control-docket small, .control-table small, .control-evidence small { color: var(--text-faint); font-size: var(--t-micro); }
-.control-guide-body { display: grid; grid-template-columns: minmax(220px, .65fr) minmax(360px, 1fr) minmax(300px, .9fr); gap: 20px; align-items: start; }
-.control-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.control-guide-body p { margin: 0; color: var(--text-dim); line-height: 1.45; }
-.control-guide-body ol { margin: 0; padding-left: 19px; display: grid; gap: 8px; color: var(--text-dim); font-size: var(--t-body); line-height: 1.4; }
-.control-guide-body strong { color: var(--text); }
-.control-guide-body code { font: var(--t-small) var(--mono); }
-.control-example { border-left: 2px solid var(--line); padding-left: 12px; display: grid; gap: 5px; }
-.control-example p { font-size: 13px; }
-.control-grid { display: grid; grid-template-columns: minmax(380px, 1fr) minmax(300px, .75fr); gap: 18px; align-items: start; }
-.control-grid > .card, .control-detail { padding: 20px; }
-.control-create, .control-list { display: grid; gap: 11px; }
-/* Size comes from the h2 rule in index.css; only the leading is Control's. */
-.control-create h2, .control-list h2, .control-detail h2, .control-lower h2 { margin: 2px 0 6px; }
-.control-create label, .control-launch label { display: grid; gap: 5px; }
-/* Compound on purpose: control.css is @imported above index.css's own rules,
-   so `min-height` lost to .field's --control-h, which at 32px sits below the
-   height a textarea already takes from its two default rows. The objective,
-   acceptance, plan-instruction and event boxes have therefore been opening at
-   the browser's two-row height rather than the four this asks for, and nothing
-   in the cascade could give it to them. Do not collapse the selector.
-   `font: inherit` rises with it and resolves to the same --t-body it already
-   computed to, because nothing between these textareas and body sets a size. */
-.field.control-textarea { min-height: 76px; resize: vertical; font: inherit; }
-.control-inline { align-items: end; }
-.control-inline > label { flex: 1; display: grid; gap: 5px; }
-.control-card-head { justify-content: space-between; align-items: start; }
-.control-goal-meta { display: flex; align-items: center; justify-content: end; flex-wrap: wrap; gap: 8px; font-size: 12px; }
-.control-goal-meta a { color: var(--accent); }
-.control-docket { appearance: none; border: 1px solid var(--line); background: var(--bg-raised); color: var(--text); text-align: left; border-radius: 8px; padding: 11px; display: grid; gap: 4px; cursor: pointer; }
-/* Hover lifts the border; selection is a different claim and gets the same
-   inset plate-red edge every other list in the app uses, on a neutral fill —
-   the old accent tint sat one shade from the critical tint in the light palette. */
-.control-docket:hover { border-color: var(--text-faint); }
-.control-docket.selected { border-color: var(--line); background: var(--bg-selected, var(--bg-sunk)); box-shadow: inset 3px 0 0 var(--plate-red); }
-.control-docket strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.control-status { display: inline-block; width: max-content; border-radius: 99px; padding: 2px 7px; font: 700 10px/1.3 var(--mono); background: var(--bg-sunk); color: var(--text-dim); text-transform: uppercase; }
-.control-status.executing, .control-status.running, .control-status.working { color: var(--accent); background: var(--accent-soft); }
-.control-status.review, .control-status.ready, .control-status.input_required { color: var(--warning); background: var(--warning-soft); }
-.control-status.accepted, .control-status.completed, .control-status.passed, .control-status.recorded, .control-status.triaged { color: var(--good); background: var(--good-soft); }
-/* DocketNodeStatus spells it 'canceled'; only McpTaskRecord uses 'cancelled'. Both are serious. */
-.control-status.failed, .control-status.rejected, .control-status.blocked, .control-status.canceled, .control-status.cancelled { color: var(--serious); background: var(--serious-soft); }
-.control-detail { display: grid; gap: 15px; }
-.control-detail > p { margin: 0; color: var(--text-dim); white-space: pre-wrap; }
-.control-acceptance { margin: 0; padding-left: 20px; color: var(--text-dim); display: grid; gap: 4px; }
-.control-launch { align-items: end; padding: 12px; border-radius: 8px; background: var(--bg-sunk); }
-.control-launch label { flex: 1; }
-/* Unattended dispatch sits on the same sunk plate as the launch row directly
-   above it, because arming freezes exactly the provider and model chosen
-   there — two controls on one surface is the visual claim that they are one
-   decision. The cap field is narrowed rather than left to .control-inline's
-   flex:1, which would stretch a five-character dollar amount across the whole
-   goal card and read as the most important field on it. */
-.control-autopilot { display: grid; gap: var(--s-2); padding: var(--s-3); border-radius: var(--r-md); background: var(--bg-sunk); }
-.control-autopilot > p { margin: 0; color: var(--text-dim); }
+/* Review: one selected goal, a task journey and evidence beside the decision. */
+.pane.control-view { overflow: hidden; }
+.control-view.pane > * { flex-shrink: 0; }
+.control-view .pane-head { margin-bottom: 0; }
+.control-view .control-workbench { flex: 1; min-height: 300px; }
+.control-workbench { display: grid; grid-template-columns: 248px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--line-soft); border-radius: var(--r-xl); background: var(--bg-soft); }
+.control-list { display: flex; flex-direction: column; gap: var(--s-3); min-width: 0; overflow-y: auto; padding: var(--s-5) var(--s-3); border-right: 1px solid var(--line-soft); background: var(--bg-raised); scrollbar-width: thin; }
+.control-list > .sec-head { padding: 0 var(--s-2); }
+.control-chips { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+.control-list > .control-chips { padding-bottom: var(--s-3); border-bottom: 1px solid var(--line-soft); }
+.control-goals { display: grid; gap: var(--s-1); }
+.control-docket { appearance: none; display: grid; gap: var(--s-2); width: 100%; border: 1px solid transparent; border-radius: var(--r-md); padding: var(--s-3); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.control-docket:hover { background: var(--bg-sunk); }
+.control-docket.selected { border-color: var(--line); background: var(--bg-selected); box-shadow: var(--shadow-control); }
+.control-docket:disabled { cursor: wait; }
+.control-docket strong { font-size: var(--t-body); font-weight: 550; line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.control-docket small { color: var(--text-faint); font-size: var(--t-micro); }
+.control-goal-state { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
+.control-reading { min-width: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.control-reading > .empty { min-height: 400px; }
+.control-detail { display: grid; gap: var(--s-3); padding: var(--s-5) var(--s-6); }
+.control-identity { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); color: var(--text-faint); font-size: var(--t-small); }
+.control-identity > span:first-child { color: var(--text-dim); }
+.control-goal-meta { margin-left: auto; max-width: 100%; }
+.control-goal-meta summary { cursor: pointer; }
+.control-goal-meta > div { display: grid; gap: var(--s-2); padding-top: var(--s-3); overflow-wrap: anywhere; }
+.control-goal-meta .btn { justify-self: start; }
+.control-intent h2 { margin: 0; color: var(--text); font-size: var(--t-display); line-height: 1.15; letter-spacing: -.04em; font-weight: 550; overflow-wrap: anywhere; }
+.control-overview { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, .48fr); gap: var(--s-5); align-items: start; }
+.goal-companion { display: flex; align-items: flex-start; gap: var(--s-2); min-width: 0; border-left: 1px solid var(--line-soft); padding-left: var(--s-3); }
+.goal-companion .wanigan-orb { width: var(--companion-size); flex: 0 0 var(--companion-size); }
+.goal-companion-copy { min-width: 0; display: grid; gap: var(--s-2); padding-top: var(--s-2); }
+.goal-companion-copy strong { font-size: var(--t-small); font-weight: 550; line-height: 1.4; }
+.goal-companion-copy p { margin: 0; font-size: var(--t-micro); color: var(--text-dim); line-height: 1.5; overflow-wrap: anywhere; }
+.goal-companion-action { padding: 0; background: transparent; border: 0; color: var(--accent); text-align: left; font-size: var(--t-micro); line-height: 1.5; cursor: pointer; justify-self: start; }
+.goal-companion-action:hover { text-decoration: underline; }
+.goal-companion-action:disabled { color: var(--text-faint); cursor: wait; }
+.goal-companion[data-phase="accepted"] strong { color: var(--good); }
+.control-intent p { margin: var(--s-3) 0 0; max-width: 68ch; color: var(--text-dim); font-size: var(--t-lead); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.control-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-3); border-block: 1px solid var(--line-soft); padding: var(--s-3) 0; }
+.control-facts > div { display: flex; flex-direction: column; justify-content: center; align-items: start; gap: var(--s-1); }
+.control-facts > div + div { border-left: 1px solid var(--line-soft); padding-left: var(--s-4); }
+.control-facts strong { color: var(--text); font-size: var(--t-title); font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: -.025em; }
+.control-facts strong span { color: var(--text-faint); font-size: var(--t-body); }
+.control-facts > div > span:last-child { color: var(--text-faint); font-size: var(--t-micro); }
+.control-contract > summary { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); font-size: var(--t-body); font-weight: 550; cursor: pointer; }
+.control-contract > summary::after { content: '+'; margin-left: auto; color: var(--text-faint); }
+.control-contract[open] > summary::after { content: '−'; }
+.control-contract > summary span { font-size: var(--t-micro); font-weight: 400; color: var(--text-faint); }
+.control-acceptance { display: grid; gap: var(--s-2); margin: var(--s-3) 0 0; padding-left: var(--s-5); color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; overflow-wrap: anywhere; }
+.control-acceptance li::marker { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.control-journey { display: grid; gap: var(--s-2); min-width: 0; }
+.control-journey .sec-right { font-size: var(--t-micro); }
+.control-steps { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(164px, 1fr); overflow-x: auto; gap: var(--s-2); padding-bottom: var(--s-2); scrollbar-width: thin; }
+.control-steps > button { display: flex; gap: var(--s-2); padding: var(--s-3); text-align: left; border: 1px solid var(--line-soft); border-radius: var(--r-md); background: var(--bg-raised); color: var(--text-dim); cursor: pointer; }
+.control-steps > button:hover { background: var(--bg-sunk); border-color: var(--line); }
+.control-steps > button[aria-selected="true"] { border-color: var(--accent); background: var(--bg-selected); color: var(--text); }
+.control-step-number { font-size: var(--t-micro); color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.control-step-copy { display: grid; gap: var(--s-2); min-width: 0; }
+.control-step-copy > span:first-child { font-size: var(--t-micro); text-transform: capitalize; }
+.control-step-copy strong { font-size: var(--t-small); line-height: 1.4; font-weight: 550; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.control-step-copy .mark { font-size: var(--t-micro); }
+.control-decision { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .88fr); gap: var(--s-5); align-items: start; }
+.control-task { min-width: 0; }
+.control-node { display: grid; gap: var(--s-3); min-width: 0; }
+.control-finish { display: grid; gap: var(--s-4); padding: var(--s-3) 0; }
+.control-finish h3 { margin: 0; font-size: var(--t-title); font-weight: 550; letter-spacing: -.025em; }
+.control-finish p, .control-finish blockquote { margin: 0; font-size: var(--t-small); color: var(--text-dim); line-height: 1.6; overflow-wrap: anywhere; }
+.control-finish blockquote { padding-left: var(--s-3); border-left: 1px solid var(--line); white-space: pre-wrap; }
+.control-node h3 { margin: 0; font-size: var(--t-title); line-height: 1.25; letter-spacing: -.025em; font-weight: 550; overflow-wrap: anywhere; }
+.control-node > p { margin: 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.control-prereqs { display: grid; gap: var(--s-2); padding: var(--s-3) 0; border-block: 1px solid var(--line-soft); }
+.control-dependency { display: flex; align-items: center; gap: var(--s-2); background: transparent; color: var(--text-dim); border: 0; padding: var(--s-1) 0; text-align: left; font-size: var(--t-small); cursor: pointer; }
+.control-dependency > span:first-child { flex: 1; overflow-wrap: anywhere; }
+.control-dependency:hover { color: var(--text); }
+.control-node-actions { display: grid; gap: var(--s-3); }
+.control-node-actions > .btn { justify-self: start; }
+.control-node-actions label, .control-create label, .control-launch label { display: grid; gap: var(--s-2); min-width: 0; }
+.control-review-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.field.control-textarea { min-height: 88px; resize: vertical; font: inherit; }
+.control-proof { display: grid; gap: var(--s-3); min-width: 0; padding: var(--s-4); border: 1px solid var(--line-soft); border-radius: var(--r-lg); background: var(--bg-raised); }
+.control-proof .sec-right { font-size: var(--t-micro); }
+.control-proof .seg { width: 100%; }
+.control-proof .seg > button { flex: 1; padding-inline: var(--s-2); }
+.control-proof-body { display: grid; gap: var(--s-3); }
+.control-record { display: grid; gap: var(--s-2); padding-bottom: var(--s-3); border-bottom: 1px solid var(--line-soft); }
+.control-record:last-child { padding-bottom: 0; border-bottom: 0; }
+.control-record > div { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); color: var(--text-faint); font-size: var(--t-micro); }
+.control-record time { margin-left: auto; color: var(--text-faint); font-size: var(--t-micro); }
+.control-record p { margin: 0; font-size: var(--t-small); line-height: 1.6; color: var(--text-dim); white-space: pre-wrap; overflow-wrap: anywhere; }
+.control-record code { font-size: var(--t-micro); color: var(--text-faint); overflow-wrap: anywhere; }
+.control-attribution { justify-self: start; border: 0; padding: 0; background: transparent; color: var(--text-faint); font-size: var(--t-micro); cursor: pointer; text-align: left; }
+.control-attribution:hover { color: var(--text); text-decoration: underline; }
+.control-claim { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); }
+.control-claim code { overflow-wrap: anywhere; min-width: 0; font-size: var(--t-small); color: var(--text-dim); }
+.control-inline, .control-launch { display: flex; align-items: end; gap: var(--s-3); }
+.control-inline > label, .control-launch > label { flex: 1; display: grid; gap: var(--s-2); }
+.control-inline > .field { min-width: 0; }
+.control-execution { border-top: 1px solid var(--line-soft); }
+.control-execution > summary { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-3); padding: var(--s-3) 0; color: var(--text-dim); font-size: var(--t-small); cursor: pointer; }
+.control-execution > summary::before { content: '+'; }
+.control-execution[open] > summary::before { content: '−'; }
+.control-execution > summary > .faint { margin-left: auto; }
+.control-launch { padding: var(--s-4); border: 1px solid var(--line-soft); border-radius: var(--r-md); background: var(--bg-raised); }
+.control-autopilot { display: grid; gap: var(--s-3); padding: var(--s-4); }
+.control-autopilot > p { margin: 0; color: var(--text-dim); line-height: 1.6; }
 .control-autopilot-facts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); }
 .control-autopilot-cap { max-width: 360px; }
 .control-autopilot-act { display: grid; gap: var(--s-2); justify-items: start; }
-.control-nodes { display: grid; gap: 9px; }
-.control-node { justify-content: space-between; align-items: start; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg-raised); }
-.control-node > div:first-child { min-width: 0; flex: 1; }
-.control-node h3 { margin: 5px 0; }
-.control-node p { color: var(--text-dim); margin: 0 0 9px; font-size: 13px; white-space: pre-wrap; }
-/* The prerequisite line sits between the title and the instructions. It is
-   generated prose rather than an agent's own text, so it wraps normally
-   instead of inheriting the pre-wrap the instructions need, and it sits one
-   step tighter to the title than the paragraph below it. */
-.control-node-waits { margin: 0 0 var(--s-2); white-space: normal; }
-.control-node-actions { width: min(340px, 44%); display: grid; gap: 7px; }
-.control-node-actions .field { min-width: 0; }
-.control-review-actions { flex-wrap: wrap; }
-.control-evidence { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding-top: 4px; border-top: 1px solid var(--line); }
-.control-evidence h3 { margin: 4px 0; }
-.control-evidence p { margin: 7px 0; font-size: 13px; color: var(--text-dim); }
-.control-evidence small { display: block; margin-top: 3px; }
-.control-claims { border-top: 1px solid var(--line); padding-top: 12px; }
-.control-claims p { margin: 7px 0; }
-.control-claim { margin: 7px 7px 0 0; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); padding: 4px 6px; border-radius: 5px; font: 12px var(--mono); }
-.control-lower { align-items: stretch; }
-.control-lower > .card { display: grid; align-content: start; gap: 10px; }
-.control-lower p { margin: 0; }
-.control-event { border-top: 1px solid var(--line); padding-top: 9px; }
-.control-event strong { margin-left: 6px; font-size: 13px; }
-.control-event p { color: var(--text-dim); font-size: 13px; margin: 5px 0; }
-.control-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.control-table th { text-align: left; color: var(--text-faint); font: 700 10px var(--mono); text-transform: uppercase; }
-.control-table td, .control-table th { padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
-.control-table small { display: block; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Prose inside the create card — the empty-state route and the stated reason
-   the Create button is disabled — is not a labelled field, so it sits tight to
-   the control it explains instead of taking a full 11px grid step. */
-.control-create .control-hint { margin: -5px 0 0; font-size: 12px; line-height: 1.45; }
+.control-support { border-top: 1px solid var(--line-soft); max-height: 48%; overflow-y: auto; }
+.control-support > summary { display: flex; align-items: center; gap: var(--s-3); cursor: pointer; padding: var(--s-2) 0; color: var(--text-dim); font-size: var(--t-small); }
+.control-support > summary::before { content: '+'; }
+.control-support[open] > summary::before { content: '−'; }
+.control-support > summary .faint { margin-left: auto; }
+.control-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-6); padding: var(--s-5) 0; }
+.control-lower > article { display: grid; align-content: start; gap: var(--s-3); min-width: 0; }
+.control-lower h2 { margin: 0; font-size: var(--t-title); letter-spacing: -.025em; }
+.control-lower p { margin: 0; line-height: 1.6; }
+.control-event { border-top: 1px solid var(--line-soft); padding-top: var(--s-3); }
+.control-event strong { margin-left: var(--s-2); font-size: var(--t-small); }
+.control-event p { color: var(--text-dim); font-size: var(--t-small); margin: var(--s-2) 0; }
+.control-event .btn { margin-right: var(--s-2); }
+.control-table { width: 100%; border-collapse: collapse; font-size: var(--t-small); }
+.control-table th { text-align: left; color: var(--text-faint); font-size: var(--t-micro); font-weight: 500; }
+.control-table td, .control-table th { padding: var(--s-2) var(--s-1); border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+.control-table small { display: block; color: var(--text-faint); font-size: var(--t-micro); overflow-wrap: anywhere; }
+.control-create { display: grid; gap: var(--s-4); }
+.control-create > .btn-primary { justify-content: center; margin-top: var(--s-2); }
+.control-create .control-hint { margin: 0; font-size: var(--t-small); }
 .control-create > .btn:not(.btn-primary) { justify-self: start; }
-/* Control was not a .pane, so compact.css never reached it and it kept its own
-   1100/900 shelves — the visible result was Control at 18px padding beside a
-   document surface still at 16px. Both queries now sit on the named ladder in
-   index.css (wide 1180, medium 980), and the padding step at 980 is compact.css
-   stepping .pane like every other surface. Only the grid collapses are here. */
-@media (max-width: 1180px) { .control-guide { grid-template-columns: 1fr 1fr; } .control-example { grid-column: 1 / -1; } }
-@media (max-width: 980px) { .control-grid, .control-guide { grid-template-columns: 1fr; } .control-example { grid-column: auto; } .control-node { display: grid; } .control-node-actions { width: 100%; } .control-evidence { grid-template-columns: 1fr; } }
-
-/* The task-graph editor in the create card.
-   Rows sit on the sunk plate the launch and autopilot rows already use, so the
-   graph reads as one nested object rather than as four more fields in the same
-   column as Title and Objective — the create card is a grid, and without the
-   plate an eight-row graph looked like the form had grown eight sections. Every
-   size here is a token: control.css carries eleven px font literals from before
-   the scale existed and the gate only lets that number fall.
-   A problem line is red *behind* a ✕ and a full sentence, never the colour
-   alone, because the whole point of stating a refusal before the button is that
-   it can be read and acted on. */
+.control-guide-body { display: grid; grid-template-columns: minmax(180px, .65fr) minmax(280px, 1fr) minmax(220px, .9fr); gap: var(--s-5); align-items: start; }
+.control-guide-body p { margin: 0; color: var(--text-dim); line-height: 1.6; }
+.control-guide-body ol { margin: 0; padding-left: var(--s-5); display: grid; gap: var(--s-2); color: var(--text-dim); font-size: var(--t-small); line-height: 1.6; }
+.control-guide-body strong { color: var(--text); }
+.control-guide-body code { font-size: var(--t-small); }
+.control-example { border-left: 1px solid var(--line-soft); padding-left: var(--s-3); display: grid; gap: var(--s-2); }
+.control-example p { font-size: var(--t-small); }
+@media (max-width: 1180px) {
+  .control-workbench { grid-template-columns: 218px minmax(0, 1fr); }
+  .control-detail { padding: var(--s-5); }
+  .control-decision { grid-template-columns: minmax(0, 1fr); }
+  .control-guide-body { grid-template-columns: 1fr 1fr; }
+  .control-example { grid-column: 1 / -1; }
+}
+@media (max-width: 980px) {
+  .control-workbench { grid-template-columns: 190px minmax(0, 1fr); }
+  .control-list { padding: var(--s-4) var(--s-2); }
+  .control-detail { padding: var(--s-4); }
+  .control-grid, .control-guide-body { grid-template-columns: 1fr; }
+  .control-example { grid-column: auto; }
+  .control-facts { grid-template-columns: 1fr 1fr; }
+  .control-facts > div:nth-child(3) { border-left: 0; padding-left: 0; }
+  .control-identity { gap: var(--s-2); }
+  .control-goal-meta { margin-left: 0; }
+}
+@media (max-width: 720px) {
+  .pane.control-view { overflow-y: auto; }
+  .control-view .control-workbench { flex: none; min-height: 0; }
+  .control-workbench { grid-template-columns: 1fr; }
+  .control-list { max-height: 280px; border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .control-launch { flex-direction: column; align-items: stretch; }
+  .control-reading { overflow: visible; }
+  .control-support { max-height: none; }
+}
 .control-plan { display: grid; gap: var(--s-2); }
 .control-plan-lead { margin: 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.45; }
 .control-plan-rows { display: grid; gap: var(--s-2); }
-.control-plan-row { display: grid; gap: var(--s-2); padding: var(--s-3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); }
+.control-plan-row { padding: var(--s-3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); }
+.control-plan-summary { display: flex; align-items: center; gap: var(--s-3); cursor: pointer; list-style: none; }
+.control-plan-summary::-webkit-details-marker { display: none; }
+.control-plan-summary > span { color: var(--accent); font-size: var(--t-small); font-variant-numeric: tabular-nums; }
+.control-plan-summary > strong { flex: 1; min-width: 0; font-size: var(--t-body); font-weight: 500; overflow-wrap: anywhere; }
+.control-plan-summary > small { color: var(--text-faint); font-size: var(--t-micro); }
+.control-plan-summary::after { content: '+'; color: var(--text-faint); }
+.control-plan-row[open] > .control-plan-summary::after { content: '−'; }
+.control-plan-edit { display: grid; gap: var(--s-3); padding-top: var(--s-4); }
 .control-plan-top { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); flex-wrap: wrap; }
 .control-plan-actions, .control-plan-add { display: flex; flex-wrap: wrap; gap: var(--s-1); }
 /* Kind is a four-word enum next to a free-text title, so it takes what it needs
@@ -135,66 +184,15 @@
 .control-plan-problem { display: flex; gap: var(--s-1); margin: 0; color: var(--bad); font-size: var(--t-small); line-height: 1.45; }
 /* Closed, the graph still says what it holds: a field nobody opened is not a
    field nobody submitted. */
-.control-plan-open { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); }
-.control-plan-state { margin: 2px 0 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.4; }
-.control-plan-slot:empty { display: none; }
 
-/* Review is a list and its selected record on one quiet working surface.
-   Creation is a deliberate sheet; evidence stays visible beside the list. */
-.control-view.pane > * { flex-shrink: 0; }
-.control-workbench { display: grid; grid-template-columns: minmax(230px, .32fr) minmax(0, 1fr); min-height: 420px; border: 1px solid var(--line-soft); border-radius: var(--r-lg); background: var(--bg-soft); }
-.control-workbench .control-list { min-width: 0; align-content: start; padding: var(--s-5) var(--s-3); border-right: 1px solid var(--line-soft); background: var(--bg-raised); border-radius: var(--r-lg) 0 0 var(--r-lg); }
-.control-list > .sec-head { padding: 0 var(--s-2); }
-.control-list > .faint { padding: var(--s-2); line-height: 1.6; }
-.control-list .control-chips { padding: 0 var(--s-2) var(--s-3); }
-.control-list .control-docket { border: 0; border-radius: var(--r-sm); background: transparent; padding: var(--s-3); gap: var(--s-2); }
-.control-list .control-docket.selected { background: var(--bg-selected); box-shadow: inset 2px 0 0 var(--accent); }
-.control-list .control-docket:hover:not(.selected) { background: var(--bg-sunk); }
-.control-list .control-docket strong { white-space: normal; font-weight: 550; line-height: 1.4; }
-.control-reading { min-width: 0; }
-.control-reading > .empty { min-height: 420px; }
-.control-reading .control-detail { padding: var(--s-5) var(--s-6); gap: var(--s-5); }
-.control-detail > .control-card-head { flex-wrap: wrap; gap: var(--s-3); }
-.control-detail > .control-card-head > div:first-child { flex: 1; min-width: 220px; }
-.control-detail h2 { margin: var(--s-2) 0 0; font-weight: 550; letter-spacing: -.025em; }
-.control-detail > p { font-size: var(--t-lead); line-height: 1.65; max-width: 68ch; }
-.control-goal-meta { display: block; font-size: var(--t-small); color: var(--text-faint); }
-.control-goal-meta summary { cursor: pointer; padding: var(--s-2) 0; }
-.control-goal-meta > div { display: grid; gap: var(--s-2); max-width: 270px; overflow-wrap: anywhere; }
-.control-goal-meta .btn { justify-self: start; }
-.control-detail .control-node { border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; background: transparent; padding: var(--s-4) 0; }
-.control-detail .control-status { font-family: var(--font-ui); font-size: var(--t-micro); font-weight: 550; text-transform: none; padding: var(--s-1) var(--s-2); }
-.control-detail .control-node .label { display: inline; margin-left: var(--s-2); }
-.control-support { border-top: 1px solid var(--line-soft); }
-.control-support > summary { display: flex; justify-content: space-between; gap: var(--s-3); cursor: pointer; padding: var(--s-4) 0; color: var(--text-dim); font-size: var(--t-small); }
-.control-support > summary::before { content: '+'; }
-.control-support[open] > summary::before { content: '−'; }
-.control-support > summary .faint { margin-left: auto; }
-.control-support .control-grid > .card { padding: var(--s-5); }
-.control-sheet { width: min(640px, 100%); max-height: calc(100dvh - var(--s-6) * 2); overflow-y: auto; padding: var(--s-6); border: 1px solid var(--glass-line); border-radius: var(--r-xl); background: var(--bg-raised); color: var(--text); box-shadow: var(--shadow-modal); }
-.control-sheet-title { display: flex; justify-content: space-between; align-items: center; gap: var(--s-3); margin-bottom: var(--s-5); }
-.control-sheet-title h2 { font-size: var(--t-display); font-weight: 550; letter-spacing: -.035em; }
-.control-sheet .control-create { gap: var(--s-4); }
-.control-sheet .control-create > .btn-primary { justify-content: center; margin-top: var(--s-2); }
-.control-sheet .control-create .control-hint { font-size: var(--t-small); }
-@media (max-width: 980px) {
-  .control-workbench { grid-template-columns: minmax(190px, .34fr) minmax(0, 1fr); }
-  .control-reading .control-detail { padding: var(--s-5); }
-  .control-workbench .control-list { padding: var(--s-4) var(--s-2); }
-}
-@media (max-width: 720px) {
-  .control-workbench { grid-template-columns: 1fr; }
-  .control-workbench .control-list { border-right: 0; border-bottom: 1px solid var(--line-soft); border-radius: var(--r-lg) var(--r-lg) 0 0; max-height: 260px; overflow-y: auto; }
-  .control-reading .control-detail { padding: var(--s-4); }
-  .control-sheet { padding: var(--s-5); }
-}
+.control-note { color: var(--text-dim); font-size: var(--t-small); }
+.control-note > summary { cursor: pointer; padding: var(--s-1) 0; }
+.control-note > label { margin-top: var(--s-2); }
+.control-node .control-prereqs { gap: var(--s-1); padding: var(--s-2) 0; }
+.control-view > .control-support { flex-shrink: 1; }
 
-.control-execution { border: 1px solid var(--line-soft); border-radius: var(--r-md); background: var(--bg-raised); }
-.control-execution > summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); padding: var(--s-3) var(--s-4); font-size: var(--t-small); color: var(--text-dim); }
-.control-execution > summary::before { content: '+'; }
-.control-execution[open] > summary::before { content: '−'; }
-.control-execution > summary > .faint { margin-left: auto; }
-.control-execution > .control-launch, .control-execution > .control-autopilot { margin: var(--s-3); }
-@media (min-width: 721px) {
-  .control-workbench .control-list { position: sticky; top: var(--review-sticky-top); align-self: start; max-height: calc(100dvh - var(--review-list-inset)); overflow-y: auto; }
+@media (max-width: 1180px) {
+  .control-overview { grid-template-columns: minmax(0, 1fr); gap: var(--s-2); }
+  .goal-companion { border-left: 0; padding-left: 0; }
+  .goal-companion-copy { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--s-3); }
 }

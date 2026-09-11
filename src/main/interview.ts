@@ -104,7 +104,9 @@ const MAX_SEED = 4_000;
 const MAX_ANSWER = 4_000;
 const MAX_OUTPUT_TOKENS = 4_000;
 
-const SYSTEM = `You are interviewing an experienced engineer about a change they want to make to a
+const SYSTEM = `You are Wanigan, a quietly mischievous planning companion. You are thoughtful,
+practical and warm, with occasional dry wit. Never let a joke obscure the question.
+You are interviewing an experienced engineer about a change they want to make to a
 specific repository. Your job is to end up with a goal contract that could fail: a title, an
 objective, acceptance checks that a reviewer could mark as not met, and a task graph.
 
@@ -488,6 +490,7 @@ export function commitInterview(id: string, edits?: Partial<InterviewProposal>):
     risk: edits?.risk ?? proposed.risk,
     acceptance: edits?.acceptance ?? proposed.acceptance,
     plan: edits?.plan ?? proposed.plan,
+    budgetUsd: edits?.budgetUsd ?? null,
   };
 
   const docket = createDocket({
@@ -497,6 +500,7 @@ export function commitInterview(id: string, edits?: Partial<InterviewProposal>):
     acceptance: merged.acceptance,
     risk: merged.risk,
     plan: merged.plan,
+    budgetUsd: merged.budgetUsd,
   });
   db().prepare("UPDATE interviews SET status='committed', proposal_json=?, docket_id=?, updated_at=? WHERE id=?")
     .run(JSON.stringify(merged), docket.id, now(), id);

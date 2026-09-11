@@ -1,16 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
-  ControlEvent, DocketAutopilot, DocketDetail, DocketNode, DocketNodeKind, DocketNodeStatus, DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
+  ControlEvent, DocketAutopilot, DocketDetail, DocketNode, DocketNodeKind, DocketNodeStatus, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
 } from '@shared/types';
-import { Chip, ConfirmNote, EmptyState, Explainer, Hint, Icon, Mark, Note, PageHead, Reading, SectionHead, ago, markOf, usd } from '../components/bits';
+import { Chip, ConfirmNote, EmptyState, Explainer, Hint, Icon, Mark, Note, PageHead, Pill, Reading, SectionHead, ago, markOf, usd } from '../components/bits';
 import type { MarkSpec } from '../components/bits';
-import PlanEditor, { planProblems, planRowsFromDefault, toPlanNodes } from '../components/PlanEditor';
-import type { PlanRow } from '../components/PlanEditor';
-import { useDialog } from '../components/useDialog';
+import Interview from './Interview';
 import { useViewMemory } from '../components/viewMemory';
+import ReviewEvidence from '../components/ReviewEvidence';
+import GoalCompanion from '../components/GoalCompanion';
+import { goalLocation } from '@shared/goal-journey';
 
 const errText = (error: unknown) => error instanceof Error ? error.message : String(error);
-const risks: DocketRisk[] = ['low', 'elevated', 'high'];
 
 /**
  * Whether unattended dispatch is on, and whether it last stopped itself.
@@ -55,8 +55,9 @@ const SPEND_READING: Record<DocketAutopilot['spendStatus'], string> = {
   unreported: 'No session on this goal has reported a cost. Nothing has been counted against the cap — which is not the same as nothing having been spent.',
   none: 'No session has been launched for this goal yet, so there is nothing to count against the cap.',
 };
-const goalHash = (id: string) => `#goal=${encodeURIComponent(id)}`;
+const goalHash = (id: string) => goalLocation(id);
 const goalFromHash = () => new URLSearchParams(window.location.hash.slice(1)).get('goal');
+const taskFromHash = () => new URLSearchParams(window.location.hash.slice(1)).get('task');
 async function copyText(value: string): Promise<void> {
   if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(value); return; }
   const field = document.createElement('textarea');
@@ -131,8 +132,12 @@ export default function Control({ projects, providers, onOpenSession }: {
   projects: Project[]; providers: ProviderInfo[]; onOpenSession: (id: string) => void;
 }) {
   const [dockets, setDockets] = useState<WorkDocket[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [selected, setSelected] = useViewMemory<string | null>('selected', null);
+  const [query, setQuery] = useViewMemory('query', '');
+  const [scope, setScope] = useViewMemory('projectScope', '');
+  const [taskSelection, setTaskSelection] = useViewMemory<Record<string, string>>('taskSelection', {});
+  const [createOpen, setCreateOpen] = useViewMemory('creating', false);
+  const createButton = useRef<HTMLButtonElement>(null);
   /**
    * Which status the goal list is filtered to. 'all' is the default and the
    * way back; a filter that cannot be cleared is a list that lies about size.
@@ -167,40 +172,20 @@ export default function Control({ projects, providers, onOpenSession }: {
    */
   const [ready, setReady] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [inspectAccepted, setInspectAccepted] = useState<string | null>(null);
+  const [actionBusy, setBusy] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const busy = actionBusy ?? (refreshing ? 'reading' : null);
+  const actionLock = useRef(false);
+  const alive = useRef(true);
   const [projectId, setProjectId] = useState('');
-  const [title, setTitle] = useState('');
-  const [objective, setObjective] = useState('');
-  const [acceptance, setAcceptance] = useState('');
-  const [risk, setRisk] = useState<DocketRisk>('elevated');
-  const [budget, setBudget] = useState('');
-  /**
-   * The task graph this goal would be created with.
-   *
-   * Seeded from the shared default, so a goal created without opening the
-   * editor gets exactly the four phases Control has always created — the same
-   * array main falls back to, not a second copy of it. control.create has
-   * accepted a `plan` since the validator landed and no renderer surface ever
-   * sent one, which is why the node cap, the terminal-review rule and the
-   * claim-overlap check had only ever run against a default that passes them
-   * all trivially.
-   */
-  const [plan, setPlan] = useState<PlanRow[]>(planRowsFromDefault);
-  // Collapsed by default. The graph is the one field on this card that already
-  // has a right answer for most goals, so it announces what it holds and opens
-  // only for someone who wants something else.
-  const [planOpen, setPlanOpen] = useState(false);
   const [providerId, setProviderId] = useState('');
   const [model, setModel] = useState('');
-  const [notes, setNotes] = useState<Record<string, string>>({});
-  const [claims, setClaims] = useState<Record<string, string>>({});
+  const [notes, setNotes] = useViewMemory<Record<string, string>>('notes', {});
+  const [claims, setClaims] = useViewMemory<Record<string, string>>('claims', {});
   const [eventSource, setEventSource] = useState('manual');
   const [eventKind, setEventKind] = useState('CI failure');
   const [eventSummary, setEventSummary] = useState('');
-  // A folder picked from this card. The shell owns the project list and re-reads
-  // it on window focus, so this is not a second source of truth — it is what
-  // keeps the form usable in the frame after the dialog closes.
-  const [picked, setPicked] = useState<Project[]>([]);
   /**
    * Which goal's arm-autopilot confirmation is open, if any.
    *
@@ -224,10 +209,7 @@ export default function Control({ projects, providers, onOpenSession }: {
   const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({});
 
   const enabledProviders = useMemo(() => providers.filter((provider) => !!provider.path), [providers]);
-  const projectOptions = useMemo(() => {
-    const seen = new Set(projects.map((project) => project.id));
-    return [...projects, ...picked.filter((project) => !seen.has(project.id))];
-  }, [projects, picked]);
+  const projectOptions = projects;
 
   // `selected` is read through a ref rather than a dependency: as a dependency
   // every selection changed load's identity, the mount effect below fired it a
@@ -239,27 +221,42 @@ export default function Control({ projects, providers, onOpenSession }: {
   const loadSeq = useRef(0);
   const load = useCallback(async (focus?: string | null) => {
     const seq = ++loadSeq.current;
+    if (focus && focus !== selectedRef.current) {
+      selectedRef.current = focus; setSelected(focus); setDetail(null);
+      setTasks([]); setReceipts([]); setTraces([]); setArmAsk(null); setConfirmCancel(null);
+    }
+    setRefreshing(true); setLoadError(null);
     try {
       const [next, nextOutcomes, nextEvents] = await Promise.all([
         window.wanigan.control.list(), window.wanigan.control.outcomes(), window.wanigan.control.events('all'),
       ]);
-      if (seq !== loadSeq.current) return;
+      if (!alive.current || seq !== loadSeq.current) return;
       setDockets(next); setOutcomes(nextOutcomes); setEvents(nextEvents);
       const linked = goalFromHash();
-      const id = focus ?? (linked && next.some((docket) => docket.id === linked) ? linked : null) ?? selectedRef.current ?? next[0]?.id ?? null;
+      const preferred = focus ?? selectedRef.current ?? linked;
+      const id = preferred && next.some((docket) => docket.id === preferred) ? preferred : next[0]?.id ?? null;
+      if (id !== selectedRef.current) {
+        selectedRef.current = id; setSelected(id); setDetail(null);
+        setTasks([]); setReceipts([]); setTraces([]); setArmAsk(null); setConfirmCancel(null);
+      }
       if (id && next.some((docket) => docket.id === id)) {
         const [full, mcp, nextReceipts, nextTraces] = await Promise.all([
           window.wanigan.control.get(id), window.wanigan.control.mcpTasks(id), window.wanigan.control.resumeReceipts(id), window.wanigan.control.traces(id, 5),
         ]);
-        if (seq !== loadSeq.current) return;
+        if (!alive.current || seq !== loadSeq.current) return;
+        const requestedTask = goalFromHash() === id ? taskFromHash() : null;
+        const taskId = full.nodes.some(node => node.id === requestedTask) ? requestedTask : null;
+        if (taskId) setTaskSelection(previous => ({ ...previous, [id]: taskId }));
+        const location = goalLocation(id, taskId ?? undefined);
+        if (window.location.hash !== location) window.history.replaceState(null, '', location);
         setSelected(id); setDetail(full); setTasks(mcp); setReceipts(nextReceipts); setTraces(nextTraces);
       } else { setSelected(null); setDetail(null); setTasks([]); setReceipts([]); setTraces([]); }
       setLoadError(null);
-    } catch (e) { if (seq === loadSeq.current) setLoadError(errText(e)); }
-    finally { if (seq === loadSeq.current) setReady(true); }
+    } catch (e) { if (alive.current && seq === loadSeq.current) setLoadError(errText(e)); }
+    finally { if (alive.current && seq === loadSeq.current) { setReady(true); setRefreshing(false); } }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { alive.current = true; void load(goalFromHash()); return () => { alive.current = false; loadSeq.current++; }; }, [load]);
   // The board is driven by main: autopilot queues and launches tasks on a
   // 10-second sweep, and sessions exit on their own. Without these the page sat
   // frozen at the last click while tasks started, spent and finished behind it.
@@ -285,38 +282,26 @@ export default function Control({ projects, providers, onOpenSession }: {
   useEffect(() => { if (!providerId && enabledProviders[0]) setProviderId(enabledProviders[0].id); }, [enabledProviders, providerId]);
 
   const act = async (key: string, work: () => Promise<void>, message?: string) => {
+    if (actionLock.current) return;
+    actionLock.current = true;
     setBusy(key); setActionError(null); setNotice(null);
-    try { await work(); if (message) setNotice(message); }
-    catch (e) { setActionError(errText(e)); }
-    finally { setBusy(null); }
+    const origin = selectedRef.current;
+    try { await work(); if (alive.current && (key === 'create' || key.startsWith('triage-') || selectedRef.current === origin) && message) setNotice(message); }
+    catch (e) { if (alive.current && selectedRef.current === origin) setActionError(errText(e)); }
+    finally { actionLock.current = false; if (alive.current) setBusy(null); }
   };
 
-  const create = () => act('create', async () => {
-    const created = await window.wanigan.control.create({ projectId, title, objective,
-      acceptance: acceptance.split('\n').map((line) => line.trim()).filter(Boolean), risk,
-      budgetUsd: budget.trim() ? Number(budget) : null, plan: toPlanNodes(plan) });
-    setTitle(''); setObjective(''); setAcceptance(''); setBudget('');
-    // The graph goes back to the default with the rest of the form. Leaving the
-    // last goal's custom graph loaded would silently apply it to the next one.
-    setPlan(planRowsFromDefault()); setPlanOpen(false);
-    await load(created.id);
-    setCreateOpen(false);
-  }, 'Goal created. Start with a task that has no unfinished prerequisite; the rest stays blocked until theirs are complete.');
+  // A completed action may refresh its own goal, never navigate back from a new one.
+  const reloadGoal = async (id: string | null) => {
+    if (alive.current && selectedRef.current === id) await load(id);
+  };
 
-  // Control is reachable before any project exists, and every field on the
-  // create card depends on one. Without a route out of that state the card is a
-  // dead end: an empty picker above a button that refuses to explain itself.
-  const addProject = () => act('add-project', async () => {
-    const project = await window.wanigan.projects.pick();
-    if (!project) return;
-    setPicked((previous) => previous.some((entry) => entry.id === project.id) ? previous : [...previous, project]);
-    setProjectId(project.id);
-  });
-
-  const choose = (id: string) => act(`choose-${id}`, async () => {
+  const choose = async (id: string) => {
+    if (actionLock.current) return;
+    setActionError(null); setNotice(null); setArmAsk(null); setConfirmCancel(null);
     if (window.location.hash !== goalHash(id)) window.history.replaceState(null, '', goalHash(id));
     await load(id);
-  });
+  };
   /**
    * The clipboard gets the goal's own id, never a URL.
    *
@@ -333,19 +318,19 @@ export default function Control({ projects, providers, onOpenSession }: {
   }, 'Goal ID copied. It names this goal in Wanigan’s records — an identifier, not a link.');
   const start = (node: DocketNode) => act(`start-${node.id}`, async () => {
     const launched = await window.wanigan.control.start(node.id, { providerId, model: model.trim() || undefined });
-    await load(detail?.id);
-    if (launched.sessionId) onOpenSession(launched.sessionId);
+    await reloadGoal(detail?.id ?? null);
+    if (alive.current && selectedRef.current === detail?.id && launched.sessionId) onOpenSession(launched.sessionId);
   }, 'Isolated agent session launched from this task’s contract.');
   const checkpoint = (node: DocketNode) => act(`checkpoint-${node.id}`, async () => {
     await window.wanigan.control.checkpoint(node.id, notes[node.id] || 'Operator checkpoint.');
-    setNotes((previous) => ({ ...previous, [node.id]: '' })); await load(detail?.id);
+    setNotes((previous) => ({ ...previous, [node.id]: '' })); await reloadGoal(detail?.id ?? null);
   }, 'Checkpoint saved with repository commit, worktree, and exact conversation ID when available.');
   const addClaim = (node: DocketNode) => act(`claim-${node.id}`, async () => {
     await window.wanigan.control.claim(node.id, claims[node.id] || '');
-    setClaims((previous) => ({ ...previous, [node.id]: '' })); await load(detail?.id);
+    setClaims((previous) => ({ ...previous, [node.id]: '' })); await reloadGoal(detail?.id ?? null);
   }, 'Path claimed. Overlapping active work is now refused.');
   const proof = (node: DocketNode) => act(`proof-${node.id}`, async () => {
-    await window.wanigan.control.runProof(node.id); await load(detail?.id);
+    await window.wanigan.control.runProof(node.id); await reloadGoal(detail?.id ?? null);
   }, 'Review gate recorded as evidence.');
   // A failed or canceled task blocks everything downstream of it. Without this
   // the docket is a dead end: the main process can reopen the node, but nothing
@@ -357,7 +342,7 @@ export default function Control({ projects, providers, onOpenSession }: {
   // (control.ts). What reopening removes is the failure, not the wait.
   const retry = (node: DocketNode) => act(`retry-${node.id}`, async () => {
     await window.wanigan.control.retry(node.id);
-    await load(detail?.id);
+    await reloadGoal(detail?.id ?? null);
   }, 'Task reopened and set back to pending. Start it again when you are ready; tasks that wait on it stay blocked until it completes.');
 
   /**
@@ -375,12 +360,12 @@ export default function Control({ projects, providers, onOpenSession }: {
     detail?.nodes.find((node) => node.id === task.nodeId)?.status === 'running';
   const cancelTask = (task: McpTaskRecord) => act(`cancel-task-${task.id}`, async () => {
     const receipt = await window.wanigan.control.cancelMcpTask(task.id);
-    await load(detail?.id);
+    await reloadGoal(detail?.id ?? null);
     // Set inside the closure, after the call, and deliberately not through
     // act's third argument: act clears the notice on the way in and only
     // overwrites it from a message it was handed before the work ran, which is
     // exactly the sentence this cannot be.
-    setNotice(cancelNotice(receipt));
+    if (alive.current && selectedRef.current === detail?.id) setNotice(cancelNotice(receipt));
   });
 
   /**
@@ -394,158 +379,141 @@ export default function Control({ projects, providers, onOpenSession }: {
    */
   const arm = (docket: DocketDetail) => act(`autopilot-${docket.id}`, async () => {
     await window.wanigan.control.setAutopilot(docket.id, { enabled: true, providerId, model: model.trim() || undefined });
-    setArmAsk(null); await load(docket.id);
+    setArmAsk(null); await reloadGoal(docket.id);
   }, 'Autopilot armed. Ready tasks other than Review are dispatched without further approval until reported spend reaches the cap or a halt is recorded.');
   // Stopping is the safe direction, so it is not confirmed. It is also not a
   // kill switch: startQueuedNode re-reads the flag, so a queued task will not
   // launch, but a session already running is a live PTY that keeps running.
   const disarm = (docket: DocketDetail) => act(`autopilot-${docket.id}`, async () => {
     await window.wanigan.control.setAutopilot(docket.id, { enabled: false });
-    setArmAsk(null); await load(docket.id);
+    setArmAsk(null); await reloadGoal(docket.id);
   }, 'Autopilot disarmed. Nothing new is dispatched; a session already running keeps running until it ends.');
   // A goal created without a budget could otherwise never arm at all: the cap
   // is a precondition in control.ts and the create card makes it optional.
   const saveBudget = (docket: DocketDetail) => act(`budget-${docket.id}`, async () => {
     await window.wanigan.control.setBudget(docket.id, Number(budgetDrafts[docket.id] ?? ''));
-    setBudgetDrafts((previous) => ({ ...previous, [docket.id]: '' })); await load(docket.id);
+    setBudgetDrafts((previous) => ({ ...previous, [docket.id]: '' })); await reloadGoal(docket.id);
   }, 'Spend cap saved. Autopilot stops when reported spend reaches it.');
 
   const complete = (node: DocketNode, decision: 'approve' | 'request_changes' | 'reject' = 'approve') => act(`complete-${node.id}-${decision}`, async () => {
     await window.wanigan.control.complete(node.id, { detail: notes[node.id] || undefined, decision });
-    setNotes((previous) => ({ ...previous, [node.id]: '' })); await load(detail?.id);
+    setNotes((previous) => ({ ...previous, [node.id]: '' })); await reloadGoal(detail?.id ?? null);
   }, decisionNotice(node.kind, decision));
   const addEvent = () => act('event', async () => {
     await window.wanigan.control.addEvent({ projectId: projectId || null, source: eventSource, kind: eventKind, summary: eventSummary });
-    setEventSummary(''); await load(detail?.id);
+    setEventSummary(''); await reloadGoal(detail?.id ?? null);
   }, 'Event added to the local triage inbox. It cannot launch work on its own.');
   const triage = (event: ControlEvent) => act(`triage-${event.id}`, async () => {
     const created = await window.wanigan.control.triageEvent(event.id, {}); await load(created.id);
   }, 'Event turned into a reviewed goal; no agent was launched automatically.');
 
-  // A disabled primary button that never says why is the same dead end in a
-  // different shape, so the missing pieces are named in visible text and the
-  // button points at it.
-  const missing = [
-    !projectId && 'a project',
-    !title.trim() && 'a title',
-    !objective.trim() && 'an objective',
-    !acceptance.trim() && 'at least one acceptance check',
-  ].filter((entry): entry is string => typeof entry === 'string');
-  const shownDockets = statusFilter === 'all' ? dockets : dockets.filter((docket) => docket.status === statusFilter);
+  const scopedDockets = dockets.filter(docket => !scope || docket.projectId === scope);
+  const shownDockets = scopedDockets.filter(docket => (statusFilter === 'all' || docket.status === statusFilter)
+    && `${docket.title} ${docket.projectName} ${docket.objective}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const activeNode = detail?.nodes.find(node => node.id === taskSelection[detail.id])
+    ?? detail?.nodes.find(node => node.kind === 'review' && node.status === 'ready')
+    ?? detail?.nodes.find(node => ['failed', 'canceled', 'running', 'ready'].includes(node.status))
+    ?? detail?.nodes[0];
+  const selectTask = (id: string, focus = false) => {
+    if (!detail) return;
+    setTaskSelection(previous => ({ ...previous, [detail.id]: id }));
+    window.history.replaceState(null, '', goalLocation(detail.id, id));
+    if (focus) requestAnimationFrame(() => document.getElementById('control-task-title')?.focus());
+  };
   // Named once because the cancel confirmation has to answer the same question
   // the rows do: a prompt is only allowed to stand while the record it names is
   // still on screen.
   const shownTasks = tasks.slice(0, 5);
-  const missingText = missing.length < 2 ? missing.join('')
-    : `${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]}`;
-  /**
-   * Everything main would refuse about the drawn graph, from the same function
-   * the editor renders beside the offending task.
-   *
-   * The button is gated on this list rather than on a submit-time catch,
-   * because a validator that only speaks after the press is the rule stated
-   * twice and heard once. main still validates — this is a courtesy, not the
-   * authority — but a refusal that arrives with the goal already discarded is
-   * a worse version of the same sentence.
-   */
-  const planFaults = useMemo(() => planProblems(plan), [plan]);
-  const planIsDefault = useMemo(() => {
-    const base = planRowsFromDefault();
-    return plan.length === base.length && plan.every((row, index) => row.kind === base[index].kind
-      && row.title === base[index].title && row.instructions === base[index].instructions
-      && row.claimPath === base[index].claimPath
-      && row.dependsOn.length === base[index].dependsOn.length
-      && row.dependsOn.every((dep, at) => dep === base[index].dependsOn[at]));
-  }, [plan]);
+  if (createOpen) return <Interview projects={projects} projectId={scope || projectId || null} backLabel="Back to goals"
+    onCancel={() => { setCreateOpen(false); requestAnimationFrame(() => createButton.current?.focus()); }}
+    onDone={id => { setCreateOpen(false); void choose(id); setNotice('Goal created. Choose a task when you are ready to begin.'); }} />;
 
   return <div className="pane control-view">
-    <PageHead title="Review" lead="Your goals, the evidence, and the next decision."
-      actions={<button className="btn btn-primary" type="button" onClick={() => setCreateOpen(true)}><Icon name="plus" />New goal</button>} />
-    {error && !createOpen && <Note tone="error" onDismiss={actionError ? () => setActionError(null) : undefined}>{error}</Note>}
+    <PageHead compact title="Review" lead="The work. The proof. Your call."
+      actions={<><button className="btn" type="button" disabled={busy !== null} onClick={() => void load()}>{refreshing ? 'Refreshing…' : 'Refresh'}</button><button className="btn btn-primary" type="button" disabled={actionBusy !== null} ref={createButton} onClick={() => setCreateOpen(true)}><Icon name="plus" />New goal</button></>} />
+    {error && !createOpen && <Note tone="error" onDismiss={actionError ? () => setActionError(null) : undefined}>{error} {loadError && !actionError && <button className="btn btn-sm" disabled={refreshing} onClick={() => void load()}>Try again</button>}</Note>}
     {notice && <Note tone="ok">{notice}</Note>}
-
-    {createOpen && <GoalSheet onClose={() => { if (busy === null) setCreateOpen(false); }} busy={busy !== null}>
-      <div className="control-create">
-        <Hint>Choose the outcome and what will count as done. Creating a goal does not launch an agent.</Hint>
-        {actionError && <Note tone="error">{actionError}</Note>}
-        <label><span className="label">Project</span><select className="field" value={projectId} aria-describedby={projectOptions.length === 0 ? 'control-no-projects' : undefined} onChange={(event) => setProjectId(event.target.value)}>{projectOptions.length === 0 && <option value="" disabled>No project added yet</option>}{projectOptions.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
-        {projectOptions.length === 0 && <><p className="faint control-hint" id="control-no-projects">A goal is scoped to one repository, and no project folder has been added yet.</p>
-        <button className="btn" onClick={() => void addProject()} disabled={busy !== null}>{busy === 'add-project' ? 'Choosing…' : 'Add your first project'}</button></>}
-        <label><span className="label">Title</span><input className="field" data-initial-focus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Harden checkout retry" /></label>
-        <label><span className="label">Objective</span><textarea className="field control-textarea" value={objective} onChange={(event) => setObjective(event.target.value)} placeholder="What must change, and why?" /></label>
-        <label><span className="label">Acceptance checks · one per line</span><textarea className="field control-textarea" value={acceptance} onChange={(event) => setAcceptance(event.target.value)} placeholder={'Targeted tests pass\nFailure mode is covered\nDiff is reviewed'} /></label>
-        <div className="control-inline"><label><span className="label">Risk</span><select className="field" value={risk} onChange={(event) => setRisk(event.target.value as DocketRisk)}>{risks.map((value) => <option key={value} value={value}>{value}</option>)}</select></label><label><span className="label">Budget · USD</span><input className="field" inputMode="decimal" value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="optional" /></label></div>
-        {/* The graph announces what it holds while it is closed, so a goal
-            created without opening it is not created out of an unread field. */}
-        <div className="control-plan-open">
-          <div><span className="label">Task graph</span>
-            <p className="control-plan-state">{planIsDefault
-              ? 'The four phases every goal gets: plan, implement, verify, review.'
-              : `${plan.length} task${plan.length === 1 ? '' : 's'} of your own, in place of the default four.`}</p></div>
-          <button className="btn btn-sm" type="button" aria-expanded={planOpen} aria-controls="control-plan-editor"
-                  onClick={() => setPlanOpen(!planOpen)}>{planOpen ? 'Hide the graph' : 'Design the graph'}</button>
-        </div>
-        {/* The slot is always in the tree so the toggle's aria-controls names an
-            element that exists while the graph is closed; :empty keeps it from
-            taking a grid row when it holds nothing. */}
-        <div className="control-plan-slot" id="control-plan-editor">{planOpen && <PlanEditor rows={plan} onChange={setPlan} />}</div>
-        {(missing.length > 0 || planFaults.length > 0) && <p className="faint control-hint" id="control-create-blocked">
-          {missing.length > 0 ? `Still needed: ${missingText}.` : ''}
-          {missing.length > 0 && planFaults.length > 0 ? ' ' : ''}
-          {planFaults.length > 0
-            ? `The task graph has ${planFaults.length} problem${planFaults.length === 1 ? '' : 's'} Wanigan would refuse${planOpen ? ', named beside the tasks above' : '; open it to read them'}.`
-            : ''}
-        </p>}
-        <button className="btn btn-primary" disabled={busy !== null || missing.length > 0 || planFaults.length > 0} aria-describedby={missing.length > 0 || planFaults.length > 0 ? 'control-create-blocked' : undefined} onClick={() => void create()}>{busy === 'create' ? 'Creating…' : 'Create goal'}</button>
-      </div>
-    </GoalSheet>}
 
     <div className="control-workbench">
 
 
-      <aside className="control-list" aria-label="Goals"><SectionHead label="Goals" count={ready ? dockets.length : undefined} />
-        {/* One chip per status actually present, each filtering the list it
-            counts. Statuses with no goals are left out rather than turned into
-            a taxonomy lesson. */}
-        {dockets.length > 0 && (
-          <div className="control-chips" role="group" aria-label="Filter goals by status">
-            <Chip pressed={statusFilter === 'all'} count={dockets.length} onToggle={() => setStatusFilter('all')}>All</Chip>
-            {[...new Set(dockets.map((d) => d.status))].map((status) => {
-              const m = markOf(status);
-              const n = dockets.filter((d) => d.status === status).length;
-              return (
-                <Chip key={status} pressed={statusFilter === status} count={n}
-                      onToggle={() => setStatusFilter(statusFilter === status ? 'all' : status)}>
-                  <span className="glyph" aria-hidden="true">{m.glyph}</span>{m.word}
-                </Chip>
-              );
-            })}
-          </div>
-        )}
+      <aside className="control-list" aria-label="Goals">
+        <SectionHead label="Goals" count={ready ? dockets.length : undefined} />
+        <input type="search" className="field" aria-label="Search goals" placeholder="Find a goal…" value={query} onChange={event => setQuery(event.target.value)} />
+        <select className="field" aria-label="Filter goals by project" value={scope} onChange={event => setScope(event.target.value)}>
+          <option value="">Every project</option>{projectOptions.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+        </select>
+        {dockets.length > 0 && <div className="control-chips" role="group" aria-label="Filter goals by status">
+          <Chip pressed={statusFilter === 'all'} count={scopedDockets.length} onToggle={() => setStatusFilter('all')}>All</Chip>
+          {[...new Set([...scopedDockets.map(d => d.status), ...(statusFilter === 'all' ? [] : [statusFilter])])].map(status => <Chip key={status} pressed={statusFilter === status}
+            count={scopedDockets.filter(d => d.status === status).length} onToggle={() => setStatusFilter(statusFilter === status ? 'all' : status)}>{markOf(status).word}</Chip>)}
+        </div>}
         {!ready && <Reading what="your goals" />}
-        {ready && loadError !== null && dockets.length === 0 && (
-          <EmptyState posture="could-not-read" title="Could not read your goals" cue={loadError}
-                      action={<button className="btn" type="button" onClick={() => void load()}>Try again</button>} />
-        )}
-        {ready && loadError === null && dockets.length === 0 && (
-          <p className="faint">No goals yet. Add an objective and its acceptance checks to start tracking work here.</p>
-        )}
-        {shownDockets.length === 0 && dockets.length > 0 && <p className="faint">No goal has that status right now. Press All to see every goal.</p>}
-        {shownDockets.map((docket) => { const m = markOf(docket.status); return <button key={docket.id} className={`control-docket ${selected === docket.id ? 'selected' : ''}`} aria-current={selected === docket.id ? 'true' : undefined} onClick={() => void choose(docket.id)}><Mark glyph={m.glyph} word={m.word} tone={m.tone} /><strong>{docket.title}</strong><small>{docket.projectName} · {ago(docket.updatedAt)}</small></button>; })}
+        {ready && loadError !== null && dockets.length === 0 && <EmptyState posture="could-not-read" title="Could not read your goals" cue={loadError} action={<button className="btn" onClick={() => void load()}>Try again</button>} />}
+        {ready && loadError === null && dockets.length === 0 && <Hint>No goals yet. Add an objective and its acceptance checks to start tracking work here.</Hint>}
+        {shownDockets.length === 0 && dockets.length > 0 && <EmptyState posture="nothing-yet" title="No matching goals" cue="Try another title, project, or state." action={<button className="btn" onClick={() => { setQuery(''); setScope(''); setStatusFilter('all'); }}>Clear filters</button>} />}
+        <div className="control-goals">{shownDockets.map(docket => <button type="button" key={docket.id} data-goal-id={docket.id} className={`control-docket ${selected === docket.id ? 'selected' : ''}`}
+          disabled={actionBusy !== null} aria-current={selected === docket.id ? 'true' : undefined} onClick={() => void choose(docket.id)}>
+          <span className="control-goal-state"><Mark {...markOf(docket.status)} /><small>{ago(docket.updatedAt)}</small></span>
+          <strong>{docket.title}</strong><small>{docket.projectName}</small>
+          {docket.autopilot.enabled && <Mark {...AUTOPILOT_MARKS.armed} word="Autopilot armed" />}
+        </button>)}</div>
       </aside>
-      <div className="control-reading">
-      {!detail && <EmptyState posture={loadError ? 'could-not-read' : 'nothing-yet'} title={loadError ? 'Your goals could not be read' : ready ? 'Make room for your next decision.' : 'Reading your goals…'}
-        cue={loadError ?? 'Keep an objective, its tasks, and the proof of what changed together.'}
-        action={ready && !loadError ? <button className="btn" type="button" onClick={() => setCreateOpen(true)}>Create your first goal</button> : undefined} />}
-    {detail && <section className="control-detail" id={`goal-${detail.id}`}><div className="control-card-head"><div><span className="label">Goal · {detail.status} · {detail.risk} risk{detail.budgetUsd !== null ? ` · ${usd(detail.budgetUsd)} budget` : ''}</span><h2>{detail.title}</h2></div><details className="control-goal-meta"><summary>Record details</summary><div>{detail.baseCommit
-        ? <span className="mono">base {detail.baseCommit.slice(0, 10)}</span>
-        /* A null base commit has several causes — no repository, a repository
-           with no commit yet, a git read that failed — and the renderer has no
-           way to tell them apart, so it reports the absence and does not name a
-           cause it cannot observe. */
-        : <span className="faint">no base commit recorded</span>}<span className="mono">id {detail.id}</span><button className="btn" onClick={() => void copyGoalId(detail.id)} disabled={busy !== null}>Copy goal ID</button></div></details></div>
-      <p>{detail.objective}</p><ol className="control-acceptance">{detail.acceptance.map((check, index) => <li key={index}>{check}</li>)}</ol>
-      <details className="control-execution">
+      <div className="control-reading" aria-busy={refreshing}>
+        {!detail && (refreshing ? <Reading what="the goal" /> : <EmptyState posture={loadError ? 'could-not-read' : 'nothing-yet'}
+          title={loadError ? 'This goal could not be read' : 'Make room for your next decision.'}
+          cue={loadError ?? 'Keep an objective, its tasks, and the proof of what changed together.'}
+          action={loadError ? <button className="btn" onClick={() => void load()}>Try again</button> : <button className="btn" onClick={() => setCreateOpen(true)}>Create your first goal</button>} />)}
+        {detail && <section className="control-detail" key={detail.id} id={`goal-${detail.id}`}>
+          <div className="control-identity"><span>{detail.projectName}</span><Pill status={detail.status} /><span>{detail.risk} risk</span>
+            <details className="control-goal-meta"><summary>Record details</summary><div>
+              <span className="mono">{detail.baseCommit ? `base ${detail.baseCommit.slice(0, 10)}` : 'no base commit recorded'}</span>
+              <span className="mono">id {detail.id}</span><button className="btn btn-sm" onClick={() => void copyGoalId(detail.id)} disabled={busy !== null}>Copy goal ID</button>
+            </div></details>
+          </div>
+          <div className="control-overview"><div className="control-intent"><h2>{detail.title}</h2><p>{detail.objective}</p></div>
+            <GoalCompanion key={detail.id} goal={detail} unavailable={!!loadError} busy={busy !== null} onTask={id => selectTask(id, true)} onSession={onOpenSession} />
+          </div>
+          <div className="control-facts" aria-label="Recorded goal progress">
+            <div><strong>{detail.nodes.filter(node => node.status === 'completed').length}<span> / {detail.nodes.length}</span></strong><span>tasks complete</span></div>
+            <div><strong>{detail.proofs.length}</strong><span>proof records</span></div>
+            <div><strong>{detail.autopilot.spendStatus === 'none' || detail.autopilot.spendStatus === 'unreported' ? '—' : usd(detail.autopilot.spendUsd)}</strong><span>{detail.autopilot.spendStatus === 'partial' ? 'partly reported spend' : detail.autopilot.spendStatus === 'reported' ? 'reported spend' : SPEND_MARKS[detail.autopilot.spendStatus].word}</span></div>
+            <div><Mark {...AUTOPILOT_MARKS[detail.autopilot.enabled ? 'armed' : detail.autopilot.haltedReason ? 'halted' : 'off']} /><span>autopilot</span></div>
+          </div>
+          <section className="control-journey" aria-label="Task journey"><SectionHead label="Task journey" count={detail.nodes.length} right={<span className="faint">Choose a task to review</span>} />
+            <div className="control-steps" role="tablist" aria-label="Goal tasks" onKeyDown={event => {
+              const at = detail.nodes.findIndex(node => node.id === activeNode?.id);
+              const next = event.key === 'Home' ? 0 : event.key === 'End' ? detail.nodes.length - 1 : event.key === 'ArrowRight' ? (at + 1) % detail.nodes.length : event.key === 'ArrowLeft' ? (at + detail.nodes.length - 1) % detail.nodes.length : -1;
+              if (next < 0) return;
+              event.preventDefault(); selectTask(detail.nodes[next].id);
+              event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+            }}>{detail.nodes.map((node, index) => <button type="button" role="tab" key={node.id} id={`control-tab-${node.id}`} data-node-id={node.id}
+              aria-selected={activeNode?.id === node.id} aria-controls="control-task-panel" tabIndex={activeNode?.id === node.id ? 0 : -1} onClick={() => selectTask(node.id)}>
+              <span className="control-step-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span><span className="control-step-copy"><span>{node.kind}</span><strong>{node.title}</strong><Mark {...markOf(node.status)} word={node.queued ? 'queued' : markOf(node.status).word} /></span>
+            </button>)}</div>
+          </section>
+          <div className="control-decision">
+            <div className="control-task" id="control-task-panel" role="tabpanel" aria-labelledby={activeNode ? `control-tab-${activeNode.id}` : undefined}>
+              {detail.status === 'accepted' && activeNode?.kind === 'review' && activeNode.status === 'completed' && inspectAccepted !== detail.id
+                ? <div className="control-finish"><Mark {...markOf('accepted')} /><h3 id="control-task-title" tabIndex={-1}>Accepted, with the receipts.</h3>
+                  <p>Your decision is saved. The proof and handoffs stay here whenever you need them.</p>
+                  {activeNode.detail && <blockquote>{activeNode.detail}</blockquote>}
+                  <div className="control-review-actions"><button className="btn btn-primary" disabled={busy !== null} onClick={() => setCreateOpen(true)}>Plan the next goal</button>
+                    <button className="btn" onClick={() => setInspectAccepted(detail.id)}>Read review record</button></div>
+                </div>
+                : activeNode ? <NodeCard key={activeNode.id} node={activeNode} busy={busy ?? (loadError ? 'unavailable' : null)} note={notes[activeNode.id] ?? ''} claim={claims[activeNode.id] ?? ''}
+                prereqs={activeNode.dependsOn.map(id => detail.nodes.find(other => other.id === id)).filter((other): other is DocketNode => !!other)}
+                onPrerequisite={id => selectTask(id, true)} onSession={() => activeNode.sessionId && onOpenSession(activeNode.sessionId)}
+                onNote={value => setNotes(previous => ({ ...previous, [activeNode.id]: value }))} onClaim={value => setClaims(previous => ({ ...previous, [activeNode.id]: value }))}
+                onStart={() => start(activeNode)} onCheckpoint={() => checkpoint(activeNode)} onClaimAdd={() => addClaim(activeNode)} onProof={() => proof(activeNode)} onComplete={decision => complete(activeNode, decision)} onRetry={() => retry(activeNode)} />
+                : <Hint>No tasks were recorded for this goal.</Hint>}
+            </div>
+            <ReviewEvidence key={detail.id} docket={detail} receipts={receipts} traces={traces} onTask={id => selectTask(id, true)}>
+              <SectionHead label="Active file claims" count={detail.claims.filter(claim => !claim.releasedAt).length} />
+              {detail.claims.filter(claim => !claim.releasedAt).length === 0 ? <Hint>No active paths claimed.</Hint> : detail.claims.filter(claim => !claim.releasedAt).map(claim => <div key={claim.id} className="control-claim"><code>{claim.path}</code><button className="btn btn-sm" disabled={busy !== null} onClick={() => void act(`release-${claim.id}`, async () => { await window.wanigan.control.releaseClaim(claim.id); await reloadGoal(detail.id); })}>Release</button></div>)}
+            </ReviewEvidence>
+          </div>
+      <details className="control-execution" key={`execution-${detail.id}`}>
         <summary><span>Execution &amp; spending</span><Mark {...AUTOPILOT_MARKS[detail.autopilot.enabled ? 'armed' : detail.autopilot.haltedReason ? 'halted' : 'off']}
           word={detail.autopilot.enabled ? 'Autopilot armed' : detail.autopilot.haltedReason ? 'Autopilot halted' : 'Autopilot off'} />
           <span className="faint">{detail.autopilot.enabled
@@ -554,7 +522,7 @@ export default function Control({ projects, providers, onOpenSession }: {
             {detail.autopilot.enabled && detail.budgetUsd !== null ? ` · ${usd(detail.budgetUsd)} cap` : ''}</span>
         </summary>
       <div className="control-launch"><label><span className="label">Provider for next task</span><select className="field" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{enabledProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label><span className="label">Model override</span><input className="field" value={model} onChange={(event) => setModel(event.target.value)} placeholder="provider default" /></label></div>
-      <AutopilotCard docket={detail} busy={busy} confirming={armAsk === detail.id}
+      <AutopilotCard docket={detail} busy={busy ?? (loadError ? 'unavailable' : null)} confirming={armAsk === detail.id}
         armWith={enabledProviders.find((provider) => provider.id === providerId)?.label ?? null} armWithModel={model}
         armedWith={providers.find((provider) => provider.id === detail.autopilot.providerId)?.label ?? detail.autopilot.providerId}
         budgetDraft={budgetDrafts[detail.id] ?? ''}
@@ -562,26 +530,19 @@ export default function Control({ projects, providers, onOpenSession }: {
         onAsk={() => setArmAsk(detail.id)} onCancelAsk={() => setArmAsk(null)}
         onArm={() => void arm(detail)} onDisarm={() => void disarm(detail)} onSetBudget={() => void saveBudget(detail)} />
       </details>
-      <div className="control-nodes">{detail.nodes.map((node) => <NodeCard key={node.id} node={node} busy={busy} note={notes[node.id] ?? ''} claim={claims[node.id] ?? ''}
-        prereqs={node.dependsOn.map((id) => detail.nodes.find((other) => other.id === id)).filter((other): other is DocketNode => !!other).map((other) => ({ title: other.title, status: other.status }))}
-        onNote={(value) => setNotes((previous) => ({ ...previous, [node.id]: value }))} onClaim={(value) => setClaims((previous) => ({ ...previous, [node.id]: value }))}
-        onStart={() => start(node)} onCheckpoint={() => checkpoint(node)} onClaimAdd={() => addClaim(node)} onProof={() => proof(node)} onComplete={(decision) => complete(node, decision)} onRetry={() => retry(node)} />)}</div>
-      <div className="control-evidence"><div><span className="label">Proof bundle</span><h3>{detail.proofs.length} record{detail.proofs.length === 1 ? '' : 's'}</h3>{detail.proofs.length === 0 ? <p className="faint">No evidence yet. A review gate result is required before verification can pass.</p> : detail.proofs.map((proof) => <p key={proof.id}><span className={`control-status ${proof.status}`}>{proof.status}</span> {proof.summary} <small>{ago(proof.createdAt)}</small></p>)}</div><div><span className="label">Continuity</span><h3>{detail.checkpoints.length} checkpoint{detail.checkpoints.length === 1 ? '' : 's'}</h3>{detail.checkpoints.length === 0 ? <p className="faint">Save a checkpoint before handoff or interruption. It records the exact provider conversation when one exists.</p> : detail.checkpoints.slice(0, 4).map((checkpoint) => <p key={checkpoint.id}>{checkpoint.note}<small>{checkpoint.conversationId ? ` · thread ${checkpoint.conversationId.slice(0, 12)}…` : ''} · {ago(checkpoint.createdAt)}</small></p>)}</div></div>
-      <div className="control-evidence"><div><span className="label">Safe recovery</span><h3>{receipts.length === 0 ? 'No launched task yet' : `${receipts.filter((receipt) => receipt.state === 'exact').length} exact resume${receipts.filter((receipt) => receipt.state === 'exact').length === 1 ? '' : 's'}`}</h3>{receipts.map((receipt) => <p key={receipt.nodeId}><span className={`control-status ${receipt.state === 'exact' ? 'passed' : receipt.state === 'writer_active' ? 'working' : 'blocked'}`}>{receipt.state.replace('_', ' ')}</span> {receipt.detail}<small>{receipt.conversationId ? ` · thread ${receipt.conversationId.slice(0, 12)}…` : ''}</small></p>)}</div><div><span className="label">Goal trace</span><h3>{traces.length} recent signal{traces.length === 1 ? '' : 's'}</h3>{traces.length === 0 ? <p className="faint">Operational events appear here without copying prompts or responses into Control.</p> : traces.map((trace) => <p key={trace.id}><span className={`control-status ${trace.status}`}>{trace.status}</span> {trace.toolName ?? trace.kind}{trace.summary ? ` · ${trace.summary}` : ''}<small>{trace.durationMs !== null ? ` · ${trace.durationMs}ms` : ''}{trace.costUsd ? ` · ${usd(trace.costUsd)}` : ''} · {ago(trace.createdAt)}</small></p>)}</div></div>
-      <div className="control-claims"><span className="label">Active file claims</span>{detail.claims.filter((claim) => !claim.releasedAt).length === 0 ? <p className="faint">No paths claimed. Claims are optional but prevent overlapping parallel edits.</p> : detail.claims.filter((claim) => !claim.releasedAt).map((claim) => <span key={claim.id} className="control-claim">{claim.path} <button className="btn" onClick={() => void act(`release-${claim.id}`, async () => { await window.wanigan.control.releaseClaim(claim.id); await load(detail.id); })}>Release</button></span>)}</div>
-    </section>}
 
+        </section>}
       </div>
     </div>
     <details className="control-support">
       <summary>Events &amp; model evidence<span className="faint">{events.filter((event) => event.status === 'new').length} new events</span></summary>
-    <section className="control-grid control-lower"><article className="card"><span className="label">Local event inbox</span><h2>Triage, don’t auto-run</h2><p className="faint">Use this for CI, incident, or issue signals. Remote webhooks are intentionally not opened until their identity and replay controls are designed.</p><div className="control-inline"><label><span className="label">Event source</span><input className="field" value={eventSource} onChange={(event) => setEventSource(event.target.value)} /></label><label><span className="label">Event kind</span><input className="field" value={eventKind} onChange={(event) => setEventKind(event.target.value)} /></label></div><textarea className="field control-textarea" aria-label="Event summary" value={eventSummary} onChange={(event) => setEventSummary(event.target.value)} placeholder="What happened? Include the observable failure, not a solution guess." /><button className="btn" disabled={busy !== null || !eventSummary.trim()} onClick={() => void addEvent()}>Add event</button>{/* Dismiss existed in main and in the preload and was reachable from
+    <section className="control-grid control-lower"><article><SectionHead label="Local event inbox" /><h2>A signal worth following.</h2><p className="faint">Capture a CI failure, incident, or issue, then decide whether it needs a goal.</p><label><span className="label">Event project</span><select className="field" value={projectId} onChange={event => setProjectId(event.target.value)}>{projectOptions.length === 0 && <option value="">No project available</option>}{projectOptions.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><div className="control-inline"><label><span className="label">Event source</span><input className="field" value={eventSource} onChange={(event) => setEventSource(event.target.value)} /></label><label><span className="label">Event kind</span><input className="field" value={eventKind} onChange={(event) => setEventKind(event.target.value)} /></label></div><textarea className="field control-textarea" aria-label="Event summary" value={eventSummary} onChange={(event) => setEventSummary(event.target.value)} placeholder="What happened? Include the observable failure, not a solution guess." /><button className="btn" disabled={busy !== null || !eventSummary.trim()} onClick={() => void addEvent()}>Add event</button>{/* Dismiss existed in main and in the preload and was reachable from
     nothing, so an event added by mistake could only be cleared by creating
     a Goal nobody wanted. Dismissed rows are also filtered out rather than
     left to consume the six visible slots. */}
-{events.filter((event) => event.status !== 'dismissed').slice(0, 6).map((event) => <div className="control-event" key={event.id}><span className={`control-status ${event.status}`}>{event.status}</span><strong>{event.kind}</strong><p>{event.summary}</p>{event.status === 'new' && <><button className="btn" onClick={() => void triage(event)}>Create goal</button><button className="btn" disabled={busy !== null} onClick={() => void act(`dismiss-${event.id}`, async () => { await window.wanigan.control.dismissEvent(event.id); await load(detail?.id); })}>Dismiss</button></>}</div>)}</article>
-      <article className="card"><span className="label">Model evidence</span><h2>Outcome router</h2><p className="faint">Ordered by acceptance rate over completed goal evidence. One sample is one sample: the count is beside every row, and a cost is shown only for the sessions whose CLI reported one.</p>{outcomes.length === 0 ? <p className="faint">No completed provider outcomes yet.</p> : <table className="control-table"><thead><tr><th>Model</th><th>Task</th><th>Accept</th><th>Tests</th><th>Cost</th></tr></thead><tbody>{outcomes.map((outcome) => <tr key={`${outcome.providerId}-${outcome.model}-${outcome.taskKind}`}><td>{outcome.providerId}<small>{outcome.model}</small></td><td>{outcome.taskKind}<small>{outcome.samples} sample{outcome.samples === 1 ? '' : 's'}</small></td><td>{outcome.acceptedRate === null ? '—' : `${Math.round(outcome.acceptedRate * 100)}%`}</td><td>{outcome.testPassRate === null ? '—' : `${Math.round(outcome.testPassRate * 100)}%`}</td><td title={outcome.reportedSamples === outcome.samples ? undefined : `${outcome.reportedSamples} of ${outcome.samples} session${outcome.samples === 1 ? '' : 's'} reported a cost. The rest ran on a plan or a harness that reports none, so they are not in this figure.`}>{outcome.reportedSamples === 0 ? <span className="faint">not reported</span> : <>{usd(outcome.totalCostUsd)}{outcome.reportedSamples < outcome.samples && <small>{outcome.reportedSamples} of {outcome.samples} reported</small>}</>}</td></tr>)}</tbody></table>}
-        <span className="label">MCP task compatibility</span><p className="faint">Goal tasks have durable working/input-required/completed/cancelled state ready for the evolving MCP Tasks adapter.</p>{shownTasks.map((task) => <p key={task.id}><span className={`control-status ${task.status}`}>{task.status}</span> {task.title} {['working', 'input_required'].includes(task.status) && <button className="btn btn-sm" disabled={busy !== null} title={cancelStopsAgent(task)
+{events.filter((event) => event.status !== 'dismissed').slice(0, 6).map((event) => <div className="control-event" key={event.id}><Pill status={event.status} /><strong>{event.kind}</strong><p>{event.summary}</p>{event.status === 'new' && <><button className="btn" disabled={busy !== null} onClick={() => void triage(event)}>Create goal</button><button className="btn" disabled={busy !== null} onClick={() => void act(`dismiss-${event.id}`, async () => { await window.wanigan.control.dismissEvent(event.id); await reloadGoal(detail?.id ?? null); })}>Dismiss</button></>}</div>)}</article>
+      <article><SectionHead label="Model evidence" /><h2>What the outcomes say.</h2><p className="faint">Ordered by acceptance rate over completed goal evidence. One sample is one sample: the count is beside every row, and a cost is shown only for the sessions whose CLI reported one.</p>{outcomes.length === 0 ? <p className="faint">No completed provider outcomes yet.</p> : <table className="control-table"><thead><tr><th>Model</th><th>Task</th><th>Accept</th><th>Tests</th><th>Cost</th></tr></thead><tbody>{outcomes.map((outcome) => <tr key={`${outcome.providerId}-${outcome.model}-${outcome.taskKind}`}><td>{outcome.providerId}<small>{outcome.model}</small></td><td>{outcome.taskKind}<small>{outcome.samples} sample{outcome.samples === 1 ? '' : 's'}</small></td><td>{outcome.acceptedRate === null ? '—' : `${Math.round(outcome.acceptedRate * 100)}%`}</td><td>{outcome.testPassRate === null ? '—' : `${Math.round(outcome.testPassRate * 100)}%`}</td><td title={outcome.reportedSamples === outcome.samples ? undefined : `${outcome.reportedSamples} of ${outcome.samples} session${outcome.samples === 1 ? '' : 's'} reported a cost. The rest ran on a plan or a harness that reports none, so they are not in this figure.`}>{outcome.reportedSamples === 0 ? <span className="faint">not reported</span> : <>{usd(outcome.totalCostUsd)}{outcome.reportedSamples < outcome.samples && <small>{outcome.reportedSamples} of {outcome.samples} reported</small>}</>}</td></tr>)}</tbody></table>}
+        <SectionHead label="Agent task records" count={shownTasks.length} /><Hint>{detail ? `For ${detail.title}.` : 'Select a goal to read its task records.'}</Hint>{shownTasks.map((task) => <p key={task.id}><Pill status={task.status} /> {task.title} {['working', 'input_required'].includes(task.status) && <button className="btn btn-sm" disabled={busy !== null} title={cancelStopsAgent(task)
           ? 'Cancel this task, stop the agent session running it, and release any file claims it holds. The goal is marked blocked until you reopen the task.'
           : 'Cancel this task. If it has not ended, any file claims it holds are released and the goal is marked blocked until you reopen it; if it has, only the MCP task record is marked cancelled.'}
           onClick={() => { if (cancelStopsAgent(task)) { setConfirmCancel(task); return; } void cancelTask(task); }}>Cancel task</button>}</p>)}
@@ -596,9 +557,6 @@ export default function Control({ projects, providers, onOpenSession }: {
           verb="Cancel task and stop the agent" onCancel={() => setConfirmCancel(null)}
           onRun={() => { const task = confirmCancel; setConfirmCancel(null); return cancelTask(task); }} />}
       </article></section>
-    </details>
-    {/* Secondary guidance stays reachable after the selected work. The
-        remembered disclosure still honors an operator who chose to open it. */}
     <Explainer id="control-guide" title="How review works" defaultHidden>
       <div className="control-guide-body">
       <div><p>A <strong>goal</strong> is work you delegate without losing the reason for it, the evidence, or the final decision.</p></div>
@@ -611,21 +569,8 @@ export default function Control({ projects, providers, onOpenSession }: {
       <div className="control-example"><span className="label">Example</span><p><strong>Title:</strong> “Prevent duplicate checkout charge”</p><p><strong>Objective:</strong> “Make checkout retries idempotent without changing successful order flow.”</p><p><strong>Acceptance:</strong> “A repeated payment callback is ignored; the existing checkout suite passes; the diff has a review decision.”</p><p className="faint">Start Plan with your preferred provider, claim the payment handler during Implement, run the configured review gate in Verify, then approve or request changes in Review.</p></div>
       </div>
     </Explainer>
+    </details>
   </div>;
-}
-
-/** Draft state stays in Control when this sheet closes. The shared dialog
- * owns the focus trap, Escape and return focus; creation remains explicit. */
-function GoalSheet({ children, onClose, busy }: { children: ReactNode; onClose: () => void; busy: boolean }) {
-  const { portal, backdropProps, dialogProps } = useDialog<HTMLDivElement>({ onClose, initialFocus: 'first' });
-  return portal(<div {...backdropProps}>
-    <div {...dialogProps} className="control-sheet" aria-labelledby="control-sheet-title">
-      <div className="control-sheet-title"><h2 id="control-sheet-title">New goal</h2>
-        <button className="btn btn-sm" type="button" disabled={busy} onClick={onClose} aria-label="Close new goal"><Icon name="x" /></button>
-      </div>
-      {children}
-    </div>
-  </div>);
 }
 
 /**
@@ -724,19 +669,37 @@ function AutopilotCard({ docket, busy, confirming, armWith, armWithModel, armedW
  * than a chain the status word alone cannot say which, so each prerequisite is
  * listed with its own status.
  */
-function NodeCard({ node, busy, note, claim, prereqs, onNote, onClaim, onStart, onCheckpoint, onClaimAdd, onProof, onComplete, onRetry }: {
+function NodeCard({ node, busy, note, claim, prereqs, onPrerequisite, onSession, onNote, onClaim, onStart, onCheckpoint, onClaimAdd, onProof, onComplete, onRetry }: {
   node: DocketNode; busy: string | null; note: string; claim: string;
-  prereqs: { title: string; status: DocketNodeStatus }[];
+  prereqs: { id: string; title: string; status: DocketNodeStatus }[];
+  onPrerequisite: (id: string) => void; onSession: () => void;
   onNote: (value: string) => void; onClaim: (value: string) => void; onStart: () => void; onCheckpoint: () => void;
   onClaimAdd: () => void; onProof: () => void; onComplete: (decision?: 'approve' | 'request_changes' | 'reject') => void;
   onRetry: () => void;
 }) {
+  const [noteOpen, setNoteOpen] = useState(!!note);
   const actionable = ['ready', 'running'].includes(node.status);
   const reopenable = ['failed', 'canceled'].includes(node.status);
-  return <article className="control-node"><div><span className={`control-status ${node.status}`}>{node.status}</span><span className="label">{node.kind}</span><h3>{node.title}</h3>{prereqs.length > 0 && <p className="control-node-waits">Waits on {prereqs.map((prereq, index) => { const mark = markOf(prereq.status); return <span key={`${prereq.title}-${index}`}>{index > 0 ? ', ' : ''}{prereq.title} <Mark glyph={mark.glyph} word={mark.word} tone={mark.tone} /></span>; })}</p>}<p>{node.instructions}</p>{node.sessionId && <button className="btn" onClick={onCheckpoint} disabled={busy !== null}>Checkpoint</button>}</div>
-    <div className="control-node-actions">{node.status === 'ready' && (node.queued
-      ? <Mark glyph="◴" word="queued by autopilot" tone="quiet" title="The autopilot dispatcher has claimed this task and will launch it on its next sweep. Starting it by hand here would race that and one of the two sessions would be killed after its first prompt." />
-      : <button className="btn btn-primary" onClick={onStart} disabled={busy !== null}>Start isolated task</button>)}{reopenable && <button className="btn" onClick={onRetry} disabled={busy !== null}
-      title="Reopen this task so it can be started again. Tasks waiting on it stay blocked until it completes.">Reopen task</button>}{node.kind === 'verify' && actionable && <button className="btn" onClick={onProof} disabled={busy !== null}>Run review gate</button>}<input className="field" aria-label="Evidence or handoff note" value={note} onChange={(event) => onNote(event.target.value)} placeholder="Evidence or handoff note" disabled={!actionable} />{node.kind === 'implement' && actionable && <div className="control-inline"><input className="field" aria-label="Path to claim" value={claim} onChange={(event) => onClaim(event.target.value)} placeholder="src/path.ts" /><button className="btn" onClick={onClaimAdd} disabled={busy !== null || !claim.trim()}>Claim</button></div>}{node.kind === 'review' && actionable ? <div className="control-review-actions"><button className="btn btn-primary" onClick={() => onComplete('approve')} disabled={busy !== null}>Approve</button><button className="btn" onClick={() => onComplete('request_changes')} disabled={busy !== null}>Request changes</button><button className="btn btn-danger" onClick={() => onComplete('reject')} disabled={busy !== null}>Reject</button></div> : actionable && <button className="btn" onClick={() => onComplete('approve')} disabled={busy !== null}>Mark complete</button>}</div>
+  return <article className="control-node">
+    <SectionHead label={node.kind === 'review' ? 'Your decision' : node.kind === 'verify' ? 'Verification' : 'Selected task'} right={<Pill status={node.status} />} />
+    <h3 id="control-task-title" tabIndex={-1}>{node.title}</h3>
+    <p className="control-instructions">{node.instructions}</p>
+    {node.detail && <Note tone={reopenable ? 'warn' : 'info'} role="none">{node.detail}</Note>}
+    {prereqs.length > 0 && <div className="control-prereqs"><SectionHead label="Prerequisites" />{prereqs.map(prereq => <button type="button" key={prereq.id} className="control-dependency" onClick={() => onPrerequisite(prereq.id)}><span>{prereq.title}</span><Mark {...markOf(prereq.status)} /><Icon name="chevron-right" /></button>)}</div>}
+    {node.sessionId && <div className="control-review-actions"><button className="btn" onClick={onSession}>Open session<Icon name="external" /></button><button className="btn" onClick={onCheckpoint} disabled={busy !== null}>Save checkpoint</button></div>}
+    <div className="control-node-actions">
+      {node.status === 'ready' && node.kind !== 'review' && (node.queued
+        ? <Mark glyph="◴" word="queued by autopilot" tone="quiet" title="Autopilot has claimed this task and will launch it on its next sweep." />
+        : <button className="btn btn-primary" onClick={onStart} disabled={busy !== null}>Start isolated task</button>)}
+      {reopenable && <><Hint>Reopen this task for another pass. Its dependents stay blocked until it completes.</Hint><button className="btn" onClick={onRetry} disabled={busy !== null} title="Reopen this task so it can be started again. Tasks waiting on it stay blocked until it completes.">Reopen task</button></>}
+      {node.kind === 'verify' && actionable && <button className="btn" onClick={onProof} disabled={busy !== null}>Run review gate</button>}
+      {(actionable || node.sessionId) && (node.kind === 'review' ? <details className="control-note" open={noteOpen} onToggle={event => setNoteOpen(event.currentTarget.open)}><summary>{note.trim() ? 'Decision note added' : 'Add a decision note'}</summary><label><span className="label">Decision note</span><textarea className="field control-textarea" aria-label="Evidence or handoff note" value={note} onChange={event => onNote(event.target.value)} placeholder="What supports your decision?" disabled={busy !== null} /></label></details> : <label><span className="label">Evidence or handoff note</span><textarea className="field control-textarea" aria-label="Evidence or handoff note" value={note} onChange={event => onNote(event.target.value)} placeholder="What should the next person know?" disabled={busy !== null} /></label>)}
+      {node.kind === 'implement' && actionable && <div className="control-inline"><input className="field" aria-label="Path to claim" value={claim} onChange={event => onClaim(event.target.value)} placeholder="src/path.ts" /><button className="btn" onClick={onClaimAdd} disabled={busy !== null || !claim.trim()}>Claim</button></div>}
+      {node.kind === 'review' && actionable ? <div className="control-review-actions"><button className="btn btn-primary" onClick={() => onComplete('approve')} disabled={busy !== null}>Approve</button><button className="btn" onClick={() => onComplete('request_changes')} disabled={busy !== null}>Request changes</button><button className="btn btn-danger" onClick={() => onComplete('reject')} disabled={busy !== null}>Reject</button></div> : actionable && <button className="btn" onClick={() => onComplete('approve')} disabled={busy !== null}>Mark complete</button>}
+      {node.kind === 'review' && node.status === 'ready' && <button className="btn btn-sm" onClick={onStart} disabled={busy !== null || node.queued}>Start isolated task</button>}
+      {node.status === 'blocked' && <Hint>This task waits for its prerequisites to complete.</Hint>}
+      {node.status === 'completed' && <Hint>This task is complete. Its recorded evidence stays available alongside it.</Hint>}
+      {node.status === 'pending' && <Hint>{node.deferUntil ? `Parked until ${new Date(node.deferUntil).toLocaleString()}.` : 'This task is pending.'}</Hint>}
+    </div>
   </article>;
 }

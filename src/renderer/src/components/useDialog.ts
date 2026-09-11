@@ -155,7 +155,12 @@ export function useDialog<E extends HTMLElement = HTMLElement>({ onClose, initia
       onMouseDown: (event) => {
         // Only the backdrop itself: a mousedown that started on the dialog
         // bubbles here too and must not close it.
-        if (event.target === event.currentTarget) onCloseRef.current();
+        if (event.target === event.currentTarget) {
+          // The browser's default mousedown focus runs after dismissal and
+          // would undo restoreFocus(), dropping focus onto the document body.
+          event.preventDefault();
+          onCloseRef.current();
+        }
       },
     },
     dialogProps: {

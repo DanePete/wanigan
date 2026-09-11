@@ -237,6 +237,20 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
       // keeps UTF-8 code points whole, so emoji and non-Latin source survive
       // a chunk boundary intact.
       term.onData((data) => {
+        // Not everything xterm emits here was typed by a person. Writing the
+        // replayed scrollback back into this terminal re-runs whatever device
+        // queries the agent's own output carried — a cursor-position report, a
+        // device-attributes request — and xterm dutifully answers each one on
+        // this channel. A probe confirmed all four: ESC[6n, ESC[c, ESC[>c and
+        // ESC[5n each produce a reply. Forwarded, they arrive at the running
+        // agent as keystrokes nobody pressed.
+        //
+        // The prime gate already exists for the inbound direction; this is the
+        // outbound half of it. Read the pane from the pool rather than the
+        // closure: this handler is registered once for a pooled terminal, and
+        // the `entry` binding it could capture belongs to whichever mount
+        // happened to create it.
+        if (pool.get(sessionId)?.priming) return;
         for (const chunk of splitTerminalInput(data)) {
           window.wanigan.sessions.write(sessionId, chunk);
         }
@@ -273,8 +287,13 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
           // A pane disposed mid-prime has a disposed terminal, and a session
           // re-mounted after that is a new entry with a prime of its own.
           if (pool.get(sessionId) !== pane) return;
-          if (buf) pane.term.write(buf);
-          finishPrime(pane);
+          // write() queues; it does not parse. Opening the gate on the next
+          // line left `priming` false for the whole parse, which is exactly
+          // when the replayed queries are answered — so the guard above would
+          // have been closed at the only moment it mattered. The callback
+          // fires once this buffer has actually been consumed.
+          if (buf) pane.term.write(buf, () => finishPrime(pane));
+          else finishPrime(pane);
         })
         .catch(() => {
           // A refused scrollback still has to open the gate. Left shut, feed()

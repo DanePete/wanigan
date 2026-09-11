@@ -4,7 +4,7 @@ import type {
 } from '@shared/types';
 import { ATTENTION_ORDER, EMPTY_USAGE, trustCopy, trustGlyph } from '@shared/types';
 import { providerTint } from '@shared/provider-status';
-import { EmptyState, Note, PageHead, Segmented, Stat, ago, num, usd } from '../components/bits';
+import { Chip, EmptyState, Note, PageHead, SectionHead, Segmented, Stat, ago, num, usd } from '../components/bits';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import ObservedBand from '../components/ObservedBand';
 import TeamPanel from '../components/TeamPanel';
@@ -157,6 +157,7 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
   // only: a relaunch still opens on the defaults.
   const [sort, setSort] = useViewMemory<SortKey>('sort', 'attention');
   const [only, setOnly] = useViewMemory<AttentionKind | 'all'>('only', 'all');
+  const [selectedId, setSelectedId] = useViewMemory<string | null>('selected', null);
   const [ready, setReady] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState(0);
@@ -171,13 +172,11 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
   const [, setTick] = useState(0);
 
   // And the scroll offset with them: remembering the filter but not the
-  // position still loses the card the operator was reading, which on a fleet of
-  // eight is most of the screen. The scroller is the pane — .fleet-grid grows,
-  // it does not scroll — so the offset is remembered on the element that
-  // actually owns a scrollTop. A callback ref rather than a ref object because
-  // this pane only mounts once the first read returns, which is after the
-  // effect a plain ref would have run.
+  // position still loses the session the operator was reading. The outer pane
+  // and the bounded roster each retain their own offset. Callback refs attach
+  // when data has arrived and the actual scrolling elements mount.
   const paneRef = useRememberedScrollRef('pane');
+  const rosterRef = useRememberedScrollRef('roster');
 
   const alive = useRef(true);
   const busy = useRef(false);
@@ -411,15 +410,19 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
     });
   }, [sessions, attention, only, sort, usageOf]);
 
+  // A live sort may move a row, but never changes the session under inspection.
+  const selected = shown.find((s) => s.id === selectedId) ?? shown[0];
+  useEffect(() => {
+    if (selected && selected.id !== selectedId) setSelectedId(selected.id);
+  }, [selected, selectedId, setSelectedId]);
+
   const head = (
     <PageHead
       title="Fleet"
-      lead="Every agent on one screen. Whoever is blocked sorts to the top."
+      lead="Your crew, across every project."
       actions={(
         <div className="fleet-controls">
-          <span className="label">Sort</span>
-          <Segmented label="Sort sessions by" value={sort} onChange={setSort}
-                     options={SORTS.map((s) => ({ value: s.key, label: s.label, title: s.hint }))} />
+          {onNewSession && <button className="btn btn-primary" onClick={onNewSession}>New session</button>}
           <span className="faint fleet-updated">
             {updatedAt ? `updated ${ago(updatedAt)}` : 'never updated'} · every 3s
           </span>
@@ -429,7 +432,7 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
 
   if (!ready) {
     return (
-      <div className="pane">
+      <div className="pane wide fleet-view">
         {head}
         <div className="card fleet-blank">
           <p>Reading the fleet…</p>
@@ -441,7 +444,7 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
 
   if (err && !sessions.length) {
     return (
-      <div className="pane">
+      <div className="pane wide fleet-view">
         {head}
         {/* role="none": the sr-only live region above already announces the
             membership change once. This Note carries a duration that reticks
@@ -464,7 +467,7 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
 
   if (!sessions.length) {
     return (
-      <div className="pane">
+      <div className="pane wide fleet-view">
         {head}
         <TeamPanel />
         {/* Absence first, then one path. The mechanism sentence stays — Fleet
@@ -488,13 +491,12 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
   }
 
   return (
-    <div className="pane" ref={paneRef}>
+    <div className="pane wide fleet-view" ref={paneRef}>
       {head}
-      <TeamPanel />
 
       {err && (
         <Note tone="warn">
-          <strong>Live updates stalled.</strong> {err} — the cards below are the last good read,
+          <strong>Live updates stalled.</strong> {err} — the sessions below are the last good read,
           from {ago(updatedAt)}.{' '}
           <button className="fleet-inline" onClick={() => void load(true)}>Retry now</button>
         </Note>
@@ -537,7 +539,7 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
           stay inert — one is an estimate, the other a total with no row set. */}
       <div className="stat-grid">
         <Stat label="Agents" value={`${num(totals.running)} running`}
-              sub={`${num(totals.exited)} exited · ${num(sessions.length)} cards`}
+              sub={`${num(totals.exited)} exited · ${num(sessions.length)} sessions`}
               pressed={only === 'all'} onSelect={() => setOnly('all')}
               title="Show every session" />
         {/* Labelled "Needs you", this tile counted only the agents blocked on a
@@ -577,21 +579,17 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
               sub={`${num(totals.commits)} commits`} />
       </div>
 
-      <div className="fleet-chips" role="group" aria-label="Filter by status">
-        <button className={`fleet-chip${only === 'all' ? ' on' : ''}`} aria-pressed={only === 'all'}
-                onClick={() => setOnly('all')}>
-          All <span className="fleet-chip-n">{num(sessions.length)}</span>
-        </button>
-        {ATTENTION_ORDER.filter((k) => counts[k]).map((k) => {
-          const m = MARK[k];
-          return (
-            <button key={k} className={`fleet-chip${only === k ? ' on' : ''}`} aria-pressed={only === k}
-                    onClick={() => setOnly(k)}>
-              <span aria-hidden="true" style={{ color: m.fg, fontWeight: 700 }}>{m.glyph}</span>
-              {m.word} <span className="fleet-chip-n">{num(counts[k])}</span>
-            </button>
-          );
-        })}
+      <div className="fleet-toolbar">
+        <div className="fleet-chips" role="group" aria-label="Filter by status">
+          <Chip pressed={only === 'all'} count={sessions.length} onToggle={() => setOnly('all')}>All</Chip>
+          {ATTENTION_ORDER.filter((k) => counts[k]).map((k) => (
+            <Chip key={k} pressed={only === k} count={counts[k]} onToggle={() => setOnly(k)}>
+              {MARK[k].glyph} {MARK[k].word}
+            </Chip>
+          ))}
+        </div>
+        <Segmented label="Sort sessions by" value={sort} onChange={setSort}
+                   options={SORTS.map((s) => ({ value: s.key, label: s.label, title: s.hint }))} />
       </div>
 
       {shown.length === 0 ? (
@@ -606,18 +604,41 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
           </button>
         </div>
       ) : (
-        <div className="fleet-grid">
-          {shown.map((s) => (
-            <Card key={s.id} session={s} att={attention[s.id]} usage={usageOf(s.id)}
-                  spark={spark[s.id] ?? []} branch={branchOf.get(s.projectId) ?? null}
-                  trust={s.trust ?? defaultTrust} onOpen={() => onOpenSession(s.id)}
-                  onControl={control} />
-          ))}
+        <div className="fleet-workspace">
+          <section className="fleet-roster" aria-label="Session roster" ref={rosterRef}>
+            <SectionHead label="Sessions" count={shown.length} />
+            {shown.map((s) => {
+              const att = attention[s.id];
+              const mark = MARK[att?.kind ?? 'idle'] ?? UNKNOWN;
+              return (
+                <button key={s.id} type="button" className="fleet-entry"
+                        aria-pressed={selected?.id === s.id} aria-controls="fleet-inspector"
+                        onClick={() => setSelectedId(s.id)}>
+                  <span className="fleet-entry-top"><strong>{s.projectName}</strong><span>{providerName(s.providerId)}</span></span>
+                  <span className="fleet-entry-task">{s.displayTitle || s.title || 'Untitled session'}</span>
+                  <span className="fleet-entry-state">
+                    <span>{mark.glyph} {att?.label || mark.word}</span>
+                    <span>{dur(Date.now() - (att?.since ?? s.createdAt))}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </section>
+          <section id="fleet-inspector" className="fleet-inspector" aria-label="Selected session">
+            {selected && <Card key={selected.id} session={selected} att={attention[selected.id]}
+              usage={usageOf(selected.id)} spark={spark[selected.id] ?? []}
+              branch={branchOf.get(selected.projectId) ?? null} trust={selected.trust ?? defaultTrust}
+              onOpen={() => onOpenSession(selected.id)} onControl={control} />}
+          </section>
         </div>
       )}
 
-      <FleetTable rows={shown} att={attention} usageOf={usageOf} spark={spark}
-                  defaultTrust={defaultTrust} onOpen={onOpenSession} />
+      <details className="fleet-ledger">
+        <summary>Compare session metrics <span className="faint">· {num(shown.length)} sessions</span></summary>
+        <FleetTable rows={shown} att={attention} usageOf={usageOf} spark={spark}
+                    defaultTrust={defaultTrust} onOpen={onOpenSession} />
+      </details>
+      <TeamPanel />
 
       {/* Last, and outside every count above it: the stats, chips and cards on
           this page are Wanigan's own sessions, and a foreign process must never
@@ -655,12 +676,7 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onContr
   };
 
   return (
-    // A div, not a button: the card now carries controls of its own, and a
-    // button inside a button is invalid and unreachable by keyboard. Whole-card
-    // click still opens the session — the same convention the table below
-    // already uses — and every action inside it is a real focusable button.
-    <div className={`fleet-card${urgent ? ' urgent' : ''}`} onClick={onOpen}
-         style={{ cursor: 'pointer' }}>
+    <div className={`fleet-card${urgent ? ' urgent' : ''}`}>
       <div className="fleet-row">
         <span className="pill" style={{ background: m.bg, color: m.fg }}>
           <span aria-hidden="true" style={{ fontWeight: 700 }}>{m.glyph}</span>{word}
@@ -680,6 +696,7 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onContr
         )}
       </div>
 
+      <h2 className="fleet-task">{s.displayTitle || s.title || s.projectName}</h2>
       <div className="fleet-row fleet-title">
         <span className="fleet-name">{s.projectName}</span>
         <span className="pill fleet-prov" style={{ color: providerTint(s.providerId) }}>
@@ -725,9 +742,9 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onContr
             ? `Exited ${s.exitCode === null ? 'without a code' : `code ${s.exitCode}`} · ${ago(s.endedAt)}`
             : `Running · pid ${s.pid ?? '—'} · started ${ago(s.createdAt)}`}
         </span>
-        <button type="button" className="fleet-inline fleet-open" onClick={(e) => { e.stopPropagation(); onOpen(); }}
+        <button type="button" className="btn btn-primary fleet-open" onClick={(e) => { e.stopPropagation(); onOpen(); }}
                 aria-label={`Open ${s.projectName} — ${providerName(s.providerId)}, ${word}`}>
-          open →
+          Open session →
         </button>
       </div>
 
@@ -780,10 +797,9 @@ const CONTROLS: {
  * Both actions confirm, which Sessions deliberately does not do.
  *
  * There the terminal you are about to interrupt is the one filling the screen.
- * Here eight cards re-sort under the pointer every time attention rank changes,
- * so the agent under the cursor a moment ago is not necessarily the one that
- * receives the click. Naming the project in the question is the whole point of
- * asking it.
+ * The selected inspector stays stable as the roster re-sorts, and the
+ * confirmation still names its project. Switching sessions remounts the
+ * inspector, so an unfinished confirmation cannot carry over to another agent.
  */
 function ConfirmRow({ action, session, onCancel, onConfirm }: {
   action: ControlAction; session: Session; onCancel: () => void; onConfirm: () => void;
@@ -897,7 +913,7 @@ function FleetTable({ rows, att, usageOf, spark, defaultTrust, onOpen }: {
     <div className="card" style={{ padding: 15 }}>
       <h3 style={{ fontSize: 'var(--t-body)', fontWeight: 600 }}>Every session, in numbers</h3>
       <p className="dim" style={{ fontSize: 'var(--t-small)', marginTop: 2, lineHeight: 1.45 }}>
-        The same rows as the cards above, in the same order, including the values each sparkline
+        The same sessions as the roster above, in the same order, including the values each sparkline
         draws — so nothing on this screen is readable only as a shape or a colour.
       </p>
       <div className="fleet-scroll">

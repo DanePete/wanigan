@@ -3,6 +3,32 @@
    conversation must retain the available width and never be squeezed merely
    because the user needs to switch sessions. */
 
+.mission-shell .body .pane.sessions-view {
+  padding: 0;
+  gap: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.pane.sessions-view > * { max-width: none; }
+.sessions-view .session-toolbar { flex: none; padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--line-soft); }
+.sessions-view .session-toolbar .pane-head { align-items: center; }
+.sessions-view .session-toolbar .pane-head > div:first-child { min-width: 0; flex: 1; }
+.sessions-view .session-toolbar h1 { overflow-wrap: anywhere; }
+.sessions-view .session-toolbar .pane-actions { flex: none; }
+.sessions-view .session-context-separator { margin-inline: var(--s-2); color: var(--text-faint); }
+.sessions-view .session-config { flex: none; border-bottom: 1px solid var(--line-soft); background: var(--bg-soft); }
+.sessions-view .session-controls > summary { cursor: pointer; padding: var(--s-2) var(--s-5); font-size: var(--t-small); color: var(--text-dim); }
+.sessions-view .session-controls > summary > span { margin-left: var(--s-3); font-size: var(--t-micro); }
+.sessions-view .session-controls-content { max-height: min(40vh, 380px); overflow: auto; }
+.sessions-view .session-rail .group-title .label { text-transform: none; letter-spacing: 0; font-family: var(--font-ui); }
+.sessions-view .session-rail .session-item { padding-block: var(--s-3); border-radius: var(--r-md); }
+.sessions-view .session-rail .session-item.active { background: var(--bg-selected); box-shadow: none; }
+.sessions-view .terminal-host .xterm { padding: var(--s-4) var(--s-5); }
+.sessions-view .term-split { grid-template-columns: minmax(0, 1fr) minmax(300px, 32%); }
+.sessions-view .session-toolbar .session-tab-close { width: auto; font-size: var(--t-small); }
+.sessions-view .sessions--compact-picker .session-toolbar .session-picker-trigger { display: inline-flex; position: static; box-shadow: none; }
+.sessions-view .sessions--compact-picker .session-toolbar { padding: var(--s-3); }
+
 .sessions-view .session-picker-heading,
 .sessions-view .session-picker-trigger,
 .sessions-view .session-picker-scrim {
@@ -210,8 +236,7 @@
   line-height: 1;
 }
 
-.sessions-view .sessions--compact-picker .session-tab-wrap,
-.sessions-view .sessions--compact-picker .session-side-panel-toggle {
+.sessions-view .sessions--compact-picker .session-tab-wrap {
   display: none;
 }
 
@@ -339,3 +364,29 @@
   padding: var(--s-2) var(--s-3);
   border-top: 1px solid var(--line-soft);
 }
+
+/* The new-session dialog asks for a redirected profile's own key where the
+   operator hits the need, rather than sending them to Settings to guess which
+   of several was meant. Tokens only: this sheet spells no colour or size. */
+.ns-credential { display: grid; gap: var(--s-2); margin: 0 0 var(--s-4); padding: var(--s-3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-sunk); }
+.ns-credential-why { margin: 0; color: var(--text-dim); font-size: var(--t-micro); line-height: 1.45; }
+.ns-credential-row { display: flex; align-items: center; gap: var(--s-2); }
+.ns-credential-row .field { flex: 1 1 auto; min-width: 0; }
+.ns-credential-ok { margin: 0; color: var(--good); font-size: var(--t-micro); }
+.ns-credential-bad { margin: 0; color: var(--bad); font-size: var(--t-micro); line-height: 1.45; }
+.ns-credential-note { margin: 0; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.45; }
+.session-goal-trail { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-2) var(--s-4); border-bottom: 1px solid var(--line-soft); background: var(--bg-soft); font-size: var(--t-micro); min-width: 0; flex-shrink: 0; }
+.session-goal-link { display: flex; align-items: center; gap: var(--s-2); min-width: 0; flex: 1; color: var(--text-dim); background: transparent; border: 0; padding: 0; text-align: left; cursor: pointer; font-size: inherit; }
+.session-goal-link strong, .session-goal-link > span:not(.session-goal-label) { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.session-goal-link strong { font-weight: 550; color: var(--text); }
+.session-goal-label { flex-shrink: 0; color: var(--accent); }
+.session-goal-link:hover .session-goal-label { text-decoration: underline; }
+.session-goal-trail > .mark { flex-shrink: 0; }
+
+/* A compact window can read the same details without remounting its terminal. */
+.session-detail-reader { display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 1; }
+.session-detail-reader[hidden] { display: none; }
+.term-full[data-detail-focus='true'] > .term-col { display: none; }
+.session-detail-return { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-3); border-bottom: 1px solid var(--line); background: var(--bg-soft); }
+.session-detail-return > span { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-size: var(--t-small); }
+.term-full[data-detail-focus='true'] .code-panel { border-left: 0; }

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountResolution, AgentAccount, LaunchModelCatalogue, LaunchOptions, Project, ProviderId, ProviderInfo, Session, TrustLevel } from '@shared/types';
 import { TRUST_LEVELS, permissionModeCopy, trustCopy, trustGlyph } from '@shared/types';
 import { intersectChoices, launchFieldChoices, type LaunchChoice } from '@shared/launch-fields';
 import { providerTint } from '@shared/provider-status';
-import { Hint, Note } from './bits';
+import { Hint, Note, Icon, SectionHead } from './bits';
+import '../styles/launch.css';
 import { useDialog } from './useDialog';
 
 /** Same filled progression the session header uses: ◇ → ◈ → ◆ reads in greyscale. */
@@ -397,6 +398,34 @@ export default function NewSessionDialog({
    * mouse, which is how a first run reached a raw ENOENT instead of "install
    * the CLI first".
    */
+  /*
+   * Credentials this profile declares and does not have.
+   *
+   * A redirected profile — GLM, DeepSeek, xAI — is the shared Claude Code
+   * binary pointed at another endpoint, and the base URL and the key only mean
+   * anything together. main refuses the launch without it; asking here means
+   * the operator fixes it where they hit it rather than being sent to Settings
+   * to guess which of several keys was meant. null while unread, so an unknown
+   * answer never reads as "nothing needed".
+   */
+  const [missingCred, setMissingCred] = useState<string[] | null>(null);
+  const [credKey, setCredKey] = useState('');
+  const [credBusy, setCredBusy] = useState(false);
+  const [credMsg, setCredMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+
+  const readMissingCred = useCallback(async (id: ProviderId) => {
+    if (!id) { setMissingCred([]); return; }
+    try { setMissingCred(await window.wanigan.key.missingFor(id)); }
+    catch { setMissingCred(null); }
+  }, []);
+
+  useEffect(() => {
+    setCredKey(''); setCredMsg(null);
+    void readMissingCred(providerId);
+  }, [providerId, readMissingCred]);
+
+  const needsCred = (missingCred?.length ?? 0) > 0;
+
   const blocker = list.length === 0
     ? 'Wanigan has not loaded any agent profiles yet, so there is nothing to launch.'
     : !provider?.path
@@ -405,7 +434,29 @@ export default function NewSessionDialog({
         : 'Choose an installed agent above.')
       : !projectId
         ? 'Choose the folder this session works in.'
-        : null;
+        : needsCred
+          ? `${provider?.label ?? 'This profile'} needs its own API key (${missingCred?.join(', ')}). `
+            + 'Without it the session would run on the underlying CLI account instead of this provider.'
+          : null;
+
+  async function saveCredential() {
+    const id = missingCred?.[0];
+    if (!id || !credKey.trim() || credBusy) return;
+    setCredBusy(true); setCredMsg(null);
+    try {
+      await window.wanigan.key.setProvider(id, credKey.trim());
+      setCredKey('');
+      setCredMsg({ tone: 'ok', text: 'Key verified and stored.' });
+      await readMissingCred(providerId);
+    } catch (e) {
+      // The provider rejected it, or Wanigan could not reach it. Either way
+      // nothing was stored, so say that rather than leaving the operator to
+      // wonder whether a bad key is now saved.
+      setCredMsg({ tone: 'error', text: `${e instanceof Error ? e.message : String(e)} Nothing was stored.` });
+    } finally {
+      setCredBusy(false);
+    }
+  }
 
   async function go() {
     if (blocker || busy) return;
@@ -439,9 +490,13 @@ export default function NewSessionDialog({
   // handing focus back to the control that opened this.
   return portal(
     <div {...backdropProps}>
-      <div {...dialogProps} className="modal" aria-labelledby="new-session-title">
-        <h2 id="new-session-title" style={{ fontSize: 'var(--t-lead)', fontWeight: 600, marginBottom: 14 }}>New session</h2>
-
+      <div {...dialogProps} className="modal session-launch" aria-labelledby="new-session-title">
+        <header className="launch-intro"><div><h2 id="new-session-title">New session</h2>
+          <p>Choose who’s working, where they work, and how they begin.</p></div>
+          <button className="btn" type="button" onClick={onClose} aria-label="Close new session"><Icon name="x" /></button>
+        </header>
+        <div className="launch-layout"><div className="launch-form">
+        <section className="launch-section" id="launch-space"><SectionHead label="Agent and space" />
         <div className="label">Agent</div>
         <div style={{ display: 'flex', gap: 8, margin: '6px 0 14px' }}>
           {list.map((p) => {
@@ -474,6 +529,39 @@ export default function NewSessionDialog({
         {missing.length > 0 && (
           <InstallGuidance missing={missing} anyInstalled={installed.length > 0}
                            onProviders={setRechecked} />
+        )}
+
+        {needsCred && missingCred && (
+          /* The key is asked for where it is needed. Saving goes through the
+             same verified path Settings uses, so a key that the provider
+             rejects is never stored and the message says why. */
+          <div className="ns-credential">
+            <p className="ns-credential-why">
+              {provider?.label} runs the installed {provider?.bin} binary against its own endpoint, so it needs
+              its own key rather than the one that CLI is signed in with.
+            </p>
+            {/* The provider's own name, not the credential id: `glm` is the
+                slot keys.ts stores under, and "Paste the glm API key" reads as
+                a typo to the person holding a Z.ai key. The id stays in the
+                placeholder, where it matches what Settings shows. */}
+            <label className="label" htmlFor="ns-credential-key">
+              {`Paste the ${provider?.label ?? missingCred.join(' / ')} API key`}
+            </label>
+            <div className="ns-credential-row">
+              <input id="ns-credential-key" className="field mono" type="password" autoComplete="off" spellCheck={false}
+                     placeholder={`${missingCred[0]} API key`} value={credKey}
+                     onChange={(e) => setCredKey(e.target.value)}
+                     onKeyDown={(e) => { if (e.key === 'Enter' && credKey.trim()) { e.preventDefault(); void saveCredential(); } }} />
+              <button className="btn btn-primary" type="button" disabled={credBusy || !credKey.trim()}
+                      onClick={() => void saveCredential()}>
+                {credBusy ? 'Checking…' : 'Save & verify'}
+              </button>
+            </div>
+            {credMsg && <p className={credMsg.tone === 'ok' ? 'ns-credential-ok' : 'ns-credential-bad'}>{credMsg.text}</p>}
+            <p className="ns-credential-note">
+              Verified with the provider before it is stored, then encrypted in your Keychain. Wanigan never shows or logs it.
+            </p>
+          </div>
         )}
 
         {provider?.capabilities && (
@@ -573,6 +661,7 @@ export default function NewSessionDialog({
           )}
         </div>
 
+        </section><section className="launch-section" id="launch-controls"><SectionHead label="How this session starts" />
         {modelField.supported && <>
           <div className="label">{modelField.label} <span style={{ textTransform: 'none' }}>— blank leaves the model to the CLI</span></div>
           {/* "Not read yet" and "read, and there is nothing" are different
@@ -937,8 +1026,9 @@ export default function NewSessionDialog({
           </span>
         </label>
 
-        <div className="label">First message <span style={{ textTransform: 'none' }}>(optional)</span></div>
-        <textarea className="field mono" aria-label="First message" rows={3} style={{ margin: '6px 0 4px', resize: 'vertical' }}
+        </section><section className="launch-section" id="launch-message"><SectionHead label="Give it a starting point" />
+        <label className="label" htmlFor="launch-first-message">First message <span>(optional)</span></label>
+        <textarea id="launch-first-message" className="field launch-message" aria-label="First message" rows={3} style={{ margin: '6px 0 4px', resize: 'vertical' }}
                   placeholder="Typed into the session once it is up."
                   value={initialPrompt} onChange={(e) => setInitialPrompt(e.target.value)} />
 
@@ -959,20 +1049,40 @@ export default function NewSessionDialog({
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 8, marginTop: 16, alignItems: 'center' }}>
+        </section></div>
+        <aside className="launch-summary" aria-label="Session launch summary">
+          <span className="launch-summary-symbol"><Icon name="terminal" /></span>
+          <h3>{project?.name ?? 'Your next session'}</h3>
+          <p>{project?.path ?? 'Choose a folder to begin.'}</p>
+          <dl>
+            <div><dt>Agent</dt><dd>{provider?.label ?? 'Not selected'}</dd></div>
+            <div><dt>Model</dt><dd>{model || 'CLI default'}</dd></div>
+            {effortField.supported && <div><dt>Effort</dt><dd>{effort || 'CLI default'}</dd></div>}
+            <div><dt>Workspace</dt><dd>{isolate ? 'New isolated worktree' : 'Project checkout'}</dd></div>
+            <div><dt>Trust</dt><dd>{trust ? trustCopy(trust).label : trustErr ? 'Could not read' : 'Reading…'}</dd></div>
+            <div><dt>Permissions</dt><dd>{permissionMode || 'CLI default'}</dd></div>
+          </dl>
+          <nav aria-label="Launch sections">
+            {[['launch-space', 'Agent and space'], ['launch-controls', 'Session controls'], ['launch-message', initialPrompt.trim() ? 'First message added' : 'Add a first message']].map(([id, label]) =>
+              <button key={id} type="button" onClick={() => { const section = document.getElementById(id); section?.scrollIntoView({ block: 'start', behavior: 'instant' }); section?.querySelector<HTMLElement>('input, select, textarea, button')?.focus({ preventScroll: true }); }}><span>{label}</span><Icon name="chevron-right" /></button>)}
+          </nav>
+          <p className="launch-summary-note">Starts a real agent in the selected folder. Review the settings, then start when you’re ready.</p>
+        </aside></div>
+        <footer className="launch-footer">
           {blocker && (
             <p id="new-session-blocked" className="dim"
                style={{ fontSize: 'var(--t-small)', lineHeight: 1.45, minWidth: 0 }}>
               {blocker}
             </p>
           )}
-          <FocusBtn className="btn" onClick={onClose} style={{ marginLeft: 'auto' }}>Cancel</FocusBtn>
+          <div className="launch-submit"><span className="launch-key" aria-hidden="true">⌘↵</span>
+          <FocusBtn className="btn" onClick={onClose}>Cancel</FocusBtn>
           <FocusBtn className="btn btn-primary" onClick={go} disabled={!!blocker || busy}
                     aria-describedby={blocker ? 'new-session-blocked' : undefined}>
             {busy ? 'Starting…' : isolate ? 'Start in a worktree' : 'Start session'}
           </FocusBtn>
-        </div>
-        <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, textAlign: 'right' }}>⌘↵ to start</p>
+          </div>
+        </footer>
       </div>
     </div>,
   );

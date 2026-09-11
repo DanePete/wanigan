@@ -1,0 +1,85 @@
+{
+  "synthetic": true,
+  "checks": [
+    "Search, status/order controls, keyboard workspace navigation and selected reader survive page navigation. Evidence and Goal remain deliberate reader sections.",
+    "Review, snooze, reopen and dismiss use only proposal updates; the final status facet resets when it disappears.",
+    "Preview stays local; manual explicitly allows one online check without saved unattended consent. Blocked, failed, running and unknown outcomes never announce completion.",
+    "Source links cannot toggle consent; unsafe URL schemes are removed. Workspace, unattended permission, weekly watch and local schedule save independently.",
+    "Goal creation is serialized, calls only the cited Scout endpoint and retains its receipt after a refresh fails. The handoff opens Review; uncited proposals cannot create Goals.",
+    "Failed refreshes retain the last observation and disable mutations; first-read failures never invent empty records. Late unmounted reads are discarded and action failures remain visible.",
+    "Observed emptiness has its own state. Off disables reader motion and Auto follows reduced motion. Populated views in both themes fit a 1024px desktop; workspace and content regions have no horizontal overflow."
+  ],
+  "errors": [],
+  "dimensions": [
+    {
+      "area": "Proposals",
+      "sizes": [
+        {
+          "class": "",
+          "width": 1024,
+          "scroll": 1024
+        },
+        {
+          "class": "scout-workspace",
+          "width": 948,
+          "scroll": 948
+        },
+        {
+          "class": "scout-scroll",
+          "width": 948,
+          "scroll": 948
+        },
+        {
+          "class": "scout-reader",
+          "width": 542,
+          "scroll": 542
+        }
+      ]
+    },
+    {
+      "area": "Sources",
+      "sizes": [
+        {
+          "class": "",
+          "width": 1024,
+          "scroll": 1024
+        },
+        {
+          "class": "scout-workspace",
+          "width": 948,
+          "scroll": 948
+        },
+        {
+          "class": "scout-scroll",
+          "width": 933,
+          "scroll": 933
+        }
+      ]
+    },
+    {
+      "area": "Watch",
+      "sizes": [
+        {
+          "class": "",
+          "width": 1024,
+          "scroll": 1024
+        },
+        {
+          "class": "scout-workspace",
+          "width": 948,
+          "scroll": 948
+        },
+        {
+          "class": "scout-scroll",
+          "width": 933,
+          "scroll": 933
+        },
+        {
+          "class": "scout-watch-settings",
+          "width": 544,
+          "scroll": 544
+        }
+      ]
+    }
+  ]
+}

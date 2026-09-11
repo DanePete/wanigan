@@ -4,7 +4,7 @@
  * Renderer style gate. Runs in `npm test` between typecheck and the package
  * hooks, and reads source only — it never renders the app.
  *
- * Seven checks, each a ratchet against a baseline written into this file:
+ * Eight checks, each a ratchet against a baseline written into this file:
  *   1. inline `style={{` objects per renderer .tsx, keyed by path,
  *   2. `<style` tags in any renderer .tsx,
  *   3. literal px font sizes in styles/*.css (index.css owns the type scale and
@@ -16,7 +16,9 @@
  *   6. <input>/<select>/<textarea> in a renderer .tsx that reach a screen
  *      reader with no name at all,
  *   7. hook calls below an early return in a renderer component, which make a
- *      render that has data run more hooks than one that does not.
+ *      render that has data run more hooks than one that does not,
+ *   8. the native `title` attribute used as a tooltip on an intrinsic element,
+ *      which is unreachable by keyboard and invisible to a finger.
  *
  * A baseline entry is a debt, not a permit. It records what the tree carried
  * the day the gate landed so the gate could pass that day; the only allowed
@@ -53,28 +55,28 @@ const INLINE_STYLE_BASELINE = {
   'components/ErrorBoundary.tsx': 7,
   'components/NewSessionDialog.tsx': 79,
   'components/Pet.tsx': 8,
-  'components/ReviewGate.tsx': 8,
-  'components/SessionLearning.tsx': 6,
+  'components/ReviewGate.tsx': 0,
+  'components/SessionLearning.tsx': 5,
   'components/ShortcutSheet.tsx': 0,
-  'components/TeamPanel.tsx': 24,
+  'components/TeamPanel.tsx': 0,
   'components/TerminalPane.tsx': 1,
   'components/ThemeControl.tsx': 0,
   'components/Timeline.tsx': 8,
   'main.tsx': 0,
-  'views/Batches.tsx': 206,
-  'views/Context.tsx': 113,
+  'views/Batches.tsx': 177,
+  'views/Context.tsx': 44,
   'views/Control.tsx': 0,
   'views/Fleet.tsx': 29,
   'views/Git.tsx': 32,
   'views/HeadlessRuns.tsx': 0,
-  'views/ImprovementScout.tsx': 1,
+  'views/ImprovementScout.tsx': 0,
   'views/Insights.tsx': 62,
   'views/Learning.tsx': 9,
-  'views/Plugins.tsx': 38,
-  'views/Schedules.tsx': 23,
+  'views/Plugins.tsx': 0,
+  'views/Schedules.tsx': 0,
   'views/Sessions.tsx': 125,
   'views/Settings.tsx': 269,
-  'views/Skills.tsx': 39,
+  'views/Skills.tsx': 21,
   'views/Usage.tsx': 45,
 };
 
@@ -95,17 +97,15 @@ const STYLE_TAG_BASELINE = new Set([]);
 const FONT_PX_BASELINE = {
   'attention.css': 11,
   'batches.css': 0,
-  'control.css': 11,
+  'control.css': 0,
   'insights.css': 17,
-  'evals.css': 19, 'skills.css': 19,
   'fleet.css': 15,
   'git.css': 13,
-  'learning.css': 2,
   'pet.css': 10,
-  'policy.css': 16, 'context.css': 16,
-  'queue.css': 15, 'plugins.css': 15,
-  'schedule.css': 8,
-  'session-learning.css': 1,
+  'policy.css': 0, 'context.css': 16,
+  'queue.css': 0, 'plugins.css': 15,
+  'schedule.css': 0,
+  'session-learning.css': 0,
   'settings.css': 27,
   'sessions.css': 2,
   'timeline.css': 25,
@@ -218,7 +218,6 @@ const SHADOWED_MODIFIER_BASELINE = {
   // New sheets start at zero and stay there: the baseline records debt that
   // existed the day the gate landed, and board.css was written after it.
   'board.css': 0,
-  'evals.css': 0,
   'fleet.css': 0,
   'git.css': 0,
   'motion.css': 0,
@@ -248,6 +247,40 @@ const SHADOWED_MODIFIER_BASELINE = {
 //    Everything is at zero, so this one is not a debt list — it is the shape
 //    the tree is in. A file added to it is a file that regressed.
 const NO_ACCESSIBLE_NAME_BASELINE = {};
+
+// 8. Native title tooltips, per renderer .tsx. These are the counts the tree
+//    carried the day the check landed, and like every baseline here they are a
+//    debt rather than a permit: a file may only ever go down, and a file not
+//    listed is allowed zero. Replacing one means putting its sentence on the
+//    screen — a Note, a cue, a line under the control — not moving it to
+//    aria-label, which leaves a sighted keyboard user with nothing.
+const TITLE_TOOLTIP_BASELINE = {
+  "App.tsx": 8,
+  "components/AttentionQueue.tsx": 1,
+  "components/CodePanel.tsx": 10,
+  "components/Composer.tsx": 9,
+  "components/NewSessionDialog.tsx": 1,
+  "components/ObservedBand.tsx": 2,
+  "components/Pet.tsx": 8,
+  "components/PlanEditor.tsx": 6,
+  "components/SessionLearning.tsx": 11,
+  "components/SpaceNavigation.tsx": 2,
+  "components/ThemeControl.tsx": 1,
+  "components/Timeline.tsx": 2,
+  "components/bits.tsx": 8,
+  "views/Batches.tsx": 4,
+  "views/Context.tsx": 4,
+  "views/Control.tsx": 3,
+  "views/Fleet.tsx": 7,
+  "views/Git.tsx": 14,
+  "views/Insights.tsx": 14,
+  "views/Learning.tsx": 4,
+  "views/Plugins.tsx": 0,
+  "views/Sessions.tsx": 9,
+  "views/Settings.tsx": 5,
+  "views/Skills.tsx": 1,
+  "views/Usage.tsx": 4,
+};
 
 const INLINE_STYLE = /style=\{\{/g;
 const STYLE_TAG = /<style[\s>]/;
@@ -415,6 +448,36 @@ function shadowedModifiers(read, tsxFiles) {
  * a check that reads the explanation as the defect teaches people to write
  * fewer explanations.
  */
+// 8. Native title tooltips on intrinsic elements.
+//
+//    This repository already argued the case, in five separate comments:
+//    bits.tsx says "a title is invisible to a finger", NewSessionDialog.tsx
+//    that "a tooltip is unreachable by keyboard and touch", Settings.tsx that
+//    there is "No `title` escape hatch". It then carried 145 of them across 25
+//    files, bits.tsx itself holding eight — and a title added to the disabled
+//    Start button of the first-run checklist, which is the one control a new
+//    operator meets, went in without anything objecting.
+//
+//    Only intrinsic elements count: a lowercase tag is HTML, where `title`
+//    renders a hover tooltip. `<EmptyState title=...>` is a component prop and
+//    is not a tooltip at all. On the elements below the attribute is the
+//    accessible name for embedded content rather than a tooltip, so they are
+//    exempt for the same reason the HTML spec gives them one.
+const TITLE_IS_A_NAME = new Set(['embed', 'frame', 'iframe', 'math', 'object']);
+const OPEN_TAG = /<([a-zA-Z][\w.]*)((?:[^>"']|"[^"]*"|'[^']*')*?)>/g;
+const TITLE_ATTR = /(?<![\w-])title\s*=/;
+
+function titleTooltips(src) {
+  let n = 0;
+  for (const m of src.matchAll(OPEN_TAG)) {
+    const [, tag, attrs] = m;
+    if (tag[0] !== tag[0].toLowerCase()) continue;   // a component, not an element
+    if (TITLE_IS_A_NAME.has(tag)) continue;
+    if (TITLE_ATTR.test(attrs)) n += 1;
+  }
+  return n;
+}
+
 function unnamedControls(src) {
   const bare = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   const open = /<(input|select|textarea)(?=[\s/>])/g;
@@ -537,9 +600,12 @@ function measure() {
   const shadowed = shadowedModifiers(read, tsx);
 
   const unnamed = {};
+  const titles = {};
   for (const f of tsx) {
     const n = unnamedControls(read(f));
     if (n > 0) unnamed[rel(f)] = n;
+    const t = titleTooltips(read(f));
+    if (t > 0) titles[rel(f)] = t;
   }
 
   const hookOrder = {};
@@ -551,7 +617,7 @@ function measure() {
     for (const h of hits) hookFindings.push({ file: rel(f), ...h });
   }
 
-  return { inline, styleTags, fontPx, durations, shadowed, unnamed, hookOrder, hookFindings };
+  return { inline, styleTags, fontPx, durations, shadowed, unnamed, titles, hookOrder, hookFindings };
 }
 
 function ratchet(label, current, baseline, failures) {
@@ -583,6 +649,7 @@ function main() {
       DURATION_BASELINE: sorted(m.durations),
       SHADOWED_MODIFIER_BASELINE: sorted(m.shadowed.counts),
       NO_ACCESSIBLE_NAME_BASELINE: sorted(m.unnamed),
+      TITLE_TOOLTIP_BASELINE: sorted(m.titles),
       HOOK_AFTER_GUARD_BASELINE: sorted(m.hookOrder),
     }, null, 2));
     return;
@@ -596,6 +663,7 @@ function main() {
   ratchet('px font sizes outside index.css', m.fontPx, FONT_PX_BASELINE, failures);
   ratchet('literal durations outside motion.css', m.durations, DURATION_BASELINE, failures);
   ratchet('form control with no accessible name', m.unnamed, NO_ACCESSIBLE_NAME_BASELINE, failures);
+  ratchet('native title tooltip', m.titles, TITLE_TOOLTIP_BASELINE, failures);
 
   const shadowFailures = [];
   ratchet('modifier shadowed by a base rule', m.shadowed.counts, SHADOWED_MODIFIER_BASELINE, shadowFailures);
@@ -627,6 +695,7 @@ function main() {
     `${Object.values(m.durations).reduce((a, b) => a + b, 0)} literal durations outside motion.css`,
     `${m.shadowed.findings.length} shadowed modifier declarations in the ${m.shadowed.sheets.length} sheets index.css imports`,
     `${Object.values(m.unnamed).reduce((a, b) => a + b, 0)} form controls with no accessible name`,
+    `${Object.values(m.titles).reduce((a, b) => a + b, 0)} native title tooltips`,
     `${m.hookFindings.length} hooks called below an early return`,
   ];
 
@@ -635,6 +704,7 @@ function main() {
     for (const f of failures) console.error(`  - ${f}`);
     console.error('New views use .pane and the bits.tsx primitives; sizes, paddings and durations come from the tokens in index.css and motion.css.');
     console.error('A rule in a sheet index.css imports always loses to index.css at equal specificity; run --print-shadowed for the full list.');
+    console.error('A native title is unreachable by keyboard and invisible to a finger: put the reason in text beside the control.');
     process.exitCode = 1;
     return;
   }

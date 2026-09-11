@@ -4,6 +4,7 @@ import type { GoalCapsule, GoalCapsuleDelivery, LaunchOptions, Session, Provider
 import { EFFORT_LEVELS } from '../shared/types';
 import {
   providerById, shellPath, detectProviders, refreshProviderPacks, runsClaudeCli,
+  missingCredentialIds,
 } from './providers';
 import { projectById } from './store';
 import { db } from './db';
@@ -922,6 +923,32 @@ function assertBudgetAllowsLaunch(projectId: string): void {
   );
 }
 
+/**
+ * Refuse a profile whose declared credential is missing, by name.
+ *
+ * A redirected profile is a base URL and a credential that only mean anything
+ * together, and compileProviderProfile already declines to apply half the pair.
+ * What it cannot do is stop the launch: an empty environment is also what an
+ * ordinary profile returns, agentEnv() then strips the ambient Anthropic names,
+ * and the shared `claude` binary falls back to its own stored login. A GLM
+ * session would run as Claude Code, be displayed as GLM, and bank its spend
+ * against a backend that never served the request.
+ *
+ * So this refuses instead, and names the key rather than saying "not
+ * configured" — the operator has to know which of several to paste. It sits
+ * with the other cheap local refusals, before any probe or spawn.
+ */
+function assertProviderCredentials(def: { id: ProviderId; label: string }): void {
+  const missing = missingCredentialIds(def.id);
+  if (!missing.length) return;
+  const names = missing.join(', ');
+  throw new Error(
+    `${def.label} needs its own API key (${names}), and none is stored. Without it this profile cannot reach `
+    + `its own endpoint, and the session would quietly run on the underlying CLI's account instead. `
+    + `Add the key under Settings › Agents, then start this session again.`
+  );
+}
+
 export async function createSession(opts: LaunchOptions, internal: CreateSessionInternal = {}): Promise<Session> {
   // First, before provider probing, worktree creation or any injected file
   // exists to roll back. Every attended session in the app comes through here —
@@ -940,10 +967,11 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   const project = projectById(opts.projectId);
   if (!project) throw new Error('Project not found — it may have been removed.');
 
-  // Both refusals are local and cheap, so they answer before provider probing,
-  // worktree creation or any injected file exists to roll back.
+  // All three refusals are local and cheap, so they answer before provider
+  // probing, worktree creation or any injected file exists to roll back.
   assertSessionSlotAvailable();
   assertBudgetAllowsLaunch(project.id);
+  assertProviderCredentials(def);
 
   const PATH = await shellPath();
   // Launch the exact binary detection found, not whatever PATH resolves to now.

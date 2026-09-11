@@ -1,3 +1,4 @@
+import { goalLocation } from '@shared/goal-journey';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { Attention, AttentionKind, ClaudeContextUsage, HaltState, InAppAlert, MotionSetting, Project, ProviderInfo, Session, ThemeSetting, TranscriptHit } from '@shared/types';
@@ -6,6 +7,7 @@ import { DIGIT_ROUTES, SIDEBAR_GROUPS, TABS, TAB_ICONS, TAB_SHORTCUTS, labelForT
 import { bindingMatches, inTerminal, modalOpen } from './bindings';
 import Sessions from './views/Sessions';
 import MissionRoom from './views/MissionRoom';
+import { useContextStory } from './orb/context-story';
 import CompanionPresence from './components/CompanionPresence';
 import { companionPresence, type PresenceRead } from '@shared/companion-presence';
 import { ProjectSpaces, SpaceRoutes, SpaceDock } from './components/SpaceNavigation';
@@ -21,10 +23,11 @@ import Git from './views/Git';
 import HeadlessRuns from './views/HeadlessRuns';
 import ImprovementScout from './views/ImprovementScout';
 import UsageView from './views/Usage';
-import SettingsView, { SETTINGS_INDEX, type SettingsJump } from './views/Settings';
+import SettingsView, { DemoPanel, SETTINGS_INDEX, type SettingsJump } from './views/Settings';
 import Skills from './views/Skills';
 import Context from './views/Context';
-import { Icon, ago, num } from './components/bits';
+import { Icon, ago, num, PageHead, EmptyState, Segmented } from './components/bits';
+import { DEMO_VIEWS } from '@shared/demo';
 import { startTerminalOutputPump } from './components/TerminalPane';
 import ErrorBoundary from './components/ErrorBoundary';
 import ShortcutSheet from './components/ShortcutSheet';
@@ -262,14 +265,14 @@ export default function App() {
   // is open, debounced, and cleared with it. The archive is local; still,
   // nothing is searched until at least three characters ask for it.
   const [paletteHits, setPaletteHits] = useState<TranscriptHit[]>([]);
+  const [paletteRead, setPaletteRead] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [settingsJump, setSettingsJump] = useState<SettingsJump | null>(null);
   const [shortcuts, setShortcuts] = useState(false);
   // The palette is a real modal. Remember where it came from so Escape and a
   // backdrop click put a keyboard user straight back where they started.
   const paletteOpenerRef = useRef<HTMLElement | null>(null);
-  // Demo mode rewrites names at the IPC boundary, so the window can be showing
-  // invented projects with nothing on screen saying so. The banner is read
-  // once at start-up: demo:set reloads the window, which is what refreshes it.
+  // The banner labels this window's fixed source. Switching mode creates a
+  // new window with separate storage and reads its source again on mount.
   const [demoOn, setDemoOn] = useState(false);
   const [demoPrompt, setDemoPrompt] = useState<{ next: boolean } | null>(null);
   const [demoBusy, setDemoBusy] = useState(false);
@@ -547,6 +550,8 @@ export default function App() {
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeSessionId) ?? null, [sessions, activeSessionId]);
 
+  const orbStory=useContextStory(activeSession?.id??null,activeSession?.displayTitle||activeSession?.id||'');
+
   // Main cannot infer which pane the renderer is showing. Keep its suppression
   // target current so the Mac does not show a redundant banner for the session
   // already on screen. Phone alerts are a separate opt-in sink and are never
@@ -661,8 +666,8 @@ export default function App() {
   /** Scout proposals become durable Control Goals. Set the portable fragment
    * and move to the owning surface together; a fragment alone has no visible
    * effect while another tab is mounted. */
-  const openGoal = useCallback((id: string) => {
-    window.history.replaceState(null, '', `#goal=${encodeURIComponent(id)}`);
+  const openGoal = useCallback((id: string, taskId?: string) => {
+    window.history.replaceState(null, '', goalLocation(id, taskId));
     go('control');
   }, [go]);
 
@@ -853,59 +858,20 @@ export default function App() {
     ? navFocus
     : (railHasActiveTab ? tab : NAV_RAIL_TABS[0]);
 
-  // ── demo mode ───────────────────────────────────────────
-  // Read once at start-up. demo:set reloads the window, so there is no state
-  // to keep in sync afterwards — the next mount reads the new answer.
-  //
-  // The terminal blur is re-applied here, and only here. It used to be a
-  // localStorage flag written by a checkbox that exists only while Settings ›
-  // Demo mode is open and demo mode is already on, so the reload demo:set
-  // performs came back with masked names and an unblurred terminal — the
-  // half-masked screenshot that is worse than no masking, because it looks
-  // done. This component always mounts, so it is the only place the preference
-  // can be applied before a terminal draws.
-  //
-  // Blurred is where it starts, before the read has answered. An unblurred
-  // terminal is raw agent output on a screen someone may be sharing; a blurred
-  // one costs a caption for as long as one IPC call takes. Only an answer
-  // clears it, so a read that fails leaves the terminal covered and reports
-  // itself rather than quietly uncovering it.
+  // Each mode owns a separate browser storage partition and main-process
+  // data source. Read only the source label; no personal mapping reaches UI.
   useEffect(() => {
     let mounted = true;
-    const blur = (on: boolean) => document.documentElement.toggleAttribute('data-demo-blur', on);
-    blur(true);
     const read = () => window.wanigan.demo.state().then((s) => {
-      if (!mounted) return;
-      setDemoOn(s.on);
-      blur(s.on && s.blurTerminals);
+      if (mounted) setDemoOn(s.on);
     });
-    // One-shot, for an operator who ticked the box while it was still a browser
-    // flag. The stored setting is written first and the flag dropped second, so
-    // a failed write leaves the old preference where it is and the next launch
-    // tries again, instead of silently turning the blur off.
-    const carryOverLegacyFlag = async () => {
-      let legacy: string | null = null;
-      try { legacy = localStorage.getItem('wanigan.demo.blurTerminal'); }
-      catch { return; }  // blocked storage: there is no old preference to carry
-      if (legacy === null) return;
-      if (legacy === '1') await window.wanigan.demo.setBlur(true);
-      try { localStorage.removeItem('wanigan.demo.blurTerminal'); } catch { /* nothing to clean up */ }
-    };
-    void carryOverLegacyFlag()
-      .catch(() => { /* the read below is what reports the setting either way */ })
-      .then(read)
-      .catch((e) => {
-        // A silent failure here would be the one failure this app cannot take:
-        // masking on, and nothing on screen saying the names are invented.
-        if (mounted) reportError(e, { label: 'Check whether demo mode is on', run: read }, 'settings');
-      });
+    void read().catch(e => { if (mounted) reportError(e, { label: 'Read demo state', run: read }, 'settings'); });
     return () => { mounted = false; };
   }, [reportError]);
 
   const applyDemo = useCallback((next: boolean) => {
     setDemoBusy(true);
     void window.wanigan.demo.set(next)
-      .then(() => window.location.reload())
       .catch((e) => {
         setDemoBusy(false);
         setDemoPrompt(null);
@@ -1064,12 +1030,14 @@ export default function App() {
   useEffect(() => {
     if (!palette) return;
     const q = paletteQuery.trim();
-    if (q.length < TRANSCRIPT_QUERY_MIN) { setPaletteHits([]); return; }
+    setPaletteHits([]);
+    if (q.length < TRANSCRIPT_QUERY_MIN) { setPaletteRead('idle'); return; }
+    setPaletteRead('loading');
     let cancelled = false;
     const timer = window.setTimeout(() => {
       window.wanigan.transcripts.search(q, TRANSCRIPT_RESULT_CAP)
-        .then((hits) => { if (!cancelled) setPaletteHits(hits); })
-        .catch(() => { if (!cancelled) setPaletteHits([]); });
+        .then((hits) => { if (!cancelled) { setPaletteHits(hits); setPaletteRead('ready'); } })
+        .catch(() => { if (!cancelled) { setPaletteHits([]); setPaletteRead('error'); } });
     }, 250);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [palette, paletteQuery]);
@@ -1207,17 +1175,13 @@ export default function App() {
           </button>
         </section>
       )}
-      {/* Demo mode replaces real names before they ever reach this window, so
-          nothing downstream can tell you it is on. It borrows the recovery
-          strip's shape deliberately: a persistent band above the header is the
-          one place a masked screenshot cannot crop it out by accident. */}
+      {/* Sample activity must remain labelled across destinations. */}
       {demoOn && (
         <section className="startup-recovery demo-banner" role="status">
           <div>
-            <strong>Demo mode is on — the names on screen are masked.</strong>
+            <strong>Demo workspace · Fictional data</strong>
             <span>
-              Project names, paths, your username, git authors and email addresses are replaced with
-              stand-ins before any response reaches this window. Counts, costs and timings are not masked.
+              Projects, sessions, transcripts and usage figures are examples. Real work stays private; demo actions cannot change it.
             </span>
             <small>Turn it off here, in Settings › App, or with ⌘⇧D.</small>
           </div>
@@ -1247,7 +1211,7 @@ export default function App() {
             <span className="brand-context" aria-hidden="true">{labelForTab(tab)}</span>
           </div>
 
-          <ProjectSpaces projects={projects} selected={spaceId} onAdd={addProject}
+        <ProjectSpaces projects={projects} selected={spaceId} ready={projectsRead} onAdd={addProject}
             onSelect={(id) => { setSpaceId(id); if (id) choose(id);
               if (!['mission', 'sessions', 'board', 'git', 'context'].includes(tab) || (!id && ['git', 'context'].includes(tab))) go('mission'); }} />
           <div className="nav-actions">
@@ -1399,12 +1363,20 @@ export default function App() {
               without mounting another, which is how a broken view's memory is
               marked for clearing before the next mount. */}
           <ViewMemoryScope view={tab}>
-          {tab === 'mission' && <MissionRoom projectId={spaceId} presence={presence} onOpenSession={openSession}
+          {demoOn && !(DEMO_VIEWS as readonly string[]).includes(tab) ? (
+            <main className="pane">
+              <PageHead title={labelForTab(tab)} eyebrow="Demo workspace" />
+              <EmptyState posture="nothing-yet" title="This demo surface is still being prepared."
+                cue="Explore Mission, Sessions, Fleet and Usage with fictional data. Your real records stay private." />
+            </main>
+          ) : <>
+          {tab === 'mission' && <MissionRoom story={orbStory} followedSession={activeSessionId} sessions={sessions} onFollow={setActiveSessionId} demo={demoOn} projectId={spaceId} presence={presence} onOpenSession={openSession}
             onProject={(id) => { choose(id); go('sessions'); }} onAddProject={addProject}
-            onNewSession={requestNewSession} onSettings={() => jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' })} />}
+            onNewSession={requestNewSession} onSettings={() => jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' })}
+            onUsage={() => go('usage')} />}
           {tab === 'sessions' && (
             <Sessions providers={providers} projects={projects} selectedProjectId={spaceId}
-                      onAddProject={addProject} onError={reportSessionError}
+                      onAddProject={addProject} onError={reportSessionError} onOpenGoal={openGoal}
                       activeId={activeSessionId} onActiveChange={focusSession}
                       newSessionRequest={newSessionRequest} onNewSessionRequestConsumed={consumeNewSessionRequest}
                       onSendToBatch={(seed) => { setBatchSeed(seed); go('batches'); }} />
@@ -1416,8 +1388,13 @@ export default function App() {
                    onOpenGoal={openGoal} onOpenSession={openSession} />
           )}
           {tab === 'control' && <Control projects={projects} providers={providers} onOpenSession={openSession} />}
+          {/* Land on the key, not on Settings. The nav mark beside this tab
+              already deep-links to the exact section; sending the operator to
+              the top of a 5,000-line surface to find it themselves was the one
+              door that did not. */}
           {tab === 'batches' && (
-            <Batches projects={projects} hasKey={hasKey} onNeedKey={() => go('settings')}
+            <Batches projects={projects} hasKey={hasKey}
+                     onNeedKey={() => jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' })}
                      seed={batchSeed} onSeedConsumed={() => setBatchSeed(null)} />
           )}
           {tab === 'insights' && <InsightsView />}
@@ -1440,18 +1417,22 @@ export default function App() {
           {tab === 'schedules' && <Schedules projects={projects} />}
           {tab === 'git' && <Git projects={projects} projectsRead={projectsRead} selectedProjectId={spaceId ?? projectId} onPickProject={choose} />}
           {tab === 'runs' && <HeadlessRuns projects={projects} providers={providers} />}
-          {tab === 'settings' && (
-            <SettingsView providers={providers} projects={projects} jump={settingsJump}
+          {tab === 'settings' && (demoOn ? <main className="pane">
+            <PageHead title="Settings" eyebrow="Demo workspace" lead="These appearance choices apply only to this demo." />
+            <Segmented label="Demo theme" value={theme.preference} options={[{value:'dark',label:'Dark'},{value:'light',label:'Light'},{value:'system',label:'System'}]} onChange={theme.setTheme} />
+            <DemoPanel />
+          </main> : <SettingsView providers={providers} projects={projects} jump={settingsJump}
                           onKeyChange={loadShell} onRemoveProject={removeProject} onAddProject={addProject}
                           themePreference={theme.preference} resolvedTheme={theme.resolved} onThemeChange={theme.setTheme} />
           )}
+          </>}
           </ViewMemoryScope>
         </ErrorBoundary>
       </div>
       </div>
 
       <SpaceDock tab={tab} go={go} needs={needs.total} expanded={sidebarOpen} onMore={toggleSidebar}
-        companion={tab === 'mission' ? undefined : <CompanionPresence presence={presence}
+        companion={tab === 'mission' ? undefined : <CompanionPresence story={orbStory} presence={presence}
           expanded={!!needAnchor?.closest('.companion-presence')} onAttention={setNeedAnchor} onHome={() => go('mission')} />} />
       {/* role=alert is itself an assertive live region; declaring aria-live as
           well made some VoiceOver builds read the message twice. */}
@@ -1495,6 +1476,7 @@ export default function App() {
           query={paletteQuery}
           onQuery={setPaletteQuery}
           items={paletteItems}
+          transcriptRead={paletteRead}
           onClose={closePalette}
           onRun={(item) => { closePalette(item.staysPut === true); item.run(); }}
         />
@@ -1506,7 +1488,7 @@ export default function App() {
       )}
       {shortcuts && <ShortcutSheet onClose={() => setShortcuts(false)} />}
       {needAnchor && (
-        <NeedYouPopover anchor={needAnchor} attention={attention} sessions={sessions}
+        <NeedYouPopover anchor={needAnchor} attention={attention} sessions={sessions} read={attentionRead}
                         onOpen={(id) => { setNeedAnchor(null); openSession(id); }}
                         onClose={() => setNeedAnchor(null)} />
       )}
@@ -1531,12 +1513,12 @@ export default function App() {
  * the shell it is a dialog (⌘1–9 must not fire behind it) and, like every
  * overlay here, it does not animate: a live terminal may be on screen under it.
  */
-function NeedYouPopover({ anchor, attention, sessions, onOpen, onClose }: {
-  anchor: HTMLElement; attention: Attention[]; sessions: Session[];
+function NeedYouPopover({ anchor, attention, sessions, read, onOpen, onClose }: {
+  anchor: HTMLElement; attention: Attention[]; sessions: Session[]; read: PresenceRead;
   onOpen: (sessionId: string) => void; onClose: () => void;
 }) {
   const { portal, backdropProps, dialogProps } = useDialog<HTMLElement>({ onClose, initialFocus: 'first' });
-  const rows = attention.filter((a) => NEEDS_YOU.includes(a.kind));
+  const rows = read === 'ready' ? [...new Map(attention.filter(a => NEEDS_YOU.includes(a.kind) && sessions.some(s => s.id === a.sessionId)).map(a => [a.sessionId, a])).values()] : [];
   // Anchored under the mark that opened it, from measured geometry; clamped
   // so the panel never runs off the right edge on a narrow window.
   const rect = anchor.getBoundingClientRect();
@@ -1548,7 +1530,8 @@ function NeedYouPopover({ anchor, attention, sessions, onOpen, onClose }: {
   return portal(
     <div {...backdropProps} className="overlay-backdrop clear">
       <section {...dialogProps} className="need-popover" aria-label="Sessions that need you" style={place}>
-        <h2>{rows.length === 0 ? 'Nothing is waiting on you now' : `${rows.length} need you — worst first`}</h2>
+        <h2>{read !== 'ready' ? 'Waiting for a fresh read.' : rows.length === 0 ? 'All caught up.' : 'A quick look together.'}</h2>
+        <p className="need-intro">{read !== 'ready' ? 'Session attention is unavailable right now.' : rows.length === 0 ? 'Nothing is waiting on you now.' : `${rows.length} ${rows.length === 1 ? 'session needs' : 'sessions need'} you. Permissions first, then problems and finished turns.`}</p>
         <div className="need-rows">
           {rows.map((a) => {
             const tone = NEED_MARK[a.kind]?.tone ?? 'ok';
@@ -1560,7 +1543,7 @@ function NeedYouPopover({ anchor, attention, sessions, onOpen, onClose }: {
                 <span className={`nav-mark tone-${tone}`}>
                   <span aria-hidden="true">{ATTENTION_GLYPH[a.kind]}</span>{a.label}
                 </span>
-                <span className="need-row-project">{project}{a.detail ? ` · ${a.detail}` : ''}</span>
+                <span className="need-row-project"><strong>{session?.displayTitle || session?.title || project}</strong><span>{project}{a.detail ? ` · ${a.detail}` : ''}</span><small>{a.kind === 'permission' ? 'Open the permission prompt' : a.kind === 'error' ? 'Inspect the session' : session?.status === 'exited' ? 'Read the ended session' : 'Read the finished turn'} <span aria-hidden="true">↗</span></small></span>
                 <span className="need-row-wait">{ago(a.since)}</span>
               </button>
             );
@@ -1596,18 +1579,18 @@ function DemoConfirm({ next, busy, onCancel, onConfirm }: {
       </h2>
       <p className="dim" style={{ marginTop: 8, lineHeight: 1.55 }}>
         {next
-          ? 'Every response is rewritten before it reaches the window: project names, paths, your username, git authors and email addresses become stand-ins. What you read and screenshot afterwards is masked, not observed.'
-          : 'Wanigan will show real project names, paths, your username and git authors again.'}
+          ? 'Open a separate workspace with fictional projects, sessions, terminal text and usage figures. Demo actions cannot access your files, accounts, agents or saved drafts.'
+          : 'Return to your real workspace. Your projects, drafts, accounts and terminal output will be visible again.'}
       </p>
       <p className="faint" style={{ marginTop: 8, lineHeight: 1.5 }}>
-        Applying this reloads the window. Agent processes run outside it, so a running session is not
-        stopped and its terminal reattaches with its scrollback. A banner above the header stays on
-        screen for as long as demo mode is on.
+        Switching replaces the window and keeps existing agent processes running in the background.
+        Demo mode suppresses Wanigan’s desktop alerts. Quit still ends live sessions.
+        A banner labels fictional data throughout the demo.
       </p>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
         <button className="btn" type="button" onClick={onCancel} disabled={busy}>Cancel</button>
         <button className="btn btn-primary" type="button" onClick={onConfirm} disabled={busy}>
-          {busy ? 'Applying…' : next ? 'Turn on and reload' : 'Turn off and reload'}
+          {busy ? 'Applying…' : next ? 'Open demo workspace' : 'Return to real workspace'}
         </button>
       </div>
     </section>
@@ -1909,7 +1892,7 @@ function AlertStack({ alerts, onOpen, onDismiss, onDismissAll }: {
   }, [alerts, onDismiss]);
 
   return (
-    <div className="alert-stack">
+    <div className="alert-stack alert-inbox">
       {alerts.length > 1 && (
         <button className="alert-clear" type="button" onClick={onDismissAll}>
           Dismiss {alerts.length} notifications
@@ -1922,6 +1905,12 @@ function AlertStack({ alerts, onOpen, onDismiss, onDismissAll }: {
                 whatever the operator was already having read to them is the
                 behaviour that gets a screen reader user to turn the app off. */
              role={alert.urgent ? 'alert' : 'status'}>
+          <div className="alert-identity">
+            <span><span aria-hidden="true">{alert.urgent ? '!' : '✓'}</span> {alert.urgent ? 'Needs attention' : 'Update'}</span>
+            <time dateTime={new Date(alert.at).toISOString()}>{new Date(alert.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time>
+            <button className="alert-card-x" type="button" aria-label={`Dismiss: ${alert.title}`}
+                    onClick={() => onDismiss(alert.id)}><Icon name="x" /></button>
+          </div>
           <div className="alert-card-body">
             <div className="alert-card-title">{alert.title}</div>
             <div className="alert-card-text">{alert.body}</div>
@@ -1932,8 +1921,6 @@ function AlertStack({ alerts, onOpen, onDismiss, onDismissAll }: {
                 {alert.target.kind === 'session' ? 'Open session' : 'Open run'}
               </button>
             )}
-            <button className="alert-card-x" type="button" aria-label={`Dismiss: ${alert.title}`}
-                    onClick={() => onDismiss(alert.id)}>&#10005;</button>
           </div>
         </div>
       ))}
@@ -1946,8 +1933,9 @@ function AlertStack({ alerts, onOpen, onDismiss, onDismissAll }: {
 type PaletteMark = { glyph: string; word: string };
 type PaletteItem = PaletteEntry & { run: () => void; mark?: PaletteMark };
 
-function CommandPalette({ query, onQuery, items, onClose, onRun }: {
+function CommandPalette({ query, onQuery, items, transcriptRead, onClose, onRun }: {
   query: string; onQuery: (value: string) => void; items: PaletteItem[];
+  transcriptRead: 'idle' | 'loading' | 'ready' | 'error';
   onClose: () => void; onRun: (item: PaletteItem) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
@@ -1974,15 +1962,20 @@ function CommandPalette({ query, onQuery, items, onClose, onRun }: {
     const rest = items.filter((item) => item.group !== 'Actions');
     return [...actions, ...rows, ...rest];
   }, [items, normalizedQuery, recent]);
-  const shown = useMemo(() => filterPalette(withRecent, query), [withRecent, query]);
+  const [scope, setScope] = useState('All');
+  const matching = useMemo(() => filterPalette(withRecent, query), [withRecent, query]);
+  const shown = useMemo(() => matching.filter(item => scope === 'All' || item.group === scope
+    || (scope === 'Settings' && item.key.startsWith('action:appearance:'))), [matching, scope]);
   const groups = useMemo(() => groupPalette(shown), [shown]);
   const run = (item: PaletteItem) => { rememberRecent(item.key); onRun(item); };
   // Reaching the third result used to take three Tabs. One highlighted row,
   // moved with the arrow keys and taken with Enter, is what every palette on
   // this machine does; anything else is a list you have to walk.
-  const [selected, setSelected] = useState(0);
-  const active = shown.length === 0 ? -1 : Math.min(selected, shown.length - 1);
-  useEffect(() => { setSelected(0); }, [normalizedQuery]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const identity = (item: PaletteItem) => `${item.group}:${item.key}`;
+  const active = shown.length === 0 ? -1 : Math.max(0, shown.findIndex(item => identity(item) === selected));
+  const selectedItem = shown[active];
+  useEffect(() => { setSelected(null); }, [normalizedQuery, scope]);
   useEffect(() => { input.current?.focus(); }, []);
   useEffect(() => {
     list.current?.querySelector<HTMLElement>('[data-command-active="true"]')
@@ -2011,19 +2004,16 @@ function CommandPalette({ query, onQuery, items, onClose, onRun }: {
   // onto a row. Focus itself stays in the field: the highlight is published
   // with aria-activedescendant, so typing never stops mid-search.
   const onDialogKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
-    if (shown.length === 0) return;
+    if (shown.length === 0 || e.nativeEvent.isComposing || document.activeElement !== input.current) return;
     const step = (delta: number) => {
       e.preventDefault();
-      setSelected((current) => {
-        const from = Math.min(current, shown.length - 1);
-        return (from + delta + shown.length) % shown.length;
-      });
+      setSelected(identity(shown[(active + delta + shown.length) % shown.length]));
       input.current?.focus();
     };
     if (e.key === 'ArrowDown') return step(1);
     if (e.key === 'ArrowUp') return step(-1);
-    if (e.key === 'Home') { e.preventDefault(); setSelected(0); input.current?.focus(); return; }
-    if (e.key === 'End') { e.preventDefault(); setSelected(shown.length - 1); input.current?.focus(); return; }
+    if (!normalizedQuery && e.key === 'Home') { e.preventDefault(); setSelected(identity(shown[0])); return; }
+    if (!normalizedQuery && e.key === 'End') { e.preventDefault(); setSelected(identity(shown[shown.length - 1])); return; }
     // A row that already has focus activates itself; Enter is only ours while
     // the caret is still in the field.
     if (e.key === 'Enter' && document.activeElement === input.current && active >= 0) {
@@ -2034,18 +2024,27 @@ function CommandPalette({ query, onQuery, items, onClose, onRun }: {
 
   return (
     <div className="command-backdrop" role="presentation" onMouseDown={onClose}>
-      <section ref={dialog} className="command-palette" role="dialog" aria-modal="true"
+      <section ref={dialog} className="command-palette command-workspace" role="dialog" aria-modal="true"
                aria-label="Go to a view, project or session"
                onKeyDown={onDialogKeyDown} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="command-search">
+        <Icon name="search" />
         <input ref={input} className="field" value={query} onChange={(e) => onQuery(e.target.value)}
-               placeholder="Go to a view, project, session or setting — or search transcripts…"
+               placeholder="Where do you want to go?"
                aria-label="Search views, projects, live sessions, settings and archived transcripts"
                role="combobox" aria-expanded={shown.length > 0} aria-autocomplete="list"
                aria-controls="wanigan-command-results"
                aria-activedescendant={active >= 0 ? `wanigan-command-${active}` : undefined} />
+        <button className="command-close" type="button" onClick={onClose} aria-label="Close command search"><Icon name="x" /></button>
+        </div>
+        <div className="command-scopes" role="group" aria-label="Search category">
+          {['All', 'Views', 'Projects', 'Live sessions', 'Settings', 'Transcripts'].map(value =>
+            <button type="button" key={value} aria-pressed={scope === value} onClick={() => { setScope(value); input.current?.focus(); }}>{value === 'Live sessions' ? 'Sessions' : value}</button>)}
+        </div>
+        <div className="command-layout">
         <div ref={list} id="wanigan-command-results" className="command-results" role="listbox"
              aria-label="Results">
-          {shown.length === 0 ? <p className="faint">No matching view, project, session, setting, transcript or action.</p> : (() => {
+          {shown.length === 0 ? <div className="command-empty"><Icon name="search" /><strong>No matches here.</strong><p>Try a shorter name or search another category.</p>{scope !== 'All' && <button className="btn" type="button" onClick={() => setScope('All')}>Search everything</button>}</div> : (() => {
             let flat = -1;
             return groups.map((group) => (
               <div key={group.label} role="group" aria-label={`${group.label}, ${group.items.length} results`}>
@@ -2062,10 +2061,10 @@ function CommandPalette({ query, onQuery, items, onClose, onRun }: {
                     // stays in the field and the highlight travels by arrow key. The
                     // highlight paints from .command-item[aria-selected="true"] in
                     // index.css — the rule this row used to mirror inline for want of one.
-                    <button key={item.key} id={`wanigan-command-${index}`} type="button" role="option" tabIndex={-1}
+                    <button key={identity(item)} id={`wanigan-command-${index}`} type="button" role="option" tabIndex={-1}
                             className={`command-item${item.primary ? ' command-item-primary' : ''}`}
                             aria-selected={index === active} data-command-active={index === active}
-                            onMouseEnter={() => setSelected(index)}
+                            onMouseEnter={() => setSelected(identity(item))}
                             onClick={() => run(item)}>
                       <span className="command-item-copy">
                         <strong>
@@ -2084,9 +2083,18 @@ function CommandPalette({ query, onQuery, items, onClose, onRun }: {
             ));
           })()}
         </div>
-        <p className="faint" style={{ margin: '8px 0 0', fontSize: 'var(--t-small)' }}>
-          ↑↓ moves · Enter opens · Esc closes · ⌘K closes
-        </p>
+        <aside className="command-preview" aria-label="Selected result">
+          {selectedItem ? <><span className="command-preview-kind">{selectedItem.group}</span>
+            <Icon name={selectedItem.group === 'Live sessions' ? 'terminal' : selectedItem.group === 'Projects' ? 'reveal' : selectedItem.group === 'Settings' ? 'sliders' : 'search'} />
+            <h2>{selectedItem.title}</h2><p>{selectedItem.hint}</p>
+            {selectedItem.mark && <p className="command-preview-mark">{selectedItem.mark.glyph} {selectedItem.mark.word}</p>}
+            <span className="command-preview-action"><kbd>↵</kbd> {selectedItem.staysPut ? 'Apply selection' : 'Open selection'}</span>
+          </> : <p>Your next destination will appear here.</p>}
+        </aside>
+        </div>
+        <div className="command-footer"><span><kbd>↑</kbd><kbd>↓</kbd> move <kbd>↵</kbd> open</span>
+          <span role="status">{transcriptRead === 'loading' ? 'Searching transcripts…' : transcriptRead === 'error' ? 'Transcript search unavailable. Other results are still available.' : scope === 'Transcripts' && normalizedQuery.length < TRANSCRIPT_QUERY_MIN ? 'Type at least 3 characters to search transcripts.' : `${shown.length} results shown`}</span>
+        </div>
       </section>
     </div>
   );

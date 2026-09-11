@@ -1,0 +1,127 @@
+name: Release
+
+# The trigger list is the whole point of this file.
+#
+# ci.yml explains why there has never been a release job: signing and
+# notarisation need an Apple Developer identity and an app-specific password,
+# and "making CI depend on secrets that only exist on a maintainer's machine
+# turns every fork's first pull request into a red build for a reason the
+# contributor cannot fix". That is true of a job on `push` or `pull_request`.
+# It is not true of a job that cannot be reached from either.
+#
+# Nothing here runs on a branch push or a pull request, from a fork or
+# otherwise, so a contributor's first PR still sees exactly the two jobs in
+# ci.yml and none of these secrets. A release is cut deliberately: a maintainer
+# pushes a `v*` tag or runs this from the Actions tab.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and upload nothing — proves the pipeline without publishing'
+        type: boolean
+        default: false
+
+# A tag is cut once. Two runs of the same tag would race over one release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    name: macOS · signed, notarised
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # The same install CI runs: postinstall rebuilds node-pty and
+      # better-sqlite3 against Electron's ABI, from source.
+      - name: Install
+        run: npm ci
+
+      # A release must not be the first place a regression is noticed, and
+      # these are the same five steps a contributor is told to run. The two
+      # macOS packaging suites are fixture-only and touch no /Applications.
+      - name: Test
+        run: npm test
+
+      # Fail before a 40-minute build rather than after it. An unsigned or
+      # un-notarised bundle is not a release, and electron-builder would
+      # otherwise happily produce one and only trip at the notarise step.
+      - name: Check signing credentials
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=()
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            printf 'Missing release secrets: %s\n' "${missing[*]}" >&2
+            printf 'electron-builder.yml sets notarize: true, so a build without these is not shippable.\n' >&2
+            exit 1
+          fi
+
+      # Both architectures, dmg and zip, per electron-builder.yml. The rebuild
+      # that dist:mac runs afterwards restores the local ABI; on a throwaway
+      # runner it is harmless and keeps one command doing one thing.
+      - name: Build, sign and notarise
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist:mac
+
+      # Proof the artifact is actually sealed, rather than trusting that the
+      # build step would have failed. `spctl` is what Gatekeeper itself runs.
+      - name: Verify the signature
+        run: |
+          app=$(find release -maxdepth 2 -name 'Wanigan.app' -print -quit)
+          if [ -z "$app" ]; then echo 'No Wanigan.app in release/' >&2; exit 1; fi
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=4 "$app"
+
+      - name: List artifacts
+        run: ls -lh release/*.dmg release/*.zip 2>/dev/null || true
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wanigan-macos
+          path: |
+            release/*.dmg
+            release/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      # Only a tag publishes. A manual run builds, verifies and uploads to the
+      # run's artifacts, which is how the pipeline gets exercised without
+      # putting a half-considered version in front of anybody.
+      - name: Publish the release
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --verify-tag \
+            release/*.dmg release/*.zip

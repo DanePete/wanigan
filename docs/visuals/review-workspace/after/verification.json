@@ -1,0 +1,25 @@
+{
+  "checks": [
+    "the first screen selects the ready human review, shows goal-wide verification beside acceptance checks, and keeps Approve visible without any mutation",
+    "keyboard journey, prerequisite and proof attribution navigation preserve task identity, focus and drafts; selected task, evidence area and note survive a route change",
+    "project, text and state filters can be cleared; blocked work names its failed prerequisite and exposes no completion action",
+    "a delayed goal cannot replace a newer selection, a failed goal never retains another goal’s actions, and a removed selection falls back to an existing record",
+    "queued work cannot be launched twice; review gate, checkpoint, path claim, release and session navigation retain their exact typed targets",
+    "a failed decision keeps the note; pending actions disable duplicates; request-changes, retry and approval preserve the recorded decision payload",
+    "autopilot still requires deliberate confirmation with provider and cap, goal switching dismisses that confirmation, and disarming remains a separate explicit action",
+    "live task cancellation still requires confirmation and reports its receipt; event scope and dismissal stay explicit, while model cost states partial reporting",
+    "goal creation traps and restores focus, keeps its draft on close, validates required fields, and submits the explicit project, acceptance checks and four-task plan",
+    "Off and OS Reduce Motion remove reveal animation; the narrow desktop keeps every task and evidence area reachable without horizontal page overflow",
+    "failed refresh disables decisions based on stale evidence; a confirmed empty list and an unavailable list have distinct recovery states"
+  ],
+  "errors": [],
+  "dimensions": [
+    {
+      "width": 820,
+      "paneClient": 794,
+      "paneScroll": 794,
+      "readingClient": 543,
+      "readingScroll": 543
+    }
+  ]
+}

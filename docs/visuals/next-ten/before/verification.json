@@ -1,0 +1,5 @@
+{
+  "checks": [],
+  "errors": [],
+  "provenance": "Real Electron renderer with authored fixtures, including one deliberately invalid project name to exercise the error boundary. No live app session, provider call, or repository action."
+}

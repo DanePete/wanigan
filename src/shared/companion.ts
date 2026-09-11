@@ -6,7 +6,7 @@ export type CompanionSource = {
   targetId: string;
   projectId: string;
   label: string;
-};
+} | { id: 'usage:overview'; kind: 'usage'; targetId: 'usage'; projectId: null; label: string };
 export type CompanionSession = {
   id: string;
   projectId: string;

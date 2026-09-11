@@ -1,0 +1,54 @@
+{
+  "at": "2026-09-10T23:21:13.177Z",
+  "provenance": "Actual Electron renderer, synthetic files and services, no real agent calls",
+  "checks": [
+    "all seven areas stay mounted with one visible; section navigation reads no source file or agent session",
+    "keyboard section navigation works; opening a source focuses its reader, preserves report visibility, escapes raw markup, and restores the opener",
+    "late source responses cannot replace the selected file; failures expose retry, truncation is explicit, and missing files cannot be opened",
+    "instruction query and load-state filters survive sections and route changes; empty search can return to the complete ordered chain",
+    "memory index and topics use the memory reader; reported line cuts stay distinct from byte limits, permission rules are inspectable, and estimates stay labeled",
+    "switching projects removes the previous report immediately; late scans and failed switches cannot show old files under the new project",
+    "a rescan replaces open source contents and removes missing sources; one failed channel leaves other reports usable without invented empty counts",
+    "reader motion honors Off and system Reduce Motion while retaining the explicit Full override",
+    "all seven areas fit a narrow desktop; the source reader occupies the working area and closing it restores the report",
+    "empty Instructions retains an explicit /init action that types only into a running Claude Code session; a Codex-only project cannot receive it"
+  ],
+  "dimensions": [
+    {
+      "area": "chain",
+      "width": 794,
+      "scroll": 794
+    },
+    {
+      "area": "rules",
+      "width": 794,
+      "scroll": 794
+    },
+    {
+      "area": "agents",
+      "width": 794,
+      "scroll": 794
+    },
+    {
+      "area": "memory",
+      "width": 794,
+      "scroll": 794
+    },
+    {
+      "area": "config",
+      "width": 794,
+      "scroll": 794
+    },
+    {
+      "area": "budget",
+      "width": 794,
+      "scroll": 794
+    },
+    {
+      "area": "learning",
+      "width": 794,
+      "scroll": 794
+    }
+  ],
+  "errors": []
+}

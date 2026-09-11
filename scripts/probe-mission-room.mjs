@@ -18,6 +18,7 @@ try{
  const page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));
  page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
  await page.addInitScript(STUB);
+ const selectSpace=async name=>{await page.getByRole('button',{name:/Switch project space/}).click();const input=page.getByRole('combobox',{name:'Search project spaces',exact:true});await input.fill(name);await page.keyboard.press('Enter');};
  const views=[['mission','Meta+Shift+H'],['sessions','Meta+1'],['fleet','Meta+2'],['control','Meta+3'],['batches','Meta+4'],['insights','Meta+5'],['learning','Meta+6'],['plugins','Meta+7'],['schedules','Meta+8'],['git','Meta+9'],['runs','Meta+0'],['settings','Meta+,'],['skills','Meta+Shift+S'],['context','Meta+Shift+C'],['scout','Meta+Shift+I'],['usage','Meta+Shift+U'],['board','Meta+Shift+B']];
  for(const theme of compactOnly?[]:['dark','light']){
   const themeOut=path.join(out,theme);mkdirSync(themeOut,{recursive:true});
@@ -31,20 +32,20 @@ try{
   assert.equal(await page.locator('.wanigan-orb canvas').getAttribute('data-frames'),count,'motion off must stop the loop');
   // Native hide/show is verified through the real bridge by scripts/shots.mjs.
   await page.screenshot({path:path.join(themeOut,'mission.png')});
-  // A project pick narrows the briefing and the live session strip together.
-  await page.getByRole('navigation',{name:'Project spaces'}).getByRole('button',{name:'storefront',exact:true}).click();
+  // A project pick narrows the briefing and the active session together.
+  await selectSpace('storefront');
   await page.waitForFunction(()=>document.querySelectorAll('.mission-space').length===1);
   assert.equal(await page.locator('.mission-space-title button').innerText(),'storefront');
   await page.keyboard.press('Meta+1');await page.waitForSelector('.sessions-view');await page.waitForTimeout(300);
-  assert.equal(await page.locator('.session-tab').count(),1);
-  assert(!(await page.locator('.tabbar').innerText()).includes('platform'));
-  await page.getByRole('navigation',{name:'Project spaces'}).getByRole('button',{name:'platform',exact:true}).click();
+  assert((await page.locator('.session-toolbar').innerText()).includes('storefront'));
+  assert(!(await page.locator('.session-toolbar').innerText()).includes('platform'));
+  await selectSpace('platform');
   await page.waitForTimeout(250);
   await page.getByRole('navigation',{name:'Projects views'}).getByRole('button',{name:'Changes',exact:true}).click();await page.waitForTimeout(300);
   assert.equal(await page.getByRole('combobox',{name:'Repository',exact:true}).inputValue(),'p2');
   await page.keyboard.press('Meta+Shift+C');await page.waitForTimeout(300);
-  assert.equal(await page.getByRole('combobox',{name:'Project',exact:true}).inputValue(),'p2');
-  await page.getByRole('navigation',{name:'Project spaces'}).getByRole('button',{name:'All spaces',exact:true}).click();
+  assert.equal(await page.getByRole('combobox',{name:'Context project',exact:true}).inputValue(),'p2');
+  await selectSpace('All spaces');
   for(const [name,chord] of views){
    await page.getByRole('button',{name:'All destinations',exact:true}).focus();await page.keyboard.press(chord);await page.waitForTimeout(420);
    await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;document.documentElement.dataset.motion='off';},theme);

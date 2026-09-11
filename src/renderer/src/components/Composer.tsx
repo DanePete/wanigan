@@ -1,3 +1,4 @@
+import { Icon } from './bits';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AttentionKind, Session } from '@shared/types';
 import { runsClaudeHarness } from '@shared/provider-status';
@@ -266,6 +267,11 @@ export default function Composer({ session, onError, onCollapse }: {
   const [queued, setQueued] = useState<QueuedMessage[]>(() => queuedFor(sessionId));
   const [stash, setStash] = useState<StashEntry[]>(readStash);
   const [stashOpen, setStashOpen] = useState(false);
+  const [stashQuery, setStashQuery] = useState('');
+  const stashButton = useRef<HTMLButtonElement>(null);
+  const stashSearch = useRef<HTMLInputElement>(null);
+  const saved = useMemo(() => stash.filter(entry => entry.text.toLocaleLowerCase().includes(stashQuery.trim().toLocaleLowerCase())), [stash, stashQuery]);
+  useEffect(() => { if (stashOpen) stashSearch.current?.focus(); else setStashQuery(''); }, [stashOpen]);
   const [skills, setSkills] = useState<SkillOption[]>([]);
   const [menu, setMenu] = useState<{ start: number; query: string; index: number } | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
@@ -415,7 +421,7 @@ export default function Composer({ session, onError, onCollapse }: {
   const exited = session.status === 'exited';
 
   return (
-    <div className="composer" data-state={state.mode}>
+    <div className="composer composer-workspace" data-state={state.mode}>
       {queued.length > 0 && (
         <div className="composer-queue" role="list" aria-label="Queued messages">
           {queued.map((m) => (
@@ -444,16 +450,17 @@ export default function Composer({ session, onError, onCollapse }: {
           </span>
         </div>
       )}
+      <div className="composer-identity"><span>Message the agent</span><span>{session.status === 'starting' ? 'Session starting' : state.mode === 'queue' ? 'Queues until idle' : state.mode === 'blocked' ? 'Session ended' : 'Ready to send'}</span></div>
       <div className="composer-row">
         <div className="composer-field">
           <textarea
             ref={areaRef}
             className="composer-area"
-            rows={Math.min(6, Math.max(1, draft.split('\n').length))}
+            rows={Math.min(6, Math.max(2, draft.split('\n').length))}
             value={draft}
-            placeholder={state.mode === 'blocked'
+            placeholder={session.status === 'starting' ? 'Waiting for the agent’s prompt…' : state.mode === 'blocked'
               ? 'Session exited — resume it from Recent to keep talking'
-              : 'Message the agent — Enter sends, Shift+Enter for a new line, $ inserts a skill, ⌘S stashes'}
+              : 'What should we work on next?'}
             aria-label="Message the agent"
             // A textarea's implicit role is textbox and HTML-ARIA permits no
             // role change on it, so this cannot be the combobox the pattern
@@ -506,6 +513,7 @@ export default function Composer({ session, onError, onCollapse }: {
           </p>
         </div>
         <div className="composer-actions">
+          <span className="composer-key-hint"><kbd>↵</kbd> send <kbd>⇧↵</kbd> new line <kbd>$</kbd> skill</span>
           {onCollapse && (
             <button type="button" className="composer-chip-btn" title="Hide the composer (⌘E brings it back)"
                     aria-label="Hide the composer" onClick={onCollapse}>⌄</button>
@@ -523,8 +531,9 @@ export default function Composer({ session, onError, onCollapse }: {
             /compact
             </button>
           )}
-          <button type="button" className="btn composer-stash" title="Stashed prompts"
-                  aria-expanded={stashOpen} onClick={() => setStashOpen((o) => !o)}>⧉{stash.length ? ` ${stash.length}` : ''}</button>
+          <button ref={stashButton} type="button" className="btn composer-stash" aria-label="Saved prompts"
+                  aria-expanded={stashOpen} aria-controls={stashOpen ? 'composer-stash-list' : undefined}
+                  onClick={() => setStashOpen((o) => !o)}><Icon name="book" />Saved{stash.length ? ` ${stash.length}` : ''}</button>
           <button type="button" className="btn btn-primary composer-send" disabled={disabled}
                   title={state.reason ?? 'Send to the agent’s prompt'}
                   onClick={() => void send()}>
@@ -545,9 +554,14 @@ export default function Composer({ session, onError, onCollapse }: {
         </div>
       )}
       {stashOpen && (
-        <div className="composer-stash-pop">
+        <section className="composer-stash-pop" id="composer-stash-list" aria-label="Saved prompts" onKeyDown={event => {
+          if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setStashOpen(false); stashButton.current?.focus(); }
+        }}>
+          <div className="composer-saved-intro"><strong>Saved for another moment</strong><button type="button" aria-label="Close saved prompts" className="composer-chip-btn" onClick={() => { setStashOpen(false); stashButton.current?.focus(); }}><Icon name="x" /></button></div>
+          <input ref={stashSearch} type="search" className="field" aria-label="Search saved prompts" placeholder="Find a saved prompt…" value={stashQuery} onChange={event => setStashQuery(event.target.value)} />
           {stash.length === 0 && <p className="faint composer-stash-empty">Nothing stashed yet — ⌘S in the composer keeps a prompt for later.</p>}
-          {stash.map((entry) => (
+          {stash.length > 0 && saved.length === 0 && <p className="composer-stash-empty">No saved prompts match. <button className="link" type="button" onClick={() => setStashQuery('')}>Clear search</button></p>}
+          <div className="composer-saved-list">{saved.map((entry) => (
             <div key={entry.id} className="composer-stash-row">
               <button type="button" className="composer-stash-restore" title={entry.text}
                       onClick={() => { setDraft(entry.text); setStashOpen(false); areaRef.current?.focus(); }}>
@@ -557,8 +571,9 @@ export default function Composer({ session, onError, onCollapse }: {
                       aria-label={`Delete stashed prompt: ${entry.text.slice(0, 60)}`}
                       onClick={() => { const next = stash.filter((s) => s.id !== entry.id); writeStash(next); setStash(next); }}>×</button>
             </div>
-          ))}
-        </div>
+          ))}</div>
+          <p className="composer-saved-note"><kbd>⌘S</kbd> saves the current draft. Choosing a prompt puts it in the composer; it does not send it.</p>
+        </section>
       )}
     </div>
   );

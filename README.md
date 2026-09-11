@@ -43,13 +43,15 @@ is exactly the variable that makes an Electron app die at startup with
 Code terminal and you get that failure; `npm run app` unsets it and does not.
 The full explanation is in *Six things that will bite you if you fork this*.
 
-`npm test` is five steps, in this order: `typecheck` (both tsconfigs),
+`npm test` is six steps, in this order: `typecheck` (both tsconfigs),
+`test:shared` (plain `node --test` over the pure modules in `src/shared`, no
+Electron and no display),
 `test:renderer-style` (the ratchets over the renderer sources — inline styles,
 literal font sizes and durations, shadowed modifiers, unnamed form controls),
 `test:package-hooks` and `test:local-install` (fixture-only checks over the
 macOS packaging and installer hooks — they build nothing and touch no
 `/Applications`), then `smoke` (the suite inside a real Electron main process,
-mock runner, no API key). CI runs the same five across two runners; see
+mock runner, no API key). CI runs the same six across two runners; see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Installing a local macOS arm64 build
@@ -481,12 +483,16 @@ Savings become causal only after controlled metrics are actually attached.
 
 ### Improvement Scout
 
-**Learning → Scout** is Wanigan’s controlled product-research loop. It watches
+**Knowledge → Scout** is Wanigan’s controlled product-research loop. It watches
 only the official sources shown in its allow-list, compares fresh source text
 against Wanigan’s declared capability inventory, and puts evidence-linked ideas
 in a review queue. It is an inbox for work worth considering, not an updater:
 Scout cannot edit Wanigan, install software, change a provider, deploy code, or
 start an agent.
+
+The desktop workspace separates **Proposals**, **Sources**, and **Watch**.
+Select a proposal to read its brief, inspect retained evidence, and choose a
+Goal destination. Search and selection stay where you left them.
 
 Use it in this order:
 
@@ -703,13 +709,13 @@ src/main/db.ts          one SQLite file: projects, runs, batches, requests, even
 src/main/keys.ts        OS-keychain API key storage and live verification
 src/main/git.ts         the acting half of git: stage, commit, branch, stash
 src/main/glm.ts         the GLM catalogue, fetched rather than hardcoded
-src/main/demo.ts        real names out, plausible ones in, at the IPC boundary
+src/main/demo.ts        demo intent; demo-workspace.ts serves fictional data
 src/main/migrate.ts     carrying the old Foreman userData across, once
 src/main/batch/         build · estimate · submit · poll · results · files · evals
 src/main/smoke*.ts      the smoke suite, run inside the real main process
 src/main/plugins.ts     installed plugins, kept apart from the marketplace catalog
 src/renderer/views/     Sessions · Fleet · Batches · Insights · Skills · Plugins
-src/renderer/views/     Learning → Scout · Schedules · Git · Context · Runs · Settings
+src/renderer/views/     Learning · Scout · Schedules · Git · Context · Runs · Settings
 ```
 
 Batches advance on a timer in the main process, so a run keeps moving as long as
@@ -732,7 +738,7 @@ session: an agent left running with no window is an agent burning tokens unseen.
 | `⌘B` | show or hide the code rail |
 | `⌘.` | interrupt the running agent, even from inside the terminal |
 | `⌘W` | close an exited tab |
-| `⌘⇧D` | demo mode: real names out, plausible ones in |
+| `⌘⇧D` | switch between your real workspace and a read-only fictional demo |
 
 ## What this app believes
 
@@ -799,3 +805,32 @@ nothing here will ever be behind it. Same app either way.
 ## Licence
 
 MIT
+
+
+### Preparing a public demo
+
+Use **Settings → App → Demo mode** or **⌘⇧D** to open the fictional workspace.
+Projects, activity, terminal text, accounts and usage figures are authored examples.
+A persistent banner labels them. Demo actions cannot reach real file, account,
+agent, model or export handlers. Browser storage is separate, so saved drafts and
+view state from your real workspace do not appear in the demo.
+
+Mission, Sessions, Fleet and Usage currently have sample data. Other destinations
+show a preparation notice. The companion's GPU water and play controls are real;
+model answers are disabled. Returning to the real workspace reveals real data.
+Existing agents continue during a mode switch; a full quit still stops them.
+Wanigan's desktop alerts are suppressed during the demo, while separately enabled
+phone alerts continue. This does not hide other apps or the operating system.
+
+For a demo-only development launch, build and run Electron with
+`--wanigan-demo`; this skips account discovery and background services. For
+repeatable privacy verification without capturing any media:
+
+```sh
+nvm use
+npm run build
+node scripts/test-demo.cjs
+node scripts/probe-demo.mjs
+```
+
+See [the demo privacy audit](docs/demo-privacy.md) for scope and remaining work.

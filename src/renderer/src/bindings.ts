@@ -83,7 +83,7 @@ export const BINDINGS: Binding[] = [
   { id: 'palette-move',  keys: '↑ ↓',      aria: 'ArrowUp ArrowDown', group: 'Command palette',
     does: 'Move the highlight', scope: 'palette', skipsTerminal: false },
   { id: 'palette-ends',  keys: 'Home  End', aria: 'Home End', group: 'Command palette',
-    does: 'First or last result', scope: 'palette', skipsTerminal: false },
+    does: 'First or last result when search is empty; otherwise move the text caret', scope: 'palette', skipsTerminal: false },
   { id: 'palette-run',   keys: 'Enter',     aria: 'Enter', group: 'Command palette',
     does: 'Run the highlighted item', scope: 'palette', skipsTerminal: false },
   { id: 'palette-close', keys: 'Esc  ·  ⌘K', aria: 'Escape Meta+K Control+K', group: 'Command palette',

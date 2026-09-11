@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-11T04:56:13.745Z",
+  "checks": [
+    "Plugins: search, scoped enablement, accessible reader, failed detail reads, source-bearing install consent, CLI fallback, and marketplace draft retention.",
+    "Batches: searchable queue, keyboard-accessible request evidence, separated cache/comparison/refusal/configuration views, and a failed delete stays on the run.",
+    "Preparation: every step retains its draft, returning from another page requires fresh dataset evidence, and pending or failed submissions cannot silently duplicate a batch.",
+    "Read errors retain their recovery path, confirmed empty states stay distinct, and both themes fit the narrower library, queue, and preparation layouts."
+  ],
+  "errors": [],
+  "dimensions": [
+    {
+      "surface": "batches",
+      "width": 960,
+      "client": 919,
+      "scroll": 919
+    },
+    {
+      "surface": "batches",
+      "width": 720,
+      "client": 687,
+      "scroll": 687
+    },
+    {
+      "surface": "plugins",
+      "width": 960,
+      "client": 934,
+      "scroll": 934
+    },
+    {
+      "surface": "plugins",
+      "width": 720,
+      "client": 687,
+      "scroll": 687
+    },
+    {
+      "surface": "prepare",
+      "width": 960,
+      "client": 934,
+      "scroll": 934
+    },
+    {
+      "surface": "prepare",
+      "width": 720,
+      "client": 687,
+      "scroll": 687
+    }
+  ],
+  "provenance": "Real Electron renderer with synthetic plugin and batch data. No provider requests, plugin installs, real exports, or repository writes."
+}

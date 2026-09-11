@@ -1,0 +1,35 @@
+{
+  "at": "2026-09-11T04:32:01.649Z",
+  "checks": [
+    "Review leads with recorded work; partial cost stays qualified, output loads on demand, and failed or late reads cannot show another run’s repositories.",
+    "Search narrows the ledger; merge and cancellation require named confirmations, and merge targets stay bound to the reviewed run.",
+    "Preparation persists across navigation, defaults to no repositories, requires explicit full scope, respects provider budget capability, and keeps failed or pending launches from duplicating.",
+    "Read failures preserve evidence and disable unsafe actions; both themes fit narrow windows, Off disables the reveal, and verified emptiness has a preparation path."
+  ],
+  "errors": [],
+  "dimensions": [
+    {
+      "width": 960,
+      "client": 934,
+      "scroll": 934
+    },
+    {
+      "width": 720,
+      "client": 687,
+      "scroll": 687
+    },
+    {
+      "surface": "prepare",
+      "width": 960,
+      "client": 934,
+      "scroll": 934
+    },
+    {
+      "surface": "prepare",
+      "width": 720,
+      "client": 687,
+      "scroll": 687
+    }
+  ],
+  "provenance": "Packaged renderer with synthetic runs; no real agent launch, cancellation, merge or provider call"
+}

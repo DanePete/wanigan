@@ -1,0 +1,31 @@
+{
+  "at": "2026-09-11T04:32:02.830Z",
+  "builds": [
+    {
+      "architecture": "mac-arm64",
+      "appPath": "/private/tmp/wanigan-runs-snnu_exg/release/mac-arm64/Wanigan.app",
+      "executable": "/private/tmp/wanigan-runs-snnu_exg/release/mac-arm64/Wanigan.app/Contents/MacOS/Wanigan",
+      "helper": "/private/tmp/wanigan-runs-snnu_exg/release/mac-arm64/Wanigan.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty/build/Release/spawn-helper",
+      "bundleIdentifier": "io.deadnorth.wanigan",
+      "signatureMetadata": "\nExecutable=/private/tmp/wanigan-runs-snnu_exg/release/mac-arm64/Wanigan.app/Contents/MacOS/Wanigan\nIdentifier=io.deadnorth.wanigan\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20400 size=301 flags=0x2(adhoc) hashes=3+3 location=embedded\nVersionPlatform=1\nVersionMin=851968\nVersionSDK=1705216\nHash type=sha256 size=32\nCandidateCDHash sha256=67f9a1cdda32a342ab11448b0de1b43a4a97b155\nCandidateCDHashFull sha256=67f9a1cdda32a342ab11448b0de1b43a4a97b155ac7a03fefd585f7724f1c4cc\nHash choices=sha256\nCMSDigest=67f9a1cdda32a342ab11448b0de1b43a4a97b155ac7a03fefd585f7724f1c4cc\nCMSDigestType=2\nExecutable Segment base=0\nExecutable Segment limit=16384\nExecutable Segment flags=0x1\nPage size=16384\nCDHash=67f9a1cdda32a342ab11448b0de1b43a4a97b155\nSignature=adhoc\nInfo.plist entries=35\nTeamIdentifier=not set\nSealed Resources version=2 rules=13 files=264\nInternal requirements count=0 size=12\n",
+      "asarSha256": "ec2ad04b017e2decddb7516dc7d39ba233c017de414b571772792edefac9e8d4",
+      "renderer": "/out/renderer/assets/index-Cp5qgMMC.js",
+      "rendererSha256": "703e93b95262160bd967e2901cb215a9f14b720c9b124ba282bc94799225c4fe",
+      "runtime": "/out/renderer/assets/runtime-DPC_1S4f.js",
+      "runtimeSha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b"
+    },
+    {
+      "architecture": "mac",
+      "appPath": "/private/tmp/wanigan-runs-snnu_exg/release/mac/Wanigan.app",
+      "executable": "/private/tmp/wanigan-runs-snnu_exg/release/mac/Wanigan.app/Contents/MacOS/Wanigan",
+      "helper": "/private/tmp/wanigan-runs-snnu_exg/release/mac/Wanigan.app/Contents/Resources/app.asar.unpacked/node_modules/node-pty/build/Release/spawn-helper",
+      "bundleIdentifier": "io.deadnorth.wanigan",
+      "signatureMetadata": "\nExecutable=/private/tmp/wanigan-runs-snnu_exg/release/mac/Wanigan.app/Contents/MacOS/Wanigan\nIdentifier=io.deadnorth.wanigan\nFormat=app bundle with Mach-O thin (x86_64)\nCodeDirectory v=20400 size=333 flags=0x2(adhoc) hashes=4+3 location=embedded\nVersionPlatform=1\nVersionMin=851968\nVersionSDK=1705216\nHash type=sha256 size=32\nCandidateCDHash sha256=fcb531a4b4b03e1265ce0f66fe1e43d8d07e2be3\nCandidateCDHashFull sha256=fcb531a4b4b03e1265ce0f66fe1e43d8d07e2be31d865efd38104f7c1725d8b9\nHash choices=sha256\nCMSDigest=fcb531a4b4b03e1265ce0f66fe1e43d8d07e2be31d865efd38104f7c1725d8b9\nCMSDigestType=2\nExecutable Segment base=0\nExecutable Segment limit=8192\nExecutable Segment flags=0x1\nPage size=4096\nCDHash=fcb531a4b4b03e1265ce0f66fe1e43d8d07e2be3\nSignature=adhoc\nInfo.plist entries=35\nTeamIdentifier=not set\nSealed Resources version=2 rules=13 files=264\nInternal requirements count=0 size=12\n",
+      "asarSha256": "89f9fd077b3e67d6d11b36087dfbb213d9445b60373c5583aa9a90fd9c99a303",
+      "renderer": "/out/renderer/assets/index-Cp5qgMMC.js",
+      "rendererSha256": "703e93b95262160bd967e2901cb215a9f14b720c9b124ba282bc94799225c4fe",
+      "runtime": "/out/renderer/assets/runtime-DPC_1S4f.js",
+      "runtimeSha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b"
+    }
+  ]
+}

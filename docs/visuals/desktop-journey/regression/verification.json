@@ -1,0 +1,87 @@
+[
+  {
+    "probe": "desktop-workspaces",
+    "exitCode": 0,
+    "seconds": 3.1
+  },
+  {
+    "probe": "fleet-ledgers",
+    "exitCode": 0,
+    "seconds": 13.3
+  },
+  {
+    "probe": "board-workspace",
+    "exitCode": 0,
+    "seconds": 3.6
+  },
+  {
+    "probe": "review-workspace",
+    "exitCode": 0,
+    "seconds": 6.7
+  },
+  {
+    "probe": "learning-workspace",
+    "exitCode": 0,
+    "seconds": 5.5
+  },
+  {
+    "probe": "skills-workspace",
+    "exitCode": 0,
+    "seconds": 4.9
+  },
+  {
+    "probe": "context-workspace",
+    "exitCode": 0,
+    "seconds": 5.2
+  },
+  {
+    "probe": "scout-workspace",
+    "exitCode": 0,
+    "seconds": 4.5
+  },
+  {
+    "probe": "settings-workspace",
+    "exitCode": 0,
+    "seconds": 7.1
+  },
+  {
+    "probe": "goal-planning",
+    "exitCode": 0,
+    "seconds": 9.4
+  },
+  {
+    "probe": "runs-workspace",
+    "exitCode": 0,
+    "seconds": 3.8
+  },
+  {
+    "probe": "schedules-workspace",
+    "exitCode": 0,
+    "seconds": 5.5
+  },
+  {
+    "probe": "space-switcher",
+    "exitCode": 0,
+    "seconds": 8.1
+  },
+  {
+    "probe": "desktop-remainder",
+    "exitCode": 0,
+    "seconds": 7.6
+  },
+  {
+    "probe": "terminal-replay",
+    "exitCode": 0,
+    "seconds": 3.5
+  },
+  {
+    "probe": "orb-signatures",
+    "exitCode": 0,
+    "seconds": 31.3
+  },
+  {
+    "probe": "orb-personality-physics",
+    "exitCode": 0,
+    "seconds": 30.6
+  }
+]

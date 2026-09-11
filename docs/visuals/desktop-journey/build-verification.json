@@ -1,0 +1,43 @@
+{
+  "at": "2026-09-11T05:21:55.532Z",
+  "matchedSourceFiles": 372,
+  "physicsRuntimeUnchanged": true,
+  "installed": false,
+  "reason": "Installed Wanigan PID 5780 owns live Claude PID 16772; no quit or replacement was performed.",
+  "builds": [
+    {
+      "architecture": "arm64",
+      "appPath": "/Users/dane/Projects/drupal/wanigan/release/desktop-journey/mac-arm64/Wanigan.app",
+      "bundleIdentifier": "io.deadnorth.wanigan",
+      "signature": "strict verification passed",
+      "native": {
+        "app": "arm64",
+        "helper": "arm64",
+        "pty": "arm64",
+        "sqlite": "arm64"
+      },
+      "asarSha256": "a550b2751d845b1664391978954ea907631c18ed31308dfda68de2424b6033c1",
+      "rendererSha256": "9efbe241fe099461b105052a64a5626c48d1874d7f2f5186015d1d83b75cb093",
+      "runtimeSha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b",
+      "mainSha256": "974966bb06f7f9fbb2367281dcc183e9052b8a25ae53b8485c841b19501be8aa",
+      "preloadSha256": "66818c8d46d6819c821e6f267160d7bf592e63b3f4650fef8f930e30ab37893b"
+    },
+    {
+      "architecture": "x64",
+      "appPath": "/Users/dane/Projects/drupal/wanigan/release/desktop-journey/mac/Wanigan.app",
+      "bundleIdentifier": "io.deadnorth.wanigan",
+      "signature": "strict verification passed",
+      "native": {
+        "app": "x86_64",
+        "helper": "x86_64",
+        "pty": "x86_64",
+        "sqlite": "x86_64"
+      },
+      "asarSha256": "8883f760d554a0d3192f556a9f334369b4ceecef60d3474c9c2630c54cb79192",
+      "rendererSha256": "9efbe241fe099461b105052a64a5626c48d1874d7f2f5186015d1d83b75cb093",
+      "runtimeSha256": "489b4a8c1bab47627a784510ea3360b4906ad0504d176085429b3891dced357b",
+      "mainSha256": "974966bb06f7f9fbb2367281dcc183e9052b8a25ae53b8485c841b19501be8aa",
+      "preloadSha256": "66818c8d46d6819c821e6f267160d7bf592e63b3f4650fef8f930e30ab37893b"
+    }
+  ]
+}

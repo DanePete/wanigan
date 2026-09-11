@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GhPr, GhStatusReport, Project, WorktreeInfo } from '@shared/types';
-import { ConfirmNote, EmptyState, Note, PageHead, Reading, ago } from '../components/bits';
+import { ConfirmNote, EmptyState, Note, PageHead, Reading, SectionHead, Segmented, ago } from '../components/bits';
 import ReviewGate from '../components/ReviewGate';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 
@@ -32,7 +32,8 @@ type Sel =
   | null;
 
 const LANE_C = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--series-4)', 'var(--accent)', 'var(--claude)'];
-const ROW = 34, LANE_W = 13, X0 = 12;
+// Keep the SVG row in step with .gt-history .gt-row so parent edges meet.
+const ROW = 54, LANE_W = 13, X0 = 12;
 
 /** Colour-blind safe by construction: every status letter is shown as itself. */
 const STAT_TONE: Record<string, string> = {
@@ -206,7 +207,7 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [showAll, setShowAll] = useViewMemory('showAll', true);
-  const [pane, setPane] = useViewMemory<'changes' | 'branches' | 'stash'>('pane', 'changes');
+  const [pane, setPane] = useViewMemory<'changes' | 'history' | 'branches' | 'stash'>('pane', 'changes');
   // Five acts share this one confirm — push, discard all, merge, delete branch,
   // drop stash — so it carries the verb as well as the sentence. It used to
   // render a single button reading “Do it”, which is the T2 tier's own failure
@@ -494,8 +495,8 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
   const head = (
     <PageHead
       compact
-      title="Git"
-      lead="One project's repository: history, working tree, branches, stashes and the review gate. Wanigan only reads it until you press a button here." />
+      title="Changes"
+      lead={project ? `Review the work in ${project.name}.` : 'Choose a project to review its work.'} />
   );
 
   // An empty list is two different facts and this pane used to print only one
@@ -665,11 +666,23 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
         </div>
       )}
 
-      <ReviewGate projectId={projectId} />
+      <details className="gt-review-controls">
+        <summary>Review gate<span className="faint">Checks & recorded results</span></summary>
+        <ReviewGate projectId={projectId} projectName={project?.name} />
+      </details>
 
       <div className="gt" style={{ flex: 1, minHeight: 0 }}>
-        {/* ── the graph ─────────────────────────────────────────────── */}
-        <div className="gt-col">
+        <aside className="gt-browser" aria-label="Repository browser">
+          <div className="gt-browser-nav">
+            <Segmented label="Repository views" value={pane} onChange={setPane} options={[
+              { value: 'changes', label: st ? `Changes ${st.staged.length + st.unstaged.length + st.untracked.length}` : 'Changes' },
+              { value: 'history', label: 'History' },
+              { value: 'branches', label: 'Branches' },
+              { value: 'stash', label: st ? `Stash ${stash.length}` : 'Stash' },
+            ]} />
+          </div>
+        {/* Keep the history scroller mounted when changing the browser's view. */}
+        <div className="gt-col gt-history" hidden={pane !== 'history'}>
           <div className="gt-sec-h">
             <span className="t">History</span>
             {/* A count is a read. Until one returns, this said 0. */}
@@ -750,19 +763,7 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
           </div>
         </div>
 
-        {/* ── right panel ───────────────────────────────────────────── */}
-        <div className="gt-col">
-          <div className="gt-sec-h">
-            {(['changes', 'branches', 'stash'] as const).map((p) => (
-              <button key={p} className={`gt-chip${pane === p ? ' on' : ''}`} onClick={() => setPane(p)}>
-                {p}{p === 'changes' && st ? ` ${st.staged.length + st.unstaged.length + st.untracked.length}` : ''}
-                {/* Guarded like the changes count beside it: an unread stash
-                    list is not an empty one. */}
-                {p === 'stash' && st ? ` ${stash.length}` : ''}
-              </button>
-            ))}
-          </div>
-
+        <div className="gt-col" hidden={pane === 'history'}>
           {pane === 'changes' && st && (
             <div className="gt-scroll" ref={paneRef}>
               {st.conflicted.length > 0 && (
@@ -969,13 +970,18 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
             </div>
           )}
 
-          {detail && (
-            <div style={{ borderTop: '1px solid var(--line)', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              <div className="gt-sec-h"><span className="t" style={{ textTransform: 'none', letterSpacing: 0 }}>{detail.title}</span></div>
-              <Diff text={detail.patch} cutBytes={detail.cutBytes} />
-            </div>
-          )}
         </div>
+        </aside>
+        <section className="gt-col gt-reader" aria-label="Selected diff">
+          <SectionHead label={detail?.title ?? 'Review changes'} right={sel?.kind === 'file'
+            ? <span className="faint">{sel.staged ? 'Staged' : 'Working tree'}</span>
+            : sel?.kind === 'commit' ? <span className="faint">Commit</span> : undefined} />
+          {detail ? <Diff text={detail.patch} cutBytes={detail.cutBytes} /> : st ? (
+            <EmptyState posture="nothing-in-scope"
+              title={st.clean ? 'A clear working tree.' : 'Choose a file to see what changed.'}
+              cue={st.clean ? 'Open History to review a commit.' : 'Select a changed file on the left, or open History to review a commit.'} />
+          ) : <Reading what="this repository" />}
+        </section>
       </div>
     </div>
   );

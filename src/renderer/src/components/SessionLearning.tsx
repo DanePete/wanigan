@@ -7,7 +7,7 @@ import type {
   SessionBriefingRecord,
   SessionLearningLedger,
 } from '@shared/types';
-import { ago, num } from './bits';
+import { Note, SectionHead, Segmented, ago, num } from './bits';
 import '../styles/session-learning.css';
 
 /**
@@ -60,6 +60,8 @@ const RECENT = 12;
 const LEDGER_CAP = 300;
 
 const plural = (n: number, word: string) => `${num(n)} ${word}${n === 1 ? '' : 's'}`;
+
+const briefingKey = (record: SessionBriefingRecord) => `${record.at}:${record.delivery}:${record.sessionStartAt ?? ''}`;
 
 const fullDate = (ts: number) =>
   new Date(ts).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
@@ -120,28 +122,18 @@ function SignalChips({ groups }: { groups: SignalGroups }) {
 }
 
 function SignalRow({ signal }: { signal: LearningSignal }) {
-  const d = signal.detail ?? {};
-  const ok = typeof d.ok === 'boolean' ? d.ok : undefined;
-  const failed = ok === false || /-(failure|denied)$/.test(signal.kind);
-  const succeeded = !failed && (ok === true || /-(success|passed)$/.test(signal.kind));
-  const mark = failed
-    ? { glyph: '✕', color: 'var(--warning)' }
-    : succeeded ? { glyph: '✓', color: 'var(--good)' } : { glyph: '·', color: 'var(--text-faint)' };
-  const toolName = typeof d.toolName === 'string' && d.toolName ? d.toolName : null;
-  return (
-    <li className="sl-item">
-      <span className="sl-glyph" style={{ color: mark.color }} aria-hidden="true">{mark.glyph}</span>
-      <span className="sl-trunc" title={signal.summary}>{signal.summary}</span>
-      {toolName && <span className="sl-tool" title={toolName}>{toolName}</span>}
-      {d.learningCandidateEligible === false && (
-        <span className="sl-shell" title="Shell command text is discarded before storage; this row is counted operationally but never consolidated.">shell — content discarded</span>
-      )}
-      {d.summaryRedacted === true && (
-        <span className="sl-badge" title="Credential-like content was removed before this summary was stored.">redacted</span>
-      )}
-      <span className="sl-when">{ago(signal.createdAt)}</span>
-    </li>
-  );
+  const detail = signal.detail ?? {};
+  const failed = detail.ok === false || /-(failure|denied)$/.test(signal.kind);
+  const tool = typeof detail.toolName === 'string' ? detail.toolName : null;
+  return <li className="sl-signal">
+    <details>
+      <summary><span className="sl-glyph" aria-hidden="true">{failed ? '✕' : '·'}</span><span className="sl-signal-title">{signal.summary}</span><time>{ago(signal.createdAt)}</time><span className="sl-signal-toggle" aria-hidden="true">›</span></summary>
+      <p className="sl-signal-copy">{signal.summary}</p>
+      <div className="sl-line"><span>{signal.kind}</span>{tool && <span>{tool}</span>}<time>{fullDate(signal.createdAt)}</time></div>
+      {detail.learningCandidateEligible === false && <p className="sl-cap">Shell command text was discarded before storage. This signal is counted operationally and excluded from consolidation.</p>}
+      {detail.summaryRedacted === true && <p className="sl-cap">Credential-like content was removed before this summary was stored.</p>}
+    </details>
+  </li>;
 }
 
 /* ── briefing ────────────────────────────────────────────────────────── */
@@ -150,6 +142,8 @@ function briefingHeldBack(rec: SessionBriefingRecord) {
   const parts: string[] = [];
   if (rec.omittedStale > 0) parts.push(`${num(rec.omittedStale)} stale-cited`);
   if (rec.omittedBudget > 0) parts.push(`${num(rec.omittedBudget)} over budget`);
+  if (rec.omittedUnsynthesized !== null && rec.omittedUnsynthesized > 0) parts.push(`${num(rec.omittedUnsynthesized)} unsynthesized`);
+  if (rec.omittedUnverified !== null && rec.omittedUnverified > 0) parts.push(`${num(rec.omittedUnverified)} unverified`);
   if (parts.length === 0) return null;
   return (
     <Mark glyph="⊘" word={`held back: ${parts.join(' · ')}`} color="var(--warning)"
@@ -169,7 +163,7 @@ function BriefingLine({ rec }: { rec: SessionBriefingRecord | null }) {
       <>
         <Mark glyph="○" word="retrieval ran" color="var(--text-dim)"
           title="A briefing record exists for this session with zero entries — retrieval executed and admitted nothing." />
-        <span>— nothing in the knowledge store matched this task</span>
+        <span>— no items admitted to this briefing</span>
         {briefingHeldBack(rec)}
         <Sep /><span className="sl-when" title={fullDate(rec.at)}>{ago(rec.at)}</span>
       </>
@@ -190,38 +184,36 @@ function BriefingLine({ rec }: { rec: SessionBriefingRecord | null }) {
 /* ── the panel ───────────────────────────────────────────────────────── */
 
 export default function SessionLearning({ sessionId, harness, compact }: {
-  sessionId: string;
-  harness?: string | null;
-  compact?: boolean;
+  sessionId: string; harness?: string | null; compact?: boolean;
 }) {
   const [phase, setPhase] = useState<Phase>('loading');
   const [err, setErr] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
   const [ledger, setLedger] = useState<SessionLearningLedger | null>(null);
-  const [openBriefing, setOpenBriefing] = useState(false);
-  const [openSignals, setOpenSignals] = useState(false);
-  // Monotonic fetch id: a stale response (session switched, unmount) is dropped.
+  const [area, setArea] = useState<'briefing' | 'signals' | 'reach'>('briefing');
+  const [selectedBriefing, setSelectedBriefing] = useState('latest');
+  const [query, setQuery] = useState('');
+  const [failures, setFailures] = useState(false);
+  const [limit, setLimit] = useState(RECENT);
   const seq = useRef(0);
-
   const load = useCallback(async (quiet: boolean) => {
     const mine = ++seq.current;
     if (!quiet) { setPhase('loading'); setErr(null); }
     try {
       const next = await window.wanigan.learning.sessionLedger(sessionId);
       if (seq.current !== mine) return;
-      setLedger(next); setErr(null); setPhase('ready');
+      setLedger(next); setErr(null); setStale(false); setPhase('ready');
     } catch (e) {
       if (seq.current !== mine) return;
-      // A quiet refresh keeps the last-good ledger instead of flashing an error.
-      if (!quiet) { setErr(e instanceof Error ? e.message : String(e)); setPhase('error'); }
+      setErr(e instanceof Error ? e.message : String(e));
+      if (quiet) setStale(true); else setPhase('error');
     }
   }, [sessionId]);
-
   useEffect(() => {
-    setLedger(null); setOpenBriefing(false); setOpenSignals(false);
+    setLedger(null); setArea('briefing'); setSelectedBriefing('latest'); setQuery(''); setFailures(false); setLimit(RECENT); setStale(false);
     void load(false);
     return () => { seq.current++; };
   }, [load]);
-
   useEffect(() => {
     let timer: number | undefined;
     const off = window.wanigan.on.learningChanged(() => {
@@ -230,154 +222,57 @@ export default function SessionLearning({ sessionId, harness, compact }: {
     });
     return () => { off(); if (timer !== undefined) window.clearTimeout(timer); };
   }, [load]);
-
-  const briefing = ledger?.briefings[0] ?? null;
+  useEffect(() => setLimit(RECENT), [query, failures]);
+  const selectedRecord = ledger?.briefings.find(record => briefingKey(record) === selectedBriefing);
+  const briefing = selectedRecord ?? ledger?.briefings[0] ?? null;
   const signals = ledger?.signals ?? [];
   const groups = groupSignals(signals);
-  const reach = (ledger?.contributions.length ?? 0) + (ledger?.candidates.length ?? 0) > 0;
+  const reach = (ledger?.contributions.length ?? 0) + (ledger?.candidates.length ?? 0);
   const empty = !!ledger && !ledger.briefings.length && !signals.length && !reach;
-  const recent = signals.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, RECENT);
-
+  const filtered = signals.filter(signal => (`${signal.summary} ${signal.kind} ${signal.detail?.toolName ?? ''}`).toLowerCase().includes(query.trim().toLowerCase())
+    && (!failures || signal.detail?.ok === false || /-(failure|denied)$/.test(signal.kind))).sort((a,b) => b.createdAt-a.createdAt);
   const codexNote = harness === 'codex';
   const unverifiedNote = !codexNote && harness !== 'claude-code' && signals.length === 0;
-
-  let body: React.ReactNode;
-  if (phase === 'loading') {
-    body = <p className="sl-state">Reading the learning ledger…</p>;
-  } else if (phase === 'error') {
-    body = (
-      <div className="sl-row sl-error">
-        <p>{err ?? 'The learning ledger could not be read.'}</p>
-        <button className="btn" onClick={() => void load(false)}>Retry</button>
-      </div>
-    );
-  } else if (empty) {
-    body = (
-      <>
-        <p className="sl-state">
-          Nothing recorded yet. Tool activity in Claude Code sessions records signals as it
-          happens; a briefing is recorded at launch when learning is enabled.
-        </p>
-        {!compact && codexNote && <CodexNote />}
-        {!compact && unverifiedNote && <UnverifiedNote />}
-      </>
-    );
-  } else if (compact) {
-    body = (
-      <>
-        <div className="sl-line"><BriefingLine rec={briefing} /></div>
-        <div className="sl-line">
-          <strong className="sl-num">{plural(signals.length, 'signal')}</strong>
-          <SignalChips groups={groups} />
-        </div>
-      </>
-    );
-  } else {
-    body = (
-      <>
-        <div className="sl-row">
-          <div className="sl-line">
-            <BriefingLine rec={briefing} />
-            {briefing && briefing.entries.length > 0 && (
-              <button className="sl-expand" aria-expanded={openBriefing} onClick={() => setOpenBriefing((v) => !v)}>
-                <span className="g" aria-hidden="true">{openBriefing ? '▼' : '▶'}</span>
-                {openBriefing ? 'hide items' : 'items'}
-              </button>
-            )}
-          </div>
-          {briefing && openBriefing && (
-            <ul className="sl-list">
-              {briefing.entries.map((e, i) => (
-                <li className="sl-item" key={`${e.itemId}-${i}`}>
-                  <KindChip kind={e.kind} />
-                  <span className="sl-trunc" title={e.title}>{e.title}</span>
-                  <span className="sl-when">~{num(e.estimatedTokens)} est.</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {briefing && (
-            <p className="sl-cap">
-              Read from the stored briefing record for this session
-              {ledger && ledger.briefings.length > 1 ? ` (newest of ${ledger.briefings.length})` : ''};
-              token numbers are bytes÷4 estimates.
-            </p>
-          )}
-        </div>
-
-        <div className="sl-row">
-          <div className="sl-line">
-            {signals.length === 0
-              ? <Mark glyph="·" word="no signals recorded" color="var(--text-faint)" />
-              : <strong className="sl-num">{plural(signals.length, 'signal')}</strong>}
-            <SignalChips groups={groups} />
-            {signals.length > 0 && (
-              <button className="sl-expand" aria-expanded={openSignals} onClick={() => setOpenSignals((v) => !v)}>
-                <span className="g" aria-hidden="true">{openSignals ? '▼' : '▶'}</span>
-                {openSignals ? 'hide recent' : 'recent'}
-              </button>
-            )}
-          </div>
-          {openSignals && (
-            <ul className="sl-list">
-              {recent.map((s) => <SignalRow key={s.id} signal={s} />)}
-            </ul>
-          )}
-          <p className="sl-cap">
-            Recorded from session events; credential-redacted; identical repeats collapse into one row.
-            {openSignals && signals.length > RECENT ? ` Showing the newest ${RECENT} of ${num(signals.length)}.` : ''}
-            {signals.length >= LEDGER_CAP
-              ? ` The ledger read returns at most ${num(LEDGER_CAP)}, so this is the newest ${num(LEDGER_CAP)} — older signals are neither listed nor counted above.`
-              : ''}
-          </p>
-        </div>
-
-        {reach && ledger && (
-          <div className="sl-row">
-            <div className="sl-line"><strong>Evidence from this session reached:</strong></div>
-            <ul className="sl-list">
-              {ledger.contributions.map((c) => {
-                const s = ITEM_STATUS[c.status] ?? ITEM_STATUS.retired;
-                return (
-                  <li className="sl-item" key={`i-${c.itemId}`}>
-                    <KindChip kind={c.kind} />
-                    <span className="sl-trunc" title={c.title}>{c.title}</span>
-                    <span className="sl-when sl-num">{plural(c.evidenceCount, 'evidence row')}</span>
-                    <Mark glyph={s.glyph} word={s.word} color={s.color} />
-                  </li>
-                );
-              })}
-              {ledger.candidates.map((c) => {
-                const s = CANDIDATE_STATUS[c.status] ?? CANDIDATE_STATUS.pending;
-                return (
-                  <li className="sl-item" key={`c-${c.candidateId}`}>
-                    <KindChip kind={c.targetKind} />
-                    <span className="sl-trunc" title={c.title}>{c.title}</span>
-                    <span className="sl-when">candidate</span>
-                    <Mark glyph={s.glyph} word={s.word} color={s.color} />
-                  </li>
-                );
-              })}
-            </ul>
-            <p className="sl-cap">Stored as citation rows — auditable in Learning → Knowledge.</p>
-          </div>
-        )}
-
-        {codexNote && <CodexNote />}
-        {unverifiedNote && <UnverifiedNote />}
-      </>
-    );
-  }
-
-  return (
-    <section className="card sl-panel" aria-label="Session learning ledger">
-      <header className="sl-head">
-        <span className="label">Learning</span>
-        {phase === 'ready' && !empty && !compact && <small>this session’s recorded ledger</small>}
-      </header>
-      {body}
-    </section>
-  );
+  return <section className="sl-panel" aria-label="Session learning ledger">
+    <SectionHead label="Session learning" />
+    {phase === 'loading' && <p className="sl-state" role="status">Reading the learning ledger…</p>}
+    {phase === 'error' && <Note tone="error" action={{ label: 'Retry ledger read', run: () => load(false) }}>{err ?? 'The learning ledger could not be read.'}</Note>}
+    {phase === 'ready' && <>
+      {stale && <Note tone="warn" action={{ label: 'Retry ledger update', run: () => load(true) }}>Update unavailable. Showing the last successful read. {err}</Note>}
+      {empty ? <p className="sl-state">Nothing recorded for this session yet. Briefings and observed learning signals appear here when they are recorded.</p> : compact ? <>
+        <div className="sl-line"><BriefingLine rec={briefing} /></div><div className="sl-line"><strong>{plural(signals.length,'signal')}</strong><SignalChips groups={groups} /></div>
+      </> : <>
+        <Segmented label="Session learning area" value={area} onChange={setArea} options={[{value:'briefing',label:'Briefing'},{value:'signals',label:`Signals ${signals.length}`},{value:'reach',label:`Contributions ${reach}`}]} />
+        {area === 'briefing' && <div className="sl-area">
+          <p className="sl-intro">What this session was given.</p>
+          {ledger && ledger.briefings.length > 1 && <select className="field" aria-label="Recorded briefing" value={selectedRecord ? selectedBriefing : 'latest'} onChange={event => setSelectedBriefing(event.target.value)}><option value="latest">Latest briefing</option>{ledger.briefings.map((record,index) => <option key={`${record.at}-${index}`} value={briefingKey(record)}>{fullDate(record.at)}</option>)}</select>}
+          <div className="sl-line"><BriefingLine rec={briefing} /></div>
+          {briefing && <>
+            <ul className="sl-list">{briefing.entries.map((entry,index) => <li className="sl-briefing-item" key={`${entry.itemId}-${index}`}><KindChip kind={entry.kind} /><strong>{entry.title}</strong><span className="sl-when">~{num(entry.estimatedTokens)} est. tokens</span><p className="sl-cap">Citations: {entry.checked === null ? 'checked count not recorded' : `${entry.checked} checked`}; {entry.skipped === null ? 'skipped count not recorded' : `${entry.skipped} skipped`}.</p></li>)}</ul>
+            <p className="sl-cap">Stored briefing evidence. Token numbers are bytes÷4 estimates.</p>
+          </>}
+        </div>}
+        {area === 'signals' && <div className="sl-area">
+          <p className="sl-intro">What this session recorded.</p>
+          <div className="sl-line"><SignalChips groups={groups} /></div>
+          <input className="field" type="search" aria-label="Search learning signals" value={query} onChange={event => setQuery(event.target.value)} placeholder="Find a signal or tool" />
+          <label className="sl-filter"><input type="checkbox" checked={failures} onChange={event => setFailures(event.target.checked)} />Failures and denials only</label>
+          {!filtered.length && <p className="sl-state">{signals.length ? 'No signals match this view.' : 'No signals recorded.'}{signals.length > 0 && <button className="btn btn-sm" onClick={() => { setQuery(''); setFailures(false); }}>Clear signal filters</button>}</p>}
+          <ul className="sl-list">{filtered.slice(0,limit).map(signal => <SignalRow key={signal.id} signal={signal} />)}</ul>
+          <div className="sl-list-end"><span>{Math.min(limit,filtered.length)} of {filtered.length} matching signals</span>{filtered.length > limit && <button className="btn btn-sm" onClick={() => setLimit(value => value+RECENT)}>Show more signals</button>}</div>
+          <p className="sl-cap">Recorded from session events; credential-redacted; identical repeats collapse into one row.{signals.length >= LEDGER_CAP ? ` This read contains only the newest ${num(LEDGER_CAP)} signals. Older signals are not counted here.` : ''}</p>
+        </div>}
+        {area === 'reach' && <div className="sl-area">
+          <p className="sl-intro">Where this session’s evidence went.</p>
+          {!reach && <p className="sl-state">No knowledge contributions or candidates are linked to this session yet.</p>}
+          <ul className="sl-list">{ledger?.contributions.map(item => { const status=ITEM_STATUS[item.status] ?? ITEM_STATUS.retired; return <li className="sl-contribution" key={item.itemId}><KindChip kind={item.kind} /><strong>{item.title}</strong><Mark {...status} /><span className="sl-when">{plural(item.evidenceCount,'evidence row')}</span></li>; })}
+          {ledger?.candidates.map(item => { const status=CANDIDATE_STATUS[item.status] ?? CANDIDATE_STATUS.pending; return <li className="sl-contribution" key={item.candidateId}><KindChip kind={item.targetKind} /><strong>{item.title}</strong><Mark {...status} /><span className="sl-when">Candidate</span></li>; })}</ul>
+          <p className="sl-cap">Stored citation links. Review the full records in Learning → Knowledge.</p>
+        </div>}
+      </>}
+      {!compact && codexNote && <CodexNote />}{!compact && unverifiedNote && <UnverifiedNote />}
+    </>}
+  </section>;
 }
 
 function CodexNote() {

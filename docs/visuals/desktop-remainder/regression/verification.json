@@ -1,0 +1,67 @@
+[
+  {
+    "probe": "desktop-workspaces",
+    "exitCode": 0,
+    "seconds": 3.0
+  },
+  {
+    "probe": "fleet-ledgers",
+    "exitCode": 0,
+    "seconds": 13.2
+  },
+  {
+    "probe": "board-workspace",
+    "exitCode": 0,
+    "seconds": 3.9
+  },
+  {
+    "probe": "review-workspace",
+    "exitCode": 0,
+    "seconds": 5.6
+  },
+  {
+    "probe": "learning-workspace",
+    "exitCode": 0,
+    "seconds": 5.7
+  },
+  {
+    "probe": "skills-workspace",
+    "exitCode": 0,
+    "seconds": 5.1
+  },
+  {
+    "probe": "context-workspace",
+    "exitCode": 0,
+    "seconds": 5.2
+  },
+  {
+    "probe": "scout-workspace",
+    "exitCode": 0,
+    "seconds": 4.5
+  },
+  {
+    "probe": "settings-workspace",
+    "exitCode": 0,
+    "seconds": 6.6
+  },
+  {
+    "probe": "goal-planning",
+    "exitCode": 0,
+    "seconds": 9.2
+  },
+  {
+    "probe": "runs-workspace",
+    "exitCode": 0,
+    "seconds": 3.8
+  },
+  {
+    "probe": "schedules-workspace",
+    "exitCode": 0,
+    "seconds": 5.5
+  },
+  {
+    "probe": "space-switcher",
+    "exitCode": 0,
+    "seconds": 8.2
+  }
+]

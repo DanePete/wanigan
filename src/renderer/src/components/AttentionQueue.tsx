@@ -54,23 +54,25 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
   });
 
   const alive = useRef(true);
+  const request = useRef(0);
   const burst = useRef<number | null>(null);
 
   // Attention carries a session id, not a project name — the name lives on the
   // session. Both reads are cheap and must describe the same instant, so they go
   // together rather than as two independently-timed polls.
   const load = useCallback(async () => {
+    const sequence = ++request.current;
     try {
       const [list, live] = await Promise.all([
         window.wanigan.attention.list(),
         window.wanigan.sessions.list(),
       ]);
-      if (!alive.current) return;
-      setItems(list);
+      if (!alive.current || sequence !== request.current) return;
+      setItems(list.filter(item => live.some(session => session.id === item.sessionId)));
       setSessions(Object.fromEntries(live.map((s) => [s.id, s] as const)));
       setErr(null);
     } catch (e) {
-      if (!alive.current) return;
+      if (!alive.current || sequence !== request.current) return;
       setErr(e instanceof Error ? e.message : String(e));
     }
   }, []);
@@ -92,6 +94,7 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       alive.current = false;
+      request.current++;
       clearInterval(t);
       off();
       document.removeEventListener('visibilitychange', onVisible);
@@ -119,18 +122,18 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
 
   const shown = showAll ? items : items.filter((a) => NEEDS_YOU.includes(a.kind));
   const hidden = items.length - shown.length;
+  const liveCount = Object.values(sessions).filter(session => session.status !== 'exited').length;
 
   if (shown.length === 0) {
     return (
       <div className="atq atq-quiet" role="region" aria-label="Attention queue">
         <span className="label">Attention</span>
-        <span className="atq-none">Nothing waiting.</span>
-        {items.length === 0 ? (
-          // Empty: no agents exist yet, so say how one gets here.
+        <span className="atq-none">{err ? 'Attention unavailable.' : items.length === 0 && liveCount > 0 ? 'Waiting for an attention signal.' : 'Nothing waiting.'}</span>
+        {!err && items.length === 0 ? (
           <span className="atq-hint">
-            No sessions running. Start one with ⌘T and it appears here the moment it blocks.
+            {liveCount > 0 ? `${liveCount} live ${liveCount === 1 ? 'session' : 'sessions'}. No attention state has been reported yet.` : 'No sessions running. Start one with ⌘T and it appears here the moment it blocks.'}
           </span>
-        ) : (
+        ) : !err && (
           // Zero results: the filter excluded everything, so hand back the way in.
           <>
             <span className="atq-hint">

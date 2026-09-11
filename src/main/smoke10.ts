@@ -145,6 +145,11 @@ export async function runPaletteSmoke(check: Check, say: Say): Promise<void> {
     check(dead.mode === 'blocked' && typeof dead.reason === 'string' && dead.reason.length > 0,
       'a queue aimed at an exited session is blocked, with a sentence saying why rather than a bare disabled button',
       dead);
+    const starting = deriveSendState({ status: 'starting', attention: 'idle' });
+    check(starting.mode === 'blocked' && starting.reason?.includes('starting') === true,
+      'a starting session cannot receive composer input and is described as starting, never exited');
+    check(deriveSendState({ status: null, attention: 'idle' }).reason?.includes('no longer available') === true,
+      'a missing session is described as unavailable rather than claiming an observed exit');
     check(deriveSendState({ status: 'running', attention: 'idle' }).mode === 'send'
       && deriveSendState({ status: 'running', attention: 'working' }).mode === 'queue',
       'a running agent at its prompt takes the send directly, and a busy one still queues');

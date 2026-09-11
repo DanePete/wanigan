@@ -1,0 +1,39 @@
+{
+  "verifiedAt": "2026-09-10T23:07:34.395Z",
+  "arm64": {
+    "app": "/Users/dane/Projects/drupal/wanigan/release/mac-arm64/Wanigan.app",
+    "asarSha256": "1a3c5b3a518fd48e04f73aecedc9b2769756a8e1abe811e142efa83010141937",
+    "rendererPath": "/out/renderer/assets/index-BBtPtft8.js",
+    "rendererSha256": "e4f1e16a2dc842e40cef55180e3ab985bbcd755a687bf1d513762461f5424e1d",
+    "signature": "strict sealed ad-hoc signature, hardened fuses, ASAR integrity and executable PTY helper verified"
+  },
+  "x64": {
+    "app": "/Users/dane/Projects/drupal/wanigan/release/mac/Wanigan.app",
+    "asarSha256": "d71380abf60dd21eb63efc3eaa2b5b68799c45c076b69af57555f066f31e9aaf",
+    "rendererPath": "/out/renderer/assets/index-BBtPtft8.js",
+    "rendererSha256": "e4f1e16a2dc842e40cef55180e3ab985bbcd755a687bf1d513762461f5424e1d",
+    "signature": "strict sealed ad-hoc signature, hardened fuses, ASAR integrity and executable PTY helper verified"
+  },
+  "installed": {
+    "app": "/Applications/Wanigan.app",
+    "asarSha256": "1a3c5b3a518fd48e04f73aecedc9b2769756a8e1abe811e142efa83010141937",
+    "rendererPath": "/out/renderer/assets/index-BBtPtft8.js",
+    "rendererSha256": "e4f1e16a2dc842e40cef55180e3ab985bbcd755a687bf1d513762461f5424e1d",
+    "signature": "strict sealed ad-hoc signature, hardened fuses, ASAR integrity and executable PTY helper verified",
+    "verifiedAt": "2026-09-10T23:07:53.782Z"
+  },
+  "nativeInspection": {
+    "launchPid": 16641,
+    "method": "Native accessibility tree and screenshot of /Applications/Wanigan.app",
+    "observed": [
+      "New Board heading and lead",
+      "Search board tasks field",
+      "Project scope filter",
+      "Six state filters",
+      "Honest empty state with zero recorded tasks",
+      "Existing miniature 3D companion"
+    ],
+    "leftOpen": "Board, Every project",
+    "operations": "Navigation only; no model calls, task actions or preference changes"
+  }
+}

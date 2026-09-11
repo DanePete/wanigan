@@ -7,8 +7,8 @@ fn react(input:vec4f,dt:f32)->vec4f {
  let ignition=smoothstep(.12,.22,q.y);
  let burned=q.x*(1.-exp(-5.*ignition*dt));
  q.x=(q.x-burned)*exp(-.3*dt);
- q.y=min(2.4,(q.y+1.6*burned)*exp(-.85*dt));
- q.z=min(1.5,(q.z+.14*burned)*exp(-.7*dt));
+ q.y=min(2.4,(q.y+1.6*burned)*exp(-.9*dt));
+ q.z=min(1.5,(q.z+.20*burned)*exp(-.5*dt));
  q.w=burned/max(dt,.00001);
  return q;
 }`;
@@ -21,7 +21,7 @@ struct Params { dt:f32, time:f32, source:f32, energy:f32, direction:vec4f }
 @group(0) @binding(4) var water:texture_3d<f32>;
 @group(0) @binding(5) var velocity:texture_3d<f32>;
 fn open(p:vec3f)->bool {
- return length(p-.5)<.485 && textureSampleLevel(water,smoothSampler,p,0.).x<.35;
+ return length(p-.5)<.485 && (u.source>.5 || textureSampleLevel(water,smoothSampler,p,0.).x<.35);
 }
 `;
 export class Thermal {
@@ -56,16 +56,19 @@ export class Thermal {
         lo=min(lo,value);hi=max(hi,value);
       }}}
       q=clamp(q,lo,hi);
-      // A small supplied source behind the eyes. Its material persists when
+      // A broad, supplied hearth behind the eyes. Its material persists when
       // the supply stops; no reseeding occurs when a request or theme changes.
-      let center=vec3f(.5+u.direction.x*.025,.505,.43);
-      let p=(uv-center)/vec3f(.105,.043,.13);
-      let left=(uv-center-vec3f(-.19,0.,.025))/vec3f(.10,.043,.12);
-      let right=(uv-center-vec3f(.19,0.,-.015))/vec3f(.10,.043,.12);
+      let center=vec3f(.5+u.direction.x*.025,.23,.48);
+      let p=(uv-center)/vec3f(.13,.055,.14);
+      let left=(uv-center-vec3f(-.19,0.,.025))/vec3f(.10,.045,.12);
+      let right=(uv-center-vec3f(.19,0.,-.015))/vec3f(.10,.045,.12);
       // Three supplied roots span the hearth. Unlike enlarging one Gaussian,
       // the side plumes have enough local heat to ignite in the moving flow.
-      let emitter=min(1.,exp(-dot(p,p)*2.)+.9*exp(-dot(left,left)*2.)+.9*exp(-dot(right,right)*2.))*u.source;
-      q.x+=emitter*u.dt*5.;q.y+=emitter*u.dt*3.;
+      let hearth=min(1.,exp(-dot(p,p)*2.)+.9*exp(-dot(left,left)*2.)+.9*exp(-dot(right,right)*2.))*u.source;
+      let column=(uv-vec3f(.5,.23,.48))/vec3f(.12,.065,.12);
+      let emitter=mix(hearth,exp(-dot(column,column)*1.6)*u.source*1.7,u.direction.y);
+      let supply=.60+.40*sin(u.time*3.+uv.x*29.+uv.z*19.);
+      q.x+=emitter*supply*u.dt*5.5;q.y+=emitter*supply*u.dt*3.;
       textureStore(destination,id,react(q,u.dt));
     }`];
     this.passes=codes.map((code,index)=>{
@@ -86,8 +89,8 @@ export class Thermal {
     this.passes.push({pipeline,group:device.createBindGroup({layout:pipeline.getBindGroupLayout(0),entries:[
       {binding:0,resource:corrected.createView()},{binding:1,resource:this.texture.createView()}]})});
   }
-  step(encoder:GPUCommandEncoder,dt:number,time:number,source:number,energy:number,direction:number){
-    this.device.queue.writeBuffer(this.uniform,0,new Float32Array([dt,time,source,energy,direction,0,0,0]));
+  step(encoder:GPUCommandEncoder,dt:number,time:number,source:number,energy:number,direction:number,whirl=0){
+    this.device.queue.writeBuffer(this.uniform,0,new Float32Array([dt,time,source,energy,direction,whirl,0,0]));
     for(const {pipeline,group} of this.passes){
       const pass=encoder.beginComputePass();pass.setPipeline(pipeline);pass.setBindGroup(0,group);
       pass.dispatchWorkgroups(this.size/4,this.size/4,this.size/4);pass.end();

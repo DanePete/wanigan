@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Project } from '@shared/types';
-import { EmptyState, Explainer } from '../components/bits';
+import { EmptyState, Explainer, Note, PageHead, Reading, SectionHead, Segmented } from '../components/bits';
+import { useViewMemory } from '../components/viewMemory';
 import '../styles/improvement-scout.css';
 
 /**
@@ -20,7 +21,7 @@ type JsonObject = Record<string, unknown>;
 type ScoutRun = {
   id: string;
   mode: string;
-  status: 'running' | 'completed' | 'blocked' | 'failed';
+  status: 'running' | 'completed' | 'blocked' | 'failed' | 'unknown';
   networkAllowed: boolean;
   startedAt: number | null;
   finishedAt: number | null;
@@ -133,7 +134,7 @@ const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frida
 
 /** Glyph first, then the word. Colour is the third channel here, never the only one. */
 const RUN_GLYPH: Record<ScoutRun['status'], string> = {
-  running: '◐', completed: '✓', blocked: '⁃', failed: '✕',
+  running: '◐', completed: '✓', blocked: '⁃', failed: '✕', unknown: '?',
 };
 
 function asRecord(value: unknown): JsonObject | null {
@@ -172,11 +173,11 @@ function array(value: unknown): unknown[] {
  */
 function normalizeRun(value: unknown): ScoutRun {
   const raw = asRecord(value) ?? {};
-  const status = string(raw.status, 'completed');
+  const status = string(raw.status, 'unknown');
   return {
     id: string(raw.id),
     mode: string(raw.mode, 'manual'),
-    status: (['running', 'completed', 'blocked', 'failed'].includes(status) ? status : 'completed') as ScoutRun['status'],
+    status: (['running', 'completed', 'blocked', 'failed'].includes(status) ? status : 'unknown') as ScoutRun['status'],
     networkAllowed: bool(raw.networkAllowed ?? raw.allowNetwork),
     startedAt: timestamp(raw.startedAt ?? raw.started_at),
     finishedAt: timestamp(raw.finishedAt ?? raw.finished_at),
@@ -292,7 +293,7 @@ function errorText(error: unknown): string {
 }
 
 function displayStatus(status: string): string {
-  return status.replace(/_/g, ' ');
+  return status.replace(/[_-]/g, ' ');
 }
 
 function formatWhen(at: number | null): string {
@@ -338,482 +339,220 @@ function effortRank(effort: string): number {
   return known === undefined ? Number.MAX_SAFE_INTEGER : known;
 }
 
+type ScoutArea = 'proposals' | 'sources' | 'watch';
+type ReaderArea = 'brief' | 'evidence' | 'goal';
+
 export default function ImprovementScout({ projects, onOpenGoal }: {
   projects: Project[];
-  /** App-level route hand-off. `#goal=` alone cannot select the Control view. */
   onOpenGoal?: (id: string) => void;
 }) {
   const [overview, setOverview] = useState<ScoutOverview>(EMPTY_OVERVIEW);
   const [settings, setSettings] = useState<ScoutSettings>(EMPTY_SETTINGS);
   const [sources, setSources] = useState<ScoutSource[]>([]);
-
-  /**
-   * Scout has not been set up: it is switched off, or no source is allow-listed.
-   *
-   * Either way it cannot research anything, which is why this decides the order
-   * of the page below rather than only the copy on it.
-   */
-  const needsSetup = !settings.enabled || sources.every((source) => !source.enabled);
   const [suggestions, setSuggestions] = useState<ScoutSuggestion[]>([]);
-  const [loading, setLoading] = useState(true);
-  /**
-   * Whether any read has ever succeeded.
-   *
-   * One failed IPC read used to make the Scout say, in four places at once, that
-   * there are no sources, no proposals, and that nothing has ever run — over a
-   * grid of zeros presented as observed counts, with advice about configuring
-   * things that may already be configured. A banner above them saying the load
-   * failed does not undo four confident statements below it.
-   */
   const [loaded, setLoaded] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [readError, setReadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
-  const [status, setStatus] = useState('all');
-  const [query, setQuery] = useState('');
-  /**
-   * Newest first, deliberately. The queue used to open on a composite priority
-   * number that came from a hardcoded rule table rather than from any
-   * measurement, which made the first thing a reader saw the least defensible
-   * thing on the page. Arrival order is a filing order and claims nothing.
-   */
-  const [sort, setSort] = useState<'newest' | 'effort'>('newest');
-  const [inspectedId, setInspectedId] = useState<string | null>(null);
-  const [goalProjectId, setGoalProjectId] = useState('');
-  const [goalIds, setGoalIds] = useState<Record<string, string>>({});
-
-  /**
-   * `quiet` reloads the same records without flashing the loading state. Every
-   * action here funnels back through load(), and blanking the queue after a
-   * "Mark reviewed" threw away the reader's place in a list they were working
-   * down. The first read and an explicit re-read still announce themselves.
-   */
-  const load = useCallback(async (quiet = false) => {
-    if (!quiet) setLoading(true);
+  const [area, setArea] = useViewMemory<ScoutArea>('area', 'proposals');
+  const [readerArea, setReaderArea] = useViewMemory<ReaderArea>('reader-area', 'brief');
+  const [status, setStatus] = useViewMemory('status', 'all');
+  const [query, setQuery] = useViewMemory('query', '');
+  const [sort, setSort] = useViewMemory<'newest' | 'effort'>('sort', 'newest');
+  const [selectedId, setSelectedId] = useViewMemory<string | null>('selected', null);
+  const [goalProjectId, setGoalProjectId] = useViewMemory('goal-project', projects[0]?.id ?? '');
+  const [goalIds, setGoalIds] = useViewMemory<Record<string, string>>('goal-receipts', {});
+  const alive = useRef(true), sequence = useRef(0), actionLock = useRef(false);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; sequence.current++; }; }, []);
+  const load = useCallback(async () => {
+    if (!alive.current) return;
+    const mine = ++sequence.current;
+    setLoading(true);
     try {
       const api = scout();
       const [nextOverview, nextSettings, nextSources, nextSuggestions] = await Promise.all([
         api.overview(), api.settings(), api.sources(), api.suggestions({ limit: 150 }),
       ]);
+      if (!alive.current || mine !== sequence.current) return;
       setOverview(normalizeOverview(nextOverview));
       setSettings(normalizeSettings(nextSettings));
       setSources(array(nextSources).map(normalizeSource));
       setSuggestions(array(nextSuggestions).map(normalizeSuggestion));
-      setError(null);
+      setReadError(null);
       setLoaded(true);
     } catch (reason) {
-      setError(errorText(reason));
+      if (alive.current && mine === sequence.current) setReadError(errorText(reason));
     } finally {
-      setLoading(false);
+      if (alive.current && mine === sequence.current) setLoading(false);
     }
   }, []);
-
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => {
-    if (!goalProjectId && projects[0]) setGoalProjectId(projects[0].id);
-  }, [goalProjectId, projects]);
-  useEffect(() => {
-    if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(null), 9_000);
-    return () => window.clearTimeout(timer);
-  }, [notice]);
-
+  const disabled = !loaded || loading || !!readError || busy !== null;
   const act = useCallback(async (key: string, work: () => Promise<void>, message?: Notice) => {
-    setBusy(key);
-    setError(null);
+    if (actionLock.current || disabled) return;
+    actionLock.current = true;
+    setBusy(key); setError(null); setNotice(null);
     try {
       await work();
-      if (message) setNotice(message);
-    } catch (reason) {
-      setError(errorText(reason));
-    } finally {
-      setBusy(null);
+      if (alive.current && message) setNotice(message);
+    } catch (reason) { if (alive.current) setError(errorText(reason)); }
+    finally { actionLock.current = false; if (alive.current) setBusy(null); }
+  }, [disabled]);
+  const patchSettings = (patch: JsonObject, message: string) => act('settings', async () => {
+    await scout().setSettings(patch); await load();
+  }, { message });
+  const toggleSource = (source: ScoutSource, enabled: boolean) => act(`source-${source.id}`, async () => {
+    await scout().setSourceEnabled(source.id, enabled); await load();
+  }, { message: `${source.label} is ${enabled ? 'included' : 'excluded'} from future scans.` });
+  const run = (mode: 'manual' | 'preview') => act(`run-${mode}`, async () => {
+    // Manual is one explicit online pass; preview can never inherit saved consent.
+    const result = normalizeRun(await scout().run(mode === 'manual' ? { mode, allowNetwork: true } : { mode }));
+    await load();
+    if (result.status === 'blocked' || result.status === 'failed' || result.status === 'unknown') {
+      throw new Error(result.error ?? result.detail ?? `The scan outcome is ${result.status}. Refresh to read its recorded result.`);
     }
-  }, []);
-
-  const patchSettings = useCallback((patch: JsonObject, message: string) => act(
-    'settings',
-    async () => { await scout().setSettings(patch); await load(true); },
-    { message },
-  ), [act, load]);
-
-  const toggleSource = useCallback((source: ScoutSource, enabled: boolean) => act(
-    `source-${source.id}`,
-    async () => { await scout().setSourceEnabled(source.id, enabled); await load(true); },
-    { message: `${source.label} is ${enabled ? 'included' : 'excluded'} from future scans.` },
-  ), [act, load]);
-
-  /**
-   * A run reports its own outcome, and the two that are not success are the
-   * ones worth reading: 'blocked' means a consent gate refused it, 'failed'
-   * means it broke. The banner used to be a constant, so a scan that never
-   * contacted anything still announced that "one explicit allow-listed online
-   * check completed" — the app stating an online check happened when the code
-   * had just declined to make one.
-   */
-  const run = useCallback((mode: 'manual' | 'preview') => act(
-    `run-${mode}`,
-    async () => {
-      const started = normalizeRun(await scout().run(mode === 'manual' ? { mode, allowNetwork: true } : { mode }));
-      await load(true);
-      if (started.status === 'blocked' || started.status === 'failed') {
-        // Thrown rather than set directly, so it lands in the same error banner
-        // as every other failure instead of inventing a third notice style.
-        throw new Error(started.error
-          ?? (started.status === 'blocked'
-            ? 'The scan was blocked before it ran. Check that the workspace, online checks and at least one source are enabled.'
-            : 'The scan failed before it finished. No proposals were added.'));
-      }
-    },
-    { message: mode === 'preview'
-      ? 'Local preview complete. No external source was contacted, nothing was scheduled, and no agent was started.'
-      : 'One explicit allow-listed online check completed. It did not enable the weekly watch or start an agent.' },
-  ), [act, load]);
-
-  const updateSuggestion = useCallback((suggestion: ScoutSuggestion, nextStatus: string, message: string) => act(
-    `suggestion-${suggestion.id}-${nextStatus}`,
-    async () => { await scout().updateSuggestion(suggestion.id, { status: nextStatus }); await load(true); },
-    { message },
-  ), [act, load]);
-
-  const createGoal = useCallback((suggestion: ScoutSuggestion) => act(
-    `goal-${suggestion.id}`,
-    async () => {
-      if (!goalProjectId) throw new Error('Choose the project this Goal belongs to first.');
-      const api = scout();
-      // Do not fall back to Control#create: the Scout-specific endpoint proves
-      // retained official evidence and writes that evidence into the Goal.
-      // A renderer paired with an old main process must fail closed instead of
-      // quietly producing an uncited, unlinked work item.
-      if (!api.createGoal) {
-        throw new Error('Scout Goal linking needs a Wanigan restart to finish updating its local services.');
-      }
-      const receipt: ScoutGoalReceipt = await api.createGoal(suggestion.id, { projectId: goalProjectId });
-      setGoalIds((previous) => ({ ...previous, [suggestion.id]: receipt.goalId }));
-      await load(true);
-      setNotice({ message: 'Goal created. It is linked to this proposal and its evidence; no agent was started.', goalId: receipt.goalId });
-    },
-  ), [act, goalProjectId, load]);
-
-  const openGoal = useCallback((id: string) => {
+    if (alive.current) setNotice({ message: result.status === 'running'
+      ? 'Scout is still running. Refresh to read its recorded result.'
+      : `${mode === 'preview' ? 'Local preview' : 'Online check'} completed. ${result.detail ?? 'Review the recorded proposals below.'}` });
+  });
+  const updateSuggestion = (suggestion: ScoutSuggestion, nextStatus: string, message: string) => act(`suggestion-${suggestion.id}`, async () => {
+    await scout().updateSuggestion(suggestion.id, { status: nextStatus }); await load();
+  }, { message });
+  const createGoal = (suggestion: ScoutSuggestion) => act(`goal-${suggestion.id}`, async () => {
+    if (!projects.some(project => project.id === goalProjectId)) throw new Error('Choose an available project for this Goal.');
+    const api = scout();
+    // Only this endpoint verifies retained official evidence and links the Goal.
+    if (!api.createGoal) throw new Error('Scout Goal linking needs a Wanigan restart to finish updating its local services.');
+    const receipt = await api.createGoal(suggestion.id, { projectId: goalProjectId });
+    if (!alive.current) return;
+    setGoalIds(previous => ({ ...previous, [suggestion.id]: receipt.goalId }));
+    await load();
+    if (alive.current) setNotice({ message: 'Goal created with this proposal and its evidence. No agent was started.', goalId: receipt.goalId });
+  });
+  const openGoal = (id: string) => {
     const link = goalHref(id);
     if (window.location.hash !== link) window.history.replaceState(null, '', link);
     onOpenGoal?.(id);
-  }, [onOpenGoal]);
-
-  const statuses = useMemo(() => ['all', ...new Set(suggestions.map((item) => item.status))], [suggestions]);
-  // Reviewing the last 'new' proposal removes 'new' from the options above. A
-  // controlled select with a value that matches no option displays the first
-  // one, so the control read 'All statuses' while the state still filtered to
-  // 'new' and the queue said nothing matched — with no filter visibly set.
-  useEffect(() => {
-    if (!statuses.includes(status)) setStatus('all');
-  }, [statuses, status]);
+  };
+  const statuses = useMemo(() => ['all', ...new Set(suggestions.map(item => item.status))], [suggestions]);
+  useEffect(() => { if (loaded && !statuses.includes(status)) setStatus('all'); }, [loaded, statuses, status, setStatus]);
   const filteredSuggestions = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    const matches = suggestions.filter((item) => {
-      if (status !== 'all' && item.status !== status) return false;
-      if (!normalized) return true;
-      return [item.title, item.summary, item.category, item.whyNow, item.recommendation]
-        .some((part) => part.toLowerCase().includes(normalized));
-    });
-    return matches.sort((a, b) => {
-      if (sort === 'effort') {
-        const byEffort = effortRank(a.effort) - effortRank(b.effort);
-        return byEffort !== 0 ? byEffort : (b.createdAt ?? 0) - (a.createdAt ?? 0);
-      }
-      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
-    });
+    return suggestions.filter(item => (status === 'all' || item.status === status) && (!normalized ||
+      [item.title, item.summary, item.category, item.whyNow, item.recommendation].some(part => part.toLowerCase().includes(normalized))))
+      .sort((a, b) => (sort === 'effort' ? effortRank(a.effort) - effortRank(b.effort) : 0) || (b.createdAt ?? 0) - (a.createdAt ?? 0));
   }, [query, sort, status, suggestions]);
-
-  /**
-   * The queue's one announced line.
-   *
-   * The results list used to be the live region, so a first load, a broadened
-   * filter, a reorder and every status change read up to 150 proposals aloud in
-   * filing order — title, summary, four reason codes and five button labels
-   * each. A reader who moved a single proposal to "reviewed" was told about the
-   * other hundred. What actually changed is a count, and a count belongs beside
-   * the controls that change it, in one sentence.
-   */
+  const selected = filteredSuggestions.find(item => item.id === selectedId) ?? filteredSuggestions[0] ?? null;
+  const linkedGoal = selected ? goalIds[selected.id] ?? selected.goalId : null;
+  const needsSetup = !settings.enabled || sources.every(source => !source.enabled);
   const filterStatus = useMemo(() => {
     if (loading) return 'Reading local Scout records…';
     if (suggestions.length === 0) return 'Nothing proposed yet.';
     if (filteredSuggestions.length === 0) return 'No proposal matches these filters.';
     return `Showing ${filteredSuggestions.length} of ${suggestions.length}.`;
   }, [filteredSuggestions.length, loading, suggestions.length]);
+  const watchLabel = !settings.enabled ? 'Scout paused' : settings.networkEnabled && settings.weeklyEnabled
+    ? `Weekly · ${WEEKDAYS[settings.weekday]}` : 'Watch off';
+  const clearFilters = () => { setQuery(''); setStatus('all'); };
 
-  return (
-    <div className="scout-view">
-      <header className="scout-head">
-        <div className="scout-head-copy">
-          <span className="label-stencil">Improvement Scout · Wanigan improvement loop</span>
-          <h1>Scout</h1>
-          <p>Track explicitly enabled, source-backed changes in the agent ecosystem, compare them to Wanigan’s capability inventory, and review the resulting proposals here.</p>
-        </div>
-        <div className="scout-head-actions">
-          {/* Every word of this pill is a claim about saved configuration, so
-              it waits for the read like the rest of the page. Before `loaded`
-              the settings object is still EMPTY_SETTINGS — all false — and the
-              pill would have read "Scout paused", which is not merely unknown
-              but the opposite of the main-process default. */}
-          <span className={`scout-state ${!loaded ? 'muted' : settings.enabled && settings.networkEnabled ? (settings.weeklyEnabled ? 'on' : 'warn') : 'muted'}`}>
-            {!loaded ? 'not read yet'
-              : settings.enabled && settings.networkEnabled ? (settings.weeklyEnabled ? `weekly watch · ${WEEKDAYS[settings.weekday]}` : 'online research on · schedule off') : settings.enabled ? 'scheduled online research off' : 'Scout paused'}
-          </span>
-          {loaded && (
-            <span className="scout-state muted" title="The current Scout builds proposals with local deterministic matching rules; it does not send source text to a provider model.">
-              {overview.analysisMethod === 'deterministic-rules' ? 'local rules' : overview.analysisMethod}
-            </span>
-          )}
-          <button className="btn" type="button" disabled={loading || busy !== null || !settings.enabled}
-                  title={settings.enabled ? 'Refresh the local capability inventory without contacting a source.' : 'Enable Scout workspace below before running it.'}
-                  onClick={() => void run('preview')}>
-            {busy === 'run-preview' ? 'Previewing…' : 'Preview locally'}
-          </button>
-          <button className="btn btn-primary" type="button" disabled={loading || busy !== null || !settings.enabled}
-                  title={settings.enabled ? 'Make one explicit allow-listed online source check without enabling the weekly watch.' : 'Enable Scout workspace below before running it.'}
-                  onClick={() => void run('manual')}>
-            {busy === 'run-manual' ? 'Scanning…' : 'Run scout now'}
-          </button>
-        </div>
-      </header>
-
-      <div className="scout-scroll">
-        <div className="scout-stack">
-          {error && <div className="scout-banner error" role="alert"><span aria-hidden="true">!</span><div><strong>Scout could not load</strong><p>{error}</p></div></div>}
-          {notice && <div className="scout-banner ok" role="status"><span aria-hidden="true">✓</span><div><strong>{notice.message}</strong>{notice.goalId && <p><a className="scout-goal-link" href={goalHref(notice.goalId)} onClick={() => onOpenGoal?.(notice.goalId!)}>Open goal in Review</a></p>}</div></div>}
-
-          {/* Nothing below this line is true until a read has succeeded. Until
-              then the page says so once, instead of publishing zeros as counts
-              and an empty allow-list as a configuration you have not done. */}
-          {!loaded ? (
-            <EmptyState posture={error === null ? 'nothing-yet' : 'could-not-read'}
-                        title={error === null ? 'Reading local Scout records' : 'Could not read the Scout records'}
-                        cue={error ?? 'Nothing is being scanned while this page loads.'}
-                        action={error === null ? undefined : (
-                          <button className="btn" type="button" onClick={() => void load()}>Try again</button>
-                        )} />
-          ) : (
-          <>
-          {/* Order follows what the operator can actually do. Until Scout is
-              switched on and given a source it can read, the four numbers above
-              are a report on a feature that has never run, and the setup below is
-              the only thing on the page that does anything — so when that is the
-              state, the setup goes first and the report follows it. Once Scout is
-              configured the reading is the point and the original order returns. */}
-          {needsSetup ? (
-            <>
-          <section className="scout-grid">
-            <article className="card scout-card">
-              <div className="scout-card-head"><div><span className="label">Schedule and consent</span><h3>Choose when research can run</h3><p>Weekly scans use only the sources enabled in the adjacent list. Local preview never contacts a source; “Run scout now” is a one-time, visible allow-listed online check and never enables the weekly schedule.</p></div></div>
-              <div className="scout-setting-grid">
-                <label className="scout-toggle">
-                  <input type="checkbox" checked={settings.enabled} disabled={busy !== null}
-                         onChange={(event) => void patchSettings({ enabled: event.target.checked }, event.target.checked ? 'Scout workspace enabled. Online checks remain off until you explicitly allow them.' : 'Scout workspace paused. Existing proposals stay available for review.')} />
-                  <span><strong>Enable Scout workspace</strong><small>Controls the local research inbox and its schedule.</small></span>
-                </label>
-                <label className="scout-toggle">
-                  <input type="checkbox" checked={settings.networkEnabled} disabled={busy !== null || !settings.enabled}
-                         onChange={(event) => void patchSettings({ networkEnabled: event.target.checked }, event.target.checked ? 'Online source checks are permitted for your selected allow-list.' : 'Online source checks are blocked. You can still review existing local proposals.')} />
-                  <span><strong>Allow unattended official-source checks</strong><small>Explicitly permits your source allow-list on the weekly watch.</small></span>
-                </label>
-                <label className="scout-toggle">
-                  <input type="checkbox" checked={settings.weeklyEnabled} disabled={busy !== null || !settings.enabled || !settings.networkEnabled}
-                         onChange={(event) => void patchSettings({ weeklyEnabled: event.target.checked }, event.target.checked ? 'Weekly watch enabled.' : 'Weekly watch paused.')} />
-                  <span><strong>Weekly watch</strong><small>Runs only when research is allowed.</small></span>
-                </label>
-                <label><span className="label">Local time</span><select className="field" value={settings.hour} disabled={busy !== null || !settings.enabled} onChange={(event) => void patchSettings({ hour: Number(event.target.value) }, 'Weekly scan time updated.')}>
-                  {Array.from({ length: 24 }, (_, hour) => <option value={hour} key={hour}>{new Date(2000, 0, 1, hour).toLocaleTimeString(undefined, { hour: 'numeric' })}</option>)}
-                </select></label>
-                <label><span className="label">Day</span><select className="field" value={settings.weekday} disabled={busy !== null || !settings.enabled} onChange={(event) => void patchSettings({ weekday: Number(event.target.value) }, 'Weekly scan day updated.')}>
-                  {WEEKDAYS.map((day, index) => <option value={index} key={day}>{day}</option>)}
-                </select></label>
-              </div>
-            </article>
-
-            <article className="card scout-card sources">
-              <div className="scout-card-head"><div><span className="label">Source allow-list</span><h3>What Scout can read</h3><p>Only switch on sources you want checked. Each link opens the source itself, not a Wanigan summary.</p></div><span className="scout-state muted">{sources.filter((source) => source.enabled).length} enabled</span></div>
-              <div className="scout-sources">
-                {sources.length === 0 && <p className="scout-no-evidence">No sources are configured yet. Scout cannot research until a trusted source is available.</p>}
-                {sources.map((source) => <label className={`scout-source ${source.enabled ? '' : 'disabled'}`} key={source.id}>
-                  <input type="checkbox" checked={source.enabled} disabled={busy !== null} onChange={(event) => void toggleSource(source, event.target.checked)} aria-label={`Include ${source.label} in Scout research`} />
-                  <span className="scout-source-copy"><strong>{source.label}</strong><small>{source.description}</small></span>
-                  {source.url && <a href={source.url} target="_blank" rel="noreferrer">Source ↗</a>}
-                </label>)}
-              </div>
-            </article>
-          </section>
-          <section className="scout-stat-grid" aria-label="Improvement Scout summary">
-            <article className="card scout-stat"><span className="label">New to review</span><strong>{overview.pendingSuggestions.toLocaleString()}</strong><small>source-backed proposals</small></article>
-            <article className="card scout-stat"><span className="label">Research sources</span><strong>{overview.enabledSourceCount}/{overview.sourceCount}</strong><small>enabled for the next scan</small></article>
-            {/* The timestamp alone said a scan started, never whether it got
-                anywhere: a weekly watch that has been blocked by a consent gate
-                for a month looked exactly like one running cleanly. Glyph and
-                word, per the house rule, and the error underneath when there
-                is one. */}
-            <article className="card scout-stat"><span className="label">Last scan</span><strong className="scout-date">{formatWhen(overview.lastRunAt)}</strong>
-              <small>{overview.latestRun === null ? 'local run history' : (
-                <span className={`scout-run-outcome ${overview.latestRun.status}`}>
-                  <span aria-hidden="true">{RUN_GLYPH[overview.latestRun.status]}</span>{' '}
-                  {overview.latestRun.status === 'completed'
-                    ? overview.latestRun.networkAllowed
-                      ? `online · ${overview.latestRun.suggestionCount} ${overview.latestRun.suggestionCount === 1 ? 'proposal' : 'proposals'}`
-                      : 'local pass · no source was contacted'
-                    : overview.latestRun.status === 'running' ? 'still running'
-                    : overview.latestRun.detail ?? overview.latestRun.error ?? overview.latestRun.status}
-                </span>
-              )}</small></article>
-            <article className="card scout-stat"><span className="label">Next review</span><strong className="scout-date">{settings.weeklyEnabled && settings.enabled && settings.networkEnabled ? formatWhen(overview.nextRunAt) : 'not scheduled'}</strong><small>{settings.weeklyEnabled ? overview.cadenceLabel : 'enable a weekly watch below'}</small></article>
-          </section>
-            </>
-          ) : (
-            <>
-          <section className="scout-stat-grid" aria-label="Improvement Scout summary">
-            <article className="card scout-stat"><span className="label">New to review</span><strong>{overview.pendingSuggestions.toLocaleString()}</strong><small>source-backed proposals</small></article>
-            <article className="card scout-stat"><span className="label">Research sources</span><strong>{overview.enabledSourceCount}/{overview.sourceCount}</strong><small>enabled for the next scan</small></article>
-            {/* The timestamp alone said a scan started, never whether it got
-                anywhere: a weekly watch that has been blocked by a consent gate
-                for a month looked exactly like one running cleanly. Glyph and
-                word, per the house rule, and the error underneath when there
-                is one. */}
-            <article className="card scout-stat"><span className="label">Last scan</span><strong className="scout-date">{formatWhen(overview.lastRunAt)}</strong>
-              <small>{overview.latestRun === null ? 'local run history' : (
-                <span className={`scout-run-outcome ${overview.latestRun.status}`}>
-                  <span aria-hidden="true">{RUN_GLYPH[overview.latestRun.status]}</span>{' '}
-                  {overview.latestRun.status === 'completed'
-                    ? `completed · ${overview.latestRun.suggestionCount} ${overview.latestRun.suggestionCount === 1 ? 'proposal' : 'proposals'}`
-                    : overview.latestRun.status === 'running' ? 'still running'
-                    : overview.latestRun.error ?? overview.latestRun.status}
-                </span>
-              )}</small></article>
-            <article className="card scout-stat"><span className="label">Next review</span><strong className="scout-date">{settings.weeklyEnabled && settings.enabled && settings.networkEnabled ? formatWhen(overview.nextRunAt) : 'not scheduled'}</strong><small>{settings.weeklyEnabled ? overview.cadenceLabel : 'enable a weekly watch below'}</small></article>
-          </section>
-          <section className="scout-grid">
-            <article className="card scout-card">
-              <div className="scout-card-head"><div><span className="label">Schedule and consent</span><h3>Choose when research can run</h3><p>Weekly scans use only the sources enabled in the adjacent list. Local preview never contacts a source; “Run scout now” is a one-time, visible allow-listed online check and never enables the weekly schedule.</p></div></div>
-              <div className="scout-setting-grid">
-                <label className="scout-toggle">
-                  <input type="checkbox" checked={settings.enabled} disabled={busy !== null}
-                         onChange={(event) => void patchSettings({ enabled: event.target.checked }, event.target.checked ? 'Scout workspace enabled. Online checks remain off until you explicitly allow them.' : 'Scout workspace paused. Existing proposals stay available for review.')} />
-                  <span><strong>Enable Scout workspace</strong><small>Controls the local research inbox and its schedule.</small></span>
-                </label>
-                <label className="scout-toggle">
-                  <input type="checkbox" checked={settings.networkEnabled} disabled={busy !== null || !settings.enabled}
-                         onChange={(event) => void patchSettings({ networkEnabled: event.target.checked }, event.target.checked ? 'Online source checks are permitted for your selected allow-list.' : 'Online source checks are blocked. You can still review existing local proposals.')} />
-                  <span><strong>Allow unattended official-source checks</strong><small>Explicitly permits your source allow-list on the weekly watch.</small></span>
-                </label>
-                <label className="scout-toggle">
-                  <input type="checkbox" checked={settings.weeklyEnabled} disabled={busy !== null || !settings.enabled || !settings.networkEnabled}
-                         onChange={(event) => void patchSettings({ weeklyEnabled: event.target.checked }, event.target.checked ? 'Weekly watch enabled.' : 'Weekly watch paused.')} />
-                  <span><strong>Weekly watch</strong><small>Runs only when research is allowed.</small></span>
-                </label>
-                <label><span className="label">Local time</span><select className="field" value={settings.hour} disabled={busy !== null || !settings.enabled} onChange={(event) => void patchSettings({ hour: Number(event.target.value) }, 'Weekly scan time updated.')}>
-                  {Array.from({ length: 24 }, (_, hour) => <option value={hour} key={hour}>{new Date(2000, 0, 1, hour).toLocaleTimeString(undefined, { hour: 'numeric' })}</option>)}
-                </select></label>
-                <label><span className="label">Day</span><select className="field" value={settings.weekday} disabled={busy !== null || !settings.enabled} onChange={(event) => void patchSettings({ weekday: Number(event.target.value) }, 'Weekly scan day updated.')}>
-                  {WEEKDAYS.map((day, index) => <option value={index} key={day}>{day}</option>)}
-                </select></label>
-              </div>
-            </article>
-
-            <article className="card scout-card sources">
-              <div className="scout-card-head"><div><span className="label">Source allow-list</span><h3>What Scout can read</h3><p>Only switch on sources you want checked. Each link opens the source itself, not a Wanigan summary.</p></div><span className="scout-state muted">{sources.filter((source) => source.enabled).length} enabled</span></div>
-              <div className="scout-sources">
-                {sources.length === 0 && <p className="scout-no-evidence">No sources are configured yet. Scout cannot research until a trusted source is available.</p>}
-                {sources.map((source) => <label className={`scout-source ${source.enabled ? '' : 'disabled'}`} key={source.id}>
-                  <input type="checkbox" checked={source.enabled} disabled={busy !== null} onChange={(event) => void toggleSource(source, event.target.checked)} aria-label={`Include ${source.label} in Scout research`} />
-                  <span className="scout-source-copy"><strong>{source.label}</strong><small>{source.description}</small></span>
-                  {source.url && <a href={source.url} target="_blank" rel="noreferrer">Source ↗</a>}
-                </label>)}
-              </div>
-            </article>
-          </section>
-            </>
-          )}
-
-          {/* The boundary is worth reading once and worth reaching again; it
-              is not the page. Hidden only by the operator, and the four claims
-              stay verbatim because each one is a promise about what Scout will
-              not do. */}
-          <Explainer id="scout-safety" title="Ideas are not updates" defaultHidden={needsSetup}>
-            <div className="scout-guide-body">
-            <div>
-              <p>This build uses local deterministic matching rules over allowed sources; it does not send source text to a provider model. Scout can collect release notes and trusted source metadata on a schedule, but it cannot modify Wanigan, install anything, change your provider, deploy code, or start an agent. A proposal becomes work only when you create a Goal and then choose to start its task.</p>
-            </div>
-            <ul className="scout-safety-list">
-              <li><span aria-hidden="true">✓</span><span>Scheduled online research stays off until you explicitly allow it.</span></li>
-              <li><span aria-hidden="true">✓</span><span>The current analyzer is deterministic; no source text is sent to an AI model.</span></li>
-              <li><span aria-hidden="true">✓</span><span>Each proposal retains its source evidence and uncertainty.</span></li>
-              <li><span aria-hidden="true">✓</span><span>Creating a Goal preserves the evidence; it does not launch work.</span></li>
-            </ul>
-            </div>
-          </Explainer>
-
-          <section className="card scout-filterbar" aria-label="Filter Scout proposals">
-            <div className="scout-filter-copy">
-              <span className="label">Review queue</span>
-              {/* The heading carries the total, which only a scan changes, so it stays
-                  an ordinary heading. The line under it is this page’s one announced
-                  channel, and it sits beside the controls that change it. */}
-              <h3>{suggestions.length} proposal{suggestions.length === 1 ? '' : 's'}</h3>
-              <p className="scout-filter-status" role="status">{filterStatus}</p>
-              <p>The order here is a filing order, not a ranking — a proposal is a suggestion, never a claim that the change suits your setup.</p>
-            </div>
-            <div className="scout-filter-controls">
-              <label><span className="label">Status</span><select className="field" value={status} onChange={(event) => setStatus(event.target.value)}>{statuses.map((item) => <option value={item} key={item}>{item === 'all' ? 'All statuses' : displayStatus(item)}</option>)}</select></label>
-              <label><span className="label">Order</span><select className="field" value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="newest">Newest first</option><option value="effort">Smallest effort first · unestimated last</option></select></label>
-              <label><span className="label">Find</span><input className="field" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search proposals" /></label>
-            </div>
-          </section>
-
-          {/* A list, not an announcement. This section was the live region, so a
-              first load, a broadened filter, a reorder and every status change read
-              the whole queue aloud — each proposal’s title, summary, four reason
-              codes and five button labels. The count sentence in the filter bar is
-              the announced channel now. */}
-          <section className="scout-results">
-            {loading && <div className="scout-empty"><span aria-hidden="true">◌</span><div><h3>Reading local Scout records…</h3><p>Nothing is being scanned while this dashboard loads.</p></div></div>}
-            {!loading && filteredSuggestions.length === 0 && <div className="scout-empty"><span aria-hidden="true">⌕</span><div><h3>{suggestions.length ? 'No proposal matches these filters' : 'No proposals yet'}</h3><p>{suggestions.length ? 'Clear a filter or try another search.' : 'Enable sources, then run a visible preview or schedule a weekly scan. Scout will never apply an update by itself.'}</p></div></div>}
-            {filteredSuggestions.map((suggestion) => {
-              const inspected = inspectedId === suggestion.id;
-              const goalId = goalIds[suggestion.id] ?? suggestion.goalId;
-              const creating = busy === `goal-${suggestion.id}`;
-              return <article className={`card scout-suggestion status-${suggestion.status}`} key={suggestion.id}>
-                <div className="scout-suggestion-top">
-                  <div className="scout-suggestion-title"><span className="label">{suggestion.category} · found {formatDate(suggestion.createdAt)}</span><h3>{suggestion.title}</h3><p>{suggestion.summary}</p></div>
-                  <span className={`scout-status ${suggestion.status}`}>{displayStatus(suggestion.status)}</span>
-                </div>
-                {/* Reason codes, not a verdict. The evidence count is observed; the
-                    rest are the rule-table inputs that raised this proposal, each
-                    named so the reader can disagree with a specific one. */}
-                <div className="scout-reason-grid" role="group" aria-label="Why this proposal was raised">
-                  <div><small>Linked evidence</small><strong>{suggestion.evidence.length} source{suggestion.evidence.length === 1 ? '' : 's'}</strong></div>
-                  <div><small>Confidence · rule-derived</small><strong>{ruleConfidence(suggestion.confidence)}</strong></div>
-                  <div><small>Effort</small><strong>{suggestion.effort}</strong></div>
-                  <div><small>Risk</small><strong><span className={`scout-chip risk-${suggestion.risk}`}>{suggestion.risk}</span></strong></div>
-                </div>
-                {suggestion.whyNow && <div className="scout-why"><strong>Why it surfaced now:</strong> {suggestion.whyNow}</div>}
-                <div className="scout-actions" style={{ marginTop: 'var(--s-3)' }}>
-                  <button className="btn" type="button" aria-expanded={inspected} onClick={() => setInspectedId((current) => current === suggestion.id ? null : suggestion.id)}>{inspected ? 'Hide evidence' : 'Inspect evidence'}</button>
-                  {suggestion.status === 'new' && <button className="btn" type="button" disabled={busy !== null} onClick={() => void updateSuggestion(suggestion, 'reviewed', 'Proposal marked reviewed. Its source evidence remains attached.')}>{busy === `suggestion-${suggestion.id}-reviewed` ? 'Saving…' : 'Mark reviewed'}</button>}
-                  {suggestion.status === 'reviewed' && <button className="btn" type="button" disabled={busy !== null} onClick={() => void updateSuggestion(suggestion, 'snoozed', 'Proposal snoozed. Reopen it whenever it becomes relevant again.')}>{busy === `suggestion-${suggestion.id}-snoozed` ? 'Snoozing…' : 'Snooze'}</button>}
-                  {['snoozed', 'dismissed'].includes(suggestion.status) && <button className="btn" type="button" disabled={busy !== null} onClick={() => void updateSuggestion(suggestion, 'new', 'Proposal reopened for review.')}>{busy === `suggestion-${suggestion.id}-new` ? 'Reopening…' : 'Reopen'}</button>}
-                  {!goalId && suggestion.status !== 'dismissed' && <button className="btn" type="button" disabled={busy !== null} onClick={() => void updateSuggestion(suggestion, 'dismissed', 'Proposal dismissed. Its evidence remains in the local record.')}>{busy === `suggestion-${suggestion.id}-dismissed` ? 'Dismissing…' : 'Dismiss'}</button>}
-                  {goalId && <button className="btn btn-primary" type="button" onClick={() => openGoal(goalId)}>Open linked Goal</button>}
-                </div>
-                {inspected && <div className="scout-inspection">
-                  <div><span className="label">Recommended next step</span><h4>Scope before implementation</h4><p>{suggestion.recommendation || 'No implementation plan was generated. Review the linked sources and define the smallest testable next step.'}</p></div>
-                  <div><span className="label">Evidence</span><h4>{suggestion.evidence.length} linked source{suggestion.evidence.length === 1 ? '' : 's'}</h4><div className="scout-evidence-list">{suggestion.evidence.length === 0 && <p className="scout-no-evidence">This proposal has no safely linked evidence yet. Do not turn it into work until the source is attached.</p>}{suggestion.evidence.map((evidence, index) => <div className="scout-evidence" key={`${suggestion.id}-evidence-${index}`}><strong>{evidence.title}</strong>{evidence.url && <a href={evidence.url} target="_blank" rel="noreferrer">Open source ↗</a>}{evidence.excerpt && <p>{evidence.excerpt}</p>}<small>{[evidence.publisher, evidence.publishedAt ? formatDate(evidence.publishedAt) : null].filter(Boolean).join(' · ') || 'Publisher/date not supplied'}</small></div>)}</div></div>
-                  <div className="scout-goal-picker"><label><span className="label">Project for Goal</span><select className="field" value={goalProjectId} onChange={(event) => setGoalProjectId(event.target.value)} disabled={creating}>{projects.length === 0 && <option value="">No projects available</option>}{projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label><p>A Goal records the source evidence and an acceptance contract. It does not make a code change or launch an agent.</p><div className="scout-actions">{goalId ? <button className="btn btn-primary" type="button" onClick={() => openGoal(goalId)}>Open goal in Review</button> : suggestion.status === 'dismissed' ? <span className="faint">Reopen this proposal before creating work from it.</span> : <button className="btn btn-primary" type="button" disabled={busy !== null || !goalProjectId || suggestion.evidence.length === 0} onClick={() => void createGoal(suggestion)}>{creating ? 'Creating Goal…' : 'Create linked Goal'}</button>}</div></div>
-                </div>}
-              </article>;
-            })}
-          </section>
-          </>
-          )}
-        </div>
+  return <div className="pane wide scout-view">
+    <PageHead compact eyebrow="Knowledge" title="Scout" lead="A watchful eye on what’s next. You decide what’s worth pursuing."
+      actions={<>
+        <button className="btn" disabled={loading || busy !== null} onClick={() => void load()}>{loading ? 'Refreshing…' : 'Refresh'}</button>
+        <button className="btn" disabled={disabled || !settings.enabled} onClick={() => void run('preview')} title="Refresh the local inventory without contacting a source.">{busy === 'run-preview' ? 'Previewing…' : 'Preview locally'}</button>
+        <button className="btn btn-primary" disabled={disabled || !settings.enabled} onClick={() => void run('manual')} title="One explicit online check of enabled official sources. Does not enable the weekly watch.">{busy === 'run-manual' ? 'Checking sources…' : 'Run scout now'}</button>
+      </>} />
+    <div className="scout-workspace">
+      <div className="scout-navigation">
+        <Segmented<ScoutArea> label="Scout workspace" value={area} onChange={setArea} options={[{ value: 'proposals', label: 'Proposals' }, { value: 'sources', label: 'Sources' }, { value: 'watch', label: 'Watch' }]} />
+        <div className="scout-watch-label">{loaded ? <><span className="scout-watch-dot" data-active={settings.enabled && settings.networkEnabled && settings.weeklyEnabled} aria-hidden="true" />{watchLabel}<span className="dim">{overview.analysisMethod === 'deterministic-rules' ? 'Local rules' : overview.analysisMethod}</span></> : 'Waiting for local records'}</div>
       </div>
+      <div className="scout-feedback">
+        {readError && <Note tone="error" action={!loading && busy === null ? { label: 'Read again', run: load } : undefined}>{loaded ? 'The last successful read is still shown. Refresh before making changes.' : 'Scout records could not be read.'} {readError}</Note>}
+        {error && <Note tone="error" onDismiss={() => setError(null)}>{error}</Note>}
+        <Note tone="ok" role="status" onDismiss={notice ? () => setNotice(null) : undefined}>{notice?.message}{notice?.goalId && <button className="link" onClick={() => openGoal(notice.goalId!)}>Open linked Goal →</button>}</Note>
+      </div>
+      {!loaded ? <div className="scout-scroll">{loading ? <Reading what="local Scout records" /> : <EmptyState posture="could-not-read" title="Your proposals are unavailable" cue="Try reading the local records again." />}</div> : <div className="scout-scroll" data-area={area}>
+        {area === 'proposals' && <>
+          {needsSetup && <Note role="none" action={{ label: !settings.enabled ? 'Set up watch' : 'Choose sources', run: () => setArea(!settings.enabled ? 'watch' : 'sources') }}>{!settings.enabled ? 'Scout is paused. Your saved proposals remain here to review.' : 'Choose at least one official source before an online check.'}</Note>}
+          <div className="scout-review">
+            <div className="scout-directory">
+              <SectionHead label="Proposals" count={suggestions.length} />
+              <input className="field" type="search" aria-label="Find proposals" placeholder="Find an idea…" value={query} onChange={event => setQuery(event.target.value)} />
+              <div className="scout-filters">
+                <select className="field" aria-label="Proposal status" value={status} onChange={event => setStatus(event.target.value)}>{statuses.map(value => <option key={value} value={value}>{value === 'all' ? 'All statuses' : displayStatus(value)}</option>)}</select>
+                <select className="field" aria-label="Proposal order" value={sort} onChange={event => setSort(event.target.value as 'newest' | 'effort')}><option value="newest">Newest first</option><option value="effort">Smallest effort</option></select>
+              </div>
+              <div className="scout-count"><p className="scout-filter-status" role="status">{filterStatus}</p>{(query || status !== 'all') && <button className="link" onClick={clearFilters}>Clear filters</button>}</div>
+              <section className="scout-results">
+                {filteredSuggestions.map(item => <button key={item.id} className="scout-entry" aria-current={selected?.id === item.id ? 'true' : undefined} onClick={() => setSelectedId(item.id)}>
+                  <span className="scout-entry-meta"><span>{item.category}</span><span>{displayStatus(item.status)}</span></span>
+                  <strong>{item.title}</strong><span className="scout-entry-summary">{item.summary}</span>
+                  <span className="scout-entry-meta"><span>{item.evidence.length} {item.evidence.length === 1 ? 'source' : 'sources'} · {item.effort} effort</span><span>{formatDate(item.createdAt)}</span></span>
+                </button>)}
+                {!filteredSuggestions.length && <EmptyState posture={suggestions.length ? 'nothing-in-scope' : 'nothing-yet'} title={suggestions.length ? 'No matching proposals' : 'Room for the next idea'} cue={suggestions.length ? 'Try a different phrase or status.' : 'An explicit check of your enabled sources can add proposals here.'} />}
+              </section>
+              <p className="scout-limit">Up to 150 stored proposals. Ordering applies to this loaded set.</p>
+            </div>
+            {selected ? <article className="scout-reader" aria-label="Selected proposal">
+              <div className="scout-reader-intro"><div className="scout-entry-meta"><span>{selected.category}</span><span>{displayStatus(selected.status)}</span></div><h2>{selected.title}</h2><p>{selected.summary}</p></div>
+              <Segmented<ReaderArea> label="Proposal reader section" value={readerArea} onChange={setReaderArea} options={[{ value: 'brief', label: 'Brief' }, { value: 'evidence', label: `Evidence · ${selected.evidence.length}` }, { value: 'goal', label: 'Goal' }]} />
+              <div className="scout-reading" key={`${selected.id}/${readerArea}`} tabIndex={0} role="region" aria-label="Proposal content">
+                {readerArea === 'brief' && <div className="scout-brief">
+                  <dl className="scout-reasons"><div><dt>Effort</dt><dd>{selected.effort}</dd></div><div><dt>Risk</dt><dd>{selected.risk}</dd></div><div><dt>Rule confidence</dt><dd>{ruleConfidence(selected.confidence)}<small>Rule-derived · not measured</small></dd></div></dl>
+                  <section><SectionHead label="Why now" /><p>{selected.whyNow || 'No timing rationale was recorded.'}</p></section>
+                  <section><SectionHead label="Proposed work" /><p className="scout-prose">{selected.recommendation || 'No recommendation was recorded.'}</p></section>
+                  <button className="link" onClick={() => setReaderArea('evidence')}>Read the evidence →</button>
+                </div>}
+                {readerArea === 'evidence' && <div className="scout-evidence">
+                  <SectionHead label="Retained sources" count={selected.evidence.length} />
+                  {selected.evidence.length ? selected.evidence.map((evidence, index) => <section className="scout-citation" key={`${evidence.url}/${index}`}>
+                    <span className="scout-citation-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span><div><div className="scout-entry-meta"><span>{evidence.publisher || 'Publisher not supplied'}</span><span>{formatDate(evidence.publishedAt)}</span></div><h3>{evidence.url ? <a href={evidence.url} target="_blank" rel="noreferrer">{evidence.title} ↗</a> : evidence.title}</h3><p>{evidence.excerpt || 'No excerpt was retained.'}</p>{evidence.url && <span className="scout-citation-url">{new URL(evidence.url).hostname}</span>}</div>
+                  </section>) : <EmptyState posture="nothing-yet" title="No retained evidence" cue="A linked Goal requires evidence verified by Scout’s local service." />}
+                </div>}
+                {readerArea === 'goal' && <div className="scout-goal">
+                  <SectionHead label="From idea to work" />
+                  <h3>{linkedGoal ? 'This idea has a home.' : 'Give this idea a destination.'}</h3>
+                  <p>Create a Goal with this proposal and its retained evidence. Starting an agent is a separate action in Review.</p>
+                  {linkedGoal ? <button className="btn btn-primary" onClick={() => openGoal(linkedGoal)}>Open linked Goal →</button> : selected.status === 'dismissed' ? <Note role="none">Reopen this proposal before creating a Goal.</Note> : <>
+                    <label className="scout-project"><span className="label">Project for Goal</span><select className="field" aria-label="Project for Goal" value={projects.some(project => project.id === goalProjectId) ? goalProjectId : ''} disabled={disabled} onChange={event => setGoalProjectId(event.target.value)}><option value="">Choose a project</option>{projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+                    {!selected.evidence.length && <Note role="none">This proposal has no retained evidence. A linked Goal is unavailable.</Note>}
+                    <button className="btn btn-primary" disabled={disabled || !projects.some(project => project.id === goalProjectId) || !selected.evidence.length} onClick={() => void createGoal(selected)}>{busy === `goal-${selected.id}` ? 'Creating Goal…' : 'Create linked Goal'}</button>
+                  </>}
+                </div>}
+              </div>
+              <div className="scout-review-actions">
+                <span className="scout-limit">Your call.</span>
+                {selected.status === 'new' && <button className="btn btn-sm" disabled={disabled} onClick={() => void updateSuggestion(selected, 'reviewed', 'Proposal marked reviewed.')}>Mark reviewed</button>}
+                {selected.status === 'reviewed' && <button className="btn btn-sm" disabled={disabled} onClick={() => void updateSuggestion(selected, 'snoozed', 'Proposal snoozed.')}>Snooze</button>}
+                {(selected.status === 'snoozed' || selected.status === 'dismissed') && <button className="btn btn-sm" disabled={disabled} onClick={() => void updateSuggestion(selected, 'new', 'Proposal reopened.')}>Reopen</button>}
+                {!linkedGoal && selected.status !== 'dismissed' && <button className="btn btn-sm" disabled={disabled} onClick={() => void updateSuggestion(selected, 'dismissed', 'Proposal dismissed.')}>Dismiss proposal</button>}
+                {linkedGoal && readerArea !== 'goal' && <button className="link" onClick={() => openGoal(linkedGoal)}>Open linked Goal →</button>}
+              </div>
+            </article> : <div className="scout-reader-empty"><EmptyState posture={suggestions.length ? 'nothing-in-scope' : 'nothing-yet'} title="An idea, with its receipts." cue="Select a proposal to read the recommendation, inspect its sources, and decide what happens next." /></div>}
+          </div>
+        </>}
+        {area === 'sources' && <div className="scout-settings-layout">
+          <div className="scout-introduction"><span className="label">Official sources</span><h2>Choose where<br />Scout looks.</h2><p>Only the enabled sources below are eligible for online checks. Each proposal keeps its evidence close.</p><div className="scout-source-total"><strong>{sources.filter(source => source.enabled).length}</strong><span>of {sources.length} sources enabled</span></div><p className="scout-limit">Opening a source visits its website. It does not change your selection.</p></div>
+          <div className="scout-sources"><SectionHead label="Source directory" count={sources.length} />{sources.map(source => <div className="scout-source" key={source.id}>
+            <label><input type="checkbox" disabled={disabled} checked={source.enabled} onChange={event => void toggleSource(source, event.target.checked)} /><span><strong>{source.label}</strong><span>{source.description}</span></span></label>
+            {source.url && <a className="link" href={source.url} target="_blank" rel="noreferrer" aria-label={`Visit ${source.label}`}>Visit source ↗</a>}
+          </div>)}{!sources.length && <EmptyState posture="nothing-yet" title="No sources were returned" cue="Refresh to check the local source directory." />}</div>
+        </div>}
+        {area === 'watch' && <div className="scout-settings-layout">
+          <div className="scout-introduction"><span className="label">On your terms</span><h2>A little<br />forward thinking.</h2><p>Set the rhythm. Scout checks selected official sources and leaves proposals for you to review.</p><div className="scout-next"><span className="label">Next scheduled check</span><strong>{overview.nextRunAt ? formatWhen(overview.nextRunAt) : 'Not scheduled'}</strong><span className="scout-limit">Local time · {Intl.DateTimeFormat().resolvedOptions().timeZone}</span></div><Explainer id="scout-safety" title="Ideas are not updates" defaultHidden><p>Scout uses local deterministic rules. It does not call a model, modify code, install packages, or start an agent. A Goal is created only when you choose it; execution is a separate step.</p></Explainer></div>
+          <div className="scout-watch-settings">
+            <SectionHead label="Workspace & permissions" />
+            <label className="scout-switch"><span><strong>Enable Scout workspace</strong><small>Allow local previews and explicit source checks. Saved permissions are retained when paused.</small></span><input type="checkbox" checked={settings.enabled} disabled={disabled} onChange={event => void patchSettings({ enabled: event.target.checked }, event.target.checked ? 'Scout workspace enabled. Saved watch permissions are shown below.' : 'Scout workspace paused.')} /></label>
+            <label className="scout-switch"><span><strong>Allow unattended official-source checks</strong><small>Permission for scheduled network access. “Run scout now” requests a single online check separately.</small></span><input type="checkbox" checked={settings.networkEnabled} disabled={disabled || !settings.enabled} onChange={event => void patchSettings({ networkEnabled: event.target.checked }, 'Unattended network permission updated.')} /></label>
+            <label className="scout-switch"><span><strong>Weekly watch</strong><small>A scheduled check needs both unattended permission and an enabled source.</small></span><input type="checkbox" checked={settings.weeklyEnabled} disabled={disabled || !settings.enabled || !settings.networkEnabled} onChange={event => void patchSettings({ weeklyEnabled: event.target.checked }, 'Weekly watch updated.')} /></label>
+            <div className="scout-schedule"><label><span className="label">Day</span><select className="field" aria-label="Weekly watch day" disabled={disabled || !settings.enabled} value={settings.weekday} onChange={event => void patchSettings({ weekday: Number(event.target.value) }, 'Watch day updated.')}>{WEEKDAYS.map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label><label><span className="label">Local time</span><select className="field" aria-label="Weekly watch time" disabled={disabled || !settings.enabled} value={settings.hour} onChange={event => void patchSettings({ hour: Number(event.target.value) }, 'Watch time updated.')}>{Array.from({ length: 24 }, (_, hour) => <option value={hour} key={hour}>{String(hour).padStart(2, '0')}:00</option>)}</select></label></div>
+            <section className="scout-last-run"><SectionHead label="Last recorded scan" /><div className="scout-run-outcome"><strong>{overview.latestRun ? `${RUN_GLYPH[overview.latestRun.status]} ${overview.latestRun.status}` : 'No scan recorded'}</strong><span>{formatWhen(overview.latestRun?.finishedAt ?? overview.lastRunAt)}</span></div>{overview.latestRun && <><p>{overview.latestRun.error ?? overview.latestRun.detail ?? 'No run detail was recorded.'}</p><span className="scout-limit">{overview.latestRun.networkAllowed ? 'Network allowed' : 'Local only'} · {overview.latestRun.suggestionCount} proposals recorded</span></>}</section>
+          </div>
+        </div>}
+      </div>}
     </div>
-  );
+  </div>;
 }

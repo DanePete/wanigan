@@ -1,27 +1,28 @@
-.learning-view {
-  width: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column;
-  background:
-    radial-gradient(circle at 82% -20%, color-mix(in srgb, var(--plate-blue) 10%, transparent), transparent 34%),
-    var(--bg);
-}
-.learning-head {
-  flex: none; display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s-4);
-  padding: var(--s-5) var(--s-5) var(--s-4); border-bottom: 1px solid var(--line-soft);
-}
-.learning-head h1 { margin-top: 2px; line-height: 1; letter-spacing: -.035em; }
-.learning-head p { margin-top: var(--s-2); max-width: 760px; color: var(--text-dim); line-height: 1.5; }
-.learning-head-actions { display: flex; align-items: center; gap: var(--s-2); flex: none; }
-.learning-scope { display: flex; align-items: center; gap: 7px; }
-.learning-scope select { width: auto; min-width: 150px; max-width: 260px; }
-
+.pane.learning-view { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.learning-view .learning-scope-select { width: auto; min-width: 150px; max-width: 240px; }
+.learning-workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: 190px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-xl); background: var(--bg-soft); }
+.learning-directory { display: flex; flex-direction: column; gap: var(--s-5); padding: var(--s-5) var(--s-3); border-right: 1px solid var(--line-soft); background: var(--bg); min-width: 0; }
+.learning-tablist { display: flex; flex-direction: column; gap: var(--s-1); }
+.learning-tablist button { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-3) var(--s-2); border-radius: var(--r-md); text-align: left; color: var(--text-dim); }
+.learning-tablist button > span:not(.sec-count) { display: grid; gap: var(--s-1); min-width: 0; }
+.learning-tablist button strong { font-weight: 550; }
+.learning-tablist button small { font-size: var(--t-micro); color: var(--text-faint); line-height: 1.4; }
+.learning-tablist button:hover { background: var(--bg-sunk); color: var(--text); }
+.learning-tablist button[aria-selected='true'] { background: var(--accent-soft); color: var(--text); box-shadow: var(--shadow-input); }
+.learning-tablist button[aria-selected='true'] > .icon { color: var(--accent); }
+.learning-directory > .section-head { padding: 0 var(--s-2); }
+.learning-scope-note { display: grid; gap: var(--s-2); margin-top: auto; padding: var(--s-3) var(--s-2); border-top: 1px solid var(--line-soft); }
+.learning-scope-note strong { font-size: var(--t-small); font-weight: 550; line-height: 1.5; }
+.learning-directory > .btn { align-self: flex-start; }
+.learning-overview-intro { display: grid; gap: var(--s-3); padding: var(--s-2) 0 var(--s-4); }
+.learning-overview-intro h2 { font-size: var(--t-display); font-weight: 550; letter-spacing: -.035em; }
+.learning-overview-intro > p { color: var(--text-dim); line-height: 1.6; max-width: 66ch; }
 /* ── the five-station spine · shared chrome between the head and the tabs ── */
 .pipeline-spine {
-  flex: none; display: flex; align-items: center; gap: 4px; min-height: 40px;
-  padding: 3px var(--s-5); overflow-x: auto; border-bottom: 1px solid var(--line-soft);
-  background: color-mix(in srgb, var(--bg-soft) 55%, transparent);
+  display: flex; align-items: stretch; gap: var(--s-2); padding: var(--s-4) 0; overflow-x: auto; border-block: 1px solid var(--line-soft);
 }
 .spine-station {
-  display: flex; align-items: baseline; gap: 7px; flex: none; padding: 4px 8px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-2); flex: 1; padding: var(--s-2);
   border-radius: var(--r-sm); text-align: left; white-space: nowrap; color: var(--text-dim);
 }
 .spine-station:hover { background: var(--bg-sunk); color: var(--text); }
@@ -32,39 +33,9 @@
 /* An optional stage reading zero is not a fault, so its note must not borrow
  * the warning colour that sits beside it. */
 .spine-station .spine-note { color: var(--text-faint); font-style: italic; }
-.spine-arrow { flex: none; color: var(--text-faint); }
+.spine-arrow { flex: none; align-self: center; color: var(--text-faint); }
 
-.learning-tabs {
-  flex: none; display: flex; align-items: stretch; gap: 2px; padding: 0 var(--s-5); overflow-x: auto;
-  border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg-soft) 84%, transparent);
-}
-/* The tablist holds only tabs; the hint beside it is ordinary text with an
- * ordinary link, and stays out of the roving tabindex. */
-.learning-tablist { flex: none; display: flex; align-items: stretch; gap: 2px; }
-.learning-tablist button {
-  position: relative; display: flex; align-items: center; gap: 7px;
-  min-width: max-content; padding: 8px 11px 7px; border-bottom: 2px solid transparent;
-  color: var(--text-dim); text-align: left;
-}
-.learning-tablist button b {
-  min-width: 18px; padding: 0 5px; border-radius: var(--r-pill); background: var(--accent-soft);
-  color: var(--accent); font-size: var(--t-micro); text-align: center;
-}
-.learning-tablist button:hover, .learning-tablist button.on { color: var(--text); }
-.learning-tablist button.on { border-bottom-color: var(--plate-red); }
-.learning-tablist button.on::after {
-  content: ''; position: absolute; left: 3px; right: -3px; bottom: -2px; height: 2px;
-  background: var(--plate-blue); opacity: .55;
-}
-/* The question the open tab answers, plus the glossary link. Ordinary text
- * beside the tablist, so it is skipped by the roving tabindex. */
-.tab-hint {
-  margin-left: auto; align-self: center; padding-left: var(--s-3);
-  color: var(--text-faint); font-size: var(--t-micro); white-space: nowrap;
-}
-.tab-hint .learning-link { color: var(--text-faint); }
-.tab-hint .learning-link:hover { color: var(--text); }
-.learning-scroll { flex: 1; min-height: 0; overflow: auto; padding: var(--s-4) var(--s-5) var(--s-6); }
+.learning-scroll { min-width: 0; min-height: 0; overflow: auto; padding: var(--s-5); }
 /* A scroll container is only scrollable from the keyboard once it can hold
  * focus, so the panel carries a tab stop. The outline draws inward because the
  * container clips its own overflow and would otherwise swallow the ring. */
@@ -130,7 +101,7 @@
 .candidate-patch {
   min-height: 72px; max-height: 360px; overflow: auto; padding: var(--s-3);
   border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--code-bg);
-  color: var(--text-dim); font: 12px/1.55 ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+  color: var(--text-dim); font: var(--t-small)/1.55 ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .candidate-conflicts { padding: var(--s-3); border: 1px solid color-mix(in srgb, var(--bad) 55%, var(--line)); border-radius: var(--r-sm); background: var(--bad-soft); color: var(--bad); }
@@ -148,22 +119,39 @@
 .evidence-list > div small { grid-column: 1; }
 .evidence-list > div .btn { grid-column: 2; grid-row: 1 / 3; }
 
-.learning-split { display: grid; grid-template-columns: minmax(300px, .78fr) minmax(400px, 1.22fr); gap: var(--s-4); max-width: 1500px; height: 100%; min-height: 480px; margin: 0 auto; }
-.learning-list-pane { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: var(--s-2); padding-right: 2px; }
-.learning-search { display: flex; gap: var(--s-2); padding: var(--s-2); position: sticky; top: 0; z-index: 2; }
-.knowledge-row { display: flex; flex-direction: column; gap: 5px; padding: var(--s-3); text-align: left; }
-.knowledge-row:hover, .knowledge-row.on { border-color: var(--accent); background: var(--bg-sunk); }
-.knowledge-row p { color: var(--text-dim); line-height: 1.4; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.knowledge-row small { color: var(--text-faint); }
-.learning-detail { min-width: 0; min-height: 0; overflow: auto; padding: var(--s-4); display: flex; flex-direction: column; gap: var(--s-3); }
-.learning-detail > h3 { font-size: var(--t-body); margin-top: var(--s-2); }
-/* Both panes are the scroller, so a child must keep its natural height and let
- * the pane scroll past it. At the default flex-shrink they competed for one
- * viewport instead: the stat row, the evidence frame and the version history
- * were squeezed to slivers, and because those two frames clip their overflow
- * the squeezed rows were cut off rather than merely short. */
-.learning-list-pane > *, .learning-detail > * { flex: none; }
-
+.learning-split { display: grid; grid-template-columns: minmax(265px, .85fr) minmax(320px, 1.35fr); min-height: 500px; gap: var(--s-5); }
+.learning-list-pane { min-width: 0; display: flex; flex-direction: column; gap: var(--s-3); align-self: start; }
+.learning-search { display: flex; gap: var(--s-2); }
+.learning-search > input { min-width: 0; }
+.knowledge-row { display: flex; flex-direction: column; gap: var(--s-2); width: 100%; min-width: 0; padding: var(--s-4); text-align: left; border: 1px solid transparent; border-radius: var(--r-md); }
+.knowledge-row:hover { background: var(--bg-sunk); }
+.knowledge-row.on { background: var(--accent-soft); border-color: var(--line); }
+.knowledge-row strong { font-size: var(--t-lead); line-height: 1.4; font-weight: 550; }
+.knowledge-row p { color: var(--text-dim); font-size: var(--t-small); line-height: 1.6; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.knowledge-row small { color: var(--text-faint); line-height: 1.6; }
+.learning-detail { min-width: 0; display: flex; flex-direction: column; gap: var(--s-5); padding: var(--s-5); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--bg); align-self: start; position: sticky; top: 0; }
+.learning-detail h2 { font-size: var(--t-title); letter-spacing: -.025em; line-height: 1.4; margin-top: var(--s-2); font-weight: 550; }
+.learning-reading { display: flex; flex-direction: column; gap: var(--s-4); }
+.learning-reading > h3 { font-size: var(--t-body); font-weight: 550; }
+.learning-reading > .candidate-patch { font: var(--t-lead)/1.8 var(--font-ui); padding: var(--s-4) 0; border: 0; background: none; color: var(--text); max-height: none; }
+.learning-reading .learning-actions { padding-top: var(--s-4); border-top: 1px solid var(--line-soft); }
+.learning-reading .learning-actions > .faint { font-size: var(--t-small); line-height: 1.5; }
+.learning-reading .evidence-list strong { overflow-wrap: anywhere; }
+.learning-proposals { display: grid; grid-template-columns: minmax(240px, .8fr) minmax(350px, 1.4fr); gap: var(--s-5); align-items: start; }
+.learning-proposal-list { display: flex; flex-direction: column; gap: var(--s-2); min-width: 0; }
+.learning-proposal { display: grid; gap: var(--s-2); padding: var(--s-4); border: 1px solid transparent; border-radius: var(--r-md); text-align: left; }
+.learning-proposal:hover { background: var(--bg-sunk); }
+.learning-proposal[aria-current='true'] { background: var(--accent-soft); border-color: var(--line); }
+.learning-proposal strong { font-size: var(--t-lead); line-height: 1.45; font-weight: 550; }
+.learning-proposal small { color: var(--text-faint); font-size: var(--t-small); }
+.learning-proposal-reader { min-width: 0; }
+.learning-proposal-reader .candidate-card { padding: var(--s-5); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--bg); gap: var(--s-3); }
+.learning-proposal-reader .candidate-card h2 { font-size: var(--t-title); letter-spacing: -.02em; font-weight: 550; line-height: 1.4; }
+.learning-proposal-reader .candidate-patch { padding: var(--s-4) 0; font: var(--t-lead)/1.8 var(--font-ui); background: none; border: 0; color: var(--text); }
+.learning-proposal-reader .candidate-card .learning-actions { position: static; background: var(--bg); }
+.learning-inbox, .learning-overview, .knowledge-tab { max-width: none; }
+.learning-inbox > .learning-toolbar { padding: 0 0 var(--s-4); border: 0; border-bottom: 1px solid var(--line-soft); background: none; border-radius: 0; }
+.learning-overview > .learning-card { border-radius: var(--r-lg); }
 .skill-grid { grid-template-columns: minmax(380px, .9fr) minmax(420px, 1.1fr); }
 .learning-card > label { display: flex; flex-direction: column; gap: 5px; }
 .learning-form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-3); }
@@ -429,7 +417,7 @@
 /* ── knowledge · the injected payload leads, the two panes fill the rest ─ */
 .knowledge-tab {
   display: flex; flex-direction: column; gap: var(--s-4);
-  max-width: 1500px; min-height: 100%; margin: 0 auto;
+  min-width: 0;
 }
 /* The split keeps its own internal scrolling, but takes its height from what
  * the payload panel above it leaves rather than from the viewport. */
@@ -439,7 +427,7 @@
 .payload-text {
   max-height: 340px; overflow: auto; padding: var(--s-3);
   border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--code-bg);
-  color: var(--text); font: 12px/1.55 ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+  color: var(--text); font: var(--t-small)/1.55 ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap; overflow-wrap: anywhere; user-select: text;
 }
 .payload-delivery {
@@ -456,9 +444,8 @@
 }
 
 @media (max-width: 860px) {
-  .learning-head { align-items: flex-start; flex-direction: column; }
-  .learning-head-actions { flex-wrap: wrap; }
-  .learning-tabs, .learning-scroll, .pipeline-spine { padding-left: var(--s-3); padding-right: var(--s-3); }
+
+  .learning-scroll { padding: var(--s-3); }
   /* The hint is the only gloss on eight terse tab labels, and it is read out
    * rather than decorative — hiding it took away the one explanation a narrow
    * window needs most. Wrap the row so the hint keeps a full line of its own
@@ -502,3 +489,23 @@
   padding-top: var(--s-2); margin-top: var(--s-2);
   background: var(--bg-soft); border-top: 1px solid var(--line-soft);
 }
+
+@media (max-width: 1180px) {
+  .learning-workspace { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .learning-directory { display: block; padding: var(--s-2); border-right: 0; border-bottom: 1px solid var(--line); }
+  .learning-directory > .sec-head, .learning-directory > .section-head, .learning-directory > .btn, .learning-scope-note { display: none; }
+  .learning-tablist { flex-direction: row; overflow-x: auto; }
+  .learning-tablist button { flex: 1; justify-content: center; padding: var(--s-3); }
+  .learning-tablist button small { display: none; }
+}
+@media (max-width: 860px) {
+  .learning-proposals { grid-template-columns: 1fr; }
+  .learning-detail { position: static; }
+  .spine-station { min-width: 110px; }
+}
+
+.learning-proposal > span:last-child { display: flex; gap: var(--s-2); align-items: center; color: var(--text-dim); font-size: var(--t-small); }
+.learning-proposal-reader .candidate-targets { grid-template-columns: minmax(160px, .8fr) minmax(0, 1fr); gap: var(--s-3); }
+.learning-proposal-reader .candidate-patch { min-height: 0; padding: var(--s-3) 0; }
+.learning-proposal-reader .candidate-rationale { font-size: var(--t-small); }
+.learning-overview .learning-window > .faint { font-size: var(--t-micro); }

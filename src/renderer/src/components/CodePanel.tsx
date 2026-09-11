@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CheckpointDiff, CheckpointRevertPlan, CheckpointRevertResult, SessionCheckpoint } from '@shared/types';
-import { Note } from './bits';
+import { Note, Icon } from './bits';
+import { useDialog } from './useDialog';
+import '../styles/code-reader.css';
 type Editor = { id: string; label: string; path: string };
 type Changed = { path: string; index: string; work: string; staged: boolean; untracked: boolean; preexisting?: boolean; committed?: boolean };
 type Entry = { name: string; rel: string; dir: boolean; size: number };
@@ -338,7 +340,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   }, [dir, projectName]);
 
   return (
-    <div className="code-panel">
+    <div className="code-panel code-workspace">
       <div className="code-head">
         <button className={tab === 'changes' ? 'code-tab on' : 'code-tab'} onClick={() => setTab('changes')}>
           Changes{visible.length ? ` (${visible.length})` : ''}
@@ -365,7 +367,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
             {follow ? '◉ following' : '○ follow'}
           </button>
         )}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+        <details className="code-actions-menu"><summary>Actions <Icon name="chevron-down" /></summary><div className="code-toolbar-actions">
           {tab === 'changes' && sessionId && preexistingCount > 0 && (
             <button className="pill" title={`${preexistingCount} file(s) were already modified when this session started`}
                     onClick={() => setScope(scope === 'session' ? 'all' : 'session')}
@@ -402,13 +404,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                   )}>
             {editor ? `Open in ${editor.label}` : 'Reveal'}
           </button>
-          <button className="btn" style={{ padding: '3px 9px', fontSize: 'var(--t-small)' }}
-                  disabled={!target}
-                  title={target ? 'Open this file or diff in Wanigan’s full-height code inspector' : 'Select a file first'}
-                  onClick={() => setInspector(true)}>
-            Pop out
-          </button>
-        </div>
+        </div></details>
+        <button className="btn code-read-button" disabled={!target} onClick={() => setInspector(true)}><Icon name="file-text" />Read code</button>
       </div>
 
       {/* A failed read is a Note, not a clickable strip. This was a bare div
@@ -774,64 +771,31 @@ function CodeInspector({ title, text, kind, truncated, onClose, onExternal }: {
     ? lines.map((line, i) => line.toLocaleLowerCase().includes(needle) ? i : -1).filter((i) => i >= 0)
     : [], [lines, needle]);
 
-  const panel = useRef<HTMLElement>(null);
+  const { portal, backdropProps, dialogProps } = useDialog<HTMLElement>({ onClose, initialFocus: 'first' });
+  const [matchIndex, setMatchIndex] = useState(0);
+  const activeMatch = matches.length ? Math.min(matchIndex, matches.length - 1) : -1;
+  useEffect(() => { setMatchIndex(0); }, [needle, title]);
+  useEffect(() => { body.current?.querySelector<HTMLElement>('[data-active-match="true"]')?.scrollIntoView({ block: 'center' }); }, [activeMatch, needle, matches]);
+  const nextMatch = (delta: number) => { if (matches.length) setMatchIndex((Math.max(0, activeMatch) + delta + matches.length) % matches.length); };
+  const jump = (where: 'top' | 'bottom') => { const el = body.current; if (el) el.scrollTop = where === 'top' ? 0 : el.scrollHeight; };
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); onClose(); }
-      // aria-modal="true" promises the rest of the app is inert, but nothing
-      // was holding focus: Tab walked straight out into the view behind and
-      // left a screen reader outside a dialog it had been told was modal.
-      if (e.key !== 'Tab' || !panel.current) return;
-      const focusable = [...panel.current.querySelectorAll<HTMLElement>(
-        'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-      )].filter((el) => !el.hasAttribute('disabled'));
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const active = document.activeElement as HTMLElement | null;
-      if (!panel.current.contains(active)) { e.preventDefault(); first.focus(); return; }
-      if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
-      else if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
-
-  // Focus starts inside the dialog rather than wherever the opener left it.
-  useEffect(() => {
-    panel.current?.querySelector<HTMLElement>('input, button')?.focus();
-  }, []);
-
-  const jump = (where: 'top' | 'bottom' | 'match') => {
-    const el = body.current;
-    if (!el) return;
-    if (where === 'top') { el.scrollTop = 0; return; }
-    if (where === 'bottom') { el.scrollTop = el.scrollHeight; return; }
-    el.querySelector<HTMLElement>('[data-match="true"]')?.scrollIntoView({ block: 'center' });
-  };
-
-  return (
-    <div className="code-inspector-backdrop" role="presentation" onMouseDown={onClose}>
-      <section ref={panel} className="code-inspector" role="dialog" aria-modal="true" aria-label={`Code inspector: ${title}`}
-               onMouseDown={(e) => e.stopPropagation()}>
+  return portal(
+    <div {...backdropProps} className="overlay-backdrop code-reader-backdrop">
+      <section {...dialogProps} className="code-inspector code-reader" aria-label={`Code inspector: ${title}`}>
         <header className="code-inspector-head">
-          <div style={{ minWidth: 0 }}>
-            <div className="label">{kind === 'diff' ? 'Diff inspector' : 'File inspector'}</div>
-            <strong className="mono trunc" title={title}>{title}</strong>
-          </div>
-          <span className="faint mono">{lines.length.toLocaleString()} lines</span>
-          <div className="code-inspector-actions">
-            <input className="field" value={query} onChange={(e) => setQuery(e.target.value)}
-                   placeholder="Find in code" aria-label="Find in code" />
-            {needle && <button className="btn" onClick={() => jump('match')}>{matches.length} match{matches.length === 1 ? '' : 'es'}</button>}
-            <button className="btn" aria-pressed={wrap} onClick={() => setWrap((v) => !v)}>{wrap ? 'Wrapped' : 'No wrap'}</button>
-            <button className="btn" onClick={() => jump('top')}>Top</button>
-            <button className="btn" onClick={() => jump('bottom')}>Bottom</button>
-            <button className="btn" onClick={onExternal}>Open externally</button>
-            <button className="btn" onClick={onClose}>Close <span className="faint">Esc</span></button>
-          </div>
+          <div className="code-reader-identity"><span>{kind === 'diff' ? 'Review changes' : 'Read file'}</span><strong>{title}</strong></div>
+          <div className="code-reader-open"><button className="btn" onClick={onExternal}>Open externally <Icon name="external" /></button><button className="btn" onClick={onClose} aria-label="Close code inspector"><Icon name="x" /></button></div>
         </header>
+        <div className="code-reader-toolbar">
+          <div className="code-reader-find"><Icon name="search" /><input className="field" value={query} onChange={(e) => setQuery(e.target.value)}
+            placeholder="Find in this file…" aria-label="Find in code" data-initial-focus onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); nextMatch(event.shiftKey ? -1 : 1); } }} />
+            <span role="status">{needle ? matches.length ? `${activeMatch + 1} of ${matches.length} lines` : 'No matches' : ''}</span>
+            <button className="btn" disabled={!matches.length} aria-label="Previous matching line" onClick={() => nextMatch(-1)}>↑</button>
+            <button className="btn" disabled={!matches.length} aria-label="Next matching line" onClick={() => nextMatch(1)}>↓</button>
+          </div>
+          <div className="code-reader-tools"><button className="btn" aria-pressed={wrap} onClick={() => setWrap((v) => !v)}>{wrap ? 'Wrapped' : 'No wrap'}</button>
+            <button className="btn" onClick={() => jump('top')}>Top</button><button className="btn" onClick={() => jump('bottom')}>Bottom</button></div>
+        </div>
         {truncated && <div className="code-err">This file is truncated for display. Open it externally for the complete contents.</div>}
         <pre ref={body} className={`code-inspector-body${wrap ? ' wrap' : ''}`} tabIndex={0}>
           {lines.map((line, i) => {
@@ -843,11 +807,12 @@ function CodeInspector({ title, text, kind, truncated, onClose, onExternal }: {
               else if (line.startsWith('@@')) cls = ' hunk';
               else if (line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('+++') || line.startsWith('---')) cls = ' meta';
             }
-            return <span className={`code-inspector-line${cls}${match ? ' match' : ''}`} data-match={match || undefined} key={i}>
+            return <span className={`code-inspector-line${cls}${match ? ' match' : ''}`} data-match={match || undefined} data-active-match={match && matches[activeMatch] === i || undefined} key={i}>
               <span className="ln">{i + 1}</span><span>{line || ' '}</span>
             </span>;
           })}
         </pre>
+        <div className="code-reader-status"><span>{lines.length.toLocaleString()} lines{truncated ? ' · truncated' : ''}</span><span>Read only <span aria-hidden="true">/</span> <kbd>↵</kbd> next match <kbd>⇧↵</kbd> previous</span></div>
       </section>
     </div>
   );

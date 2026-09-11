@@ -13,14 +13,46 @@
    index.css rules they replace (and the compact.css ladder) on specificity
    alone, which matters: git.css is @imported at the top of index.css and so
    loses every tie on source order. */
-.pane.gt-view { padding: 0; }
+.mission-shell .body .pane.gt-view { padding: 0; gap: 0; overflow: hidden; }
 .pane.gt-view > * { max-width: none; }
-.pane.gt-view > .pane-head:first-child { padding: var(--s-3); }
+.pane.gt-view > .pane-head:first-child { padding: var(--s-4) var(--s-5); }
 
-.gt { display: grid; grid-template-columns: minmax(0,1fr) minmax(320px, 38%);
+.gt-view .gt { display: grid; grid-template-columns: minmax(320px, 30%) minmax(0, 1fr);
       width: 100%; min-height: 0; }
 .gt-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.gt-col + .gt-col { border-left: 1px solid var(--line); }
+.gt-col[hidden] { display: none; }
+.gt-browser { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--line); background: var(--bg-soft); }
+.gt-browser > .gt-col { flex: 1; min-height: 0; }
+.gt-browser-nav { padding: var(--s-3); border-bottom: 1px solid var(--line-soft); }
+.gt-browser-nav .seg { display: flex; flex-wrap: wrap; }
+.gt-browser-nav .seg button { flex: 1; padding-inline: var(--s-2); }
+.gt-history > .gt-sec-h { flex-wrap: wrap; }
+.gt-history > .gt-sec-h .sp { flex-basis: 100%; margin-left: 0; }
+.gt-history .field.gt-filter { flex: 1; min-width: 0; }
+.gt-history .gt-row { height: 54px; min-height: 54px; grid-template-columns: auto minmax(0, 1fr); row-gap: 0; }
+.gt-history .gt-who { grid-column: 2; padding-bottom: var(--s-2); }
+.gt-history .gt-graph { width: 92px; height: 54px; grid-row: 1 / 3; }
+.gt-reader { background: var(--bg); }
+.gt-reader > .sec-head { padding: var(--s-3) var(--s-5); margin: 0; min-height: 48px; border-bottom: 1px solid var(--line-soft); flex: none; flex-wrap: wrap; }
+.gt-reader > .sec-head > .label { font-family: var(--mono); font-size: var(--t-small); letter-spacing: 0; text-transform: none; overflow-wrap: anywhere; }
+.gt-reader > .empty { margin: auto; padding: var(--s-6); }
+.gt-reader .gt-diff { font-family: var(--mono); font-size: var(--t-small); line-height: 1.75; padding: var(--s-4) var(--s-5); }
+.gt-reader .gt-diff .add { background: var(--good-soft); }
+.gt-reader .gt-diff .del { background: var(--bad-soft); }
+.gt-review-controls { flex: none; border-bottom: 1px solid var(--line-soft); }
+.gt-review-controls > summary { cursor: pointer; padding: var(--s-2) var(--s-5); font-size: var(--t-small); color: var(--text-dim); }
+.gt-review-controls > summary > span { margin-left: var(--s-3); font-size: var(--t-micro); }
+.gt-review-controls[open] { max-height: 40vh; overflow: auto; }
+.gt-view .gt-sec-h { background: transparent; padding: var(--s-3); }
+.gt-view .gt-sec-h .t { text-transform: none; letter-spacing: 0; font-family: var(--font-ui); font-size: var(--t-small); }
+.gt-view .gt-file { min-height: var(--control-h); padding: var(--s-2) var(--s-3); }
+.gt-view .gt-commit > div { flex-wrap: wrap; }
+
+@media (max-width: 760px) {
+  .gt-view .gt { grid-template-columns: minmax(0, 1fr); overflow: auto; }
+  .gt-browser { border-right: 0; border-bottom: 1px solid var(--line); min-height: 240px; max-height: 42vh; }
+  .gt-reader { min-height: 300px; }
+}
 
 .gt-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
           border-bottom: 1px solid var(--line); flex-wrap: wrap; }

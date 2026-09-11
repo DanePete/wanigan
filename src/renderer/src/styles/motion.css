@@ -111,6 +111,36 @@
   transition: none;
 }
 
+/* Settings motion answers navigation and appearance choices. Categories stay
+   mounted for drafts; revealing one plays a single, brief arrival. */
+.set-tab-panel:not([hidden]) { animation: mo-view-in var(--mo-view) var(--mo-ease) both; }
+.set-tabs button, .theme-preview, .theme-choice-check, .set-panel-help .icon {
+  transition: transform var(--mo-state) var(--mo-ease), opacity var(--mo-state) var(--mo-ease);
+}
+.set-tabs button:active { transform: scale(.98); }
+.theme-choice:hover .theme-preview { transform: translateY(-2px); }
+.theme-choice:active .theme-preview { transform: scale(.98); }
+.set-panel-help[open] .icon { transform: rotate(180deg); }
+.brd-card { transition: transform var(--mo-state) var(--mo-ease); }
+.brd-card:active { transform: scale(.98); }
+.brd-sheet { animation: brd-sheet-in var(--mo-view) var(--mo-ease) both; }
+.brd-park-menu .icon { transition: transform var(--mo-state) var(--mo-ease); }
+.brd-park-menu[open] .icon { transform: rotate(180deg); }
+.ctx-source { animation: brd-sheet-in var(--mo-view) var(--mo-ease) both; }
+.ctx-area:not([hidden]) { animation: mo-view-in var(--mo-view) var(--mo-ease) both; }
+@keyframes brd-sheet-in {
+  from { opacity: 0; transform: translateX(18px); }
+  to { opacity: 1; transform: none; }
+}
+:root[data-motion='off'] .set-tabs button:active,
+:root[data-motion='off'] .theme-choice .theme-preview,
+:root[data-motion='off'] .brd-card:active { transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion='full']) .set-tabs button:active,
+  :root:not([data-motion='full']) .theme-choice .theme-preview,
+  :root:not([data-motion='full']) .brd-card:active { transform: none; }
+}
+
 /* ── the nav underline ───────────────────────────────────────────────
    Placed from measured tab geometry (offsetLeft/offsetWidth) so it can slide
    as a transform. The base element is 1px wide and scaled to the real width;
@@ -170,3 +200,36 @@
   :root:not([data-motion='full']) .space-dock button:active,
   :root:not([data-motion='full']) .mission-composer button:active { transform: none; }
 }
+
+/* A new goal, selected task and evidence area each settle once, not on polls. */
+.control-detail, .control-node, .control-proof-body, .control-finish { animation: mo-view-in var(--mo-view) var(--mo-ease) both; }
+.planning-saved { animation: mo-in var(--mo-view) var(--mo-ease) both; }
+.control-docket, .control-steps > button { transition: background var(--mo-state) var(--mo-ease), border-color var(--mo-state) var(--mo-ease); }
+
+/* Learning only animates a newly selected record or reader section. */
+.learning-reading, .learning-proposal-reader > .candidate-card { animation: mo-view-in var(--mo-view) var(--mo-ease) both; }
+.learning-tablist button, .knowledge-row, .learning-proposal { transition: background var(--mo-state) var(--mo-ease), border-color var(--mo-state) var(--mo-ease); }
+
+/* Skills keeps motion on deliberate selection and document changes. */
+.skills-reader-content, .skills-writer-preview { animation: mo-view-in var(--mo-view) var(--mo-ease) both; }
+.skills-entry { transition: background var(--mo-state) var(--mo-ease), border-color var(--mo-state) var(--mo-ease); }
+
+/* Scout changes the reader once per deliberate selection, never on refresh. */
+.scout-reading { animation: mo-view-in var(--mo-view) var(--mo-ease) both; }
+.scout-entry { transition: background var(--mo-state) var(--mo-ease), border-color var(--mo-state) var(--mo-ease); }
+
+.scout-switch input::before { transition: transform var(--mo-state) var(--mo-ease), background var(--mo-state) var(--mo-ease); }
+
+/* A schedule reader changes once when another agenda entry is selected. */
+.sc-reading { animation: mo-in var(--mo-view) var(--mo-ease) both; }
+.sc-entry { transition: background var(--mo-state) var(--mo-ease), border-color var(--mo-state) var(--mo-ease); }
+
+/* Review follows the selected run; quiet polling does not replay the reveal. */
+.hr-reading, .hr-compose { animation: mo-view-in var(--mo-view) var(--mo-ease) both; }
+.hr-run, .hr-project { transition: background var(--mo-state) var(--mo-ease), border-color var(--mo-state) var(--mo-ease); }
+
+/* Selection reveals belong to the work in focus, not every library row. */
+.pg-selection { animation: mo-view-in var(--mo-view) var(--mo-ease) both; }
+.pg-entry { transition: background var(--mo-state), border-color var(--mo-state); }
+.bx-step:not([hidden]), .bx-evidence { animation: mo-view-in var(--mo-view) var(--mo-ease) both; }
+.bx-run, .bx-step .preset { transition: background var(--mo-state) var(--mo-ease), border-color var(--mo-state) var(--mo-ease); }

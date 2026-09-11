@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Explainer, Note, Stat, ago, num } from '../components/bits';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { EmptyState, Mark, Note, PageHead, Reading, SectionHead, Segmented, ago, num, type Tone } from '../components/bits';
 import { useDialog } from '../components/useDialog';
+import { useLiveViewMemory } from '../components/planningMemory';
+import { useRememberedScrollRef } from '../components/viewMemory';
 
 /* Shapes mirror src/main/plugins.ts; the renderer cannot import from main. */
 type Component = { kind: 'skill' | 'command' | 'agent'; name: string; path: string };
@@ -25,17 +27,6 @@ type State = {
 
 const kb = (b: number) => (b < 1024 ? `${b} B` : b < 1048576 ? `${Math.round(b / 1024)} KB` : `${(b / 1048576).toFixed(1)} MB`);
 
-/**
- * Where an offered plugin's code comes from, said at the moment of consent.
- *
- * The catalog is a list of offers, and accepting one runs code on this machine,
- * so the dialog that answers the CLI on your behalf has to name the origin.
- * The marketplace records it per plugin and Wanigan repeats that field; nothing
- * here is derived. Three things this must not do: go blank when no source is
- * recorded, put the marketplace's own address there instead — the catalog's
- * address is not the plugin's — or call any of it checked, contained or safe.
- * Naming an origin is not a judgement about one.
- */
 function origin(s: Src | null, marketplace: string) {
   if (!s) {
     return <>Nothing in the <span className="mono">{marketplace}</span> manifest records where this
@@ -50,611 +41,254 @@ function origin(s: Src | null, marketplace: string) {
     {s.pinned && <>, pinned at <span className="mono">{s.pinned}</span></>}.</>;
 }
 
-/**
- * What is known about whether Claude Code currently has a plugin switched on.
- *
- * The disk scan records installation and nothing else — `installed_plugins.json`
- * and the plugin directory have no enable/disable field — so the honest default
- * is that the state has not been read. `claude plugin list --json` does know, and
- * this view already asks it for the catalog, so the unknown is resolvable rather
- * than permanent. It is still four separate answers and not one:
- *
- *  - `unread`    nobody has asked the CLI yet. The recommended action is to ask.
- *  - `on`/`off`  the CLI answered for this plugin. Only one action can apply.
- *  - `absent`    the CLI answered, and does not list this plugin as installed —
- *                the disk and the CLI disagree, which is its own problem.
- *  - `unlisted`  the CLI answered and has never heard of this id, so the disk
- *                remains the only source and both actions stay on offer.
- */
-type Enablement = 'unread' | 'on-settings' | 'off-settings' | 'on' | 'off' | 'absent' | 'unlisted';
 
-/**
- * Whether this plugin is switched on, and how that is known.
- *
- * settings.json is consulted first because it is the file the CLI itself reads,
- * it is already on disk, and asking the CLI costs two subprocesses and up to
- * ninety seconds. The CLI's answer still wins when it has been asked — it is
- * the live authority and it also knows about plugins the settings file does not
- * mention — but there is no longer a state where every card says the answer is
- * unknowable while the answer sits in a JSON file Wanigan already reads.
- */
+type Enablement = 'unread' | 'on-settings' | 'off-settings' | 'on' | 'off' | 'absent' | 'unlisted';
 function enablementOf(id: string, cat: CatalogItem[] | null, fromSettings: boolean | null): Enablement {
-  if (!cat) {
-    if (fromSettings === true) return 'on-settings';
-    if (fromSettings === false) return 'off-settings';
-    return 'unread';
-  }
-  const row = cat.find((c) => c.id === id);
+  if (!cat) return fromSettings === true ? 'on-settings' : fromSettings === false ? 'off-settings' : 'unread';
+  const row = cat.find(c => c.id === id);
   if (!row) return 'unlisted';
   if (!row.installed) return 'absent';
-  return row.enabled ? 'on' : 'off';
+  return typeof row.enabled !== 'boolean' ? 'unread' : row.enabled ? 'on' : 'off';
 }
-
-/* Glyph plus word first, colour last — a card whose only difference from its
-   neighbour is a hue is a card nobody can read in greyscale. `blurb` is shown
-   as text on the card for every answer that is not a plain on/off, because
-   "enabled state not on disk" is a sentence about Wanigan's plumbing that
-   means nothing to the person reading it. */
-const ENABLEMENT: Record<Enablement, { glyph: string; word: string; tone: string; blurb: string }> = {
-  unread: {
-    glyph: '?', word: 'enabled state not read', tone: 'var(--text-faint)',
-    blurb: 'This account’s settings.json does not mention this plugin, so the CLI decides for it. '
-      + 'Ask the CLI above to have it answer.',
-  },
-  'on-settings': {
-    glyph: '●', word: 'enabled in settings', tone: 'var(--good)',
-    blurb: 'This account’s settings.json switches it on, so its skills, commands, hooks and MCP servers load '
-      + 'into sessions. Ask the CLI to confirm against what it is actually running.',
-  },
-  'off-settings': {
-    glyph: '○', word: 'disabled in settings', tone: 'var(--text-dim)',
-    blurb: 'This account’s settings.json switches it off, so it costs a session nothing. Ask the CLI to '
-      + 'confirm against what it is actually running.',
-  },
-  on: {
-    glyph: '●', word: 'enabled', tone: 'var(--good)',
-    blurb: 'The CLI reports this as enabled, so its skills, commands, hooks and MCP servers load into sessions.',
-  },
-  off: {
-    glyph: '○', word: 'disabled', tone: 'var(--text-dim)',
-    blurb: 'The CLI reports this as installed but switched off, so it costs a session nothing.',
-  },
-  absent: {
-    glyph: '⚠', word: 'the CLI does not list it', tone: 'var(--warning)',
-    blurb: 'It is registered on disk, but the CLI does not report it as installed. The two disagree, and the CLI '
-      + 'is the one your sessions obey — reinstall it, or remove the stale registration.',
-  },
-  unlisted: {
-    glyph: '?', word: 'not in the CLI catalog', tone: 'var(--text-faint)',
-    blurb: 'The CLI answered and its catalog has no entry with this id, usually because the marketplace it came '
-      + 'from was removed. Disk is the only source left, and disk does not record enable state.',
-  },
+const ENABLEMENT: Record<Enablement, { glyph: string; word: string; tone: Tone; blurb: string }> = {
+  unread: { glyph: '?', word: 'State not read', tone: 'quiet', blurb: 'Enablement is not reported. Ask the CLI to read its current plugin list.' },
+  'on-settings': { glyph: '●', word: 'Enabled in settings', tone: 'ok', blurb: 'This account’s settings switch this plugin on. Existing sessions may have loaded an earlier configuration.' },
+  'off-settings': { glyph: '○', word: 'Disabled in settings', tone: 'quiet', blurb: 'This account’s settings switch this plugin off. Existing sessions may have loaded an earlier configuration.' },
+  on: { glyph: '●', word: 'Enabled', tone: 'ok', blurb: 'The CLI reports this plugin enabled. Changes apply when Claude Code next loads its plugins.' },
+  off: { glyph: '○', word: 'Disabled', tone: 'quiet', blurb: 'The CLI reports this plugin disabled. Existing sessions may still hold its earlier configuration.' },
+  absent: { glyph: '!', word: 'Registration differs', tone: 'warn', blurb: 'Registered on disk, but the CLI does not list it as installed. Check the registration in Claude Code before using it.' },
+  unlisted: { glyph: '?', word: 'Not in CLI catalog', tone: 'quiet', blurb: 'The CLI catalog has no entry for this registration. The local scan remains available below.' },
 };
+type Area = 'installed' | 'catalog' | 'marketplaces';
+const errorText = (e: unknown) => e instanceof Error ? e.message : String(e);
 
 export default function Plugins() {
-  const [st, setSt] = useState<State | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState<Record<string, boolean>>({});
-  const [q, setQ] = useState('');
-  const [showCatalog, setShowCatalog] = useState(false);
+  const [st, setSt] = useLiveViewMemory<State | null>('scan', null);
+  const [err, setErr] = useLiveViewMemory<string | null>('scan-error', null);
+  const [busy, setBusy] = useLiveViewMemory('scanning', false);
+  const [area, setArea] = useLiveViewMemory<Area>('area', 'installed');
+  const [q, setQ] = useLiveViewMemory('query', '');
+  const [chosen, setChosen] = useLiveViewMemory('selection', '');
+  const [filter, setFilter] = useLiveViewMemory('filter', 'all');
+  const [cat, setCat] = useLiveViewMemory<CatalogItem[] | null>('catalog', null);
+  const [catNote, setCatNote] = useLiveViewMemory<string | null>('catalog-note', null);
+  const [catBusy, setCatBusy] = useLiveViewMemory('catalog-pending', false);
+  const [working, setWorking] = useLiveViewMemory<string | null>('working', null);
+  const [result, setResult] = useLiveViewMemory<{ id: string; ok: boolean; text: string } | null>('result', null);
+  const [cost, setCost] = useLiveViewMemory<Record<string, number | null>>('cost', {});
+  const [market, setMarket] = useLiveViewMemory('market-source', '');
   const [reading, setReading] = useState<{ title: string; text: string; truncated: boolean } | null>(null);
-  const [cat, setCat] = useState<CatalogItem[] | null>(null);
-  const [catNote, setCatNote] = useState<string | null>(null);
-  const [catBusy, setCatBusy] = useState(false);
   const [confirming, setConfirming] = useState<CatalogItem | null>(null);
-  const [working, setWorking] = useState<string | null>(null);
-  const [result, setResult] = useState<{ id: string; ok: boolean; text: string } | null>(null);
-  const [cost, setCost] = useState<Record<string, number | null>>({});
-  const [market, setMarket] = useState('');
+  const [readBusy, setReadBusy] = useState(false);
+  const [readError, setReadError] = useState<string | null>(null);
+  const mounted = useRef(false), readSeq = useRef(0), current = useRef('');
+  const listRef = useRememberedScrollRef('library');
+  const inspector = useRef<HTMLElement>(null);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; readSeq.current++; }; }, []);
 
   const load = useCallback(async (refresh = false) => {
-    setBusy(true);
-    try {
-      setSt(refresh ? await window.wanigan.plugins.refresh() : await window.wanigan.plugins.list());
-      setErr(null);
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    let claimed = false;
+    setBusy(pending => { if (!pending) claimed = true; return true; });
+    if (!claimed) return;
+    try { setSt(refresh ? await window.wanigan.plugins.refresh() : await window.wanigan.plugins.list()); setErr(null); }
+    catch (e) { setErr(errorText(e)); }
     finally { setBusy(false); }
-  }, []);
+  }, [setBusy, setSt, setErr]);
   useEffect(() => { void load(); }, [load]);
-
-  async function read(c: Component) {
-    try {
-      const f = await window.wanigan.plugins.file(c.path);
-      setReading({ title: c.name, text: f.text, truncated: f.truncated });
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
-  }
-
-  // 285 in the real catalog against the 54 cloned to disk — the CLI knows the
-  // full index, so it is fetched on demand rather than guessed from the tree.
   const loadCatalog = useCallback(async () => {
-    setCatBusy(true);
+    let claimed = false;
+    setCatBusy(pending => { if (!pending) claimed = true; return true; });
+    if (!claimed) return;
     try {
       const r = await window.wanigan.plugins.catalog();
-      // A note means the CLI did not answer — it is missing, it errored, or it
-      // returned a shape this build does not recognise. Storing its empty array
-      // as a catalog made `cat` truthy, so every card said "The CLI answered
-      // and its catalog has no entry with this id", the retry button vanished,
-      // and the 54 rows read off disk a second earlier disappeared behind a
-      // search-miss message for an empty query. No answer is null.
+      // A failed CLI read cannot stand in for a successful empty catalog.
       setCat(r.note ? null : (r.plugins as CatalogItem[]));
       setCatNote(r.note);
-    } catch (e) { setCatNote(e instanceof Error ? e.message : String(e)); }
+    } catch (e) { setCat(null); setCatNote(errorText(e)); }
     finally { setCatBusy(false); }
-  }, []);
-
-  async function act(id: string, fn: () => Promise<Action>) {
-    setWorking(id); setResult(null);
-    try {
-      const r = await fn();
-      setResult({ id, ok: r.ok, text: r.ok ? (r.output || 'Done.') : (r.error ?? 'It failed.') });
-      await load(true);
-      if (cat) await loadCatalog();
-    } catch (e) { setResult({ id, ok: false, text: e instanceof Error ? e.message : String(e) }); }
-    finally { setWorking(null); setConfirming(null); }
-  }
-
-  async function showCost(name: string) {
-    setCost((c) => ({ ...c, [name]: c[name] ?? null }));
-    try {
-      const d = await window.wanigan.plugins.details(name);
-      setCost((c) => ({ ...c, [name]: d.alwaysOnTokens }));
-      if (d.text) setReading({ title: `${name} — inventory and cost`, text: d.text, truncated: false });
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
-  }
+  }, [setCatBusy, setCat, setCatNote]);
 
   const catalog = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    // Disk rows record installation and nothing about enablement, so `enabled`
-    // is null here rather than false: hardcoding false drew a green ✓ beside
-    // the word "disabled" for every installed plugin until the CLI answered,
-    // and kept the tick on one that really was switched off.
-    const rows: CatalogItem[] = cat ?? (st?.available ?? []).map((a) => ({
+    const rows: CatalogItem[] = cat ?? (st?.available ?? []).map(a => ({
       id: a.id, name: a.name, marketplace: a.marketplace,
       description: a.description ?? '', installed: a.installed, enabled: null, source: a.source,
     }));
-    if (!s) return rows;
-    return rows.filter((a) => a.name.toLowerCase().includes(s) || a.description.toLowerCase().includes(s));
-  }, [st, cat, q]);
+    return rows;
+  }, [st, cat]);
+  const installed = st?.installed ?? [];
+  const query = q.trim().toLowerCase();
+  const rows = (area === 'catalog' ? catalog : installed).filter(p => {
+    if (![p.name, p.description, p.marketplace].some(t => t?.toLowerCase().includes(query))) return false;
+    if (area !== 'installed' || filter === 'all') return true;
+    const item = p as Installed, state = enablementOf(item.id, cat, item.enabledInSettings);
+    return filter === 'attention' ? !item.present || ['unread', 'absent', 'unlisted'].includes(state)
+      : filter === 'enabled' ? ['on', 'on-settings'].includes(state) : ['off', 'off-settings'].includes(state);
+  });
+  const selected = rows.find(p => p.id === chosen) ?? rows[0];
+  const plugin = selected ? installed.find(p => p.id === selected.id) : undefined;
+  const offer = selected ? catalog.find(p => p.id === selected.id) : undefined;
+  const selectionKey = `${area}/${selected?.id ?? ''}`;
+  current.current = selectionKey;
+  useEffect(() => {
+    readSeq.current++; setReading(null); setReadError(null); setReadBusy(false); setConfirming(null);
+    inspector.current?.scrollTo({ top: 0 });
+  }, [selectionKey]);
+  const locked = Boolean(working || busy || err || catBusy);
+  const state = plugin ? enablementOf(plugin.id, cat, plugin.enabledInSettings) : null;
 
-  // `err && !st` only catches a failure on the very first read. After one good
-  // scan `st` is set for good, so a later Rescan that fails used to put the
-  // button back to "Rescan", leave yesterday's list on screen, and say nothing
-  // at all. The error is rendered in the page below as well.
-  if (err && !st) {
-    return (
-      <div className="pane pg-wrap">
-        <Note tone="error" action={{ label: 'Try again', run: () => void load(true) }}>{err}</Note>
-      </div>
-    );
+  async function act(id: string, fn: () => Promise<Action>) {
+    if (locked) return;
+    let claimed = false;
+    setWorking(previous => { if (!previous) claimed = true; return previous ?? id; });
+    if (!claimed) return;
+    setResult(null);
+    try {
+      const r = await fn();
+      setResult({ id, ok: r.ok, text: r.ok ? r.output || 'Done.' : r.error || 'The CLI did not complete this action.' });
+      if (r.ok) {
+        if (mounted.current) setConfirming(null);
+        if (id === 'market-add') setMarket('');
+      }
+      await load(true);
+      if (cat !== null) await loadCatalog();
+    } catch (e) { setResult({ id, ok: false, text: errorText(e) }); }
+    finally { setWorking(null); }
   }
-  if (!st) return <div className="pane pg-wrap"><p className="dim">Reading your plugins…</p></div>;
-
-  const missing = st.installed.filter((p) => !p.present);
-  // The one call that turns every card's unknown into an answer failed. Told on
-  // the cards themselves, not only inside the collapsed catalog section that
-  // happens to own the request.
-  const askFailed = !cat && catNote !== null;
+  async function read(title: string, request: () => Promise<{ text: string; truncated: boolean }>) {
+    const seq = ++readSeq.current, key = current.current;
+    setReadBusy(true); setReadError(null);
+    try {
+      const r = await request();
+      if (mounted.current && readSeq.current === seq && current.current === key) setReading({ title, ...r });
+    } catch (e) { if (mounted.current && readSeq.current === seq) setReadError(errorText(e)); }
+    finally { if (mounted.current && readSeq.current === seq) setReadBusy(false); }
+  }
+  function showCost(p: Installed) {
+    void read(`${p.name} — inventory and cost`, async () => {
+      const d = await window.wanigan.plugins.details(p.name);
+      if (d.error) throw new Error(d.error);
+      setCost(previous => ({ ...previous, [p.id]: d.alwaysOnTokens }));
+      return { text: d.text || 'The CLI returned no detail text.', truncated: false };
+    });
+  }
+  function changeArea(next: Area) {
+    setArea(next); setQ(''); setChosen(''); setConfirming(null);
+    if (next === 'catalog' && cat === null && catNote === null) void loadCatalog();
+  }
 
   return (
     <div className="pane pg-wrap">
-      {/* Named for whose plugins these are. "Plugins" on a control surface for
-          coding agents reads as "things that extend this app", and nothing here
-          does: every row is a Claude Code plugin, installed by the Claude Code
-          CLI into its own directory, loaded by Claude Code sessions. Wanigan
-          reads and drives that; it has no extension format of its own. */}
-      <div className="pane-head pg-head">
-        <div className="pg-title">
-          <span className="label-stencil">Claude Code plugins</span>
-          <h1>Plugins</h1>
-        </div>
-        <span className="pg-count">{st.installed.length} installed · {st.available.length} in the catalog</span>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-          <button className="btn" disabled={busy} onClick={() => void load(true)}>
-            {busy ? 'Scanning…' : 'Rescan'}
-          </button>
-        </div>
+      <PageHead title="Plugins" lead="A library of skills, commands, and tools for Claude Code."
+        actions={<button className="btn" disabled={busy || Boolean(working)} onClick={() => void load(true)}>{busy ? 'Scanning…' : 'Rescan'}</button>} />
+      <div className="pg-toolbar">
+        <Segmented<Area> label="Plugin library" value={area} onChange={changeArea} options={[
+          { value: 'installed', label: `Installed${st ? ` (${installed.length})` : ''}` },
+          { value: 'catalog', label: 'Catalog' }, { value: 'marketplaces', label: 'Marketplaces' },
+        ]} />
+        <span className="pg-scan">{st ? `Scanned ${ago(st.scannedAt)}` : 'Reading local registrations'}</span>
       </div>
-      {/* Below the head, so the head stays the pane's first child and keeps its
-          sticky treatment. A rescan that fails after a good scan used to say
-          nothing at all: `err && !st` above only catches the first read. */}
-      {err && (
-        <Note tone="error" action={{ label: busy ? 'Scanning…' : 'Rescan', run: () => void load(true) }}
-              onDismiss={() => setErr(null)}>
-          {err} What is listed below is the last scan that succeeded, not the state on disk now.
-        </Note>
-      )}
-
-      {/* What a plugin is, and what it is not, is a guide: true, worth reading
-          once, and not the content of the page. The honest per-card state text
-          below is not this and stays on screen. */}
-      <Explainer id="plugins-guide" title="What these plugins are">
-      <p className="dim">
-        These are Claude Code's own plugins — bundles of skills, slash commands, subagents, hooks and MCP
-        servers that the <span className="mono">claude</span> CLI installs under{' '}
-        <span className="mono">~/.claude/plugins</span> and loads into its sessions. Wanigan reads that
-        directory and drives the same CLI commands you would run in a terminal. Nothing here extends Wanigan
-        itself: there is no Wanigan plugin format, and writing one of these does not add a view, a panel or an
-        IPC channel to this app. What an enabled plugin costs a session is in Context (
-        <span className="mono">⌘⇧C</span>), and the skills it ships are listed in Skills (
-        <span className="mono">⌘⇧S</span>).
-      </p>
-      </Explainer>
-
-      {/* The distinction the directory layout makes easy to get wrong. */}
-      {st.notes.map((n, i) => (
-        <div key={i} style={{ marginTop: 8 }}><Note tone="info">{n}</Note></div>
-      ))}
-      {missing.length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          <Note tone="warn">
-            <span aria-hidden="true">⚠ </span>
-            {missing.length} registered plugin{missing.length > 1 ? 's are' : ' is'} missing from disk
-            ({missing.map((p) => p.name).join(', ')}). Claude Code skips {missing.length > 1 ? 'them' : 'it'} silently.
-          </Note>
+      {err && <Note tone="error" action={{ label: 'Try again', run: () => load(true) }}>The plugin scan could not refresh. {err}{st && ' Showing the last scan; changes are paused.'}</Note>}
+      {result && <Note tone={result.ok ? 'ok' : 'error'} onDismiss={() => setResult(null)}><strong>{result.id}</strong><div className="pg-receipt">{result.text}</div></Note>}
+      {!st ? !err && <Reading what="your plugins" /> : area === 'marketplaces' ? (
+        <div className="pg-markets">
+          <section className="pg-market-list" aria-label="Registered marketplaces">
+            <div className="pg-intro"><h2>Your sources</h2><p>Marketplaces offer plugins. Each plugin’s own recorded origin appears before installation.</p></div>
+            <SectionHead label="Registered marketplaces" count={st.marketplaces.length} right={<button className="btn btn-sm" disabled={locked} onClick={() => void act('market-update', () => window.wanigan.plugins.marketUpdate())}>Update marketplaces</button>} />
+            {st.marketplaces.length === 0 && <EmptyState posture="nothing-in-scope" title="Add your first marketplace" cue="Use the source field to register a marketplace with Claude Code." />}
+            {st.marketplaces.map(m => <article className="pg-market" key={m.name}>
+              <div className="pg-inline"><strong>{m.name}</strong><Mark glyph={m.present ? '●' : '!'} word={m.present ? 'On disk' : 'Directory missing'} tone={m.present ? 'quiet' : 'warn'} /></div>
+              <p className="pg-path">{m.source || 'Source not recorded'}</p><p className="pg-path faint">{m.installLocation}</p><small className="faint">{m.lastUpdated ? `Updated ${ago(m.lastUpdated)}` : 'Update time not recorded'}</small>
+            </article>)}
+            <details className="pg-disclosure"><summary>Where Claude Code keeps this library</summary>
+              {st.roots.map(r => <div className="pg-root" key={r.path}><strong>{r.label}</strong><span>{r.exists ? 'Present' : 'Not found'}</span><code>{r.path}</code></div>)}
+            </details>
+            {st.notes.map((note, i) => <Note key={i} tone="warn" role="none">{note}</Note>)}
+          </section>
+          <aside className="pg-add-market">
+            <h2>Add a marketplace</h2><p>Paste a GitHub owner/repository, Git URL, or local directory. Claude Code will register this source for its plugin catalog.</p>
+            <label className="pg-field"><span className="label">Marketplace source</span><input className="field" value={market} disabled={Boolean(working)} onChange={e => setMarket(e.target.value)} placeholder="owner/repository" /></label>
+            <button className="btn btn-primary" disabled={locked || !market.trim()} onClick={() => void act('market-add', () => window.wanigan.plugins.marketAdd(market.trim()))}>{working === 'market-add' ? 'Adding…' : 'Add marketplace'}</button>
+            <p className="faint">Wanigan asks you to confirm this source before it is added. Adding a marketplace does not install its plugins.</p>
+          </aside>
         </div>
-      )}
-
-      <div className="stat-grid" style={{ marginTop: 12 }}>
-        <Stat label="Installed" value={num(st.installed.length)} sub={`${st.marketplaces.length} marketplace${st.marketplaces.length === 1 ? '' : 's'}`} />
-        <Stat label="Skills" value={num(st.installed.reduce((a, p) => a + p.skills.length, 0))} sub="from plugins" />
-        <Stat label="Commands" value={num(st.installed.reduce((a, p) => a + p.commands.length, 0))} sub="slash commands" />
-        <Stat label="Hooks" value={num(st.installed.reduce((a, p) => a + p.hookEvents.length, 0))}
-              sub="events plugins register"
-              tone={st.installed.some((p) => p.hookEvents.length) ? 'var(--warning)' : undefined} />
-      </div>
-
-      <div className="pg-sec">
-        <div className="pg-sec-h">
-          <h2>Installed</h2><span className="n">{st.installed.length}</span>
-          {/* The recommended action, once rather than once per card. It fills
-              the same catalog the section below uses, so a single call turns
-              every card's unknown into an answer — and it is not run on mount
-              because it shells out to the CLI twice and this view has to work
-              with nothing installed and no network. */}
-          {st.installed.length > 0 && !cat && (
-            <button className="btn btn-primary" style={{ marginLeft: 'auto', fontSize: 'var(--t-small)', padding: '3px 9px' }}
-                    disabled={catBusy}
-                    title="Runs `claude plugin list --json`, the only thing that knows whether a plugin is enabled."
-                    onClick={() => void loadCatalog()}>
-              {catBusy ? 'Asking the CLI…' : askFailed ? 'Ask the CLI again' : 'Ask the CLI which are enabled'}
-            </button>
-          )}
-        </div>
-        {st.installed.length > 0 && !cat && (
-          <div style={{ marginBottom: 11, maxWidth: '76ch' }}>
-            <Note tone={askFailed ? 'error' : 'info'}>
-              {askFailed ? (
-                <>
-                  <strong>The CLI could not be asked:</strong> {catNote} Until it answers, every card below says
-                  its enabled state has not been read, and both Disable and Enable stay on offer — each one runs
-                  the matching <span className="mono">claude plugin</span> command and reports what it said.
-                </>
-              ) : (
-                <>
-                  <strong>Enabled state is not recorded on disk.</strong>{' '}
-                  <span className="mono">installed_plugins.json</span> and the plugin folders note that a plugin
-                  is installed and stop there, so Wanigan's own scan cannot tell an enabled plugin from a
-                  disabled one. <span className="mono">claude plugin list --json</span> can. One call above
-                  answers for every card.
-                </>
-              )}
-            </Note>
-          </div>
-        )}
-        {st.installed.length === 0 ? (
-          <p className="dim" style={{ maxWidth: '62ch', lineHeight: 1.55 }}>
-            No plugins installed. The catalog below lists what the marketplaces offer —
-            install one with <span className="mono">/plugin install &lt;name&gt;</span> in any session.
-          </p>
-        ) : (
-          <div className="pg-grid">
-            {st.installed.map((p) => {
-              const items = [...p.skills, ...p.commands, ...p.agents];
-              const isOpen = open[p.id];
-              const state = enablementOf(p.id, cat, p.enabledInSettings ?? null);
-              const mark = ENABLEMENT[state];
-              // Only an answered state can narrow the actions to one. Every
-              // other answer keeps both, because offering only Disable was a
-              // one-way door out of Wanigan with no way back except the CLI.
-              const known = state === 'on' || state === 'off';
-              return (
-                <article key={p.id} className={`pg-card${p.present ? '' : ' gone'}`}>
-                  <div className="pg-top">
-                    <span className="pg-name">{p.name}</span>
-                    <span className="pg-ver mono">{p.version}</span>
-                  </div>
-                  {p.description
-                    ? <p className="pg-desc">{p.description}</p>
-                    : <p className="pg-none">No manifest — this plugin ships no plugin.json, which is allowed.</p>}
-
-                  <div className="pg-provides">
-                    {p.skills.length > 0 && <span className="pg-chip"><b>{p.skills.length}</b> skills</span>}
-                    {p.commands.length > 0 && <span className="pg-chip"><b>{p.commands.length}</b> commands</span>}
-                    {p.agents.length > 0 && <span className="pg-chip"><b>{p.agents.length}</b> agents</span>}
-                    {/* Hooks run code on your machine — worth seeing without expanding. */}
-                    {p.hookEvents.length > 0 && (
-                      <span className="pg-chip hook" title={p.hookEvents.join(', ')}>
-                        <span aria-hidden="true">⚑</span> hooks: {p.hookEvents.join(', ')}
-                      </span>
-                    )}
-                    {p.mcpServers.length > 0 && (
-                      <span className="pg-chip mcp">MCP: {p.mcpServers.join(', ')}</span>
-                    )}
-                    {items.length === 0 && p.hookEvents.length === 0 && p.mcpServers.length === 0 && (
-                      <span className="pg-none">Provides nothing Wanigan can see from disk.</span>
-                    )}
-                  </div>
-
-                  {items.length > 0 && (
-                    <button className="pg-expand" aria-expanded={!!isOpen}
-                            onClick={() => setOpen((o) => ({ ...o, [p.id]: !o[p.id] }))}>
-                      {isOpen ? '▾ hide what it provides' : `▸ show ${items.length} item${items.length > 1 ? 's' : ''}`}
-                    </button>
-                  )}
-                  {isOpen && (
-                    <div className="pg-items">
-                      {items.map((c) => (
-                        <button key={c.path} className="pg-item" onClick={() => void read(c)}
-                                title={`Open ${c.path}`}>
-                          <span className="k">{c.kind}</span>
-                          <span className="n mono">{c.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="pg-meta" style={{ marginTop: 'auto' }}>
-                    <span>{p.marketplace}</span>
-                    <span>{p.scope}</span>
-                    {p.author && <span>{p.author}</span>}
-                    {p.present && <span>{kb(p.bytes)}</span>}
-                    <span>{p.lastUpdated ? `updated ${ago(p.lastUpdated)}` : 'no date'}</span>
-                    {/* Read from installed_plugins.json and the plugin directory
-                        until the CLI is asked, and neither records enable state.
-                        An unknown still renders as an unknown — it just no
-                        longer has to stay one. */}
-                    <span title={mark.blurb} style={{ color: mark.tone }}>
-                      <span aria-hidden="true">{mark.glyph}</span> {mark.word}
-                    </span>
-                    {!p.present && <span style={{ color: 'var(--warning)' }}>✕ missing</span>}
-                    {/* The CLI reports always-on cost as an estimate and prints
-                        its own tilde; it is repeated here with the word est. so
-                        this reads the same as every other estimate in Wanigan. */}
-                    {cost[p.name] != null && (
-                      <span style={{ color: 'var(--accent)' }}>
-                        ~{num(cost[p.name] as number)} est. tokens every session
-                      </span>
-                    )}
-                  </div>
-                  {/* The unknown, in words. A card that says "enabled state not
-                      on disk" and then offers two equally-weighted opposite
-                      buttons is honest and unusable; the state stays honest and
-                      the sentence says what it means. The one action that
-                      resolves it lives at the top of this section, because it
-                      answers for every card at once. */}
-                  {/* The same 40-word sentence under every card read as nine
-                      separate problems. The mark still carries the state in a
-                      glyph and a word; the sentence is one click away, per card,
-                      and the section Note above says it once for all of them. */}
-                  {!known && (
-                    <details className="pg-why">
-                      <summary>why?</summary>
-                      <p>
-                        {mark.blurb}
-                        {state === 'unread' && !askFailed && ' Ask the CLI at the top of this section to resolve it.'}
-                      </p>
-                    </details>
-                  )}
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                    {/* Each button runs the matching `claude plugin` command and
-                        reports what it said. Once the CLI has answered, only the
-                        direction that changes something is offered. */}
-                    {state !== 'off' && (
-                      <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
-                              disabled={working === p.id}
-                              title="Runs `claude plugin disable` for this plugin."
-                              onClick={() => void act(p.id, () => window.wanigan.plugins.setEnabled(p.id, false))}>
-                        Disable
-                      </button>
-                    )}
-                    {state !== 'on' && (
-                      <button className={`btn${state === 'off' ? ' btn-primary' : ''}`}
-                              style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
-                              disabled={working === p.id}
-                              title="Runs `claude plugin enable` for this plugin. Harmless if it is already enabled — the CLI's answer is shown below."
-                              onClick={() => void act(p.id, () => window.wanigan.plugins.setEnabled(p.id, true))}>
-                        Enable
-                      </button>
-                    )}
-                    {working === p.id && <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>working…</span>}
-                    <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
-                            title="What this plugin adds to every session's context"
-                            onClick={() => void showCost(p.name)}>Cost</button>
-                    {p.hasReadme && (
-                      <button className="btn" style={{ fontSize: 'var(--t-small)', padding: '3px 9px' }}
-                              onClick={() => void read({ kind: 'skill', name: `${p.name} readme`, path: `${p.path}/README.md` })}>
-                        Readme
-                      </button>
-                    )}
-                  </div>
-                  {result && result.id === p.id && (
-                    <Note tone={result.ok ? 'ok' : 'error'}>{result.text.slice(0, 400)}</Note>
-                  )}
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      <div className="pg-sec">
-        <div className="pg-sec-h">
-          <h2>Catalog</h2>
-          <span className="n">{st.available.length} available</span>
-          <button className="pg-expand" style={{ marginLeft: 'auto' }}
-                  aria-expanded={showCatalog}
-                  onClick={() => { const v = !showCatalog; setShowCatalog(v); if (v && !cat) void loadCatalog(); }}>
-            {showCatalog ? '▾ hide' : '▸ search and install'}
-          </button>
-        </div>
-        {showCatalog && (
-          <>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
-              <input className="field" aria-label="Search plugins" style={{ flex: 1, minWidth: 220 }} value={q} type="text"
-                     placeholder={catBusy ? 'Reading the catalog…' : `Search ${catalog.length} plugins…`}
-                     onChange={(e) => setQ(e.target.value)} />
-              <button className="btn" disabled={catBusy} onClick={() => void loadCatalog()}>
-                {catBusy ? 'Loading…' : 'Refresh'}
-              </button>
-              <button className="btn" disabled={!!working}
-                      onClick={() => void act('__market', () => window.wanigan.plugins.marketUpdate())}>
-                Update marketplaces
-              </button>
+      ) : (
+        <div className="pg-workspace">
+          <section className="pg-library" aria-label={area === 'installed' ? 'Installed plugins' : 'Plugin catalog'}>
+            <label className="pg-search"><span className="sr-only">Search plugins</span><input type="search" className="field" placeholder="Find a plugin or marketplace…" value={q} onChange={e => setQ(e.target.value)} /></label>
+            {area === 'installed' && <label className="pg-filter"><span>Show</span><select className="field" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All installed</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option><option value="attention">Needs a look</option></select></label>}
+            <div className="pg-library-meta"><span>{num(rows.length)} {area === 'catalog' ? 'available' : 'registered'}</span><span>{area === 'catalog' ? cat ? 'CLI catalog' : 'Local catalog' : 'Local scan'}</span></div>
+            <div className="pg-entries" ref={listRef}>
+              {rows.slice(0, 200).map(p => {
+                const local = installed.find(item => item.id === p.id);
+                const status = local ? ENABLEMENT[enablementOf(local.id, cat, local.enabledInSettings)] : null;
+                return <button className={`pg-entry${p.id === selected?.id ? ' on' : ''}`} key={p.id} data-plugin-id={p.id} aria-pressed={p.id === selected?.id} onClick={() => setChosen(p.id)}>
+                  <span className="pg-monogram" aria-hidden="true">{p.name.slice(0, 1).toUpperCase()}</span>
+                  <span className="pg-entry-copy"><strong>{p.name}</strong><small>{p.marketplace}</small><span className="pg-entry-summary">{p.description || 'No description supplied.'}</span>
+                    {local && !local.present ? <Mark glyph="!" word="Directory missing" tone="warn" /> : status ? <Mark {...status} /> : <span className="faint">{(p as CatalogItem).installed ? 'CLI reports installed' : 'Available to install'}</span>}
+                  </span>
+                </button>;
+              })}
+              {rows.length > 200 && <p className="pg-cue">Showing 200 of {num(rows.length)} matches. Refine your search to see the rest.</p>}
+              {rows.length === 0 && <EmptyState posture="nothing-in-scope" title={query || filter !== 'all' && area === 'installed' ? 'No matching plugins' : area === 'installed' ? 'Room for a few new skills' : 'No catalog entries yet'} cue={area === 'installed' && !query && filter === 'all' ? 'Browse the catalog to see what Claude Code can add.' : 'Try another search, or refresh the catalog from the CLI.'} />}
             </div>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-              <input className="field" aria-label="Marketplace to add" style={{ flex: 1 }} value={market} type="text"
-                     placeholder="Add a marketplace — a GitHub repo, URL or path"
-                     onChange={(e) => setMarket(e.target.value)} />
-              <button className="btn" disabled={!market.trim() || !!working}
-                      onClick={() => void act('__market', () => window.wanigan.plugins.marketAdd(market.trim()))}>Add</button>
+            {(q || filter !== 'all') && <button className="btn btn-sm" onClick={() => { setQ(''); setFilter('all'); }}>Clear filters</button>}
+          </section>
+          <section className="pg-inspector" ref={inspector} aria-label="Plugin details">
+            <div className="pg-catalog-status">
+              <span>{catBusy ? 'Reading the CLI catalog…' : catNote ? 'CLI unavailable. Using the local scan.' : cat ? 'Enablement read from the CLI.' : 'Enablement comes from account settings where recorded.'}</span>
+              <button className="btn btn-sm" disabled={catBusy || Boolean(working)} onClick={() => void loadCatalog()}>{catBusy ? 'Reading…' : cat ? 'Refresh CLI catalog' : 'Ask the CLI'}</button>
             </div>
-            {catNote && <div style={{ marginBottom: 10 }}><Note tone="warn">{catNote}</Note></div>}
-            {result && result.id === '__market' && (
-              <div style={{ marginBottom: 10 }}>
-                <Note tone={result.ok ? 'ok' : 'error'}>{result.text.slice(0, 500)}</Note>
-              </div>
-            )}
-            {confirming && (
-              <div style={{ marginBottom: 10 }}>
-                <Note tone="warn">
-                  <strong>Install {confirming.name}?</strong> A plugin can ship hooks, an MCP server or an LSP —
-                  code that runs on this machine.
-                  <br />{origin(confirming.source, confirming.marketplace)}
-                  <br />Wanigan has no terminal to answer the CLI's own prompt, so it passes{' '}
-                  <span className="mono">-y</span>, which accepts the marketplace-declared install command
-                  on your behalf. This dialog is that prompt.
-                  <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                    <button className="btn btn-primary" disabled={!!working}
-                            onClick={() => void act(confirming.id, () => window.wanigan.plugins.install(confirming.id))}>
-                      {working ? 'Installing…' : `Install ${confirming.name}`}
-                    </button>
-                    <button className="btn" onClick={() => setConfirming(null)}>Cancel</button>
-                  </div>
-                </Note>
-              </div>
-            )}
-            {catalog.length === 0 ? (
-              // A search miss and an empty catalog are different facts, and
-              // reporting "nothing matches ''" for a query nobody typed sent
-              // the operator looking for a filter they had not set.
-              q.trim()
-                ? <p className="faint">Nothing in the catalog matches “{q}”.</p>
-                : catNote !== null
-                  ? <p className="faint">The catalog could not be read, so there is nothing to list here yet.</p>
-                  : <p className="faint">No marketplace is added yet — add one above to see what is on offer.</p>
-            ) : (
-              <div className="pg-cat">
-                {catalog.slice(0, 200).map((a) => (
-                  <div key={a.id} className="pg-cat-row">
-                    <div className="t">
-                      <span>{a.name}</span>
-                      {a.installed
-                        ? a.enabled === null
-                          ? <span className="faint pg-state">installed · enabled state not read</span>
-                          : a.enabled
-                            ? <span className="pg-yes">✓ installed</span>
-                            : <span className="faint pg-state">○ installed, switched off</span>
-                        : (
-                          <button className="btn" style={{ marginLeft: 'auto', fontSize: 'var(--t-micro)', padding: '2px 8px' }}
-                                  disabled={!!working}
-                                  onClick={() => setConfirming(a)}>Install</button>
-                        )}
-                    </div>
-                    {a.description && <div className="d">{a.description}</div>}
-                    {result && result.id === a.id && (
-                      <div className="d" style={{ color: result.ok ? 'var(--good)' : 'var(--bad)' }}>
-                        {result.text.slice(0, 200)}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-            {catalog.length > 200 && (
-              <p className="faint" style={{ marginTop: 8 }}>
-                Showing 200 of {num(catalog.length)}. Narrow the search rather than scrolling.
-              </p>
-            )}
-          </>
-        )}
-      </div>
-
-      <div className="pg-sec">
-        <div className="pg-sec-h"><h2>Where this comes from</h2></div>
-        <table className="viz-table">
-          <tbody>
-            {st.roots.map((r) => (
-              <tr key={r.path}>
-                <td style={{ width: 90 }}>{r.label}</td>
-                <td className="mono" style={{ fontSize: 'var(--t-micro)' }}>{r.path}</td>
-                <td className="n" style={{ width: 70 }}>
-                  {r.exists ? <span style={{ color: 'var(--good)' }}>✓ found</span>
-                            : <span className="faint">absent</span>}
-                </td>
-              </tr>
-            ))}
-            {st.marketplaces.map((m) => (
-              <tr key={m.name}>
-                <td>marketplace</td>
-                <td className="mono" style={{ fontSize: 'var(--t-micro)' }}>{m.name} — {m.source}</td>
-                <td className="n" style={{ width: 70 }}>{m.lastUpdated ? ago(m.lastUpdated) : '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
+            {catNote && <Note tone="warn">{catNote}</Note>}
+            {selected ? <div className="pg-selection" key={selectionKey}>
+              <div className="pg-identity"><span className="pg-monogram pg-monogram-large" aria-hidden="true">{selected.name.slice(0, 1).toUpperCase()}</span><div><h2>{selected.name}</h2><p>{selected.marketplace}{plugin?.version && ` · ${plugin.version}`}</p></div></div>
+              <p className="pg-description">{selected.description || 'This plugin has no description in its manifest.'}</p>
+              {plugin && state && <>
+                <div className="pg-enablement"><Mark {...ENABLEMENT[state]} /><p>{ENABLEMENT[state].blurb}</p></div>
+                {!plugin.present && <Note tone="warn">The registered directory is missing. Its components cannot be read from this scan.</Note>}
+                <div className="pg-actions">
+                  {!['on', 'on-settings'].includes(state) && <button className="btn btn-primary" disabled={locked || !plugin.present} onClick={() => void act(plugin.id, () => window.wanigan.plugins.setEnabled(plugin.id, true))}>Enable plugin</button>}
+                  {!['off', 'off-settings'].includes(state) && <button className="btn" disabled={locked} onClick={() => void act(plugin.id, () => window.wanigan.plugins.setEnabled(plugin.id, false))}>Disable plugin</button>}
+                  <button className="btn" disabled={readBusy || Boolean(working)} onClick={() => showCost(plugin)}>Read context cost</button>
+                  {plugin.hasReadme && <button className="btn" disabled={!plugin.present || readBusy} onClick={() => void read(plugin.name, () => window.wanigan.plugins.file(`${plugin.path}/README.md`))}>Readme</button>}
+                </div>
+                {Object.hasOwn(cost, plugin.id) && <p className="pg-cue">{cost[plugin.id] === null ? 'The CLI did not report an always-on token estimate.' : `~${num(cost[plugin.id]!)} estimated always-on tokens. Actual context depends on the session.`}</p>}
+                {readBusy && <Reading what="plugin details" />}
+                {readError && <Note tone="error" onDismiss={() => setReadError(null)}>{readError}</Note>}
+                <SectionHead label="What it adds" count={plugin.skills.length + plugin.commands.length + plugin.agents.length} />
+                <div className="pg-capabilities">
+                  {[...plugin.skills, ...plugin.commands, ...plugin.agents].map(c => <button className="pg-component" key={`${c.kind}/${c.path}`} disabled={!plugin.present || readBusy} onClick={() => void read(c.name, () => window.wanigan.plugins.file(c.path))}><span>{c.kind}</span><strong>{c.name}</strong><span aria-hidden="true">↗</span></button>)}
+                  {plugin.skills.length + plugin.commands.length + plugin.agents.length === 0 && <p className="pg-cue">No skills, commands, or agents in this scan.</p>}
+                </div>
+                <div className="pg-integrations"><div><SectionHead label="Hook events" count={plugin.hookEvents.length} /><p>{plugin.hookEvents.join(', ') || 'None recorded'}</p></div><div><SectionHead label="MCP servers" count={plugin.mcpServers.length} /><p>{plugin.mcpServers.join(', ') || 'None recorded'}</p></div></div>
+                <details className="pg-disclosure"><summary>Installation details</summary><dl className="pg-facts"><dt>Scope</dt><dd>{plugin.scope}</dd><dt>Author</dt><dd>{plugin.author || 'Not recorded'}</dd><dt>Size</dt><dd>{kb(plugin.bytes)}</dd><dt>Updated</dt><dd>{plugin.lastUpdated ? ago(plugin.lastUpdated) : 'Not recorded'}</dd><dt>Directory</dt><dd className="pg-path">{plugin.path}</dd></dl></details>
+              </>}
+              {offer && <div className="pg-source"><SectionHead label="Recorded origin" /><p>{origin(offer.source, offer.marketplace)}</p>
+                {!plugin && !offer.installed && !confirming && <button className="btn btn-primary" disabled={locked} onClick={() => setConfirming(offer)}>Review installation</button>}
+                {!plugin && offer.installed && <Note tone="info">The CLI reports this plugin installed. Rescan to read its local components.</Note>}
+              </div>}
+              {confirming && confirming.id === selected.id && <Note tone="warn" role="none">
+                <strong>Install {confirming.name}?</strong><p>A plugin may include hooks, MCP servers, or an LSP that runs code on this machine.</p>
+                <p>{origin(confirming.source, confirming.marketplace)}</p>
+                <p>Installation uses the CLI’s -y option, accepting any marketplace-declared install command. This confirmation is that prompt.</p>
+                <div className="pg-actions"><button className="btn btn-primary" disabled={locked} onClick={() => void act(confirming.id, () => window.wanigan.plugins.install(confirming.id))}>{working === confirming.id ? 'Installing…' : `Install ${confirming.name}`}</button><button className="btn" disabled={Boolean(working)} onClick={() => setConfirming(null)}>Cancel</button></div>
+              </Note>}
+            </div> : <EmptyState posture="nothing-in-scope" title="Choose a plugin" cue="Its components, configuration, and recorded origin will appear here." />}
+          </section>
+        </div>
+      )}
       {reading && (
-        <ReaderDialog title={reading.title} text={reading.text} truncated={reading.truncated}
-                      onClose={() => setReading(null)} />
+        <ReaderDialog title={reading.title} text={reading.text} truncated={reading.truncated} onClose={() => setReading(null)} />
       )}
     </div>
   );
 }
 
-/**
- * The file this view opens when you click a skill, a command or a Readme.
- *
- * It is a component of its own because useDialog cannot be called from
- * Plugins(): the hook raises the shell's modal flag on mount, so an
- * unconditional call would switch off the digit chords, ⌘K and ? for as long as
- * this view is on screen — while the reader itself answered no key at all, not
- * even Escape. Mounted only when there is something to read, the flag matches
- * what is actually over the page, and the markup keeps the promise its
- * aria-modal was already making: Escape closes it, Tab stays inside it, focus
- * starts on Close and goes back to the button that opened it.
- */
-function ReaderDialog({ title, text, truncated, onClose }: {
-  title: string; text: string; truncated: boolean; onClose: () => void;
-}) {
-  // 'least-destructive' lands on Close. The hook also portals this out of
-  // .body, whose view-transition name is a stacking context that used to paint
-  // the reader under the header.
+function ReaderDialog({ title, text, truncated, onClose }: { title: string; text: string; truncated: boolean; onClose: () => void }) {
   const { portal, backdropProps, dialogProps } = useDialog<HTMLDivElement>({ onClose, initialFocus: 'least-destructive' });
-
   return portal(
     <div {...backdropProps} className="overlay-backdrop pg-reader">
       <div {...dialogProps} className="pg-reader-in" aria-label={title}>
-        <div className="pg-reader-h">
-          <strong style={{ fontSize: 'var(--t-lead)' }}>{title}</strong>
-          {truncated && <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>truncated at 200 KB</span>}
-          <button className="btn" style={{ marginLeft: 'auto' }} onClick={onClose}>Close</button>
-        </div>
-        {/* A SKILL.md is longer than the box. Without a tab stop of its own the
-            scroller is unreachable from the keyboard, and the Tab trap — which
-            wraps around the focusable elements it can find — would have nothing
-            to wrap around but the Close button. */}
+        <div className="pg-reader-h"><strong>{title}</strong>{truncated && <span className="faint">Truncated at 200 KB</span>}<button className="btn" onClick={onClose}>Close</button></div>
         <div className="pg-reader-b" tabIndex={0}>{text}</div>
       </div>
     </div>,

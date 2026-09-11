@@ -9,7 +9,10 @@ import type {
   TranscriptHit, TranscriptTurn, TrustLevel, UploadedFile, WorktreeInfo,
 } from '@shared/types';
 import { TRUST_COPY, TRUST_LEVELS, trustCopy } from '@shared/types';
-import { ConfirmNote, Explainer, Note, PageHead, Reading, Section, Stat, ago, num } from '../components/bits';
+import { DEMO_PROMPTS } from '@shared/demo';
+import { ConfirmNote, Explainer, Icon, Note, PageHead, Reading, Section, Stat, ago, num } from '../components/bits';
+import type { IconName } from '../components/bits';
+import { useRememberedScroll } from '../components/viewMemory';
 import ThemeControl from '../components/ThemeControl';
 import type { ResolvedTheme } from '../theme-boot';
 import '../styles/settings.css';
@@ -46,13 +49,13 @@ export type SettingsIndexEntry = {
  * still lands on the right tab.
  */
 export const SETTINGS_INDEX: SettingsIndexEntry[] = [
+  { tab: 'agents', tabLabel: 'Agents', section: 'Installed agent runtimes', hint: 'Which CLIs Wanigan found, and where', keywords: 'cli path version claude codex installed runtime detect' },
+  { tab: 'agents', tabLabel: 'Agents', section: 'Accounts', hint: 'Work and personal logins, and which is default', keywords: 'account login work personal switch claude config dir credentials organisation organization sign in profile' },
+  { tab: 'agents', tabLabel: 'Agents', section: 'Provider packs', hint: 'Packs, profiles, trust and enablement', keywords: 'provider pack manifest profile harness backend trust digest sha256 adapter enable disable remove restore' },
   { tab: 'agents', tabLabel: 'Agents', section: 'Claude Platform API key', hint: 'Batches API key, workspace id', keywords: 'anthropic api key batches workspace sk-ant console' },
   { tab: 'agents', tabLabel: 'Agents', section: 'GLM Coding Plan', hint: 'Z.ai key for GLM sessions', keywords: 'glm z.ai zai coding plan key' },
   { tab: 'agents', tabLabel: 'Agents', section: 'DeepSeek', hint: 'DeepSeek key for sessions', keywords: 'deepseek key anthropic-compatible' },
   { tab: 'agents', tabLabel: 'Agents', section: 'Grok · xAI', hint: 'xAI key for Grok sessions', keywords: 'grok xai x.ai key anthropic-compatible elon' },
-  { tab: 'agents', tabLabel: 'Agents', section: 'Installed agent runtimes', hint: 'Which CLIs Wanigan found, and where', keywords: 'cli path version claude codex installed runtime detect' },
-  { tab: 'agents', tabLabel: 'Agents', section: 'Provider packs', hint: 'Packs, profiles, trust and enablement', keywords: 'provider pack manifest profile harness backend trust digest sha256 adapter enable disable remove restore' },
-  { tab: 'agents', tabLabel: 'Agents', section: 'Accounts', hint: 'Work and personal logins, and which is default', keywords: 'account login work personal switch claude config dir credentials organisation organization sign in profile' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Projects', hint: 'Add and remove repositories', keywords: 'project repository folder add remove' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Worktrees', hint: 'Isolated worktrees and cleanup', keywords: 'worktree isolated branch cleanup orphan' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Trust and the policy ledger', hint: 'Trust levels, decisions, export', keywords: 'trust policy ledger permission audit export' },
@@ -70,7 +73,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'backup', tabLabel: 'Backup', section: 'Restore a backup', hint: 'Put a copy back in place', keywords: 'backup restore replace recovery' },
   { tab: 'app', tabLabel: 'App', section: 'Appearance', hint: 'Theme: system, light, dark', keywords: 'appearance theme light dark system colour color' },
   { tab: 'app', tabLabel: 'App', section: 'Motion', hint: 'Animation comfort', keywords: 'motion animation reduce comfort' },
-  { tab: 'app', tabLabel: 'App', section: 'Demo mode', hint: 'Mask names before sharing a screen', keywords: 'demo mode mask screenshot share names' },
+  { tab: 'app', tabLabel: 'App', section: 'Demo mode', hint: 'Fictional workspace and demo prompts', keywords: 'demo mode mask screenshot share names prompt copy demonstration sample ai companion' },
 ];
 
 type SettingsTabInfo = {
@@ -80,10 +83,13 @@ type SettingsTabInfo = {
   title: string;
   detail: string;
   help: string;
-  includes: string[];
 };
 
 const SETTINGS_TAB_STORAGE_KEY = 'wanigan.settings.tab';
+const SETTINGS_ICONS: Record<SettingsTab, IconName> = {
+  agents: 'terminal', projects: 'branch', automation: 'gauge', connections: 'plug',
+  privacy: 'file-text', backup: 'layers', app: 'sliders',
+};
 // Keep the settings breakpoint deliberately wider than the general phone
 // breakpoint. A 1,024 px iPad (or a desktop window in split view) has enough
 // room for the content, but not enough room for a useful 212 px navigation
@@ -99,45 +105,38 @@ const SETTINGS_COMPACT_QUERY = '(max-width: 1024px), (pointer: coarse) and (max-
 const SETTINGS_TABS: SettingsTabInfo[] = [
   {
     id: 'agents', label: 'Agents', eyebrow: 'Accounts & runtime', title: 'Agents & providers',
-    detail: 'Add provider keys, check their status, and manage the provider packs whose profiles Wanigan can launch.',
+    detail: 'Your installed agents, signed-in accounts and the providers they can use.',
     help: 'Keys are verified before Wanigan stores them in your macOS credential store. A new key is ready for the next session; a session already running keeps the launch configuration it started with — including its frozen provider pack, even if you disable or remove that pack here.',
-    includes: ['Claude Platform', 'GLM Coding Plan', 'DeepSeek', 'Grok · xAI', 'installed runtimes', 'provider packs', 'accounts'],
   },
   {
     id: 'projects', label: 'Projects & safety', eyebrow: 'Repositories & guardrails', title: 'Projects & safety',
     detail: 'Manage repositories, clean up isolated worktrees, and set the policy record that accompanies agent tools.',
     help: 'Project and trust changes are saved as you make them. Trust is a visible policy and audit layer, not an operating-system sandbox; it never retroactively changes a command already running.',
-    includes: ['projects', 'worktrees', 'trust levels', 'policy ledger'],
   },
   {
     id: 'automation', label: 'Automation', eyebrow: 'Cost & capacity', title: 'Automation',
     detail: 'Set a spend ceiling and decide how many interactive, headless, and batch jobs may run at once.',
     help: 'Save buttons apply the fields beside them. Lowering a limit prevents additional work from starting — queued for headless, batch and Scout work, refused outright for an interactive session — and deliberately does not stop work that is already underway.',
-    includes: ['spending cap', 'concurrency limits', 'dispatch queue'],
   },
   {
     id: 'connections', label: 'Connections', eyebrow: 'Tools & remote access', title: 'Connections',
     detail: 'Configure MCP tool servers and the private iPad/phone monitor, alerts, and optional remote controls.',
     help: 'External connections are opt-in. Wanigan keeps local services on loopback and says when a setting needs a new session or an app restart before it can take effect.',
-    includes: ['iPad & phone', 'Tailscale pairing', 'ntfy alerts', 'MCP servers'],
   },
   {
     id: 'privacy', label: 'Privacy & data', eyebrow: 'Observation & retention', title: 'Privacy & data',
     detail: 'Choose what Wanigan observes, search the transcript archive, inspect its own network boundaries, and remove locally retained data.',
     help: 'Most switches save immediately for future activity. The descriptions distinguish aggregate telemetry, tool summaries, and the separate transcript archive that can retain conversation text on this Mac.',
-    includes: ['telemetry', 'transcript search', 'egress report', 'event retention'],
   },
   {
     id: 'backup', label: 'Backup', eyebrow: 'Copy & recovery', title: 'Backup & restore',
     detail: 'Write a verified copy of Wanigan’s database and transcript archive, check a copy you already have, and put one back.',
     help: 'A backup is a file operation you start here; nothing is scheduled and nothing is uploaded. Restoring replaces the database in place and relaunches Wanigan, so it refuses while any agent is still running.',
-    includes: ['create a backup', 'verify a backup', 'restore', 'what is not copied'],
   },
   {
     id: 'app', label: 'App', eyebrow: 'Appearance & sharing', title: 'App experience',
-    detail: 'Tune motion for comfort and prepare a safely masked view before sharing a screenshot or demo.',
-    help: 'These are local presentation preferences. Motion changes immediately; demo mode reloads the app so every view starts from the same masked state.',
-    includes: ['appearance', 'motion', 'demo mode', 'safe screenshots'],
+    detail: 'Tune motion for comfort and open a fictional workspace before sharing a screenshot or demo.',
+    help: 'These are local presentation preferences. Motion changes immediately; demo mode opens a separate workspace with fictional data.',
   },
 ];
 
@@ -387,39 +386,36 @@ function Result({ r }: { r: { tone: 'ok' | 'error'; text: string } | null }) {
 /** Scroll to a section by the title it renders. A title that has drifted
  *  simply does not scroll; the tab is already correct, which is the same
  *  degradation the ⌘K jump accepts. */
-function jumpToSection(section: string): void {
-  document.querySelector(`[data-section-title="${CSS.escape(section)}"]`)
-    ?.scrollIntoView({ block: 'start', behavior: 'auto' });
+function jumpToSection(section: string, focus = false): void {
+  const target = document.querySelector<HTMLElement>(`[data-section-title="${CSS.escape(section)}"]`);
+  target?.scrollIntoView({ block: 'start', behavior: 'auto' });
+  if (focus && target) {
+    target.tabIndex = -1;
+    target.focus({ preventScroll: true });
+  }
 }
 
 function SettingsTabPanel({ tab, active, children }: {
   tab: SettingsTabInfo; active: boolean; children: React.ReactNode;
 }) {
+  const scroll = useRef<HTMLDivElement>(null);
+  useRememberedScroll(scroll, `settings-${tab.id}`);
   return (
-    <div id={`settings-${tab.id}`} className="set-tab-panel" role="tabpanel"
+    <div ref={scroll} id={`settings-${tab.id}`} className="set-tab-panel" role="tabpanel"
          aria-labelledby={`settings-tab-${tab.id}`} hidden={!active}>
       <header className="set-panel-intro">
-        <div className="set-panel-kicker">{tab.eyebrow}</div>
         <h2>{tab.title}</h2>
         <p>{tab.detail}</p>
-        <div className="set-panel-help">
-          <span className="set-panel-help-mark" aria-hidden="true">?</span>
-          <div><strong>How changes apply</strong><p>{tab.help}</p></div>
-        </div>
-        {/* The section list was a sentence describing anchors that already
-            exist. Each entry is now the button that scrolls to its own
-            section, using the same lookup the palette's Settings rows use. */}
-        <p className="set-panel-includes">
-          <strong>In this section</strong>
-          <span>
-            {tab.includes.map((entry, i) => (
-              <span key={entry}>
-                {i > 0 && ' · '}
-                <button type="button" className="link set-jump" onClick={() => jumpToSection(entry)}>{entry}</button>
-              </span>
-            ))}
-          </span>
-        </p>
+        <details className="set-panel-help">
+          <summary>How changes apply<Icon name="chevron-down" /></summary>
+          <p>{tab.help}</p>
+        </details>
+        <nav className="set-section-index" aria-label={`${tab.label} settings shortcuts`}>
+          {SETTINGS_INDEX.filter(entry => entry.tab === tab.id).map(entry => (
+            <button type="button" className="btn btn-sm" key={entry.section}
+                    onClick={() => jumpToSection(entry.section, true)}>{entry.section}</button>
+          ))}
+        </nav>
       </header>
       {children}
     </div>
@@ -490,6 +486,13 @@ export default function Settings({
   const [xaiBusy, setXaiBusy] = useState(false);
   const [xaiMsg, setXaiMsg] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>(savedSettingsTab);
+  const [settingsQuery, setSettingsQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+  const searchWords = settingsQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const searchResults = searchWords.length ? SETTINGS_INDEX.filter(entry => {
+    const text = `${entry.tabLabel} ${entry.section} ${entry.hint} ${entry.keywords}`.toLowerCase();
+    return searchWords.every(word => text.includes(word));
+  }) : [];
   const compactSettingsLayout = useMediaQuery(SETTINGS_COMPACT_QUERY);
   const settingsTabsRef = useRef<HTMLElement>(null);
 
@@ -734,42 +737,76 @@ export default function Settings({
     chooseSettingsTab(SETTINGS_TABS[next].id, true);
   }
 
+  function openSearchResult(entry: SettingsIndexEntry) {
+    setSettingsTab(entry.tab);
+    setSettingsQuery('');
+    requestAnimationFrame(() => jumpToSection(entry.section, true));
+  }
+
   return (
     <div className="pane set" data-motion={prefs?.motion ?? 'auto'}>
-      {/* One meta-layer, not three. The hero said what the grouping is, an
-          aside said how saving works and the rail intro said the same thing
-          again about drafts — three explanations of the page before the first
-          control. The rule is one line; the rest is a guide the operator can
-          hide. Per-control captions stay where they are. */}
       <PageHead compact title="Settings"
-                lead="Grouped by the job you are doing. Switches save at once; a Save button applies the fields beside it." />
-      <Explainer id="settings-how" title="How settings work">
-        <p>
-          Most switches save immediately. A button labelled Save applies the fields beside it, and each
-          section calls out anything that waits for a new session or a restart. Your unfinished form
-          entries stay put while you move between sections.
-        </p>
-      </Explainer>
+                lead="Make Wanigan work your way." />
 
       {prefsErr && <Callout level="critical" title="A preference did not save.">{prefsErr}</Callout>}
 
       <div className="set-layout">
+        <aside className="set-directory" aria-label="Find a setting">
+          <label className="set-search">
+            <Icon name="search" />
+            <input ref={searchRef} className="field" type="search" aria-label="Search settings"
+                   placeholder="Find a setting" value={settingsQuery}
+                   onChange={event => setSettingsQuery(event.target.value)}
+                   onKeyDown={event => {
+                     if (event.key === 'Escape') { event.stopPropagation(); setSettingsQuery(''); }
+                     if (event.key === 'Enter' && searchResults[0]) { event.preventDefault(); openSearchResult(searchResults[0]); }
+                   }} />
+          </label>
+          {searchWords.length > 0 && <div className="set-search-results" aria-label="Settings search results">
+            <p role="status">{searchResults.length} {searchResults.length === 1 ? 'result' : 'results'}</p>
+            {searchResults.map(entry => <button type="button" key={entry.section} onClick={() => openSearchResult(entry)}>
+              <strong>{entry.section}</strong><span>{entry.tabLabel}</span>
+            </button>)}
+            {searchResults.length === 0 && <p>Try “appearance”, “accounts” or “backup”.</p>}
+            <button type="button" className="link" onClick={() => { setSettingsQuery(''); searchRef.current?.focus(); }}>Clear search</button>
+          </div>}
         <nav ref={settingsTabsRef} className="set-tabs" role="tablist" aria-label="Settings sections"
              aria-orientation={compactSettingsLayout ? 'horizontal' : 'vertical'}>
-          <div className="set-tabs-intro"><strong>Settings areas</strong></div>
           {SETTINGS_TABS.map((tab, index) => (
             <button id={`settings-tab-${tab.id}`} key={tab.id} type="button" role="tab"
                     aria-selected={settingsTab === tab.id} tabIndex={settingsTab === tab.id ? 0 : -1}
                     aria-controls={`settings-${tab.id}`} className={settingsTab === tab.id ? 'on' : ''}
                     onClick={() => chooseSettingsTab(tab.id)} onKeyDown={(event) => moveSettingsTab(event, index)}>
-              <span className="set-tab-label">{tab.label}</span>
-              <span className="set-tab-detail">{tab.eyebrow}</span>
+              <span className="set-category-icon"><Icon name={SETTINGS_ICONS[tab.id]} /></span>
+              <span><span className="set-tab-label">{tab.label}</span><span className="set-tab-detail">{tab.eyebrow}</span></span>
             </button>
           ))}
         </nav>
+          <Explainer id="settings-how" title="Saving your changes" defaultHidden>
+            <p>Switches save immediately. Save buttons apply the fields beside them. Unfinished entries stay put as you change categories.</p>
+          </Explainer>
+        </aside>
 
         <div className="set-panels">
           <SettingsTabPanel tab={settingsTabInfo('agents')} active={settingsTab === 'agents'}>
+            <Section title="Installed agent runtimes" hint="Resolved from your login shell's PATH, then from editor extension directories.">
+              {providers.map((p) => (
+                <div className="set-runtime-row" key={p.id}>
+                  <span style={{ fontWeight: 600, minWidth: 110 }}>{p.label}</span>
+                  {p.path ? (
+                    <>
+                      <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>{p.version ?? 'installed'}</span>
+                      <span className="faint set-path set-wrap" style={{ flex: 1 }}>{p.path}</span>
+                    </>
+                  ) : (
+                    <span className="faint">not found — <code className="mono">{p.bin}</code> is not on PATH or in an editor extension</span>
+                  )}
+                </div>
+              ))}
+            </Section>
+
+            <Accounts />
+            <ProviderPacks providers={providers} />
             <Section title="Claude Platform API key"
                      hint="Needed for Batches — estimating, dry runs, and submitting. Agent sessions do not use it; they authenticate through their own CLI.">
               {status?.fromEnv && (
@@ -842,6 +879,8 @@ export default function Settings({
                     console.anthropic.com/settings/keys
                   </button>. A Claude Code OAuth token is rejected.
                 </p>
+                <details className="set-key-guide">
+                  <summary>Key storage and workspace IDs</summary>
                 <p className="dim" style={{ marginTop: 8 }}>
                   The key is verified against the live API before it is saved, then encrypted with{' '}
                   {status?.encryptionAvailable ? 'your macOS Keychain' : 'the OS credential store'} — it is never
@@ -856,6 +895,7 @@ export default function Settings({
                   exchanges a short-lived JWT from a cloud or CI identity provider, so it only works on GCP, AWS,
                   Azure or GitHub Actions. A local desktop app has nothing to federate from.
                 </p>
+                </details>
               </div>
             </Section>
 
@@ -944,24 +984,7 @@ export default function Settings({
               </p>
             </Section>
 
-            <Section title="Installed agent runtimes" hint="Resolved from your login shell's PATH, then from editor extension directories.">
-              {providers.map((p) => (
-                <div className="set-runtime-row" key={p.id}>
-                  <span style={{ fontWeight: 600, minWidth: 110 }}>{p.label}</span>
-                  {p.path ? (
-                    <>
-                      <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>{p.version ?? 'installed'}</span>
-                      <span className="faint set-path set-wrap" style={{ flex: 1 }}>{p.path}</span>
-                    </>
-                  ) : (
-                    <span className="faint">not found — <code className="mono">{p.bin}</code> is not on PATH or in an editor extension</span>
-                  )}
-                </div>
-              ))}
-            </Section>
 
-            <ProviderPacks providers={providers} />
-            <Accounts />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('projects')} active={settingsTab === 'projects'}>
@@ -4714,14 +4737,11 @@ function Appearance({ preference, resolved, onChange }: {
 }) {
   return (
     <Section title="Appearance"
-             hint="Choose a colour mode once. It stays local to Wanigan and changes the whole working surface, including code and terminals.">
+             hint="One appearance for your workspace, code and terminals.">
       <div className="set-appearance">
         <div>
-          <h3>Colour mode</h3>
-          <p>
-            System follows your Mac’s Light/Dark appearance as it changes. Light and Dark stay fixed
-            until you choose System again.
-          </p>
+          <h3>Set the atmosphere</h3>
+          <p>Follow your Mac, or settle into light or dark.</p>
         </div>
         <ThemeControl variant="card" preference={preference} resolved={resolved} onChange={onChange} />
       </div>
@@ -4738,28 +4758,24 @@ function Motion({ prefs, pending, setPref }: {
 }) {
   return (
     <Section title="Motion"
-             hint="Sparklines, the attention strip and the timeline animate as work moves. This decides whether they do.">
+             hint="Choose how the companion and interface respond.">
       {!prefs ? (
         <p className="dim" style={{ fontSize: 'var(--t-small)' }}>Reading your preferences…</p>
       ) : (
         <>
-          <fieldset disabled={pending === 'motion'} style={{ border: 'none' }}>
+          <fieldset disabled={pending === 'motion'} className="set-motion-options">
             <Options<MotionSetting>
               label="Motion"
               value={prefs.motion}
               options={[
-                { id: 'auto', word: 'Auto', detail: 'Follow the system. macOS Reduce Motion switches animation off; otherwise it plays. The right answer for almost everyone.' },
-                { id: 'full', word: 'Full', detail: 'Always animate, even when the system asks for reduced motion. Use this when you want the movement and the OS setting is there for something else.' },
-                { id: 'off',  word: 'Off',  detail: 'Never animate, even when the system allows it. Values still update — they change without sliding.' },
+                { id: 'auto', word: 'Auto', detail: 'Follows Reduce Motion on your Mac.' },
+                { id: 'full', word: 'Full', detail: 'Expressive motion, even with Reduce Motion on.' },
+                { id: 'off',  word: 'Off',  detail: 'Instant changes. All the same information.' },
               ]}
               onPick={(v) => void setPref('motion', v)}
             />
           </fieldset>
-          <p className="faint" style={{ fontSize: 'var(--t-micro)', marginTop: 8, lineHeight: 1.5 }}>
-            This page honours the setting as soon as you pick it — the switches above stop sliding.
-            Motion never carries meaning anywhere in Wanigan, so turning it off costs you nothing but
-            the movement.
-          </p>
+          <p className="set-caption">Applies immediately. Status and progress always remain readable with motion off.</p>
         </>
       )}
     </Section>
@@ -5505,109 +5521,69 @@ function Backup() {
   );
 }
 
-/* ── demo mode ────────────────────────────────────────────────────────────
-   For screenshots. Masking happens in the main process at the IPC boundary,
-   so this panel only turns it on and shows what it is doing — a mapping you
-   cannot inspect is one you cannot trust before you publish a screenshot.
-   ──────────────────────────────────────────────────────────────────────── */
-
-type DemoState = { on: boolean; blurTerminals: boolean; map: { real: string; fake: string }[] };
-
-function DemoPanel() {
-  // Null until demo:state answers. It used to start at {on:false,
-  // blurTerminals:false}, which the effect below wrote straight to the global
-  // attribute — so opening Settings removed the blur App had applied, and a
-  // rejected read (swallowed by an empty catch) left it removed for the rest of
-  // the session while masking, which lives in the main process, stayed on. That
-  // is the half-masked screen: invented project names over real terminal bytes.
-  const [state, setState] = useState<DemoState | null>(null);
+/* Demo controls share the same main-owned window transition as the shortcut. */
+export function DemoPanel() {
+  const [state, setState] = useState<import('@shared/demo').DemoState | null>(null);
   const [readErr, setReadErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
+  const [promptId, setPromptId] = useState<string>(DEMO_PROMPTS[0].id);
+  const [copying, setCopying] = useState(false);
+  const [copyResult, setCopyResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const prompt = DEMO_PROMPTS.find(item => item.id === promptId) ?? DEMO_PROMPTS[0];
   const read = useCallback(() => window.wanigan.demo.state()
-    .then((s) => { setState(s); setReadErr(null); })
-    .catch((e) => { setReadErr(msg(e)); }), []);
+    .then(s => { setState(s); setReadErr(null); })
+    .catch(e => setReadErr(msg(e))), []);
   useEffect(() => { void read(); }, [read]);
-
-  // App applies this at start-up from the same stored answer; this keeps the
-  // page honest between ticking the box and the next launch. Until the read
-  // answers there is no answer to apply, so this writes nothing and leaves
-  // whatever App last set standing — blurred, if App's own read has not
-  // returned either.
-  useEffect(() => {
+  async function toggle() {
     if (!state) return;
-    document.documentElement.toggleAttribute('data-demo-blur', state.on && state.blurTerminals);
-  }, [state]);
-
-  async function toggleBlur(next: boolean) {
-    // No reload and no optimistic flip: on a failed write the checkbox stays
-    // where it was, because state was never updated.
-    try { setState(await window.wanigan.demo.setBlur(next)); }
-    catch { /* the checkbox stays where it was: state was not updated */ }
-  }
-
-  async function toggle(on: boolean) {
     setBusy(true);
-    try {
-      await window.wanigan.demo.set(!on);
-      // Reload rather than just flipping the flag. Views hold data fetched
-      // before the toggle, so without this the rail keeps showing real project
-      // names while this panel shows masked ones — half-masked is the one
-      // outcome worse than not masking at all, because it looks done.
-      window.location.reload();
-    } catch { setBusy(false); }
+    try { await window.wanigan.demo.set(!state.on); }
+    catch (e) { setReadErr(msg(e)); setBusy(false); }
   }
-
-  return (
-    <Section title="Demo mode"
-             hint="Replaces your project names, paths, usernames and git authors with plausible fakes everywhere in the app, so a screenshot shows the tool rather than your work.">
-      {readErr !== null && (
-        <PanelError what="whether demo mode is on" detail={readErr} onRetry={() => void read()} />
-      )}
-      {state === null ? (
-        readErr === null && <Reading what="whether demo mode is on" />
-      ) : (
-        <>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button className={state.on ? 'btn btn-primary' : 'btn'} disabled={busy} onClick={() => void toggle(state.on)}>
-            {busy ? '…' : state.on ? 'Demo mode is on' : 'Turn on demo mode'}
-          </button>
-          <span className="faint" style={{ fontSize: 'var(--t-small)' }}>⌘⇧D toggles it without touching the mouse.</span>
-        </div>
-
-        {state.on && (
-          <>
-            <div style={{ marginTop: 10 }}>
-              <label style={{ display: 'flex', gap: 7, alignItems: 'flex-start', fontSize: 'var(--t-small)' }}>
-                <input type="checkbox" checked={state.blurTerminals}
-                       onChange={(e) => void toggleBlur(e.target.checked)} style={{ marginTop: 3 }} />
-                <span>
-                  <strong>Blur terminals too.</strong> A live terminal draws raw bytes from the agent, so nothing in the
-                  app can rewrite what it already printed. Masking cannot reach it — blurring can.
-                </span>
-              </label>
-            </div>
-
-            <div style={{ marginTop: 10 }}>
-              <div className="label">What your projects look like right now</div>
-              <table className="viz-table">
-                <tbody>
-                  {state.map.slice(0, 12).map((m) => (
-                    <tr key={m.real}>
-                      <td className="mono" style={{ fontSize: 'var(--t-micro)', color: 'var(--text-faint)' }}>{m.fake}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <p className="faint" style={{ fontSize: 'var(--t-small)', marginTop: 6, lineHeight: 1.5 }}>
-                Only the masked side is listed — printing the real paths beside them would put the thing you are
-                hiding on the screen you are about to photograph.
-              </p>
-            </div>
-          </>
-        )}
-        </>
-      )}
-    </Section>
-  );
+  async function copyPrompt() {
+    setCopying(true);
+    setCopyResult(null);
+    try {
+      await window.wanigan.demo.copyPrompt(prompt.id);
+      setCopyResult({ tone: 'ok', text: 'Prompt copied.' });
+    } catch {
+      setCopyResult({ tone: 'error', text: 'Could not copy the prompt. Select the prompt text and copy it manually.' });
+    } finally { setCopying(false); }
+  }
+  return <Section title="Demo mode" hint="A separate, read-only workspace for showing Wanigan with fictional data.">
+    {readErr !== null && <PanelError what="whether demo mode is on" detail={readErr} onRetry={() => void read()} />}
+    {!state && !readErr && <Reading what="whether demo mode is on" />}
+    {state && <>
+      <p>Projects, session activity, terminal text, accounts and usage figures are examples.
+        Your saved drafts and real records are kept in a separate workspace. Demo actions cannot launch agents, call models or change files.</p>
+      <p>Existing work continues in the background. Wanigan’s desktop alerts are suppressed during the demo.
+        Switching back reveals your real workspace; quitting the app ends live sessions.</p>
+      <button className="btn btn-primary" disabled={busy} onClick={() => void toggle()}>
+        {busy ? 'Switching workspace…' : state.on ? 'Return to real workspace' : 'Open demo workspace'}
+      </button>
+      <p className="faint">⌘⇧D opens the same switch from anywhere. Mission, Sessions, Fleet and Usage have sample data; other surfaces are still being prepared.</p>
+    </>}
+    <div className="set-stack">
+      <label className="label" htmlFor="demo-prompt">Demo prompts</label>
+      <div className="set-field-action">
+        <select id="demo-prompt" className="field" value={prompt.id} disabled={copying}
+                aria-describedby="demo-prompt-help demo-prompt-target" onChange={e => {
+                  setPromptId(e.target.value);
+                  setCopyResult(null);
+                }}>
+          {DEMO_PROMPTS.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+        </select>
+        <button type="button" className="btn" disabled={copying} onClick={() => void copyPrompt()}>
+          {copying ? 'Copying…' : 'Copy prompt'}
+        </button>
+      </div>
+      <p id="demo-prompt-help" className="set-caption">Prompts for preparing a demonstration. Live demo AI and disposable sample repositories are still being prepared.</p>
+      <p id="demo-prompt-target" className="set-caption">{prompt.target}</p>
+      <textarea className="field" aria-label="Selected demo prompt" aria-describedby="demo-prompt-target"
+                readOnly rows={4} value={prompt.text} />
+      <div className="set-stack" role="status">
+        {copyResult && <Note tone={copyResult.tone} role="none">{copyResult.text}</Note>}
+      </div>
+    </div>
+  </Section>;
 }

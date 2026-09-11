@@ -1,0 +1,32 @@
+/* One launch decision with its selected values alongside the form. */
+.modal.session-launch { width: min(1040px, calc(100vw - var(--s-6))); max-width: 1040px; max-height: calc(100vh - var(--s-6)); padding: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: var(--r-xl); }
+.launch-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-5); padding: var(--s-5) var(--s-6); border-bottom: 1px solid var(--line-soft); }
+.launch-intro h2 { font-size: var(--t-display); letter-spacing: -.035em; font-weight: 550; }
+.launch-intro p { margin-top: var(--s-2); color: var(--text-dim); font-size: var(--t-body); line-height: 1.6; }
+.launch-intro > .btn { border: 0; background: transparent; box-shadow: none; }
+.launch-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; min-height: 0; }
+.launch-form { overflow: auto; padding: 0 var(--s-6); scroll-padding-top: var(--s-5); }
+.launch-section { padding-block: var(--s-5); }
+.launch-section + .launch-section { border-top: 1px solid var(--line-soft); }
+.launch-section > .sec-head { margin-bottom: var(--s-5); color: var(--text); }
+.launch-section .sunk { border: 0; border-radius: var(--r-md); }
+.launch-section .field { min-height: var(--control-h); }
+.launch-section .label { text-transform: none; letter-spacing: 0; }
+.launch-section .launch-message { font-family: var(--font-ui); min-height: 125px; line-height: 1.7; }
+.launch-summary { padding: var(--s-5); background: var(--bg-chrome); border-left: 1px solid var(--line-soft); display: flex; flex-direction: column; min-width: 0; overflow: auto; }
+.launch-summary-symbol { display: grid; place-items: center; width: 52px; height: 52px; border: 1px solid var(--glass-line); border-radius: var(--r-lg); color: var(--accent); background: var(--glass-fill); margin-bottom: var(--s-5); }
+.launch-summary-symbol > .icon { width: 25px; height: 25px; }
+.launch-summary h3 { font-size: var(--t-title); font-weight: 550; letter-spacing: -.025em; overflow-wrap: anywhere; }
+.launch-summary > p { font-size: var(--t-small); line-height: 1.6; color: var(--text-faint); margin-top: var(--s-2); overflow-wrap: anywhere; }
+.launch-summary dl { margin-block: var(--s-5); display: grid; gap: var(--s-4); }
+.launch-summary dl > div { display: grid; gap: var(--s-1); }
+.launch-summary dt { color: var(--text-faint); font-size: var(--t-micro); }
+.launch-summary dd { color: var(--text); font-size: var(--t-small); line-height: 1.5; overflow-wrap: anywhere; }
+.launch-summary nav { border-top: 1px solid var(--line-soft); padding-top: var(--s-3); }
+.launch-summary nav button { width: 100%; display: flex; justify-content: space-between; gap: var(--s-2); text-align: left; padding: var(--s-2) 0; color: var(--text-dim); font-size: var(--t-small); }
+.launch-summary nav button:hover { color: var(--accent); }
+.launch-summary .launch-summary-note { margin-top: auto; padding-top: var(--s-5); }
+.launch-footer { display: flex; align-items: center; gap: var(--s-4); padding: var(--s-4) var(--s-6); border-top: 1px solid var(--line-soft); background: var(--bg-raised); flex-shrink: 0; }
+.launch-submit { display: flex; align-items: center; gap: var(--s-2); margin-left: auto; flex: none; }
+.launch-key { font-size: var(--t-small); color: var(--text-faint); margin-right: var(--s-2); }
+@media (max-width: 800px) { .launch-layout { grid-template-columns: minmax(0, 1fr); } .launch-summary { display: none; } .launch-intro, .launch-footer { padding: var(--s-4); } .launch-form { padding-inline: var(--s-4); } .launch-footer { flex-wrap: wrap; } }

@@ -1,0 +1,92 @@
+{
+  "at": "2026-09-10T22:40:54.816Z",
+  "provenance": "Actual Electron renderer; synthetic services; no production operations",
+  "checks": [],
+  "measurements": [
+    {
+      "theme": "dark",
+      "tab": "agents",
+      "width": 1399,
+      "scrollWidth": 1399
+    },
+    {
+      "theme": "dark",
+      "tab": "projects",
+      "width": 1399,
+      "scrollWidth": 1399
+    },
+    {
+      "theme": "dark",
+      "tab": "automation",
+      "width": 1399,
+      "scrollWidth": 1399
+    },
+    {
+      "theme": "dark",
+      "tab": "connections",
+      "width": 1399,
+      "scrollWidth": 1399
+    },
+    {
+      "theme": "dark",
+      "tab": "privacy",
+      "width": 1399,
+      "scrollWidth": 1399
+    },
+    {
+      "theme": "dark",
+      "tab": "backup",
+      "width": 1399,
+      "scrollWidth": 1399
+    },
+    {
+      "theme": "dark",
+      "tab": "app",
+      "width": 1399,
+      "scrollWidth": 1399
+    },
+    {
+      "theme": "light",
+      "tab": "agents",
+      "width": 1399,
+      "scrollWidth": 1399
+    },
+    {
+      "theme": "light",
+      "tab": "projects",
+      "width": 1399,
+      "scrollWidth": 1399
+    },
+    {
+      "theme": "light",
+      "tab": "automation",
+      "width": 1399,
+      "scrollWidth": 1399
+    },
+    {
+      "theme": "light",
+      "tab": "connections",
+      "width": 1399,
+      "scrollWidth": 1399
+    },
+    {
+      "theme": "light",
+      "tab": "privacy",
+      "width": 1399,
+      "scrollWidth": 1399
+    },
+    {
+      "theme": "light",
+      "tab": "backup",
+      "width": 1399,
+      "scrollWidth": 1399
+    },
+    {
+      "theme": "light",
+      "tab": "app",
+      "width": 1399,
+      "scrollWidth": 1399
+    }
+  ],
+  "errors": []
+}

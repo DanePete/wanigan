@@ -1,0 +1,110 @@
+{
+  "checks": [
+    "planning saves an explicit contract, launch opens the recorded session, attention opens the exact prompt, and the return path restores its exact goal task",
+    "failed approval retains the draft without celebrating; recorded acceptance celebrates once, keeps evidence, respects reduced motion, and reopening history does not replay it",
+    "next-goal planning does not spend or launch; unavailable reads disable guidance, retry restores the exact link, and late answers cannot attach a goal to an unrelated session",
+    "long goal and task names fit 1080, 1280 and 1720 pixel windows in both themes; Wanigan keeps detailed GPU rendering and responds to a deliberate nudge"
+  ],
+  "errors": [],
+  "calls": [
+    [
+      "create",
+      {
+        "projectId": "p1",
+        "title": "A checkout you can trust",
+        "objective": "Make payment retries safe, even when a response never reaches the customer.",
+        "acceptance": [
+          "A repeated callback creates one charge.",
+          "The timeout case has a passing regression test.",
+          "The final diff is reviewed."
+        ],
+        "risk": "elevated",
+        "plan": [
+          {
+            "kind": "plan",
+            "title": "Plan and identify risks",
+            "instructions": "Produce an implementation plan, identify affected areas, unknowns, and evidence needed for acceptance. Do not make changes until the plan is accepted.",
+            "dependsOn": [],
+            "claimPath": null
+          },
+          {
+            "kind": "implement",
+            "title": "Implement in an isolated worktree",
+            "instructions": "Make the smallest changes that satisfy the accepted plan and the docket acceptance checks. Keep the worktree reviewable and report intentional trade-offs.",
+            "dependsOn": [
+              0
+            ],
+            "claimPath": null
+          },
+          {
+            "kind": "verify",
+            "title": "Verify the change",
+            "instructions": "Run the project review gate and targeted checks in the implementation worktree. Record failures as evidence; do not claim success without command results.",
+            "dependsOn": [
+              1
+            ],
+            "claimPath": null
+          },
+          {
+            "kind": "review",
+            "title": "Independent review and decision",
+            "instructions": "Review the diff, the acceptance checks, and the recorded evidence. Approve only with a passed verification proof; otherwise request changes or reject.",
+            "dependsOn": [
+              2
+            ],
+            "claimPath": null
+          }
+        ],
+        "budgetUsd": null
+      }
+    ],
+    [
+      "start",
+      "task-0",
+      {
+        "providerId": "claude"
+      }
+    ],
+    [
+      "complete",
+      "task-0",
+      {
+        "decision": "approve"
+      }
+    ],
+    [
+      "complete",
+      "task-1",
+      {
+        "decision": "approve"
+      }
+    ],
+    [
+      "runProof",
+      "task-2"
+    ],
+    [
+      "complete",
+      "task-2",
+      {
+        "decision": "approve"
+      }
+    ],
+    [
+      "complete",
+      "task-3",
+      {
+        "detail": "The retries are covered and the diff is ready.",
+        "decision": "approve"
+      }
+    ],
+    [
+      "complete",
+      "task-3",
+      {
+        "detail": "The retries are covered and the diff is ready.",
+        "decision": "approve"
+      }
+    ]
+  ]
+}

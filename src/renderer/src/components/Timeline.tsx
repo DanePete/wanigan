@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionCheckpoint, SessionEvent } from '@shared/types';
-import { Note, Section, Stat, ago, num } from './bits';
+import { Note, Section, Stat, Icon, ago, num } from './bits';
 
 /**
  * What the agent DID, beside the terminal that says what it claimed.
@@ -47,6 +47,7 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
   /** Jump to this turn's diff in the code panel. Offered only for checkpoint-matched turns. */
   onOpenTurnDiff?: (turn: number) => void;
 }) {
+  const scroll = useRef<HTMLDivElement>(null);
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
   const [err, setErr] = useState<string | null>(null);
   const [all, setAll] = useState<SessionEvent[]>([]);
@@ -227,11 +228,10 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
   }
 
   return (
-    <div className="tl">
-      <div className="tl-scroll">
-        <ToolSummary tools={tools} events={all.length} capped={all.length >= FETCH} />
-
+    <div className="tl tl-workspace">
+      <div className="tl-scroll" ref={scroll}>
         <div className="tl-sticky">
+          <div className="tl-identity"><strong>Session activity</strong><button className="tl-chip" type="button" onClick={() => scroll.current?.scrollTo({ top: 0, behavior: 'instant' })}>Latest</button></div>
           <LiveStrip live={live} now={now} />
           <div className="tl-filters">
             <input
@@ -255,8 +255,12 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
                 </button>
               ))}
             </div>
+            {filtering && <button className="tl-clear" type="button" onClick={clear}><Icon name="x" />Clear filters</button>}
           </div>
         </div>
+        <details className="tl-summary"><summary><span>Tool timing</span><span>{num(tools.reduce((count, tool) => count + tool.calls, 0))} completed calls <Icon name="chevron-down" /></span></summary>
+          <ToolSummary tools={tools} events={all.length} capped={all.length >= FETCH} />
+        </details>
 
         {filtered.length === 0 ? (
           <div className="tl-pad">

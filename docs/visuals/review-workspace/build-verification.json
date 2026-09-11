@@ -1,0 +1,25 @@
+{
+  "verifiedAt": "2026-09-10T23:41:18.387Z",
+  "arm64": {
+    "app": "/Users/dane/Projects/drupal/wanigan/release/mac-arm64/Wanigan.app",
+    "asarSha256": "fe6e73a31f6fc20bbcbea27f216a7eb7a1ab3d3cb6f1a353d5d853879e02591d",
+    "rendererPath": "/out/renderer/assets/index-Cvn799Rn.js",
+    "rendererSha256": "48936285e922559c50a99bcb39838ab3db16578c177fcf4653664ea25f633dbd",
+    "signature": "strict sealed ad-hoc signature, hardened fuses, ASAR integrity and executable PTY helper verified"
+  },
+  "x64": {
+    "app": "/Users/dane/Projects/drupal/wanigan/release/mac/Wanigan.app",
+    "asarSha256": "568d0853d7396fcf73f612770e8748333f7d58db9ccd27c961ed85c6ea8fbcf8",
+    "rendererPath": "/out/renderer/assets/index-Cvn799Rn.js",
+    "rendererSha256": "48936285e922559c50a99bcb39838ab3db16578c177fcf4653664ea25f633dbd",
+    "signature": "strict sealed ad-hoc signature, hardened fuses, ASAR integrity and executable PTY helper verified"
+  },
+  "installed": {
+    "app": "/Applications/Wanigan.app",
+    "asarSha256": "fe6e73a31f6fc20bbcbea27f216a7eb7a1ab3d3cb6f1a353d5d853879e02591d",
+    "rendererPath": "/out/renderer/assets/index-Cvn799Rn.js",
+    "rendererSha256": "48936285e922559c50a99bcb39838ab3db16578c177fcf4653664ea25f633dbd",
+    "signature": "strict sealed ad-hoc signature, hardened fuses, ASAR integrity and executable PTY helper verified",
+    "verifiedAt": "2026-09-10T23:41:39.775Z"
+  }
+}

@@ -1,3 +1,5 @@
+import { useMemo, useState } from 'react';
+import { Icon } from './bits';
 import { TAB_SHORTCUTS, VIEW_SHORTCUT_ORDER, labelForTab } from '@shared/routes';
 import { BINDINGS, BINDING_GROUPS, type Binding, type BindingGroup } from '../bindings';
 import { useDialog } from './useDialog';
@@ -56,15 +58,24 @@ export default function ShortcutSheet({ onClose }: { onClose: () => void }) {
   // capture phase and hands focus back to whatever opened the sheet.
   const { portal, backdropProps, dialogProps } = useDialog<HTMLDivElement>({ onClose, initialFocus: 'first' });
 
+  const [query, setQuery] = useState('');
+  const [scope, setScope] = useState<BindingGroup | 'All'>('All');
+  const groups = useMemo(() => GROUPS.filter(group => scope === 'All' || group.title === scope)
+    .map(group => ({ ...group, rows: group.rows.filter(row => `${row.does} ${row.keys} ${group.title}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())) }))
+    .filter(group => group.rows.length > 0), [query, scope]);
+  const count = groups.reduce((sum, group) => sum + group.rows.length, 0);
   return portal(
     <div {...backdropProps}>
-      <div {...dialogProps} className="shortcut-sheet" aria-label="Keyboard shortcuts">
+      <div {...dialogProps} className="shortcut-sheet shortcut-browser" aria-label="Keyboard shortcuts">
         <div className="shortcut-head">
           <h2>Keyboard shortcuts</h2>
           <button type="button" className="btn" onClick={onClose}>Close</button>
         </div>
-        <div className="shortcut-groups">
-          {GROUPS.map((group) => (
+        <div className="shortcut-search"><Icon name="search" /><input className="field" type="search" aria-label="Find a keyboard shortcut" placeholder="Find an action or a key…" value={query} onChange={event => setQuery(event.target.value)} data-initial-focus /></div>
+        <div className="shortcut-layout"><nav className="shortcut-sections" aria-label="Shortcut categories">
+          {(['All', ...BINDING_GROUPS] as const).map(title => <button className="btn" type="button" key={title} aria-pressed={scope === title} onClick={() => setScope(title)}>{title === 'All' ? 'All shortcuts' : title}</button>)}
+        </nav><div className="shortcut-groups">
+          {groups.map((group) => (
             <section key={group.title} className="shortcut-group" aria-label={group.title}>
               <h3>{group.title}</h3>
               {group.note && <p className="faint shortcut-note">{group.note}</p>}
@@ -72,7 +83,7 @@ export default function ShortcutSheet({ onClose }: { onClose: () => void }) {
                 <tbody>
                   {group.rows.map((row) => (
                     <tr key={`${row.keys} ${row.does}`}>
-                      <td className="mono shortcut-keys">{row.keys}</td>
+                      <td className="shortcut-keys"><kbd>{row.keys}</kbd></td>
                       <td>{row.does}</td>
                     </tr>
                   ))}
@@ -80,7 +91,9 @@ export default function ShortcutSheet({ onClose }: { onClose: () => void }) {
               </table>
             </section>
           ))}
-        </div>
+          {count === 0 && <div className="shortcut-empty"><p>No shortcuts match this search. Try the action’s name.</p><button className="btn" onClick={() => { setQuery(''); setScope('All'); }}>Clear search</button></div>}
+        </div></div>
+        <p className="shortcut-results" role="status">{count} shortcuts shown. Keys apply when focus is outside the terminal, unless noted.</p>
       </div>
     </div>,
   );

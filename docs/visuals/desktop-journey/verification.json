@@ -1,0 +1,13 @@
+{
+  "core": {
+    "sharedTests": 24,
+    "smokeAssertions": 1580,
+    "failures": 0
+  },
+  "broaderProbesPassed": 17,
+  "packagedJourneyPassed": true,
+  "packagedReviewPassed": true,
+  "beforeScreenshots": 14,
+  "afterScreenshots": 24,
+  "rendererErrors": []
+}

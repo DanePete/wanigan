@@ -55,3 +55,37 @@ handled.release();assert.deepEqual(handled.step(0),held,'release does not telepo
 for(let i=0;i<120;i++)handled.step(1/30);
 assert(Math.abs(handled.step(0).roll)<.001,'handling settles after release');
 console.log('Orb play intention checks passed: priority, bounded vortex, one-shot celebration, pause, lava and handling.');
+
+const playful=new OrbExpression(base);advance(playful,1);playful.nudge();
+let wink=0,tilt=0,gestureForce=0;
+for(let i=0;i<240;i++){
+ const p=playful.step(1/120);wink=Math.max(wink,p.wink);tilt=Math.max(tilt,Math.abs(p.roll));gestureForce+=Math.abs(p.accelX)/120;
+ assert(Math.abs(p.accelX)<=2.2&&Math.abs(p.accelY)<=1.5,'expressive acceleration remains inside its force budget');
+ assert(Object.values(p).every(v=>typeof v!=='number'||Number.isFinite(v)),'every pose channel remains finite');
+}
+assert(wink>.85&&tilt>.16&&gestureForce>.1,'play has a visible wink and tilt that transfers force to the material');
+advance(playful,3);assert(playful.frame().wink<.001&&Math.abs(playful.frame().roll)<.001,'play settles without a repeated idle loop');
+playful.nudge();advance(playful,.7);assert(playful.frame().wink>.7);
+playful.setContext({...base,focused:true});advance(playful,.3);
+assert(playful.frame().wink<.02&&playful.frame().gesture==='listening','conversation interrupts a playful wink');
+
+const notice=new OrbExpression({...base,overview:{x:-.8,y:.3}});advance(notice,1);
+notice.setContext({...base,attentionEvent:1,overview:{x:-.8,y:.3}});
+const firstLook=advance(notice,.3),checkIn=advance(notice,.35),secondLook=advance(notice,.5);
+assert(firstLook.gazeX<-.6&&Math.abs(checkIn.gazeX)<.08&&secondLook.gazeX<-.6,'one attention event checks the work, looks back, and checks the work again');
+assert(firstLook.surprise>.65&&firstLook.wink===0&&firstLook.celebration===0,'attention opens the eyes without a wink or celebratory burst');
+advance(notice,3);notice.setContext({...base,attentionEvent:1});advance(notice,.2);
+assert.equal(notice.frame().gesture,'rest','a repeated attention snapshot does not repeat the double-take');
+
+const completed=new OrbExpression({...base,completionEvent:7});advance(completed,.5);
+assert.equal(completed.frame().celebration,0,'mounting with existing completions establishes a baseline');
+completed.setContext({...base,completionEvent:8});let nod=0;
+for(let i=0;i<120;i++){const p=completed.step(1/120);nod=Math.max(nod,p.pitch);}
+assert(nod>.1&&completed.frame().warmth>.8&&completed.frame().gesture==='pleased','a fresh completed turn gets a warm nod');
+advance(completed,3);completed.setContext({...base,completionEvent:9},false);
+const paused=completed.frame();assert.deepEqual(completed.step(0),paused);
+assert.equal(advance(completed,.3).celebration,0,'completions received while motion is off never replay');
+
+const rates=[18,30,60].map(rate=>{const e=new OrbExpression(base);e.nudge();for(let i=0;i<rate;i++)e.step(1/rate);return e.frame();});
+assert(Math.max(...rates.map(p=>p.roll))-Math.min(...rates.map(p=>p.roll))<.025,'miniature and large companions keep the same gesture timing');
+console.log('Personality checks passed: visible wink and physical tilt, conversation priority, attention double-take, observed completion, pause and miniature timing.');

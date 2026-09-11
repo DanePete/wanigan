@@ -1,0 +1,4 @@
+{
+  "archiveSha256": "325a02b0c7a988e81a7b5cbb9ff5c9e74f37654458438a99b9209c484c16ca44",
+  "scope": "Compiled prior installed renderer copied into a temporary isolated Electron harness; synthetic fixtures; actual installed app untouched"
+}

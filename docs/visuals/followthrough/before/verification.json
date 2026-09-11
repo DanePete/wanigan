@@ -1,0 +1,5 @@
+{
+  "checks": [],
+  "errors": [],
+  "provenance": "Isolated Electron renderer with authored fixtures. All actions terminate at fixture methods."
+}

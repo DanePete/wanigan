@@ -226,3 +226,27 @@
    ancestry per level reads as a tree, two read as a mistake. */
 .tl-turnbody { margin-left: 10px; padding-left: 4px; }
 .tl-turnbody::before { display: none; }
+
+/* Activity leads; aggregate timing waits in a disclosure. */
+.tl-workspace .tl-sticky { padding-top: var(--s-3); border-bottom: 1px solid var(--line-soft); }
+.tl-identity { display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); margin-bottom: var(--s-3); }
+.tl-identity strong { font-size: var(--t-lead); font-weight: 550; letter-spacing: -.02em; }
+.tl-workspace .tl-filters { gap: var(--s-3); }
+.tl-workspace .tl-chips { gap: var(--s-1); }
+.tl-workspace .tl-chip { font-size: var(--t-small); padding: var(--s-1) var(--s-2); border-color: transparent; border-radius: var(--r-sm); }
+.tl-workspace .tl-chip.on { color: var(--text); background: var(--bg-selected); border-color: var(--glass-line); }
+.tl-workspace .field.tl-search { border-radius: var(--r-sm); }
+.tl-clear { display: flex; align-items: center; gap: var(--s-1); align-self: flex-start; color: var(--accent); font-size: var(--t-small); }
+.tl-clear > .icon { width: 13px; height: 13px; }
+.tl-summary { margin: 0 var(--s-3); border-bottom: 1px solid var(--line-soft); }
+.tl-summary > summary { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); padding-block: var(--s-3); cursor: pointer; color: var(--text-dim); font-size: var(--t-small); list-style: none; }
+.tl-summary > summary::-webkit-details-marker { display: none; }
+.tl-summary > summary > span:last-child { display: flex; gap: var(--s-2); align-items: center; color: var(--text-faint); font-size: var(--t-micro); }
+.tl-summary[open] > summary .icon { transform: rotate(180deg); }
+.tl-summary .section { border: 0; box-shadow: none; background: transparent; padding: var(--s-2) 0 var(--s-4); }
+.tl-summary .tl-stats { gap: var(--s-3); }
+.tl-summary .stat { border: 0; background: transparent; padding: var(--s-1) 0; }
+.tl-workspace .tl-count { padding: var(--s-3); font-size: var(--t-micro); }
+.tl-workspace .tl-day { text-transform: none; letter-spacing: 0; font-size: var(--t-small); }
+.tl-workspace .tl-turnhead { border-radius: var(--r-md); }
+.tl-workspace .tl-sum { font-family: var(--font-ui); line-height: 1.5; }

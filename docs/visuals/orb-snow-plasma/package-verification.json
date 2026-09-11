@@ -1,0 +1,36 @@
+{
+  "verifiedAt": "2026-09-10T16:08:16.617Z",
+  "rendererSha256": "9a9ee27636db1dfead6ac59f3342246c806299b9ad36cbe93427769a04356b19",
+  "bundles": [
+    {
+      "app": "release/mac-arm64/Wanigan.app",
+      "filesMatched": 22,
+      "archiveSha256": "6ff93021949d5453217bb11393512b06841bfac8c5a31fed93a1928bd839b3c2",
+      "bundleIdentifier": "io.deadnorth.wanigan",
+      "checks": [
+        "sealed code signature",
+        "archive integrity",
+        "hardened fuses",
+        "executable PTY helper",
+        "every built output matches archive"
+      ]
+    },
+    {
+      "app": "release/mac/Wanigan.app",
+      "filesMatched": 22,
+      "archiveSha256": "0a4b123400732be413f82b8e68dd9a33d6ada8abfdc684270b03f4d48bd9cb12",
+      "bundleIdentifier": "io.deadnorth.wanigan",
+      "checks": [
+        "sealed code signature",
+        "archive integrity",
+        "hardened fuses",
+        "executable PTY helper",
+        "every built output matches archive"
+      ]
+    }
+  ],
+  "installed": true,
+  "scope": "Verified local macOS packages; arm64 build installed into /Applications/Wanigan.app and relaunched after explicit user approval.",
+  "installedAt": "2026-09-10T16:51:48.726Z",
+  "installedArchiveSha256": "6ff93021949d5453217bb11393512b06841bfac8c5a31fed93a1928bd839b3c2"
+}

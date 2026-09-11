@@ -1,33 +1,45 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { PresenceSignal } from '@shared/companion-presence';
 import type { OrbRuntime, OrbPlay } from '../orb/runtime';
-import { OrbExpression, type ExpressionContext, type Temperament } from '../orb/expression';
+import { OrbStoryDirector, type OrbStory } from '@shared/orb-story';
+import { OrbExpression, materialIndex, type ExpressionContext, type Temperament } from '../orb/expression';
 
 /** Dedicated, lazy GPU scene. Never launches agent work or shares a terminal loop. */
-export default function Orb({ thinking = false, focused=false, answerEvent=0, attentionEvent=0, spinEvent=0, playEvent, temperament='water',
-  compact=false, signal='quiet', onActivate, label, popup=false, expanded=false, children }: {
-  thinking?:boolean;focused?:boolean;answerEvent?:number;attentionEvent?:number;spinEvent?:number;temperament?:Temperament;
+export default function Orb({ thinking = false, focused=false, inputEvent=0, answerEvent=0, attentionEvent=0, completionEvent=0, spinEvent=0, playEvent, temperament='water',
+  story, floating=false, onFloat, compact=false, signal='quiet', onActivate, label, descriptionId, popup=false, expanded=false, gazeTarget, children }: {
+  thinking?:boolean;focused?:boolean;inputEvent?:number;answerEvent?:number;attentionEvent?:number;completionEvent?:number;spinEvent?:number;temperament?:Temperament;
   playEvent?:{kind:OrbPlay;id:number};
+  story?:OrbStory;floating?:boolean;onFloat?:()=>void;
   compact?:boolean;signal?:PresenceSignal;onActivate?:(anchor:HTMLButtonElement)=>void;label?:string;popup?:boolean;expanded?:boolean;children?:ReactNode;
+  gazeTarget?: HTMLElement | null;
+  descriptionId?: string;
 }) {
   const canvas=useRef<HTMLCanvasElement>(null),host=useRef<HTMLButtonElement>(null);
-  const context=useRef<ExpressionContext>({thinking,focused,answerEvent,attentionEvent,temperament});
+  const context=useRef<ExpressionContext>({thinking,focused,answerEvent,attentionEvent,completionEvent,temperament});
   const wake=useRef(()=>{});
+  const inputAction=useRef(()=>{}),lastInput=useRef(inputEvent);
   const spinAction=useRef(()=>{}),lastSpin=useRef(spinEvent);
   const playAction=useRef((_kind:OrbPlay)=>{}),lastPlay=useRef(playEvent?.id);
   const suppressClick=useRef(false);
+  const storyRef=useRef(story);storyRef.current=story;
+  const floatRef=useRef(floating);floatRef.current=floating;
+  const onFloatRef=useRef(onFloat);onFloatRef.current=onFloat;
   const signalRef=useRef(signal);signalRef.current=signal;
+  const gazeTargetRef=useRef(gazeTarget);gazeTargetRef.current=gazeTarget;
   const [status,setStatus]=useState<'loading'|'ready'|'unavailable'>('loading');
-  useEffect(()=>{context.current={thinking,focused,answerEvent,attentionEvent,temperament};wake.current();},[thinking,focused,answerEvent,attentionEvent,temperament]);
-  useEffect(()=>{wake.current();},[signal]);
+  useEffect(()=>{context.current={thinking,focused,answerEvent,attentionEvent,completionEvent,temperament};wake.current();},[thinking,focused,answerEvent,attentionEvent,completionEvent,temperament]);
+  useEffect(()=>{wake.current();},[signal,story,floating,gazeTarget]);
+  useEffect(()=>{if(inputEvent!==lastInput.current){lastInput.current=inputEvent;inputAction.current();}},[inputEvent]);
   useEffect(()=>{if(spinEvent!==lastSpin.current){lastSpin.current=spinEvent;spinAction.current();}},[spinEvent]);
   useEffect(()=>{if(playEvent&&playEvent.id!==lastPlay.current){lastPlay.current=playEvent.id;playAction.current(playEvent.kind);}},[playEvent]);
   useEffect(()=>{
     const el=canvas.current;if(!el)return;
     let runtime:OrbRuntime|undefined,disposed=false,visible=true,nativeVisible=true,frame=0,busy=false,dirty=false;
+    let lastTyping=-Infinity,listeningRipples=0;
     let last=0,lastInteraction=-Infinity,elapsed=0,targetX=0,targetY=0;
     let drag:{id:number;x:number;y:number;lastX:number;lastY:number;moved:boolean}|undefined;
     const expression=new OrbExpression(context.current);
+    const director=new OrbStoryDirector(storyRef.current);
     // Colored illumination, with the same optical geometry and physical fields
     // at both sizes. Only idle frame frequency changes for the small companion.
     const colors:Record<PresenceSignal,number[]>={quiet:[0,0,0,0],working:[.08,.42,1,.35],
@@ -36,12 +48,12 @@ export default function Orb({ thinking = false, focused=false, answerEvent=0, at
     let targetsDirty=true,targets:Pick<ExpressionContext,'composer'|'overview'>={};
     const readTargets=()=>{
       const orb=el.getBoundingClientRect();
-      const point=(selector:string)=>{
-        const target=document.querySelector(selector)?.getBoundingClientRect();if(!target||!orb.width)return undefined;
+      const point=(selector:string, element?:HTMLElement|null)=>{
+        const target=(element??document.querySelector(selector))?.getBoundingClientRect();if(!target||!orb.width)return undefined;
         return {x:Math.max(-1,Math.min(1,(target.x+target.width*.5-orb.x-orb.width*.5)/(orb.width*1.6))),
           y:Math.max(-1,Math.min(1,-(target.y+target.height*.5-orb.y-orb.height*.5)/(orb.height*1.6)))};
       };
-      targets={composer:point('.mission-composer'),overview:point(compact?'.space-dock':'.mission-summary')};targetsDirty=false;
+      targets={composer:point('.mission-composer',gazeTargetRef.current),overview:point(compact?'.space-dock':'.mission-summary',gazeTargetRef.current)};targetsDirty=false;
     };
     const media=matchMedia('(prefers-reduced-motion: reduce)');
     const motion=()=>document.documentElement.dataset.motion!=='off' &&
@@ -52,19 +64,34 @@ export default function Orb({ thinking = false, focused=false, answerEvent=0, at
       const rate=at-lastInteraction<2_000?60:compact?18:30;
       if(motion()&&last&&at-last<1_000/rate-1){frame=requestAnimationFrame(draw);return;}
       busy=true;
-      const moving=motion(),dt=last?Math.min((at-last)/1000,compact?1/15:1/30):1/60;last=at;
+      const moving=motion(),elapsedDt=last?Math.min((at-last)/1000,.1):1/60;
+      const dt=Math.min(elapsedDt,compact?1/15:1/30);last=at;
       if(!moving&&drag)release();
       if(targetsDirty)readTargets();
       expression.setContext({...context.current,...targets},moving);
       if(moving)elapsed+=dt;
-      const pose=expression.step(moving?dt:0);
-      const target=colors[signalRef.current],blend=moving?1-Math.exp(-dt*6):1;
+      const pose=expression.step(moving?elapsedDt:0);
+      director.update(storyRef.current??{},moving,context.current.thinking);
+      const performance=director.step(moving?elapsedDt:0,floatRef.current);
+      // Eyes find the disturbance before the fire rises; during compaction
+      // they follow the gathering pockets, then glance down at the keepsake.
+      if(performance.whirl>.05){pose.gazeX*=.4;pose.gazeY=-.28;pose.surprise=Math.max(pose.surprise,performance.whirl*.9);pose.wink=0;}
+      else if(!context.current.focused&&!context.current.thinking&&performance.gather>.1){pose.gazeX*=.4;pose.gazeY=.35;}
+      if(performance.alarm){pose.celebration=0;pose.wink=0;}
+      const target=performance.alarm?[1,.09,.025,.3*(1-Math.max(performance.whirl,performance.recovery))]:colors[signalRef.current],blend=moving?1-Math.exp(-dt*6):1;
       tint=tint.map((value,index)=>value+(target[index]-value)*blend);
       try {
-        await runtime.render({dt:moving?dt:0,time:elapsed,light:document.documentElement.dataset.theme==='light',
-          ...pose,thinking:context.current.thinking,tint:tint.slice(0,3) as [number,number,number],tintStrength:tint[3]});
+        await runtime.render({dt:moving?dt:0,elapsedDt:moving?elapsedDt:0,time:elapsed,light:document.documentElement.dataset.theme==='light',
+          ...pose,...performance,material:materialIndex(context.current.temperament),thinking:context.current.thinking,tint:tint.slice(0,3) as [number,number,number],tintStrength:tint[3]});
         el.dataset.frames=String(runtime.frames);
         el.dataset.expression=context.current.thinking?'engage':context.current.focused?'attend':'rest';
+        el.dataset.gesture=pose.gesture;
+        el.dataset.gazeX=String(pose.gazeX);el.dataset.gazeY=String(pose.gazeY);
+        el.dataset.story=performance.storyGesture;
+        el.dataset.alarm=String(performance.alarm);
+        el.dataset.wink=String(pose.wink);
+        el.dataset.roll=String(pose.roll);
+        el.dataset.surprise=String(pose.surprise);
         el.dataset.yaw=String(pose.yaw);
         el.dataset.signal=signalRef.current;
         el.dataset.tint=tint.join(',');
@@ -95,6 +122,7 @@ export default function Orb({ thinking = false, focused=false, answerEvent=0, at
         }
         drag.lastX=event.clientX;drag.lastY=event.clientY;
       }
+      runtime?.point(x,y,event.clientX>=rect.left&&event.clientX<=rect.right&&event.clientY>=rect.top&&event.clientY<=rect.bottom);
       targetX=x;targetY=y;
       expression.point(x,y);
     };
@@ -112,16 +140,21 @@ export default function Orb({ thinking = false, focused=false, answerEvent=0, at
       if(host.current?.hasPointerCapture(id))host.current.releasePointerCapture(id);
       runtime?.release();
     };
-    const blur=()=>release();
+    const blur=()=>{release();runtime?.point(0,0,false);};
     const key=(event:KeyboardEvent)=>{
       if(event.key==='Enter'||event.key===' ')suppressClick.current=false;
       if(event.key==='ArrowLeft'||event.key==='ArrowRight'){
         event.preventDefault();if(motion()){expression.nudge();runtime?.nudge(-.2,-.3,event.key==='ArrowLeft'?-1:1,.5);lastInteraction=performance.now();redraw();}
       }else if(!event.metaKey&&!event.ctrlKey&&!event.altKey){
         const key=event.key.toLowerCase();
+        if(key==='g'){event.preventDefault();onFloatRef.current?.();}
         if(key==='s'){event.preventDefault();spinAction.current();}
         if(key==='b'||key==='r'){event.preventDefault();playAction.current(key==='b'?'burst':'rain');}
       }
+    };
+    inputAction.current=()=>{
+      const at=performance.now();if(!motion()||!runtime||at-lastTyping<180)return;
+      lastTyping=at;runtime.nudge(-.3,-.38,.065,.075);el.dataset.listeningRipples=String(++listeningRipples);redraw();
     };
     spinAction.current=()=>{if(motion()&&runtime&&expression.spin()){lastInteraction=performance.now();redraw();}};
     playAction.current=kind=>{if(motion()&&runtime){runtime.play(kind);if(kind!=='rain')expression.nudge();lastInteraction=performance.now();redraw();}};
@@ -130,6 +163,7 @@ export default function Orb({ thinking = false, focused=false, answerEvent=0, at
     const resize=new ResizeObserver(redraw);resize.observe(el);
     const button=host.current;
     document.addEventListener('pointermove',pointer,{passive:true});document.addEventListener('visibilitychange',redraw);
+    document.addEventListener('scroll',redraw,{passive:true,capture:true});
     media.addEventListener('change',redraw);button?.addEventListener('click',nudge);
     button?.addEventListener('pointerdown',down);button?.addEventListener('pointerup',release);button?.addEventListener('pointercancel',release);
     button?.addEventListener('lostpointercapture',release);button?.addEventListener('keydown',key);
@@ -142,8 +176,9 @@ export default function Orb({ thinking = false, focused=false, answerEvent=0, at
       void created.device.lost.then(()=>{if(!disposed&&runtime===created){setStatus('unavailable');runtime=undefined;}});
       redraw();
     }).catch(error=>{if(!disposed){console.error('Wanigan orb initialization:',error);setStatus('unavailable');}});
-    return()=>{disposed=true;wake.current=()=>{};spinAction.current=()=>{};playAction.current=()=>{};cancelAnimationFrame(frame);observer.disconnect();intersection.disconnect();resize.disconnect();
+    return()=>{disposed=true;wake.current=()=>{};inputAction.current=()=>{};spinAction.current=()=>{};playAction.current=()=>{};cancelAnimationFrame(frame);observer.disconnect();intersection.disconnect();resize.disconnect();
       document.removeEventListener('pointermove',pointer);document.removeEventListener('visibilitychange',redraw);
+      document.removeEventListener('scroll',redraw,true);
       stopNative();media.removeEventListener('change',redraw);button?.removeEventListener('click',nudge);
       button?.removeEventListener('pointerdown',down);button?.removeEventListener('pointerup',release);button?.removeEventListener('pointercancel',release);
       button?.removeEventListener('lostpointercapture',release);button?.removeEventListener('keydown',key);window.removeEventListener('blur',blur);runtime?.destroy();};
@@ -151,6 +186,7 @@ export default function Orb({ thinking = false, focused=false, answerEvent=0, at
   return <button type="button" ref={host} className={`wanigan-orb${compact?' wanigan-orb-small':''}`} data-physics={status}
     onClick={event=>{if(!suppressClick.current)onActivate?.(event.currentTarget);suppressClick.current=false;}} onDoubleClick={()=>{if(!compact)spinAction.current();}}
     aria-haspopup={popup?'dialog':undefined} aria-expanded={popup?expanded:undefined}
+    aria-describedby={descriptionId}
     aria-label={label??(status==='unavailable'?'Wanigan · 3D rendering unavailable':'Give Wanigan a nudge')}
     title={label??'Click to nudge. Grab and flick to stir. Double-click or press S to spin. Arrow keys make a splash.'}>
     <canvas ref={canvas} aria-hidden="true" />

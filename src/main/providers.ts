@@ -102,6 +102,23 @@ function editorExtensions(prefix: string): string[] {
   return out;
 }
 
+/**
+ * Every directory resolution actually consults, for a surface that has to
+ * report a miss. `which claude` returning nothing is the normal state on a
+ * working machine — these CLIs ship inside editor extensions — so a first-run
+ * screen that says "not installed" without saying where it looked reads as an
+ * accusation. Only directories that exist are returned: naming a path the
+ * operator does not have would pad the count with places nothing could be.
+ */
+export function searchedLocations(PATH: string): string[] {
+  const seen = new Set<string>();
+  for (const dir of [...PATH.split(path.delimiter), ...EDITOR_EXT_DIRS]) {
+    if (!dir) continue;
+    try { if (fs.statSync(dir).isDirectory()) seen.add(dir); } catch { /* absent */ }
+  }
+  return [...seen];
+}
+
 /** First existing executable among the candidates, or null. */
 function firstExecutable(candidates: string[]): string | null {
   for (const c of candidates) {
@@ -401,6 +418,36 @@ const ACCOUNT_BACKENDS = new Set(['anthropic']);
 /** Whether this profile authenticates with a Claude account at all. */
 export function usesAnthropicAccount(def: Pick<ProviderDef, 'harness' | 'backendId'>): boolean {
   return def.harness === 'claude-code' && ACCOUNT_BACKENDS.has(def.backendId?.trim() ?? '');
+}
+
+/**
+ * The stored credentials this profile declares and does not have.
+ *
+ * A redirected profile — GLM, DeepSeek, xAI, or any local pack pointing a
+ * shared harness at its own endpoint — is a base URL and a credential that only
+ * mean anything together. compileProviderProfile already refuses to apply half
+ * of that pair, returning an empty environment when the credential is missing,
+ * which correctly keeps the operator's Anthropic key away from another host.
+ *
+ * But an empty environment is also what a profile with nothing to declare
+ * returns, and sessions.ts then strips the ambient Anthropic names, so the
+ * shared `claude` binary falls back to its own stored login. The result was a
+ * plain Claude Code session recorded and displayed as GLM — spend attributed to
+ * a backend that never served it. This is the reader that lets a launch refuse
+ * instead, by name, before anything is spawned.
+ *
+ * Read from the profile manifest rather than from the compiled environment,
+ * because the compiled form deliberately cannot tell "no credential" apart
+ * from "nothing declared".
+ */
+export function missingCredentialIds(providerId: string): string[] {
+  const profile = providerPackRegistry.profileById(providerId);
+  if (!profile) return [];
+  const ids = new Set<string>();
+  for (const spec of Object.values(profile.environment ?? {})) {
+    if (spec.source === 'credential') ids.add(spec.id ?? profile.id);
+  }
+  return [...ids].filter((id) => !getProviderKey(id));
 }
 
 export type ProviderCostBasis = 'reconcilable' | 'unverified';

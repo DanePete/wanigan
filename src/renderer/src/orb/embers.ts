@@ -18,7 +18,7 @@ fn hash(s:f32)->f32{return fract(sin(s*127.1+31.7)*43758.5453);}
   p.w=0.;
   if(v.w>0. && u.z>.05){
    let seed=f32(i)*1.71+floor(u.y)*.13;
-   let center=vec3f((hash(seed)-.5)*.15,.055,-.14+(hash(seed+9.)-.5)*.10);
+   let center=vec3f((hash(seed)-.5)*.65,-.49,-.04+(hash(seed+9.)-.5)*.20);
    let heat=textureSampleLevel(thermal,smoothSampler,(center+1.)*.5,0.).y;
    if(heat>.18){p=vec4f(center,min(1.8,heat));v=vec4f((hash(seed+8.)-.5)*.07,.16+hash(seed+4.)*.1,0.,0.);}
   }
@@ -31,7 +31,7 @@ fn hash(s:f32)->f32{return fract(sin(s*127.1+31.7)*43758.5453);}
    let n=normalize(p.xyz);p=vec4f(n*.965,p.w);
    v=vec4f(v.xyz-n*max(0.,dot(v.xyz,n))*1.25,v.w);
   }
-  if(textureSampleLevel(water,smoothSampler,(p.xyz+1.)*.5,0.).x>.32){p.w=0.;v.w=-.4;}
+  if(u.z<.5&&textureSampleLevel(water,smoothSampler,(p.xyz+1.)*.5,0.).x>.32){p.w=0.;v.w=-.4;}
  }
  positions[i]=p;velocities[i]=v;
 }`;

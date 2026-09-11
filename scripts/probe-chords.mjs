@@ -86,8 +86,15 @@ function ariaFor(id) {
    focus, by design — the PTY owns its keystrokes — so a probe that presses one
    with the terminal focused is testing the guard, not the chord. */
 const stepOffTerminal = (page) => page.evaluate(() => {
-  document.querySelector('[data-nav-tab="sessions"]')?.focus();
+  document.querySelector('.hdr-toggle')?.focus();
 });
+const goSessions = async (page) => {
+  await stepOffTerminal(page);
+  await page.keyboard.press('Meta+1');
+  await page.locator('.sessions-view').waitFor();
+  if (await page.locator('.sidebar').count()) await page.locator('.hdr-toggle').click();
+  await stepOffTerminal(page);
+};
 const count = (page, sel) => page.locator(sel).count();
 
 /* ── the probes ─────────────────────────────────────────────────────────
@@ -144,6 +151,7 @@ const PROBES = {
   },
   'rail-move': {
     async run(page) {
+      if (await count(page, '.sidebar') === 0) await page.locator('.hdr-toggle').click();
       await page.evaluate(() => document.querySelector('[data-nav-tab="sessions"]')?.focus());
       const before = await page.evaluate(() => document.activeElement?.dataset?.navTab);
       await page.keyboard.press('ArrowDown');
@@ -254,7 +262,7 @@ const missing = declared.filter((b) => !PROBES[b.id]).map((b) => b.id);
 const extra = Object.keys(PROBES).filter((id) => !declared.some((b) => b.id === id));
 
 const { page, close } = await openRenderer({ onError: (m) => VERBOSE && console.log('  [page]', m) });
-await page.locator('[data-nav-tab="sessions"]').click();
+await goSessions(page);
 await page.waitForTimeout(900);
 
 const results = [];
@@ -275,12 +283,12 @@ for (const binding of declared) {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(180);
   }
-  await page.locator('[data-nav-tab="sessions"]').click().catch(() => {});
+  await goSessions(page);
   await page.waitForTimeout(400);
   // A view that threw takes its rail and its chords with it, and every probe
   // after it would report a failure it did not cause. Put it back before the
   // next one, and say which chord left it broken.
-  if (await page.locator('text=stopped rendering').count() > 0) {
+  if (await page.locator('.view-recovery').count() > 0) {
     console.log(`      (${binding.id} left a view in its error boundary; reloading it)`);
     await page.locator('text=Reload view').click().catch(() => {});
     await page.waitForTimeout(600);
