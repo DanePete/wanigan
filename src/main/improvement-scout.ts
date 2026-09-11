@@ -292,8 +292,6 @@ export function listSources(): ImprovementScoutSource[] {
   });
 }
 
-export const sources = listSources;
-
 export function setSourceEnabled(id: string, enabled: boolean): ImprovementScoutSource[] {
   if (!SOURCE_BY_ID.has(id)) throw new Error('That source is not in Wanigan’s official Scout allow-list.');
   const result = db().prepare('UPDATE improvement_scout_sources SET enabled=?,updated_at=? WHERE id=?')
@@ -381,8 +379,6 @@ export function listSuggestions(filter?: {
   return rows.map(mapSuggestion);
 }
 
-export const suggestions = listSuggestions;
-
 export function suggestion(id: string): ImprovementScoutSuggestion {
   const row = db().prepare('SELECT * FROM improvement_scout_suggestions WHERE id=?').get(id) as SuggestionRow | undefined;
   if (!row) throw new Error('Scout suggestion not found.');
@@ -413,8 +409,6 @@ export function listRuns(limit = 30): ImprovementScoutRun[] {
     .all(Math.max(1, Math.min(200, Math.round(limit)))) as RunRow[];
   return rows.map(mapRun);
 }
-
-export const runs = listRuns;
 
 function scheduleRow(): { next_at: number | null; enabled: number } | undefined {
   return db().prepare('SELECT next_at,enabled FROM schedules WHERE id=?').get(SCOUT_SCHEDULE_ID) as
