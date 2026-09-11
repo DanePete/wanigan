@@ -2,6 +2,7 @@ import type { DemoPromptId, DemoState } from '../shared/demo';
 import type { SessionGoal } from '../shared/goal-journey';
 import type { Preflight } from '../shared/preflight';
 import type { DiscoveryResult } from '../shared/discovery';
+import type { HandoffPlan, HandoffResult } from '../shared/handoff';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
@@ -435,6 +436,11 @@ const api = {
     discover: () => call<DiscoveryResult>('discovery:scan'),
     /** Import chosen candidates. Main re-checks each against its own scan and confirms with the operator. */
     importProjects: (paths: string[]) => call<Project[]>('discovery:import', paths),
+  },
+  /** Continuing one conversation on another account of the same harness. */
+  handoff: {
+    plan: (sessionId: string) => call<HandoffPlan>('handoff:plan', sessionId),
+    move: (sessionId: string, accountId: string) => call<HandoffResult>('handoff:move', sessionId, accountId),
   },
   demo: {
     state: () => call<DemoState>('demo:state'),

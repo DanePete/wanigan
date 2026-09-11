@@ -7,6 +7,7 @@ import { TRUST_LEVELS, trustCopy, trustGlyph } from '@shared/types';
 import { launchFieldChoices } from '@shared/launch-fields';
 import { providerTint } from '@shared/provider-status';
 import { applyUnreadCounts } from '@shared/unread';
+import SessionHandoff from '../components/SessionHandoff';
 import TerminalPane, { disposePane } from '../components/TerminalPane';
 import Composer from '../components/Composer';
 import NewSessionDialog from '../components/NewSessionDialog';
@@ -1123,6 +1124,9 @@ export default function Sessions({
                             title="End the session. The conversation stays in Recent below and can be resumed exactly."
                             onClick={() => window.wanigan.sessions.kill(active.id)}>end session</FocusBtn>
                 )}
+                {/* Renders nothing unless another account of this harness could
+                    take the conversation, so it costs an exited session nothing. */}
+                <SessionHandoff session={active} onOpened={onActiveChange} onError={onError} />
               </>
             ) : <span>⌘T new session · ⌥⌘←→ switch · ⌘⌫ close · ⌘B side panel</span>}
           </div>
@@ -1132,7 +1136,7 @@ export default function Sessions({
       {dialog && (
         <NewSessionDialog providers={providers} projects={projects} defaultProjectId={dialogProject ?? selectedProjectId ?? active?.projectId}
                           liveSessions={sessions}
-                          onClose={() => { setDialog(false); setDialogProject(undefined); }} onCreate={createSession} onAddProject={onAddProject} />
+                          onClose={() => { setDialog(false); setDialogProject(undefined); }} onCreate={createSession} />
       )}
       {exactRecoveryDialog && (
         <ExactCodexRecoveryDialog projects={projects} defaultProjectId={active?.projectId}

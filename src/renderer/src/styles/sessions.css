@@ -390,3 +390,14 @@
 .session-detail-return { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-3); border-bottom: 1px solid var(--line); background: var(--bg-soft); }
 .session-detail-return > span { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-size: var(--t-small); }
 .term-full[data-detail-focus='true'] .code-panel { border-left: 0; }
+
+/* Continue this conversation on another account. Hidden entirely unless main
+   says there is somewhere for it to go. */
+.session-handoff { position: relative; display: inline-flex; }
+.session-handoff-open { color: var(--accent); border-radius: var(--r-sm); font-size: var(--t-small); }
+.session-handoff-menu { position: absolute; bottom: 100%; left: 0; z-index: 60; display: grid; gap: var(--s-1); min-width: 17rem; margin-bottom: var(--s-1); padding: var(--s-2); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-raised); box-shadow: var(--shadow-popover); }
+.session-handoff-item { display: grid; gap: var(--s-1); justify-items: start; text-align: left; padding: var(--s-2); border-radius: var(--r-sm); }
+.session-handoff-item:hover:not(:disabled) { background: var(--bg-sunk); }
+.session-handoff-label { font-size: var(--t-small); font-weight: 550; color: var(--text); }
+.session-handoff-why { font-size: var(--t-micro); color: var(--text-dim); line-height: 1.4; }
+.session-handoff-note { font-size: var(--t-micro); color: var(--text-faint); line-height: 1.4; padding: 0 var(--s-2) var(--s-1); }

@@ -140,4 +140,47 @@ export async function runPreflightSmoke(check: Check, say: Say): Promise<void> {
   } catch (error) {
     check(false, 'the accounts checks ran without throwing', String(error));
   }
+
+  // ── handing one conversation to another account ───────────────────────
+  // An account is a CODEX_HOME, and Codex writes a conversation into the home
+  // it was launched under — so a thread on the account that just ran out of
+  // usage is invisible from the other one, not merely locked. The fix is one
+  // directory entry, and the risk is filing it in the wrong place: a rollout
+  // that lands under the wrong date still resumes, and has quietly been
+  // refiled under the day it moved.
+  say('── conversation handoff · where the file must land');
+  try {
+    const { destinationFor, handoffPlan } = await import('./handoff');
+    const path = await import('node:path');
+
+    const src = path.join('/Users/x/.codex', 'sessions', '2026', '09', '11',
+      'rollout-2026-09-11T01-03-09-01a08f10-0f63-7453-b33e-d71285fbd389.jsonl');
+    check(destinationFor('/Users/x/.codex_personal', src)
+      === path.join('/Users/x/.codex_personal', 'sessions', '2026', '09', '11',
+        'rollout-2026-09-11T01-03-09-01a08f10-0f63-7453-b33e-d71285fbd389.jsonl'),
+      'the destination keeps the conversation’s own date directories, not the day it moved',
+      destinationFor('/Users/x/.codex_personal', src));
+
+    check(destinationFor('/Users/x/.codex_personal', '/Users/x/.codex/auth.json') === null
+      && destinationFor('/Users/x/.codex_personal', '/tmp/rollout.jsonl') === null,
+      'a path that is not filed under sessions/ has no destination rather than a guessed one');
+
+    // A home whose own path contains "sessions" must not confuse the split.
+    const nested = path.join('/Users/x/sessions/.codex', 'sessions', '2026', '09', '11', 'r.jsonl');
+    check(destinationFor('/Users/y/.codex_two', nested)
+      === path.join('/Users/y/.codex_two', 'sessions', '2026', '09', '11', 'r.jsonl'),
+      'the last sessions/ segment is the one that starts the relative path, so a home named sessions still works',
+      destinationFor('/Users/y/.codex_two', nested));
+
+    // The read side must explain itself rather than return an empty list that
+    // reads as "no other accounts".
+    const plan = handoffPlan('s_not_a_real_session');
+    check(plan.targets.length === 0 && typeof plan.unavailable === 'string' && plan.unavailable.length > 0,
+      'a session with nothing to hand over says why, so no surface draws a dead control',
+      plan.unavailable);
+    check(plan.threadId === null,
+      'and it names no conversation it could not find');
+  } catch (error) {
+    check(false, 'the handoff checks ran without throwing', String(error));
+  }
 }
