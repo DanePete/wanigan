@@ -4,11 +4,6 @@
       "count": 5
     }
   },
-  "scripts/install-local-macos.cjs": {
-    "no-unsafe-finally": {
-      "count": 1
-    }
-  },
   "scripts/probe-goal-planning.mjs": {
     "no-empty": {
       "count": 1
@@ -50,9 +45,6 @@
     }
   },
   "src/main/index.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 2
-    },
     "@typescript-eslint/no-misused-promises": {
       "count": 1
     }
@@ -68,9 +60,6 @@
     }
   },
   "src/main/sessions.ts": {
-    "@typescript-eslint/no-floating-promises": {
-      "count": 1
-    },
     "no-useless-escape": {
       "count": 1
     }
@@ -120,11 +109,6 @@
   },
   "src/renderer/src/components/TeamPanel.tsx": {
     "react-hooks/exhaustive-deps": {
-      "count": 1
-    }
-  },
-  "src/renderer/src/components/bits.tsx": {
-    "@typescript-eslint/no-floating-promises": {
       "count": 1
     }
   },

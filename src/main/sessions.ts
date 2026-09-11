@@ -1715,7 +1715,10 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     // session-end checkpoint is captured first — removal must never race the
     // snapshot that makes this session's last state recoverable.
     if (worktree) {
-      checkpointsSettled.finally(() => {
+      // finalizeSessionCheckpoints swallows its own failures today, but its
+      // type does not promise to, and .finally() re-raises whatever it is
+      // chained onto.
+      void checkpointsSettled.catch(() => {}).finally(() => {
         void removeWorktree(worktree, false).catch(() => {
           /* dirty worktrees are kept on purpose — the human reviews and merges */
         });
