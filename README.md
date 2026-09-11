@@ -48,15 +48,18 @@ is exactly the variable that makes an Electron app die at startup with
 Code terminal and you get that failure; `npm run app` unsets it and does not.
 The full explanation is in *Six things that will bite you if you fork this*.
 
-`npm test` is six steps, in this order: `typecheck` (both tsconfigs),
+`npm test` is eight steps, in this order: `typecheck` (both tsconfigs),
 `test:shared` (plain `node --test` over the pure modules in `src/shared`, no
 Electron and no display),
 `test:renderer-style` (the ratchets over the renderer sources — inline styles,
 literal font sizes and durations, shadowed modifiers, unnamed form controls),
+`test:dead-code` (knip over the entry points in `knip.json` — unused files,
+unused dependencies, and imports nothing declares),
+`test:lint` (ESLint, including the type-aware rules `strict` cannot see),
 `test:package-hooks` and `test:local-install` (fixture-only checks over the
 macOS packaging and installer hooks — they build nothing and touch no
 `/Applications`), then `smoke` (the suite inside a real Electron main process,
-mock runner, no API key). CI runs the same six across two runners; see
+mock runner, no API key). CI runs the same eight across two runners; see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Installing a local macOS arm64 build

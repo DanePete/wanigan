@@ -51,7 +51,7 @@ jobs:
         run: npm ci
 
       # A release must not be the first place a regression is noticed, and
-      # these are the same six steps a contributor is told to run.
+      # these are the same eight steps a contributor is told to run.
       - name: Test
         run: npm test
 
