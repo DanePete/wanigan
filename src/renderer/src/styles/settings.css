@@ -398,3 +398,22 @@ a.set-mini, a.btn { text-decoration: none; }
 .ctx-codex-path { flex: 1; min-width: 0; font-size: var(--t-small); word-break: break-all; }
 .ctx-codex-bytes { flex: none; color: var(--text-faint); font-size: var(--t-micro); font-variant-numeric: tabular-nums; }
 .ctx-fine { font-size: var(--t-small); line-height: 1.55; margin-top: var(--s-2); }
+
+/* Accounts, grouped by the harness that holds them. Adding one asks for a name
+   and derives the directory, so the path is shown rather than typed. */
+.set-account-group { display: grid; gap: var(--s-2); margin-bottom: var(--s-5); }
+.set-account-rows { display: grid; gap: var(--s-2); }
+.set-account-row { display: grid; gap: var(--s-1); padding: var(--s-3); }
+.set-account-head { display: flex; gap: var(--s-2); align-items: baseline; flex-wrap: wrap; }
+.set-account-name { font-size: var(--t-small); }
+.set-account-default { background: var(--accent-soft); color: var(--accent); }
+.set-account-gone { color: var(--bad); }
+.set-account-dir { font-size: var(--t-micro); word-break: break-all; }
+.set-account-note { font-size: var(--t-micro); line-height: 1.45; margin: 0; }
+.set-account-actions { display: flex; gap: var(--s-2); flex-wrap: wrap; margin-top: var(--s-1); }
+.set-account-add { display: grid; gap: var(--s-2); margin-bottom: var(--s-2); }
+.set-account-proposed { font-size: var(--t-micro); line-height: 1.45; margin: 0; }
+.set-account-seed { display: flex; gap: var(--s-2); align-items: flex-start; font-size: var(--t-small); line-height: 1.45; }
+.set-account-seed input { margin-top: var(--s-1); accent-color: var(--accent); flex: none; }
+.set-account-seed-why { display: block; margin-top: var(--s-1); }
+.set-accounts-foot { font-size: var(--t-micro); margin-top: var(--s-3); line-height: 1.45; }

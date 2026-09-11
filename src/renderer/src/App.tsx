@@ -1421,7 +1421,7 @@ export default function App() {
             <PageHead title="Settings" eyebrow="Demo workspace" lead="These appearance choices apply only to this demo." />
             <Segmented label="Demo theme" value={theme.preference} options={[{value:'dark',label:'Dark'},{value:'light',label:'Light'},{value:'system',label:'System'}]} onChange={theme.setTheme} />
             <DemoPanel />
-          </main> : <SettingsView providers={providers} projects={projects} jump={settingsJump}
+          </main> : <SettingsView providers={providers} projects={projects} jump={settingsJump} onOpenSession={openSession}
                           onKeyChange={loadShell} onRemoveProject={removeProject} onAddProject={addProject}
                           themePreference={theme.preference} resolvedTheme={theme.resolved} onThemeChange={theme.setTheme} />
           )}
