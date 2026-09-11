@@ -7,7 +7,7 @@ import { pollOnce, cancelRun } from './poll';
 import { render, slotsIn, missingSlots } from './template';
 import { PRESETS } from './presets';
 import { cachedModels, refreshModels } from './models';
-import { MODELS, DEFAULT_MODEL } from './pricing';
+import { DEFAULT_MODEL } from './pricing';
 import { isMock } from './anthropic';
 import { projectById } from '../store';
 import type { RunConfig, RunRow, SourceConfig } from '../../shared/types';
@@ -105,7 +105,7 @@ export async function dryRunOne(config: RunConfig, rowIndex = 0) {
   if (built.errors.length) return { result: null, errors: built.errors };
   const target = built.requests[rowIndex] ?? built.requests[0];
   if (!target) throw new Error('Dataset is empty.');
-  return { result: await dryRun(config, target), rowIndex: target.rowIndex, prompt: target.rendered, errors: [] };
+  return { result: await dryRun(target), rowIndex: target.rowIndex, prompt: target.rendered, errors: [] };
 }
 
 /**

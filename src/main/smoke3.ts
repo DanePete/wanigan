@@ -68,7 +68,6 @@ import { __test as codexUsageTest } from './codex-usage';
 import { getSetting, setSetting } from './settings';
 import { dataDir, db, resultsDir } from './db';
 import { addProject } from './store';
-import { permissionModeCopy } from '../shared/types';
 import { automationArgv, automationRun, AUTOMATION_ARGV } from './automation';
 import { selectedProviderStatus, selectedSessionTelemetry } from '../shared/provider-status';
 import { MAX_TERMINAL_INPUT_CHUNK_BYTES, splitTerminalInput } from '../shared/terminal-input';

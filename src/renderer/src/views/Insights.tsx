@@ -93,7 +93,6 @@ const SURFACES: { key: SurfaceKey; label: string; color: string; meter: MeterKey
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** usd() reads a negative as "<$0.01"; a delta needs its sign back. */
-const money = (n: number) => (n < -0.0000001 ? `−${usd(-n)}` : usd(n));
 
 /** Money to the cent, for columns where two meters are compared side by side. */
 const cents = (n: number) =>
@@ -160,8 +159,6 @@ type BatchInsights = {
   outcomes: { status: string; n: number }[];
 };
 
-type DayUsd = { day: string; sessionUsd: number };
-type SyncRow = { day: string; actualUsd: number; syncUsd: number };
 type EffortRow = { effort: string; requests: number; costUsd: number };
 type CacheRow = { surface: string; read: number; write: number; input: number; rate: number; note: string };
 type AccuracyRow = { model: string; runs: number; estUsd: number; actualUsd: number; ratio: number };
@@ -408,7 +405,6 @@ export default function InsightsView({ onOpenRun, projects: given }: {
   const [report, setReport] = useViewMemory<'spending' | 'activity' | 'budgets' | 'batch'>('report', 'spending');
   const [batch, setBatch] = useState<BatchInsights | null>(null);
   const [unified, setUnified] = useState<UnifiedSpendDay[]>([]);
-  const [sync, setSync] = useState<SyncRow[]>([]);
   const [effort, setEffort] = useState<EffortRow[]>([]);
   const [cache, setCache] = useState<CacheRow[]>([]);
   const [buds, setBuds] = useState<BudgetState[]>([]);
@@ -484,15 +480,16 @@ export default function InsightsView({ onOpenRun, projects: given }: {
       (async () => {
         if (!due(`spend:${d}`, TTL.spend, force)) return;
         try {
-          const [un, sy] = await Promise.all([
-            window.wanigan.spend.unified(d),
-            window.wanigan.spend.sync(d),
-          ]);
+          // `spend.unified` alone. The old `spend.sync` series was read beside
+          // it and never used again once surfaceRows started deriving the
+          // counterfactual locally — it re-ran the same three daily
+          // aggregations on every refresh to fill state nothing rendered.
+          const un = await window.wanigan.spend.unified(d);
           stamp(`spend:${d}`);
           // A window the operator has already moved on from must not land over
           // the one they are looking at.
           if (!alive.current || d !== daysRef.current) return;
-          setUnified(un); setSync(sy);
+          setUnified(un);
         } catch (e) { next.spend = msg(e); }
       })(),
       (async () => {

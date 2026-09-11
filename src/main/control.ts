@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { SessionGoal } from '../shared/goal-journey';
 import { db } from './db';
-import { halted, refuseIfHalted } from './halt';
+import { halted } from './halt';
 import { headSync } from './git';
 import { listProjects, projectById } from './store';
 import { createSession, killSession, listSessions } from './sessions';

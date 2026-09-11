@@ -1,5 +1,5 @@
 import { mobileShell } from './page/shell';
-import { MOBILE_ICON_PNG_PATH, dashboardIconPng } from './page/icon';
+import { MOBILE_ICON_PNG_PATH } from './page/icon';
 
 export { MOBILE_SECTION_ANCHORS } from './page/sections';
 export { MOBILE_ICON_PNG_PATH, dashboardIconPng } from './page/icon';

@@ -1181,7 +1181,13 @@ function RunDetail({ id, onBack, onOpen }: { id: string; onBack: () => void; onO
       if (r?.runId) { onOpen(r.runId); return true; }
       if (label !== 'delete') { await loadDetail(); await loadRows(); }
       return true;
-    } catch (e) { setActErr(e instanceof Error ? e.message : String(e)); }
+    } catch (e) {
+      setActErr(e instanceof Error ? e.message : String(e));
+      // Explicitly false, not an implicit undefined. The delete confirmation
+      // reads this to decide whether to close itself, and a failed delete must
+      // leave it open over the error it just set.
+      return false;
+    }
     finally { setBusy(null); }
   }
 
