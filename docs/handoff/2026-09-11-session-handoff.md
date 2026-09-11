@@ -155,8 +155,9 @@ JSON
 do not run until it lands. Deliberately not done unasked — it is a big call on a
 public repo.
 
-**3. `conduct@deadnorth.io` must exist.** `CODE_OF_CONDUCT.md` points at it. An
-alias on a domain already serving `security@deadnorth.io`.
+**3. ~~`conduct@deadnorth.io` must exist.~~ Resolved.** `CODE_OF_CONDUCT.md`
+now points at `support@deadnorth.io`, which already exists — no new alias
+needed. The domain also serves `security@deadnorth.io` for `SECURITY.md`.
 
 **4. Not started, in rough value order:** the 22 circular import chains in
 `src/main` (`sessions → mcp/registry → mcp/server → batch/index → batch/poll →

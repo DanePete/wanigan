@@ -60,7 +60,7 @@ representative at an online or offline event.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement at
-**conduct@deadnorth.io**.
+**support@deadnorth.io**.
 
 All complaints will be reviewed and investigated promptly and fairly. This is a
 small project, so the person reading that address is usually its maintainer; if
