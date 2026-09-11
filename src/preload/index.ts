@@ -3,6 +3,7 @@ import type { SessionGoal } from '../shared/goal-journey';
 import type { Preflight } from '../shared/preflight';
 import type { DiscoveryResult } from '../shared/discovery';
 import type { HandoffPlan, HandoffResult } from '../shared/handoff';
+import type { HandoverBegun, HandoverFinished } from '../shared/handover';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
@@ -436,6 +437,11 @@ const api = {
     discover: () => call<DiscoveryResult>('discovery:scan'),
     /** Import chosen candidates. Main re-checks each against its own scan and confirms with the operator. */
     importProjects: (paths: string[]) => call<Project[]>('discovery:import', paths),
+  },
+  /** Carrying a filling conversation into a fresh session. */
+  handover: {
+    begin: (sessionId: string) => call<HandoverBegun>('handover:begin', sessionId),
+    finish: (sessionId: string) => call<HandoverFinished>('handover:finish', sessionId),
   },
   /** Continuing one conversation on another account of the same harness. */
   handoff: {

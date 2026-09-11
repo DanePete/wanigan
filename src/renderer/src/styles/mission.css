@@ -27,7 +27,10 @@
 .space-dock .icon { width: 17px; height: 17px; }
 .space-count { font-size: var(--t-micro); color: var(--warning); }
 .space-settings { justify-self: end; color: var(--text-faint); padding: var(--s-2); }
-.companion-presence { min-width: 0; justify-self: start; }
+/* position: relative is load-bearing — the handover bubble anchors to this,
+   and without it the bubble resolved against a distant ancestor and landed
+   above the top of the viewport at phone width. */
+.companion-presence { position: relative; min-width: 0; justify-self: start; }
 .companion-presence .wanigan-orb-small { display: flex; align-items: center; gap: var(--s-1); width: auto; max-width: 100%; aspect-ratio: auto; text-align: left; border-radius: var(--r-pill); }
 .companion-presence .wanigan-orb-small canvas { flex: none; width: var(--companion-size); height: var(--companion-size); }
 .companion-presence .wanigan-orb-small::after { display: none; }
@@ -253,3 +256,13 @@
   .mission-setup-candidates label { grid-template-columns: auto minmax(0,1fr); }
   .mission-setup-candidate-meta { grid-column: 2; text-align: left; }
 }
+
+/* Wanigan saying a conversation is filling up. Sits above the companion rather
+   than over the work: never modal, never takes focus, and reachable by touch
+   on a tablet where there is no hover. */
+.handover-bubble { position: absolute; bottom: 100%; left: 0; z-index: 70; display: grid; gap: var(--s-1); width: max-content; max-width: min(21rem, calc(100vw - var(--s-5))); margin-bottom: var(--s-2); padding: var(--s-3); border: 1px solid var(--glass-line); border-radius: var(--r-lg); background: var(--bg-raised); box-shadow: var(--shadow-popover); }
+.handover-said { margin: 0; font-size: var(--t-small); font-weight: 550; color: var(--text); line-height: 1.4; }
+.handover-ask { margin: 0; font-size: var(--t-small); color: var(--text-dim); line-height: 1.4; }
+.handover-note { margin: 0; font-size: var(--t-micro); color: var(--warning); line-height: 1.4; }
+.handover-actions { display: flex; gap: var(--s-2); flex-wrap: wrap; margin-top: var(--s-1); }
+.handover-why { margin: 0; font-size: var(--t-micro); color: var(--text-faint); line-height: 1.4; }

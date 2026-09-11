@@ -31,6 +31,7 @@
     "probe:chords": "node scripts/probe-chords.mjs",
     "probe:preflight": "node scripts/probe-preflight.mjs",
     "probe:terminal": "node scripts/probe-terminal-replay.mjs",
+    "probe:handover": "node scripts/probe-handover.mjs",
     "test:package-hooks": "node scripts/test-package-hooks.cjs",
     "test:local-install": "node scripts/test-local-macos-install.cjs",
     "app": "./scripts/launch.sh",

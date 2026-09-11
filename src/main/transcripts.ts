@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { db, dataDir, ensurePrivateDir, ensurePrivateFile } from './db';
 import * as accounts from './accounts';
@@ -569,6 +568,31 @@ export function searchTranscripts(q: string, limit = 50): TranscriptHit[] {
  * holds only what is worth searching, while reading a session means seeing the
  * tool steps too. The copy on disk is the record of truth in both directions.
  */
+/**
+ * The newest assistant turn in a conversation that is still running.
+ *
+ * transcriptFor below reads the `transcripts` table, which archiveSession fills
+ * when a session *exits* — so for a live conversation it correctly answers that
+ * nothing was archived. The handover needs the opposite case: a conversation
+ * that is still going, whose text is in the CLI's own transcript on disk. That
+ * is the same file the context reader measures, resolved the same way.
+ *
+ * Returns null for "there is no such turn" and throws for "the transcript could
+ * not be read", because a caller about to seed a new session with this needs to
+ * tell an empty answer apart from a failed one.
+ */
+export function lastAssistantTurn(projectPath: string, conversationId: string | null): string | null {
+  const file = transcriptPathFor(projectPath, conversationId);
+  if (!file) return null;
+  const { text } = readForParse(file);
+  const parsed = parseTranscript(text, Date.now());
+  for (let i = parsed.turns.length - 1; i >= 0; i -= 1) {
+    const turn = parsed.turns[i];
+    if (turn.role === 'assistant' && turn.text.trim()) return turn.text.trim();
+  }
+  return null;
+}
+
 export function transcriptFor(sessionId: string): { turns: TranscriptTurn[]; note: string | null; bytes: number } {
   const row = db().prepare(
     'SELECT stored_path, bytes, note FROM transcripts WHERE session_id = ?'
