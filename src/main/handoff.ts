@@ -35,8 +35,52 @@ export type { HandoffPlan, HandoffResult, HandoffTarget } from '../shared/handof
 /** Only Codex keeps a conversation as one self-contained file under its home. */
 const HARNESS = 'codex';
 
+/**
+ * Find a conversation's rollout, by index first and by name second.
+ *
+ * codexRolloutPaths reads Codex's own state database, which is the right
+ * answer when it is there — its comment is explicit that a partial or
+ * unavailable one "simply leaves that thread unmetered". Unmetered is a fine
+ * outcome for a spend column and a bad one here: it would report a
+ * conversation that is plainly on disk as impossible to hand over.
+ *
+ * So when the index cannot answer, look for the file. Codex names a rollout
+ * `rollout-<timestamp>-<uuid>.jsonl`, and the uuid is the thread id, so the
+ * name is evidence rather than a guess — the scan matches the id and the
+ * extension, never a date or a position.
+ */
 function rolloutFor(threadId: string): string | null {
-  return codexRolloutPaths([threadId]).get(threadId.toLowerCase()) ?? null;
+  const indexed = codexRolloutPaths([threadId]).get(threadId.toLowerCase());
+  if (indexed) return indexed;
+
+  const id = threadId.toLowerCase();
+  for (const home of accounts.readRoots(HARNESS)) {
+    const found = scanForRollout(path.join(home, 'sessions'), id, 0);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** Codex files by year/month/day, so four levels is the whole tree. */
+const SCAN_DEPTH = 4;
+
+function scanForRollout(dir: string, id: string, depth: number): string | null {
+  if (depth > SCAN_DEPTH) return null;
+  let entries: import('node:fs').Dirent[];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    // Never follow a link out of the sessions tree: one placed there would
+    // otherwise make this walk somebody else's filesystem.
+    if (entry.isSymbolicLink()) continue;
+    if (entry.isDirectory()) {
+      const found = scanForRollout(full, id, depth + 1);
+      if (found) return found;
+    } else if (entry.isFile() && entry.name.endsWith('.jsonl') && entry.name.toLowerCase().includes(id)) {
+      return full;
+    }
+  }
+  return null;
 }
 
 /**
