@@ -6,7 +6,11 @@ set -uo pipefail
 # happened to be in.
 cd "$(dirname "$0")/.." || exit 1
 
-WANT="$(cat .nvmrc 2>/dev/null | tr -d 'v \n')"
+# stderr is redirected before the input redirect, not after: with
+# `< .nvmrc 2>/dev/null` bash reports "No such file or directory" on the
+# still-unredirected stderr, and a missing .nvmrc is a case these scripts
+# already handle silently by leaving WANT empty.
+WANT="$(tr -d 'v \n' 2>/dev/null < .nvmrc)"
 if [ -n "$WANT" ] && [ -d "$HOME/.nvm/versions/node/v$WANT/bin" ]; then
   export PATH="$HOME/.nvm/versions/node/v$WANT/bin:$PATH"
 fi

@@ -50,11 +50,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Preinstalled on the GitHub runner image, so there is nothing to fetch.
-      # The three scripts here are the ones a contributor actually runs:
-      # launch.sh, smoke.sh and cli.sh.
+      # Pinned rather than taken from the runner image. The image's shellcheck
+      # was older than the one these scripts were checked against locally, and
+      # the two disagreed about SC2002 — which 0.11.0 dropped from its defaults
+      # — so a workflow that passed on a laptop failed on its first CI run for
+      # a reason nothing in the repository recorded. A linter whose rule set
+      # moves under you is not a gate.
+      - name: Install shellcheck
+        env:
+          SHELLCHECK_VERSION: 0.11.0
+        run: |
+          curl --fail --silent --show-error --location \
+            --output shellcheck.tar.xz \
+            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          tar --extract --xz --file shellcheck.tar.xz "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          mv "shellcheck-v${SHELLCHECK_VERSION}/shellcheck" .
+
+      # The three scripts a contributor actually runs: launch.sh, smoke.sh and
+      # cli.sh.
       - name: Check shell scripts
-        run: shellcheck scripts/*.sh
+        run: ./shellcheck scripts/*.sh
 
   secrets:
     name: gitleaks
