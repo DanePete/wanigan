@@ -86,17 +86,23 @@ try {
       windows: [{ kind: 'week', scope: null, usedPercent: percent, resetsAtText: 'Friday 4:15pm', resetsAt: Date.now() + 3600000 }] },
     ...extra ] });
 
+  // The fifth field is what the shot is called. Both speaking cases used to
+  // write bubble-1280.png and bubble-430.png, and this loop runs the account
+  // limit after the handover, so the limit bubble overwrote the handover one
+  // every time. docs/visuals/context-handover/ has been documenting the wrong
+  // feature, with the probe green throughout: every assertion here is about the
+  // bubble on screen at the time, and both bubbles are real.
   const cases = [
-    ['a measured window at 90% speaks', ok(), true, undefined],
+    ['a measured window at 90% speaks', ok(), true, undefined, 'bubble'],
     ['an assumed window stays silent', ok({ windowSource: 'assumed-200k' }), false, undefined],
     ['a stale reading stays silent', ok({ at: Date.now() - 130_000 }), false, undefined],
     ['an ordinary 50% stays silent', ok({ percent: 50, tokens: 100000 }), false, undefined],
-    ['a reached account limit speaks', ok({ percent: 50, tokens: 100000 }), true, limitsFor(96)],
+    ['a reached account limit speaks', ok({ percent: 50, tokens: 100000 }), true, limitsFor(96), 'limit'],
     ['stale limits stay silent', ok({ percent: 50, tokens: 100000 }), false,
       { at: Date.now() - 11 * 60_000, limits: limitsFor(96).limits }],
   ];
 
-  for (const [label, reading, expected, limits] of cases) {
+  for (const [label, reading, expected, limits, stem] of cases) {
     const q = [`ctx=${encodeURIComponent(JSON.stringify(reading))}`];
     if (limits !== undefined) q.push(`lim=${encodeURIComponent(JSON.stringify(limits))}`);
     await page.goto(`${rendererURL}?${q.join('&')}`);
@@ -128,7 +134,22 @@ try {
       });
       check(wide.top >= 0 && wide.bottom <= wide.vh && wide.left >= 0 && wide.right <= wide.vw && wide.onTop,
         'it is actually visible at desktop width, not merely present in the DOM', wide);
-      await page.screenshot({ path: path.join(out, 'bubble-1280.png'), clip: { x: 0, y: 420, width: 640, height: 480 } });
+      // Frame the bubble this run just measured, rather than a fixed rectangle
+      // that has drifted off it. Every assertion above is on .handover-bubble
+      // and they all pass, but the clip was x:0,y:420 — which had come to hold
+      // the weekly-limit bubble instead, so the one image documenting context
+      // handover showed a different feature entirely and the probe stayed
+      // green. Same 640x480 as before, positioned to contain what it is of.
+      const shot = { width: 640, height: 480 };
+      const clip = {
+        x: Math.max(0, Math.min(wide.vw - shot.width, Math.round((wide.left + wide.right) / 2 - shot.width / 2))),
+        y: Math.max(0, Math.min(wide.vh - shot.height, Math.round((wide.top + wide.bottom) / 2 - shot.height / 2))),
+        ...shot,
+      };
+      check(clip.x <= wide.left && clip.y <= wide.top
+        && clip.x + clip.width >= wide.right && clip.y + clip.height >= wide.bottom,
+        'and the saved screenshot actually contains the bubble it is a screenshot of', { clip, wide });
+      await page.screenshot({ path: path.join(out, `${stem}-1280.png`), clip });
       await page.setViewportSize({ width: 430, height: 900 });   // a phone
       await page.waitForTimeout(600);
       // Horizontal fit is not the same as visible. A bubble anchored above the
@@ -152,7 +173,7 @@ try {
         'and sits inside the viewport vertically rather than above its top edge', fits);
       check(fits !== null && fits.onTop,
         'and is the thing actually painted there, not covered by the dock', fits);
-      await page.screenshot({ path: path.join(out, 'bubble-430.png') });
+      await page.screenshot({ path: path.join(out, `${stem}-430.png`) });
       await page.setViewportSize({ width: 1280, height: 900 });
     }
   }
