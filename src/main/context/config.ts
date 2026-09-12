@@ -835,7 +835,11 @@ const MODEL_ALIASES: Record<string, string> = {
   opus: 'claude-opus-5',
   sonnet: 'claude-sonnet-5',
   haiku: 'claude-haiku-4-5-20251001',
-  fable: 'claude-fable-5',
+  // Both Fable rows carry the same rate, so this alias is not load-bearing for
+  // cost — it decides which label a cost is filed under. Pointed at 5.1 because
+  // that is what the CLI's `fable` resolves to on the machines this was written
+  // against; if that is ever wrong, the money is still right.
+  fable: 'claude-fable-5-1',
 };
 
 function resolveModel(modelId: string | undefined): { id: string; known: boolean } {

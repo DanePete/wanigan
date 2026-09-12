@@ -103,6 +103,10 @@ export const PUBLISHED_BACKEND_MODELS: Record<string, LaunchModelRow[]> = {
     { value: 'sonnet', label: 'Sonnet', description: null, efforts: null },
     { value: 'haiku', label: 'Haiku', description: null, efforts: null },
     { value: 'fable', label: 'Fable', description: null, efforts: null },
+    // Named by full id rather than an alias, because the alias is the CLI's to
+    // resolve and Wanigan cannot see what it currently points at. A row that
+    // says 5.1 has to deliver 5.1.
+    { value: 'claude-fable-5-1', label: 'Fable 5.1', description: null, efforts: null },
   ],
 };
 

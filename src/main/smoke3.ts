@@ -6244,7 +6244,10 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     .run('mc-3', 'mc-3', 'glm', 'claude-code', 'zai', 'glm-5.3', '/tmp/mc', 'mc', Date.now() - 3000);
   const after = await providerModelCatalogue(anthropicProfile as never);
   const values = after.rows.map((r) => r.value);
-  check(before.rows.length === 4 && values.length === 5 && values.includes('claude-opus-4-6-20260115'),
+  // 5 published rows for anthropic (opus, sonnet, haiku, fable, Fable 5.1) plus
+  // the one resolved id mc-1 ran on. mc-2 is 'Opus' — the same alias in another
+  // case — and mc-3 belongs to another backend, so neither adds a row.
+  check(before.rows.length === 5 && values.length === 6 && values.includes('claude-opus-4-6-20260115'),
     'a resolved id a session actually ran on this backend joins the published aliases',
     JSON.stringify(values));
   check(values.filter((v) => v.toLowerCase() === 'opus').length === 1,

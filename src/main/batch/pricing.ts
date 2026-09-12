@@ -49,6 +49,7 @@ export type ModelPricing = {
 export const MODELS: ModelPricing[] = [
   { id: 'claude-opus-5',    label: 'Opus 5',    batchInput: 2.5,  batchOutput: 12.5, maxTokens: 128_000, extendedOutput: true },
   { id: 'claude-sonnet-5',  label: 'Sonnet 5',  batchInput: 1.0,  batchOutput: 5.0,  maxTokens: 128_000, extendedOutput: true },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1', batchInput: 5.0,  batchOutput: 25.0, maxTokens: 128_000, extendedOutput: false },
   { id: 'claude-fable-5',   label: 'Fable 5',   batchInput: 5.0,  batchOutput: 25.0, maxTokens: 128_000, extendedOutput: false },
   { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', batchInput: 0.5, batchOutput: 2.5, maxTokens: 64_000, extendedOutput: false },
   { id: 'claude-opus-4-8',  label: 'Opus 4.8',  batchInput: 2.5,  batchOutput: 12.5, maxTokens: 128_000, extendedOutput: true },
