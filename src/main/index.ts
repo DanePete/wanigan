@@ -163,7 +163,17 @@ const attendedUiInvocation = !isCliInvocation()
   && !isDaemonInvocation()
   && process.env.WANIGAN_SMOKE !== '1';
 const ownsUiInstance = !attendedUiInvocation || app.requestSingleInstanceLock();
-if (!ownsUiInstance) app.quit();
+// exit, not quit. `app.quit()` fires before-quit, and that handler vetoes the
+// first one unconditionally (`quitReady` is false this early) so it can ask
+// about live agents. A second instance has no window to ask in and no sessions
+// initialised to ask about, so the veto stood and nothing re-issued the quit:
+// the process stayed alive for ever, holding no lock, showing no window and
+// refusing ⌘Q. That is what "Wanigan can't close and won't open" looks like,
+// and installing over a still-running copy is the ordinary way to hit it,
+// because the old process has not released the lock yet when the new one
+// starts. `app.exit` skips before-quit, which is what this path wants: there
+// is nothing to drain and nobody to prompt.
+if (!ownsUiInstance) app.exit(0);
 
 /**
  * Batches advance in the main process on a timer. BatchStudio needed a separate
