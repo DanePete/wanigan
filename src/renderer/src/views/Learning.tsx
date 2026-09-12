@@ -457,6 +457,18 @@ function LearningWorkspace({ projectId, projects, providers, onPickProject, init
       return true;
     } catch (e) {
       if (alive.current) setError(message(e));
+      // Reload on failure too. Several actions here are more than one IPC call
+      // -- approve is reviewCandidate followed by promoteCandidate -- and when
+      // the second is refused the first has already committed. Returning
+      // without reloading left the card asserting the status the database held
+      // before the call, so a candidate that was now 'approved' still rendered
+      // its pending controls, and the only transition the repository would
+      // accept from there was reject. The error still surfaces; what changes is
+      // that the row beneath it stops describing a state that is no longer true.
+      if (alive.current) {
+        setRefreshTick((t) => t + 1);
+        try { await load(true); } catch { /* the error already shown is the one that matters */ }
+      }
       return false;
     } finally {
       actionLock.current = false; if (alive.current) setBusy(null);
