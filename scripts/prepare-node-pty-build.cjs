@@ -44,6 +44,35 @@ async function beforeBuild(context) {
 }
 
 /**
+ * Keep macOS from offering build output as installed applications.
+ *
+ * A packaged `.app` under $HOME is a launchable application as far as Spotlight
+ * is concerned, and `release/` being in .gitignore means nothing to it. Every
+ * packaging run therefore adds two more "Wanigan" entries to Spotlight — and
+ * feature-verification builds that copy their result back here for review add
+ * two each and are never collected. That reached 21 bundles on one machine,
+ * only one of which was the install in /Applications.
+ *
+ * `.metadata_never_index` at the output root is the documented way to tell
+ * mdworker to skip a tree. Written here rather than in the npm scripts so it
+ * covers every dist target, including a run that overrides the output
+ * directory — the marker lands beside whatever `appOutDir` this build used.
+ *
+ * Best-effort on purpose: a release must not fail because a Spotlight hint
+ * could not be written.
+ *
+ * @param {string} outRoot
+ * @returns {Promise<void>}
+ */
+async function excludeOutputFromSpotlight(outRoot) {
+  try {
+    await fs.writeFile(path.join(outRoot, '.metadata_never_index'), '');
+  } catch {
+    /* an unindexed release is a convenience, never a release requirement */
+  }
+}
+
+/**
  * Keep a missing helper from becoming a release artifact. This runs after the
  * app files have been copied and unpacked, but before electron-builder signs
  * and archives the app, so a failure is both actionable and safe.
@@ -57,6 +86,8 @@ async function beforeBuild(context) {
  */
 async function afterPack(context, options = {}) {
   if (context.electronPlatformName !== 'darwin') return;
+  await (options.excludeOutputFromSpotlight || excludeOutputFromSpotlight)(path.dirname(context.appOutDir));
+
   const hostPlatform = options.hostPlatform || process.platform;
   // Flipping a macOS framework's fuses, synchronizing its Info.plist hash,
   // and sealing the result are release requirements, not optional niceties.
@@ -111,5 +142,6 @@ async function afterPack(context, options = {}) {
   await (options.signLocalMacAppIfNeeded || signLocalMacAppIfNeeded)(context);
 }
 
+exports.excludeOutputFromSpotlight = excludeOutputFromSpotlight;
 exports.beforeBuild = beforeBuild;
 exports.afterPack = afterPack;
