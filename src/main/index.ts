@@ -2075,9 +2075,20 @@ function registerIpc() {
   // substituted for it, so it gets its own slot and its own UI.
   handle('key:provider', (rawId: string) => {
     const id = managedProviderCredentialId(rawId);
+    // Effective presence, not stored presence. getProviderKey lets
+    // WANIGAN_<ID>_KEY win (keys.ts) and docs/provider-packs.md documents that
+    // precedence, so answering from the file alone made this handler disagree
+    // with the same process: sessions authenticated while the panel said no key
+    // was stored, and the fingerprint beside that sentence was the env key's,
+    // because providerKeyFingerprint resolves through getProviderKey. key:status
+    // has reported its Anthropic equivalent this way all along.
+    const fromEnv = Boolean(process.env[`WANIGAN_${id.toUpperCase()}_KEY`]);
     return {
-      present: hasProviderKey(id),
+      present: hasProviderKey(id) || fromEnv,
       fingerprint: providerKeyFingerprint(id),
+      fromEnv,
+      /** Whether Remove has anything to remove: it clears the file only. */
+      stored: hasProviderKey(id),
     };
   });
   /*

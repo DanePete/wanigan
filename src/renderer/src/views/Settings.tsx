@@ -19,7 +19,29 @@ import type { ResolvedTheme } from '../theme-boot';
 import '../styles/settings.css';
 
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
-type ProviderKeyStatus = { present: boolean; fingerprint: string | null };
+type ProviderKeyStatus = { present: boolean; fingerprint: string | null; fromEnv: boolean; stored: boolean };
+
+/**
+ * Said once per provider panel when WANIGAN_<ID>_KEY is set.
+ *
+ * The env var wins inside getProviderKey, so with it set the fingerprint beside
+ * the pill is the environment's key, Verify reports on the environment's key,
+ * and Remove — which clears the stored file — cannot reach it. The panel has to
+ * say so, or it reads as a description of something the operator can edit here.
+ */
+function EnvKeyNote({ envName, stored }: { envName: string; stored: boolean }) {
+  return (
+    <div style={{ marginBottom: 11 }}>
+      <Note tone="info">
+        <code className="mono">{envName}</code> is set in the environment and takes precedence over
+        anything stored here — the fingerprint below is that key, and Verify reports on it.{' '}
+        {stored
+          ? 'A stored key also exists; Remove clears that one, and sessions keep using the environment.'
+          : 'Remove has nothing to clear: unset the variable to stop using it.'}
+      </Note>
+    </div>
+  );
+}
 type SettingsTab = 'agents' | 'projects' | 'automation' | 'connections' | 'privacy' | 'backup' | 'app';
 export type { SettingsTab };
 
@@ -913,12 +935,15 @@ export default function Settings({
               ) : !glmStatus ? (
                 <Reading what="the stored Z.ai Coding Plan key" />
               ) : glmStatus.present ? (
+                <>
+                {glmStatus.fromEnv && <EnvKeyNote envName="WANIGAN_GLM_KEY" stored={glmStatus.stored} />}
                 <div className="set-key-status">
                   <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>Coding Plan key installed</span>
                   <span className="mono faint">{glmStatus.fingerprint}</span>
                   <button className="btn" onClick={() => void verifyGlm()} disabled={glmBusy}>Verify live catalogue</button>
                   <button className="btn btn-danger" onClick={() => void clearGlm()} disabled={glmBusy}>Remove</button>
                 </div>
+                </>
               ) : <Note tone="warn">No Z.ai Coding Plan key stored. GLM sessions cannot authenticate until you add one.</Note>}
               {/* Never empty: this label is the input's accessible name. "Paste"
                   is dropped while the status is unread, because it implies an
@@ -942,12 +967,15 @@ export default function Settings({
               ) : !deepseekStatus ? (
                 <Reading what="the stored DeepSeek key" />
               ) : deepseekStatus.present ? (
+                <>
+                {deepseekStatus.fromEnv && <EnvKeyNote envName="WANIGAN_DEEPSEEK_KEY" stored={deepseekStatus.stored} />}
                 <div className="set-key-status">
                   <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>DeepSeek key installed</span>
                   <span className="mono faint">{deepseekStatus.fingerprint}</span>
                   <button className="btn" onClick={() => void verifyDeepseek()} disabled={deepseekBusy}>Verify live catalogue</button>
                   <button className="btn btn-danger" onClick={() => void clearDeepseek()} disabled={deepseekBusy}>Remove</button>
                 </div>
+                </>
               ) : <Note tone="warn">No DeepSeek key stored. DeepSeek sessions cannot authenticate until you add one.</Note>}
               <label className="label" htmlFor="deepseek-api-key" style={{ marginTop: 11 }}>{deepseekStatus?.present ? 'Replace DeepSeek key' : deepseekStatus ? 'Paste DeepSeek API key' : 'DeepSeek API key'}</label>
               <div className="set-field-action">
@@ -968,12 +996,15 @@ export default function Settings({
               ) : !xaiStatus ? (
                 <Reading what="the stored xAI key" />
               ) : xaiStatus.present ? (
+                <>
+                {xaiStatus.fromEnv && <EnvKeyNote envName="WANIGAN_XAI_KEY" stored={xaiStatus.stored} />}
                 <div className="set-key-status">
                   <span className="pill" style={{ background: 'var(--ok-soft)', color: 'var(--ok)' }}>xAI key installed</span>
                   <span className="mono faint">{xaiStatus.fingerprint}</span>
                   <button className="btn" onClick={() => void verifyXai()} disabled={xaiBusy}>Verify live catalogue</button>
                   <button className="btn btn-danger" onClick={() => void clearXai()} disabled={xaiBusy}>Remove</button>
                 </div>
+                </>
               ) : <Note tone="warn">No xAI key stored. Grok sessions cannot authenticate until you add one.</Note>}
               <label className="label" htmlFor="xai-api-key" style={{ marginTop: 11 }}>{xaiStatus?.present ? 'Replace xAI key' : xaiStatus ? 'Paste xAI API key' : 'xAI API key'}</label>
               <div className="set-field-action">

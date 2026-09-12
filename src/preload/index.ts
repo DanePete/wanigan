@@ -212,7 +212,7 @@ const api = {
     set: (k: string, workspaceId?: string) =>
       call<{ detail: string; batches: boolean; fingerprint: string | null }>('key:set', k, workspaceId),
     verify: () => call<{ ok: boolean; detail: string; batches: boolean }>('key:verify'),
-    provider: (id: string) => call<{ present: boolean; fingerprint: string | null }>('key:provider', id),
+    provider: (id: string) => call<{ present: boolean; fingerprint: string | null; fromEnv: boolean; stored: boolean }>('key:provider', id),
     /** Credential ids this profile declares and does not have. Empty for Claude and Codex. */
     missingFor: (providerId: string) => call<string[]>('key:missingFor', providerId),
     setProvider: (id: string, key: string) =>
