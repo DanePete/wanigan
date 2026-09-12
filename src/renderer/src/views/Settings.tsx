@@ -4762,7 +4762,10 @@ function Worktrees() {
                   </thead>
                   <tbody>
                     {list.map((w) => {
-                      const risky = w.dirty > 0 || w.ahead > 0;
+                      // Unreadable is risky. A worktree git could not count is exactly
+                      // the one whose contents nobody can vouch for.
+                      const unreadable = w.dirty === null || w.ahead === null;
+                      const risky = unreadable || (w.dirty ?? 0) > 0 || (w.ahead ?? 0) > 0;
                       const asking = confirm === w.path;
                       return (
                         <tr key={w.path}>
@@ -4778,21 +4781,27 @@ function Worktrees() {
                             {w.head && <div className="faint" style={{ fontSize: 'var(--t-micro)' }}>{w.head.slice(0, 8)}</div>}
                           </td>
                           <td className="set-n">
-                            {w.dirty > 0
-                              ? <span style={{ color: 'var(--warning)' }}>{plural(w.dirty, 'file')}</span>
-                              : <span className="faint">none</span>}
+                            {w.dirty === null
+                              ? <span style={{ color: 'var(--warning)' }}>unreadable</span>
+                              : w.dirty > 0
+                                ? <span style={{ color: 'var(--warning)' }}>{plural(w.dirty, 'file')}</span>
+                                : <span className="faint">none</span>}
                           </td>
                           <td className="set-n">
-                            {w.ahead > 0
-                              ? <span style={{ color: 'var(--warning)' }}>{plural(w.ahead, 'commit')}</span>
-                              : <span className="faint">none</span>}
+                            {w.ahead === null
+                              ? <span style={{ color: 'var(--warning)' }}>unreadable</span>
+                              : w.ahead > 0
+                                ? <span style={{ color: 'var(--warning)' }}>{plural(w.ahead, 'commit')}</span>
+                                : <span className="faint">none</span>}
                           </td>
                           <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                             {asking ? (
                               <>
                                 <span className="faint" style={{ fontSize: 'var(--t-micro)', marginRight: 6 }}>
-                                  destroy {w.dirty > 0 ? plural(w.dirty, 'uncommitted file') : 'it'}
-                                  {w.ahead > 0 ? ` and ${plural(w.ahead, 'unpushed commit')}` : ''}?
+                                  {unreadable
+                                    ? 'git could not read this worktree — destroy it and whatever is in it?'
+                                    : <>destroy {w.dirty! > 0 ? plural(w.dirty!, 'uncommitted file') : 'it'}
+                                        {w.ahead! > 0 ? ` and ${plural(w.ahead!, 'unpushed commit')}` : ''}?</>}
                                 </span>
                                 <button className="set-mini danger" onClick={() => void remove(w, true)}>yes, delete</button>
                                 <button className="set-mini" onClick={() => setConfirm(null)}>keep</button>

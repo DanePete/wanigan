@@ -897,7 +897,7 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
                                   // the committed half of an agent's work silently.
                                   const wt = worktrees.find((w) => w.branch === b.name);
                                   setConfirm(wt
-                                    ? { what: `Merge ${b.name} into ${st.branch}. It is an agent's worktree at ${wt.path}${wt.dirty > 0 ? ` with ${wt.dirty} uncommitted file${wt.dirty > 1 ? 's' : ''} that will not be merged` : ''}.`,
+                                    ? { what: `Merge ${b.name} into ${st.branch}. It is an agent's worktree at ${wt.path}$${wt.dirty === null ? ' whose uncommitted files git could not count; anything uncommitted there will not be merged' : wt.dirty > 0 ? ` with ${wt.dirty} uncommitted file${wt.dirty > 1 ? 's' : ''} that will not be merged` : ''}.`,
                                         verb: `Merge into ${st.branch}`,
                                         run: () => act('Merge', async () => {
                                           const r = await window.wanigan.worktrees.merge(wt.path, { squash: false });

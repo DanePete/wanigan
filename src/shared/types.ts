@@ -1122,9 +1122,20 @@ export type WorktreeInfo = {
   repoRoot: string;
   /** Null when Wanigan has no session for it — an orphan from a crash. */
   sessionId: string | null;
-  /** Uncommitted files, so "discard" can warn before destroying work. */
-  dirty: number;
-  ahead: number;
+  /**
+   * Uncommitted files, so "discard" can warn before destroying work.
+   *
+   * Null means git could not say — a `status` that timed out on a large or
+   * network-mounted tree, or overflowed its buffer on a huge untracked
+   * directory. It is deliberately not 0: every destructive path here treats 0
+   * as proof of cleanliness, and a UI that renders "none" for an unreadable
+   * worktree builds its force-delete confirmation out of that word. The main
+   * process kept this distinction from the start (see the Dirty/Ahead shapes
+   * in worktrees.ts); it used to be flattened at this boundary.
+   */
+  dirty: number | null;
+  /** Unpushed commits, or null when `rev-list` could not say. Same rule. */
+  ahead: number | null;
   /** Gitignored paths linked back to the main checkout — vendor, node_modules, .env. */
   linked?: { path: string; kind: 'dir' | 'file'; bytes: number | null }[];
 };

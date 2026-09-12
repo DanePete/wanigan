@@ -418,11 +418,12 @@ export async function relinkWorktree(worktreePath: string): Promise<LinkedPath[]
 /* ── inspect ─────────────────────────────────────────────────────────── */
 
 /**
- * Everything worktreeStatus reports, plus whether the dirty count is a real
- * answer. WorktreeInfo.dirty is a plain number the UI renders, so the "git
- * could not say" case has to ride alongside it — the destructive operations
- * need it, and re-running `git status` in merge and remove would mean a second
- * 30s wait in exactly the case where the first one already timed out.
+ * Everything worktreeStatus reports, plus the reason git gave when it could
+ * not count. WorktreeInfo.dirty/ahead carry null for that case, so the UI can
+ * say "unreadable" rather than "none"; the Dirty and Ahead shapes ride
+ * alongside because they also carry git's own words, and re-running
+ * `git status` in merge and remove would mean a second 30s wait in exactly the
+ * case where the first one already timed out.
  */
 async function inspect(p: string): Promise<{ info: WorktreeInfo; dirty: Dirty; ahead: Ahead } | null> {
   const abs = canon(p);
@@ -459,12 +460,13 @@ async function inspect(p: string): Promise<{ info: WorktreeInfo; dirty: Dirty; a
   const info: WorktreeInfo = {
     path: abs, branch, head, repoRoot,
     sessionId: rowFor(abs)?.session_id ?? null,
-    // Unknown shows as 0 in the list, which is only a display: nothing
-    // destructive is decided from these two fields — merge and remove read the
-    // Dirty and Ahead beside them, where null is refused rather than rounded
-    // down to a number that happens to mean "carry on".
-    dirty: dirty.count ?? 0,
-    ahead: ahead.count ?? 0,
+    // Null travels. It used to be flattened to 0 here, on the grounds that
+    // "nothing destructive is decided from these two fields" — but the
+    // renderer's force-delete confirmation is built from them, and it renders
+    // 0 as "none". An operator shown "none" who presses "yes, delete" sends
+    // force: true, which is precisely the flag that skips the refusal below.
+    dirty: dirty.count,
+    ahead: ahead.count,
   };
   return { info, dirty, ahead };
 }

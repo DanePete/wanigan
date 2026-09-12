@@ -1830,7 +1830,10 @@ function WorktreeBar({ session, path, onRefresh }: {
   async function discard(target: WorktreeInfo) {
     setBusy('discard');
     try {
-      const r = await window.wanigan.worktrees.remove(target.path, target.dirty > 0);
+      // force only on a count git actually gave. When dirty is null the
+      // operator was shown "unreadable", not a file count — forcing here
+      // would spend a confirmation they were never asked for.
+      const r = await window.wanigan.worktrees.remove(target.path, (target.dirty ?? 0) > 0);
       setResult({ ok: r.removed, text: r.detail });
       setConfirm(null);
       await load();
@@ -1861,11 +1864,15 @@ function WorktreeBar({ session, path, onRefresh }: {
             <span className="mono" style={{ fontSize: 'var(--t-small)', fontWeight: 600 }}>{branch ?? 'detached HEAD'}</span>
             <span className="faint mono trunc" style={{ fontSize: 'var(--t-micro)' }} title={info.path}>{info.path}</span>
             <span className="dim" style={{ fontSize: 'var(--t-small)', fontVariantNumeric: 'tabular-nums' }}>
-              {info.dirty > 0
-                ? `${plural(info.dirty, 'uncommitted file')}`
-                : 'nothing uncommitted'}
+              {info.dirty === null
+                ? 'uncommitted files unreadable'
+                : info.dirty > 0
+                  ? `${plural(info.dirty, 'uncommitted file')}`
+                  : 'nothing uncommitted'}
               {' · '}
-              {info.ahead > 0 ? `${plural(info.ahead, 'commit')} ahead` : 'no commits yet'}
+              {info.ahead === null
+                ? 'commits unreadable'
+                : info.ahead > 0 ? `${plural(info.ahead, 'commit')} ahead` : 'no commits yet'}
             </span>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
               <FocusBtn className="btn" style={{ padding: '3px 9px' }} disabled={busy !== null || !branch}
@@ -1896,16 +1903,22 @@ function WorktreeBar({ session, path, onRefresh }: {
                       borderRadius: 'var(--r-sm)', padding: '8px 11px', lineHeight: 1.5 }}>
           <div style={{ color: 'var(--warning)', fontWeight: 650, fontSize: 'var(--t-small)' }}>
             <span aria-hidden="true">⚠ </span>
-            {confirm.dirty > 0
-              ? `${plural(confirm.dirty, 'uncommitted file')} will be deleted`
-              : 'Delete this worktree folder?'}
+            {confirm.dirty === null
+              ? 'git could not read this worktree'
+              : confirm.dirty > 0
+                ? `${plural(confirm.dirty, 'uncommitted file')} will be deleted`
+                : 'Delete this worktree folder?'}
           </div>
           <p style={{ color: 'var(--text-dim)', fontSize: 'var(--t-small)', marginTop: 3 }}>
-            {confirm.dirty > 0
-              ? <>Those changes exist only in <span className="mono">{confirm.path}</span> and nowhere else.
-                  Commit them there first if you want to keep them.</>
-              : <>Nothing is uncommitted, so only the folder at <span className="mono">{confirm.path}</span> goes.</>}
-            {confirm.ahead > 0 && confirm.branch && (
+            {confirm.dirty === null
+              ? <>Wanigan asked git what is uncommitted in <span className="mono">{confirm.path}</span> and
+                  got no answer, so it cannot say what deleting it would destroy. Run
+                  <span className="mono"> git status</span> there first.</>
+              : confirm.dirty > 0
+                ? <>Those changes exist only in <span className="mono">{confirm.path}</span> and nowhere else.
+                    Commit them there first if you want to keep them.</>
+                : <>Nothing is uncommitted, so only the folder at <span className="mono">{confirm.path}</span> goes.</>}
+            {confirm.ahead !== null && confirm.ahead > 0 && confirm.branch && (
               <> {plural(confirm.ahead, 'commit')} on <span className="mono">{confirm.branch}</span> are
                  not merged anywhere else; the branch itself is kept, so they are recoverable.</>
             )}
@@ -1913,7 +1926,9 @@ function WorktreeBar({ session, path, onRefresh }: {
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
             <FocusBtn className="btn" onClick={() => setConfirm(null)} disabled={busy === 'discard'}>Keep it</FocusBtn>
             <FocusBtn className="btn btn-danger" onClick={() => discard(confirm)} disabled={busy === 'discard'}>
-              {busy === 'discard' ? 'Deleting…' : confirm.dirty > 0 ? 'Delete it and lose the changes' : 'Delete the worktree'}
+              {busy === 'discard' ? 'Deleting…'
+                : confirm.dirty === null ? 'Delete it anyway'
+                : confirm.dirty > 0 ? 'Delete it and lose the changes' : 'Delete the worktree'}
             </FocusBtn>
           </div>
         </div>
