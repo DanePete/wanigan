@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import { db, logEvent, newRunId } from './db';
-import { detectProviders, providerById, refreshProviderPacks, shellPath } from './providers';
+import { cliVersionOf, detectProviders, providerById, refreshProviderPacks, shellPath } from './providers';
 import { listProjects, projectById } from './store';
 import { trustFor, registerPolicyContext, releasePolicyContext } from './policy';
 import { writeHookSettings, cleanupHookSettings } from './hooks';
@@ -981,13 +981,17 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   // arbitrary adapter cannot gain it by naming its executable `claude`.
   const takesHooks = def.harness === 'claude-code';
   const hooksOn = flags().hooks;
+  // Probed from `bin`, the file this row will spawn, through the cache the
+  // run-level detection already filled — so twenty repos cost no extra spawns.
+  // A failed probe is null, and null asks for the base events only.
+  const cliVersion = takesHooks && hooksOn ? await cliVersionOf(def, bin).catch(() => null) : null;
   let hookSettings: string | null = takesHooks && hooksOn ? writeHookSettings(hookId, cwd, {
     providerId: def.id,
     backendId: def.backendId,
     projectId,
     projectPath: row.project_path,
     query: cfg.prompt,
-  }) : null;
+  }, { cliVersion }) : null;
   if (hookSettings) {
     registerPolicyContext({
       sessionId: hookId,

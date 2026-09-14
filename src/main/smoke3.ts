@@ -7784,6 +7784,23 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     'every hook event Wanigan asks a current CLI for has a word and a glyph in the Timeline, so none of them reaches the operator as a raw identifier',
     JSON.stringify({ asked: asked.length, undrawn }));
 
+  // The gate is half a contract; the launch paths are the other half. Both
+  // wrote their settings file with no version, so every real session was asked
+  // for the base thirteen alone and SubagentStart/Stop, PostModelSwitch,
+  // CwdChanged and InstructionsLoaded never arrived — while the gate's own
+  // checks above, which pass a version by hand, stayed green.
+  const hookLaunchSessionsSrc = sourceOf('src/main/sessions.ts');
+  const hookLaunchHeadlessSrc = sourceOf('src/main/headless.ts');
+  const unversionedWrites = [...hookLaunchSessionsSrc.matchAll(/writeHookSettings\([^;]*?\);/gs),
+    ...hookLaunchHeadlessSrc.matchAll(/writeHookSettings\([^;]*?\) : null;/gs)]
+    .map((m) => m[0]).filter((call) => !call.includes('cliVersion'));
+  check(hookLaunchSessionsSrc.includes('writeHookSettings(id0, cwd, undefined, { cliVersion: detected.version })')
+    && hookLaunchHeadlessSrc.includes('await cliVersionOf(def, bin)')
+    && hookLaunchHeadlessSrc.includes('}, { cliVersion }) : null;')
+    && unversionedWrites.length === 0,
+  'both launch paths hand the settings file the probed version of the binary they spawn, so a current CLI is asked for the version-gated events and not the base set alone',
+  JSON.stringify({ unversionedWrites }));
+
   // The shell seeds its project list empty and surfaces a failed read as a banner, so `length === 0`
   // was two different facts and this pane printed only one of them.
   check(appSrc.includes('const [projectsRead, setProjectsRead] = useState(false);')
