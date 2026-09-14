@@ -9,6 +9,7 @@ import { trustFor, registerPolicyContext, releasePolicyContext } from './policy'
 import { writeHookSettings, cleanupHookSettings } from './hooks';
 import { flags, learningSettings } from './settings';
 import { createWorktree, removeWorktree } from './worktrees';
+import { gateLaunch } from './config-pins';
 import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } from './learning';
 import { claimFireForRun, recordFireOutcome, type ScheduleFire } from './schedule';
 import { announceRunEnded } from './notify';
@@ -930,6 +931,25 @@ async function runRow(runId: string, projectId: string): Promise<void> {
       `Could not create a worktree in ${row.project_name}: ${e instanceof Error ? e.message : String(e)}`,
       startedAt
     );
+    return;
+  }
+
+  // The repository's executable configuration, checked in the directory this
+  // row will run in. A change since it was last accepted blocks the row: there
+  // is nobody at a headless run to read the difference, and running a hook or
+  // MCP command nobody approved is exactly what the pin exists to stop.
+  const configGate = await gateLaunch(projectId, cwd, null, false).catch((error: unknown) => ({
+    allowed: false as const,
+    reason: `Wanigan could not read this repository's executable config, so it was not run: ${error instanceof Error ? error.message : String(error)}`,
+  }));
+  if (!configGate.allowed) {
+    if (worktree) {
+      try { await removeWorktree(worktree, false); } catch { /* git refused; a fresh tree with nothing in it is harmless */ }
+    }
+    d.prepare("UPDATE headless_rows SET status='blocked', error=?, ended_at=? WHERE run_id=? AND project_id=?")
+      .run(configGate.reason, Date.now(), runId, projectId);
+    logEvent(runId, 'warn', `${row.project_name}: blocked because its executable config changed since it was last accepted.`);
+    finalize(runId);
     return;
   }
 

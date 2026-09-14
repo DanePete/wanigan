@@ -233,6 +233,8 @@ export type Session = {
    * saying.
    */
   accountNote?: string | null;
+  /** What the executable-config pin did at launch, when it did anything: a first-use pin or a reviewed change. */
+  configNote?: string | null;
   /** How the docket goal capsule reached this session, when one was requested. */
   goalCapsule?: GoalCapsuleDelivery | null;
   /** Repo state at launch — lets the code panel show only this session's work. */
@@ -294,6 +296,12 @@ export type LaunchOptions = {
    * instructions, recorded as a work-trace row, never mutated by the renderer.
    */
   goalCapsule?: GoalCapsule;
+  /**
+   * The executable-config digest the operator read and accepted in the launch
+   * dialog. Main recomputes the digest at launch and launches only when they
+   * match, so a configuration that moved again is asked about again.
+   */
+  acceptConfigDigest?: string;
 };
 
 /** A finished session, recoverable after a quit. */

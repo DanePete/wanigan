@@ -275,6 +275,13 @@ const api = {
     forecast: (projectId: string) =>
       call<import('../shared/collisions').CollisionForecast>('worktrees:forecast', projectId),
   },
+  /** The repository's executable config against what was last let launch. */
+  configPins: {
+    check: (projectId: string, worktree?: string | null) =>
+      call<import('../shared/exec-config').ConfigPinCheck>('configPins:check', projectId, worktree ?? null),
+    accept: (projectId: string, digest: string, worktree?: string | null) =>
+      call<import('../shared/exec-config').ConfigPinCheck>('configPins:accept', projectId, digest, worktree ?? null),
+  },
   // ── phase 10 · headless fan-out ──────────────────────────────────────
   headless: {
     // `allProjects` is the operator saying "every registered repository" out

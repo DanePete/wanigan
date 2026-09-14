@@ -1,0 +1,10 @@
+{
+  "at": "2026-09-14T23:16:47.221Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; no real agent calls",
+  "mode": "before",
+  "checks": [
+    "before: the launch dialog says nothing about what the repository runs of its own",
+    "before: Context lists hooks and MCP servers but never says whether a launch will be let through with them"
+  ],
+  "errors": []
+}

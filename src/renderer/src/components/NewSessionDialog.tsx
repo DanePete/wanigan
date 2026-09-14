@@ -3,7 +3,8 @@ import type { AccountResolution, AgentAccount, LaunchModelCatalogue, LaunchOptio
 import { TRUST_LEVELS, permissionModeCopy, trustCopy, trustGlyph } from '@shared/types';
 import { intersectChoices, launchFieldChoices, type LaunchChoice } from '@shared/launch-fields';
 import { providerTint } from '@shared/provider-status';
-import { Hint, Note, Icon, SectionHead } from './bits';
+import type { ConfigPinCheck } from '@shared/exec-config';
+import { Hint, Mark, Note, Icon, SectionHead, ago } from './bits';
 import '../styles/launch.css';
 import { useDialog } from './useDialog';
 
@@ -425,6 +426,24 @@ export default function NewSessionDialog({
 
   const needsCred = (missingCred?.length ?? 0) > 0;
 
+  // The repository's own executable configuration, compared with what was last
+  // let launch here. Read again for every project choice; accepting a change is
+  // a per-launch act and never carries over to another project.
+  const [configCheck, setConfigCheck] = useState<ConfigPinCheck | null>(null);
+  const [configRead, setConfigRead] = useState<'reading' | 'read' | 'failed'>('reading');
+  const [configAccepted, setConfigAccepted] = useState(false);
+  useEffect(() => {
+    let live = true;
+    setConfigCheck(null); setConfigAccepted(false);
+    if (!projectId) { setConfigRead('read'); return; }
+    setConfigRead('reading');
+    window.wanigan.configPins.check(projectId)
+      .then((check) => { if (live) { setConfigCheck(check); setConfigRead('read'); } })
+      .catch(() => { if (live) setConfigRead('failed'); });
+    return () => { live = false; };
+  }, [projectId]);
+  const configChanged = configCheck?.state === 'changed';
+
   const blocker = list.length === 0
     ? 'Wanigan has not loaded any agent profiles yet, so there is nothing to launch.'
     : !provider?.path
@@ -436,7 +455,9 @@ export default function NewSessionDialog({
         : needsCred
           ? `${provider?.label ?? 'This profile'} needs its own API key (${missingCred?.join(', ')}). `
             + 'Without it the session would run on the underlying CLI account instead of this provider.'
-          : null;
+          : configChanged && !configAccepted
+            ? 'This repository’s configuration changed since it was last accepted. Read the changes above and confirm them to launch.'
+            : null;
 
   async function saveCredential() {
     const id = missingCred?.[0];
@@ -469,7 +490,8 @@ export default function NewSessionDialog({
     if (missingField) { setErr(`${missingField.label} is required by this provider profile.`); return; }
     setBusy(true); setErr(null);
     try {
-      await onCreate({ providerId, projectId, model, effort, permissionMode, providerOptions, extraArgs, initialPrompt, isolate, accountId });
+      await onCreate({ providerId, projectId, model, effort, permissionMode, providerOptions, extraArgs, initialPrompt, isolate, accountId,
+        acceptConfigDigest: configChanged && configAccepted && configCheck ? configCheck.snapshot.digest : undefined });
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -1038,6 +1060,38 @@ export default function NewSessionDialog({
                  value={extraArgs} onChange={(e) => setExtraArgs(e.target.value)} />
         </details>
 
+        {configCheck?.state === 'first-use' && (
+          <Hint>This repository runs {configCheck.summary} of its own before the agent starts. Launching pins that configuration, and Wanigan asks again if it changes.</Hint>
+        )}
+        {configChanged && configCheck?.diff && (
+          <section className="launch-config-review" aria-labelledby="launch-config-title">
+            <h3 id="launch-config-title">This repository’s configuration changed</h3>
+            <p className="launch-config-lead">
+              These run before the agent does anything. Compared with the configuration
+              {configCheck.lastAccepted ? ` ${configCheck.lastAccepted.how === 'reviewed' ? 'you reviewed' : 'pinned at first launch'} ${ago(configCheck.lastAccepted.at)}` : ' last accepted'}:
+            </p>
+            <ul className="launch-config-list">
+              {configCheck.diff.added.map((item) => (
+                <li key={`a:${item.id}`}><Mark glyph="+" word="added" tone="warn" /><span className="launch-config-what"><b>{item.label}</b> · {item.file}</span><code>{item.shown}</code></li>
+              ))}
+              {configCheck.diff.changed.map(({ before, after }) => (
+                <li key={`c:${after.id}`}><Mark glyph="~" word="changed" tone="warn" /><span className="launch-config-what"><b>{after.label}</b> · {after.file}</span>
+                  <code>{before.shown === after.shown ? `${after.shown} — the value changed and is not shown` : `${before.shown} → ${after.shown}`}</code></li>
+              ))}
+              {configCheck.diff.removed.map((item) => (
+                <li key={`r:${item.id}`}><Mark glyph="−" word="removed" tone="quiet" /><span className="launch-config-what"><b>{item.label}</b> · {item.file}</span><code>{item.shown}</code></li>
+              ))}
+              {configCheck.snapshot.unreadable.map((file) => (
+                <li key={`u:${file}`}><Mark glyph="?" word="unreadable" tone="bad" /><span className="launch-config-what"><b>{file}</b> exists but could not be read, so what it runs is unknown</span></li>
+              ))}
+            </ul>
+            <label className="launch-config-accept">
+              <input type="checkbox" checked={configAccepted} onChange={(event) => setConfigAccepted(event.target.checked)} />
+              I have read these changes. Launch with them.
+            </label>
+          </section>
+        )}
+
         {err && (
           // role="alert" because this text appears where nothing was, after a
           // button press that a screen reader otherwise reports as silence.
@@ -1060,6 +1114,13 @@ export default function NewSessionDialog({
             <div><dt>Workspace</dt><dd>{isolate ? 'New isolated worktree' : 'Project checkout'}</dd></div>
             <div><dt>Trust</dt><dd>{trust ? trustCopy(trust).label : trustErr ? 'Could not read' : 'Reading…'}</dd></div>
             <div><dt>Permissions</dt><dd>{permissionMode || 'CLI default'}</dd></div>
+            <div><dt>Repository config</dt><dd>{configRead === 'reading' ? 'Reading…'
+              : configRead === 'failed' ? 'Could not read'
+                : !configCheck || configCheck.state === 'none' ? 'Runs nothing of its own'
+                  : configCheck.state === 'first-use' ? 'Pinned at this launch'
+                    : configCheck.state === 'accepted'
+                      ? (configCheck.lastAccepted?.how === 'reviewed' ? 'Matches what you reviewed' : 'Matches the first-launch pin')
+                      : configAccepted ? 'Changed, confirmed' : 'Changed since accepted'}</dd></div>
           </dl>
           <nav aria-label="Launch sections">
             {[['launch-space', 'Agent and space'], ['launch-controls', 'Session controls'], ['launch-message', initialPrompt.trim() ? 'First message added' : 'Add a first message']].map(([id, label]) =>

@@ -19,6 +19,7 @@ import type { Baseline, BudgetState, TrustLevel } from '../shared/types';
 import { otelEnv } from './otel';
 import * as accounts from './accounts';
 import { readableFromAccount } from './handoff';
+import { gateLaunch, type LaunchGate } from './config-pins';
 import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './hooks';
 import { finalizeSessionCheckpoints, forgetSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
 import { archiveSession, conversationTitle, titleFromTranscript, type ReadTitle } from './transcripts';
@@ -1112,6 +1113,24 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     }
   };
 
+  // The repository's own executable configuration — hooks, MCP servers,
+  // helpers, env overrides, git hooks — checked against what was last let
+  // launch here, in the directory the agent will actually run in. A changed
+  // configuration launches only with the digest the operator accepted in the
+  // dialog; every other caller, a paired phone included, is refused with the
+  // reason. See config-pins.ts.
+  let configGate: LaunchGate;
+  try {
+    configGate = await gateLaunch(project.id, cwd, typeof opts.acceptConfigDigest === 'string' ? opts.acceptConfigDigest : null, true);
+  } catch (error) {
+    await rollbackLaunch();
+    throw error;
+  }
+  if (!configGate.allowed) {
+    await rollbackLaunch();
+    throw new Error(configGate.reason);
+  }
+
   // Attachments arrive after a session has started, so the directory must
   // exist and be granted to the CLI before its sandbox is created. Granting
   // this one session directory is deliberately narrower than granting all of
@@ -1401,6 +1420,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   meta.accountId = account?.id ?? null;
   meta.accountLabel = account?.label ?? null;
   meta.accountNote = account && pinnedAccount?.note ? pinnedAccount.note : null;
+  meta.configNote = configGate.note;
   meta.goalCapsule = capsuleDelivery;
 
   let proc: IPty;
