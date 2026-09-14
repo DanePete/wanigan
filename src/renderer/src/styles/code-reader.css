@@ -27,3 +27,31 @@
 .code-reader-status { display: flex; justify-content: space-between; gap: var(--s-3); flex-wrap: wrap; padding: var(--s-3) var(--s-5); border-top: 1px solid var(--line-soft); color: var(--text-faint); font-size: var(--t-small); }
 .code-reader-status kbd { font-family: var(--font-ui); }
 @media (max-width: 720px) { .overlay-backdrop.code-reader-backdrop { padding: var(--s-2); } .code-reader-toolbar { padding: var(--s-3); } .code-reader-find { flex-wrap: wrap; } .code-reader-find > .field { flex: 1; } }
+
+/* Review notes: selecting diff lines to comment on, and the tray of notes
+   waiting to go into the session's message box. The left rule, not colour
+   alone, marks a selected or already-noted line. */
+.review-diff { display: flex; flex-direction: column; min-width: 0; }
+.review-diff .dl.add, .review-diff .dl.del, .review-diff .dl.ctx { cursor: pointer; }
+.review-diff .dl.review-sel { box-shadow: inset 3px 0 0 var(--accent); background: var(--accent-soft); }
+.review-diff .dl.review-noted { box-shadow: inset 3px 0 0 var(--warning); }
+.review-hunk { display: flex; align-items: center; gap: var(--s-3); }
+.review-hunk-btn { font-family: var(--font-ui); font-size: var(--t-micro); color: var(--text-dim); background: none;
+                   border: 1px solid var(--line); border-radius: var(--r-pill); padding: 0 var(--s-2); cursor: pointer; }
+.review-hunk-btn:hover, .review-hunk-btn:focus-visible { color: var(--text); border-color: var(--accent); }
+.review-compose { position: sticky; bottom: 0; display: grid; gap: var(--s-2); padding: var(--s-3);
+                  background: var(--bg-raised); border-top: 1px solid var(--line); }
+.review-compose textarea { width: 100%; min-height: calc(var(--s-6) * 2); resize: vertical; font: inherit; font-size: var(--t-small);
+                           color: var(--text); background: var(--bg-sunk); border: 1px solid var(--line);
+                           border-radius: var(--r-sm); padding: var(--s-2); }
+.review-compose-where { font-family: var(--mono); font-size: var(--t-micro); color: var(--text-dim); overflow-wrap: anywhere; }
+.review-compose-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); font-size: var(--t-micro); }
+.review-why { margin: 0; font-size: var(--t-micro); color: var(--warning); }
+.review-tray { display: grid; gap: var(--s-2); padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--line); background: var(--bg-raised); }
+.review-tray-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1) var(--s-2); font-size: var(--t-small); }
+.review-tray-actions { display: flex; gap: var(--s-2); margin-left: auto; }
+.review-tray-list { display: grid; gap: var(--s-1); margin: 0; padding-left: var(--s-4); font-size: var(--t-micro); color: var(--text-dim); }
+.review-tray-list li { overflow-wrap: anywhere; }
+.review-remove { margin-left: var(--s-2); font-size: var(--t-micro); color: var(--text-faint); background: none; border: 0; cursor: pointer; text-decoration: underline; }
+.review-remove:hover, .review-remove:focus-visible { color: var(--text); }
+.review-added { padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--line); }

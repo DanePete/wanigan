@@ -213,6 +213,29 @@ function writeDrafts(map: ComposerDraftMap) {
   catch { /* the caps are the real bound; a quota error here is the fallback */ }
 }
 
+/** Joins appended text to whatever the operator already had in the box. */
+function joinDraft(current: string, addition: string): string {
+  return current.trim() ? `${current.replace(/\s+$/, '')}\n\n${addition}` : addition;
+}
+
+type ComposerAppend = { sessionId: string; text: string; handled: boolean };
+
+/**
+ * Puts text into a session's message box without sending it. A mounted
+ * composer takes it through its own state, so the operator sees it land and
+ * the debounce persists it; a collapsed one never hears the event, so the
+ * stored draft is appended directly and appears when the box is opened. Either
+ * way the operator reads it and presses Send or Queue.
+ */
+export function appendToComposerDraft(sessionId: string, text: string): 'composer' | 'stored' {
+  const detail: ComposerAppend = { sessionId, text, handled: false };
+  window.dispatchEvent(new CustomEvent<ComposerAppend>('wanigan:composer-append', { detail }));
+  if (detail.handled) return 'composer';
+  const drafts = readDrafts();
+  writeDrafts(putDraft(drafts, sessionId, joinDraft(drafts[sessionId]?.text ?? '', text), Date.now()));
+  return 'stored';
+}
+
 /* ── stash ───────────────────────────────────────────────────────────── */
 
 type StashEntry = { id: number; text: string; at: number };
@@ -288,6 +311,29 @@ export default function Composer({ session, onError, onCollapse }: {
     }, 300);
     return () => window.clearTimeout(t);
   }, [draft, sessionId]);
+
+  // Text handed over from elsewhere — review notes from the code rail — lands
+  // in the box, never in the terminal. Marked handled so the sender does not
+  // also append it to the stored draft.
+  useEffect(() => {
+    const onAppend = (e: Event) => {
+      const detail = (e as CustomEvent<ComposerAppend>).detail;
+      if (!detail || detail.sessionId !== sessionId || typeof detail.text !== 'string') return;
+      detail.handled = true;
+      setDraft((current) => joinDraft(current, detail.text));
+      setFlash('Review notes added below your draft. Nothing is sent until you send it.');
+      window.setTimeout(() => setFlash(null), 4000);
+      requestAnimationFrame(() => {
+        const el = areaRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+        el.scrollTop = el.scrollHeight;
+      });
+    };
+    window.addEventListener('wanigan:composer-append', onAppend);
+    return () => window.removeEventListener('wanigan:composer-append', onAppend);
+  }, [sessionId]);
 
   useEffect(() => {
     const sync = () => setQueued(queuedFor(sessionId));

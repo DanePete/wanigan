@@ -1,0 +1,11 @@
+{
+  "at": "2026-09-14T22:27:42.521Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic code, sessions and services; no real agent calls",
+  "mode": "after",
+  "checks": [
+    "click and shift-click select three added lines; the note is anchored to new lines 1–3 against the session’s base commit, and the noted lines stay marked",
+    "the keyboard route selects the whole hunk from its header button and adds with ⌘↩, and the removed line counts on the old side",
+    "Add to message puts both notes under the existing draft, in the anchored format, and sends nothing to the terminal"
+  ],
+  "errors": []
+}

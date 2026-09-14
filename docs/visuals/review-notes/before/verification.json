@@ -1,0 +1,9 @@
+{
+  "at": "2026-09-14T22:28:02.778Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic code, sessions and services; no real agent calls",
+  "mode": "before",
+  "checks": [
+    "before: the code rail shows the diff as read-only lines, with no way to comment on one"
+  ],
+  "errors": []
+}
