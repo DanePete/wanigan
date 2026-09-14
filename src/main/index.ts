@@ -2991,6 +2991,22 @@ function registerIpc() {
     agentsChain(projectId, projectPath));
   handle('context:agentsMd', (projectPath: string) =>
     ctxInstructions.agentsMdStatus(assertManagedRoot(projectPath, 'That project folder')));
+  // The prediction above, laid beside what the newest session in this project
+  // reported through InstructionsLoaded. Keyed on the project id alone and the
+  // path resolved here, so a renderer cannot pair one project's session rows
+  // with another project's chain. Null means no session has reported yet —
+  // which, before launches handed the hook file a CLI version, was every one.
+  handle('context:observed', (projectId: string) => {
+    const project = typeof projectId === 'string' ? projectById(projectId) : undefined;
+    if (!project) throw new Error('That project is not registered with Wanigan.');
+    const root = assertManagedRoot(project.path, 'That project folder');
+    const newest = hooks.instructionsLoadedSessions(project.id, 1)[0];
+    if (!newest) return null;
+    return ctxInstructions.reconcileInstructions(
+      ctxInstructions.resolveInstructions(root),
+      hooks.instructionsLoaded(newest.sessionId),
+    );
+  });
   handle('context:refresh', (projectPath: string) => {
     const root = assertManagedRoot(projectPath, 'That project folder');
     ctxInstructions.refreshInstructions();

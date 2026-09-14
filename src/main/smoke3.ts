@@ -4289,6 +4289,20 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
       && contextSrc.includes('<CodexAgentsPanel'),
     'the Codex AGENTS.md chain reaches a screen — main exposes it, preload types it, and the Context view renders it',
     'wired');
+    // The same defect twice over: reconcileInstructions() and the two hook
+    // readers had tests and no caller, and the events they read were never
+    // requested. The channel takes a project id only, so the renderer cannot
+    // lay one project's session rows against another project's chain, and a
+    // failed read hides the section instead of reading as "nothing loaded".
+    check(indexSrc.includes("handle('context:observed', (projectId: string) =>")
+      && /hooks\.instructionsLoadedSessions\(project\.id, 1\)/.test(indexSrc)
+      && /ctxInstructions\.reconcileInstructions\(\s*ctxInstructions\.resolveInstructions\(root\),\s*hooks\.instructionsLoaded\(newest\.sessionId\),?\s*\)/.test(indexSrc)
+      && preloadSrc.includes("call<import('../shared/types').InstructionReconciliation | null>('context:observed', projectId)")
+      && contextSrc.includes('<ObservedLoads observed={observed} read={observedRead}/>')
+      && contextSrc.includes("const observedRead = rob.status === 'fulfilled' && !!pid;")
+      && contextSrc.includes('if (!read) return null;'),
+    'the loader prediction meets what a session reported — main pairs them per project, preload types it, and Context shows the report or says none exists, never an empty one',
+    'wired');
     const chain = codexSessions.agentsChain(null, appRoot());
     check(chain.files.some((file) => file.scope === 'home')
       && chain.files.some((file) => file.scope === 'project')

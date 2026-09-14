@@ -679,6 +679,8 @@ const api = {
     // deliberately not a prediction of Codex's load order — see agentsChain().
     codexAgents: (projectId: string | null, projectPath: string) =>
       call<CodexAgentsChain>('context:codexAgents', projectId, projectPath),
+    observed: (projectId: string) =>
+      call<import('../shared/types').InstructionReconciliation | null>('context:observed', projectId),
     refresh: (projectPath: string) => call<any>('context:refresh', projectPath),
   },
   // Opening a link is an external side effect, so it is explicit and validated
