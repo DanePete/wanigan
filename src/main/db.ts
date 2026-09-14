@@ -1274,6 +1274,11 @@ function migrateControl(d: Database.Database) {
   // "not now, but not never" — instead of forcing every known issue to be
   // either in progress or forgotten.
   addColumn(d, 'work_nodes', 'defer_until', 'INTEGER');
+  // When a task was last reopened. A gate proof written before it is evidence
+  // about a tree the reopened work has since replaced, so it must not complete
+  // the task a second time — hasPassedProof in control.ts and the phone's gate
+  // reading both count only proofs from after this moment.
+  addColumn(d, 'work_nodes', 'reopened_at', 'INTEGER');
   // The interview that produced a goal, kept after it did.
   //
   // Durable rather than in memory because an interview is ten minutes of the

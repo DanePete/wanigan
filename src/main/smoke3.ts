@@ -5828,7 +5828,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // numbers stay plausible and only shrink when somebody presses Reopen.
     const controlSrcP8 = sourceOf('src/main/control.ts');
     check(controlSrcP8.includes('UNION SELECT session_id FROM work_node_sessions WHERE docket_id=?')
-      && controlSrcP8.includes('recordNodeSession(nodeId, node.docket_id, node.session_id);')
+      && controlSrcP8.includes('recordNodeSession(node.id, node.docket_id, node.session_id);')
       && controlSrcP8.includes('recordNodeSession(nodeId, parent.id, session.id);')
       && !/const sessions = \(db\(\)\.prepare\("SELECT session_id FROM work_nodes WHERE docket_id=\? AND session_id IS NOT NULL"\)/.test(controlSrcP8),
       'a goal’s spend is read from the union of its live session pointers and the sessions work_node_sessions has recorded for its tasks, both dispatch and reopen write that record, and the single-table read that let a reopened task refund its own spend is gone',

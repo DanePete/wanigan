@@ -812,6 +812,12 @@ export function goalCapsuleText(capsule: GoalCapsule): string {
       ? '- To record progress or take a path, call the wanigan_goal_checkpoint / wanigan_goal_claim MCP tools with this node id.'
       : '- This harness cannot claim or release a path from inside the session. Stay within the claimed path and name anything else you needed in your final answer.',
   ];
+  // Snapshot rule applies here too: these are the notes as they stood at launch.
+  const changes = capsule.changesRequested ?? [];
+  if (changes.length) {
+    lines.push('- A human reviewer requested changes to earlier work on this goal. Address each, or say in your final answer why you did not:');
+    for (const change of changes) lines.push(`  - (${new Date(change.decidedAt).toISOString()}) ${change.note}`);
+  }
   return lines.join('\n');
 }
 

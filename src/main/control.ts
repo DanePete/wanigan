@@ -39,6 +39,7 @@ type NodeRow = {
   status: string; provider_id: string | null; model: string | null; session_id: string | null;
   worktree: string | null; started_at: number | null; ended_at: number | null; detail: string | null;
   claim_path: string | null; dispatch_state: string | null; defer_until: number | null;
+  reopened_at: number | null;
 };
 
 const MAX_OBJECTIVE = 12_000;
@@ -217,6 +218,7 @@ function mapNodes(rows: NodeRow[], at: number = Date.now()): DocketNode[] {
       worktree: row.worktree, startedAt: row.started_at, endedAt: row.ended_at, detail: row.detail,
       queued: row.dispatch_state === 'queued',
       deferUntil: row.defer_until,
+      reopenedAt: row.reopened_at ?? null,
     };
   });
 }
@@ -551,6 +553,7 @@ export function goalCapsuleFor(nodeId: string): GoalCapsule {
     }),
     siblingClaims: siblings.map((row) => ({ nodeId: row.node_id, title: row.title, path: row.path })),
     canClaimLive: false,
+    changesRequested: changesRequestedFor(parent.id),
     recordedAt: now(),
   };
 }
@@ -827,10 +830,42 @@ export async function runProof(nodeId: string): Promise<DocketProof> {
  * proof would say "verified" about a tree that had since failed.
  */
 function hasPassedProof(docketId: string, nodeId: string): boolean {
+  // Only runs since the task was last reopened. A reopen after "Request
+  // changes" sends the work back; the pass recorded before it is about the tree
+  // the reviewer asked to change, and letting it complete the task again would
+  // approve the revision on the strength of the version it replaced.
+  const reopened = (db().prepare('SELECT reopened_at FROM work_nodes WHERE id=?').get(nodeId) as
+    { reopened_at: number | null } | undefined)?.reopened_at ?? 0;
   const latest = db().prepare(`SELECT status FROM work_proofs
-    WHERE docket_id=? AND node_id=? AND kind='test' ORDER BY created_at DESC, rowid DESC LIMIT 1`)
-    .get(docketId, nodeId) as { status: string } | undefined;
+    WHERE docket_id=? AND node_id=? AND kind='test' AND created_at >= ? ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+    .get(docketId, nodeId, reopened) as { status: string } | undefined;
   return latest?.status === 'passed';
+}
+
+/** Longest note a capsule carries from one decision; the whole note stays in the proof. */
+const CAPSULE_CHANGE_CHARS = 1_200;
+
+/**
+ * The reviewer's "Request changes" notes on a goal, newest first. Read from the
+ * decision proofs' Mac-only detail rather than from the review task's own detail
+ * field, which a reopen overwrites, and rather than from `summary`, which is
+ * one of the few fields that crosses to a paired phone.
+ */
+function changesRequestedFor(docketId: string, limit = 3): { note: string; decidedAt: number }[] {
+  const rows = db().prepare(`SELECT detail_json, created_at FROM work_proofs
+    WHERE docket_id=? AND kind='decision' ORDER BY created_at DESC, rowid DESC LIMIT 20`)
+    .all(docketId) as { detail_json: string; created_at: number }[];
+  const out: { note: string; decidedAt: number }[] = [];
+  for (const row of rows) {
+    let detail: unknown;
+    try { detail = JSON.parse(row.detail_json); } catch { continue; }
+    const record = detail as { decision?: unknown; note?: unknown };
+    if (record?.decision !== 'request_changes' || typeof record.note !== 'string' || !record.note.trim()) continue;
+    const flat = record.note.replace(/\s+/g, ' ').trim();
+    out.push({ note: flat.length > CAPSULE_CHANGE_CHARS ? `${flat.slice(0, CAPSULE_CHANGE_CHARS)}…` : flat, decidedAt: row.created_at });
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 function storeOutcome(node: NodeRow, accepted: boolean, testsPassed: boolean): void {
@@ -876,8 +911,12 @@ export function completeNode(nodeId: string, input: { detail?: string; decision?
   releaseClaims(nodeId); setTaskStatus(nodeId, failed ? (decision === 'reject' ? 'cancelled' : 'failed') : 'completed');
   const proof: DocketProof = { id: uid('proof'), docketId: parent.id, nodeId, kind: node.kind === 'review' ? 'decision' : 'review',
     status: failed ? 'failed' : 'recorded', summary: node.kind === 'review' ? `Human decision: ${decision.replace('_', ' ')}.` : (detail ?? `${node.title} completed.`), createdAt: now() };
-  db().prepare('INSERT INTO work_proofs (id,docket_id,node_id,kind,status,summary,created_at) VALUES (?,?,?,?,?,?,?)')
-    .run(proof.id, proof.docketId, proof.nodeId, proof.kind, proof.status, proof.summary, proof.createdAt);
+  // The reviewer's note goes into detail_json, which stays on the Mac: it is
+  // what a reopened implementation is handed in its goal capsule, and `summary`
+  // crosses to a paired phone.
+  db().prepare('INSERT INTO work_proofs (id,docket_id,node_id,kind,status,summary,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(proof.id, proof.docketId, proof.nodeId, proof.kind, proof.status, proof.summary,
+      JSON.stringify(node.kind === 'review' ? { decision, note: detail } : {}), proof.createdAt);
   // The final decision is evidence about the work-producing agents, not just
   // about the reviewer. Persist one outcome per launched phase so the router
   // can compare implementation, verification and review models separately.
@@ -1152,21 +1191,69 @@ export function retryNode(nodeId: string): DocketNode {
   if (!['failed', 'canceled'].includes(node.status)) {
     throw new Error(`Only a failed or canceled task can be reopened; this task is ${node.status}.`);
   }
+  // A review that asked for changes sends the work back, not only itself.
+  // Reopening the review alone used to put the same, unchanged implementation
+  // in front of the reviewer again: the implementation task was complete and
+  // nothing could run it a second time, so "Request changes" had no path to a
+  // change anywhere inside the goal.
+  const sendBack = node.kind === 'review' && latestDecision(node.docket_id, nodeId) === 'request_changes'
+    ? upstreamWork(node.docket_id, nodeId) : [];
+  reopen(node, `Reopened after ${node.status}.`);
+  for (const upstream of sendBack) reopen(upstream, 'Reopened: the reviewer requested changes.');
+  setDocketPhase(node.docket_id);
+  return mapNodes(rawNodes(node.docket_id)).find((value) => value.id === nodeId)!;
+}
+
+function reopen(node: NodeRow, detail: string): void {
   if (node.session_id) {
     // Recorded before the statement below drops the pointer. Dispatch already
     // wrote this pair for anything started since work_node_sessions existed;
     // this call is what covers a task dispatched before it did.
-    recordNodeSession(nodeId, node.docket_id, node.session_id);
+    recordNodeSession(node.id, node.docket_id, node.session_id);
     try { killSession(node.session_id); } catch { /* already exited */ }
   }
   db().prepare(`UPDATE work_nodes SET status='pending',session_id=NULL,started_at=NULL,ended_at=NULL,
-    dispatch_state=NULL,detail=? WHERE id=?`).run(`Reopened after ${node.status}.`, nodeId);
-  releaseClaims(nodeId);
+    dispatch_state=NULL,detail=?,reopened_at=? WHERE id=?`).run(detail, now(), node.id);
+  releaseClaims(node.id);
   // The MCP task vocabulary has no 'pending': a reopened task is one waiting
   // to be started again, which is exactly what input_required means here.
-  setTaskStatus(nodeId, 'input_required');
-  setDocketPhase(node.docket_id);
-  return mapNodes(rawNodes(node.docket_id)).find((value) => value.id === nodeId)!;
+  setTaskStatus(node.id, 'input_required');
+}
+
+/** The newest human decision recorded on one review task, or null. */
+function latestDecision(docketId: string, nodeId: string): string | null {
+  const row = db().prepare(`SELECT detail_json FROM work_proofs WHERE docket_id=? AND node_id=? AND kind='decision'
+    ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(docketId, nodeId) as { detail_json: string } | undefined;
+  if (!row) return null;
+  try {
+    const decision = (JSON.parse(row.detail_json) as { decision?: unknown }).decision;
+    return typeof decision === 'string' ? decision : null;
+  } catch { return null; }
+}
+
+/**
+ * The completed implementation and verification tasks a review stands on,
+ * found by walking its dependencies. Plans are left alone: a reviewer asking for
+ * a different implementation has not rejected the plan, and replanning is a
+ * decision of its own.
+ */
+function upstreamWork(docketId: string, reviewId: string): NodeRow[] {
+  const rows = rawNodes(docketId);
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const seen = new Set<string>();
+  const out: NodeRow[] = [];
+  const walk = (id: string) => {
+    for (const dep of parseStrings(byId.get(id)?.depends_json ?? '[]')) {
+      if (seen.has(dep)) continue;
+      seen.add(dep);
+      const row = byId.get(dep);
+      if (!row) continue;
+      if ((row.kind === 'implement' || row.kind === 'verify') && row.status === 'completed') out.push(row);
+      walk(dep);
+    }
+  };
+  walk(reviewId);
+  return out;
 }
 
 /* ── autopilot ───────────────────────────────────────────────────────── */

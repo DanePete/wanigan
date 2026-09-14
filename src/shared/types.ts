@@ -1382,6 +1382,11 @@ export type DocketNode = {
    */
   deferUntil: number | null;
   /**
+   * When this task was last reopened, or null. Gate proofs from before it
+   * describe work the reopen replaced and do not count toward completing it.
+   */
+  reopenedAt: number | null;
+  /**
    * The autopilot dispatcher has claimed this task and is about to launch it.
    * A queued task reads as 'ready' otherwise, so pressing Start raced the
    * dispatcher: both created a worktree and a PTY, the atomic claim decided
@@ -1423,6 +1428,12 @@ export type GoalCapsule = {
   siblingClaims: { nodeId: string; title: string; path: string }[];
   /** Whether this harness can claim/checkpoint through Wanigan's MCP tools. */
   canClaimLive: boolean;
+  /**
+   * What a human reviewer asked to change, newest first, from "Request changes"
+   * decisions on this goal. The note used to be stored and never reach any
+   * agent; this is how it reaches the one launched to address it.
+   */
+  changesRequested: { note: string; decidedAt: number }[];
   recordedAt: number;
 };
 
