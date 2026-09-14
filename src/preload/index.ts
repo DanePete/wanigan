@@ -446,7 +446,9 @@ const api = {
   /** Carrying a filling conversation into a fresh session. */
   handover: {
     begin: (sessionId: string) => call<HandoverBegun>('handover:begin', sessionId),
-    finish: (sessionId: string) => call<HandoverFinished>('handover:finish', sessionId),
+    /** `toAccountId` only when the operator took an offer that named a different account. */
+    finish: (sessionId: string, toAccountId?: string | null) =>
+      call<HandoverFinished>('handover:finish', sessionId, toAccountId ?? null),
   },
   /** Continuing one conversation on another account of the same harness. */
   handoff: {

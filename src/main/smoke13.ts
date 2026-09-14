@@ -262,6 +262,24 @@ export async function runPreflightSmoke(check: Check, say: Say): Promise<void> {
     check(handoverSeed('x').includes('previous session'),
       'the fresh session is told the text is a handover, not passed it off as the work');
 
+    // "Personal has room. Carry the work there?" used to open the new session
+    // on the pressed account anyway. The id comes from the renderer, so it has
+    // to be an account of this session's own harness.
+    const { __test: handoverTest } = await import('./handover');
+    const accountsForCarry = await import('./accounts');
+    const { dataDir: carryDataDir } = await import('./db');
+    const carryPath = await import('node:path');
+    const claudeHome = accountsForCarry.create({ harness: 'claude-code', label: 'Carry Roomier', configDir: carryPath.join(carryDataDir(), 'carry-roomier') });
+    const codexHome = accountsForCarry.create({ harness: 'codex', label: 'Carry Codex', configDir: carryPath.join(carryDataDir(), 'carry-codex') });
+    const pressed = { providerId: 'claude', accountId: 'acct_pressed' } as import('../shared/types').Session;
+    const refuses = (id: string) => { try { handoverTest.carryAccount(pressed, id); return false; } catch { return true; } };
+    check(handoverTest.carryAccount(pressed, claudeHome.id) === claudeHome.id,
+      'taking the roomier-account offer opens the fresh session on that account, not the pressed one');
+    check(handoverTest.carryAccount(pressed, null) === 'acct_pressed' && handoverTest.carryAccount(pressed, 'acct_pressed') === 'acct_pressed',
+      'with no offer taken, the fresh session keeps the account the conversation already runs as');
+    check(refuses(codexHome.id) && refuses('acct_no_such_account'),
+      'an account of another harness, or one Wanigan does not hold, is refused rather than quietly replaced by the default');
+
     // An empty note and an unreadable transcript are different sentences, and
     // the type keeps them apart so a surface cannot merge them by accident.
     const kinds = ['carried', 'empty', 'unreadable'];

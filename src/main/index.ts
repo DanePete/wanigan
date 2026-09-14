@@ -1635,9 +1635,12 @@ function registerIpc() {
     if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('No session was named.');
     return beginHandover(sessionId.trim());
   });
-  handle('handover:finish', (sessionId: unknown) => {
+  handle('handover:finish', (sessionId: unknown, toAccountId: unknown) => {
     if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('No session was named.');
-    return finishHandover(sessionId.trim());
+    if (toAccountId !== undefined && toAccountId !== null && typeof toAccountId !== 'string') {
+      throw new Error('That is not an account.');
+    }
+    return finishHandover(sessionId.trim(), typeof toAccountId === 'string' && toAccountId.trim() ? toAccountId.trim() : null);
   });
   handle('handoff:plan', (sessionId: unknown) =>
     (typeof sessionId === 'string' && sessionId.trim() ? handoffPlan(sessionId.trim()) : {
