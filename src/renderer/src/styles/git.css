@@ -96,6 +96,19 @@
 /* A branch checked out in an agent's worktree, marked because merging one is
    routed through the worktree guards rather than a bare `git merge`. */
 .gt-wt-mark { margin-left: var(--s-2); font-size: var(--t-micro); }
+/* The collision forecast heads the branches pane whenever agents hold
+   worktrees: most severe pair first, clean pairs folded under a disclosure. */
+.gt-forecast { display: flex; flex-direction: column; gap: var(--s-2); padding: var(--s-2) var(--s-3) var(--s-3);
+               border-bottom: 1px solid var(--line); }
+.gt-forecast-counts { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-3); margin: 0; font-size: var(--t-small); }
+.gt-forecast-list { display: flex; flex-direction: column; gap: var(--s-2); margin: 0; padding: 0; list-style: none; }
+.gt-forecast-row { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--s-1) var(--s-2);
+                   align-items: baseline; font-size: var(--t-small); }
+.gt-forecast-pair { min-width: 0; font-family: var(--mono); overflow-wrap: anywhere; }
+.gt-forecast-files { grid-column: 2; color: var(--text-dim); font-size: var(--t-micro); overflow-wrap: anywhere; }
+.gt-forecast-more > summary { cursor: pointer; color: var(--text-dim); font-size: var(--t-small); }
+.gt-forecast-more[open] > summary { margin-bottom: var(--s-2); }
+.gt-forecast-foot { margin: 0; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.5; }
 .gt-file-row { display: flex; align-items: center; }
 .gt-file-row .gt-file { flex: 1; min-width: 0; }
 /* 24px hit area for the stage/unstage control, outside the path button. */
@@ -141,3 +154,8 @@
    of it. Inset to the same gutter as the panes they interrupt. */
 .gt-notice,
 .gt-confirm { padding: var(--s-2) var(--s-3); }
+/* A forecast conflict on a branch row, on its own line under the name: the
+   name span is one ellipsised line, and a mark inside it is clipped away. */
+.gt-branch-note { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); margin: 0;
+                  padding: 0 var(--s-3) var(--s-2) var(--s-6); color: var(--text-dim); font-size: var(--t-micro);
+                  overflow-wrap: anywhere; }

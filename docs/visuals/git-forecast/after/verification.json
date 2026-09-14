@@ -1,0 +1,14 @@
+{
+  "at": "2026-09-14T22:18:19.565Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic git and services; no real agent calls",
+  "mode": "after",
+  "checks": [
+    "opening the branches pane over agent worktrees runs one forecast, asked by project id alone",
+    "counts match the fixture, the conflict leads with its files named, overlap names its shared path, and clean pairs are folded",
+    "the four clean pairs are one disclosure away",
+    "a base conflict marks the branch row and is stated in the merge confirmation before the press, without the stray \"$\" that followed the path",
+    "an old git says the forecast cannot run, instead of showing zero conflicts",
+    "a failed forecast reads as not run, never as clean"
+  ],
+  "errors": []
+}

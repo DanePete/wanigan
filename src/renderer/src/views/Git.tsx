@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GhPr, GhStatusReport, Project, WorktreeInfo } from '@shared/types';
-import { ConfirmNote, EmptyState, Note, PageHead, Reading, SectionHead, Segmented, ago } from '../components/bits';
+import type { CollisionForecast, CollisionOutcome, CollisionPair, CollisionSide } from '@shared/collisions';
+import { ConfirmNote, EmptyState, Mark, Note, PageHead, Reading, SectionHead, Segmented, ago, type Tone } from '../components/bits';
 import ReviewGate from '../components/ReviewGate';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 
@@ -53,6 +54,112 @@ function checksLabel(c: NonNullable<GhPr['checks']>): string {
   if (c.fail > 0) return `✕ ${c.fail} of ${c.total} checks failing`;
   if (c.pending > 0) return `… ${c.pass}/${c.total} checks`;
   return `✓ ${c.total} check${c.total > 1 ? 's' : ''}`;
+}
+
+/* ── collision forecast ─────────────────────────────────────────────────
+   Whether the agents' worktrees would merge — with their base and with each
+   other — asked of git while the work is still in flight. A glyph and a word on
+   every outcome, most severe first, and clean pairs folded away so the pair a
+   reader has to act on is never buried under the ones they do not. */
+const FORECAST: Record<CollisionOutcome, { glyph: string; word: string; tone: Tone; blurb: string }> = {
+  conflicts:  { glyph: '✕', word: 'conflicts', tone: 'bad',
+                blurb: 'git could not merge these paths. Landing one will stop the other at merge time.' },
+  unreadable: { glyph: '?', word: 'not checked', tone: 'warn',
+                blurb: 'git did not answer for this pair, so nothing is known about it.' },
+  overlap:    { glyph: '◑', word: 'both edit', tone: 'serious',
+                blurb: 'Both change these paths and git merges them without a conflict. Changes that merge can still disagree, so review them together.' },
+  clean:      { glyph: '✓', word: 'no shared paths', tone: 'ok',
+                blurb: 'Neither side changes a path the other changes.' },
+};
+
+function sideName(side: CollisionSide): string {
+  if (side.branch) return side.branch;
+  return side.worktree ? side.worktree.split(/[\\/]/).filter(Boolean).at(-1) ?? side.worktree : 'detached HEAD';
+}
+
+function fileList(paths: string[]): string {
+  const shown = paths.slice(0, 4).join(', ');
+  return paths.length > 4 ? `${shown}, and ${paths.length - 4} more` : shown;
+}
+
+function ForecastRow({ pair }: { pair: CollisionPair }) {
+  const mark = FORECAST[pair.outcome];
+  return (
+    <li className="gt-forecast-row">
+      <Mark glyph={mark.glyph} word={mark.word} tone={mark.tone} title={mark.blurb} />
+      <span className="gt-forecast-pair">
+        {sideName(pair.a)} <span aria-label={pair.kind === 'base' ? 'merging into' : 'and'}>{pair.kind === 'base' ? '→' : '↔'}</span> {sideName(pair.b)}
+      </span>
+      {pair.outcome === 'conflicts' && (
+        <span className="gt-forecast-files">
+          {pair.conflicted.length} file{pair.conflicted.length > 1 ? 's' : ''} would conflict: {fileList(pair.conflicted)}
+          {pair.shared.length > 0 && <> · both also edit {fileList(pair.shared)}</>}
+        </span>
+      )}
+      {pair.outcome === 'overlap' && <span className="gt-forecast-files">Both edit {fileList(pair.shared)}</span>}
+      {pair.outcome === 'unreadable' && <span className="gt-forecast-files">git said: {pair.detail ?? 'no output'}</span>}
+    </li>
+  );
+}
+
+function ForecastPanel({ forecast, busy, error, onCheck }: {
+  forecast: CollisionForecast | null; busy: boolean; error: string | null; onCheck: () => void;
+}) {
+  const pairs = forecast?.pairs ?? [];
+  const count = (o: CollisionOutcome) => pairs.filter((p) => p.outcome === o).length;
+  const loud = pairs.filter((p) => p.outcome !== 'clean');
+  const quiet = pairs.filter((p) => p.outcome === 'clean');
+  const failed = forecast?.worktrees.filter((w) => w.snapshot === 'failed' || w.detail) ?? [];
+  const idle = forecast?.worktrees.filter((w) => w.changed === 0).length ?? 0;
+  return (
+    <section className="gt-forecast" aria-label="Collision forecast">
+      <SectionHead label="Collision forecast" right={
+        <button className="gt-chip" type="button" disabled={busy} onClick={onCheck}>
+          {busy ? 'Checking…' : forecast ? 'Check again' : 'Check'}
+        </button>} />
+      {error && <Note tone="error">The forecast did not run: {error}</Note>}
+      {!forecast && !error && (
+        <p className="gt-forecast-foot">
+          {busy ? 'Merging each agent worktree with its base and with the others, in git’s object store.'
+            : 'Merges each agent worktree with its base and with the others, uncommitted files included, without touching any working tree.'}
+        </p>
+      )}
+      {forecast?.unsupported && <Note tone="warn">{forecast.unsupported}</Note>}
+      {forecast && !forecast.unsupported && (
+        <>
+          {pairs.length === 0
+            ? <p className="gt-forecast-foot">
+                {forecast.worktrees.length === 0 ? 'No agent worktrees to compare.'
+                  : 'No worktree has changes to compare yet.'}
+              </p>
+            : <p className="gt-forecast-counts">
+                <Mark {...FORECAST.conflicts} word={`${count('conflicts')} conflicting`} />
+                <Mark {...FORECAST.overlap} word={`${count('overlap')} overlapping`} />
+                <Mark {...FORECAST.clean} word={`${count('clean')} clean`} />
+                {count('unreadable') > 0 && <Mark {...FORECAST.unreadable} word={`${count('unreadable')} not checked`} />}
+              </p>}
+          {loud.length > 0 && <ul className="gt-forecast-list">{loud.map((p) => (
+            <ForecastRow key={`${p.kind}:${p.a.worktree}:${p.b.worktree ?? p.b.branch}`} pair={p} />))}</ul>}
+          {quiet.length > 0 && (
+            <details className="gt-forecast-more">
+              <summary>{quiet.length} pair{quiet.length > 1 ? 's' : ''} with no shared paths</summary>
+              <ul className="gt-forecast-list">{quiet.map((p) => (
+                <ForecastRow key={`${p.kind}:${p.a.worktree}:${p.b.worktree ?? p.b.branch}`} pair={p} />))}</ul>
+            </details>
+          )}
+          {failed.map((w) => (
+            <p key={w.worktree} className="gt-forecast-foot">Could not read {sideName(w)}: {w.detail ?? 'git did not answer'}</p>
+          ))}
+          <p className="gt-forecast-foot">
+            Checked {forecast.worktrees.length} worktree{forecast.worktrees.length === 1 ? '' : 's'} {ago(forecast.at)}
+            {idle > 0 && <>, {idle} with nothing changed</>}
+            {forecast.omitted > 0 && <>; {forecast.omitted} more were not compared</>}. A clean forecast is not a clean
+            landing: the base can move, and changes that merge can still disagree.
+          </p>
+        </>
+      )}
+    </section>
+  );
 }
 
 /** Every arm of GhPrStatus rendered as itself; absence is shown, not faked. */
@@ -221,6 +328,10 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
       branch in here is merged through worktrees.merge, which carries the
       guards a bare `git merge` from this pane skipped. */
   const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
+  /** The last collision forecast for this repository, its failure, and whether one is running. */
+  const [forecast, setForecast] = useState<CollisionForecast | null>(null);
+  const [forecastErr, setForecastErr] = useState<string | null>(null);
+  const [forecastBusy, setForecastBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ title: '', body: '', draft: false, base: '' });
 
@@ -285,6 +396,7 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
     setSt(null); setCommits([]); setBrs([]); setStash([]); setWorktrees([]);
     setDetail(null); setErr(null); setOk(null); setConfirm(null);
     setPr(null); setCreating(false);
+    setForecast(null); setForecastErr(null); setForecastBusy(false);
   }, [root]);
 
   // Hands the status back as well as storing it. A caller that has just run a
@@ -365,6 +477,35 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
   // one: a PR chip for the branch that was on screen a moment ago is worse
   // than no chip.
   useEffect(() => { setPr(null); }, [root, branch]);
+
+  // Local git only — no network — so it runs when the branches pane is opened
+  // over agent worktrees and the last answer is more than a minute old, and
+  // again on request. Epoch-guarded: a forecast for A must not land under B.
+  const forecastProjectId = project?.id ?? null;
+  const runForecast = useCallback(async () => {
+    if (!forecastProjectId) return;
+    const epoch = requestEpoch.current;
+    setForecastBusy(true); setForecastErr(null);
+    try {
+      const fc = await window.wanigan.worktrees.forecast(forecastProjectId);
+      if (epoch === requestEpoch.current) setForecast(fc);
+    } catch (e) {
+      if (epoch === requestEpoch.current) setForecastErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (epoch === requestEpoch.current) setForecastBusy(false);
+    }
+  }, [forecastProjectId]);
+  const hasWorktrees = worktrees.length > 0;
+  const forecastAt = forecast?.at ?? null;
+  useEffect(() => {
+    if (pane !== 'branches' || !hasWorktrees || forecastBusy) return;
+    if (forecastAt !== null && Date.now() - forecastAt < 60_000) return;
+    if (forecastErr) return;
+    void runForecast();
+  }, [pane, hasWorktrees, forecastAt, forecastBusy, forecastErr, runForecast]);
+  /** The forecast's verdict on one worktree against its base, when it found a conflict. */
+  const baseConflict = (worktreePath: string): CollisionPair | undefined =>
+    forecast?.pairs.find((p) => p.kind === 'base' && p.a.worktree === worktreePath && p.outcome === 'conflicts');
 
   // The action itself is safe — it was given the root that was on screen when
   // it was pressed. What is not safe is its *report*: switch project while a
@@ -865,8 +1006,19 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
 
           {pane === 'branches' && st && (
             <div className="gt-scroll" ref={paneRef}>
-              {brs.map((b) => (
-                <div key={b.name} className="gt-file" style={{ cursor: 'default' }}>
+              {hasWorktrees && (
+                <ForecastPanel forecast={forecast} busy={forecastBusy} error={forecastErr}
+                               onCheck={() => { setForecastErr(null); void runForecast(); }} />
+              )}
+              {brs.map((b) => {
+                // The row's name span is one ellipsised line, so a mark placed
+                // inside it is clipped away in a narrow pane. A conflict gets its
+                // own line under the row instead.
+                const rowTree = worktrees.find((w) => w.branch === b.name);
+                const rowConflict = rowTree ? baseConflict(rowTree.path) : undefined;
+                return (
+                <Fragment key={b.name}>
+                <div className="gt-file" style={{ cursor: 'default' }}>
                   <span className="st" style={{ color: b.current ? 'var(--good)' : 'var(--text-faint)' }}>
                     {b.current ? '●' : b.remote ? '☁' : '○'}
                   </span>
@@ -896,8 +1048,14 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
                                   // A bare `git merge` from here ran none of that and took
                                   // the committed half of an agent's work silently.
                                   const wt = worktrees.find((w) => w.branch === b.name);
+                                  const hit = wt ? baseConflict(wt.path) : undefined;
+                                  // Said before the press, not discovered after it: the
+                                  // merge itself still stops and backs out on a conflict.
+                                  const foreseen = hit && forecast
+                                    ? ` The forecast ${ago(forecast.at)} found it conflicts with ${hit.b.branch} in ${fileList(hit.conflicted)}; if that still holds, git will stop and the merge will be backed out.`
+                                    : '';
                                   setConfirm(wt
-                                    ? { what: `Merge ${b.name} into ${st.branch}. It is an agent's worktree at ${wt.path}$${wt.dirty === null ? ' whose uncommitted files git could not count; anything uncommitted there will not be merged' : wt.dirty > 0 ? ` with ${wt.dirty} uncommitted file${wt.dirty > 1 ? 's' : ''} that will not be merged` : ''}.`,
+                                    ? { what: `Merge ${b.name} into ${st.branch}. It is an agent's worktree at ${wt.path}${wt.dirty === null ? ' whose uncommitted files git could not count; anything uncommitted there will not be merged' : wt.dirty > 0 ? ` with ${wt.dirty} uncommitted file${wt.dirty > 1 ? 's' : ''} that will not be merged` : ''}.${foreseen}`,
                                         verb: `Merge into ${st.branch}`,
                                         run: () => act('Merge', async () => {
                                           const r = await window.wanigan.worktrees.merge(wt.path, { squash: false });
@@ -916,7 +1074,16 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
                     )}
                   </span>
                 </div>
-              ))}
+                {rowConflict && (
+                  <p className="gt-branch-note">
+                    <Mark glyph="✕" word={`conflicts with ${rowConflict.b.branch}`} tone="bad"
+                          title="From the collision forecast above. The merge itself still stops and backs out on a conflict." />
+                    <span>{fileList(rowConflict.conflicted)}</span>
+                  </p>
+                )}
+                </Fragment>
+                );
+              })}
               <div className="gt-commit">
                 <NewBranch busy={!!busy} onCreate={(name) => void act('Branch', () => window.wanigan.git.checkout(st.root, name, true))} />
               </div>

@@ -272,6 +272,8 @@ const api = {
     // when there is no worktree at the path at all.
     merge: (p: string, opts?: { squash?: boolean; message?: string }) =>
       call<{ merged: boolean; detail: string }>('worktrees:merge', p, opts),
+    forecast: (projectId: string) =>
+      call<import('../shared/collisions').CollisionForecast>('worktrees:forecast', projectId),
   },
   // ── phase 10 · headless fan-out ──────────────────────────────────────
   headless: {

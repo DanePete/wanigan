@@ -44,6 +44,7 @@ import * as checkpoints from './checkpoints';
 import * as attention from './attention';
 import * as transcripts from './transcripts';
 import * as worktrees from './worktrees';
+import { forecastCollisions } from './collisions';
 import * as queue from './queue';
 import * as policy from './policy';
 import * as headless from './headless';
@@ -2233,6 +2234,10 @@ function registerIpc() {
   // worktree at the path at all, so ok:false here is the rare case.
   handle('worktrees:merge', (p: string, opts?: { squash?: boolean; message?: string }) =>
     worktrees.mergeWorktree(assertManagedRoot(p, 'That worktree'), opts));
+  // Whether the agents' worktrees would merge — with their base and with each
+  // other — asked of git in the object database while the work is in flight.
+  // Keyed on a project id; main resolves the repository and every worktree.
+  handle('worktrees:forecast', (projectId: string) => forecastCollisions(projectId));
   handle('worktrees:orphans', () => worktrees.reconcileWorktrees(liveSessionIds()));
   handle('worktrees:relink', (p: string) => worktrees.relinkWorktree(assertManagedRoot(p, 'That worktree')));
   handle('worktrees:forSession', (id: string) => worktrees.worktreeForSession(id));
