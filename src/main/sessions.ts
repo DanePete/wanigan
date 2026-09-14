@@ -18,6 +18,7 @@ import { promisify } from 'node:util';
 import type { Baseline, BudgetState, TrustLevel } from '../shared/types';
 import { otelEnv } from './otel';
 import * as accounts from './accounts';
+import { readableFromAccount } from './handoff';
 import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './hooks';
 import { finalizeSessionCheckpoints, forgetSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
 import { archiveSession, conversationTitle, titleFromTranscript, type ReadTitle } from './transcripts';
@@ -744,8 +745,8 @@ export function resumeAccountFor(
   sessionId: string, harness: string, requestedAccountId: string | null,
 ): { accountId: string | null; note: string | null } {
   if (!accounts.supportsAccounts(harness)) return { accountId: requestedAccountId, note: null };
-  const row = db().prepare('SELECT account_id FROM session_log WHERE id = ?')
-    .get(sessionId) as { account_id: string | null } | undefined;
+  const row = db().prepare('SELECT account_id, conversation_id FROM session_log WHERE id = ?')
+    .get(sessionId) as { account_id: string | null; conversation_id: string | null } | undefined;
   if (!row) throw new Error('This saved conversation no longer exists. Refresh Recent and choose another one.');
   if (!row.account_id) {
     return {
@@ -764,6 +765,16 @@ export function resumeAccountFor(
   }
   if (requestedAccountId && requestedAccountId !== owner.id) {
     const asked = accounts.byId(requestedAccountId);
+    // A Codex conversation handed over to another account is readable from
+    // that account's home too, and that is exactly what this refusal exists to
+    // check. Ask the filesystem rather than refuse on the recorded owner alone,
+    // or the handoff links the rollout and its own resume is turned away.
+    if (asked && harness === 'codex' && row.conversation_id && readableFromAccount(row.conversation_id, asked.id)) {
+      return {
+        accountId: asked.id,
+        note: `Continuing on “${asked.label}”: this conversation was handed over and is readable from that account’s directory.`,
+      };
+    }
     throw new Error(
       `This conversation belongs to the “${owner.label}” account, not “${asked?.label ?? requestedAccountId}”. `
       + `Resume it under “${owner.label}” — ${harnessName(harness)} may not find it under another account’s directory.`

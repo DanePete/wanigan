@@ -222,6 +222,20 @@ export async function runPreflightSmoke(check: Check, say: Say): Promise<void> {
     check(fs.existsSync(rollout),
       'and the account it started on can still continue it — the source is never moved');
 
+    // The resume that follows a handoff names the other account. It used to be
+    // refused for exactly that — "this conversation belongs to Handoff From" —
+    // so the link was made and the conversation never continued anywhere.
+    const { resumeAccountFor } = await import('./sessions');
+    db().prepare('UPDATE session_log SET account_id = ? WHERE id = ?').run(from.id, sid);
+    const resumed = resumeAccountFor(sid, 'codex', to.id);
+    check(resumed.accountId === to.id && /handed over/.test(resumed.note ?? ''),
+      'after a handoff, resuming under the account it was handed to is allowed and says why', JSON.stringify(resumed));
+    const stranger = accountsMod.create({ harness: 'codex', label: 'Handoff Stranger', configDir: path.join(dataDir(), 'handoff-stranger') });
+    let strangerRefused = false;
+    try { resumeAccountFor(sid, 'codex', stranger.id); } catch { strangerRefused = true; }
+    check(strangerRefused, 'an account the conversation was never handed to is still refused, because Codex would not find it there');
+    accountsMod.remove(stranger.id);
+
     // Running it twice must not fail: an operator can click again.
     const again = handoffConversation(sid, to.id);
     check(again.linkedTo === moved.linkedTo, 'handing the same conversation over twice is a no-op, not an error');
