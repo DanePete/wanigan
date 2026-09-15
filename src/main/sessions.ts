@@ -481,6 +481,11 @@ function submitInitialCodexPrompt(live: Live, cwd: string, prompt: string): void
 
 export function initSessions(getWindow: () => BrowserWindow | null) {
   reconcileAbandonedSessions();
+  // Off the launch path: each is a file copy and a parse, and nothing on screen
+  // waits for them.
+  setTimeout(() => {
+    try { archiveInterruptedTranscripts(); } catch { /* an archive must never cost a launch */ }
+  }, 5_000).unref();
   try { backfillCodexThreadIds(); }
   catch (e) { console.warn('[wanigan] Codex session identity backfill skipped:', e); }
   broadcast = (channel, payload) => {
@@ -1832,6 +1837,63 @@ export function reconcileAbandonedSessions(now = Date.now()): number {
   }
 }
 
+/** How far back an interrupted execution is still looked at on launch. */
+const INTERRUPTED_ARCHIVE_WINDOW_MS = 30 * 24 * 60 * 60_000;
+/** Archive attempts per launch: each is a file copy and a parse. */
+const INTERRUPTED_ARCHIVE_MAX = 25;
+
+/**
+ * Transcripts of executions that ended without Wanigan seeing them end.
+ *
+ * Archiving runs in the PTY's exit handler, and three endings never reach it:
+ * an app crash, a force quit, and a quit whose SIGKILL escalation outran
+ * node-pty. The row is closed with -1 (reconcileAbandonedSessions, or killAll),
+ * and the conversation's only copy stays in Claude Code's folder, where an
+ * upgrade or a cleanup can remove it. A session that crashed was never
+ * archived, so the one conversation most worth reading afterwards was the one
+ * most likely to be lost.
+ *
+ * Exact files only. An interrupted row's ended_at is when Wanigan noticed, not
+ * when the agent stopped — possibly days later — so the lifetime window the
+ * exit path guesses inside could reach a transcript someone else wrote since.
+ * And only the newest execution of a conversation: a later resume's archive
+ * already holds everything an earlier one would copy, and copying the file now
+ * would file the later turns under the earlier session.
+ */
+export function archiveInterruptedTranscripts(now = Date.now()): { archived: number; notFound: number } {
+  const result = { archived: 0, notFound: 0 };
+  if (!flags().archiveTranscripts) return result;
+  let rows: Array<{ id: string; project_path: string; conversation_id: string }>;
+  try {
+    rows = db().prepare(`
+      SELECT s.id, s.project_path, s.conversation_id
+        FROM session_log s
+       WHERE s.origin = 'wanigan' AND s.exit_code = -1 AND s.conversation_id IS NOT NULL
+         AND s.started_at >= ?
+         AND NOT EXISTS (SELECT 1 FROM transcripts t WHERE t.session_id = s.id)
+         AND NOT EXISTS (SELECT 1 FROM session_log later
+                          WHERE later.conversation_id = s.conversation_id AND later.started_at > s.started_at)
+       ORDER BY s.started_at DESC
+    `).all(now - INTERRUPTED_ARCHIVE_WINDOW_MS) as typeof rows;
+  } catch {
+    return result;
+  }
+  let attempts = 0;
+  for (const row of rows) {
+    if (attempts >= INTERRUPTED_ARCHIVE_MAX) break;
+    let outcome: ReturnType<typeof archiveSession>;
+    try { outcome = archiveSession(row.id, row.project_path, row.conversation_id, { exactOnly: true }); }
+    catch { continue; }
+    // A harness that writes no transcript costs a row read and no attempt, so a
+    // run of Codex sessions cannot use up the Claude ones' turn.
+    if (outcome.unsupported) continue;
+    attempts++;
+    if (outcome.ok) result.archived++;
+    else result.notFound++;
+  }
+  return result;
+}
+
 /**
  * Is there a Codex execution whose identity the repair pass could still fix?
  *
@@ -1983,7 +2045,8 @@ function readTitles(shown: Array<[string, SessionLogRow]>): Map<string, NonNulla
       continue;
     }
     try {
-      const found = conversationTitle(String(r.project_path), conversationId);
+      const found = conversationTitle(String(r.project_path), conversationId,
+        typeof r.worktree === 'string' && r.worktree ? r.worktree : null);
       if (found) out.set(String(r.id), found);
     } catch { /* unnamed is the honest fallback */ }
   }
