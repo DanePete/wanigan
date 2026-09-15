@@ -4,6 +4,8 @@ import type {
 } from '@shared/types';
 import { ConfirmNote, EmptyState, Note, PageHead, Pill, Reading, SectionHead, Segmented, Stat, ago, num, usd } from '../components/bits';
 import '../styles/runs.css';
+/* helper sweep · P5 runtime */
+import { HeadlessRefusals, OutcomeLine, PromptCommandCheck, useRunOutcomes } from '../components/HeadlessTruth';
 import { useLiveViewMemory } from '../components/planningMemory';
 
 const TIMEOUTS = [5, 15, 30, 60] as const;
@@ -248,6 +250,7 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   }, [reload, revision]);
 
   const signature = runSignature(current);
+  const outcomes = useRunOutcomes(selected, `${signature}:${revision}`);
   useEffect(() => {
     let alive = true;
     if (!selected) { setRowsState(null); return; }
@@ -484,6 +487,7 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
         <label className="hr-field hr-prompt"><span className="label">Task for every repository</span><textarea className="field" aria-label="Task for every repository" value={prompt} onChange={(e) => setPrompt(e.target.value)}
                   placeholder="Audit this repository, make the requested change, run the relevant checks, and report what you verified." />
           <span className="faint">Use one self-contained request. Each selected repository receives its own worker. Worktree isolation is controlled below.</span></label>
+        <PromptCommandCheck harness={provider?.harnessId} prompt={prompt} />
         {(provider?.launchFields ?? []).filter((field) => !['model', 'effort', 'permissionMode'].includes(field.id)).length > 0 && (
           <div className="hr-provider-fields" aria-label="Provider-specific options">
             {(provider?.launchFields ?? []).filter((field) => !['model', 'effort', 'permissionMode'].includes(field.id)).map((field) => (
@@ -594,6 +598,7 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
             </button>
           ))}
           </div>
+          <HeadlessRefusals revision={revision} />
         </section>
         <section className="hr-detail" aria-label="Selected run" ref={reader}>
           {/* Nothing to inspect until a run exists: an inspector panel with no
@@ -681,6 +686,7 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
                         </button>
                       )}
                     </div>
+                    <OutcomeLine outcome={outcomes[row.projectId]} />
                     {confirmMerge === row.projectId && (
                       <ConfirmNote
                         what={<>Squash-merge {row.filesChanged === 1 ? 'the 1 changed file' : `the ${num(row.filesChanged)} changed files`} from

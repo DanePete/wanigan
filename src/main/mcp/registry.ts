@@ -8,6 +8,9 @@ import type {
   McpApprovedCommand, McpServerClassification, McpServerConfig, McpServerReview,
   McpServerStatus, McpServerTrustState,
 } from '../../shared/types';
+/* ── helper sweep · P5 runtime ── */
+import { atomicWriteFile, guardedStateWrite } from '../state-files';
+import { blankedEnv, parseStateText, runtimeAlteringNames, type StateFileHealth } from '../../shared/state-file';
 
 // Re-exported so existing main-process importers keep one name for these.
 export type { McpApprovedCommand, McpServerClassification, McpServerReview, McpServerTrustState };
@@ -160,16 +163,40 @@ function readTrust(): TrustState {
 function writeTrust(state: TrustState): void {
   const dir = ensurePrivateDir(dataDir());
   const file = path.join(dir, TRUST_STATE_FILE);
-  const temp = path.join(dir, `${TRUST_STATE_FILE}.${process.pid}.${Date.now()}.tmp`);
-  fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
-  try {
-    fs.renameSync(temp, file);
-  } catch (error) {
-    try { fs.unlinkSync(temp); } catch { /* the rename is what mattered */ }
-    throw error;
-  }
+  // helper sweep · P5 runtime: a trust file that does not parse reads as no
+  // trust (fail closed, above) — and is now never saved over. The grants it
+  // held stay on disk, byte-identical, until the operator fixes or moves it;
+  // keys a newer build wrote are carried forward.
+  guardedStateWrite(file, state as unknown as Record<string, unknown>, 'servers', MAX_TRUST_STATE_BYTES);
   try { ensurePrivateFile(file); } catch { /* the write succeeded; the mode is a hardening step */ }
 }
+
+/* ── helper sweep · P5 runtime ── */
+/** The trust file as the loader sees it, with every entry it refuses and why. */
+export function trustFileHealth(): StateFileHealth {
+  const file = trustStateFile();
+  const base = { label: 'MCP server approvals', path: file, atomic: true, rejected: [] as string[] };
+  let text: string;
+  try {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.size > MAX_TRUST_STATE_BYTES) return { ...base, state: 'invalid-shape', detail: 'Not a regular file, or too large; read as no approvals.' };
+    text = fs.readFileSync(file, 'utf8');
+  } catch { return { ...base, state: 'absent', detail: null }; }
+  const parsed = parseStateText(text);
+  if (!parsed.ok) return { ...base, state: 'unparseable', detail: `${parsed.error}. Read as no approvals; Wanigan will not overwrite it.` };
+  const raw = parsed.value as { schemaVersion?: unknown; servers?: unknown };
+  if (raw.schemaVersion !== 1 || !raw.servers || typeof raw.servers !== 'object') {
+    return { ...base, state: 'invalid-shape', detail: `schemaVersion ${JSON.stringify(raw.schemaVersion)} is not one this build reads.` };
+  }
+  const rejected: string[] = [];
+  for (const [id, value] of Object.entries(raw.servers as Record<string, unknown>)) {
+    const record = (value && typeof value === 'object' ? value : {}) as Partial<TrustRecord>;
+    if (typeof record.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(record.sha256)) rejected.push(`${id}: its digest is not a 64-character sha256, so it grants nothing.`);
+    else if (!record.approved || typeof record.approved !== 'object') rejected.push(`${id}: it records no approved command, so it grants nothing.`);
+  }
+  return { ...base, state: 'ok', detail: null, rejected };
+}
+/* ── end helper sweep · P5 runtime ── */
 
 /**
  * The digest covers every field a reviewer is shown, not just the command.
@@ -644,7 +671,7 @@ function splitArgs(s: string): string[] {
   return out;
 }
 
-type StdioEntry = { command: string; args: string[] };
+type StdioEntry = { command: string; args: string[]; env?: Record<string, string> };
 type HttpEntry = { type: 'http'; url: string; headers?: Record<string, string> };
 
 /**
@@ -693,7 +720,12 @@ export function writeMcpConfig(projectId: string | null, projectPath: string, se
         );
         continue;
       }
-      entries[s.name] = { command: fill(s.command), args: s.args ? splitArgs(fill(s.args)) : [] };
+      // helper sweep · P5 runtime: the CLI starts this server with its own
+      // environment first and this entry's env last, so blanking here is what
+      // keeps an inherited NODE_OPTIONS or DYLD_INSERT_LIBRARIES from deciding
+      // what the server loads. Names only; no value is copied.
+      const blank = runtimeAlteringNames(process.env);
+      entries[s.name] = { command: fill(s.command), args: s.args ? splitArgs(fill(s.args)) : [], ...(blank.length ? { env: blankedEnv(blank) } : {}) };
     }
   }
 
@@ -732,8 +764,9 @@ export function writeMcpConfig(projectId: string | null, projectPath: string, se
     // 0600 is enforced even when a pre-existing umask or a filesystem default
     // is permissive. `wx` makes a UUID collision fail rather than overwrite a
     // concurrent session config.
-    fs.writeFileSync(file, `${JSON.stringify({ mcpServers: entries }, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
-    try { fs.chmodSync(file, 0o600); } catch { /* write succeeded; caller can still launch */ }
+    // helper sweep · P5 runtime: through a temporary file and a rename, so the
+    // CLI can never read half of it. The unique name keeps two launches apart.
+    atomicWriteFile(file, `${JSON.stringify({ mcpServers: entries }, null, 2)}\n`);
     return file;
   } catch (error) {
     if (sessionId) revokeMcpSessionCapabilities(sessionId);

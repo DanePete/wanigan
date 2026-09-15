@@ -19,6 +19,10 @@ import { refuseIfHalted } from './halt';
 import * as accounts from './accounts';
 import { redirectsAnthropicApi, stripAmbientAnthropicCredentials } from './sessions';
 import { rememberReportedContextWindows } from './transcripts';
+/* ── helper sweep · P5 runtime ── */
+import { refuseInteractiveOnly } from './headless-guard';
+import { classifyHeadlessOutcome, type HeadlessOutcome } from '../shared/headless-outcome';
+/* ── end helper sweep · P5 runtime ── */
 import type {
   AgentAccount, HeadlessConfig, HeadlessRow, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, TrustLevel,
 } from '../shared/types';
@@ -577,6 +581,10 @@ export async function startHeadlessRun(cfg: HeadlessStart): Promise<{ runId: str
   if (!cfg.prompt.trim()) {
     throw new Error('A headless run needs a prompt — there is no terminal to type one into afterwards.');
   }
+  // helper sweep · P5 runtime: an interactive-only slash command would reach
+  // the model as literal text and be answered as though it had run. Refused
+  // here, before any run row exists, and recorded with no spend.
+  refuseInteractiveOnly({ harness: def.harness, providerId: def.id, prompt: cfg.prompt, source: 'headless run', label: cfg.name ?? null });
   if (!(cfg.timeoutMs > 0)) {
     throw new Error('A headless run needs a per-repo timeout. Without one, a stuck agent runs until the app quits.');
   }
@@ -1303,6 +1311,17 @@ async function runRow(runId: string, projectId: string): Promise<void> {
     projectId
   );
 
+  // helper sweep · P5 runtime: the finer outcome, read from the same output
+  // just stored. A separate statement so a failure here can never lose the
+  // row's status, cost or output above.
+  try {
+    const finer = classifyHeadlessOutcome({
+      harness: def.harness, status, stdout, stderr, spawnFailed: outcome.spawnError !== null,
+    });
+    d.prepare('UPDATE headless_rows SET outcome=?, outcome_reason=?, outcome_detail=? WHERE run_id=? AND project_id=?')
+      .run(finer.kind, finer.reason, finer.detail, runId, projectId);
+  } catch { /* the finer outcome is evidence, never a row dependency */ }
+
   // Said on the run, not only on the row. The queue marks a per-repo item
   // 'done' whether the agent succeeded or failed — this function returns
   // normally either way — so a fan-out where every repository errored reads as
@@ -1762,3 +1781,22 @@ export async function shutdownHeadless(graceMs = KILL_GRACE_MS): Promise<number>
   }
   return stopped;
 }
+
+/* ── helper sweep · P5 runtime ── */
+/**
+ * Each finished row's finer outcome, keyed by project. A separate read from
+ * the list channel so the row summary's shape does not change under the
+ * surfaces that already consume it. Rows finished before this column existed
+ * have no outcome and are absent, which the renderer shows as nothing.
+ */
+export function headlessOutcomes(runId: string): Record<string, HeadlessOutcome> {
+  const rows = db().prepare(
+    'SELECT project_id, outcome, outcome_reason, outcome_detail FROM headless_rows WHERE run_id=? AND outcome IS NOT NULL'
+  ).all(runId) as Array<{ project_id: string; outcome: HeadlessOutcome['kind']; outcome_reason: string | null; outcome_detail: string | null }>;
+  const out: Record<string, HeadlessOutcome> = {};
+  for (const row of rows) {
+    out[row.project_id] = { kind: row.outcome, reason: row.outcome_reason ?? '', detail: row.outcome_detail ?? '' };
+  }
+  return out;
+}
+/* ── end helper sweep · P5 runtime ── */

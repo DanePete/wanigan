@@ -9,6 +9,19 @@ import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/c
 import type { SpendYieldReport } from '../shared/spend-yield';
 import type { SessionAnatomy } from '../shared/session-anatomy';
 import type { AgentDefinitionsReport, CacheWarmthFacts, CodexCreditsReport, CostCausesReport, ScheduleCostDetail, ScheduleCostSettings, WindowShareReport, CodexLoaderReport, ProjectionBudgetView, ReferenceLintReport, SkillListingReport } from '../shared/cost-types';
+/* ── helper sweep · P5 runtime ── */
+import type { SessionProcesses, StopSurvivorResult } from '../shared/process-tree';
+import type { CodexReaderHealth } from '../shared/rollout-format';
+import type { HeadlessOutcome } from '../shared/headless-outcome';
+import type { HeadlessRefusal } from '../shared/slash-commands';
+import type { CodexImportOutcome, CodexImportPlan } from '../shared/codex-import';
+import type { DoctorReport } from '../shared/codex-doctor';
+import type { DiagnosticsPreview } from '../shared/diagnostics';
+import type { LaunchOrigin, LaunchProvenanceInput, LaunchValue } from '../shared/launch-provenance';
+import type { Forge } from '../shared/pr-review';
+import type { Substitution } from '../shared/model-substitution';
+import type { StateFileHealth } from '../shared/state-file';
+/* ── end helper sweep · P5 runtime ── */
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AccountLimits,
@@ -868,6 +881,50 @@ const api = {
     setGrantSetting: (projectId: string, enabled: boolean, days: number) => call<GrantSetting>('policyEvidence:setGrantSetting', projectId, enabled, days),
     runSelfTest: () => call<GateSelfTestRun>('policyEvidence:runSelfTest'),
   },
+  /* ── helper sweep · P5 runtime ── */
+  processes: {
+    forSession: (sessionId: string) => call<SessionProcesses>('processes:forSession', sessionId),
+    survivors: () => call<SessionProcesses[]>('processes:survivors'),
+    capture: () => call<boolean>('processes:capture'),
+    stop: (sessionId: string, pid: number) => call<StopSurvivorResult>('processes:stop', sessionId, pid),
+  },
+  codexReaders: {
+    health: (force?: boolean) => call<CodexReaderHealth>('codexReaders:health', force === true),
+  },
+  headlessTruth: {
+    outcomes: (runId: string) => call<Record<string, HeadlessOutcome>>('headless:outcomes', runId),
+    refusals: (limit?: number) => call<HeadlessRefusal[]>('headless:refusals', limit ?? 20),
+  },
+  codexImport: {
+    plan: (sessionId: string, accountId?: string | null) => call<CodexImportPlan>('codexImport:plan', sessionId, accountId ?? null),
+    run: (sessionId: string, accountId: string, confirmedPath: string) =>
+      call<CodexImportOutcome>('codexImport:run', sessionId, accountId, confirmedPath),
+  },
+  codexDoctor: {
+    run: (accountId: string) => call<{ accountId: string; label: string; ranAt: number; durationMs: number; exitCode: number | null; report: DoctorReport }>('codexDoctor:run', accountId),
+  },
+  diagnostics: {
+    preview: () => call<DiagnosticsPreview>('diagnostics:preview'),
+    save: (names: string[]) => call<string | null>('diagnostics:save', names),
+  },
+  reviewOnly: {
+    preparePr: (projectId: string, prNumber: string) => call<{
+      projectId: string; prNumber: number; forge: Forge; ref: string; head: string; worktree: string; branch: string; prompt: string; noun: string;
+    }>('review:preparePr', projectId, prNumber),
+    goal: (docketId: string) => call<boolean>('review:goalReviewOnly', docketId),
+    setGoal: (docketId: string, enabled: boolean) => call<boolean>('review:setGoalReviewOnly', docketId, enabled),
+  },
+  models: {
+    substitutions: (sessionId: string) => call<{ sessionId: string; substitutions: Substitution[]; note: string | null }>('models:substitutions', sessionId),
+  },
+  configFiles: {
+    report: () => call<{ stateFiles: StateFileHealth[]; generated: { label: string; path: string; atomic: true; note: string }[]; mcpBlankedEnv: string[] }>('configFiles:report'),
+  },
+  launchProvenance: {
+    forSession: (sessionId: string) => call<{ origin: LaunchOrigin; values: LaunchValue[] } | null>('launchProvenance:forSession', sessionId),
+    envNames: (providerId: string) => call<{ env: LaunchProvenanceInput['env']; packSource: 'builtin' | 'local' | null; packLabel: string | null }>('launchProvenance:envNames', providerId),
+  },
+  /* ── end helper sweep · P5 runtime ── */
   on: {
     startupChanged: (cb: (state: { phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }) => void) => {
       const h = (_e: unknown, state: { phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }) => cb(state);

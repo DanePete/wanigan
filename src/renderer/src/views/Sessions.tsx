@@ -26,6 +26,10 @@ import { bindingMatches, modalOpen } from '../bindings';
 import { AwayNote, LimitResumeNote, ResumeWarningDialog, TabTriageMenu } from '../components/SessionTriage';
 import { OPEN_TIMELINE_EVENT } from '../components/attentionActions';
 import '../styles/sessions.css';
+/* helper sweep · P5 runtime */
+import SessionRuntimeDetails from '../components/SessionRuntimeDetails';
+import CodexReaderNote from '../components/CodexReaderNote';
+import ContinueInCodexDialog from '../components/ContinueInCodexDialog';
 
 /* ── phase 21 · what an attachment looks like ─────────────────────────
    The shapes live in the main process (src/main/attachments.ts) and cross the
@@ -296,6 +300,8 @@ export default function Sessions({
   // not, so the ninth-newest resumable conversation was reachable only by
   // settling, pinning or forgetting a newer one.
   const [activeShown, setActiveShown] = useState(8);
+  /** helper sweep · P5 runtime: the Claude conversation being continued in Codex. */
+  const [continueInCodex, setContinueInCodex] = useState<PastSession | null>(null);
   /** The Recent row whose Forget is awaiting confirmation, if any. */
   const [forgetting, setForgetting] = useState<string | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
@@ -893,6 +899,13 @@ export default function Sessions({
                       is no hover to wait for, so they stay exactly as they
                       were; see the coarse-pointer rule in index.css. */}
                   <div className="past-actions">
+                  {/* helper sweep · P5 runtime: explicit, per row, Claude harness only. */}
+                  {providers.find((x) => x.id === p.providerId)?.harnessId === 'claude-code' && p.conversationId && (
+                    <FocusBtn className="past-x faint past-codex" aria-label={`Continue ${p.title ?? p.projectName} in Codex…`}
+                              onClick={() => setContinueInCodex(p)}>
+                      ⇢ Codex…
+                    </FocusBtn>
+                  )}
                   <FocusBtn className="past-x faint"
                             title={p.pinnedAt != null
                               ? 'Unpin — back to its place by recency'
@@ -1248,7 +1261,7 @@ export default function Sessions({
                 {active.status === 'running' && (
                   <FocusBtn className="faint session-status-action" style={{ fontSize: 'var(--t-small)', color: 'var(--bad)', borderRadius: 'var(--r-sm)' }}
                             title="End the session. The conversation stays in Recent below and can be resumed exactly."
-                            onClick={() => window.wanigan.sessions.kill(active.id)}>end session</FocusBtn>
+                            onClick={() => { void window.wanigan.processes.capture().catch(() => false).then(() => window.wanigan.sessions.kill(active.id)); }}>end session</FocusBtn>
                 )}
                 {/* Renders nothing unless another account of this harness could
                     take the conversation, so it costs an exited session nothing. */}
@@ -1267,6 +1280,10 @@ export default function Sessions({
       {exactRecoveryDialog && (
         <ExactCodexRecoveryDialog projects={projects} defaultProjectId={active?.projectId}
                                   onClose={() => setExactRecoveryDialog(false)} onRecover={recoverExactCodex} />
+      )}
+      {continueInCodex && (
+        <ContinueInCodexDialog past={continueInCodex} onClose={() => setContinueInCodex(null)} onError={onError}
+          onResumed={(id) => { void refresh().then(() => select(id)); }} />
       )}
       {teachSession && (
         <SessionTeachModal session={teachSession} onClose={() => setTeachSession(null)} onError={onError} />
@@ -1343,6 +1360,8 @@ function ExactCodexRecoveryDialog({ projects, defaultProjectId, onClose, onRecov
           Recovery launches only <span className="mono">codex resume &lt;UUID&gt;</span> through Wanigan’s normal terminal
           harness. If Codex says another writer is active or bootstrap fails, Wanigan changes no Recent history.
         </p>
+        {/* helper sweep · P5 runtime */}
+        <CodexReaderNote context="recovery" />
         {error && (
           <div style={{ background: 'var(--bad-soft)', color: 'var(--bad)', border: '1px solid var(--bad)',
                         borderRadius: 'var(--r-sm)', padding: '7px 10px', marginTop: 12,
@@ -1506,7 +1525,6 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
   // disappear merely because it does not accept Claude slash commands.
   const codexControls = harness === 'codex' && session.status === 'running';
   const hasControls = !!session.worktree || tunable || codexControls || declaresTuning;
-  if (!elevated && !hasControls) return null;
 
   return (
     <div className="session-config">
@@ -1531,6 +1549,8 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
           {codexControls && <CodexControlBar session={session} />}
         </div>
       </details>}
+      {/* helper sweep · P5 runtime: what this session runs and left running. */}
+      <SessionRuntimeDetails session={session} />
     </div>
   );
 }

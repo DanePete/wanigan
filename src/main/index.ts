@@ -119,6 +119,12 @@ import { DEFAULT_RISK_RULES } from '../shared/risk-tiers';
 import { registerCostIpc } from './cost-ipc';
 /* ── helper sweep · P1 policy ── */
 import * as policyEvidence from './policy-evidence';
+/* ── helper sweep · P5 runtime ── */
+import { registerP5Ipc } from './ipc-p5';
+import * as processWatch from './process-watch';
+import { recordLaunchProvenance } from './launch-provenance';
+import { recordModelRequest } from './model-substitutions';
+/* ── end helper sweep · P5 runtime ── */
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -1455,7 +1461,24 @@ async function startAttendedServices(): Promise<StartupState> {
       // Last, once nothing is left that would replace them.
       registerHaltStopper({
         name: 'sessions',
-        stop: () => ({ name: 'sessions', stopped: killAll(), note: 'every live agent was signalled; working trees are untouched' }),
+        stop: async () => {
+          // helper sweep · P5 runtime: record every session's process tree
+          // while the ppid chain still proves whose each process is, then
+          // count what outlived the signal. The count is said, never acted on:
+          // a dev server an agent left behind is the operator's to stop.
+          await processWatch.captureBeforeStop();
+          const stopped = killAll();
+          const left = await processWatch.survivorCountAfter(new Promise<void>((resolve) => {
+            const poll = setInterval(() => {
+              if (!listSessions().some((s) => s.status !== 'exited')) { clearInterval(poll); resolve(); }
+            }, 100);
+            setTimeout(() => { clearInterval(poll); resolve(); }, 3_000);
+          }));
+          const survivors = left === 0
+            ? 'no process Wanigan recorded in their trees is still running'
+            : `${left} process${left === 1 ? '' : 'es'} they started ${left === 1 ? 'is' : 'are'} still running — see Fleet › Still running after the session ended`;
+          return { name: 'sessions', stopped, note: `every live agent was signalled; working trees are untouched; ${survivors}` };
+        },
       });
 
       stage = 'mobile control setup';
@@ -1989,6 +2012,10 @@ function registerIpc() {
   }));
   handle('sessions:create', async (opts: LaunchOptions) => {
     const created = await createSession(opts);
+    /* ── helper sweep · P5 runtime ── */
+    recordLaunchProvenance(created, opts);
+    recordModelRequest(created.id, created.model, 'launch', created.createdAt);
+    /* ── end helper sweep · P5 runtime ── */
     // The first live agent is what takes the power-save blocker. Doing it here
     // rather than waiting for the poller means the Mac is already held before
     // the operator has finished closing the lid.
@@ -2007,7 +2034,12 @@ function registerIpc() {
   handle('sessions:markRead', (id: string) => { markRead(id); return true; });
   // 'sessions:write' is fire-and-forget; this typed variant exists so a tuning
   // slash command and its session-record update cannot drift apart.
-  handle('sessions:setTuning', (id: string, field: unknown, value: unknown) => setSessionTuning(id, field, value));
+  handle('sessions:setTuning', (id: string, field: unknown, value: unknown) => {
+    const delivered = setSessionTuning(id, field, value);
+    /* ── helper sweep · P5 runtime: a /model Wanigan typed is a request ── */
+    if (delivered && field === 'model' && typeof value === 'string') recordModelRequest(id, value, 'wanigan');
+    return delivered;
+  });
   // The status bar may reveal only the folder of a live Wanigan session. A
   // generic renderer-controlled shell.openPath bridge would let a compromised
   // renderer invoke arbitrary file handlers on this Mac.
@@ -3361,6 +3393,10 @@ function registerIpc() {
   registerHelperAttentionIpc(handle);
   /* ── helper sweep · P4 cost ── */
   registerCostIpc(handle, { liveSessionIds, trusted: (event) => trustedSender(event.sender, event.senderFrame) && !demoWindows.has(event.sender) });
+  /* ── helper sweep · P5 runtime ── */
+  processWatch.setProcessSessionSource(() => listSessions());
+  registerP5Ipc(handle);
+  /* ── end helper sweep · P5 runtime ── */
 }
 
 /** Streams a run's results to disk without materialising them in memory. */

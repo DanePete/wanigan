@@ -602,6 +602,9 @@ function migratePhases(d: Database.Database) {
   migrateHelperAttention(d);
   /* ── helper sweep · P4 cost ── */
   migrateCostSchema(d);
+  /* ── helper sweep · P5 runtime ── */
+  migrateHelperSweepP5(d);
+  /* ── end helper sweep · P5 runtime ── */
 }
 
 /**
@@ -1698,3 +1701,94 @@ function migrateHelperAttention(d: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_operator_actions_session ON operator_actions(session_id, at DESC);
   `);
 }
+/* ── helper sweep · P5 runtime ──────────────────────────────────────────
+   Additive only. Every table is new and every column is nullable, so a
+   database written by an older build reads back unchanged and one written
+   by this build still opens in an older one. */
+function migrateHelperSweepP5(d: Database.Database) {
+  d.exec(`
+    -- A headless run, queue item or schedule refused before any agent started,
+    -- because its prompt was an interactive-only slash command. No spend.
+    CREATE TABLE IF NOT EXISTS headless_refusals (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      at          INTEGER NOT NULL,
+      source      TEXT NOT NULL,
+      label       TEXT,
+      provider_id TEXT,
+      harness     TEXT,
+      command     TEXT NOT NULL,
+      reason      TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_headless_refusals_at ON headless_refusals(at DESC);
+  `);
+  // The finer outcome of a finished headless row, derived from its recorded
+  // output by shared/headless-outcome.ts. The status column keeps its meaning.
+  addColumn(d, 'headless_rows', 'outcome', 'TEXT');
+  addColumn(d, 'headless_rows', 'outcome_reason', 'TEXT');
+  addColumn(d, 'headless_rows', 'outcome_detail', 'TEXT');
+  // A session launched with Claude Code's --restricted: no command tools.
+  addColumn(d, 'session_log', 'review_only', 'INTEGER');
+  d.exec(`
+    -- A Claude conversation imported into Codex through Codex's own importer:
+    -- which transcript, into which account, and the thread Codex named.
+    CREATE TABLE IF NOT EXISTS codex_imports (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      at               INTEGER NOT NULL,
+      session_id       TEXT NOT NULL,
+      account_id       TEXT,
+      source_path      TEXT NOT NULL,
+      codex_version    TEXT,
+      thread_id        TEXT,
+      ledger_confirmed INTEGER,
+      error            TEXT
+    );
+    -- Where each launch value came from, resolved when the renderer launched it.
+    -- Values are words and environment NAMES only; no environment value is kept.
+    -- A goal's review task launches with no command tools unless turned off here.
+    CREATE TABLE IF NOT EXISTS goal_review_only (
+      docket_id  TEXT PRIMARY KEY,
+      enabled    INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    -- Worktrees Wanigan fetched a pull or merge request head into.
+    CREATE TABLE IF NOT EXISTS pr_review_worktrees (
+      path       TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      pr_number  INTEGER NOT NULL,
+      forge      TEXT NOT NULL,
+      ref        TEXT NOT NULL,
+      head       TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    -- What a session asked for, in order: its launch model and each /model
+    -- Wanigan typed. A person's switch in the terminal arrives as a hook event.
+    CREATE TABLE IF NOT EXISTS model_requests (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      at         INTEGER NOT NULL,
+      model      TEXT,
+      via        TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_model_requests_session ON model_requests(session_id, at);
+    -- Asked for one model, answered by another, with the reported cost of the
+    -- answers attributed to the model that gave them.
+    CREATE TABLE IF NOT EXISTS model_substitutions (
+      session_id TEXT NOT NULL,
+      requested  TEXT NOT NULL,
+      reported   TEXT NOT NULL,
+      first_at   INTEGER NOT NULL,
+      last_at    INTEGER NOT NULL,
+      count      INTEGER NOT NULL,
+      cost_usd   REAL,
+      via_json   TEXT NOT NULL,
+      PRIMARY KEY (session_id, requested, reported)
+    );
+    CREATE TABLE IF NOT EXISTS session_launch_provenance (
+      session_id  TEXT PRIMARY KEY,
+      at          INTEGER NOT NULL,
+      origin      TEXT NOT NULL,
+      values_json TEXT NOT NULL
+    );
+  `);
+}
+/* ── end helper sweep · P5 runtime ── */

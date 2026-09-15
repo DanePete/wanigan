@@ -11,6 +11,8 @@ import { answerFor, contextForSession, trustBriefing } from './policy';
 /* ── helper sweep · P3 review ── */
 import { recordShellResult } from './shell-results';
 /* ── end helper sweep · P3 review ── */
+/* ── helper sweep · P5 runtime ── */
+import { atomicWriteFile } from './state-files';
 import type {
   AskedQuestion, HookEventName, HookInput, LoadedInstruction, PolicyDecision, SessionEvent,
 } from '../shared/types';
@@ -391,14 +393,15 @@ export function writeHookSettings(
   // Version-gated like the event names above: a CLI that predates the keys
   // gets no block at all, and "$defaults" leads every list that is written.
   const autoMode = options.trust ? compileAutoMode(options.trust, options.cliVersion ?? null).block : null;
-  fs.writeFileSync(file, JSON.stringify({
+  // helper sweep · P5 runtime: through a temporary file and a rename, so the
+  // CLI never reads a half-written settings file (and rejects the whole file,
+  // starting with hooks silently off). atomicWriteFile also re-applies 0600:
+  // this file is a bearer credential.
+  atomicWriteFile(file, JSON.stringify({
     ...hookSettingsKeysFor(options.cliVersion),
     hooks,
     ...(autoMode ? { autoMode } : {}),
-  }, null, 2), { mode: 0o600 });
-  // writeFileSync honours mode only when it creates the file; an overwrite keeps
-  // whatever the old one had. This file is a bearer credential.
-  try { fs.chmodSync(file, 0o600); } catch { /* best effort on odd filesystems */ }
+  }, null, 2), 0o600);
 
   const previous = registered.get(waniganSessionId);
   if (previous) capabilitySessions.delete(previous.capability);

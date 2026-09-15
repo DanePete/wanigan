@@ -2,6 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+/* ── helper sweep · P5 runtime ── */
+import { guardedStateWrite } from './state-files';
+import { parseStateText, type StateFileHealth } from '../shared/state-file';
 
 /**
  * Provider packs are data first. A manifest can describe a normal CLI without
@@ -1290,14 +1293,44 @@ function readState(rootDir: string): { state: RegistryState; diagnostic: string 
 function writeState(rootDir: string, state: RegistryState): void {
   fs.mkdirSync(rootDir, { recursive: true, mode: 0o700 });
   const file = path.join(rootDir, STATE_FILE);
-  const temp = path.join(rootDir, `${STATE_FILE}.${process.pid}.${Date.now()}.tmp`);
-  fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
-  try { fs.renameSync(temp, file); }
-  catch (error) {
-    try { fs.unlinkSync(temp); } catch { /* best effort */ }
-    throw error;
-  }
+  // helper sweep · P5 runtime: readState ignores a state file it cannot parse
+  // (trust and enablement fall back to defaults), and this write used to save
+  // over it, deleting every trust grant it held. It is now refused with the
+  // path and the parse error, and unknown keys are carried forward.
+  guardedStateWrite(file, state as unknown as Record<string, unknown>, 'packs', MAX_MANIFEST_BYTES);
 }
+
+/* ── helper sweep · P5 runtime ── */
+/** The pack state file as the loader sees it, with every entry it refuses and why. */
+export function packStateHealth(rootDir: string): StateFileHealth {
+  const file = path.join(rootDir, STATE_FILE);
+  const base = { label: 'Provider pack state and trust', path: file, atomic: true, rejected: [] as string[] };
+  let text: string;
+  try {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_MANIFEST_BYTES) return { ...base, state: 'invalid-shape', detail: 'Not a regular file, or too large; ignored.' };
+    text = fs.readFileSync(file, 'utf8');
+  } catch { return { ...base, state: 'absent', detail: null }; }
+  const parsed = parseStateText(text);
+  if (!parsed.ok) return { ...base, state: 'unparseable', detail: `${parsed.error}. Ignored at load; Wanigan will not overwrite it.` };
+  const raw = parsed.value;
+  if (raw.schemaVersion !== 1 || !isObject(raw.packs)) return { ...base, state: 'invalid-shape', detail: `schemaVersion ${JSON.stringify(raw.schemaVersion)} is not one this build reads.` };
+  const rejected: string[] = [];
+  for (const [id, value] of Object.entries(raw.packs)) {
+    if (!ID_RE.test(id)) rejected.push(`${id}: not a valid pack id, so its state is ignored.`);
+    else if (!isObject(value)) rejected.push(`${id}: its state is not an object, so it is ignored.`);
+    else {
+      for (const key of ['trustedManifestSha256', 'trustedAdapterSha256'] as const) {
+        const digest = value[key];
+        if (digest !== undefined && (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest))) {
+          rejected.push(`${id}: ${key} is not a sha256 digest, so it trusts nothing.`);
+        }
+      }
+    }
+  }
+  return { ...base, state: 'ok', detail: null, rejected };
+}
+/* ── end helper sweep · P5 runtime ── */
 
 function localPackDirectory(record: ProviderPackRecord): string | null {
   if (record.source !== 'local' || !record.sourcePath) return null;

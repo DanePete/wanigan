@@ -1,0 +1,275 @@
+{
+  "mode": "after",
+  "passed": 67,
+  "failed": 0,
+  "checks": [
+    {
+      "ok": true,
+      "label": "dark: Fleet rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark: the inspector shows the tree's listening port"
+    },
+    {
+      "ok": true,
+      "label": "dark: \"Requested opus, answered by claude-sonnet-5\" renders inside the card"
+    },
+    {
+      "ok": true,
+      "label": "dark: with the exact sentence"
+    },
+    {
+      "ok": true,
+      "label": "dark: Still running after the session ended is listed across sessions"
+    },
+    {
+      "ok": true,
+      "label": "dark: Stop asks for confirmation before any signal"
+    },
+    {
+      "ok": true,
+      "label": "dark: Sessions rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark: the session header carries Processes and ports and Launch values"
+    },
+    {
+      "ok": true,
+      "label": "dark: launch values list each value with its source"
+    },
+    {
+      "ok": true,
+      "label": "dark: Continue in Codex is offered on the Claude conversation and not the Codex one"
+    },
+    {
+      "ok": true,
+      "label": "dark: the consent dialog opens"
+    },
+    {
+      "ok": true,
+      "label": "dark: it names the exact transcript file"
+    },
+    {
+      "ok": true,
+      "label": "dark: and the Codex account's CODEX_HOME"
+    },
+    {
+      "ok": true,
+      "label": "dark: the launch dialog offers Review only (no command tools) for Claude Code"
+    },
+    {
+      "ok": true,
+      "label": "dark: the summary resolves each launch value's source"
+    },
+    {
+      "ok": true,
+      "label": "dark: Usage rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark: Usage says how many Codex sessions it cannot read"
+    },
+    {
+      "ok": true,
+      "label": "dark: in those words"
+    },
+    {
+      "ok": true,
+      "label": "dark: Runs rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark: each finished row states its finer outcome"
+    },
+    {
+      "ok": true,
+      "label": "dark: the network failure is labelled as not an auth failure"
+    },
+    {
+      "ok": true,
+      "label": "dark: Refused before starting lists the refused /resume"
+    },
+    {
+      "ok": true,
+      "label": "dark: the composer warns before Start that /login would be refused"
+    },
+    {
+      "ok": true,
+      "label": "dark: Settings › Backup offers Export diagnostics"
+    },
+    {
+      "ok": true,
+      "label": "dark: the exact file list is shown before saving"
+    },
+    {
+      "ok": true,
+      "label": "dark: a state file that does not parse is named as kept and never overwritten"
+    },
+    {
+      "ok": true,
+      "label": "dark: the Codex account offers Run codex doctor"
+    },
+    {
+      "ok": true,
+      "label": "dark: failing checks and warnings are named"
+    },
+    {
+      "ok": true,
+      "label": "dark: the Git view offers Review PR…"
+    },
+    {
+      "ok": true,
+      "label": "dark: the launch dialog opens on the review worktree with review only on"
+    },
+    {
+      "ok": true,
+      "label": "dark: Review only is ticked"
+    },
+    {
+      "ok": true,
+      "label": "dark: the first message names the PR"
+    },
+    {
+      "ok": true,
+      "label": "dark: the Timeline shows the substitution under its live strip"
+    },
+    {
+      "ok": true,
+      "label": "light: Fleet rendered"
+    },
+    {
+      "ok": true,
+      "label": "light: the inspector shows the tree's listening port"
+    },
+    {
+      "ok": true,
+      "label": "light: \"Requested opus, answered by claude-sonnet-5\" renders inside the card"
+    },
+    {
+      "ok": true,
+      "label": "light: with the exact sentence"
+    },
+    {
+      "ok": true,
+      "label": "light: Still running after the session ended is listed across sessions"
+    },
+    {
+      "ok": true,
+      "label": "light: Stop asks for confirmation before any signal"
+    },
+    {
+      "ok": true,
+      "label": "light: Sessions rendered"
+    },
+    {
+      "ok": true,
+      "label": "light: the session header carries Processes and ports and Launch values"
+    },
+    {
+      "ok": true,
+      "label": "light: launch values list each value with its source"
+    },
+    {
+      "ok": true,
+      "label": "light: Continue in Codex is offered on the Claude conversation and not the Codex one"
+    },
+    {
+      "ok": true,
+      "label": "light: the consent dialog opens"
+    },
+    {
+      "ok": true,
+      "label": "light: it names the exact transcript file"
+    },
+    {
+      "ok": true,
+      "label": "light: and the Codex account's CODEX_HOME"
+    },
+    {
+      "ok": true,
+      "label": "light: the launch dialog offers Review only (no command tools) for Claude Code"
+    },
+    {
+      "ok": true,
+      "label": "light: the summary resolves each launch value's source"
+    },
+    {
+      "ok": true,
+      "label": "light: Usage rendered"
+    },
+    {
+      "ok": true,
+      "label": "light: Usage says how many Codex sessions it cannot read"
+    },
+    {
+      "ok": true,
+      "label": "light: in those words"
+    },
+    {
+      "ok": true,
+      "label": "light: Runs rendered"
+    },
+    {
+      "ok": true,
+      "label": "light: each finished row states its finer outcome"
+    },
+    {
+      "ok": true,
+      "label": "light: the network failure is labelled as not an auth failure"
+    },
+    {
+      "ok": true,
+      "label": "light: Refused before starting lists the refused /resume"
+    },
+    {
+      "ok": true,
+      "label": "light: the composer warns before Start that /login would be refused"
+    },
+    {
+      "ok": true,
+      "label": "light: Settings › Backup offers Export diagnostics"
+    },
+    {
+      "ok": true,
+      "label": "light: the exact file list is shown before saving"
+    },
+    {
+      "ok": true,
+      "label": "light: a state file that does not parse is named as kept and never overwritten"
+    },
+    {
+      "ok": true,
+      "label": "light: the Codex account offers Run codex doctor"
+    },
+    {
+      "ok": true,
+      "label": "light: failing checks and warnings are named"
+    },
+    {
+      "ok": true,
+      "label": "light: the Git view offers Review PR…"
+    },
+    {
+      "ok": true,
+      "label": "light: the launch dialog opens on the review worktree with review only on"
+    },
+    {
+      "ok": true,
+      "label": "light: Review only is ticked"
+    },
+    {
+      "ok": true,
+      "label": "light: the first message names the PR"
+    },
+    {
+      "ok": true,
+      "label": "light: the Timeline shows the substitution under its live strip"
+    },
+    {
+      "ok": true,
+      "label": "no page errors"
+    }
+  ]
+}

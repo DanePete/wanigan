@@ -6,6 +6,8 @@ import path from 'node:path';
 import { db } from './db';
 import * as accounts from './accounts';
 import type { CodexAgentsChain } from '../shared/types';
+import { isRolloutName } from '../shared/rollout-format';
+import { noteTally, noteUnreadable, rolloutFormatOf } from './codex-rollout-health';
 
 const MATCH_WINDOW_MS = 5_000;
 const FIRST_LINE_CAP = 2 * 1024 * 1024;
@@ -106,8 +108,16 @@ function isInside(root: string, child: string): boolean {
 
 /** Read exactly the trusted identity record, never an arbitrary later rollout event. */
 function rolloutSessionMeta(file: string): { id: string; cwd: string } | null {
+  // A compressed rollout has no readable first line; say so rather than
+  // letting recovery report the thread as if it had no identity at all.
+  const format = rolloutFormatOf(file);
+  if (format.kind !== 'jsonl') {
+    if (format.kind !== 'empty') noteUnreadable(file, format);
+    return null;
+  }
   const line = firstLine(file);
   if (!line) return null;
+  try { JSON.parse(line); } catch { noteTally(file, { parsed: 0, unparsed: 1, partialTail: false }); }
   try {
     const raw = JSON.parse(line) as {
       type?: string;
@@ -162,6 +172,13 @@ export function validateExactCodexThread(threadId: unknown, selectedProjectPath:
     if (!fs.statSync(rolloutPath).isFile()) throw new Error('not a file');
   } catch {
     throw new Error('Codex’s saved rollout for that conversation is unavailable. Wanigan left it untouched.');
+  }
+  const format = rolloutFormatOf(rolloutPath);
+  if (format.kind === 'compressed' || format.kind === 'binary') {
+    // Codex itself can resume a compressed rollout; Wanigan cannot read its
+    // session_meta to prove the UUID and folder, so it refuses by name rather
+    // than calling the thread's metadata inconsistent.
+    throw new Error('That conversation’s rollout is stored in a format this version of Wanigan cannot read (compressed rollout), so Wanigan cannot verify it before resuming. Resume it with codex resume directly.');
   }
   const meta = rolloutSessionMeta(rolloutPath);
   if (!meta || meta.id !== id || meta.cwd !== stateCwd) {
@@ -428,8 +445,13 @@ function rolloutThreads(around: number[]): CodexThreadCandidate[] {
     try { names = fs.readdirSync(dir); } catch { continue; }
     const inDir: CodexThreadCandidate[] = [];
     for (const name of names) {
-      if (!name.startsWith('rollout-') || !name.endsWith('.jsonl')) continue;
+      if (!isRolloutName(name)) continue;
       const file = path.join(dir, name);
+      const format = rolloutFormatOf(file);
+      if (format.kind !== 'jsonl') {
+        if (format.kind !== 'empty') noteUnreadable(file, format);
+        continue;
+      }
       const line = firstLine(file);
       if (!line) continue;
       try {
@@ -448,7 +470,10 @@ function rolloutThreads(around: number[]): CodexThreadCandidate[] {
         const thread = { id, cwd: raw.payload.cwd, createdAt, rolloutPath: file };
         out.set(id, thread);
         inDir.push(thread);
-      } catch { /* malformed/partial rollout is not a resumable identity */ }
+      } catch {
+        // Malformed or partial: not a resumable identity, and now counted.
+        noteTally(file, { parsed: 0, unparsed: 1, partialTail: false });
+      }
     }
     rolloutDirCache.set(dir, { mtimeMs, readAt: Date.now(), threads: inDir });
   }
@@ -538,7 +563,16 @@ function scanForRollouts(dir: string, wanted: Set<string>, found: Map<string, st
       scanForRollouts(full, wanted, found, depth + 1);
       continue;
     }
-    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
+    if (!entry.isFile()) continue;
+    if (!entry.name.endsWith('.jsonl')) {
+      // A compressed rollout for a wanted thread is found, and counted as
+      // unreadable, rather than reported as a conversation with no file.
+      if (isRolloutName(entry.name) && [...wanted].some((id) => entry.name.toLowerCase().includes(id))) {
+        const format = rolloutFormatOf(full);
+        if (format.kind !== 'jsonl' && format.kind !== 'empty') noteUnreadable(full, format);
+      }
+      continue;
+    }
     const name = entry.name.toLowerCase();
     for (const id of wanted) {
       if (!name.includes(id)) continue;

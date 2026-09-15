@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { atomicWriteFile } from './state-files';
 
 const exec = promisify(execFile);
 const LABEL = 'io.deadnorth.wanigan.scheduler';
@@ -28,7 +29,8 @@ export async function installDaemon(): Promise<ReturnType<typeof daemonStatus>> 
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const args = app.isPackaged ? [process.execPath, '--daemon'] : [process.execPath, app.getAppPath(), '--daemon'];
   const body = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>Label</key><string>${LABEL}</string>\n<key>ProgramArguments</key><array>${args.map((a) => `<string>${xml(a)}</string>`).join('')}</array>\n<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n<key>ProcessType</key><string>Background</string>\n</dict></plist>\n`;
-  fs.writeFileSync(file, body, { mode: 0o600 });
+  // helper sweep · P5 runtime: launchd must never load half a plist.
+  atomicWriteFile(file, body, 0o600);
   try {
     const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
     await exec('launchctl', ['bootstrap', `gui/${uid}`, file], { timeout: 10_000 });

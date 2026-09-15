@@ -5,6 +5,7 @@ import { projectById } from './store';
 /* ── helper sweep · P4 cost ── */
 import { admissionRefusal, previousRunsFor } from './schedule-cost';
 import { withPreviousRuns } from '../shared/schedule-guard';
+import { refuseScheduleCommand } from './headless-guard';
 
 /**
  * Durable schedules.
@@ -210,6 +211,10 @@ export function createSchedule(input: {
       : 'AI Improvement Scout scheduling is controlled from the Scout dashboard; generic schedules may only run headless work or batches.');
   }
 
+  // helper sweep · P5 runtime: a schedule whose prompt is an interactive-only
+  // slash command would fire every night into a model told to pretend.
+  refuseScheduleCommand(input.kind, input.payload, input.name.trim());
+
   const id = `sch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   db().prepare(`
     INSERT INTO schedules (id, name, cron, kind, payload_json, project_id, enabled, created_at, next_at)
@@ -321,6 +326,9 @@ export function updateSchedule(id: string, patch: Record<string, unknown>): Sche
       throw new Error('A headless schedule with no project pinned runs across every project. Declare that (allProjects: true) or pin a project.');
     }
   }
+
+  // helper sweep · P5 runtime: an edit is checked the way a create is.
+  if ('payload' in patch) refuseScheduleCommand(row.kind, payload, name);
 
   const changes: string[] = [];
   if (name !== row.name) changes.push(`name "${row.name}" → "${name}"`);

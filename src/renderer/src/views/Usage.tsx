@@ -6,6 +6,8 @@ import { EmptyState, Note, PageHead, SectionHead, Stat } from '../components/bit
 import WindowShare from '../components/WindowShare';
 import { useViewMemory } from '../components/viewMemory';
 import '../styles/usage.css';
+/* helper sweep · P5 runtime */
+import CodexReaderNote from '../components/CodexReaderNote';
 
 /**
  * What is left, and what was spent — kept visibly apart.
@@ -458,6 +460,10 @@ export default function Usage() {
           </span>
         </Note>
       )}
+
+      {/* helper sweep · P5 runtime: rollouts the Codex readers could not read
+          are counted here, so a missing figure is never read as a zero. */}
+      <CodexReaderNote context="usage" accountId={selected && selected.harness === 'codex' ? selected.id : undefined} />
 
       <div className="u-workspace">
         <nav className="u-accounts" aria-label="Usage accounts">

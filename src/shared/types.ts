@@ -268,6 +268,10 @@ export type Session = {
   providerProfile?: ProviderProfileInfo | null;
   backendId?: string | null;
   harnessId?: string | null;
+  /* ── helper sweep · P5 runtime ── */
+  /** Launched with Claude Code's --restricted: no command tools. Never "sandboxed". */
+  reviewOnly?: boolean;
+  /* ── end helper sweep · P5 runtime ── */
 };
 
 export type LaunchOptions = {
@@ -308,6 +312,12 @@ export type LaunchOptions = {
    * a second writer to it. Claude Code's `--fork-session` or `codex fork`.
    */
   forkSession?: boolean;
+  /* ── helper sweep · P5 runtime ── */
+  /** Claude Code only: launch with --restricted, so the session has no command tools. */
+  reviewOnly?: boolean;
+  /** A review worktree Wanigan prepared for this project with Review PR; validated in main. */
+  reviewWorktree?: string;
+  /* ── end helper sweep · P5 runtime ── */
 };
 
 /** A finished session, recoverable after a quit. */

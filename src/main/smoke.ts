@@ -260,6 +260,18 @@ export async function runSmoke(): Promise<void> {
     await p1.runGrantSmoke(check, say);
     await p1.runSkillSurfaceSmoke(check, say);
     await p1.runExposureSmoke(check, say);
+    /* ── helper sweep · P5 runtime ── */
+    const p5 = await import('./smoke34');
+    await p5.runProcessHygieneSmoke(check, say);
+    await p5.runCodexReaderSmoke(check, say);
+    await p5.runHeadlessTruthSmoke(check, say);
+    await p5.runCodexImportSmoke(check, say);
+    await p5.runHealthAndDiagnosticsSmoke(check, say);
+    await p5.runLaunchProvenanceSmoke(check, say);
+    await p5.runReviewOnlySmoke(check, say);
+    await p5.runModelSubstitutionSmoke(check, say);
+    await p5.runConfigFilesSmoke(check, say);
+    /* ── end helper sweep · P5 runtime ── */
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

@@ -1,0 +1,43 @@
+{
+  "mode": "before",
+  "passed": 9,
+  "failed": 0,
+  "checks": [
+    {
+      "ok": true,
+      "label": "dark: Fleet rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark: Sessions rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark: Usage rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark: Runs rendered"
+    },
+    {
+      "ok": true,
+      "label": "light: Fleet rendered"
+    },
+    {
+      "ok": true,
+      "label": "light: Sessions rendered"
+    },
+    {
+      "ok": true,
+      "label": "light: Usage rendered"
+    },
+    {
+      "ok": true,
+      "label": "light: Runs rendered"
+    },
+    {
+      "ok": true,
+      "label": "no page errors"
+    }
+  ]
+}
