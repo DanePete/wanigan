@@ -1,0 +1,100 @@
+{
+  "at": "2026-09-15T05:38:12.761Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; no real agent calls",
+  "mode": "before",
+  "commit": "e133cf15fd998d368bd9397674772a07da9b32d9",
+  "uncommittedChanges": 0,
+  "checks": [
+    "before: the Mission room ends with the project spaces and says nothing about the week",
+    "before: the Sessions toolbar has no way to run a project script",
+    "before: a Recent row says nothing about whether its transcript will resume whole",
+    "before: the Files tab shows a file with no way to see which session wrote a line",
+    "before: the hooks table lists commands with no way to try one",
+    "before: Settings › App has no Dock or menu-bar switch",
+    "before: Settings › Connections has one switch for Wanigan's MCP server and no per-provider choice or automation socket",
+    "before: Settings › Projects & safety has no naming format"
+  ],
+  "errors": [],
+  "shots": [
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p8-mac/docs/visuals/helper-p8-mac/before/mission-week-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p8-mac/docs/visuals/helper-p8-mac/before/mission-week-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p8-mac/docs/visuals/helper-p8-mac/before/sessions-toolbar-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p8-mac/docs/visuals/helper-p8-mac/before/sessions-toolbar-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p8-mac/docs/visuals/helper-p8-mac/before/recent-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p8-mac/docs/visuals/helper-p8-mac/before/recent-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p8-mac/docs/visuals/helper-p8-mac/before/code-files-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p8-mac/docs/visuals/helper-p8-mac/before/code-files-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p8-mac/docs/visuals/helper-p8-mac/before/context-hooks-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p8-mac/docs/visuals/helper-p8-mac/before/context-hooks-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p8-mac/docs/visuals/helper-p8-mac/before/settings-app-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p8-mac/docs/visuals/helper-p8-mac/before/settings-app-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p8-mac/docs/visuals/helper-p8-mac/before/settings-connections-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p8-mac/docs/visuals/helper-p8-mac/before/settings-connections-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p8-mac/docs/visuals/helper-p8-mac/before/settings-projects-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p8-mac/docs/visuals/helper-p8-mac/before/settings-projects-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    }
+  ]
+}

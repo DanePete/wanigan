@@ -116,7 +116,8 @@ export function AttributedFileView({ file, sessionId }: { file: FileShape; sessi
               <span className="ln">{n}</span>
               {show && (
                 <span className="p8-who">
-                  {head ? <Mark glyph={head.origin === 'commit' ? '●' : '◐'} word={`${head.title}${head.turn !== null ? ` · turn ${head.turn}` : ''}`} tone="accent" /> : null}
+                  {/* Short enough for the rail: the turn here, the session's title in the legend above. */}
+                  {head ? <Mark glyph={head.origin === 'commit' ? '●' : '◐'} word={head.turn !== null ? `turn ${head.turn}` : 'session'} tone="accent" /> : null}
                 </span>
               )}
               <span className="lt">{l || ' '}</span>

@@ -33,6 +33,9 @@
 /* This week. */
 .p8-recap { display: grid; gap: var(--s-2); }
 .p8-recap-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s-2); }
+.p8-recap-controls .field { width: auto; max-width: 16rem; }
+.mission-room .p8-recap { padding: var(--s-5) var(--mission-gutter) var(--s-4); }
+@media (max-width: 760px) { .mission-room .p8-recap { padding: var(--s-4); } }
 .p8-recap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: var(--s-2); }
 .p8-recap-list ul { display: grid; gap: var(--s-1); margin: var(--s-1) 0 0; padding: 0; list-style: none; }
 .p8-recap-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); font-size: var(--t-small); min-width: 0; }
@@ -47,7 +50,7 @@
 .p8-attr-title { font-weight: 600; }
 .p8-attr-actions { display: inline-flex; gap: var(--s-1); margin-left: auto; }
 .p8-who-bar { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); padding: var(--s-1) var(--s-2); border-bottom: 1px solid var(--line-soft); }
-.filepre .fl .p8-who { display: inline-block; width: 14rem; flex: none; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding-right: var(--s-2); font-size: var(--t-micro); }
+.filepre .fl .p8-who { display: inline-block; width: 5rem; flex: none; white-space: nowrap; padding-right: var(--s-2); font-size: var(--t-micro); }
 .filepre .fl[data-attributed='true'] { background: var(--bg-sunk); }
 .p8-who-legend { display: grid; gap: var(--s-1); margin: 0; padding: var(--s-1) var(--s-2); list-style: none; border-bottom: 1px solid var(--line-soft); font-size: var(--t-micro); }
 .p8-who-legend li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); overflow-wrap: anywhere; }
