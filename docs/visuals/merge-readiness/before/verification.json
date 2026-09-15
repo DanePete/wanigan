@@ -1,0 +1,9 @@
+{
+  "at": "2026-09-15T02:40:36.824Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic gh answers, sessions and worktrees; no network and no real agent calls",
+  "mode": "before",
+  "checks": [
+    "before: the Git bar offers a PR chip and nothing that reads mergeability, failing checks or review threads"
+  ],
+  "errors": []
+}

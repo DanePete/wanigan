@@ -4,8 +4,10 @@ import { TRUST_LEVELS, permissionModeCopy, trustCopy, trustGlyph } from '@shared
 import { intersectChoices, launchFieldChoices, type LaunchChoice } from '@shared/launch-fields';
 import { providerTint } from '@shared/provider-status';
 import type { ConfigPinCheck } from '@shared/exec-config';
-import { Hint, Mark, Note, Icon, SectionHead, ago } from './bits';
+import { DEFAULT_DEPS_MODE, DEPS_MODES, DEPS_MODE_COPY, launchSetupNote, type DepsMode, type WorktreeSetupConfig } from '@shared/worktree-bootstrap';
+import { Hint, Mark, Note, Icon, SectionHead, Segmented, ago } from './bits';
 import '../styles/launch.css';
+import '../styles/worktree-setup.css';
 import { useDialog } from './useDialog';
 
 /** Same filled progression the session header uses: ◇ → ◈ → ◆ reads in greyscale. */
@@ -154,6 +156,15 @@ export default function NewSessionDialog({
   const [trust, setTrust] = useState<TrustLevel | null>(null);
   const [trustDefault, setTrustDefault] = useState<TrustLevel | null>(null);
   const [trustErr, setTrustErr] = useState<string | null>(null);
+  /*
+   * How a new worktree of this project gets its dependency folders, and what
+   * else a launch into one does. Read once isolation is ticked. The choice is
+   * the project's, so it is stored when the session starts rather than on each
+   * press: cancelling the dialog changes nothing.
+   */
+  const [wtSetup, setWtSetup] = useState<WorktreeSetupConfig | null>(null);
+  const [wtSetupErr, setWtSetupErr] = useState<string | null>(null);
+  const [depsMode, setDepsMode] = useState<DepsMode>(DEFAULT_DEPS_MODE);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   /*
@@ -391,6 +402,16 @@ export default function NewSessionDialog({
   // A folder that is not a git repo has no worktree to cut.
   useEffect(() => { if (!isRepo) setIsolate(false); }, [isRepo]);
 
+  useEffect(() => {
+    if (!isolate || !projectId) return;
+    let live = true;
+    setWtSetup(null); setWtSetupErr(null);
+    window.wanigan.worktrees.setup(projectId)
+      .then((config) => { if (live) { setWtSetup(config); setDepsMode(config.depsMode); } })
+      .catch((e) => { if (live) setWtSetupErr(e instanceof Error ? e.message : String(e)); });
+    return () => { live = false; };
+  }, [isolate, projectId]);
+
   /*
    * The one sentence standing between here and a running session, or null. It
    * gates the button AND is rendered next to it: a disabled primary action with
@@ -508,6 +529,13 @@ export default function NewSessionDialog({
     if (missingField) { setErr(`${missingField.label} is required by this provider profile.`); return; }
     setBusy(true); setErr(null);
     try {
+      // Stored before the launch because createWorktree reads the project's
+      // choice from main, not from this request.
+      if (isolate && wtSetup && depsMode !== wtSetup.depsMode) {
+        try { await window.wanigan.worktrees.setDepsMode(projectId, depsMode); } catch (e) {
+          throw new Error(`The dependency folder choice was not saved, so nothing was launched: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
       await onCreate({ providerId, projectId, model, effort, permissionMode, providerOptions, extraArgs, initialPrompt, isolate, accountId,
         acceptConfigDigest: configChanged && configAccepted && configCheck ? configCheck.snapshot.digest : undefined });
       onClose();
@@ -1064,6 +1092,32 @@ export default function NewSessionDialog({
             )}
           </span>
         </label>
+        {isolate && project && (
+          <div className="wt-deps">
+            {wtSetupErr ? (
+              <p className="wt-setup-caption">
+                Wanigan could not read how {project.name}’s worktrees are set up: {wtSetupErr} The worktree still
+                gets whatever was last saved for the project.
+              </p>
+            ) : !wtSetup ? (
+              <p className="wt-setup-caption">Reading how {project.name}’s worktrees are set up…</p>
+            ) : (
+              <>
+                <div className="wt-setup-field">
+                  <span className="label">Dependency folders</span>
+                  <Segmented label="Dependency folders in the worktree" value={depsMode} onChange={setDepsMode}
+                             options={DEPS_MODES.map((mode) => ({ value: mode, label: DEPS_MODE_COPY[mode].label }))} />
+                </div>
+                <p className="wt-setup-caption">
+                  {DEPS_MODE_COPY[depsMode].hint}
+                  {depsMode !== wtSetup.depsMode && ` Saved as ${project.name}’s choice for every new worktree when this session starts.`}
+                </p>
+                {launchSetupNote(wtSetup) && <p className="wt-setup-caption">{launchSetupNote(wtSetup)}</p>}
+                <p className="wt-setup-caption">What the worktree got, and any setup output, shows on its branch in Changes.</p>
+              </>
+            )}
+          </div>
+        )}
 
         </section><section className="launch-section" id="launch-message"><SectionHead label="Give it a starting point" />
         <label className="label" htmlFor="launch-first-message">First message <span>(optional)</span></label>

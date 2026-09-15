@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -51,12 +51,12 @@ function ghEnv(PATH: string): NodeJS.ProcessEnv {
   };
 }
 
-export async function runGh(bin: string, cwd: string, args: string[], opts: { timeout?: number } = {}): Promise<GhRun> {
+export async function runGh(bin: string, cwd: string, args: string[], opts: { timeout?: number; maxBuffer?: number } = {}): Promise<GhRun> {
   try {
     const { stdout, stderr } = await exec(bin, args, {
       cwd,
       timeout: opts.timeout ?? READ_TIMEOUT,
-      maxBuffer: 8 * 1024 * 1024,
+      maxBuffer: opts.maxBuffer ?? 8 * 1024 * 1024,
       env: ghEnv(await searchPath()),
     });
     return { ok: true, out: stdout, err: stderr, code: 0, killed: false };
@@ -67,6 +67,76 @@ export async function runGh(bin: string, cwd: string, args: string[], opts: { ti
       code: typeof x.code === 'number' ? x.code : null, killed: x.killed === true,
     };
   }
+}
+
+export type GhTail = {
+  ok: boolean;
+  /** The last bytes of stdout, starting on a line boundary. */
+  tail: string;
+  /** Whole lines of stdout let go before `tail`. */
+  droppedLines: number;
+  err: string;
+  code: number | null;
+  killed: boolean;
+};
+
+/**
+ * gh for output far larger than anything should hold: a CI log runs to
+ * megabytes. Only the last `keepBytes` of stdout are kept, cut at a newline,
+ * and the lines let go are counted, so what comes back is the true end of the
+ * output and says how much came before it. execFile cannot do this — past its
+ * maxBuffer it kills the child and hands back the first bytes, which is the
+ * opposite end of a log from the failure.
+ */
+export async function runGhTail(bin: string, cwd: string, args: string[], opts: { timeout: number; keepBytes: number }): Promise<GhTail> {
+  const env = ghEnv(await searchPath());
+  return new Promise<GhTail>((resolve) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let droppedLines = 0;
+    let err = '';
+    let killed = false;
+    let settled = false;
+    const settle = (result: Omit<GhTail, 'tail' | 'droppedLines'>) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ ...result, tail: Buffer.concat(chunks, size).toString('utf8'), droppedLines });
+    };
+    // Compacting at twice the bound keeps the copy cost linear in the output.
+    // A newline byte never occurs inside a multi-byte UTF-8 sequence, so a cut
+    // just after one cannot split a character.
+    const compact = () => {
+      const all = Buffer.concat(chunks, size);
+      const from = all.length - opts.keepBytes;
+      const nl = all.indexOf(0x0a, from);
+      const cut = nl < 0 ? from : nl + 1;
+      for (let i = 0; i < cut; i++) if (all[i] === 0x0a) droppedLines += 1;
+      chunks.length = 0;
+      chunks.push(all.subarray(cut));
+      size = all.length - cut;
+    };
+    const child = spawn(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const timer = setTimeout(() => {
+      killed = true;
+      child.kill('SIGKILL');
+      // A descendant still holding the pipes would keep 'close' from firing.
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      settle({ ok: false, err: 'gh did not answer in time.', code: null, killed: true });
+    }, opts.timeout);
+    child.stdout?.on('data', (chunk: Buffer) => {
+      chunks.push(chunk);
+      size += chunk.length;
+      if (size > opts.keepBytes * 2) compact();
+    });
+    child.stderr?.on('data', (chunk: Buffer) => { if (err.length < 64 * 1024) err += chunk.toString('utf8'); });
+    child.on('error', (e) => settle({ ok: false, err: e.message, code: null, killed }));
+    child.on('close', (code) => {
+      if (size > opts.keepBytes) compact();
+      settle({ ok: code === 0 && !killed, err: err.trim(), code: typeof code === 'number' ? code : null, killed });
+    });
+  });
 }
 
 /* -- finding gh --------------------------------------------------------- */
@@ -88,7 +158,7 @@ async function searchPath(): Promise<string> {
  * operator who installs gh mid-run should see the chip work on the next
  * refresh, not after a restart.
  */
-async function resolveGh(): Promise<string | null> {
+export async function resolveGh(): Promise<string | null> {
   const dirs = (await searchPath()).split(':').filter(Boolean);
   for (const d of dirs) {
     const candidate = path.join(d, 'gh');
@@ -100,7 +170,7 @@ async function resolveGh(): Promise<string | null> {
 /** Version is cosmetic (a tooltip), so a cheap stamp-keyed cache is enough. */
 const versionCache = new Map<string, string | null>();
 
-async function ghVersion(bin: string): Promise<string | null> {
+export async function ghVersion(bin: string): Promise<string | null> {
   let stamp = 'unstatable';
   try { const st = fs.statSync(bin); stamp = `${st.size}:${st.mtimeMs}`; } catch { /* keyed as unstatable */ }
   const key = `${bin}|${stamp}`;

@@ -598,7 +598,72 @@ function migratePhases(d: Database.Database) {
   migrateConversationFlags(d);
   migrateClaudeUsage(d);
   migrateAttempts(d);
+  migrateWorktreeBootstrap(d);
   migrateCodexHooks(d);
+}
+
+/**
+ * What a new worktree is given beyond its tracked files, per project, and the
+ * evidence of every setup and teardown that ran.
+ *
+ * All of it lives here and none of it in the repository: a setup command is a
+ * choice the operator made on this machine, and writing it into the checkout
+ * would hand it to every clone and every agent that can edit the file.
+ */
+function migrateWorktreeBootstrap(d: Database.Database) {
+  d.exec(`
+    -- How gitignored dependency folders reach a new worktree: link, clone or
+    -- skip. The same shape as project_trust — one choice per project — with
+    -- the cascade project_accounts has, so a removed project leaves no row
+    -- behind for a re-added one to inherit.
+    CREATE TABLE IF NOT EXISTS project_worktree_deps (
+      project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+      mode       TEXT NOT NULL,
+      set_at     INTEGER NOT NULL
+    );
+
+    -- Command text the operator approved in a native dialog, run through the
+    -- login shell in every worktree Wanigan makes for the project. The shape of
+    -- review_recipes, for the same kind of text.
+    CREATE TABLE IF NOT EXISTS worktree_commands (
+      project_id    TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+      setup_json    TEXT NOT NULL DEFAULT '[]',
+      teardown_json TEXT NOT NULL DEFAULT '[]',
+      updated_at    INTEGER NOT NULL
+    );
+
+    -- One row per phase that ran, written before its first command starts and
+    -- updated as each one finishes. No cascade: evidence of what ran in a
+    -- worktree outlives the project it ran for, as review_runs does.
+    CREATE TABLE IF NOT EXISTS worktree_command_runs (
+      id           TEXT PRIMARY KEY,
+      project_id   TEXT NOT NULL,
+      worktree     TEXT NOT NULL,
+      phase        TEXT NOT NULL,
+      started_at   INTEGER NOT NULL,
+      ended_at     INTEGER,
+      status       TEXT NOT NULL,
+      planned      INTEGER NOT NULL DEFAULT 0,
+      results_json TEXT NOT NULL DEFAULT '[]',
+      env_json     TEXT,
+      note         TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_worktree_command_runs_tree
+      ON worktree_command_runs(worktree, phase, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_worktree_command_runs_project
+      ON worktree_command_runs(project_id, started_at DESC);
+  `);
+  // The project a worktree was made for, so its teardown finds the same
+  // commands its setup ran even when the repository is registered under a
+  // path that is not its root.
+  addColumn(d, 'worktrees', 'project_id', 'TEXT');
+  // The first port of the worktree's ten-port block, fixed at creation. Setup,
+  // the launch and teardown must all see one block; probing again later would
+  // skip the block the worktree's own dev server is listening on.
+  addColumn(d, 'worktrees', 'port_base', 'INTEGER');
+  // What creation put in the worktree — dependency folders, include copies,
+  // the port block — as the JSON the Git view shows beside the branch.
+  addColumn(d, 'worktrees', 'bootstrap_json', 'TEXT');
 }
 
 /**

@@ -3,6 +3,8 @@ import type { GhPr, GhStatusReport, Project, WorktreeInfo } from '@shared/types'
 import type { CollisionForecast, CollisionOutcome, CollisionPair, CollisionSide } from '@shared/collisions';
 import { ConfirmNote, EmptyState, Mark, Note, PageHead, Reading, SectionHead, Segmented, ago, type Tone } from '../components/bits';
 import ReviewGate from '../components/ReviewGate';
+import MergeReadiness from '../components/MergeReadiness';
+import WorktreeSetup, { WorktreeBootstrapNote } from '../components/WorktreeSetup';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 
 type GFile = { path: string; index: string; work: string; staged: boolean; untracked: boolean; conflicted: boolean };
@@ -324,6 +326,8 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
   const [adding, setAdding] = useState(false);
   const [pr, setPr] = useState<GhStatusReport | null>(null);
   const [prBusy, setPrBusy] = useState(false);
+  /** Whether the merge readiness section is open. Opening it asks GitHub nothing; its own button does. */
+  const [readinessOpen, setReadinessOpen] = useViewMemory('readinessOpen', false);
   /** Agent checkouts on this repository, keyed by the branch each holds. A
       branch in here is merged through worktrees.merge, which carries the
       guards a bare `git merge` from this pane skipped. */
@@ -697,6 +701,10 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
               : 'no upstream'}
           </span>
           <PrChip report={pr} busy={prBusy} onRefresh={() => { setPrBusy(true); void loadPr(true).finally(() => setPrBusy(false)); }} />
+          <button className={`gt-chip${readinessOpen ? ' on' : ''}`} aria-expanded={readinessOpen} aria-controls="gt-readiness"
+                  onClick={() => setReadinessOpen((wasOpen) => !wasOpen)}>
+            Merge readiness
+          </button>
           {st.operation && <span className="gt-op">⚠ {st.operation} in progress</span>}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexWrap: 'wrap' }}>
             {/* A branch whose only pull request was closed or merged can have
@@ -807,10 +815,24 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
         </div>
       )}
 
+      {/* Reached from the bar's pull request controls and kept mounted while
+          closed, so closing it to read a diff does not throw away an answer
+          that took a network read to get. */}
+      {st?.isRepo && project && (
+        <MergeReadiness open={readinessOpen} projectId={project.id} branch={st.detached ? null : st.branch}
+                        repoRoot={st.repoRoot} worktrees={worktrees} />
+      )}
+
       <details className="gt-review-controls">
         <summary>Review gate<span className="faint">Checks & recorded results</span></summary>
         <ReviewGate projectId={projectId} projectName={project?.name} />
       </details>
+      {project && st?.isRepo && (
+        <details className="gt-review-controls">
+          <summary>Worktree setup<span className="faint">Dependencies, setup & teardown for agent worktrees</span></summary>
+          <WorktreeSetup projectId={project.id} projectName={project.name} />
+        </details>
+      )}
 
       <div className="gt" style={{ flex: 1, minHeight: 0 }}>
         <aside className="gt-browser" aria-label="Repository browser">
@@ -1081,6 +1103,7 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
                     <span>{fileList(rowConflict.conflicted)}</span>
                   </p>
                 )}
+                {rowTree?.bootstrap && <WorktreeBootstrapNote bootstrap={rowTree.bootstrap} />}
                 </Fragment>
                 );
               })}

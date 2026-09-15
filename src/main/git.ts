@@ -78,6 +78,14 @@ export type GitRunOpts = {
   maxBuffer?: number;
   /** Extra variables (e.g. GIT_INDEX_FILE). The prompt hardening always wins. */
   env?: Record<string, string>;
+  /**
+   * Written to git's stdin, which is then closed. For the commands whose only
+   * NUL-safe form reads paths from stdin: `check-ignore -z` is refused outright
+   * without `--stdin`, and the argv form C-quotes a name with a quote,
+   * backslash or control character in it, so the answer no longer matches the
+   * question.
+   */
+  input?: string;
 };
 
 /**
@@ -126,11 +134,18 @@ export async function runGit(cwd: string, args: string[], opts: GitRunOpts = {})
     return { ok: false, out: '', err: 'No directory was given for this git command.', code: null, killed: false };
   }
   try {
-    const { stdout, stderr } = await exec('git', ['-C', cwd, ...args], {
+    const running = exec('git', ['-C', cwd, ...args], {
       timeout: opts.timeout ?? 30_000,
       maxBuffer: opts.maxBuffer ?? 64 * 1024 * 1024,
       env: gitEnv(opts.env),
     });
+    // A git that exits before reading all of it closes the pipe under the
+    // write; that EPIPE is not this command's result, which `running` carries.
+    if (opts.input !== undefined) {
+      running.child.stdin?.on('error', () => { /* the exit status says what happened */ });
+      running.child.stdin?.end(opts.input);
+    }
+    const { stdout, stderr } = await running;
     return { ok: true, out: stdout, err: stderr, code: 0, killed: false };
   } catch (e) {
     const x = e as { stdout?: string; stderr?: string; message?: string; code?: number | string; killed?: boolean };
