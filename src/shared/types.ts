@@ -3510,3 +3510,14 @@ export type GateSelfTestRun = {
   failures: { rule: string; arm: 'refuse' | 'allow'; expected: string; got: string }[];
   uncovered: string[];
 };
+
+/** Observed approval counts over the last day. Every duration in it is inferred; see shared/fatigue.ts. */
+export type FatigueReport = {
+  generatedAt: number;
+  fastMs: number;
+  run: number;
+  totals: { asked: number; answered: number; fast: number; unanswered: number };
+  hours: { hourStart: number; asked: number; answered: number; fast: number }[];
+  sessions: { sessionId: string; projectName: string | null; asked: number; answered: number; fast: number; unanswered: number }[];
+  signals: { at: number; sessionId: string | null; summary: string }[];
+};

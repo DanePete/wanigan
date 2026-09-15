@@ -3,6 +3,7 @@ import { approvalDetailFor, attachApprovalExplanation } from './approval-explain
 import { ledgerTrace } from './policy';
 import { latestGateSelfTest, runAndRecordGateSelfTest } from './policy-selftest-run';
 import { forgetTaint, observeForTaint } from './tripwire';
+import { fatigueReport, observeFatigue } from './fatigue';
 
 /**
  * The wiring for the policy evidence built around the gate: what a script alias
@@ -24,6 +25,7 @@ export function startPolicyEvidence(): void {
   onHookInput((stored, input, cwd) => {
     attachApprovalExplanation(stored, input, cwd);
     observeForTaint(stored, input, cwd);
+    observeFatigue(stored);
     if (stored.event === 'SessionEnd') forgetTaint(stored.sessionId);
   });
 }
@@ -42,6 +44,7 @@ function timeArg(value: unknown): number {
 export function registerPolicyEvidenceIpc(handle: Handle): void {
   handle('policyEvidence:approval', (sessionId: unknown, sinceAt: unknown) =>
     approvalDetailFor(sessionIdArg(sessionId), timeArg(sinceAt)));
+  handle('policyEvidence:fatigue', () => fatigueReport());
   handle('policyEvidence:selfTest', () => latestGateSelfTest());
   handle('policyEvidence:runSelfTest', () => runAndRecordGateSelfTest());
   handle('policyEvidence:trace', (id: unknown) =>

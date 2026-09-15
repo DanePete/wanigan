@@ -230,3 +230,32 @@ export async function runTripwireSmoke(check: Check, say: Say): Promise<void> {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
+
+export async function runFatigueSmoke(check: Check, say: Say): Promise<void> {
+  say('── helper sweep · P1 · approval timing, inferred');
+  const hooks = await import('./hooks');
+  const evidence = await import('./policy-evidence');
+  const { fatigueReport } = await import('./fatigue');
+  const { db } = await import('./db');
+  evidence.startPolicyEvidence();
+  await hooks.startHookServer();
+  const sessionId = 's_smoke_p1_fatigue';
+  const handler = handlerOf(hooks.writeHookSettings(sessionId, os.tmpdir()));
+  if (!handler) { check(false, 'the fatigue smoke session has a hook capability'); return; }
+  const before = fatigueReport();
+  // Six prompts answered at once: faster than any person reads a command.
+  for (let i = 0; i < 6; i++) {
+    await post(handler, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: `echo ${i}` } });
+    await post(handler, { hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: `echo ${i}` } });
+  }
+  await post(handler, { hook_event_name: 'PermissionRequest', tool_name: 'Write', tool_input: { file_path: '/tmp/x' } });
+  await post(handler, { hook_event_name: 'Stop' });
+  const signals = db().prepare("SELECT summary, detail_json FROM policy_signals WHERE session_id = ? AND kind = 'fatigue'").all(sessionId) as { summary: string; detail_json: string }[];
+  check(signals.length === 1 && /inferred/.test(signals[0].summary) && JSON.parse(signals[0].detail_json).inferred === true,
+    'five fast answers in a row record one fatigue signal, labelled inferred, and the sixth starts a new run', signals);
+  const after = fatigueReport();
+  const row = after.sessions.find((s) => s.sessionId === sessionId);
+  check(after.totals.asked - before.totals.asked === 7 && row?.answered === 6 && row.unanswered === 1,
+    'the report counts seven prompts, six answered and one the turn moved on from', JSON.stringify({ before: before.totals, after: after.totals, row }));
+  hooks.cleanupHookSettings(sessionId);
+}

@@ -40,3 +40,11 @@
 .pe-selftest { display: grid; gap: var(--s-2); margin-top: var(--s-4); }
 .pe-selftest-line { font-size: var(--t-small); display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); }
 .pe-selftest-line.failed { font-weight: 600; }
+
+/* ── approval timing ───────────────────────────────────────────────────── */
+.pe-fatigue { display: grid; gap: var(--s-3); margin-top: var(--s-4); min-width: 0; }
+.pe-scroll { overflow-x: auto; }
+.pe-table { min-width: 360px; }
+.pe-table caption { text-align: left; caption-side: top; padding-bottom: var(--s-1); }
+.pe-table .r { text-align: right; font-variant-numeric: tabular-nums; }
+.pe-id { overflow-wrap: anywhere; font-family: var(--mono); }

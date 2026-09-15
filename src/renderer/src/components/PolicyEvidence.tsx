@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { GateSelfTestRun, StoredTrace } from '@shared/types';
-import { Mark, Note, SectionHead, ago, type Tone } from './bits';
+import type { FatigueReport, GateSelfTestRun, StoredTrace } from '@shared/types';
+import { Mark, Note, SectionHead, Stat, ago, num, type Tone } from './bits';
 import '../styles/policy-evidence.css';
 
 /**
@@ -124,6 +124,91 @@ export function GateSelfTestPanel() {
                 </p>
               </>
             )}
+    </section>
+  );
+}
+
+const clockHour = (at: number) => new Date(at).toLocaleTimeString([], { hour: 'numeric' });
+
+/**
+ * How many approvals were asked for and how fast they were answered, over the
+ * last day. Observed counts only; every duration is inferred from the event
+ * that followed the prompt, and the panel says so beside the numbers.
+ */
+export function FatiguePanel() {
+  const [report, setReport] = useState<FatigueReport | null | 'error'>(null);
+  useEffect(() => {
+    let live = true;
+    window.wanigan.policyEvidence.fatigue()
+      .then((r) => { if (live) setReport(r); })
+      .catch(() => { if (live) setReport('error'); });
+    return () => { live = false; };
+  }, []);
+  const seconds = report && report !== 'error' ? `${(report.fastMs / 1000).toFixed(report.fastMs % 1000 ? 1 : 0)} s` : '';
+  return (
+    <section className="pe-fatigue" aria-label="Approval timing">
+      <SectionHead label="Approvals over the last day" />
+      {report === null ? <p className="faint pe-fine">Reading approval events…</p>
+        : report === 'error' ? <Note tone="error">Wanigan could not read the approval events.</Note>
+          : report.totals.asked === 0 ? (
+            <p className="dim pe-fine">No measurements yet: no session asked for an approval in the last 24 hours.</p>
+          ) : (
+            <>
+              <div className="stat-grid pe-fatigue-stats">
+                <Stat label="Asked" value={num(report.totals.asked)} sub="permission prompts, observed" />
+                <Stat label="Answered" value={num(report.totals.answered)} sub="a later event for that tool arrived" />
+                <Stat label={`Under ${seconds}`} value={num(report.totals.fast)} sub="inferred, an upper bound" />
+                <Stat label="Unanswered" value={num(report.totals.unanswered)} sub="the turn moved on without one" />
+              </div>
+              {report.signals.length > 0 && (
+                <ul className="pe-notes" aria-label="Fast approval runs recorded in the last week">
+                  {report.signals.map((s) => (
+                    <li key={`${s.at}-${s.sessionId ?? ''}`}>
+                      <Mark glyph="≫" word="fast run" tone="warn" /> {s.summary} <span className="faint">{ago(s.at)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="pe-scroll">
+                <table className="grid pe-table">
+                  <caption className="faint pe-fine">By hour, hours with a prompt only</caption>
+                  <thead><tr><th>Hour</th><th className="r">Asked</th><th className="r">Answered</th><th className="r">Under {seconds}</th></tr></thead>
+                  <tbody>
+                    {report.hours.filter((h) => h.asked > 0).map((h) => (
+                      <tr key={h.hourStart}>
+                        <td>{clockHour(h.hourStart)}</td>
+                        <td className="r">{num(h.asked)}</td>
+                        <td className="r">{num(h.answered)}</td>
+                        <td className="r">{num(h.fast)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="pe-scroll">
+                <table className="grid pe-table">
+                  <caption className="faint pe-fine">By session, most prompts first</caption>
+                  <thead><tr><th>Session</th><th className="r">Asked</th><th className="r">Answered</th><th className="r">Under {seconds}</th><th className="r">Unanswered</th></tr></thead>
+                  <tbody>
+                    {report.sessions.map((s) => (
+                      <tr key={s.sessionId}>
+                        <td>{s.projectName ?? <span className="faint">no project recorded</span>}<div className="faint pe-fine pe-id">{s.sessionId}</div></td>
+                        <td className="r">{num(s.asked)}</td>
+                        <td className="r">{num(s.answered)}</td>
+                        <td className="r">{num(s.fast)}</td>
+                        <td className="r">{num(s.unanswered)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+      <p className="faint pe-fine">
+        Claude Code sends no event when a person answers a prompt, so each time is inferred from the permission request to
+        the next event for the same tool. When the tool ran, that event arrives after it finished, so the time includes the
+        tool’s own run. {report && report !== 'error' ? `A run of ${report.run} answers in a row under ${seconds} is recorded as a fast run.` : ''} There is no score.
+      </p>
     </section>
   );
 }
