@@ -8,9 +8,18 @@ import Interview from './Interview';
 import { useViewMemory } from '../components/viewMemory';
 import ReviewEvidence from '../components/ReviewEvidence';
 import GoalCompanion from '../components/GoalCompanion';
+import GitHubIntake, { INTAKE_MARKS, summaryWithoutLink } from '../components/GitHubIntake';
 import { goalLocation } from '@shared/goal-journey';
+import type { IntakeEventLink, IntakeOverview } from '@shared/intake';
 
 const errText = (error: unknown) => error instanceof Error ? error.message : String(error);
+/**
+ * How many events the inbox reads, and how many rows it shows. Named here, and
+ * passed rather than left to main's default, so the count of rows not shown can
+ * say "at least" exactly when the read may have stopped short.
+ */
+const EVENTS_READ = 80;
+const EVENTS_SHOWN = 6;
 
 /**
  * Whether unattended dispatch is on, and whether it last stopped itself.
@@ -207,6 +216,15 @@ export default function Control({ projects, providers, onOpenSession }: {
   // Per-goal spend-cap drafts, keyed like `notes` and `claims` so a half-typed
   // number does not follow the operator to the next goal they open.
   const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({});
+  /**
+   * GitHub intake, read apart from the goals. It resolves every project's
+   * remotes through git, which the goal list has no reason to wait on, and a
+   * failed intake read must not blank an inbox that read fine — so it has its
+   * own value, its own error, and its own sequence against a slow answer.
+   */
+  const [intake, setIntake] = useState<IntakeOverview | null>(null);
+  const [intakeError, setIntakeError] = useState<string | null>(null);
+  const intakeSeq = useRef(0);
 
   const enabledProviders = useMemo(() => providers.filter((provider) => !!provider.path), [providers]);
   const projectOptions = projects;
@@ -228,7 +246,7 @@ export default function Control({ projects, providers, onOpenSession }: {
     setRefreshing(true); setLoadError(null);
     try {
       const [next, nextOutcomes, nextEvents] = await Promise.all([
-        window.wanigan.control.list(), window.wanigan.control.outcomes(), window.wanigan.control.events('all'),
+        window.wanigan.control.list(), window.wanigan.control.outcomes(), window.wanigan.control.events('all', EVENTS_READ),
       ]);
       if (!alive.current || seq !== loadSeq.current) return;
       setDockets(next); setOutcomes(nextOutcomes); setEvents(nextEvents);
@@ -278,6 +296,29 @@ export default function Control({ projects, providers, onOpenSession }: {
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, [load]);
+  const loadIntake = useCallback(async () => {
+    const seq = ++intakeSeq.current;
+    try {
+      const next = await window.wanigan.intake.overview();
+      if (alive.current && seq === intakeSeq.current) { setIntake(next); setIntakeError(null); }
+    } catch (e) {
+      if (alive.current && seq === intakeSeq.current) setIntakeError(errText(e));
+    }
+  }, []);
+  // A timed poll ends with nobody pressing anything, and may have added events.
+  // Several projects finishing in one pass arrive as one read, not one per project.
+  useEffect(() => {
+    let timer: number | null = null;
+    void loadIntake();
+    const off = window.wanigan.on.intakeChanged(() => {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => { timer = null; void loadIntake(); void load(); }, 400);
+    });
+    return () => {
+      if (timer !== null) window.clearTimeout(timer);
+      off();
+    };
+  }, [load, loadIntake]);
   useEffect(() => { if (!projectId && projectOptions[0]) setProjectId(projectOptions[0].id); }, [projectId, projectOptions]);
   useEffect(() => { if (!providerId && enabledProviders[0]) setProviderId(enabledProviders[0].id); }, [enabledProviders, providerId]);
 
@@ -424,6 +465,13 @@ export default function Control({ projects, providers, onOpenSession }: {
   // the rows do: a prompt is only allowed to stand while the record it names is
   // still on screen.
   const shownTasks = tasks.slice(0, 5);
+  // Dismissed rows are filtered out rather than left to take the visible slots,
+  // and the rows past those slots are counted: a timed GitHub poll can add more
+  // events in one pass than the inbox shows, and a list that silently stops at
+  // six reads as an inbox that holds six.
+  const liveEvents = events.filter((event) => event.status !== 'dismissed');
+  const hiddenEvents = Math.max(0, liveEvents.length - EVENTS_SHOWN);
+  const intakeLinks = new Map<string, IntakeEventLink>((intake?.events ?? []).map((link) => [link.eventId, link]));
   if (createOpen) return <Interview projects={projects} projectId={scope || projectId || null} backLabel="Back to goals"
     onCancel={() => { setCreateOpen(false); requestAnimationFrame(() => createButton.current?.focus()); }}
     onDone={id => { setCreateOpen(false); void choose(id); setNotice('Goal created. Choose a task when you are ready to begin.'); }} />;
@@ -536,11 +584,12 @@ export default function Control({ projects, providers, onOpenSession }: {
     </div>
     <details className="control-support">
       <summary>Events &amp; model evidence<span className="faint">{events.filter((event) => event.status === 'new').length} new events</span></summary>
-    <section className="control-grid control-lower"><article><SectionHead label="Local event inbox" /><h2>A signal worth following.</h2><p className="faint">Capture a CI failure, incident, or issue, then decide whether it needs a goal.</p><label><span className="label">Event project</span><select className="field" value={projectId} onChange={event => setProjectId(event.target.value)}>{projectOptions.length === 0 && <option value="">No project available</option>}{projectOptions.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><div className="control-inline"><label><span className="label">Event source</span><input className="field" value={eventSource} onChange={(event) => setEventSource(event.target.value)} /></label><label><span className="label">Event kind</span><input className="field" value={eventKind} onChange={(event) => setEventKind(event.target.value)} /></label></div><textarea className="field control-textarea" aria-label="Event summary" value={eventSummary} onChange={(event) => setEventSummary(event.target.value)} placeholder="What happened? Include the observable failure, not a solution guess." /><button className="btn" disabled={busy !== null || !eventSummary.trim()} onClick={() => void addEvent()}>Add event</button>{/* Dismiss existed in main and in the preload and was reachable from
+    <section className="control-grid control-lower"><article><SectionHead label="Local event inbox" /><h2>A signal worth following.</h2><p className="faint">Capture a CI failure, incident, or issue, then decide whether it needs a goal.</p><GitHubIntake overview={intake} error={intakeError} onReload={() => void loadIntake()} onChecked={() => { void loadIntake(); void load(); }} /><label><span className="label">Event project</span><select className="field" value={projectId} onChange={event => setProjectId(event.target.value)}>{projectOptions.length === 0 && <option value="">No project available</option>}{projectOptions.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><div className="control-inline"><label><span className="label">Event source</span><input className="field" value={eventSource} onChange={(event) => setEventSource(event.target.value)} /></label><label><span className="label">Event kind</span><input className="field" value={eventKind} onChange={(event) => setEventKind(event.target.value)} /></label></div><textarea className="field control-textarea" aria-label="Event summary" value={eventSummary} onChange={(event) => setEventSummary(event.target.value)} placeholder="What happened? Include the observable failure, not a solution guess." /><button className="btn" disabled={busy !== null || !eventSummary.trim()} onClick={() => void addEvent()}>Add event</button>{/* Dismiss existed in main and in the preload and was reachable from
     nothing, so an event added by mistake could only be cleared by creating
     a Goal nobody wanted. Dismissed rows are also filtered out rather than
     left to consume the six visible slots. */}
-{events.filter((event) => event.status !== 'dismissed').slice(0, 6).map((event) => <div className="control-event" key={event.id}><Pill status={event.status} /><strong>{event.kind}</strong><p>{event.summary}</p>{event.status === 'new' && <><button className="btn" disabled={busy !== null} onClick={() => void triage(event)}>Create goal</button><button className="btn" disabled={busy !== null} onClick={() => void act(`dismiss-${event.id}`, async () => { await window.wanigan.control.dismissEvent(event.id); await reloadGoal(detail?.id ?? null); })}>Dismiss</button></>}</div>)}</article>
+{liveEvents.slice(0, EVENTS_SHOWN).map((event) => { const link = intakeLinks.get(event.id); return <div className="control-event" key={event.id}><Pill status={event.status} />{link ? <Mark {...INTAKE_MARKS[link.kind]} /> : <strong>{event.kind}</strong>}<p>{link ? summaryWithoutLink(event.summary, link.url) : event.summary}</p>{link?.url && <button className="btn" type="button" onClick={() => { if (link.url) void window.wanigan.shell.openExternal(link.url); }}><Icon name="external" />Open on GitHub</button>}{event.status === 'new' && <><button className="btn" disabled={busy !== null} onClick={() => void triage(event)}>Create goal</button><button className="btn" disabled={busy !== null} onClick={() => void act(`dismiss-${event.id}`, async () => { await window.wanigan.control.dismissEvent(event.id); await reloadGoal(detail?.id ?? null); })}>Dismiss</button></>}</div>; })}
+{hiddenEvents > 0 && <Hint>{events.length >= EVENTS_READ ? 'At least ' : ''}{hiddenEvents} more {hiddenEvents === 1 ? 'event is' : 'events are'} not shown; create a goal from one above or dismiss it to bring the next into view.</Hint>}</article>
       <article><SectionHead label="Model evidence" /><h2>What the outcomes say.</h2><p className="faint">Ordered by acceptance rate over completed goal evidence. One sample is one sample: the count is beside every row, and a cost is shown only for the sessions whose CLI reported one.</p>{outcomes.length === 0 ? <p className="faint">No completed provider outcomes yet.</p> : <table className="control-table"><thead><tr><th>Model</th><th>Task</th><th>Accept</th><th>Tests</th><th>Cost</th></tr></thead><tbody>{outcomes.map((outcome) => <tr key={`${outcome.providerId}-${outcome.model}-${outcome.taskKind}`}><td>{outcome.providerId}<small>{outcome.model}</small></td><td>{outcome.taskKind}<small>{outcome.samples} sample{outcome.samples === 1 ? '' : 's'}</small></td><td>{outcome.acceptedRate === null ? '—' : `${Math.round(outcome.acceptedRate * 100)}%`}</td><td>{outcome.testPassRate === null ? '—' : `${Math.round(outcome.testPassRate * 100)}%`}</td><td title={outcome.reportedSamples === outcome.samples ? undefined : `${outcome.reportedSamples} of ${outcome.samples} session${outcome.samples === 1 ? '' : 's'} reported a cost. The rest ran on a plan or a harness that reports none, so they are not in this figure.`}>{outcome.reportedSamples === 0 ? <span className="faint">not reported</span> : <>{usd(outcome.totalCostUsd)}{outcome.reportedSamples < outcome.samples && <small>{outcome.reportedSamples} of {outcome.samples} reported</small>}</>}</td></tr>)}</tbody></table>}
         <SectionHead label="Agent task records" count={shownTasks.length} /><Hint>{detail ? `For ${detail.title}.` : 'Select a goal to read its task records.'}</Hint>{shownTasks.map((task) => <p key={task.id}><Pill status={task.status} /> {task.title} {['working', 'input_required'].includes(task.status) && <button className="btn btn-sm" disabled={busy !== null} title={cancelStopsAgent(task)
           ? 'Cancel this task, stop the agent session running it, and release any file claims it holds. The goal is marked blocked until you reopen the task.'

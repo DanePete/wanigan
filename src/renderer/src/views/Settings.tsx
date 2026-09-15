@@ -11,6 +11,7 @@ import type {
 import { harnessLabel, proposeAccountDir, signInCommand } from '@shared/accounts';
 import { TRUST_COPY, TRUST_LEVELS, trustCopy } from '@shared/types';
 import { DEMO_PROMPTS } from '@shared/demo';
+import { INTAKE_MAX_INTERVAL_MINUTES, INTAKE_MIN_INTERVAL_MINUTES, type IntakeTimer } from '@shared/intake';
 import { ConfirmNote, Explainer, Icon, Note, PageHead, Reading, Section, SectionHead, Stat, ago, num } from '../components/bits';
 import type { IconName } from '../components/bits';
 import { useRememberedScroll } from '../components/viewMemory';
@@ -87,6 +88,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'connections', tabLabel: 'Connections', section: 'Phone monitor', hint: 'iPad/phone monitor, alerts, remote', keywords: 'phone ipad mobile tailscale ntfy push alerts remote pairing' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Before you leave', hint: 'Can this Mac be left alone and still answer', keywords: 'sleep awake battery power lid closed walk away leave readiness restart resume reachable overnight' },
   { tab: 'connections', tabLabel: 'Connections', section: 'MCP servers', hint: 'Tool servers agents may use', keywords: 'mcp server tools stdio http' },
+  { tab: 'connections', tabLabel: 'Connections', section: 'GitHub intake', hint: 'Check GitHub for issues and failed CI on a timer', keywords: 'github gh issues issue comments labels labelled ci failed workflow runs poll timer interval intake triage inbox' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Observation', hint: 'Telemetry, hooks, checkpoints, archive', keywords: 'telemetry hooks checkpoints notifications archive transcripts observation pet retention' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Search transcripts', hint: 'Full-text search of the archive', keywords: 'transcript search fts archive conversation history full-text' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'What leaves this machine', hint: 'The egress report, host by host', keywords: 'egress network hosts privacy leaves machine report keychain' },
@@ -1076,6 +1078,7 @@ export default function Settings({
           <SettingsTabPanel tab={settingsTabInfo('connections')} active={settingsTab === 'connections'}>
             <PhoneMonitor />
             <Mcp projects={projects} prefs={prefs} pending={pending} setFlag={setFlag} />
+            <GitHubIntakeTimer />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('privacy')} active={settingsTab === 'privacy'}>
@@ -4250,6 +4253,73 @@ function McpEnableReview({ server, scopeName, scopePath, template, resolved, rea
           : 'Approve this command… raises a confirmation Wanigan draws itself, outside this page, showing the same digest, command, arguments and scope. That question is asked by the main process on purpose: a page the renderer draws is a page a compromised renderer can decline to draw. Approving records the grant against that exact line and leaves the server off; editing the server afterwards drops the approval rather than silently changing what gets spawned.'}
       </p>
     </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   GitHub intake · the timer
+   ════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * The opt-in half of GitHub intake. Review's event inbox reads GitHub whenever
+ * the operator presses; this decides whether Wanigan also asks on its own while
+ * it is running. Off until turned on, because it reads with the operator's gh
+ * credentials on a clock they did not start. The interval is checked in main,
+ * which refuses a short one rather than clamping it, and the refusal is shown in
+ * main's words with nothing saved.
+ */
+function GitHubIntakeTimer() {
+  const timer = useLoad(() => window.wanigan.intake.timer());
+  // What main answered the last save with. The page shows it at once rather than
+  // re-reading: a re-read that has not landed yet would put the old interval back
+  // in the box, and a switch pressed in that moment would save it.
+  const [stored, setStored] = useState<IntakeTimer | null>(null);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+
+  async function save(next: IntakeTimer) {
+    setBusy(true); setResult(null);
+    try {
+      const saved = await window.wanigan.intake.setTimer(next);
+      setStored(saved);
+      setDraft(null);
+      setResult({ tone: 'ok', text: saved.enabled
+        ? `GitHub is checked every ${saved.intervalMinutes} minutes while Wanigan is running. The first check comes within a minute.`
+        : `The timer is off, with ${saved.intervalMinutes} minutes kept for when it is on. GitHub is read only when you press Check GitHub now in Review.` });
+    } catch (e) {
+      setResult({ tone: 'error', text: `Nothing was saved. ${msg(e)}` });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Section title="GitHub intake" hint="Issues and failed CI runs, read through your gh into Review’s event inbox.">
+      <Frame v={timer.v} what="the GitHub intake timer" onRetry={timer.reload}>{(loaded) => {
+        const saved = stored ?? loaded;
+        const typed = draft ?? String(saved.intervalMinutes);
+        return <>
+          <Toggle on={saved.enabled} title="Check GitHub on a timer" busy={busy}
+                  onChange={(on) => void save({ enabled: on, intervalMinutes: saved.intervalMinutes })}>
+            While Wanigan is running, read each GitHub project’s opened, labelled and commented issues and its failed runs
+            every {saved.intervalMinutes} minutes, and add what is new to Review’s event inbox for you to triage. Nothing is
+            written to GitHub. Nothing watches while Wanigan is closed or this Mac sleeps, and the next check says for how long.
+          </Toggle>
+          <label className="label" htmlFor="intake-interval">Minutes between checks (at least {INTAKE_MIN_INTERVAL_MINUTES})</label>
+          <div className="set-field-action set-intake-interval">
+            <input id="intake-interval" className="field mono" type="number" min={INTAKE_MIN_INTERVAL_MINUTES} max={INTAKE_MAX_INTERVAL_MINUTES} step={1}
+                   value={typed} onChange={(e) => setDraft(e.target.value)} />
+            <button type="button" className="btn" disabled={busy || draft === null || typed.trim() === ''}
+                    onClick={() => void save({ enabled: saved.enabled, intervalMinutes: Number(typed) })}>Save interval</button>
+          </div>
+          <p className="set-caption">
+            Each check is three reads per repository. A press in Review checks one project at any time, whether this is on or off.
+          </p>
+          <Result r={result} />
+        </>;
+      }}</Frame>
+    </Section>
   );
 }
 
