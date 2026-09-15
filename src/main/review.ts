@@ -45,13 +45,15 @@ export function saveRecipe(projectId: string, commands: string[]): ReviewRecipe 
  * stored string to `$SHELL -lc`, and a recipe is written once and executed many
  * times from more than one surface: review:run for the project,
  * control.runProof for a goal's verify task, which runs the same stored text in
- * that task's worktree when it has one, and an attempt set, which runs it in
- * each attempt's worktree when that attempt's agent finishes. Consent belongs
- * where the capability is created.
+ * that task's worktree when it has one, a goal that gates on stop, which runs it
+ * in an implementation or verification task's tree each time that task's agent
+ * stops, and an attempt set, which runs it in each attempt's worktree when that
+ * attempt's agent finishes. Consent belongs where the capability is created.
  * Re-asking at each run would ask again about text already approved, which is
  * how a person learns to click a dialog away. runAt is also a plain module call
- * — the attempts gate runs with nobody watching, after a person confirmed the
- * set — so gating the store is what keeps the text approved whatever calls it.
+ * — the gate on stop and the attempts gate both run it with nobody pressing
+ * anything, after a person turned them on — so gating the store is what keeps
+ * the text approved whatever calls the runner.
  *
  * Only commands the stored recipe does not already contain are put in the
  * dialog. Dropping a command, or reordering the same set, asks for nothing the
@@ -89,8 +91,9 @@ export async function saveRecipeWithConsent(
       `${one ? 'This is the line' : 'These are the lines'} being added:\n\n` +
       added.map((c) => `    ${c}`).join('\n') +
       '\n\nThis is stored, not run once: the Review panel runs it for the project, a goal\'s ' +
-      'verification task runs it again in that task\'s worktree when it has one, and an attempt set ' +
-      'runs it in each attempt\'s worktree when that attempt finishes. None of them asks again. ' +
+      'verification task runs it again in that task\'s worktree when it has one, a goal that gates on ' +
+      'stop runs it in a task\'s tree each time that task\'s agent stops, and an attempt set runs it in ' +
+      'each attempt\'s worktree when that attempt finishes. None of them asks again. ' +
       'Save only what you would type here yourself.',
   });
   if (answer.response !== 1) {
@@ -213,9 +216,10 @@ async function runCommand(command: string, cwd: string): Promise<ReviewRun['resu
 /**
  * The control plane may point a gate at a worktree created by Wanigan. Keeping
  * this internal argument out of the IPC surface means no renderer names the
- * directory: review:run passes none, control.runProof passes the worktree
- * Wanigan recorded for the task it was given, or the project path, and the
- * attempts gate passes the worktree recorded on the attempt's own run. It does not
+ * directory: review:run passes none, control's gate runs, pressed or triggered
+ * by an agent stopping, pass the worktree Wanigan recorded for the task, or the
+ * project path, and the attempts gate passes the worktree recorded on the
+ * attempt's own run. It does not
  * confine the command text, which is whatever the recipe holds and reaches
  * `$SHELL -lc` verbatim; that is what saveRecipeWithConsent puts a person in
  * front of.
