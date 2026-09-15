@@ -246,7 +246,9 @@ test('with no error marker the excerpt is the end of the log, and a blank log is
 test('a long log line is bounded, and redaction sees the whole tail so a key block split by the window is still one block', () => {
   const long = failedLogExcerpt(logLine('y'.repeat(MAX_LOG_LINE_CHARS + 50)), 0, none);
   assert.equal(long.lines[0], `${'y'.repeat(MAX_LOG_LINE_CHARS)} …`);
-  const pem = ['-----BEGIN RSA PRIVATE KEY-----', ...Array.from({ length: 100 }, () => 'bodyline'), '-----END RSA PRIVATE KEY-----', '##[error]boom'];
+  // The body is the value .gitleaks.toml allowlists for key-shaped fixtures, so
+  // the secret scanner reads this as the placeholder it is.
+  const pem = ['-----BEGIN RSA PRIVATE KEY-----', ...Array.from({ length: 100 }, () => 'smokekeymaterial'), '-----END RSA PRIVATE KEY-----', '##[error]boom'];
   const seen: string[] = [];
   const out = failedLogExcerpt(pem.join('\n'), 0, (text) => { seen.push(text); return text.replace(/-----BEGIN[\s\S]*?END RSA PRIVATE KEY-----/, '[KEY]'); });
   assert.equal(seen.length, 1, 'the redactor ran once, over the whole tail');
