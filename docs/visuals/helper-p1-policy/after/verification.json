@@ -1,0 +1,105 @@
+{
+  "at": "2026-09-15T04:26:27.964Z",
+  "mode": "after",
+  "provenance": "Renderer from out/renderer of the checkout this script ran in, in an isolated Electron window, every service stubbed; phone page bundled from src/main/mobile/page.ts with a fixture /api/status",
+  "checks": [
+    "Fleet inspector shows what npm run analyze runs, flagged changed since launch, unclipped (815×388)",
+    "Settings › Trust shows the self-test line, the grant switch with its rule, observed approval counts marked inferred, and a per-command ledger trace",
+    "Settings › egress report lists an exposure lead labelled \"lead, not proof\", with the gap",
+    "Context › Settings & hooks shows the autoMode block as written, \"$defaults\" first",
+    "Skills reader shows the surface delta with a critical finding and an explicit \"Approve this surface\"",
+    "the session timeline shows its pinned rewrite, tripwire and exposure lead",
+    "the phone session card shows what the waiting command runs, unclipped at 430px"
+  ],
+  "shots": [
+    {
+      "file": "fleet-inspector-dark.png",
+      "theme": "dark",
+      "body": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "fleet-inspector-light.png",
+      "theme": "light",
+      "body": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "settings-trust-panels-dark.png",
+      "theme": "dark",
+      "body": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "settings-trust-panels-light.png",
+      "theme": "light",
+      "body": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "settings-trust-counts-dark.png",
+      "theme": "dark",
+      "body": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "settings-trust-counts-light.png",
+      "theme": "light",
+      "body": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "settings-ledger-dark.png",
+      "theme": "dark",
+      "body": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "settings-ledger-light.png",
+      "theme": "light",
+      "body": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "settings-egress-dark.png",
+      "theme": "dark",
+      "body": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "settings-egress-light.png",
+      "theme": "light",
+      "body": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "context-settings-dark.png",
+      "theme": "dark",
+      "body": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "context-settings-light.png",
+      "theme": "light",
+      "body": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "skills-reader-dark.png",
+      "theme": "dark",
+      "body": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "skills-reader-light.png",
+      "theme": "light",
+      "body": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "timeline-dark.png",
+      "theme": "dark",
+      "body": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "timeline-light.png",
+      "theme": "light",
+      "body": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "phone-card-dark.png",
+      "theme": "dark"
+    },
+    {
+      "file": "phone-card-light.png",
+      "theme": "light"
+    }
+  ],
+  "errors": []
+}

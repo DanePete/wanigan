@@ -248,6 +248,18 @@ export async function runSmoke(): Promise<void> {
     await p4.runScheduleGuardSmoke(check, say);
     await p4.runWindowShareSmoke(check, say);
     await p4.runSessionAnatomySmoke(check, say);
+    /* ── helper sweep · P1 policy ── */
+    const p1 = await import('./smoke30');
+    await p1.runApprovalExplainSmoke(check, say);
+    await p1.runGateParserSmoke(check, say);
+    await p1.runGateSelfTestSmoke(check, say);
+    await p1.runTripwireSmoke(check, say);
+    await p1.runFatigueSmoke(check, say);
+    await p1.runAutoModeSmoke(check, say);
+    await p1.runRewriteEvidenceSmoke(check, say);
+    await p1.runGrantSmoke(check, say);
+    await p1.runSkillSurfaceSmoke(check, say);
+    await p1.runExposureSmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

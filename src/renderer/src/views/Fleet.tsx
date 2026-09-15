@@ -11,6 +11,8 @@ import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory'
 import ObservedBand from '../components/ObservedBand';
 import TeamPanel from '../components/TeamPanel';
 import HelperVerdict from '../components/HelperVerdict';
+/* ── helper sweep · P1 policy ── */
+import ApprovalExplainer from '../components/ApprovalExplainer';
 
 /**
  * The whole crew on one screen — the view you leave open on a second monitor
@@ -749,6 +751,9 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onContr
       {/* helper sweep · P2 attention: the denial, incident, limit, spin and
           question behind the verdict, and the snooze beside it. */}
       <HelperVerdict att={att} session={s} onOpenSession={onOpen} />
+
+      {/* ── helper sweep · P1 policy ── */}
+      {urgent && <ApprovalExplainer sessionId={s.id} since={att?.since ?? s.createdAt} />}
 
       <Spark values={spark} live={u.lastAt} />
 

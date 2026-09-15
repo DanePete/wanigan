@@ -9,6 +9,8 @@ import { useViewMemory } from '../components/viewMemory';
 /* ── helper sweep · P4 cost ── */
 import { CodexLoaderPanel, ReferenceLintPanel, SubagentsPanel } from '../components/ContextCost';
 import type { AgentDefinitionsReport, CodexLoaderReport, ReferenceLintReport } from '@shared/cost-types';
+/* ── helper sweep · P1 policy ── */
+import AutoModePanel from '../components/AutoModePanel';
 
 /**
  * "What will my agent actually know when it starts?"
@@ -660,7 +662,9 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
     config:<>{project&&<ConfigPinPanel projectId={project.id} pin={d.pin} read={d.pinRead}
         onChanged={pin=>setD(prev=>prev?{...prev,pin,pinRead:true}:prev)}/>}
       {e.config?<PanelError channel="settings" detail={e.config} onRetry={()=>load(true)}/>
-      :shows.config&&d.config?<ConfigPanel c={d.config}/>:emptyArea('config')}</>,
+      :shows.config&&d.config?<ConfigPanel c={d.config}/>:emptyArea('config')}
+      {/* ── helper sweep · P1 policy ── */}
+      {project&&<AutoModePanel projectId={project.id}/>}</>,
     budget:e.instructions?<PanelError channel="instructions for the budget" detail={e.instructions} onRetry={()=>load(true)}/>
       :e.budget?<PanelError channel="budget" detail={e.budget} onRetry={()=>load(true)}/>
       :shows.budget&&d.budget?<BudgetPanel b={d.budget}/>:emptyArea('budget'),

@@ -15,6 +15,9 @@ import type {
   AskedQuestion, HookEventName, HookInput, LoadedInstruction, PolicyDecision, SessionEvent,
 } from '../shared/types';
 import { askedQuestions, canonicalToolInput } from '../shared/attention-rules';
+/* ── helper sweep · P1 policy ── */
+import type { TrustLevel } from '../shared/types';
+import { compileAutoMode } from '../shared/auto-mode';
 
 /**
  * The hook bus. Metrics say how much a session spent; hooks say what it did,
@@ -270,6 +273,13 @@ export type HookSettingsOptions = {
    * and unknown earns the base event set only.
    */
   cliVersion?: string | null;
+  /* ── helper sweep · P1 policy ── */
+  /**
+   * The trust level the session launches at, compiled into an `autoMode`
+   * block for Claude Code's classifier (shared/auto-mode.ts). Absent means no
+   * block: a caller that does not know the level must not guess one.
+   */
+  trust?: TrustLevel;
 };
 
 /** The leading dotted triple of a `--version` line; null when there is none. */
@@ -377,7 +387,15 @@ export function writeHookSettings(
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { fs.chmodSync(dir, 0o700); } catch { /* best effort on odd filesystems */ }
   const file = path.join(dir, `${safeName(waniganSessionId)}.json`);
-  fs.writeFileSync(file, JSON.stringify({ ...hookSettingsKeysFor(options.cliVersion), hooks }, null, 2), { mode: 0o600 });
+  /* ── helper sweep · P1 policy ── */
+  // Version-gated like the event names above: a CLI that predates the keys
+  // gets no block at all, and "$defaults" leads every list that is written.
+  const autoMode = options.trust ? compileAutoMode(options.trust, options.cliVersion ?? null).block : null;
+  fs.writeFileSync(file, JSON.stringify({
+    ...hookSettingsKeysFor(options.cliVersion),
+    hooks,
+    ...(autoMode ? { autoMode } : {}),
+  }, null, 2), { mode: 0o600 });
   // writeFileSync honours mode only when it creates the file; an overwrite keeps
   // whatever the old one had. This file is a bearer credential.
   try { fs.chmodSync(file, 0o600); } catch { /* best effort on odd filesystems */ }
@@ -510,6 +528,8 @@ async function onRequest(req: http.IncomingMessage, res: http.ServerResponse) {
 
   const stored = store(sessionId, event, input, at);
   if (stored) emit(stored);
+  /* ── helper sweep · P1 policy ── */
+  if (stored) observeInput(stored, input, registered.get(sessionId)?.projectPath ?? null);
   // Claude Code's own lifecycle signal is an additional cleanup path, never the
   // authoritative one: the session/headless owners call cleanup when the process
   // exits, and stopHookServer sweeps the rest. So a SessionEnd the process
@@ -833,6 +853,38 @@ export function recordProviderEvent(
 export function onHookEvent(cb: (e: SessionEvent) => void): () => void {
   listeners.add(cb);
   return () => { listeners.delete(cb); };
+}
+
+/* ── helper sweep · P1 policy ── */
+/**
+ * Observers that need the posted body as well as the stored row.
+ *
+ * The row is deliberately lossy — a command is clipped to 160 characters and a
+ * Write's contents are never kept — and that is right for a timeline. The
+ * policy evidence built beside it (what a script alias runs, which paths a
+ * download created, which command a person approved) needs the whole command
+ * and the session's working directory, once, in memory, and keeps only what it
+ * derives. Called after the hook has been answered, so no observer can delay a
+ * tool call; a throwing observer costs itself and nobody else.
+ */
+type InputObserver = (stored: SessionEvent, input: HookInput, cwd: string | null) => void;
+const inputObservers = new Set<InputObserver>();
+
+export function onHookInput(cb: InputObserver): () => void {
+  inputObservers.add(cb);
+  return () => { inputObservers.delete(cb); };
+}
+
+function observeInput(stored: SessionEvent, input: HookInput, registeredCwd: string | null): void {
+  const cwd = typeof input.cwd === 'string' && input.cwd.startsWith('/') ? input.cwd : registeredCwd;
+  for (const cb of inputObservers) {
+    try { cb(stored, input, cwd); } catch { /* one observer must not stop the rest */ }
+  }
+}
+
+/** The working directory a live session's hook settings were written for, or null. */
+export function registeredHookCwd(waniganSessionId: string): string | null {
+  return registered.get(waniganSessionId)?.projectPath ?? null;
 }
 
 /**

@@ -1,0 +1,97 @@
+{
+  "at": "2026-09-15T04:27:17.392Z",
+  "mode": "before",
+  "provenance": "Renderer from out/renderer of the checkout this script ran in, in an isolated Electron window, every service stubbed; phone page bundled from src/main/mobile/page.ts with a fixture /api/status",
+  "checks": [],
+  "shots": [
+    {
+      "file": "fleet-inspector-dark.png",
+      "theme": "dark",
+      "body": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "fleet-inspector-light.png",
+      "theme": "light",
+      "body": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "settings-trust-panels-dark.png",
+      "theme": "dark",
+      "body": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "settings-trust-panels-light.png",
+      "theme": "light",
+      "body": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "settings-trust-counts-dark.png",
+      "theme": "dark",
+      "body": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "settings-trust-counts-light.png",
+      "theme": "light",
+      "body": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "settings-ledger-dark.png",
+      "theme": "dark",
+      "body": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "settings-ledger-light.png",
+      "theme": "light",
+      "body": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "settings-egress-dark.png",
+      "theme": "dark",
+      "body": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "settings-egress-light.png",
+      "theme": "light",
+      "body": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "context-settings-dark.png",
+      "theme": "dark",
+      "body": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "context-settings-light.png",
+      "theme": "light",
+      "body": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "skills-reader-dark.png",
+      "theme": "dark",
+      "body": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "skills-reader-light.png",
+      "theme": "light",
+      "body": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "timeline-dark.png",
+      "theme": "dark",
+      "body": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "timeline-light.png",
+      "theme": "light",
+      "body": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "phone-card-dark.png",
+      "theme": "dark"
+    },
+    {
+      "file": "phone-card-light.png",
+      "theme": "light"
+    }
+  ],
+  "errors": []
+}

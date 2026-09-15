@@ -3607,3 +3607,113 @@ export type LimitResumeOffer = {
   note: string | null;
   armed: ResumeAtReset | null;
 };
+/* ── helper sweep · P1 policy ── */
+
+/**
+ * The newest explained approval in one session: which stored event carried it
+ * and what the command's script alias runs. See shared/script-explain.ts.
+ */
+export type ApprovalDetail = {
+  eventId: number;
+  at: number;
+  event: string;
+  toolName: string | null;
+  approval: import('./script-explain').ApprovalExplanation;
+};
+
+/**
+ * The phone's copy of an approval explanation: bounded, redacted, and sent only
+ * while remote control is on — the same opt-in that already lets a paired
+ * device read the terminal the prompt is printed in.
+ */
+export type MobileApprovalCard = {
+  scripts: {
+    alias: string;
+    manifest: string;
+    runs: { from: string; command: string; depth: number }[];
+    moreRuns: number;
+    paths: string[];
+    hosts: string[];
+    reversible: 'reversible' | 'not reversible' | 'cannot confirm';
+    because: string;
+    change: 'changed' | 'unchanged' | 'new since launch' | 'cannot confirm';
+    changeDetail: string;
+    notes: string[];
+  }[];
+};
+
+/** A ledger row's stored trace: which command in the line fired which rule. */
+export type StoredTrace = {
+  steps: {
+    text: string;
+    via: string[];
+    origin: string;
+    cwd: string | null;
+    rule: string | null;
+    decision: 'allow' | 'deny' | 'ask';
+    reason: string | null;
+  }[];
+  omitted: number;
+  notes: string[];
+  decided: { decision: 'allow' | 'deny' | 'ask'; rule: string };
+};
+
+/** One recorded run of the gate's fixture corpus. See shared/policy-selftest.ts. */
+export type GateSelfTestRun = {
+  id: number;
+  at: number;
+  rules: number;
+  passed: number;
+  failures: { rule: string; arm: 'refuse' | 'allow'; expected: string; got: string }[];
+  uncovered: string[];
+};
+
+/** Observed approval counts over the last day. Every duration in it is inferred; see shared/fatigue.ts. */
+export type FatigueReport = {
+  generatedAt: number;
+  fastMs: number;
+  run: number;
+  totals: { asked: number; answered: number; fast: number; unanswered: number };
+  hours: { hourStart: number; asked: number; answered: number; fast: number }[];
+  sessions: { sessionId: string; projectName: string | null; asked: number; answered: number; fast: number; unanswered: number }[];
+  signals: { at: number; sessionId: string | null; summary: string }[];
+};
+
+/** The auto-mode classifier block Wanigan writes for a project's sessions. See shared/auto-mode.ts. */
+export type AutoModeView = import('./auto-mode').CompiledAutoMode & {
+  /** Which CLI profile the version came from; null when no Claude Code harness was detected. */
+  providerLabel: string | null;
+};
+
+/** One observation recorded beside the policy ledger (policy_signals). */
+export type PolicySignal = {
+  id: number;
+  at: number;
+  sessionId: string | null;
+  kind: string;
+  rule: string;
+  summary: string;
+};
+
+/** A project's opt-in to letting unattended runs rely on earlier attended approvals. See shared/grants.ts. */
+export type GrantSetting = {
+  projectId: string;
+  enabled: boolean;
+  days: number;
+  /** Grants recorded for the project within the window. */
+  grants: number;
+  newestAt: number | null;
+};
+
+/** A skill's computed capability surface beside the one a person approved. See shared/skill-surface.ts. */
+export type SkillSurfaceView = {
+  skillPath: string;
+  digest: string;
+  computedAt: number;
+  surface: import('./skill-surface').SkillSurface;
+  approved: { digest: string; at: number; how: 'person' | 'projected' } | null;
+  delta: import('./skill-surface').SurfaceDelta;
+};
+
+/** An exposure lead with the project it came from. See shared/exposure.ts; always a lead, never proof. */
+export type ExposureLeadView = import('./exposure').ExposureLead & { projectName: string | null };

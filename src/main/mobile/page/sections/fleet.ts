@@ -52,7 +52,21 @@ export const FLEET_SECTION: MobileSection = {
     .metric span { display:block; color:var(--faint); font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
     .stale-note { color:var(--serious); font-size:12px; font-weight:720; margin:0 0 11px; }
     #dashboard.stale .stats,#dashboard.stale .grid { opacity:.62; }
-    @media (max-width:680px) { .stats { grid-template-columns:repeat(2,minmax(0,1fr)); } .grid { grid-template-columns:1fr; } }`,
+    @media (max-width:680px) { .stats { grid-template-columns:repeat(2,minmax(0,1fr)); } .grid { grid-template-columns:1fr; } }
+    /* helper sweep · P1 policy: what a waiting approval's script alias runs.
+       Verdicts carry a glyph and a word, never colour alone. */
+    .approval { border-top:1px solid var(--line); margin-top:12px; padding-top:10px; display:grid; gap:7px; min-width:0; }
+    .approval-title { font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.08em; }
+    .approval-alias { font-family:ui-monospace,Menlo,monospace; font-size:12px; overflow-wrap:anywhere; }
+    .approval-verdicts { display:flex; flex-wrap:wrap; gap:6px; font-size:11px; font-weight:720; }
+    .approval-verdicts span { border:1px solid currentColor; border-radius:999px; padding:2px 7px; }
+    .approval-bad { color:var(--critical); }
+    .approval-warn { color:var(--serious); }
+    .approval-ok { color:var(--good); }
+    .approval-quiet { color:var(--dim); }
+    .approval-run { font-family:ui-monospace,Menlo,monospace; font-size:11.5px; background:var(--panel-raised); border-radius:8px; padding:6px 8px; overflow-wrap:anywhere; white-space:pre-wrap; }
+    .approval-run small { display:block; color:var(--faint); font-family:inherit; font-size:10px; }
+    .approval-note { color:var(--dim); font-size:11.5px; line-height:1.45; overflow-wrap:anywhere; }`,
   script: `
       function metric(label, value) {
         const wrap = node('div', 'metric');
@@ -85,12 +99,45 @@ export const FLEET_SECTION: MobileSection = {
           metric('Requests', number(session.usage.requests)),
           metric('Output', number(session.usage.outTokens)));
         out.append(top, meta);
+        if (session.approval && Array.isArray(session.approval.scripts)) out.append(approvalBlock(session.approval));
         if (interactive) {
           out.append(node('div', ended ? 'tap-hint tap-hint-ended' : 'tap-hint',
             ended ? 'Ended · tap to read its last output' : 'Tap to open terminal & reply'));
           out.addEventListener('click', () => openSession(session.id));
         }
         return out;
+      }
+
+      // helper sweep · P1 policy. Sent by the Mac only for a session waiting on
+      // a permission prompt while remote control is on; everything in it was
+      // bounded and sanitised there, and it is written here as text nodes only.
+      function approvalBlock(card) {
+        const wrap = node('div', 'approval');
+        wrap.append(node('div', 'approval-title', 'What the waiting command runs'));
+        for (const s of card.scripts) {
+          wrap.append(node('div', 'approval-alias', s.alias + ' · ' + s.manifest));
+          const verdicts = node('div', 'approval-verdicts');
+          const rev = s.reversible === 'reversible' ? ['approval-ok', '↺ reversible']
+            : s.reversible === 'not reversible' ? ['approval-bad', '! not reversible'] : ['approval-warn', '? cannot confirm reversible'];
+          verdicts.append(node('span', rev[0], rev[1]));
+          const ch = s.change === 'changed' ? ['approval-bad', '! changed since launch']
+            : s.change === 'new since launch' ? ['approval-bad', '+ new since launch']
+              : s.change === 'unchanged' ? ['approval-quiet', '= same as at launch'] : ['approval-quiet', '? change since launch unknown'];
+          verdicts.append(node('span', ch[0], ch[1]));
+          wrap.append(verdicts);
+          for (const run of s.runs) {
+            const line = node('div', 'approval-run', run.command);
+            line.prepend(node('small', '', run.from));
+            wrap.append(line);
+          }
+          if (s.moreRuns > 0) wrap.append(node('div', 'approval-note', s.moreRuns + ' more line' + (s.moreRuns === 1 ? '' : 's') + ' at the Mac.'));
+          if (s.hosts.length) wrap.append(node('div', 'approval-note', 'Hosts: ' + s.hosts.join(', ')));
+          if (s.paths.length) wrap.append(node('div', 'approval-note', 'Paths: ' + s.paths.join(', ')));
+          if (s.because) wrap.append(node('div', 'approval-note', s.because));
+          if (s.change === 'changed' || s.change === 'new since launch') wrap.append(node('div', 'approval-note approval-bad', s.changeDetail));
+          for (const n of s.notes) wrap.append(node('div', 'approval-note', n));
+        }
+        return wrap;
       }
 
       // Drawn from the same flag the session cards read: while remote control is

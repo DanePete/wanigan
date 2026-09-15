@@ -3,6 +3,8 @@ import type { SessionCheckpoint, SessionEvent } from '@shared/types';
 import { Note, Section, Stat, Icon, ago, num } from './bits';
 /* ── helper sweep · P4 cost ── */
 import SessionAnatomyPanel from './SessionAnatomyPanel';
+/* ── helper sweep · P1 policy ── */
+import SessionPolicyEvidence from './SessionPolicyEvidence';
 
 /**
  * What the agent DID, beside the terminal that says what it claimed.
@@ -265,6 +267,8 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
         </details>
         {/* ── helper sweep · P4 cost ── */}
         <SessionAnatomyPanel sessionId={sessionId} eventCount={all.length} />
+        {/* ── helper sweep · P1 policy ── */}
+        <SessionPolicyEvidence sessionId={sessionId} />
 
         {filtered.length === 0 ? (
           <div className="tl-pad">

@@ -1,0 +1,64 @@
+/* Policy evidence: what an approval's script runs, the gate's self-test, the
+   observed approval counts, grants, skill surfaces and exposure leads. Every
+   colour, size and space here is a token; nothing is spelled as a literal. */
+
+/* ── what the waiting command runs ─────────────────────────────────────── */
+.pe-approval { display: grid; gap: var(--s-3); margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px solid var(--line-soft); min-width: 0; }
+.pe-when { font-size: var(--t-micro); }
+.pe-script { display: grid; gap: var(--s-2); min-width: 0; }
+.pe-script + .pe-script { padding-top: var(--s-3); border-top: 1px dashed var(--line-soft); }
+.pe-alias { font-size: var(--t-small); line-height: 1.5; overflow-wrap: anywhere; }
+.pe-alias code, .pe-cmd, .pe-facts code, .pe-notes code { font-family: var(--mono); font-size: var(--t-small); }
+.pe-marks { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-3); font-size: var(--t-small); }
+.pe-alarm { color: var(--critical); font-size: var(--t-small); line-height: 1.5; font-weight: 600; overflow-wrap: anywhere; }
+.pe-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+.pe-step { display: grid; gap: var(--s-1); padding: var(--s-2) var(--s-3); border-radius: var(--r-sm); background: var(--bg-sunk); min-width: 0; }
+.pe-depth-1 { margin-left: var(--s-4); }
+.pe-depth-2 { margin-left: var(--s-5); }
+.pe-depth-3, .pe-depth-4 { margin-left: var(--s-6); }
+.pe-from { color: var(--text-faint); font-size: var(--t-micro); }
+.pe-cmd { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.pe-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--s-1) var(--s-3); font-size: var(--t-small); line-height: 1.5; margin: 0; }
+.pe-facts dt { color: var(--text-faint); }
+.pe-facts dd { margin: 0; display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); overflow-wrap: anywhere; min-width: 0; }
+.pe-notes { margin: 0; padding-left: var(--s-4); display: grid; gap: var(--s-1); color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; overflow-wrap: anywhere; }
+.pe-fine { font-size: var(--t-micro); line-height: 1.5; }
+
+@media (max-width: 520px) {
+  .pe-facts { grid-template-columns: minmax(0, 1fr); }
+  .pe-depth-1, .pe-depth-2, .pe-depth-3, .pe-depth-4 { margin-left: var(--s-2); }
+}
+
+/* ── the trace behind a ledger row ─────────────────────────────────────── */
+.pe-trace { margin-top: var(--s-1); font-size: var(--t-small); }
+.pe-trace summary { cursor: pointer; color: var(--text-dim); font-size: var(--t-micro); }
+.pe-trace[open] summary { margin-bottom: var(--s-2); }
+.pe-trace-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+.pe-trace-steps li { display: grid; gap: var(--s-1); padding: var(--s-2); border-radius: var(--r-sm); background: var(--bg-sunk); min-width: 0; }
+
+/* ── the gate self-test ────────────────────────────────────────────────── */
+.pe-selftest { display: grid; gap: var(--s-2); margin-top: var(--s-4); }
+.pe-selftest-line { font-size: var(--t-small); display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); }
+.pe-selftest-line.failed { font-weight: 600; }
+
+/* ── approval timing ───────────────────────────────────────────────────── */
+.pe-fatigue { display: grid; gap: var(--s-3); margin-top: var(--s-4); min-width: 0; }
+.pe-scroll { overflow-x: auto; }
+.pe-table { min-width: 360px; }
+.pe-table caption { text-align: left; caption-side: top; padding-bottom: var(--s-1); }
+.pe-table .r { text-align: right; font-variant-numeric: tabular-nums; }
+.pe-id { overflow-wrap: anywhere; font-family: var(--mono); }
+
+/* ── auto-mode classifier rules ────────────────────────────────────────── */
+.pe-automode { display: grid; gap: var(--s-2); margin-top: var(--s-4); min-width: 0; }
+.pe-json { font-family: var(--mono); font-size: var(--t-small); line-height: 1.5; padding: var(--s-3); border-radius: var(--r-sm); background: var(--bg-sunk); overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+
+/* ── a session's policy evidence, on its timeline ──────────────────────── */
+.pe-session-list { list-style: none; margin: 0; padding: 0 var(--s-3) var(--s-3); display: grid; gap: var(--s-2); }
+.pe-session-list li { display: grid; gap: var(--s-1); padding: var(--s-2); border-radius: var(--r-sm); background: var(--bg-sunk); min-width: 0; }
+.pe-session-text { font-size: var(--t-small); overflow-wrap: anywhere; }
+
+/* ── grants for unattended runs ────────────────────────────────────────── */
+.pe-grants { display: grid; gap: var(--s-2); margin-top: var(--s-4); min-width: 0; }
+.pe-grants-rule { max-width: 78ch; }
+.pe-check { display: inline-flex; align-items: center; gap: var(--s-2); font-size: var(--t-small); }

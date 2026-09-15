@@ -52,6 +52,9 @@ import type {
 } from '../shared/review-work';
 /* ── end helper sweep · P3 review ── */
 
+/* ── helper sweep · P1 policy ── */
+import type { ApprovalDetail, AutoModeView, ExposureLeadView, FatigueReport, GateSelfTestRun, GrantSetting, PolicySignal, SkillSurfaceView, StoredTrace } from '../shared/types';
+
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
 /** Unwraps the main process envelope so callers see values or thrown errors. */
@@ -849,6 +852,21 @@ const api = {
     // Main cannot read the renderer's localStorage, and the View menu names the
     // dock's state in its label; this is the one fact it is told.
     composerShown: (shown: boolean) => ipcRenderer.send('menu:composerShown', shown),
+  },
+  /* ── helper sweep · P1 policy ── */
+  policyEvidence: {
+    approval: (sessionId: string, sinceAt?: number) => call<ApprovalDetail | null>('policyEvidence:approval', sessionId, sinceAt),
+    trace: (ledgerId: number) => call<StoredTrace | null>('policyEvidence:trace', ledgerId),
+    selfTest: () => call<GateSelfTestRun | null>('policyEvidence:selfTest'),
+    fatigue: () => call<FatigueReport>('policyEvidence:fatigue'),
+    autoMode: (projectId: string) => call<AutoModeView>('policyEvidence:autoMode', projectId),
+    session: (sessionId: string) => call<{ signals: PolicySignal[]; leads: ExposureLeadView[] }>('policyEvidence:session', sessionId),
+    exposure: () => call<ExposureLeadView[]>('policyEvidence:exposure'),
+    grantSettings: () => call<GrantSetting[]>('policyEvidence:grantSettings'),
+    skillSurface: (skillPath: string) => call<SkillSurfaceView>('policyEvidence:skillSurface', skillPath),
+    approveSkillSurface: (skillPath: string, digest: string) => call<SkillSurfaceView>('policyEvidence:approveSkillSurface', skillPath, digest),
+    setGrantSetting: (projectId: string, enabled: boolean, days: number) => call<GrantSetting>('policyEvidence:setGrantSetting', projectId, enabled, days),
+    runSelfTest: () => call<GateSelfTestRun>('policyEvidence:runSelfTest'),
   },
   on: {
     startupChanged: (cb: (state: { phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }) => void) => {

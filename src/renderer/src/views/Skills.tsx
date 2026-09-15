@@ -5,6 +5,8 @@ import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory'
 import '../styles/skills.css';
 /* ── helper sweep · P4 cost ── */
 import SkillListingCost from '../components/SkillListingCost';
+/* ── helper sweep · P1 policy ── */
+import SkillSurfacePanel from '../components/SkillSurfacePanel';
 
 /**
  * The skills on this machine, as a catalogue you can fire into a running agent
@@ -848,6 +850,8 @@ function Reader({ skill, scanAt, canSend, sending, onSend, onCopy }: {
       <h2>{skill.name}</h2><p>{skill.description}</p>
       <div className="skills-invocation"><code>{skill.invoke}</code><button className="btn btn-sm" onClick={onCopy}>Copy invocation</button>{canSend && <button className="btn btn-primary btn-sm" disabled={sending} onClick={onSend}>{sending ? 'Typing…' : 'Type into session'}</button>}</div>
       <Hint>{canSend ? 'Types into the selected session without pressing Enter. Review it there before running.' : 'Copy the invocation to use it in a session. Reading and copying work here at any time.'}</Hint>
+      {/* ── helper sweep · P1 policy ── */}
+      {skill.source !== 'builtin' && <SkillSurfacePanel skillPath={skill.path} />}
     </div>
     <Segmented label="Skill reader section" value={area} onChange={setArea} options={[{value:'document',label:'SKILL.md'},{value:'details',label:'Details'}]} />
     <div className="skills-reader-content" key={area}>

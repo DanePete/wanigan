@@ -1013,7 +1013,7 @@ async function runRow(runId: string, projectId: string): Promise<void> {
     projectId,
     projectPath: row.project_path,
     query: cfg.prompt,
-  }, { cliVersion }) : null;
+  }, { cliVersion, trust }) : null;
   if (hookSettings) {
     registerPolicyContext({
       sessionId: hookId,
