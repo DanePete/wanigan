@@ -21,7 +21,9 @@ import type { OracleReading } from '../shared/types';
  * Two uses. A gate triggered by an agent stopping is skipped when the tree is
  * the one the last gate for that task already ran against, so an agent that
  * stops to ask a question does not rerun a ten-minute suite. And every gate
- * proof records the tree, so "passed" names what it passed on.
+ * proof records the tree, so "passed" names what it passed on. An attempt set
+ * records the same two facts for each attempt's worktree, against the set's
+ * pinned commit, which is why the notes below name no goal.
  */
 
 const TIMEOUT_MS = 30_000;
@@ -66,7 +68,7 @@ export async function snapshotTree(cwd: string, base: string | null, key: string
   const written = await runGit(cwd, ['write-tree'], opts);
   const tree = written.ok ? written.out.trim() || null : null;
   if (!tree) return { tree: null, oracle: null, note: `git write-tree failed: ${clip(written.err)}` };
-  if (!base) return { tree, oracle: null, note: 'This goal has no base commit recorded, so how its tests changed could not be read.' };
+  if (!base) return { tree, oracle: null, note: 'No base commit is recorded for this work, so how its tests changed could not be read.' };
   // `-- .` matters: the scratch index holds only this directory, so without the
   // pathspec everything outside it would read as deleted.
   const diff = await runGit(cwd, [
@@ -76,8 +78,8 @@ export async function snapshotTree(cwd: string, base: string | null, key: string
     return {
       tree, oracle: null,
       note: diff.killed || /maxBuffer/i.test(diff.err)
-        ? 'The change since the goal’s base commit is too large to read, so how its tests changed was not checked.'
-        : `The goal’s base commit could not be compared here, so how its tests changed was not checked: ${clip(diff.err)}`,
+        ? 'The change since the base commit is too large to read, so how its tests changed was not checked.'
+        : `The base commit could not be compared here, so how its tests changed was not checked: ${clip(diff.err)}`,
     };
   }
   return { tree, oracle: readOracles(changedFilesFromDiff(diff.out)), note: null };
