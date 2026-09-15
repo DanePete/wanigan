@@ -34,6 +34,7 @@ import ShortcutSheet from './components/ShortcutSheet';
 import { useDialog, OVERLAY_ROOT_ID } from './components/useDialog';
 import { AnnounceProvider, AnnounceRegion, type AnnounceAction } from './components/announce';
 import { ViewMemoryProvider, ViewMemoryScope } from './components/viewMemory';
+import { COMPOSER_MENU_EVENT, readComposerShown, writeComposerShown } from './components/composerPreference';
 import { useThemePreference } from './theme';
 import { claudeContextLabel, selectedProviderStatus, selectedSessionTelemetry } from '@shared/provider-status';
 
@@ -881,6 +882,9 @@ export default function App() {
   // Both are main-process surfaces that name a destination and leave the
   // navigating to this window. The menu was built from shared/routes.ts, so
   // "Go › Fleet" and ⌘2 and the sidebar row are one route reached three ways.
+  // Main's View menu starts out assuming the composer is shown; say what this
+  // machine actually remembers before anyone opens the menu.
+  useEffect(() => { window.wanigan.menu.composerShown(readComposerShown()); }, []);
   useEffect(() => {
     const off = window.wanigan.on.menuRoute((route) => {
       switch (route.kind) {
@@ -892,6 +896,14 @@ export default function App() {
         case 'palette': paletteOpenerRef.current = null; setPaletteQuery(''); setPalette(true); break;
         case 'shortcuts': setShortcuts(true); break;
         case 'sidebar': toggleSidebar(); break;
+        // Written here as well as announced: Sessions may not be mounted, and
+        // it reads the preference when it is. Showing also goes there, because
+        // a composer shown on a view that has none is a menu item that did nothing.
+        case 'composer':
+          writeComposerShown(route.show);
+          window.dispatchEvent(new CustomEvent(COMPOSER_MENU_EVENT, { detail: { show: route.show } }));
+          if (route.show) go('sessions');
+          break;
       }
     });
     return () => { off(); };

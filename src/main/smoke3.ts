@@ -1,4 +1,4 @@
-import { app } from 'electron';
+import { app, type BrowserWindow, type MenuItem } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -37,6 +37,7 @@ import * as interview from './interview';
 import * as pricing from './batch/pricing';
 import * as sessionsModule from './sessions';
 import * as headless from './headless';
+import { buildApplicationMenu, setComposerShown } from './menu';
 import { createAndSubmitRun as submitRun } from './batch/submit';
 import * as queue from './queue';
 import * as accounts from './accounts';
@@ -8148,6 +8149,41 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     && appSrc.includes('window.wanigan.on.menuRoute(')
     && appSrc.includes("case 'tab': go(route.tab); break;"),
   'the macOS menu bar is built from the same route table, prints the effective keymap’s chords without taking them from the window, and cannot reload a renderer that owns live PTYs');
+  // View › Show/Hide Composer is the way to the dock that works while a
+  // terminal has focus. Its label is a report from the window, so the channel
+  // carrying it is checked for sender and type, and the item sends the intent
+  // its label named rather than a toggle that could land on the other side.
+  const composerPrefSrc = sourceOf('src/renderer/src/components/composerPreference.ts');
+  check(menuCode.includes("label: composerShown ? 'Hide Composer' : 'Show Composer'")
+    && menuCode.includes("click: send({ kind: 'composer', show: !composerShown })")
+    && mainSrc.includes("if (trustedSender(event.sender, event.senderFrame) && typeof shown === 'boolean') setComposerShown(shown);")
+    && composerPrefSrc.includes("window.wanigan.menu.composerShown(shown);")
+    && appSrc.includes("case 'composer':")
+    && appSrc.includes('window.wanigan.menu.composerShown(readComposerShown());')
+    && !sessionsSrc.includes("localStorage.setItem('wanigan.composer'"),
+  'View › Show/Hide Composer names the state the window reported, sends that intent back, and every writer of the preference goes through the one module that tells main');
+  {
+    // The same item, built for real: the label follows the report, and choosing
+    // it sends the opposite of what the label said is current.
+    const sent: unknown[] = [];
+    const fakeWindow = {
+      isDestroyed: () => false, isMinimized: () => false, restore: () => {}, show: () => {},
+      webContents: { send: (_channel: string, route: unknown) => { sent.push(route); } },
+    } as unknown as BrowserWindow;
+    const composerItem = () => (buildApplicationMenu(() => fakeWindow).items
+      .find((item) => item.label === 'View')?.submenu?.items ?? [])
+      .find((item: MenuItem) => /Composer$/.test(item.label));
+    setComposerShown(false);
+    const whenHidden = composerItem();
+    whenHidden?.click();
+    setComposerShown(true);
+    const whenShown = composerItem();
+    whenShown?.click();
+    check(whenHidden?.label === 'Show Composer' && whenShown?.label === 'Hide Composer'
+      && JSON.stringify(sent) === JSON.stringify([{ kind: 'composer', show: true }, { kind: 'composer', show: false }]),
+      'built for real, the View menu reads "Show Composer" after the window reports the dock shut and "Hide Composer" after it reports it open, and each sends the intent its label named',
+      { labels: [whenHidden?.label, whenShown?.label], sent });
+  }
   check(appSrc.includes('window.wanigan.on.notificationOpened(')
     && appSrc.includes("if (route.kind === 'session') { focusSession(route.sessionId); go('sessions'); }"),
     'a clicked notification lands on the session it named, instead of raising the window onto whichever tab was open');

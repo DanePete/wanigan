@@ -60,7 +60,7 @@ export const BINDINGS = [
   { id: 'side-panel',  keys: '⌘B',   aria: 'Meta+B Control+B', group: 'Sessions view',
     does: 'Toggle the side panel (Code / Timeline / Learning)', scope: 'sessions', skipsTerminal: false },
   { id: 'composer',    keys: '⌘E',   aria: 'Meta+E Control+E', group: 'Sessions view',
-    does: 'Toggle and focus the composer', scope: 'sessions', skipsTerminal: false },
+    does: 'Show the composer and attachments, focused — or hide them for more terminal', scope: 'sessions', skipsTerminal: false },
   { id: 'close-tab',   keys: '⌘⌫',  aria: 'Meta+Backspace Control+Backspace', group: 'Sessions view',
     does: 'Close the active exited session tab', scope: 'sessions', skipsTerminal: false },
   // Not ⌘1–9. Those are the view routes, taken in the capture phase by the
