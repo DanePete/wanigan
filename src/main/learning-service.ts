@@ -30,6 +30,10 @@ import {
   explainCandidate,
   listRelations,
   pipelineStats,
+  recordContradiction,
+  resolveRelation,
+  retireKnowledgeItem,
+  setKnowledgeStatus,
   recordConsolidationRun,
   recordModelPhrasing,
   recordMetric,
@@ -77,6 +81,7 @@ import {
   type ConsolidationOutcome,
   type CreateExperimentInput,
   type KnowledgeCandidate,
+  type KnowledgeItem,
   type KnowledgeProjection,
   type LearningSignal,
   type ProjectionSafety,
@@ -1777,6 +1782,71 @@ export function candidateSignals(id: string): LearningSignal[] {
 /** Contradiction/duplicate/supersede edges, with their stored reasons. */
 export function relations(itemId?: string) {
   return listRelations(itemId ? boundedId(itemId) ?? undefined : undefined);
+}
+
+const CONTRADICTION_REASON_MAX = 1000;
+
+function contradictionReason(reason: unknown, empty: string): string {
+  const note = typeof reason === 'string' ? reason.trim() : '';
+  if (!note) throw new Error(empty);
+  if (note.length > CONTRADICTION_REASON_MAX) throw new Error(`Keep the reason under ${CONTRADICTION_REASON_MAX.toLocaleString()} characters.`);
+  return note;
+}
+
+function contestable(id: unknown): KnowledgeItem {
+  const clean = boundedId(id);
+  const item = clean ? getKnowledgeItem(clean) : null;
+  if (!item) throw new Error('Knowledge item not found.');
+  if (item.status === 'retired') {
+    throw new Error(`“${item.title.slice(0, 120)}” is retired: it is no longer briefed, so there is nothing for it to contradict.`);
+  }
+  return item;
+}
+
+/**
+ * Two knowledge items a person says cannot both be true.
+ *
+ * recordContradiction, and the optimizer's "Unresolved contradiction" finding
+ * that reads what it writes, both existed with nothing to call the first, so
+ * the finding could never fire and a library holding two opposite rules
+ * briefed both. A contradiction is never guessed from lexical difference
+ * (staleness.ts says why). It is recorded here only when a person names both
+ * items and says what they disagree about, and both then leave every briefing
+ * until one of them is kept.
+ */
+export function markContradiction(firstId: unknown, secondId: unknown, reason: unknown) {
+  const first = contestable(firstId);
+  const second = contestable(secondId);
+  if (first.id === second.id) throw new Error('An item cannot contradict itself.');
+  const note = contradictionReason(reason, 'Say what the two items disagree about. It is what the person resolving it will read.');
+  return recordContradiction(first.id, second.id, note);
+}
+
+/**
+ * Resolve a contradiction by keeping one side.
+ *
+ * The other is retired with the reason, which keeps every version and records
+ * who retired it and why, and the relation is marked resolved. The kept item
+ * leaves quarantine only when nothing else still contradicts it. Retrieval
+ * re-checks citations before anything is injected, so an item that was also
+ * stale is quarantined again there rather than briefed.
+ */
+export function keepOverContradiction(keepId: unknown, retireId: unknown, reason: unknown): { kept: KnowledgeItem; retired: KnowledgeItem } {
+  const keep = contestable(keepId);
+  const drop = contestable(retireId);
+  if (keep.id === drop.id) throw new Error('Keep one item and retire the other.');
+  const note = contradictionReason(reason, 'Say why this one is kept. The retired item carries the reason with it.');
+  const open = listRelations(keep.id, true)
+    .filter((relation) => relation.relation === 'contradicts' && (relation.fromItemId === drop.id || relation.toItemId === drop.id));
+  if (!open.length) throw new Error('These two items have no unresolved contradiction between them.');
+  return db().transaction(() => {
+    const retired = retireKnowledgeItem(drop.id, `Contradicted “${keep.title.slice(0, 200)}”, which was kept: ${note}`);
+    for (const relation of open) resolveRelation(relation.fromItemId, relation.toItemId, 'contradicts');
+    const stillContested = listRelations(keep.id, true).some((relation) => relation.relation === 'contradicts');
+    const current = getKnowledgeItem(keep.id)!;
+    const kept = !stillContested && current.status === 'quarantined' ? setKnowledgeStatus(keep.id, 'active') : current;
+    return { kept, retired };
+  })();
 }
 
 /**

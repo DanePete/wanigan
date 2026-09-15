@@ -1,4 +1,4 @@
-import type { Attention, AttentionKind, Session, SessionEvent } from '../shared/types';
+import type { Attention, AttentionKind, AttentionReason, AttentionRule, Session, SessionEvent } from '../shared/types';
 import { ATTENTION_ORDER } from '../shared/types';
 import { eventsRevision, liveState, sessionEvents } from './hooks';
 import { getSetting } from './settings';
@@ -352,6 +352,7 @@ function mk(
   detail: string | null,
   tool: string | null,
   now: number,
+  reason: AttentionReason,
   label: string = ATTENTION_LABEL[kind]
 ): Attention {
   return {
@@ -364,8 +365,22 @@ function mk(
     label,
     detail: clip(detail),
     tool: tool?.trim() || null,
+    reason,
   };
 }
+
+/**
+ * The reason a verdict carries. The queue ranks people's attention, and a rank
+ * nobody can question is a rank nobody can trust: "Asking" with no source reads
+ * as an opinion. Each reason names the rule, the recorded event it read, and the
+ * threshold, so a surprising verdict can be checked against the timeline.
+ */
+function why(rule: AttentionRule, event: SessionEvent | null, because: string): AttentionReason {
+  return { rule, event: event ? { name: event.event, at: event.at } : null, because };
+}
+
+const minutes = (ms: number) => `${Math.round(ms / 60_000)} minute${Math.round(ms / 60_000) === 1 ? '' : 's'}`;
+const seconds = (ms: number) => `${Math.round(ms / 1000)} seconds`;
 
 function classify(session: Session, now: number): Attention {
   const { events, live } = snapshotOf(session.id);
@@ -384,13 +399,15 @@ function classify(session: Session, now: number): Attention {
       last ? `event:${last.id}` : `permission:${live.since || now}`,
       join(tool, last?.summary ?? null) ?? 'Waiting for your approval.',
       tool,
-      now
+      now,
+      why('permission-request', last, 'The CLI reported it is waiting for a person to approve a step.'),
     );
   }
 
   if (exited && session.exitCode !== null && session.exitCode !== 0) {
     const ended = session.endedAt ?? now;
-    return mk(session, 'error', ended, `exit:${ended}:${session.exitCode}`, `Exited with code ${session.exitCode}.`, null, now);
+    return mk(session, 'error', ended, `exit:${ended}:${session.exitCode}`, `Exited with code ${session.exitCode}.`, null, now,
+      why('nonzero-exit', null, `The process exited with code ${session.exitCode}.`));
   }
 
   // A loop says more than its newest lap does, so it is read before the single
@@ -400,11 +417,13 @@ function classify(session: Session, now: number): Attention {
   // round, so it sorts by how long it has really been stuck.
   const loop = exited ? null : repeatedFailure(events, now);
   if (loop) {
-    return mk(session, 'error', loop.since, loop.transitionId, loop.detail, loop.tool, now, STALLED_LABEL);
+    return mk(session, 'error', loop.since, loop.transitionId, loop.detail, loop.tool, now,
+      why('repeated-failure', last, `The same call failed ${REPEAT_LIMIT} or more times in a row, the latest within ${minutes(ERROR_WINDOW_MS)}.`), STALLED_LABEL);
   }
 
   if (last && FAILURE_EVENTS.has(last.event) && now - last.at <= ERROR_WINDOW_MS) {
-    return mk(session, 'error', last.at, `event:${last.id}`, describe(last) ?? 'The last step failed.', last.toolName, now);
+    return mk(session, 'error', last.at, `event:${last.id}`, describe(last) ?? 'The last step failed.', last.toolName, now,
+      why('recent-failure', last, `The newest event is a failure, recorded within the last ${minutes(ERROR_WINDOW_MS)}.`));
   }
 
   if (exited) {
@@ -434,12 +453,16 @@ function classify(session: Session, now: number): Attention {
       transitionId,
       session.exitCode === 0 ? 'Exited cleanly.' : 'Exited.',
       null,
-      now
+      now,
+      transitionId.startsWith('event:')
+        ? why('turn-ended', events.find((value) => `event:${value.id}` === transitionId) ?? null, 'The agent finished its turn, then the process exited cleanly.')
+        : why('exited', null, session.exitCode === 0 ? 'The process exited cleanly.' : 'The process ended without reporting an exit code, as on a quit.'),
     );
   }
 
   if (last?.event === 'Stop') {
-    return mk(session, 'finished', last.at, `event:${last.id}`, last.summary ?? 'Finished its turn.', null, now);
+    return mk(session, 'finished', last.at, `event:${last.id}`, last.summary ?? 'Finished its turn.', null, now,
+      why('turn-ended', last, 'The agent reported the end of its turn and nothing has happened since.'));
   }
 
   const activeAt = Math.max(session.createdAt, live.lastAt ?? 0, lastOutput.get(session.id) ?? 0);
@@ -454,7 +477,8 @@ function classify(session: Session, now: number): Attention {
       `idle:${activeAt + IDLE_MS}`,
       last ? `Quiet since ${lastSeen(last)}.` : 'No hook events yet.',
       live.tool,
-      now
+      now,
+      why('quiet', last, `No hook event and no terminal output for ${seconds(IDLE_MS)}.`),
     );
   }
 
@@ -463,7 +487,8 @@ function classify(session: Session, now: number): Attention {
   // the answer comes from what it has finished rather than from what it printed.
   const stall = stalled(events, now);
   if (stall) {
-    return mk(session, 'idle', stall.since, stall.transitionId, stall.detail, live.tool, now, STALLED_LABEL);
+    return mk(session, 'idle', stall.since, stall.transitionId, stall.detail, live.tool, now,
+      why('no-progress', last, `Still active, but no tool call has finished for more than ${minutes(stallThresholdMs(now))}.`), STALLED_LABEL);
   }
 
   let detail: string | null = null;
@@ -483,6 +508,7 @@ function classify(session: Session, now: number): Attention {
     detail,
     live.tool,
     now,
+    why('working', last, live.tool ? `A ${live.tool} call is in flight.` : 'Hook events or terminal output are still arriving.'),
   );
 }
 

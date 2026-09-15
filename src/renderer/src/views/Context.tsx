@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CodexAgentsChain, InstructionReconciliation, KnowledgeProjection, LearningOverview, LearningSettings, Project,
 } from '@shared/types';
+import type { ConfigPinCheck } from '@shared/exec-config';
 import { Chip, EmptyState, Explainer, Icon, Mark as SharedMark, Note, PageHead, Pill, Reading, SectionHead, Stat, ago, num, usd, type Tone } from '../components/bits';
 import ContextWorkspace, { ContextFileLink } from '../components/ContextWorkspace';
 import { useViewMemory } from '../components/viewMemory';
@@ -302,6 +303,9 @@ type Data = {
    *  and the section stays away rather than claiming nothing loaded. */
   observed: InstructionReconciliation | null;
   observedRead: boolean;
+  /** The executable-config pin for this project; null with `pinRead` false when the read failed. */
+  pin: ConfigPinCheck | null;
+  pinRead: boolean;
   errors: Errors;
 };
 
@@ -358,7 +362,7 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
     // The three learning reads are additive colour on this view, not its
     // subject, so they degrade silently: a failure hides the badge or section
     // instead of raising a banner.
-    const [ri, rm, rc, ra, rcx, rp, rls, rlo, rob] = await Promise.allSettled([
+    const [ri, rm, rc, ra, rcx, rp, rls, rlo, rob, rpin] = await Promise.allSettled([
       window.wanigan.context.instructions(path),
       window.wanigan.context.memory(path),
       window.wanigan.context.config(path),
@@ -373,6 +377,7 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
       window.wanigan.learning.overview(pid ?? null),
       // Colour on the chain, not its subject: a failure hides the section.
       pid ? window.wanigan.context.observed(pid) : Promise.resolve(null),
+      pid ? window.wanigan.configPins.check(pid) : Promise.resolve(null),
     ]);
 
     if(mine!==read.current || !alive.current)return;
@@ -418,7 +423,9 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
     if(mine!==read.current || !alive.current)return;
     const observed = rob.status === 'fulfilled' ? rob.value : null;
     const observedRead = rob.status === 'fulfilled' && !!pid;
-    setD({ readAt:Date.now(), chain, memory, config, agents, codexAgents, budget, managed, learn, observed, observedRead, errors });
+    const pin = rpin.status === 'fulfilled' ? rpin.value : null;
+    const pinRead = rpin.status === 'fulfilled' && !!pid;
+    setD({ readAt:Date.now(), chain, memory, config, agents, codexAgents, budget, managed, learn, observed, observedRead, pin, pinRead, errors });
     setBusy(false);
   }, [path, pid]);
 
@@ -627,8 +634,10 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
       {d.codexAgents&&<CodexAgentsPanel c={d.codexAgents}/>}</>,
     memory:e.memory?<PanelError channel="memory" detail={e.memory} onRetry={()=>load(true)}/>
       :shows.memory&&d.memory?<MemoryPanel m={d.memory}/>:emptyArea('memory'),
-    config:e.config?<PanelError channel="settings" detail={e.config} onRetry={()=>load(true)}/>
-      :shows.config&&d.config?<ConfigPanel c={d.config}/>:emptyArea('config'),
+    config:<>{project&&<ConfigPinPanel projectId={project.id} pin={d.pin} read={d.pinRead}
+        onChanged={pin=>setD(prev=>prev?{...prev,pin,pinRead:true}:prev)}/>}
+      {e.config?<PanelError channel="settings" detail={e.config} onRetry={()=>load(true)}/>
+      :shows.config&&d.config?<ConfigPanel c={d.config}/>:emptyArea('config')}</>,
     budget:e.instructions?<PanelError channel="instructions for the budget" detail={e.instructions} onRetry={()=>load(true)}/>
       :e.budget?<PanelError channel="budget" detail={e.budget} onRetry={()=>load(true)}/>
       :shows.budget&&d.budget?<BudgetPanel b={d.budget}/>:emptyArea('budget'),
@@ -965,6 +974,51 @@ function IndexMeter({b}: {b:IndexBudget}) {
 }
 
 /* ── 5 · settings and hooks ──────────────────────────────────────────── */
+
+/* ── the executable-config pin ─────────────────────────────────────────
+   What this repository runs of its own before an agent does anything, and
+   whether a launch will be let through with it. A pin taken at first launch is
+   said to be exactly that; only an explicit acceptance here or in the launch
+   dialog is recorded as a review. */
+function ConfigPinPanel({projectId,pin,read,onChanged}: {
+  projectId:string;pin:ConfigPinCheck|null;read:boolean;onChanged:(pin:ConfigPinCheck)=>void;
+}) {
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState<string|null>(null);
+  if (!read) return <><SectionHead label="What this repository runs"/><p className="ctx-fine faint">Wanigan could not read this repository’s executable configuration. A launch still checks it.</p></>;
+  if (!pin) return null;
+  const accept=async()=>{
+    setBusy(true);setError(null);
+    try { onChanged(await window.wanigan.configPins.accept(projectId,pin.snapshot.digest)); }
+    catch (e) { setError(e instanceof Error?e.message:String(e)); }
+    finally { setBusy(false); }
+  };
+  const status = pin.state==='none' ? {glyph:'○',word:'runs nothing of its own',tone:'quiet' as Tone}
+    : pin.state==='first-use' ? {glyph:'◌',word:'not pinned yet — the next launch pins it',tone:'warn' as Tone}
+      : pin.state==='changed' ? {glyph:'!',word:'changed since it was last accepted',tone:'bad' as Tone}
+        : pin.lastAccepted?.how==='reviewed' ? {glyph:'✓',word:'matches what you reviewed',tone:'ok' as Tone}
+          : {glyph:'◑',word:'matches the pin taken at first launch, never reviewed',tone:'warn' as Tone};
+  return <>
+    <SectionHead label="What this repository runs" count={pin.snapshot.items.length}/>
+    <p className="ctx-pin-status"><SharedMark glyph={status.glyph} word={status.word} tone={status.tone}/>
+      {pin.lastAccepted&&<span className="faint">{pin.lastAccepted.how==='reviewed'?'Reviewed':'Pinned'} {ago(pin.lastAccepted.at)}</span>}</p>
+    {pin.state!=='none'&&<p className="ctx-fine faint">{pin.summary}. These run before the agent does anything, and a launch is asked about them again whenever they change.</p>}
+    {pin.state==='changed'&&pin.diff&&<ul className="ctx-pin-list">
+      {pin.diff.added.map(item=><li key={`a:${item.id}`}><SharedMark glyph="+" word="added" tone="warn"/><span><b>{item.label}</b> · {item.file}</span><code>{item.shown}</code></li>)}
+      {pin.diff.changed.map(({before,after})=><li key={`c:${after.id}`}><SharedMark glyph="~" word="changed" tone="warn"/><span><b>{after.label}</b> · {after.file}</span>
+        <code>{before.shown===after.shown?`${after.shown} — the value changed and is not shown`:`${before.shown} → ${after.shown}`}</code></li>)}
+      {pin.diff.removed.map(item=><li key={`r:${item.id}`}><SharedMark glyph="−" word="removed" tone="quiet"/><span><b>{item.label}</b> · {item.file}</span><code>{item.shown}</code></li>)}
+    </ul>}
+    {pin.state!=='changed'&&pin.snapshot.items.length>0&&<details className="ctx-disclosure"><summary>Every item ({pin.snapshot.items.length})</summary>
+      <ul className="ctx-pin-list">{pin.snapshot.items.map(item=><li key={item.id}><span><b>{item.label}</b> · {item.file}</span><code>{item.shown}</code></li>)}</ul></details>}
+    {pin.snapshot.unreadable.length>0&&<p className="ctx-warn"><span aria-hidden="true">!</span>Could not be read, so what it runs is unknown: {pin.snapshot.unreadable.join(', ')}</p>}
+    {(pin.state==='changed'||(pin.state==='accepted'&&pin.lastAccepted?.how!=='reviewed')||pin.state==='first-use')&&
+      <div className="ctx-pin-actions"><button className="btn" type="button" disabled={busy} onClick={()=>void accept()}>
+        {busy?'Recording…':pin.state==='changed'?'Accept this configuration':'Mark as reviewed'}</button>
+        <span className="faint">Records that you read what is listed here. It does not make it safe.</span></div>}
+    {error&&<Note tone="error">{error}</Note>}
+  </>;
+}
 
 function fmtValue(v: unknown): string {
   if (typeof v === 'string') return v;
