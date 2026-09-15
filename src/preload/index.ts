@@ -7,6 +7,7 @@ import type { HandoverBegun, HandoverFinished } from '../shared/handover';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
 import type { AttemptCleanupResult, AttemptSetDetail, AttemptSetSummary, AttemptStartInput } from '../shared/attempts';
 import type { FailedLogReport, PrReadinessReport } from '../shared/pr-readiness';
+import type { IntakeOverview, IntakePoll, IntakeTimer } from '../shared/intake';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AccountLimits,
@@ -532,6 +533,15 @@ const api = {
     readiness: (projectId: string) => call<PrReadinessReport>('gh:readiness', projectId),
     failedLog: (projectId: string, link: string) => call<FailedLogReport>('gh:failedLog', projectId, link),
   },
+  // ── issue intake: GitHub facts into Control's event inbox ────────────
+  intake: {
+    // Local only: recorded polls and events, and each project's remotes read by git.
+    overview: () => call<IntakeOverview>('intake:overview'),
+    // Contacts GitHub through gh, so it is called only from a press.
+    check: (projectId: string) => call<IntakePoll>('intake:check', projectId),
+    timer: () => call<IntakeTimer>('intake:timer'),
+    setTimer: (input: IntakeTimer) => call<IntakeTimer>('intake:setTimer', input),
+  },
   // ── phase 25 · durable schedules ─────────────────────────────────────
   schedule: {
     list: () => call<any[]>('schedule:list'),
@@ -918,6 +928,12 @@ const api = {
       const h = () => cb();
       listen('queue:changed', h);
       return () => ipcRenderer.removeListener('queue:changed', h);
+    },
+    // A GitHub intake poll ended, pressed or timed; its events may be new.
+    intakeChanged: (cb: () => void) => {
+      const h = () => cb();
+      listen('intake:changed', h);
+      return () => ipcRenderer.removeListener('intake:changed', h);
     },
     sessions: (cb: (s: Session[]) => void) => {
       const h = (_e: unknown, s: Session[]) => cb(s);
