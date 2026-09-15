@@ -4,6 +4,7 @@ import { maintainabilityFor } from './maintainability';
 import { onHookInput } from './hooks';
 import { observeFileRefs, sessionFiles } from './session-files';
 import { agentGitMarks } from './agent-git';
+import { compactionsFor } from './compactions';
 
 /**
  * The wiring for the review-depth helpers (helper sweep P7): one start function
@@ -36,6 +37,7 @@ export function registerDepthIpc(handle: Handle, options: DepthIpcOptions): void
   handle('depth:asksList', (sessionId: unknown) => asksFor(sessionId));
   handle('depth:asksTick', (itemId: unknown, ticked: unknown) => tickAsk(itemId, ticked));
   handle('depth:setLoopBudgets', (docketId: unknown, budgets: unknown) => setLoopBudgets(idArg(docketId, 'goal'), budgets));
+  handle('depth:compactions', (sessionId: unknown) => compactionsFor(sessionId));
   handle('depth:agentGit', (root: unknown) => agentGitMarks(options.gitRoot(root)));
   handle('depth:sessionFiles', (sessionId: unknown) => sessionFiles(sessionId));
   handle('depth:maintainability', (sessionId: unknown) => maintainabilityFor(sessionId));

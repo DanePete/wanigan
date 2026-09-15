@@ -7,6 +7,9 @@ import { getSetting, setSetting } from './settings';
 import { redactCredentials } from './redact';
 import { titleFromTranscriptText, type ReadTitle } from '../shared/session-title';
 import type { ClaudeContextUsage, ProviderId, TranscriptHit, TranscriptRecall, TranscriptTurn } from '../shared/types';
+/* ── helper sweep · P7 depth ── */
+import { boundaryOf } from '../shared/compaction';
+/* ── end helper sweep · P7 depth ── */
 
 /* ── where Claude Code keeps its transcripts ─────────────────────────── */
 
@@ -231,6 +234,7 @@ function flattenResult(content: unknown): string {
 
 type Parsed = { turns: TranscriptTurn[]; lines: number; skipped: number };
 
+
 /**
  * skipped counts only real damage: a line that is not JSON, and a line that
  * carries a `message` object — so it claims to be a turn — whose role or
@@ -239,7 +243,7 @@ type Parsed = { turns: TranscriptTurn[]; lines: number; skipped: number };
  * over, because counting them would report a healthy file as half-broken. So is
  * a message we understood but had no text to take from it — see DROPPED_BLOCKS.
  */
-function parseTranscript(text: string, fallbackAt: number): Parsed {
+function parseTranscript(text: string, fallbackAt: number, opts: { boundaries?: boolean } = {}): Parsed {
   const turns: TranscriptTurn[] = [];
   let lines = 0;
   let skipped = 0;
@@ -252,6 +256,14 @@ function parseTranscript(text: string, fallbackAt: number): Parsed {
     try { raw = JSON.parse(line); } catch { skipped++; continue; }
     if (!isRecord(raw)) { skipped++; continue; }
 
+    /* ── helper sweep · P7 depth ── */
+    // A compaction is a divider in the reader, never a searchable turn: the
+    // archive's index is built without `boundaries`, so it indexes what it did.
+    if (opts.boundaries) {
+      const boundary = boundaryOf(raw);
+      if (boundary) { turns.push({ at: boundary.at, role: 'system', text: 'Conversation compacted', compact: boundary }); continue; }
+    }
+    /* ── end helper sweep · P7 depth ── */
     const msg = raw.message;
     if (!isRecord(msg)) continue;
     at = timeOf(raw, at);
@@ -688,7 +700,7 @@ export function transcriptFor(sessionId: string): { turns: TranscriptTurn[]; not
 
   try {
     const { text, truncated } = readForParse(row.stored_path);
-    const parsed = parseTranscript(text, Date.now());
+    const parsed = parseTranscript(text, Date.now(), { boundaries: true });
     const turns = parsed.turns.slice(-MAX_READ_TURNS);
     const notes = [
       row.note,

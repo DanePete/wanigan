@@ -822,6 +822,9 @@ export type TranscriptTurn = {
   role: 'user' | 'assistant' | 'system' | 'tool';
   text: string;
   toolName?: string;
+  /* ── helper sweep · P7 depth ── */
+  /** Set on the divider a compact_boundary line becomes in the reader. See shared/compaction.ts. */
+  compact?: import('./compaction').TranscriptBoundary;
 };
 
 /**

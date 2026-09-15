@@ -20,6 +20,9 @@ import '../styles/settings.css';
 /* ── helper sweep · P1 policy ── */
 import { FatiguePanel, GateSelfTestPanel, GrantsPanel, LedgerTrace, tracesTool } from '../components/PolicyEvidence';
 import ExposureLeads from '../components/ExposureLeads';
+/* ── helper sweep · P7 depth ── */
+import CompactionDivider from '../components/CompactionDivider';
+/* ── end helper sweep · P7 depth ── */
 
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
 type ProviderKeyStatus = { present: boolean; fingerprint: string | null; fromEnv: boolean; stored: boolean };
@@ -5257,7 +5260,10 @@ function TranscriptReader({ sessionId, onClose }: { sessionId: string; onClose: 
                 {d.note ? ` ${d.note}` : ''}
               </p>
               <div className="set-turns">
-                {shown.map((t, i) => (
+                {shown.map((t, i) => t.compact ? (
+                  /* ── helper sweep · P7 depth ── */
+                  <CompactionDivider key={`${t.at}-${i}`} mark={t.compact} where="after" />
+                ) : (
                   <article key={`${t.at}-${i}`} className="set-turn" data-role={t.role}>
                     <header>
                       <strong>{TURN_ROLE[t.role]}</strong>

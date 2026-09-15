@@ -370,3 +370,48 @@ export async function runAgentGitSmoke(check: Check, say: Say): Promise<void> {
   check(view.includes('<RunByInline marks={agentGit?.commits[c.hash]} />') && view.includes('<RunByList marks={agentGit?.branches[b.name]}'),
     'agent git: the Git view draws the marks on commit rows and branch rows');
 }
+
+/** Item 6: compaction boundaries from the hook bus and the transcript, on the Timeline and in the reader. */
+export async function runCompactionSmoke(check: Check, say: Say): Promise<void> {
+  say('── depth · compaction boundaries');
+  const hooks = await import('./hooks');
+  const { compactionsFor } = await import('./compactions');
+  const transcripts = await import('./transcripts');
+  await hooks.startHookServer();
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-p7-compact-')));
+  const sid = `p7-compact-${Date.now()}`;
+  insertSession(sid, null, dir, null);
+  const handler = hookHandlerOf(hooks.writeHookSettings(sid, dir));
+  check(handler !== null, 'compaction: the session gets a hook capability');
+  if (!handler) return;
+  await postHook(handler, { hook_event_name: 'PreCompact', cwd: dir, trigger: 'manual', custom_instructions: 'keep the retry notes private-words-1' });
+  await postHook(handler, { hook_event_name: 'PostCompact', cwd: dir, trigger: 'manual', compact_summary: 'model summary private-words-2' });
+  const rows = db().prepare("SELECT event, summary FROM session_events WHERE session_id = ? AND event IN ('PreCompact','PostCompact') ORDER BY id").all(sid) as { event: string; summary: string | null }[];
+  check(rows.length === 2 && rows.every((r) => r.summary === 'manual'), 'compaction: PreCompact and PostCompact rows record the trigger', JSON.stringify(rows));
+  const everything = JSON.stringify(db().prepare('SELECT * FROM session_events WHERE session_id = ?').all(sid));
+  check(!everything.includes('private-words-1') && !everything.includes('private-words-2'), 'compaction: the operator’s /compact instructions and the model’s summary are not stored');
+
+  // An archived transcript with one boundary near the hook pair and one with no hook at all.
+  const postAt = (db().prepare("SELECT at FROM session_events WHERE session_id = ? AND event = 'PostCompact'").get(sid) as { at: number }).at;
+  const file = path.join(dir, 'archived.jsonl');
+  const line = (o: unknown) => JSON.stringify(o);
+  fs.writeFileSync(file, [
+    line({ type: 'user', message: { role: 'user', content: 'Refactor the checkout.' }, timestamp: new Date(postAt - 600_000).toISOString() }),
+    line({ type: 'system', subtype: 'compact_boundary', content: 'Conversation compacted', compactMetadata: { trigger: 'auto', preTokens: 412_000, postTokens: 18_500 }, timestamp: new Date(postAt - 400_000).toISOString() }),
+    line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Continuing.' }] }, timestamp: new Date(postAt - 300_000).toISOString() }),
+    line({ type: 'system', subtype: 'compact_boundary', content: 'Conversation compacted', compactMetadata: { trigger: 'manual', preTokens: 96_000, postTokens: 9_100 }, timestamp: new Date(postAt - 1_000).toISOString() }),
+    '',
+  ].join('\n'));
+  db().prepare('INSERT INTO transcripts (session_id, source_path, stored_path, bytes, turns, parsed, archived_at) VALUES (?,?,?,?,?,?,?)').run(sid, file, file, fs.statSync(file).size, 2, 1, Date.now());
+  const result = compactionsFor(sid);
+  const paired = result.marks.find((m) => m.source === 'hook+transcript');
+  const alone = result.marks.find((m) => m.source === 'transcript');
+  check(result.transcript === 'archived' && result.marks.length === 2, 'compaction: one divider per compaction, read from the archived transcript', JSON.stringify(result));
+  check(paired?.preTokens === 96_000 && paired.postTokens === 9_100 && paired.trigger === 'manual', 'compaction: the hook pair carries the pre-compaction token count the transcript recorded', JSON.stringify(paired));
+  check(alone?.preTokens === 412_000 && alone.eventId === null, 'compaction: a transcript boundary with no hook row still draws a divider');
+  const read = transcripts.transcriptFor(sid);
+  const dividers = read.turns.filter((t) => t.compact);
+  check(dividers.length === 2 && dividers[0].compact?.preTokens === 412_000 && read.turns.some((t) => t.role === 'assistant'),
+    'compaction: the transcript reader gets a divider at each boundary, in order, between the real turns', JSON.stringify(read.turns.map((t) => t.compact ? 'divider' : t.role)));
+  hooks.cleanupHookSettings(sid);
+}

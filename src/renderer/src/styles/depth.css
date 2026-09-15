@@ -63,3 +63,9 @@
 .dp-runby li { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); align-items: center; min-width: 0; }
 .dp-runby.compact { padding: 0 var(--s-3) var(--s-1) var(--s-6); margin: 0; font-size: var(--t-micro); }
 .dp-runby-cmd { font-family: var(--mono); font-size: var(--t-micro); overflow-wrap: anywhere; }
+
+/* ── compaction dividers, in the Timeline and the transcript reader ────── */
+.dp-compact { display: grid; grid-template-columns: minmax(var(--s-4), 1fr) auto minmax(var(--s-4), 1fr); gap: var(--s-2); align-items: center; margin: var(--s-2) 0; color: var(--accent); font-size: var(--t-micro); }
+.dp-compact-rule { height: 0; border-top: 1px dashed var(--accent); }
+.dp-compact-text { text-align: center; line-height: 1.5; overflow-wrap: anywhere; max-width: 60ch; }
+.dp-compact-text .faint { color: var(--text-faint); }

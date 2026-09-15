@@ -60,6 +60,7 @@ import type { GoalLoopBudgets } from '../shared/goal-budgets';
 import type { MaintainabilityView } from '../shared/maintainability';
 import type { SessionFiles } from '../shared/session-files';
 import type { AgentGitMarks } from '../shared/agent-git';
+import type { CompactionMark } from '../shared/compaction';
 /* ── end helper sweep · P7 depth ── */
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -1035,6 +1036,7 @@ const api = {
       list: (sessionId: string) => call<AskMessage[]>('depth:asksList', sessionId),
       tick: (itemId: number, ticked: boolean) => call<{ id: number; tickedAt: number | null }>('depth:asksTick', itemId, ticked),
     },
+    compactions: (sessionId: string) => call<{ marks: CompactionMark[]; transcript: 'live' | 'archived' | 'none' }>('depth:compactions', sessionId),
     agentGit: (root: string) => call<AgentGitMarks & { sessions: number; commands: number; reflogRead: boolean }>('depth:agentGit', root),
     sessionFiles: (sessionId: string) => call<SessionFiles & { root: string | null }>('depth:sessionFiles', sessionId),
     maintainability: (sessionId: string) => call<MaintainabilityView>('depth:maintainability', sessionId),

@@ -8,6 +8,8 @@ import SessionPolicyEvidence from './SessionPolicyEvidence';
 /* ── helper sweep · P7 depth ── */
 import AskChecklist from './AskChecklist';
 import SessionFilesPanel from './SessionFilesPanel';
+import type { CompactionMark } from '@shared/compaction';
+import CompactionDivider from './CompactionDivider';
 /* ── end helper sweep · P7 depth ── */
 
 /**
@@ -177,6 +179,20 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff, onReve
   }, [groups, shown, isExpanded]);
 
   /* ── helper sweep · P7 depth ── */
+  const [compactions, setCompactions] = useState<CompactionMark[]>([]);
+  useEffect(() => {
+    let live = true;
+    const read = () => window.wanigan.depth.compactions(sessionId)
+      .then((c) => { if (live) setCompactions(c.marks); })
+      .catch(() => { /* dividers are extra; the rail stands without them */ });
+    void read();
+    const off = window.wanigan.on.sessionEvent((e) => {
+      if (e.sessionId === sessionId && (e.event === 'PostCompact' || e.event === 'PreCompact')) window.setTimeout(() => { void read(); }, 1500);
+    });
+    return () => { live = false; off(); };
+  }, [sessionId]);
+  const dividersAbove = (row: Row, newerAt: number) =>
+    compactions.filter((m) => m.eventId === row.e.id || (m.eventId === null && m.at > row.e.at && m.at <= newerAt));
   const [focused, setFocused] = useState<number | null>(null);
   const handledFocus = useRef<number | null>(null);
   useEffect(() => {
@@ -349,6 +365,7 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff, onReve
                     return (
                       <li key={r.e.id} className="tl-li">
                         {newDay && <p className="tl-day"><span>{dayLabel(r.e.at)}</span></p>}
+                        {dividersAbove(r, prev ? prev.e.at : Number.POSITIVE_INFINITY).map((m) => <CompactionDivider key={`c${m.at}`} mark={m} where="above" />)}
                         <Row r={r} max={maxSpan} now={now} onOpenFile={onOpenFile} focused={focused === r.e.id} />
                       </li>
                     );
@@ -433,8 +450,9 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff, onReve
                         </div>
                         {expanded && (
                           <ol className="tl-rail tl-turnbody">
-                            {g.rows.map((r) => (
+                            {g.rows.map((r, ri) => (
                               <li key={r.e.id} className="tl-li">
+                                {dividersAbove(r, ri > 0 ? g.rows[ri - 1].e.at : Number.POSITIVE_INFINITY).map((m) => <CompactionDivider key={`c${m.at}`} mark={m} where="above" />)}
                                 <Row r={r} max={maxSpan} now={now} onOpenFile={onOpenFile} focused={focused === r.e.id} />
                               </li>
                             ))}
