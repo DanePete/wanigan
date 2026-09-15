@@ -1,0 +1,26 @@
+/* What a commit or a push would carry, shown before it goes (PublishChecks.tsx):
+   possible secrets as file:line, rule and the masked line, and the Assisted-by
+   lines a commit will end with. Paths, excerpts and trailers wrap rather than
+   clip — a finding nobody can read to its end is a finding nobody can judge,
+   and a trailer cut off in the preview is not the trailer that gets committed. */
+.pc-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.pc-hint { font-size: var(--t-micro); }
+
+.pc-findings { display: flex; flex-direction: column; gap: var(--s-2); min-width: 0; }
+.pc-lead { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.pc-list { display: flex; flex-direction: column; gap: var(--s-2); margin: 0; padding: 0; list-style: none; }
+.pc-finding { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); min-width: 0;
+              font-size: var(--t-small); }
+.pc-where { min-width: 0; font-family: var(--mono); overflow-wrap: anywhere; }
+.pc-rule { color: var(--text-dim); }
+.pc-excerpt { flex-basis: 100%; min-width: 0; font-family: var(--mono); font-size: var(--t-micro); color: var(--text-dim);
+              white-space: pre-wrap; overflow-wrap: anywhere; }
+.pc-foot { margin: 0; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.5; }
+.pc-clean { color: var(--text-dim); }
+
+.pc-trailers { display: flex; flex-direction: column; gap: var(--s-1); padding: var(--s-2); min-width: 0;
+               border: 1px solid var(--line); border-radius: var(--r-sm); }
+.pc-trailers-head { margin: 0; color: var(--text-dim); font-size: var(--t-micro); line-height: 1.4; }
+.pc-trailers-lines { margin: 0; font-family: var(--mono); font-size: var(--t-micro); color: var(--text);
+                     white-space: pre-wrap; overflow-wrap: anywhere; }
+.pc-trailers-note { margin: 0; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.5; }

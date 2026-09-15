@@ -29,9 +29,10 @@ type Creds = { key: string; workspaceId?: string };
  * A credential replacement must not leave a zero-byte or half-written blob if
  * the app, disk, or machine stops midway through saving it. The old encrypted
  * secret remains authoritative until the new file is fully flushed and renamed
- * into place. This mirrors the mobile-pairing credential path.
+ * into place. This mirrors the mobile-pairing credential path, and the policy
+ * ledger's signing key is written through it too.
  */
-function writeEncryptedCredential(file: string, encrypted: Buffer): void {
+export function writeEncryptedCredential(file: string, encrypted: Buffer): void {
   const parent = path.dirname(file);
   fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
   const next = `${file}.next-${process.pid}-${randomBytes(6).toString('hex')}`;

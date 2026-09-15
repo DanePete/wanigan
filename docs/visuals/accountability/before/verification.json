@@ -1,0 +1,11 @@
+{
+  "at": "2026-09-15T03:32:17.911Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic git, policy and prefs; no real agent calls",
+  "mode": "before",
+  "checks": [
+    "before: the commit box offers Commit with no word on what the staged changes carry and no attribution preview",
+    "before: Push asks one sentence of confirmation and nothing checks what is about to leave",
+    "before: the ledger shows its counts and rows, with nothing that says whether a row was changed after it was written"
+  ],
+  "errors": []
+}

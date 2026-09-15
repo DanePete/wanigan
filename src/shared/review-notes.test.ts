@@ -89,6 +89,30 @@ test('the empty string a trailing newline leaves is not a line of code', () => {
   assert.deepEqual(hunkRange(single, header), { from: 1, to: 3 });
 });
 
+test('a changed line that begins like a file header is still a changed line', () => {
+  // Exact `git log -p -U0` output (git 2.50.1) for a commit appending `++ weird`
+  // and `-- weird2` to f.txt, plus the `-- note` a SQL comment makes on the
+  // removed side. Read by prefix, the first renamed the file to "weird" and
+  // every line after it was numbered one short.
+  const tricky = parseUnifiedDiff([
+    'diff --git a/f.txt b/f.txt',
+    'index d68dd40..ef62ba1 100644',
+    '--- a/f.txt',
+    '+++ b/f.txt',
+    '@@ -4,1 +4,3 @@ d',
+    '--- note',
+    '+++ weird',
+    '+-- weird2',
+    '+after',
+  ].join('\n'));
+  assert.deepEqual(tricky.slice(5).map((r) => [r.kind, r.file, r.oldLine, r.newLine]), [
+    ['del', 'f.txt', 4, null],
+    ['add', 'f.txt', null, 4],
+    ['add', 'f.txt', null, 5],
+    ['add', 'f.txt', null, 6],
+  ]);
+});
+
 test('a hunk header with no count means one line on that side', () => {
   const rowsOne = parseUnifiedDiff('@@ -5 +5 @@\n-old\n+new\n trailing', 'x.ts');
   assert.deepEqual(rowsOne.map((r) => [r.kind, r.oldLine, r.newLine]),

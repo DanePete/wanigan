@@ -75,13 +75,20 @@ export function parseUnifiedDiff(patch: string, fallbackFile: string | null = nu
       rows.push({ kind: 'meta', text, file, oldLine: null, newLine: null });
       continue;
     }
-    if (text.startsWith('+++ ')) {
+    // Inside a hunk the header's counts decide what a line is, not its first
+    // characters. An added line whose content begins `++ ` arrives as `+++ `,
+    // and a removed `-- ` comment as `--- `: read as file headers, the first
+    // renamed the file for every row after it and neither advanced the line
+    // count, so a note — or a secret finding — landed on the wrong file at the
+    // wrong line. git never prints a file header before the counts run out.
+    const inHunk = oldLine !== null && newLine !== null && (oldLeft > 0 || newLeft > 0);
+    if (!inHunk && text.startsWith('+++ ')) {
       const target = text.slice(4).trim();
       if (target !== '/dev/null') file = stripPrefix(target);
       rows.push({ kind: 'meta', text, file, oldLine: null, newLine: null });
       continue;
     }
-    if (text.startsWith('--- ')) {
+    if (!inHunk && text.startsWith('--- ')) {
       const source = text.slice(4).trim();
       // A deleted file's name only appears here.
       if (source !== '/dev/null' && file === fallbackFile) file = stripPrefix(source);

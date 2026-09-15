@@ -5,6 +5,9 @@ import type { DiscoveryResult } from '../shared/discovery';
 import type { HandoffPlan, HandoffResult } from '../shared/handoff';
 import type { HandoverBegun, HandoverFinished } from '../shared/handover';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
+import type { SecretScanReport, SecretScanRequest } from '../shared/secret-scan';
+import type { AssistedByPreview } from '../shared/assisted-by';
+import type { LedgerChainStatus } from '../shared/ledger-chain';
 import type { KeymapState, KeymapWrite } from '../shared/keymap';
 import type { AttemptCleanupResult, AttemptSetDetail, AttemptSetSummary, AttemptStartInput } from '../shared/attempts';
 import type { FailedLogReport, PrReadinessReport } from '../shared/pr-readiness';
@@ -470,6 +473,8 @@ const api = {
     ledger: (limit?: number, deniedOnly?: boolean) => call<LedgerEntry[]>('policy:ledger', limit, deniedOnly),
     summary: () => call<{ denied: number; asked: number; allowed: number; since: number | null }>('policy:summary'),
     exportTo: () => call<{ path: string; rows: number } | null>('policy:export'),
+    /** Walk the hash chain and judge the stored head signature against it. Reads only. */
+    chain: () => call<LedgerChainStatus>('policy:chain'),
   },
   // ── phase 22 · skills ────────────────────────────────────────────────
   skills: {
@@ -514,13 +519,17 @@ const api = {
     stage: (root: string, files: string[]) => call<boolean>('git:stage', root, files),
     unstage: (root: string, files: string[]) => call<boolean>('git:unstage', root, files),
     discard: (root: string, tracked: string[], untracked: string[]) => call<boolean>('git:discard', root, tracked, untracked),
-    commit: (root: string, msg: string, opts?: { amend?: boolean; all?: boolean }) => call<string>('git:commit', root, msg, opts),
+    /** Refused in main unless `acknowledge` is the digest of the current findings, when there are any, and `trailers` equals what main derives. */
+    commit: (root: string, msg: string, opts?: { amend?: boolean; all?: boolean; acknowledge?: string; trailers?: string[] }) =>
+      call<string>('git:commit', root, msg, opts),
+    scanSecrets: (root: string, request: SecretScanRequest) => call<SecretScanReport>('git:scanSecrets', root, request),
+    assistedBy: (root: string, opts?: { amend?: boolean }) => call<AssistedByPreview>('git:assistedBy', root, opts),
     checkout: (root: string, ref: string, create?: boolean) => call<boolean>('git:checkout', root, ref, create),
     deleteBranch: (root: string, name: string, force?: boolean) => call<boolean>('git:deleteBranch', root, name, force),
     merge: (root: string, ref: string) => call<string>('git:merge', root, ref),
     fetch: (root: string) => call<string>('git:fetch', root),
     pull: (root: string) => call<string>('git:pull', root),
-    push: (root: string, opts?: { setUpstream?: boolean; branch?: string }) => call<string>('git:push', root, opts),
+    push: (root: string, opts?: { setUpstream?: boolean; branch?: string; acknowledge?: string }) => call<string>('git:push', root, opts),
     stashSave: (root: string, msg: string) => call<string>('git:stashSave', root, msg),
     stashApply: (root: string, i: number, drop: boolean) => call<string>('git:stashApply', root, i, drop),
     stashDrop: (root: string, i: number) => call<boolean>('git:stashDrop', root, i),
