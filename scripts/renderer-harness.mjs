@@ -298,6 +298,10 @@ export const STUB = `
     // none of its fields, so the view died on preview.fires.length and was never
     // reviewable here. index.ts schedule:preview always returns this shape.
     'schedule.preview': { fires: [], describe: 'every weekday at 09:00' },
+    // A template field is a string the settings card trims; anything() answered
+    // it with a Proxy and Settings died on title.trim. helper-p8.ts
+    // namingTemplates returns strings or null, and null is a fresh project.
+    'naming.get': { title: null, branch: null },
     'policyEvidence.autoMode': { trust: 'project', cliVersion: null, status: 'not-verified', block: null,
       providerLabel: null, note: 'No Claude Code CLI was detected, so no auto-mode block is written.' },
     // The model-assist card renders its consent branch off status.consent and

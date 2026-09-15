@@ -23,8 +23,9 @@ function columns(table: string): Set<string> {
 }
 
 /**
- * Whether a later package records worktree outcomes. P4 of the helper sweep
- * planned such a column; it is read when present and never assumed.
+ * Whether worktree outcomes are recorded (spend-yield's \`outcome\` column,
+ * written when Wanigan merges or removes a worktree). Read when present and
+ * never assumed: a database from an older build has no such column.
  */
 function recordedOutcomeColumn(): boolean {
   return columns('worktrees').has('outcome');
@@ -72,21 +73,31 @@ export async function weeklyRecap(projectId: unknown, back: unknown = 0, now = D
   const startHeads = new Map(sessionRows.map((s) => [s.id, s.baseline_head] as const));
   const touched = new Set(sessionRows.map((s) => s.worktree).filter(Boolean));
   const worktrees: RecapWorktree[] = [];
+  let readRecorded = 0;
+  let readFromGit = 0;
   for (const row of wtRows) {
     // Only what the recap reads: worktrees this week's sessions ran in, and
     // worktrees still open. A removed worktree from months ago is not asked about.
     if (!touched.has(row.path) && row.removed_at !== null) continue;
     let outcome: WorktreeOutcome;
-    if (recorded) {
-      outcome = row.outcome === 'merged' || row.outcome === 'discarded' ? row.outcome : row.removed_at !== null ? 'discarded' : 'open';
+    // A recorded outcome wins, row by row. The column existing is not the same
+    // as this row having one: a branch merged by hand in a terminal, or a
+    // worktree removed before outcomes were written, has none, and treating
+    // that null as "still open" would call merged work half-finished.
+    if (recorded && (row.outcome === 'merged' || row.outcome === 'discarded' || row.outcome === 'removed-clean')) {
+      outcome = row.outcome === 'removed-clean' ? 'no-commits' : row.outcome;
+      readRecorded++;
     } else if (root) {
       const head = row.session_id ? startHeads.get(row.session_id) ?? (d.prepare('SELECT baseline_head FROM session_log WHERE id = ?').get(row.session_id) as { baseline_head: string | null } | undefined)?.baseline_head ?? null : null;
       outcome = await gitOutcome(root, row, head);
+      readFromGit++;
     } else {
       outcome = 'unknown';
     }
     worktrees.push({ path: row.path, branch: row.branch, sessionId: row.session_id, createdAt: row.created_at, removedAt: row.removed_at, outcome });
   }
+  const outcomeMethod: RecapInput['outcomeMethod'] = readRecorded && readFromGit ? 'mixed'
+    : readRecorded ? 'recorded' : root ? 'git' : 'not-recorded';
 
   const goals = d.prepare(`
     SELECT w.title, COALESCE((SELECT MAX(n.ended_at) FROM work_nodes n WHERE n.docket_id = w.id AND n.kind = 'review'), w.updated_at) AS at
@@ -120,7 +131,7 @@ export async function weeklyRecap(projectId: unknown, back: unknown = 0, now = D
       id: s.id, conversationId: s.conversation_id, title: s.title, providerId: s.provider_id,
       startedAt: s.started_at, endedAt: s.ended_at, exitCode: s.exit_code, worktree: s.worktree,
     })),
-    outcomeMethod: recorded ? 'recorded' : root ? 'git' : 'not-recorded',
+    outcomeMethod,
     worktrees, goalsAccepted: goals, gateRuns: gates, cost, operatorRuns,
   });
 }

@@ -49,8 +49,12 @@ export type RecapInput = {
   start: number;
   end: number;
   sessions: RecapSession[];
-  /** How outcomes were read: a column a later package records, git's own ancestry, or not at all. */
-  outcomeMethod: 'recorded' | 'git' | 'not-recorded';
+  /**
+   * How outcomes were read: as recorded when the worktree was merged or
+   * removed, from git's own ancestry, both (a worktree merged by hand or
+   * removed before outcomes were recorded has no recorded outcome), or not at all.
+   */
+  outcomeMethod: 'recorded' | 'git' | 'mixed' | 'not-recorded';
   worktrees: RecapWorktree[];
   goalsAccepted: { title: string; at: number }[];
   gateRuns: { startedAt: number; status: 'running' | 'passed' | 'failed'; failedCommands: string[] }[];
@@ -157,9 +161,11 @@ function mdEscape(text: string): string {
 }
 
 export function outcomeRule(method: RecapInput['outcomeMethod']): string {
+  const fromGit = 'merged means the branch tip is contained in the branch it was cut from and moved past where its session started; discarded means the worktree was removed without that';
   return method === 'recorded' ? 'merge and discard outcomes as recorded when each worktree was merged or removed'
-    : method === 'git' ? 'read from git: merged means the branch tip is contained in the branch it was cut from and moved past where its session started; discarded means the worktree was removed without that'
-      : 'not recorded';
+    : method === 'git' ? `read from git: ${fromGit}`
+      : method === 'mixed' ? `as recorded when Wanigan merged or removed the worktree, and read from git for the rest: ${fromGit}`
+        : 'not recorded';
 }
 
 /** The recap as a Markdown document, with every rule stated beside the number it produced. */

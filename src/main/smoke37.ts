@@ -441,10 +441,13 @@ export async function runWeeklyRecapSmoke(check: Check, say: Say, tmp: string): 
     .run('or_recap_1', now - 500, project.id, repo, 'Makefile', 'test', 'make test');
 
   try {
+    // Removing a worktree records its outcome (spend-yield). Cleared here so the
+    // first reading exercises the git path for every row; the mixed case follows.
+    db().prepare('UPDATE worktrees SET outcome = NULL WHERE path IN (?, ?, ?)').run(merged.path, open.path, gone.path);
     const recap = await recapMod.weeklyRecap(project.id, 0);
     check(recap.sessionsRun === 3 && recap.conversations === 3, 'sessions run this week are counted from session_log', recap);
     check(recap.outcomeMethod === 'git' && recap.merged === 1 && recap.discarded === 1,
-      'with no recorded outcome column, merged and discarded are read from git: one branch contained in main, one removed unmerged', { merged: recap.merged, discarded: recap.discarded, method: recap.outcomeMethod });
+      'with no outcome recorded for any of these worktrees, merged and discarded are read from git: one branch contained in main, one removed unmerged', JSON.stringify({ merged: recap.merged, discarded: recap.discarded, method: recap.outcomeMethod }));
     check(recap.halfFinished.length === 1 && recap.halfFinished[0].sessionId === 's_recap_open02',
       'the conversation that exited with its worktree open and unmerged is the half-finished one', recap.halfFinished);
     check(recap.worktreesOpen.some((w) => w.path === open.path) && !recap.worktreesOpen.some((w) => w.path === merged.path || w.path === gone.path),
@@ -456,6 +459,14 @@ export async function runWeeklyRecapSmoke(check: Check, say: Say, tmp: string): 
     const md = shared.recapMarkdown(recap, now);
     check(/\| Work merged \| 1 \|/.test(md) && /read from git/.test(md) && /Half-finished work/.test(md) && /No model wrote any of this/.test(md),
       'the Markdown export carries the counts, the half-finished conversation and the merge rule it used', md.slice(0, 400));
+    // A recorded outcome wins over git for its own row, and the recap says it
+    // used both. The open worktree is marked merged, as Wanigan records a merge it
+    // made while the worktree is still on disk; git alone reads that branch as unmerged.
+    db().prepare("UPDATE worktrees SET outcome = 'merged' WHERE path = ?").run(open.path);
+    const mixed = await recapMod.weeklyRecap(project.id, 0);
+    check(mixed.outcomeMethod === 'mixed' && mixed.merged === 2 && mixed.discarded === 1 && mixed.halfFinished.length === 0,
+      'a recorded outcome is read for its own worktree and git for the rest, and the recap says it used both', JSON.stringify({ method: mixed.outcomeMethod, merged: mixed.merged, discarded: mixed.discarded, half: mixed.halfFinished.length }));
+    db().prepare('UPDATE worktrees SET outcome = NULL WHERE path = ?').run(open.path);
     const lastWeek = await recapMod.weeklyRecap(project.id, 1);
     check(lastWeek.nothingRecorded && lastWeek.merged === 0, 'last week, with nothing recorded, says so', lastWeek);
   } finally {

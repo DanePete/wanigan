@@ -77,8 +77,8 @@ export default function WeeklyRecapSection({ projectId }: { projectId: string | 
             <>
               <div className="p8-recap-grid">
                 <Stat label="Sessions run" value={recap.sessionsRun} sub={`${recap.conversations} conversation${recap.conversations === 1 ? '' : 's'}`} />
-                <Stat label="Merged" value={recap.merged ?? notRecorded} sub={recap.outcomeMethod === 'git' ? 'read from git' : undefined} />
-                <Stat label="Discarded" value={recap.discarded ?? notRecorded} sub={recap.outcomeMethod === 'git' ? 'removed unmerged' : undefined} />
+                <Stat label="Merged" value={recap.merged ?? notRecorded} sub={recap.outcomeMethod === 'git' ? 'read from git' : recap.outcomeMethod === 'mixed' ? 'recorded, and read from git' : undefined} />
+                <Stat label="Discarded" value={recap.discarded ?? notRecorded} sub={recap.outcomeMethod === 'git' ? 'removed unmerged' : recap.outcomeMethod === 'mixed' ? 'recorded, and read from git' : undefined} />
                 <Stat label="Goals accepted" value={recap.goalsAccepted.length} />
                 <Stat label="Gates failed" value={recap.gatesFailed} sub={`of ${recap.gatesRun} run`} />
                 <Stat label="Worktrees open" value={recap.worktreesOpen.length} sub="now, not only this week" />
