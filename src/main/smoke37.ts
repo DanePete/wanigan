@@ -464,6 +464,83 @@ export async function runWeeklyRecapSmoke(check: Check, say: Say, tmp: string): 
   }
 }
 
+export async function runHookBenchSmoke(check: Check, say: Say, tmp: string): Promise<void> {
+  say('── helper sweep · P8 mac · hook dry-run bench');
+  const bench = await import('./hook-bench');
+  const { addProject } = await import('./store');
+  const { refreshProjectConfig } = await import('./context/config');
+  const dir = path.join(tmp, 'hook-bench');
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  const marker = path.join(dir, 'ran.txt');
+  const settings = path.join(dir, '.claude', 'settings.json');
+  fs.writeFileSync(settings, JSON.stringify({
+    hooks: {
+      PreToolUse: [
+        { matcher: 'Bash', hooks: [{ type: 'command', command: `cat > "${marker}"; env | cut -d= -f1 | sort | tr '\\n' ' ' >&2; exit 2` }] },
+        { matcher: 'Write', hooks: [{ type: 'command', command: 'printf \'{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask"}}\'' }] },
+        { hooks: [{ type: 'http', url: 'https://example.invalid/hook' }] },
+      ],
+      Stop: [{ hooks: [{ type: 'command', command: 'sleep 30' }, { type: 'command', command: 'head -c 200000 /dev/zero | tr "\\000" a' }] }],
+      UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'echo "Remember: the $CLAUDE_PROJECT_DIR style guide"' }] }],
+    },
+  }));
+  refreshProjectConfig();
+  await addProject(dir);
+  const priorKey = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'sk-ant-smoke-should-never-reach-a-hook';
+  const asked: string[] = [];
+  try {
+    bench.setHookBenchConfirm(async (input) => { asked.push(input.command); return false; });
+    const declined = await bench.runHookBench({ projectPath: dir, source: settings, event: 'PreToolUse', ordinal: 0 });
+    check('cancelled' in declined && !fs.existsSync(marker) && asked.length === 1 && asked[0].includes('cat >'),
+      'the confirmation names the full command, and declining it runs nothing', { declined, asked });
+
+    bench.setHookBenchConfirm(async (input) => { asked.push(input.command); return true; });
+    const blocked = await bench.runHookBench({ projectPath: dir, source: settings, event: 'PreToolUse', ordinal: 0 });
+    if ('cancelled' in blocked) throw new Error('unexpected cancel');
+    const stdin = JSON.parse(fs.readFileSync(marker, 'utf8')) as Record<string, unknown>;
+    check(stdin.hook_event_name === 'PreToolUse' && stdin.tool_name === 'Bash' && fs.realpathSync(String(stdin.cwd)) === fs.realpathSync(dir) && typeof stdin.tool_use_id === 'string',
+      'the hook reads a PreToolUse sample on stdin with the binary\'s field names and the project as cwd', JSON.stringify(stdin));
+    const envSeen = blocked.stderr.trim().split(/\s+/);
+    check(envSeen.includes('PATH') && envSeen.includes('HOME') && envSeen.includes('TMPDIR') && envSeen.includes('CLAUDE_PROJECT_DIR')
+      && !envSeen.includes('ANTHROPIC_API_KEY') && !envSeen.some((n) => n.startsWith('WANIGAN_') || n.startsWith('ELECTRON_')),
+      'the command sees PATH, HOME, TMPDIR and CLAUDE_PROJECT_DIR (plus what sh itself sets) and no credential or Wanigan variable', envSeen);
+    check(blocked.exitCode === 2 && blocked.verdict.effect === 'block', 'exit 2 is reported as a block, with stderr fed back', blocked.verdict);
+
+    const ask = await bench.runHookBench({ projectPath: dir, source: settings, event: 'PreToolUse', ordinal: 1 });
+    check(!('cancelled' in ask) && ask.verdict.effect === 'ask', 'a JSON permissionDecision of "ask" is reported as asking the person', !('cancelled' in ask) && ask.verdict);
+
+    let refused = '';
+    try { await bench.runHookBench({ projectPath: dir, source: settings, event: 'PreToolUse', ordinal: 2 }); } catch (e) { refused = String(e); }
+    check(/command hooks only/.test(refused), 'an HTTP hook is refused: the bench does not send a sample to a URL', refused);
+    refused = '';
+    try { await bench.runHookBench({ projectPath: dir, source: '/etc/passwd', event: 'PreToolUse', ordinal: 0 }); } catch (e) { refused = String(e); }
+    check(/no longer in the project/.test(refused), 'a settings file the Context view does not list for the project cannot be named', refused);
+    refused = '';
+    try { await bench.runHookBench({ projectPath: '/', source: settings, event: 'PreToolUse', ordinal: 0 }); } catch (e) { refused = String(e); }
+    check(refused.length > 0, 'a folder that is not a managed project is refused before anything is read', refused);
+
+    const context = await bench.runHookBench({ projectPath: dir, source: settings, event: 'UserPromptSubmit', ordinal: 0 });
+    check(!('cancelled' in context) && context.verdict.effect === 'context' && context.stdout.includes(fs.realpathSync(dir)),
+      'plain stdout from a UserPromptSubmit hook is reported as added context, with CLAUDE_PROJECT_DIR expanded', !('cancelled' in context) && context.stdout);
+
+    bench.setHookBenchTimeout(300);
+    const started = Date.now();
+    const slow = await bench.runHookBench({ projectPath: dir, source: settings, event: 'Stop', ordinal: 0 });
+    bench.setHookBenchTimeout(null);
+    check(!('cancelled' in slow) && slow.timedOut && Date.now() - started < 5_000 && slow.verdict.effect === 'ignored',
+      'a hook that outlives the timeout is killed, with its process group, and reported as timed out rather than as a decision', !('cancelled' in slow) && slow);
+    check(bench.BENCH_TIMEOUT_MS === 10_000, 'the real timeout is ten seconds');
+    const big = await bench.runHookBench({ projectPath: dir, source: settings, event: 'Stop', ordinal: 1 });
+    check(!('cancelled' in big) && big.stdoutTruncated && Buffer.byteLength(big.stdout) === 64 * 1024,
+      'stdout is cut at 64 KB and says so', !('cancelled' in big) && { truncated: big.stdoutTruncated, bytes: Buffer.byteLength(big.stdout) });
+  } finally {
+    bench.setHookBenchConfirm(null);
+    bench.setHookBenchTimeout(null);
+    if (priorKey === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = priorKey;
+  }
+}
+
 export async function runP8Smoke(check: Check, say: Say): Promise<void> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-p8-'));
   try {
@@ -473,6 +550,7 @@ export async function runP8Smoke(check: Check, say: Say): Promise<void> {
     await runMcpToolGrantSmoke(check, say, tmp);
     await runNamingTemplateSmoke(check, say, tmp);
     await runWeeklyRecapSmoke(check, say, tmp);
+    await runHookBenchSmoke(check, say, tmp);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

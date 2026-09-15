@@ -9,6 +9,7 @@ import { WANIGAN_TOOL_CATALOGUE, setToolGrant, toolGrantFor } from './mcp/tool-g
 import { validProfileId } from '../shared/mcp-tool-grants';
 import { namingTemplates, setNamingTemplates } from './naming';
 import { exportWeeklyRecap, weeklyRecap } from './weekly-recap';
+import { runHookBench, setHookBenchWindow } from './hook-bench';
 
 /**
  * The Mac around the app, local automation and attribution, wired once.
@@ -75,11 +76,15 @@ export function registerP8Ipc(handle: Handle): void {
   // This week, per project, from evidence.
   handle('recap:week', (projectId: unknown, back: unknown) => weeklyRecap(projectId, back));
   handle('recap:export', (projectId: unknown, back: unknown) => exportWeeklyRecap(deps?.liveWindow() ?? null, projectId, back));
+
+  // The hook dry-run bench. Main finds the command; a native dialog asks first.
+  handle('hookBench:run', (target: unknown) => runHookBench(target));
 }
 
 export function startP8Services(next: P8Deps): void {
   deps = next;
   terminalsMod.setOperatorTerminalWindow(next.liveWindow);
+  setHookBenchWindow(next.liveWindow);
   void applySettings(macSettings()).catch((error) => console.warn('[wanigan] P8 services did not start:', error));
 }
 
