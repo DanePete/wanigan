@@ -2183,7 +2183,10 @@ export const TRUST_COPY: Record<TrustLevel, { label: string; detail: string }> =
   },
   trusted: {
     label: 'Trusted',
-    detail: 'Nothing is denied by Wanigan. The OS sandbox and the agent’s own permission prompts are the only limits.',
+    // One refusal outranks trust, like the halt: reading the bearer tokens
+    // Wanigan hands every other session is never a trusted repository's own
+    // work, and a session holding one can speak for another.
+    detail: 'Nothing is denied by Wanigan except reading other sessions’ Wanigan credentials. Claude Code’s sandbox, if you turn it on, and the agent’s own permission prompts are the other limits.',
   },
 };
 
@@ -2368,8 +2371,12 @@ export type WaniganSettings = {
    * of paths. See settings.ts's mobileRepositoryReview().
    */
   mobileRepositoryReview: boolean;
+  /** Which Claude Code sessions run shell commands in Claude Code's sandbox; see shared/sandbox-policy.ts. */
+  sandboxShell: SandboxShell;
   learning: LearningSettings;
 };
+
+export type SandboxShell = 'off' | 'below-trusted' | 'always';
 
 /* ── AI Improvement Scout ──────────────────────────────────────────── */
 
