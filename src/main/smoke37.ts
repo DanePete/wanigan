@@ -194,11 +194,75 @@ export async function runAutomationSocketSmoke(check: Check, say: Say, tmp: stri
   }
 }
 
+export async function runScriptLauncherSmoke(check: Check, say: Say, tmp: string): Promise<void> {
+  say('── helper sweep · P8 mac · script launcher and your terminal');
+  const terminals = await import('./operator-terminals');
+  const { addProject } = await import('./store');
+  const { db } = await import('./db');
+  const dir = path.join(tmp, 'scripts-project');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'p8', scripts: { hello: 'echo p8-operator-$((40+2))', 'bad name': 'echo no' } }));
+  fs.writeFileSync(path.join(dir, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+  fs.writeFileSync(path.join(dir, 'Makefile'), '.PHONY: build\n## Build it\nbuild:\n\techo building\n');
+  fs.writeFileSync(path.join(dir, 'justfile'), '# Lint it\nlint:\n    echo linting\n_private:\n    echo no\n');
+  const project = await addProject(dir);
+  const sessionRows = () => (db().prepare('SELECT count(*) n FROM session_log').get() as { n: number }).n;
+  const ledgerRows = () => (db().prepare('SELECT count(*) n FROM policy_ledger').get() as { n: number }).n;
+  const beforeSessions = sessionRows();
+  const beforeLedger = ledgerRows();
+
+  const listing = await terminals.listScripts(project.id);
+  const names = listing.scripts.map((s) => `${s.source}:${s.name}`);
+  check(names.join(',') === 'package.json:hello,package.json:bad name,Makefile:build,justfile:lint' && listing.packageManager === 'pnpm',
+    'package.json scripts, Makefile targets and public justfile recipes are listed from the files, with the lockfile\'s package manager', names);
+  check(listing.scripts.find((s) => s.name === 'hello')?.command === 'pnpm run hello' && listing.scripts.find((s) => s.name === 'bad name')?.command === null,
+    'each gets its one command line, and a name that is not a plain shell word gets none', listing.scripts.map((s) => s.command));
+
+  terminals.setScriptFavourite(project.id, 'justfile', 'lint', true);
+  const starred = await terminals.listScripts(project.id);
+  check(starred.scripts[0].name === 'lint' && starred.scripts[0].favourite, 'a starred script moves to the top and stays starred on the next read', starred.scripts.map((s) => s.name));
+  let refused = '';
+  try { terminals.setScriptFavourite(project.id, 'Rakefile', 'x', true); } catch (e) { refused = String(e); }
+  check(/package\.json, a Makefile or a justfile/.test(refused), 'a favourite from an unknown source is refused', refused);
+  refused = '';
+  try { await terminals.runScript(project.id, 'package.json', 'hello', '/etc'); } catch (e) { refused = String(e); }
+  check(/not this project/.test(refused), 'a script cannot be pointed at a directory that is not the project or one of its worktrees', refused);
+  refused = '';
+  try { await terminals.runScript(project.id, 'package.json', 'rm -rf'); } catch (e) { refused = String(e); }
+  check(/no longer declares/.test(refused), 'only a script the file on disk declares can run — the renderer never supplies the command', refused);
+  refused = '';
+  try { await terminals.runScript(project.id, 'package.json', 'bad name'); } catch (e) { refused = String(e); }
+  check(/not a plain name/.test(refused), 'a declared script whose name is not shell-safe is refused rather than quoted', refused);
+
+  // `make` is on every macOS; pnpm may not be, so the round trip runs a Makefile target.
+  const t = await terminals.runScript(project.id, 'Makefile', 'build');
+  let seen = '';
+  for (let i = 0; i < 100 && !/building/.test(seen.replace(/echo building/g, '')); i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    seen = terminals.operatorTerminalScrollback(t.id);
+  }
+  check(/building/.test(seen.replace(/echo building/g, '')), 'Run opens a real shell PTY in the project and the target\'s output arrives in it', seen.slice(-300));
+  check(t.label === 'build' && t.cwd === dir && t.command === 'make build', 'the terminal is labelled with the script and runs in the project directory', t);
+  const run = db().prepare('SELECT project_id, cwd, source, name, command FROM operator_runs WHERE project_id = ?').get(project.id) as Record<string, string> | undefined;
+  check(run?.command === 'make build' && run.source === 'Makefile' && run.cwd === dir, 'the command is recorded as operator-run, with the directory and the script', run);
+  check(sessionRows() === beforeSessions && ledgerRows() === beforeLedger,
+    'your terminal adds no agent session and no policy-ledger row: it never passes through the gate as if it were the agent',
+    { sessions: sessionRows() - beforeSessions, ledger: ledgerRows() - beforeLedger });
+  check(terminals.listOperatorTerminals().some((x) => x.id === t.id), 'the terminal is listed among your terminals, apart from sessions');
+  terminals.writeOperatorTerminal(t.id, 'exit\r');
+  for (let i = 0; i < 50 && !terminals.listOperatorTerminals().find((x) => x.id === t.id)?.endedAt; i++) await new Promise((r) => setTimeout(r, 100));
+  const ended = terminals.listOperatorTerminals().find((x) => x.id === t.id);
+  check(ended?.endedAt !== null && ended?.exitCode === 0, 'typing exit ends the shell and its exit code is recorded', ended);
+  terminals.closeOperatorTerminal(t.id);
+  check(!terminals.listOperatorTerminals().some((x) => x.id === t.id), 'closing forgets the tab');
+}
+
 export async function runP8Smoke(check: Check, say: Say): Promise<void> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-p8-'));
   try {
     await runMacPresenceSmoke(check, say);
     await runAutomationSocketSmoke(check, say, tmp);
+    await runScriptLauncherSmoke(check, say, tmp);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

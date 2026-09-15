@@ -4,6 +4,7 @@ import { startMacPresence, stopMacPresence } from './mac-presence';
 import {
   automationLedger, automationStatus, startAutomationSocket, stopAutomationSocket, takeAutomationDrafts,
 } from './automation-socket';
+import * as terminalsMod from './operator-terminals';
 
 /**
  * The Mac around the app, local automation and attribution, wired once.
@@ -44,15 +45,31 @@ export function registerP8Ipc(handle: Handle): void {
   handle('automation:status', () => automationStatus());
   handle('automation:ledger', (limit: unknown) => automationLedger(typeof limit === 'number' ? limit : 50));
   handle('automation:takeDrafts', () => takeAutomationDrafts());
+
+  handle('scripts:list', (projectId: unknown, target: unknown) => terminalsMod.listScripts(projectId, target));
+  handle('scripts:favourite', (projectId: unknown, source: unknown, name: unknown, on: unknown) => terminalsMod.setScriptFavourite(projectId, source, name, on));
+  handle('scripts:run', (projectId: unknown, source: unknown, name: unknown, target: unknown) => terminalsMod.runScript(projectId, source, name, target));
+  handle('scripts:recentRuns', (projectId: unknown) => terminalsMod.recentOperatorRuns(projectId));
+  handle('opterm:open', (projectId: unknown, target: unknown) => terminalsMod.openOperatorTerminal(projectId, target));
+  handle('opterm:list', () => terminalsMod.listOperatorTerminals());
+  handle('opterm:scrollback', (id: unknown) => terminalsMod.operatorTerminalScrollback(id));
+  handle('opterm:close', (id: unknown) => terminalsMod.closeOperatorTerminal(id));
+  handle('opterm:resize', (id: unknown, cols: unknown, rows: unknown) => terminalsMod.resizeOperatorTerminal(id, cols, rows));
+  handle('opterm:write', (id: unknown, data: unknown) => terminalsMod.writeOperatorTerminal(id, data));
 }
 
 export function startP8Services(next: P8Deps): void {
   deps = next;
+  terminalsMod.setOperatorTerminalWindow(next.liveWindow);
   void applySettings(macSettings()).catch((error) => console.warn('[wanigan] P8 services did not start:', error));
 }
 
 export function stopP8Services(): void {
   stopMacPresence();
   stopAutomationSocket();
+  // The operator's terminals are the operator's, but a quit ends every child
+  // process Wanigan spawned; a shell left orphaned would outlive the window
+  // that was the only way to see it.
+  terminalsMod.closeAllOperatorTerminals();
   deps = null;
 }

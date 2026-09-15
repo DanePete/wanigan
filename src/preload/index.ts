@@ -50,6 +50,7 @@ import type {
 /* ── helper sweep · P8 mac ── */
 import type { MacSettings } from '../shared/mac-presence';
 import type { AutomationLedgerRow, AutomationStatus } from '../shared/automation-protocol';
+import type { OperatorTerminal, ScriptListing, ScriptSource } from '../shared/project-scripts';
 /* ── end helper sweep · P8 mac ── */
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -997,6 +998,40 @@ const api = {
       const h = (_e: unknown, draft: { sessionId: string; text: string }) => cb(draft);
       listen('automation:draft', h);
       return () => ipcRenderer.removeListener('automation:draft', h);
+    },
+  },
+  // The script launcher and the operator's own terminals. Main rebuilds every
+  // command line from the file on disk; the renderer names a script, not text.
+  scripts: {
+    list: (projectId: string, target?: string | null) => call<ScriptListing>('scripts:list', projectId, target ?? null),
+    favourite: (projectId: string, source: ScriptSource, name: string, on: boolean) =>
+      call<{ source: ScriptSource; name: string }[]>('scripts:favourite', projectId, source, name, on),
+    run: (projectId: string, source: ScriptSource, name: string, target?: string | null) =>
+      call<OperatorTerminal>('scripts:run', projectId, source, name, target ?? null),
+    recentRuns: (projectId: string) =>
+      call<{ at: number; cwd: string; source: string; name: string; command: string; exitCode: number | null }[]>('scripts:recentRuns', projectId),
+  },
+  operatorTerminal: {
+    open: (projectId: string, target?: string | null) => call<OperatorTerminal>('opterm:open', projectId, target ?? null),
+    list: () => call<OperatorTerminal[]>('opterm:list'),
+    scrollback: (id: string) => call<string>('opterm:scrollback', id),
+    close: (id: string) => call<OperatorTerminal[]>('opterm:close', id),
+    resize: (id: string, cols: number, rows: number) => call<boolean>('opterm:resize', id, cols, rows),
+    write: (id: string, data: string) => call<boolean>('opterm:write', id, data),
+    onData: (cb: (chunk: { id: string; data: string }) => void) => {
+      const h = (_e: unknown, chunk: { id: string; data: string }) => cb(chunk);
+      listen('opterm:data', h);
+      return () => ipcRenderer.removeListener('opterm:data', h);
+    },
+    onExit: (cb: (exit: { id: string; exitCode: number }) => void) => {
+      const h = (_e: unknown, exit: { id: string; exitCode: number }) => cb(exit);
+      listen('opterm:exit', h);
+      return () => ipcRenderer.removeListener('opterm:exit', h);
+    },
+    onList: (cb: (list: OperatorTerminal[]) => void) => {
+      const h = (_e: unknown, list: OperatorTerminal[]) => cb(list);
+      listen('opterm:list', h);
+      return () => ipcRenderer.removeListener('opterm:list', h);
     },
   },
   /* ── end helper sweep · P8 mac ── */

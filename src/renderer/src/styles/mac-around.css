@@ -13,3 +13,27 @@
 .p8-ledger { font-size: var(--t-small); }
 .p8-ledger .mark { white-space: nowrap; }
 .p8-when { white-space: nowrap; color: var(--text-faint); }
+
+/* The script launcher. */
+.p8-scripts { display: grid; gap: var(--s-2); width: min(720px, 100%); max-height: min(760px, 100%); overflow: auto; padding: var(--s-4); }
+.p8-target { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.p8-target .field { flex: 1 1 16rem; min-width: 0; }
+.p8-script-list { display: grid; gap: var(--s-1); margin: 0; padding: 0; list-style: none; }
+.p8-script { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: var(--s-2); padding: var(--s-2); border: 1px solid var(--line-soft); border-radius: var(--r-sm); }
+.p8-script[data-favourite='true'] { border-color: var(--line); background: var(--bg-sunk); }
+.p8-script-text { display: grid; gap: var(--s-1); min-width: 0; }
+.p8-script-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); font-size: var(--t-small); }
+.p8-script-body { display: block; font-size: var(--t-micro); color: var(--text-dim); white-space: pre-wrap; overflow-wrap: anywhere; }
+.p8-star { min-width: 2.25rem; justify-content: center; }
+.p8-dialog-foot { display: flex; justify-content: flex-end; gap: var(--s-2); }
+
+/* The operator's own terminals, docked above the space dock. */
+.p8-dock { position: fixed; right: var(--s-4); bottom: calc(var(--s-6) * 2.5); z-index: calc(var(--z-overlay) - 10); display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: var(--s-1); width: min(820px, calc(100vw - var(--s-4) * 2)); height: min(360px, 55vh); padding: var(--s-2) var(--s-3); box-shadow: var(--shadow-dock); }
+.p8-dock[data-collapsed='true'] { height: auto; grid-template-rows: auto; }
+.p8-dock-head { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
+.p8-dock-tabs { display: flex; flex: 1; gap: var(--s-1); min-width: 0; overflow-x: auto; }
+.p8-dock-tab { display: inline-flex; align-items: baseline; gap: var(--s-1); padding: var(--s-1) var(--s-2); border-radius: var(--r-sm); font-size: var(--t-small); color: var(--text-dim); white-space: nowrap; }
+.p8-dock-tab[aria-selected='true'] { background: var(--bg-sunk); color: var(--text); }
+.p8-dock-note { overflow-wrap: anywhere; }
+.p8-term-host { min-height: 0; border-radius: var(--r-sm); background: var(--terminal-bg); padding: var(--s-1); overflow: hidden; }
+.p8-term-surface { width: 100%; height: 100%; }

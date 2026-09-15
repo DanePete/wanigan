@@ -25,6 +25,8 @@ import { bindingMatches, modalOpen } from '../bindings';
 /* helper sweep · P2 attention */
 import { AwayNote, LimitResumeNote, ResumeWarningDialog, TabTriageMenu } from '../components/SessionTriage';
 import { OPEN_TIMELINE_EVENT } from '../components/attentionActions';
+/* helper sweep · P8 mac */
+import { OPEN_SCRIPTS_EVENT, type OpenScriptsDetail } from '../components/ScriptLauncher';
 import '../styles/sessions.css';
 
 /* ── phase 21 · what an attachment looks like ─────────────────────────
@@ -1046,6 +1048,16 @@ export default function Sessions({
                 {active?.status === 'exited' && <FocusBtn className="btn session-tab-close"
                   title="Close exited session (⌘⌫)" aria-label={`Close exited session for ${active.projectName}`}
                   onClick={() => void closeTab(active.id)}>Close session</FocusBtn>}
+                {/* helper sweep · P8 mac: the project's scripts, run in the operator's own terminal. */}
+                {(active?.projectId ?? selectedProjectId ?? projects[0]?.id) && (
+                  <FocusBtn className="btn session-scripts"
+                    aria-label="Scripts: run this project's package.json scripts, Makefile targets and justfile recipes in your own terminal"
+                    onClick={() => window.dispatchEvent(new CustomEvent<OpenScriptsDetail>(OPEN_SCRIPTS_EVENT, {
+                      detail: { projectId: (active?.projectId ?? selectedProjectId ?? projects[0]?.id)!, target: active?.worktree ?? null },
+                    }))}>
+                    <Icon name="play" /> Scripts
+                  </FocusBtn>
+                )}
                 <FocusBtn className="btn tab-new-session" onClick={() => setDialog(true)}
                   title="New session (⌘T)" aria-label="New session (Command T)"><Icon name="plus" /> New session</FocusBtn>
                 <FocusBtn className="btn session-side-panel-toggle" aria-pressed={detailsVisible}

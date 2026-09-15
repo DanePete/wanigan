@@ -37,6 +37,7 @@ import { AnnounceProvider, AnnounceRegion, type AnnounceAction } from './compone
 import HelperShellKeys from './components/HelperShellKeys';
 /* helper sweep · P8 mac */
 import { AutomationDraftLanding } from './components/MacAround';
+import OperatorTerminals from './components/ScriptLauncher';
 import { ViewMemoryProvider, ViewMemoryScope } from './components/viewMemory';
 import { COMPOSER_MENU_EVENT, readComposerShown, writeComposerShown } from './components/composerPreference';
 import { useThemePreference } from './theme';
@@ -1194,6 +1195,8 @@ export default function App() {
       <HelperShellKeys activeSessionId={activeSessionId} openSession={openFromTriage} />
       {/* helper sweep · P8 mac: a script's draft lands in the composer, unsent. */}
       <AutomationDraftLanding openSession={openFromTriage} />
+      {/* helper sweep · P8 mac: the script launcher and the operator's own terminals. */}
+      {!demoOn && <OperatorTerminals />}
       {startup?.phase === 'recovery' && (
         <section className="startup-recovery" role="alert">
           <div>
