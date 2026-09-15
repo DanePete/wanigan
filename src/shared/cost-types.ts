@@ -179,3 +179,37 @@ export type CostCausesReport = {
     note: string;
   };
 };
+
+export type ScheduleCostSettings = {
+  scheduleId: string;
+  admission: boolean;
+  reservePct: number;
+  quietMinutes: number;
+  remember: boolean;
+  keepRuns: number;
+};
+
+export type ScheduleCostDetail = {
+  settings: ScheduleCostSettings;
+  outcomes: import('./schedule-guard').ScheduleOutcome[];
+  /** The section the next fire would carry, exactly; null when memory is off or there is nothing yet. */
+  nextInjection: string | null;
+  /** What admission would say if the schedule fired now; null when it is off or would admit. */
+  admissionNow: string | null;
+  /** The most recent fires that carried a previous-runs section, with the exact text they carried. */
+  injectedFires: { at: number; status: string; text: string }[];
+};
+
+export type WindowShareReport = {
+  accounts: {
+    accountId: string;
+    label: string;
+    windowStart: number;
+    windowFrom: 'reported-reset' | 'rolling';
+    usedPercent: number | null;
+    readingAt: number | null;
+    totalTokens: number;
+    sessions: { sessionId: string; tokens: number; share: number; live: boolean; title: string | null; project: string | null }[];
+  }[];
+  note: string;
+};

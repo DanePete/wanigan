@@ -12,6 +12,8 @@ import { createWorktree, removeWorktree } from './worktrees';
 import { gateLaunch } from './config-pins';
 import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } from './learning';
 import { claimFireForRun, recordFireOutcome, type ScheduleFire } from './schedule';
+/* ── helper sweep · P4 cost ── */
+import { recordScheduleOutcome } from './schedule-cost';
 import { announceRunEnded } from './notify';
 import { refuseIfHalted } from './halt';
 import * as accounts from './accounts';
@@ -1425,6 +1427,17 @@ function reportRunEnded(runId: string): void {
         // the schedule history would then read as a measurement.
         `${total} ${total === 1 ? 'repository' : 'repositories'} — ${parts.join(', ') || 'no rows'} · $${(run?.cost_usd ?? 0).toFixed(2)} recorded.`,
       );
+      /* ── helper sweep · P4 cost ── */
+      // What the run found, kept for the schedule's next run if it opted in.
+      // The result text is the CLI's own `result` field, parsed here because
+      // schedule-cost.ts must not import this module.
+      const outputs = d.prepare('SELECT project_name, output, files_changed FROM headless_rows WHERE run_id=?')
+        .all(runId) as { project_name: string; output: string | null; files_changed: number | null }[];
+      recordScheduleOutcome({
+        scheduleId: fire.scheduleId, fireId: fire.fireId, runId, status: failed > 0 ? 'failed' : 'ok',
+        filesChanged: outputs.length ? outputs.reduce((n, r) => n + (r.files_changed ?? 0), 0) : null,
+        results: outputs.map((r) => ({ project: r.project_name, text: r.output ? parseCliOutput(r.output).message : null })),
+      });
     }
   } catch (error) {
     // The fan-out's own record is already written and is the authority. A

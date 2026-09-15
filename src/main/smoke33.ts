@@ -450,3 +450,124 @@ export async function runCostCausesSmoke(check: Check, say: Say): Promise<void> 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
+
+export async function runScheduleGuardSmoke(check: Check, say: Say): Promise<void> {
+  say('── schedules · admission rule and what the last runs found');
+  const { repo } = scratchRepo('wanigan-sched-guard-');
+  const { db } = await import('./db');
+  const { addProject, removeProject } = await import('./store');
+  const schedule = await import('./schedule');
+  const cost = await import('./schedule-cost');
+  const accounts = await import('./accounts');
+  const project = await addProject(repo);
+  const name = `smoke guard ${Date.now().toString(36)}`;
+  const sch = schedule.createSchedule({ name, cron: '* * * * *', kind: 'headless', payload: { prompt: 'Check the flaky tests.' }, projectId: project.id });
+  const claim = () => {
+    db().prepare('UPDATE schedules SET next_at=? WHERE id=?').run(Date.now() - 1, sch.id);
+    const row = db().prepare('SELECT * FROM schedules WHERE id=?').get(sch.id) as Parameters<typeof schedule.__test.claimDueSnapshot>[0];
+    return schedule.__test.claimDueSnapshot(row, Date.now());
+  };
+  const lastRun = () => db().prepare('SELECT status, detail, injected_context FROM schedule_runs WHERE schedule_id=? ORDER BY id DESC LIMIT 1').get(sch.id) as
+    { status: string; detail: string | null; injected_context: string | null };
+  const priorInput = db().prepare('SELECT at FROM operator_input WHERE id = 1').get() as { at: number } | undefined;
+  try {
+    const resolved = accounts.resolve({ harness: 'claude-code', projectId: project.id });
+    const accountId = resolved.account?.id ?? null;
+    db().prepare('DELETE FROM operator_input').run();
+    // Quiet period 0 first: other suites in this run submit prompts through the hook bus, which counts as input.
+    cost.setScheduleCostSettings(sch.id, { admission: true, reservePct: 20, quietMinutes: 0 });
+    if (accountId) db().prepare('DELETE FROM account_limit_readings WHERE account_id = ?').run(accountId);
+
+    check(claim() === false && lastRun().status === 'skipped' && /refuse on unknown/.test(lastRun().detail ?? ''),
+      'with admission on and no limit reading, the fire is skipped and history records "refuse on unknown"', JSON.stringify(lastRun()));
+
+    if (accountId) {
+      const record = (used: number, fetchedAt = Date.now()) => cost.recordLimitReadings([{
+        accountId, accountLabel: 'Smoke', harness: 'claude-code', identity: null, state: 'ok', detail: null,
+        fetchedAt, plan: null, windows: [{ kind: 'session', scope: null, usedPercent: used, resetsAt: null, resetsAtText: null }], factors: [],
+      }]);
+      record(90);
+      check(claim() === false && /below the 20% reserve/.test(lastRun().detail ?? ''),
+        'a fresh reading with 10% of the 5-hour window left skips the fire below the reserve', JSON.stringify(lastRun()));
+      record(10, Date.now() - 45 * 60_000);
+      check(claim() === false && /refuse on stale/.test(lastRun().detail ?? ''),
+        'a reading older than the freshness bound is refused as stale', JSON.stringify(lastRun()));
+      record(10);
+      cost.setScheduleCostSettings(sch.id, { quietMinutes: 10 });
+      cost.noteOperatorInput(Date.now() - 60_000);
+      check(claim() === false && /quiet period/.test(lastRun().detail ?? ''),
+        'input sent to a session a minute ago skips the fire inside the quiet period', JSON.stringify(lastRun()));
+      cost.setScheduleCostSettings(sch.id, { quietMinutes: 0 });
+      const admitted = claim();
+      check(admitted === true && lastRun().status === 'queued', 'with headroom and a quiet keyboard the fire is admitted and queued', JSON.stringify(lastRun()));
+      db().prepare('DELETE FROM queue WHERE label LIKE ?').run(`%${name}`);
+    } else {
+      check(true, 'no Claude account could be resolved in this environment; the refusal above is the whole admission check');
+    }
+
+    cost.setScheduleCostSettings(sch.id, { admission: false, remember: true, keepRuns: 2 });
+    for (let i = 0; i < 3; i++) {
+      cost.recordScheduleOutcome({
+        scheduleId: sch.id, fireId: 1000 + i, runId: `run_smoke_${i}`, status: i === 2 ? 'failed' : 'ok', filesChanged: i,
+        results: [{ project: 'guard', text: `run ${i} found things; ANTHROPIC_API_KEY=sk-ant-api03-SMOKESECRETVALUE${i} ${'x'.repeat(700)}` }],
+      });
+    }
+    const kept = cost.scheduleOutcomes(sch.id, 20);
+    check(kept.length === 2 && kept[0].status === 'failed' && (kept[0].excerpt ?? '').length <= 601 && !(kept[0].excerpt ?? '').includes('SMOKESECRET'),
+      'only the last N outcomes are kept, newest first, each redacted and cut to 600 characters', kept.map((k) => [k.status, k.excerpt?.length]));
+    const section = cost.previousRunsFor(sch.id);
+    check(!!section && section.startsWith('--- Previous runs of this schedule (recorded by Wanigan) ---'),
+      'the next fire’s section is delimited and headed as recorded by Wanigan', section?.slice(0, 80));
+    check(claim() === true, 'with memory on and admission off the fire is queued');
+    const queued = db().prepare('SELECT payload_json FROM queue WHERE label LIKE ? ORDER BY rowid DESC LIMIT 1').get(`%${name}`) as { payload_json: string } | undefined;
+    const prompt = queued ? (JSON.parse(queued.payload_json) as { prompt: string }).prompt : '';
+    check(prompt.startsWith('Check the flaky tests.\n\n--- Previous runs of this schedule') && lastRun().injected_context === section,
+      'the queued prompt carries the section and the fire records the exact text it was given', { prompt: prompt.slice(0, 120), injected: lastRun().injected_context?.slice(0, 60) });
+  } finally {
+    db().prepare('DELETE FROM queue WHERE label LIKE ?').run(`%${name}`);
+    db().prepare('DELETE FROM schedule_outcomes WHERE schedule_id = ?').run(sch.id);
+    db().prepare('DELETE FROM schedule_cost_settings WHERE schedule_id = ?').run(sch.id);
+    db().prepare('DELETE FROM operator_input').run();
+    if (priorInput) db().prepare('INSERT INTO operator_input (id, at) VALUES (1, ?)').run(priorInput.at);
+    schedule.deleteSchedule(sch.id);
+    try { removeProject(project.id); } catch { /* scratch */ }
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+}
+
+export async function runWindowShareSmoke(check: Check, say: Say): Promise<void> {
+  say('── usage · which session is eating the 5-hour window');
+  const { db } = await import('./db');
+  const accounts = await import('./accounts');
+  const cost = await import('./schedule-cost');
+  const account = accounts.list('claude-code')[0];
+  if (!account) { check(true, 'no Claude Code account exists in this environment, so there is no window to share'); return; }
+  const ids = [`share-a-${Date.now()}`, `share-b-${Date.now()}`];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-share-'));
+  try {
+    const now = Date.now();
+    for (const id of ids) {
+      db().prepare('INSERT INTO session_log (id, provider_id, project_path, project_name, started_at, account_id, title) VALUES (?,?,?,?,?,?,?)')
+        .run(id, 'claude', dir, 'share', now - 3600_000, account.id, id);
+    }
+    const ev = db().prepare('INSERT INTO session_api_events (session_id, at, kind, in_tokens, out_tokens, cache_read, cache_write) VALUES (?,?,?,?,?,?,?)');
+    ev.run(ids[0], now - 30 * 60_000, 'request', 1000, 500, 1500, 0);
+    ev.run(ids[1], now - 20 * 60_000, 'request', 500, 500, 0, 0);
+    ev.run(ids[1], now - 7 * 3600_000, 'request', 99_999, 0, 0, 0);
+    const report = cost.windowShare(new Set([ids[0]]));
+    const mine = report.accounts.find((a) => a.accountId === account.id);
+    const a = mine?.sessions.find((s) => s.sessionId === ids[0]);
+    const b = mine?.sessions.find((s) => s.sessionId === ids[1]);
+    check(!!a && !!b && a.tokens === 3000 && b.tokens === 1000 && a.live && !b.live,
+      'each session’s tokens in the window are summed per account, and a request from before the window is left out', { a, b });
+    check(!!a && !!mine && Math.abs(a.share - 3000 / mine.totalTokens) < 1e-9, 'a session’s share is its tokens over the account’s recorded total', mine?.totalTokens);
+    const headlessSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'main', 'headless.ts'), 'utf8');
+    check(/recordScheduleOutcome\(\{/.test(headlessSrc), 'a finished scheduled headless run hands its outcome to the schedule’s memory');
+  } finally {
+    for (const id of ids) {
+      db().prepare('DELETE FROM session_log WHERE id = ?').run(id);
+      db().prepare('DELETE FROM session_api_events WHERE session_id = ?').run(id);
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}

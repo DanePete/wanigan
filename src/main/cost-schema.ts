@@ -46,5 +46,54 @@ export function migrateCostSchema(d: Database.Database): void {
       PRIMARY KEY (session_id, key, value)
     );
     CREATE INDEX IF NOT EXISTS idx_worktrees_session ON worktrees(session_id);
+
+    -- Per-schedule opt-ins: the admission rule and the previous-runs memory.
+    -- A schedule with no row has both off, which is what every existing
+    -- schedule had before this table existed.
+    CREATE TABLE IF NOT EXISTS schedule_cost_settings (
+      schedule_id    TEXT PRIMARY KEY,
+      admission      INTEGER NOT NULL DEFAULT 0,
+      reserve_pct    REAL NOT NULL DEFAULT 20,
+      quiet_minutes  INTEGER NOT NULL DEFAULT 10,
+      remember       INTEGER NOT NULL DEFAULT 0,
+      keep_runs      INTEGER NOT NULL DEFAULT 5,
+      updated_at     INTEGER NOT NULL
+    );
+
+    -- What a schedule's runs came to, newest kept, excerpt already redacted.
+    CREATE TABLE IF NOT EXISTS schedule_outcomes (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      schedule_id   TEXT NOT NULL,
+      fire_id       INTEGER,
+      run_id        TEXT,
+      at            INTEGER NOT NULL,
+      status        TEXT NOT NULL,
+      files_changed INTEGER,
+      excerpt       TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_schedule_outcomes ON schedule_outcomes(schedule_id, at DESC);
+
+    -- The last limit reading per account window, so a scheduler in another
+    -- process (the launchd service) can apply admission without probing.
+    CREATE TABLE IF NOT EXISTS account_limit_readings (
+      account_id    TEXT NOT NULL,
+      harness       TEXT NOT NULL,
+      kind          TEXT NOT NULL,
+      scope         TEXT NOT NULL DEFAULT '',
+      used_percent  REAL NOT NULL,
+      resets_at     INTEGER,
+      fetched_at    INTEGER NOT NULL,
+      PRIMARY KEY (account_id, kind, scope)
+    );
+
+    -- When the operator last typed into a session, written at most every few
+    -- seconds. One row; the text is never stored.
+    CREATE TABLE IF NOT EXISTS operator_input (
+      id  INTEGER PRIMARY KEY CHECK (id = 1),
+      at  INTEGER NOT NULL
+    );
   `);
+  // The previous-runs section a fire handed to its run, kept on the fire so the
+  // schedule's history shows exactly what the agent was told.
+  addColumn('schedule_runs', 'injected_context', 'TEXT');
 }

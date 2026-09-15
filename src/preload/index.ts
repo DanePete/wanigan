@@ -7,7 +7,7 @@ import type { HandoverBegun, HandoverFinished } from '../shared/handover';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
 /* ── helper sweep · P4 cost ── */
 import type { SpendYieldReport } from '../shared/spend-yield';
-import type { AgentDefinitionsReport, CacheWarmthFacts, CodexCreditsReport, CostCausesReport, CodexLoaderReport, ProjectionBudgetView, ReferenceLintReport, SkillListingReport } from '../shared/cost-types';
+import type { AgentDefinitionsReport, CacheWarmthFacts, CodexCreditsReport, CostCausesReport, ScheduleCostDetail, ScheduleCostSettings, WindowShareReport, CodexLoaderReport, ProjectionBudgetView, ReferenceLintReport, SkillListingReport } from '../shared/cost-types';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AccountLimits,
@@ -916,6 +916,10 @@ const api = {
     codexCredits: (days?: number) => call<CodexCreditsReport>('cost:codexCredits', days),
     cacheWarmth: (sessionId: string) => call<CacheWarmthFacts>('cost:cacheWarmth', sessionId),
     causes: (days?: number, mcpDays?: number) => call<CostCausesReport>('cost:causes', days, mcpDays),
+    windowShare: () => call<WindowShareReport>('cost:windowShare'),
+    scheduleDetail: (scheduleId: string) => call<ScheduleCostDetail>('cost:scheduleDetail', scheduleId),
+    setScheduleSettings: (scheduleId: string, patch: Partial<Omit<ScheduleCostSettings, 'scheduleId'>>) =>
+      call<ScheduleCostSettings>('cost:setScheduleSettings', scheduleId, patch),
     codexLoader: (projectId: string) => call<CodexLoaderReport>('cost:codexLoader', projectId),
     referenceLint: (projectId: string) => call<ReferenceLintReport>('cost:referenceLint', projectId),
     agentDefinitions: (projectId: string) => call<AgentDefinitionsReport>('cost:agentDefinitions', projectId),

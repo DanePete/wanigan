@@ -235,6 +235,8 @@ export async function runSmoke(): Promise<void> {
     await p4.runCodexCreditsSmoke(check, say);
     await p4.runCacheWarmthSmoke(check, say);
     await p4.runCostCausesSmoke(check, say);
+    await p4.runScheduleGuardSmoke(check, say);
+    await p4.runWindowShareSmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

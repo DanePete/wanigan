@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Project } from '@shared/types';
 import { Chip, ConfirmNote, EmptyState, Explainer, Note, PageHead, Pill, Reading, SectionHead, Segmented, ago, num, usd } from '../components/bits';
+/* ── helper sweep · P4 cost ── */
+import ScheduleCostPanel from '../components/ScheduleCostPanel';
 import { useLiveViewMemory } from '../components/planningMemory';
 import { useViewMemory } from '../components/viewMemory';
 
@@ -295,6 +297,8 @@ export default function Schedules({ projects }: { projects:Project[] }) {
               {!current.projectId&&!declaresAllProjects(current.payload)&&<Note tone="warn">Needs attention: edit this schedule to pin a project or explicitly allow every registered repository.{projects.length===1?' This legacy schedule can run against the single project today; adding another causes its runs to be refused.':' Its runs are refused until its scope is resolved.'}</Note>}
             </>}
           </section>
+          {/* ── helper sweep · P4 cost ── */}
+          {current.kind==='headless'&&<ScheduleCostPanel key={`cost-${current.id}`} scheduleId={current.id} disabled={mutationDisabled} />}
           <section className="sc-section"><SectionHead label="Recorded history" count={current.runs} right={<span className="sc-fine">Latest 8 occurrences</span>} />
             {current.lastStatus&&<div className="sc-last"><Pill status={current.lastStatus} /><span>{outcome(current.lastStatus).text}</span>{current.lastAt&&<span>{ago(current.lastAt)}</span>}{current.lastDetail&&<p>{current.lastDetail}</p>}</div>}
             {histError[current.id]&&<Note tone="error">{histError[current.id]}</Note>}

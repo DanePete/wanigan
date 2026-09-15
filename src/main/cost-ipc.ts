@@ -1,3 +1,5 @@
+import { ipcMain, type IpcMainEvent } from 'electron';
+import { db } from './db';
 import { spendYield } from './spend-yield';
 import { projectById } from './store';
 import { codexLoaderReport } from './context/codex-loader';
@@ -8,6 +10,8 @@ import { setSkillModelInvocation, skillListing } from './skill-listing';
 import { codexCredits } from './codex-credits';
 import { cacheWarmth } from './cache-warmth';
 import { costCauses } from './cost-causes';
+import { admissionRefusal, noteOperatorInput, previousRunsFor, scheduleCostSettings, scheduleOutcomes, setScheduleCostSettings, windowShare } from './schedule-cost';
+import type { ScheduleCostDetail } from '../shared/cost-types';
 
 /**
  * IPC for the cost, quota and context surfaces, registered from index.ts's
@@ -24,6 +28,8 @@ type Handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => 
 
 export type CostIpcDeps = {
   liveSessionIds: () => ReadonlySet<string>;
+  /** index.ts's sender check, for the one fire-and-forget listener below. */
+  trusted: (event: IpcMainEvent) => boolean;
 };
 
 function days(value: unknown): number | undefined {
@@ -63,6 +69,36 @@ export function registerCostIpc(handle: Handle, deps: CostIpcDeps): void {
   // A write to a personal skill file, so it is its own explicit channel with
   // the choice spelled out; main re-reads the catalogue and refuses anything
   // that is not a personal skill Wanigan applied.
+  handle('cost:windowShare', () => windowShare(deps.liveSessionIds()));
+  handle('cost:scheduleDetail', (scheduleId: unknown): ScheduleCostDetail => {
+    const sid = id(scheduleId, 'That schedule');
+    const row = db().prepare('SELECT id, kind, payload_json, project_id FROM schedules WHERE id = ?').get(sid) as
+      { id: string; kind: string; payload_json: string; project_id: string | null } | undefined;
+    if (!row) throw new Error('That schedule no longer exists.');
+    let payload: unknown = null;
+    try { payload = JSON.parse(row.payload_json); } catch { /* an unreadable payload admits nothing and injects nothing */ }
+    const settings = scheduleCostSettings(sid);
+    const fires = db().prepare(`SELECT at, status, injected_context FROM schedule_runs WHERE schedule_id = ? AND injected_context IS NOT NULL
+      ORDER BY at DESC LIMIT 3`).all(sid) as { at: number; status: string; injected_context: string }[];
+    return {
+      settings,
+      outcomes: scheduleOutcomes(sid, settings.keepRuns),
+      nextInjection: row.kind === 'headless' ? previousRunsFor(sid) : null,
+      admissionNow: admissionRefusal({ id: sid, kind: row.kind, payload, projectId: row.project_id }, Date.now()),
+      injectedFires: fires.map((f) => ({ at: f.at, status: f.status, text: f.injected_context })),
+    };
+  });
+  handle('cost:setScheduleSettings', (scheduleId: unknown, patch: unknown) => {
+    const p = (patch && typeof patch === 'object' ? patch : {}) as Record<string, unknown>;
+    return setScheduleCostSettings(id(scheduleId, 'That schedule'), {
+      admission: p.admission as boolean | undefined, reservePct: p.reservePct as number | undefined,
+      quietMinutes: p.quietMinutes as number | undefined, remember: p.remember as boolean | undefined, keepRuns: p.keepRuns as number | undefined,
+    });
+  });
+  // A second listener on the PTY write channel, beside the one in index.ts that
+  // does the writing. It keeps only the time, for the admission rule's quiet
+  // period; the bytes are never looked at.
+  ipcMain.on('sessions:write', (event) => { if (deps.trusted(event)) noteOperatorInput(); });
   handle('cost:setSkillModelInvocation', (projectId: unknown, harness: unknown, skillPath: unknown, allow: unknown) =>
     setSkillModelInvocation({ projectId: optionalProject(projectId), harness, path: skillPath, allow }));
 }

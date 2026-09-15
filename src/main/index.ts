@@ -3305,7 +3305,7 @@ function registerIpc() {
   });
 
   /* ── helper sweep · P4 cost ── */
-  registerCostIpc(handle, { liveSessionIds });
+  registerCostIpc(handle, { liveSessionIds, trusted: (event) => trustedSender(event.sender, event.senderFrame) && !demoWindows.has(event.sender) });
 }
 
 /** Streams a run's results to disk without materialising them in memory. */

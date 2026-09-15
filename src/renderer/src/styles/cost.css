@@ -42,3 +42,11 @@
 .cost-chain td { vertical-align: top; }
 .cost-budget-note { margin-top: var(--s-2); }
 .cost-cold-cache { color: var(--warning); }
+
+/* Schedules: admission and memory. */
+.cost-check { display: flex; gap: var(--s-2); align-items: flex-start; line-height: 1.5; }
+.cost-inline-fields { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); }
+.cost-inline-fields .field { width: calc(var(--s-6) * 3); }
+.cost-injection { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: var(--t-small); background: var(--bg-sunk); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: var(--s-3); margin: 0; max-height: calc(var(--s-6) * 12); overflow: auto; }
+.cost-injected-fires > summary { cursor: pointer; color: var(--text-dim); font-size: var(--t-small); }
+.cost-share-meter { width: calc(var(--s-6) * 4); flex: none; }
