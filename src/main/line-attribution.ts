@@ -7,7 +7,7 @@ import { db } from './db';
 import { runGit } from './git';
 import { repoRootFor } from './worktrees';
 import {
-  addedRangesFromDiff, annotate, authorshipNote, inRanges, isUncommitted, mergeRanges, parseBlamePorcelain, rangeLines, turnForCommit,
+  addedRangesFromDiff, annotate, authorshipNote, inRanges, isUncommitted, mergeRanges, parseBlamePorcelain, rangeLines, turnForCommitByTree,
   type AnnotatedRange, type AttributionSummary, type Author, type NoteEntry, type Range,
 } from '../shared/line-attribution';
 
@@ -108,10 +108,21 @@ export async function computeAttribution(sessionId: unknown): Promise<Attributio
   // project checkout the operator commits too, and "made while the session
   // was running" would hand their commits to the agent.
   const commits = row.worktree ? await commitsInLifetime(cwd, row) : [];
+  // The tree each turn ended with, read only when there are commits to place:
+  // a commit of exactly that tree was made from that turn's work, and git's
+  // one-second commit time cannot always say which side of a boundary it fell.
+  const treeOf = async (rev: string) => (await runGit(cwd, ['rev-parse', '--verify', '--quiet', `${rev}^{tree}`], { timeout: 8_000 })).out.trim() || null;
+  const turnEnds: { turn: number; tree: string | null }[] = [];
+  if (commits.length) {
+    for (const span of turnSpans) {
+      const end = [...cps].reverse().find((e) => e.turn === span.turn && (e.kind === 'turn-end' || e.kind === 'session-end') && e.commit_hash);
+      if (end?.commit_hash) turnEnds.push({ turn: span.turn, tree: await treeOf(end.commit_hash) });
+    }
+  }
   for (const c of commits) {
     const parent = (await runGit(cwd, ['rev-parse', '--verify', '--quiet', `${c.hash}^`], { timeout: 8_000 })).out.trim() || null;
     const ranges = await diffRanges(cwd, parent, c.hash);
-    const turn = turnForCommit(turnSpans, c.at);
+    const turn = turnForCommitByTree(await treeOf(c.hash), turnEnds, turnSpans, c.at);
     for (const [file, r] of ranges) stored.push({ commit: c.hash, origin: 'commit', turn, file, ranges: r });
   }
 

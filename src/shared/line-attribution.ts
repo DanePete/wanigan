@@ -189,6 +189,29 @@ export function turnForCommit(turns: readonly { turn: number; startAt: number; e
   return candidates[0]?.turn ?? turnAt(turns.map((t) => ({ turn: t.turn, at: t.startAt })), commitSecondMs);
 }
 
+/**
+ * The turn a commit was made in, decided by content when the content can say.
+ *
+ * A commit whose tree is exactly the tree a turn ended with was made from that
+ * turn's work, whatever the clock says: an agent that commits right after its
+ * turn ends, in the same second the next turn starts, is still committing the
+ * earlier turn's change. The earliest such turn wins, because a later turn that
+ * changed nothing ends with the same tree. When no end tree matches (a partial
+ * commit, or no checkpoints), the timestamp rule in turnForCommit decides.
+ */
+export function turnForCommitByTree(
+  commitTree: string | null,
+  turnEnds: readonly { turn: number; tree: string | null }[],
+  turns: readonly { turn: number; startAt: number; endAt: number | null }[],
+  commitSecondMs: number,
+): number | null {
+  if (commitTree) {
+    const match = [...turnEnds].filter((t) => t.tree === commitTree).sort((a, b) => a.turn - b.turn)[0];
+    if (match) return match.turn;
+  }
+  return turnForCommit(turns, commitSecondMs);
+}
+
 /* ── the Git AI authorship log ───────────────────────────────────────── */
 
 export type NoteEntry = { file: string; key: string; ranges: Range[] };

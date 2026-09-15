@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  addedRangesFromDiff, annotate, authorshipNote, inRanges, mergeRanges, parseBlamePorcelain, rangeLines, rangeSpec, turnAt, turnForCommit, isUncommitted,
+  addedRangesFromDiff, annotate, authorshipNote, inRanges, mergeRanges, parseBlamePorcelain, rangeLines, rangeSpec, turnAt, turnForCommit, turnForCommitByTree, isUncommitted,
 } from './line-attribution.ts';
 
 test('ranges merge, count and print in the Git AI format', () => {
@@ -125,4 +125,17 @@ test('the authorship note follows the Git AI v3 shape and carries no prompt', ()
   assert.deepEqual(json.prompts, {});
   assert.deepEqual(json.sessions, { s_c9883b05a2487d: { agent_id: { tool: 'claude', id: 'conv-1', model: 'claude-opus-5' } } });
   assert.ok(!note.includes('empty.rs'), 'a file with no attested lines is left out');
+});
+
+test('a commit whose tree is exactly a turn\'s end tree belongs to that turn, whatever second it was stamped in', () => {
+  // Turn 1 ends at 10.2s, the commit is stamped 10s (git's whole second), turn 2 starts at 10.6s.
+  // By time alone the commit's second overlaps turn 2's start; by content it is turn 1's work.
+  const turns = [{ turn: 1, startAt: 9_100, endAt: 9_900 }, { turn: 2, startAt: 10_600, endAt: 11_500 }];
+  const ends = [{ turn: 1, tree: 'aaa' }, { turn: 2, tree: 'bbb' }];
+  assert.equal(turnForCommitByTree('aaa', ends, turns, 10_000), 1, 'content says turn 1');
+  assert.equal(turnForCommitByTree('bbb', ends, turns, 10_000), 2, 'content says turn 2');
+  assert.equal(turnForCommitByTree('ccc', ends, turns, 10_000), turnForCommit(turns, 10_000), 'a partial commit falls back to time');
+  assert.equal(turnForCommitByTree(null, ends, turns, 10_000), turnForCommit(turns, 10_000), 'an unreadable tree falls back to time');
+  assert.equal(turnForCommitByTree('aaa', [{ turn: 2, tree: 'aaa' }, { turn: 1, tree: 'aaa' }], turns, 10_000), 1,
+    'a later turn that changed nothing ends on the same tree; the earliest turn wins');
 });
