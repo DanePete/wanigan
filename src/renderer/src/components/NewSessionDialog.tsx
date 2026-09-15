@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AccountResolution, AgentAccount, LaunchModelCatalogue, LaunchOptions, Project, ProviderId, ProviderInfo, Session, TrustLevel } from '@shared/types';
+import type { AccountResolution, AgentAccount, BudgetState, LaunchModelCatalogue, LaunchOptions, Project, ProviderId, ProviderInfo, Session, TrustLevel } from '@shared/types';
 import { TRUST_LEVELS, permissionModeCopy, trustCopy, trustGlyph } from '@shared/types';
 import { intersectChoices, launchFieldChoices, type LaunchChoice } from '@shared/launch-fields';
 import { providerTint } from '@shared/provider-status';
-import { Hint, Note, Icon, SectionHead } from './bits';
+import type { ConfigPinCheck } from '@shared/exec-config';
+import { DEFAULT_DEPS_MODE, DEPS_MODES, DEPS_MODE_COPY, launchSetupNote, type DepsMode, type WorktreeSetupConfig } from '@shared/worktree-bootstrap';
+import { Hint, Mark, Note, Icon, SectionHead, Segmented, ago } from './bits';
 import '../styles/launch.css';
+import '../styles/worktree-setup.css';
 import { useDialog } from './useDialog';
 
 /** Same filled progression the session header uses: ◇ → ◈ → ◆ reads in greyscale. */
@@ -153,6 +156,15 @@ export default function NewSessionDialog({
   const [trust, setTrust] = useState<TrustLevel | null>(null);
   const [trustDefault, setTrustDefault] = useState<TrustLevel | null>(null);
   const [trustErr, setTrustErr] = useState<string | null>(null);
+  /*
+   * How a new worktree of this project gets its dependency folders, and what
+   * else a launch into one does. Read once isolation is ticked. The choice is
+   * the project's, so it is stored when the session starts rather than on each
+   * press: cancelling the dialog changes nothing.
+   */
+  const [wtSetup, setWtSetup] = useState<WorktreeSetupConfig | null>(null);
+  const [wtSetupErr, setWtSetupErr] = useState<string | null>(null);
+  const [depsMode, setDepsMode] = useState<DepsMode>(DEFAULT_DEPS_MODE);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   /*
@@ -390,6 +402,16 @@ export default function NewSessionDialog({
   // A folder that is not a git repo has no worktree to cut.
   useEffect(() => { if (!isRepo) setIsolate(false); }, [isRepo]);
 
+  useEffect(() => {
+    if (!isolate || !projectId) return;
+    let live = true;
+    setWtSetup(null); setWtSetupErr(null);
+    window.wanigan.worktrees.setup(projectId)
+      .then((config) => { if (live) { setWtSetup(config); setDepsMode(config.depsMode); } })
+      .catch((e) => { if (live) setWtSetupErr(e instanceof Error ? e.message : String(e)); });
+    return () => { live = false; };
+  }, [isolate, projectId]);
+
   /*
    * The one sentence standing between here and a running session, or null. It
    * gates the button AND is rendered next to it: a disabled primary action with
@@ -425,6 +447,42 @@ export default function NewSessionDialog({
 
   const needsCred = (missingCred?.length ?? 0) > 0;
 
+  // The repository's own executable configuration, compared with what was last
+  // let launch here. Read again for every project choice; accepting a change is
+  // a per-launch act and never carries over to another project.
+  const [configCheck, setConfigCheck] = useState<ConfigPinCheck | null>(null);
+  const [configRead, setConfigRead] = useState<'reading' | 'read' | 'failed'>('reading');
+  const [configAccepted, setConfigAccepted] = useState(false);
+  useEffect(() => {
+    let live = true;
+    setConfigCheck(null); setConfigAccepted(false);
+    if (!projectId) { setConfigRead('read'); return; }
+    setConfigRead('reading');
+    window.wanigan.configPins.check(projectId)
+      .then((check) => { if (live) { setConfigCheck(check); setConfigRead('read'); } })
+      .catch(() => { if (live) setConfigRead('failed'); });
+    return () => { live = false; };
+  }, [projectId]);
+  const configChanged = configCheck?.state === 'changed';
+
+  // A launch someone starts is never held by a budget: they are the one
+  // deciding to spend. They are told when this project or the whole account is
+  // already over, before the agent's first call adds to it — and told when the
+  // budgets could not be read, since no note is not the same as within budget.
+  const [overBudget, setOverBudget] = useState<BudgetState[] | 'unread'>([]);
+  useEffect(() => {
+    let live = true;
+    setOverBudget([]);
+    window.wanigan.budgets.breached()
+      .then((all) => {
+        if (!live) return;
+        setOverBudget(all.filter((b) => b.monthlyUsd > 0 && b.spentUsd >= b.monthlyUsd
+          && (b.scopeId === null || b.scopeId === projectId)));
+      })
+      .catch(() => { if (live) setOverBudget('unread'); });
+    return () => { live = false; };
+  }, [projectId]);
+
   const blocker = list.length === 0
     ? 'Wanigan has not loaded any agent profiles yet, so there is nothing to launch.'
     : !provider?.path
@@ -436,7 +494,9 @@ export default function NewSessionDialog({
         : needsCred
           ? `${provider?.label ?? 'This profile'} needs its own API key (${missingCred?.join(', ')}). `
             + 'Without it the session would run on the underlying CLI account instead of this provider.'
-          : null;
+          : configChanged && !configAccepted
+            ? 'This repository’s configuration changed since it was last accepted. Read the changes above and confirm them to launch.'
+            : null;
 
   async function saveCredential() {
     const id = missingCred?.[0];
@@ -469,7 +529,15 @@ export default function NewSessionDialog({
     if (missingField) { setErr(`${missingField.label} is required by this provider profile.`); return; }
     setBusy(true); setErr(null);
     try {
-      await onCreate({ providerId, projectId, model, effort, permissionMode, providerOptions, extraArgs, initialPrompt, isolate, accountId });
+      // Stored before the launch because createWorktree reads the project's
+      // choice from main, not from this request.
+      if (isolate && wtSetup && depsMode !== wtSetup.depsMode) {
+        try { await window.wanigan.worktrees.setDepsMode(projectId, depsMode); } catch (e) {
+          throw new Error(`The dependency folder choice was not saved, so nothing was launched: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      await onCreate({ providerId, projectId, model, effort, permissionMode, providerOptions, extraArgs, initialPrompt, isolate, accountId,
+        acceptConfigDigest: configChanged && configAccepted && configCheck ? configCheck.snapshot.digest : undefined });
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -1024,6 +1092,32 @@ export default function NewSessionDialog({
             )}
           </span>
         </label>
+        {isolate && project && (
+          <div className="wt-deps">
+            {wtSetupErr ? (
+              <p className="wt-setup-caption">
+                Wanigan could not read how {project.name}’s worktrees are set up: {wtSetupErr} The worktree still
+                gets whatever was last saved for the project.
+              </p>
+            ) : !wtSetup ? (
+              <p className="wt-setup-caption">Reading how {project.name}’s worktrees are set up…</p>
+            ) : (
+              <>
+                <div className="wt-setup-field">
+                  <span className="label">Dependency folders</span>
+                  <Segmented label="Dependency folders in the worktree" value={depsMode} onChange={setDepsMode}
+                             options={DEPS_MODES.map((mode) => ({ value: mode, label: DEPS_MODE_COPY[mode].label }))} />
+                </div>
+                <p className="wt-setup-caption">
+                  {DEPS_MODE_COPY[depsMode].hint}
+                  {depsMode !== wtSetup.depsMode && ` Saved as ${project.name}’s choice for every new worktree when this session starts.`}
+                </p>
+                {launchSetupNote(wtSetup) && <p className="wt-setup-caption">{launchSetupNote(wtSetup)}</p>}
+                <p className="wt-setup-caption">What the worktree got, and any setup output, shows on its branch in Changes.</p>
+              </>
+            )}
+          </div>
+        )}
 
         </section><section className="launch-section" id="launch-message"><SectionHead label="Give it a starting point" />
         <label className="label" htmlFor="launch-first-message">First message <span>(optional)</span></label>
@@ -1037,6 +1131,51 @@ export default function NewSessionDialog({
                  placeholder="--resume    --permission-mode plan"
                  value={extraArgs} onChange={(e) => setExtraArgs(e.target.value)} />
         </details>
+
+        {overBudget === 'unread' ? (
+          <Hint>Wanigan could not read this month’s budgets, so it cannot say whether this launch adds to one that is already over.</Hint>
+        ) : overBudget.length > 0 && (
+          <Note tone="warn">
+            <strong>
+              {overBudget.map((b) => b.scopeName).join(' and ')} {overBudget.length === 1 ? 'is' : 'are'} over this month’s budget
+            </strong>
+            {' — '}
+            {overBudget.map((b) => `$${b.spentUsd.toFixed(2)} of $${b.monthlyUsd.toFixed(2)}`).join('; ')}.
+            {' '}This session is not held, because you are starting it. Headless runs, scheduled batches and
+            autopilot goal tasks there wait in the queue until the budget is raised in Insights.
+          </Note>
+        )}
+        {configCheck?.state === 'first-use' && (
+          <Hint>This repository runs {configCheck.summary} of its own before the agent starts. Launching pins that configuration, and Wanigan asks again if it changes.</Hint>
+        )}
+        {configChanged && configCheck?.diff && (
+          <section className="launch-config-review" aria-labelledby="launch-config-title">
+            <h3 id="launch-config-title">This repository’s configuration changed</h3>
+            <p className="launch-config-lead">
+              These run before the agent does anything. Compared with the configuration
+              {configCheck.lastAccepted ? ` ${configCheck.lastAccepted.how === 'reviewed' ? 'you reviewed' : 'pinned at first launch'} ${ago(configCheck.lastAccepted.at)}` : ' last accepted'}:
+            </p>
+            <ul className="launch-config-list">
+              {configCheck.diff.added.map((item) => (
+                <li key={`a:${item.id}`}><Mark glyph="+" word="added" tone="warn" /><span className="launch-config-what"><b>{item.label}</b> · {item.file}</span><code>{item.shown}</code></li>
+              ))}
+              {configCheck.diff.changed.map(({ before, after }) => (
+                <li key={`c:${after.id}`}><Mark glyph="~" word="changed" tone="warn" /><span className="launch-config-what"><b>{after.label}</b> · {after.file}</span>
+                  <code>{before.shown === after.shown ? `${after.shown} — the value changed and is not shown` : `${before.shown} → ${after.shown}`}</code></li>
+              ))}
+              {configCheck.diff.removed.map((item) => (
+                <li key={`r:${item.id}`}><Mark glyph="−" word="removed" tone="quiet" /><span className="launch-config-what"><b>{item.label}</b> · {item.file}</span><code>{item.shown}</code></li>
+              ))}
+              {configCheck.snapshot.unreadable.map((file) => (
+                <li key={`u:${file}`}><Mark glyph="?" word="unreadable" tone="bad" /><span className="launch-config-what"><b>{file}</b> exists but could not be read, so what it runs is unknown</span></li>
+              ))}
+            </ul>
+            <label className="launch-config-accept">
+              <input type="checkbox" checked={configAccepted} onChange={(event) => setConfigAccepted(event.target.checked)} />
+              I have read these changes. Launch with them.
+            </label>
+          </section>
+        )}
 
         {err && (
           // role="alert" because this text appears where nothing was, after a
@@ -1060,6 +1199,13 @@ export default function NewSessionDialog({
             <div><dt>Workspace</dt><dd>{isolate ? 'New isolated worktree' : 'Project checkout'}</dd></div>
             <div><dt>Trust</dt><dd>{trust ? trustCopy(trust).label : trustErr ? 'Could not read' : 'Reading…'}</dd></div>
             <div><dt>Permissions</dt><dd>{permissionMode || 'CLI default'}</dd></div>
+            <div><dt>Repository config</dt><dd>{configRead === 'reading' ? 'Reading…'
+              : configRead === 'failed' ? 'Could not read'
+                : !configCheck || configCheck.state === 'none' ? 'Runs nothing of its own'
+                  : configCheck.state === 'first-use' ? 'Pinned at this launch'
+                    : configCheck.state === 'accepted'
+                      ? (configCheck.lastAccepted?.how === 'reviewed' ? 'Matches what you reviewed' : 'Matches the first-launch pin')
+                      : configAccepted ? 'Changed, confirmed' : 'Changed since accepted'}</dd></div>
           </dl>
           <nav aria-label="Launch sections">
             {[['launch-space', 'Agent and space'], ['launch-controls', 'Session controls'], ['launch-message', initialPrompt.trim() ? 'First message added' : 'Add a first message']].map(([id, label]) =>

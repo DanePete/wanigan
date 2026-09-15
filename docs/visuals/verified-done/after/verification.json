@@ -1,0 +1,10 @@
+{
+  "at": "2026-09-15T04:28:13.980Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; no real agent calls",
+  "mode": "after",
+  "checks": [
+    "the task says it is not verified because its gate failed, shows the failure and what was typed back, flags the tests, and holds Mark complete with the reason beside it",
+    "the goal's gate choice states what each option does and what hand-back costs before it is chosen, and choosing Run the gate stores the gate with hand-back off"
+  ],
+  "errors": []
+}

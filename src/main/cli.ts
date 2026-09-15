@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { db } from './db';
 import * as batch from './batch';
-import { enqueue } from './queue';
+import { enqueue, SESSION_NOT_QUEUED } from './queue';
 import type { BatchRow, QueueKind } from '../shared/types';
 
 /**
@@ -39,8 +39,10 @@ type Command = (typeof COMMANDS)[number];
 // Scout rows are created only by the fixed weekly schedule. Keeping this
 // generic CLI out of that lane prevents an arbitrary JSON payload from being
 // mistaken for a source-research authorization; use the Scout dashboard for a
-// visible manual pass or its explicit weekly setting instead.
-const QUEUE_KINDS: QueueKind[] = ['session', 'headless', 'batch'];
+// visible manual pass or its explicit weekly setting instead. Interactive
+// sessions are not queued work at all (queue.ts SESSION_NOT_QUEUED), and an
+// item this command wrote for one used to wait for ever.
+const QUEUE_KINDS: QueueKind[] = ['headless', 'batch'];
 
 function isCommand(v: string): v is Command {
   return (COMMANDS as readonly string[]).includes(v);
@@ -287,7 +289,11 @@ function cmdExport(args: string[]): number {
 function cmdQueue(args: string[]): number {
   const [kind, ...rest] = args;
   if (!kind || !rest.length) {
-    err('queue needs a kind and a label: wanigan queue <session|headless|batch> <label> [payload-json]');
+    err('queue needs a kind and a label: wanigan queue <headless|batch> <label> [payload-json]');
+    return USAGE;
+  }
+  if (kind === 'session') {
+    err(SESSION_NOT_QUEUED);
     return USAGE;
   }
   if (!QUEUE_KINDS.includes(kind as QueueKind)) {
@@ -309,9 +315,8 @@ function cmdQueue(args: string[]): number {
 
   const item = enqueue(kind as QueueKind, label, payload);
   out(`${item.id}  ${item.kind}  ${item.state}  ${item.label}`);
-  // Nothing starts here on purpose: a session needs a window to attach to, and
-  // a runner that ran in this short-lived process would be killed the moment
-  // the command returned.
+  // Nothing starts here on purpose: a runner that ran in this short-lived
+  // process would be killed the moment the command returned.
   out('Queued. It starts when Wanigan is open and a slot for that kind is free.');
   return OK;
 }
@@ -485,7 +490,7 @@ function cmdHelp(): number {
   status <runId>               one run: progress, batches, cost, last events
   poll                         one poll cycle against the Batches API
   export <runId> <file>        results to .csv or .jsonl (extension decides)
-  queue <kind> <label> [json]  queue work: kind is session, headless or batch
+  queue <kind> <label> [json]  queue work: kind is headless or batch
   sessions [limit]             recent agent sessions
   phone-launch                 why the phone's Start-an-agent form can or
                                cannot launch: the two opt-ins, the projects it

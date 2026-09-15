@@ -1,0 +1,16 @@
+{
+  "at": "2026-09-15T03:04:15.088Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; no real agent calls",
+  "mode": "after",
+  "checks": [
+    "Settings lists transcript recall per project, says the MCP server being off makes it inert, and switches one project by id",
+    "attachment retention previews a window (what would go and why the rest stays) without deleting, waits for a confirmation, then reports the measured pass",
+    "the launch dialog names the over-budget scope and figures, and says the session a person starts is not held",
+    "Insights says a scope that is over holds its queued headless runs, scheduled batches and autopilot goal tasks",
+    "Knowledge records a contradiction between two selected items only with a reason, then resolves it from Evidence by keeping one and retiring the other",
+    "the provider choice for the next task shows that kind’s recorded outcomes and the chosen provider’s own, and says Wanigan picks nothing from them",
+    "each Recent row opens its finished run’s turns by that run’s id, and a turn’s diff reads without resuming it"
+  ],
+  "errors": [],
+  "failures": []
+}

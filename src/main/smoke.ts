@@ -223,6 +223,36 @@ export async function runSmoke(): Promise<void> {
     await runPreflightSmoke(check, say);
     const { runOrbStorySmoke } = await import('./smoke14');
     runOrbStorySmoke(check, say);
+    const { runReviewDecisionSmoke, runConfigPinSmoke, runAttentionReasonSmoke } = await import('./smoke19');
+    await runReviewDecisionSmoke(check, say);
+    await runConfigPinSmoke(check, say);
+    await runAttentionReasonSmoke(check, say);
+    const {
+      runTranscriptPlacementSmoke, runQueueSessionKindSmoke, runBudgetGateSmoke, runRecallSwitchSmoke, runAttachmentRetentionSmoke,
+      runContradictionSmoke, runOutcomeEvidenceSmoke, runPastTurnsSmoke,
+    } = await import('./smoke20');
+    await runTranscriptPlacementSmoke(check, say);
+    await runQueueSessionKindSmoke(check, say);
+    await runBudgetGateSmoke(check, say);
+    await runRecallSwitchSmoke(check, say);
+    await runAttachmentRetentionSmoke(check, say);
+    await runContradictionSmoke(check, say);
+    runOutcomeEvidenceSmoke(check, say);
+    await runPastTurnsSmoke(check, say);
+    const { runDeferredApprovalSmoke } = await import('./smoke21');
+    await runDeferredApprovalSmoke(check, say);
+    const { runGoalPlanSmoke } = await import('./smoke22');
+    await runGoalPlanSmoke(check, say);
+    const { runSandboxAndCredentialSmoke } = await import('./smoke24');
+    await runSandboxAndCredentialSmoke(check, say);
+    const { runVerifiedDoneSmoke } = await import('./smoke26');
+    await runVerifiedDoneSmoke(check, say);
+    const { runAttemptsSmoke } = await import('./smoke27');
+    await runAttemptsSmoke(check, say);
+    const { runWorktreeBootstrapSmoke } = await import('./smoke16');
+    await runWorktreeBootstrapSmoke(check, say);
+    const { runCodexHookSmoke } = await import('./smoke28');
+    await runCodexHookSmoke(check, say);
     const { runKeymapSmoke } = await import('./smoke23');
     await runKeymapSmoke(check, say);
   } catch (e) {

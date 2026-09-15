@@ -6,6 +6,8 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { app } from 'electron';
 import { db } from './db';
 import { recordGoalTrace } from './goal-trace';
+import { planFromHook, recordGoalPlan } from './goal-plans';
+import type { ClaudeSandboxSettings } from '../shared/sandbox-policy';
 import { getSetting } from './settings';
 import { answerFor, contextForSession, trustBriefing } from './policy';
 import type {
@@ -21,6 +23,10 @@ import type {
  * its own opaque bearer capability. A process-wide bearer plus a caller-owned
  * session id would let one agent forge events for another pane; the capability
  * is the server-side binding between this request and its Wanigan session.
+ *
+ * Codex posts to the same endpoint through a fixed forwarding command, under an
+ * observe-only registration whose requests are stored and never answered with
+ * anything but `{}` (codex-hooks.ts).
  */
 
 /** Anything longer than this is a paste, not a summary. */
@@ -65,15 +71,31 @@ let learningBriefing: ((
 ) => string | null | Promise<string | null>) | null = null;
 const listeners = new Set<Listener>();
 const sockets = new Set<Socket>();
-/** sessionId → the settings file and opaque capability written for it. */
-const registered = new Map<string, {
+/**
+ * A registration whose requests are recorded and never answered: no policy
+ * decision, no SessionStart briefing, no model-switch correction, and a reply
+ * of `{}` to everything. Codex's hooks are these (codex-hooks.ts).
+ */
+export type ObserveOnlyRegistration = {
+  /** The payload as the store reads it; the harness's field names are its own. */
+  read: (raw: HookInput) => { event: string; input: HookInput };
+  /** After each event from this registration is stored and emitted. */
+  onEvent?: (event: SessionEvent) => void;
+};
+
+type Registration = {
+  /** The settings file, or for an observe-only registration its headers file. */
   file: string;
   projectPath: string;
   capability: string;
   learningContext?: LearningBriefingContext;
   /** The event names this session's settings file asked for. */
   events: HookEventName[];
-}>();
+  observeOnly?: ObserveOnlyRegistration;
+};
+
+/** sessionId → the settings file and opaque capability written for it. */
+const registered = new Map<string, Registration>();
 /** Capability → session id. This is intentionally process-local and revocable. */
 const capabilitySessions = new Map<string, string>();
 const CAPABILITY_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -266,6 +288,8 @@ export type HookSettingsOptions = {
    * and unknown earns the base event set only.
    */
   cliVersion?: string | null;
+  /** Claude Code's sandbox block, when sandboxing applies to this launch (shared/sandbox-policy.ts). */
+  sandbox?: ClaudeSandboxSettings | null;
 };
 
 /** The leading dotted triple of a `--version` line; null when there is none. */
@@ -325,8 +349,7 @@ export function writeHookSettings(
   const live = info;
   if (!live) return null;
 
-  let capability = randomBytes(32).toString('base64url');
-  while (capabilitySessions.has(capability)) capability = randomBytes(32).toString('base64url');
+  const capability = mintCapability();
   const url = `http://127.0.0.1:${live.port}/hook`;
   const handler = { type: 'http', url, headers: { Authorization: `Bearer ${capability}` } };
 
@@ -336,20 +359,82 @@ export function writeHookSettings(
     hooks[ev] = [TOOL_MATCHED.has(ev) ? { matcher: '*', hooks: [handler] } : { hooks: [handler] }];
   }
 
+  // The sandbox rides in the same --settings file on purpose: the binary
+  // honours its keys from CLI settings and ignores them from a repository.
+  const file = writeCredentialFile(`${safeName(waniganSessionId)}.json`,
+    JSON.stringify(options.sandbox ? { hooks, sandbox: options.sandbox } : { hooks }, null, 2));
+  register(waniganSessionId, { file, projectPath, capability, learningContext, events });
+  return file;
+}
+
+function mintCapability(): string {
+  let capability = randomBytes(32).toString('base64url');
+  while (capabilitySessions.has(capability)) capability = randomBytes(32).toString('base64url');
+  return capability;
+}
+
+/** Writes one bearer-carrying file into the hooks directory, owner-only, and returns its path. */
+function writeCredentialFile(name: string, content: string): string {
   const dir = hooksDir();
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { fs.chmodSync(dir, 0o700); } catch { /* best effort on odd filesystems */ }
-  const file = path.join(dir, `${safeName(waniganSessionId)}.json`);
-  fs.writeFileSync(file, JSON.stringify({ hooks }, null, 2), { mode: 0o600 });
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, content, { mode: 0o600 });
   // writeFileSync honours mode only when it creates the file; an overwrite keeps
   // whatever the old one had. This file is a bearer credential.
   try { fs.chmodSync(file, 0o600); } catch { /* best effort on odd filesystems */ }
-
-  const previous = registered.get(waniganSessionId);
-  if (previous) capabilitySessions.delete(previous.capability);
-  registered.set(waniganSessionId, { file, projectPath, capability, learningContext, events });
-  capabilitySessions.set(capability, waniganSessionId);
   return file;
+}
+
+function register(waniganSessionId: string, registration: Registration): void {
+  const previous = registered.get(waniganSessionId);
+  if (previous) {
+    capabilitySessions.delete(previous.capability);
+    // A replaced registration of the other kind leaves a differently named file.
+    if (previous.file !== registration.file) { try { fs.rmSync(previous.file, { force: true }); } catch { /* already gone */ } }
+  }
+  registered.set(waniganSessionId, registration);
+  capabilitySessions.set(registration.capability, waniganSessionId);
+}
+
+/**
+ * Registers an observe-only session and writes its headers file: the one
+ * place its bearer exists outside this process. Returns the file and the
+ * listener URL, or null when hooks are off or the listener never came up.
+ *
+ * A headers file rather than a settings file because the harness cannot post
+ * HTTP itself: a fixed forwarding command reads the bearer from this file with
+ * `curl -H @file`, so it is never in argv, in the command or in the
+ * environment. It lives beside the settings files and is swept with them. The
+ * trust gate refuses that folder to Claude sessions; a Codex session is not
+ * under the gate, so its agent, running as the same user, can read it, exactly
+ * as it could already read the settings files beside it. What such a bearer
+ * can post is observe-only: events, never a decision.
+ */
+export function writeObserveOnlyHookHeaders(
+  waniganSessionId: string,
+  projectPath: string,
+  events: HookEventName[],
+  observeOnly: ObserveOnlyRegistration,
+): { file: string; url: string } | null {
+  if (!hooksEnabled()) return null;
+  const live = info;
+  if (!live) return null;
+  const capability = mintCapability();
+  const file = writeCredentialFile(`${safeName(waniganSessionId)}.headers`,
+    `Authorization: Bearer ${capability}\nContent-Type: application/json\n`);
+  register(waniganSessionId, { file, projectPath, capability, events: [...events], observeOnly });
+  return { file, url: `http://127.0.0.1:${live.port}/hook` };
+}
+
+/**
+ * Whether a session launched now could be given hooks: 'off' when the operator
+ * turned the hook bus off, 'down' when it is on and the listener is not
+ * running. Read at the moment of asking, like writeHookSettings reads it.
+ */
+export function hookListenerState(): 'ready' | 'off' | 'down' {
+  if (!hooksEnabled()) return 'off';
+  return info ? 'ready' : 'down';
 }
 
 /**
@@ -389,7 +474,9 @@ function sweepStaleSettings() {
   let names: string[];
   try { names = fs.readdirSync(dir); } catch { return; }
   for (const name of names) {
-    if (!name.endsWith('.json')) continue;
+    // Settings files and observe-only headers files carry the same kind of
+    // dead bearer, and neither is ever reused by a later run.
+    if (!name.endsWith('.json') && !name.endsWith('.headers')) continue;
     const file = path.join(dir, name);
     try {
       // Only files older than this process, so a second Wanigan instance does
@@ -447,6 +534,25 @@ async function onRequest(req: http.IncomingMessage, res: http.ServerResponse) {
   if (!input) return reply(res, 400, {});
 
   const at = Date.now();
+
+  // An observe-only registration is answered before anything reads its event
+  // name, so no branch below can be reached from it: no policy decision, no
+  // ledger row, no held approval, no briefing and no model-switch correction.
+  // `{}` is also what the forwarding command would discard if it were
+  // anything else. Its body is read through the harness's own mapping, which
+  // keeps only what the store may hold.
+  const observer = registered.get(sessionId)?.observeOnly;
+  if (observer) {
+    reply(res, 200, {});
+    const read = observer.read(input);
+    const stored = store(sessionId, clip(str(read.event), 64) ?? 'Unknown', read.input, at, { observeOnly: true });
+    if (stored) {
+      emit(stored);
+      try { observer.onEvent?.(stored); } catch { /* the event row stands either way */ }
+    }
+    return;
+  }
+
   const event = clip(str(input.hook_event_name), 64) ?? 'Unknown';
 
   // Answer first, bookkeep after: a tool call must never wait on a SQLite write.
@@ -671,7 +777,9 @@ const MAX_PENDING = 500;
 
 let insertStmt: import('better-sqlite3').Statement | null = null;
 
-function store(sessionId: string, event: string, input: HookInput, at: number): SessionEvent | null {
+function store(
+  sessionId: string, event: string, input: HookInput, at: number, options: { observeOnly?: boolean } = {},
+): SessionEvent | null {
   const toolName = clip(str(input.tool_name), 64);
   // A subagent pairs on its own id in its own namespace. It has to: a
   // SubagentStart carries neither tool_use_id nor tool_name, so the tool key
@@ -738,7 +846,15 @@ function store(sessionId: string, event: string, input: HookInput, at: number): 
     };
     recordGoalTrace({ sessionId, source: 'hook', kind: event, status: ok === 0 ? 'failed' : 'recorded',
       toolName, summary, durationMs, costUsd: 0, inTokens: 0, outTokens: 0, createdAt: at });
-    if (event === 'PostModelSwitch') {
+    // A goal task's plan, proposed and then accepted, becomes that goal's
+    // evidence and reaches the tasks after it (goal-plans.ts). Only goal work
+    // records anything; its own try, like the trace, never costs a tool call.
+    const plan = planFromHook(event, toolName, input as Record<string, unknown>);
+    if (plan) { try { recordGoalPlan(sessionId, plan, at); } catch { /* the event row above stands either way */ } }
+    // Never from an observe-only registration: none is asked for that event,
+    // so one arriving there is a body that named it, and a body does not get
+    // to rewrite which model a session's record says it ran.
+    if (event === 'PostModelSwitch' && !options.observeOnly) {
       // The row above is the evidence; this is the correction it implies. Kept
       // inside its own try because a stale model field is a smaller wrong than
       // an agent whose turn died on Wanigan's bookkeeping.
