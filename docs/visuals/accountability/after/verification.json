@@ -1,0 +1,23 @@
+{
+  "at": "2026-09-15T03:37:59.412Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic git, policy and prefs; no real agent calls",
+  "mode": "after",
+  "checks": [
+    "the commit box shows the exact Assisted-by lines, labelled as only the sessions Wanigan started and recorded here since the last commit, unclipped",
+    "pressing Commit scans first: three findings listed as file:line, rule and masked line, nothing committed, and the way past is a button named Commit anyway",
+    "Commit anyway hands main the digest of exactly the findings shown, with the trailer lines the box displayed",
+    "a clean scan commits straight through, carrying no acknowledgement for main to accept",
+    "a scan that fails says the check did not run and commits nothing, rather than reading as clean",
+    "with the setting off the preview disappears after the next read, and nothing in the box claims attribution",
+    "when the lines cannot be worked out the box says so, and that a commit would be refused for the same reason",
+    "pressing Push scans the unpushed commits first, names the commit each finding came from, and offers Push anyway instead of the plain confirmation",
+    "Push anyway sends the digest of the findings that were shown",
+    "a clean push states what was read and that a clean result is not proof, and pushes without an acknowledgement",
+    "the ledger reads \"Chain verified through 1,204 records · head signed\", counts the 38 pre-chain records as unverified, and names the signing key",
+    "Verify now re-reads the chain; a break names the record, the tool and what kind of change it was, and counts only the records before it as verified",
+    "a chain that recomputes under a head it no longer matches is reported as a mismatch, not as verified",
+    "a check that fails reads \"Not verified\" with the reason, and nothing from the earlier success stays on screen",
+    "Commit attribution is off by default, says what an absent line does not mean, and turning it on writes assisted_by_trailers"
+  ],
+  "errors": []
+}
