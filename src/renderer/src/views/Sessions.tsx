@@ -23,6 +23,8 @@ import type { Tone } from '../components/bits';
 import { useDialog } from '../components/useDialog';
 import { bindingMatches, modalOpen } from '../bindings';
 import '../styles/sessions.css';
+/* helper sweep · P5 runtime */
+import SessionRuntimeDetails from '../components/SessionRuntimeDetails';
 
 /* ── phase 21 · what an attachment looks like ─────────────────────────
    The shapes live in the main process (src/main/attachments.ts) and cross the
@@ -1167,7 +1169,7 @@ export default function Sessions({
                 {active.status === 'running' && (
                   <FocusBtn className="faint session-status-action" style={{ fontSize: 'var(--t-small)', color: 'var(--bad)', borderRadius: 'var(--r-sm)' }}
                             title="End the session. The conversation stays in Recent below and can be resumed exactly."
-                            onClick={() => window.wanigan.sessions.kill(active.id)}>end session</FocusBtn>
+                            onClick={() => { void window.wanigan.processes.capture().catch(() => false).then(() => window.wanigan.sessions.kill(active.id)); }}>end session</FocusBtn>
                 )}
                 {/* Renders nothing unless another account of this harness could
                     take the conversation, so it costs an exited session nothing. */}
@@ -1401,7 +1403,6 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
   // disappear merely because it does not accept Claude slash commands.
   const codexControls = harness === 'codex' && session.status === 'running';
   const hasControls = !!session.worktree || tunable || codexControls || declaresTuning;
-  if (!elevated && !hasControls) return null;
 
   return (
     <div className="session-config">
@@ -1426,6 +1427,8 @@ function SessionHeader({ session, defaultTrust, onRefresh, provider }: {
           {codexControls && <CodexControlBar session={session} />}
         </div>
       </details>}
+      {/* helper sweep · P5 runtime: what this session runs and left running. */}
+      <SessionRuntimeDetails session={session} />
     </div>
   );
 }

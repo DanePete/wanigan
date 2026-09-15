@@ -5,6 +5,9 @@ import type { DiscoveryResult } from '../shared/discovery';
 import type { HandoffPlan, HandoffResult } from '../shared/handoff';
 import type { HandoverBegun, HandoverFinished } from '../shared/handover';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
+/* ── helper sweep · P5 runtime ── */
+import type { SessionProcesses, StopSurvivorResult } from '../shared/process-tree';
+/* ── end helper sweep · P5 runtime ── */
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AccountLimits,
@@ -834,6 +837,14 @@ const api = {
     // dock's state in its label; this is the one fact it is told.
     composerShown: (shown: boolean) => ipcRenderer.send('menu:composerShown', shown),
   },
+  /* ── helper sweep · P5 runtime ── */
+  processes: {
+    forSession: (sessionId: string) => call<SessionProcesses>('processes:forSession', sessionId),
+    survivors: () => call<SessionProcesses[]>('processes:survivors'),
+    capture: () => call<boolean>('processes:capture'),
+    stop: (sessionId: string, pid: number) => call<StopSurvivorResult>('processes:stop', sessionId, pid),
+  },
+  /* ── end helper sweep · P5 runtime ── */
   on: {
     startupChanged: (cb: (state: { phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }) => void) => {
       const h = (_e: unknown, state: { phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }) => cb(state);

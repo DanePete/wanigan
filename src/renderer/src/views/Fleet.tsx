@@ -8,6 +8,8 @@ import { Chip, EmptyState, Note, PageHead, SectionHead, Segmented, Stat, ago, nu
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import ObservedBand from '../components/ObservedBand';
 import TeamPanel from '../components/TeamPanel';
+/* helper sweep · P5 runtime */
+import SessionProcessesPanel, { SurvivorsAcrossSessions } from '../components/SessionProcesses';
 
 /**
  * The whole crew on one screen — the view you leave open on a second monitor
@@ -368,7 +370,10 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
     try {
       const ok = action === 'interrupt'
         ? await window.wanigan.sessions.interrupt(session.id)
-        : await window.wanigan.sessions.kill(session.id);
+        // Recorded first, while the ppid chain still proves which processes
+        // are this session's; afterwards a reparented dev server is nobody's.
+        : await window.wanigan.processes.capture().catch(() => false)
+          .then(() => window.wanigan.sessions.kill(session.id));
       setActed(ok
         ? {
             ok: true,
@@ -633,6 +638,8 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
         </div>
       )}
 
+      <SurvivorsAcrossSessions sessions={sessions} />
+
       <details className="fleet-ledger">
         <summary>Compare session metrics <span className="faint">· {num(shown.length)} sessions</span></summary>
         <FleetTable rows={shown} att={attention} usageOf={usageOf} spark={spark}
@@ -743,6 +750,8 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onContr
                    <span style={{ color: 'var(--critical)' }}>−{num(u.linesRemoved)}</span></>}
           sub={`${num(u.commits)} commits`} />
       </div>
+
+      <SessionProcessesPanel session={s} />
 
       <div className="fleet-foot faint">
         <span>

@@ -1,0 +1,28 @@
+/* helper sweep · P5 runtime: processes a session runs and leaves behind, and
+   the other runtime-hygiene readings that share its shapes. */
+.proc-panel { display: grid; gap: var(--s-2); min-width: 0; }
+.proc-panel .sec-head { margin: 0; }
+.proc-reading { margin: 0; color: var(--text-faint); font-size: var(--t-small); line-height: 1.5; max-width: 72ch; }
+.proc-tree { display: grid; gap: var(--s-2); }
+.proc-figures { display: flex; flex-wrap: wrap; gap: var(--s-4); font-size: var(--t-small); color: var(--text-dim); }
+.proc-figures strong { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.proc-ports, .proc-survivors { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-1); }
+.proc-ports li { display: flex; flex-wrap: wrap; gap: var(--s-3); font-size: var(--t-small); align-items: baseline; }
+.proc-port-owner { color: var(--text-faint); min-width: 0; overflow-wrap: anywhere; }
+.proc-port-owner code, .proc-command { font-family: var(--mono); font-size: var(--t-micro); overflow-wrap: anywhere; }
+.proc-left { display: grid; gap: var(--s-2); }
+.proc-survivor { display: grid; gap: var(--s-1); padding-block: var(--s-2); border-bottom: 1px solid var(--line-soft); }
+.proc-survivor:last-child { border-bottom: 0; }
+.proc-survivor-line { display: flex; gap: var(--s-3); align-items: baseline; min-width: 0; }
+.proc-pid { flex: none; font-size: var(--t-small); color: var(--text-dim); }
+.proc-command { color: var(--text); min-width: 0; }
+.proc-survivor-facts { display: flex; flex-wrap: wrap; gap: var(--s-3); align-items: center; font-size: var(--t-small); color: var(--text-faint); }
+.proc-stop { margin-left: auto; }
+.proc-across { display: grid; gap: var(--s-3); margin-block: var(--s-4); padding: var(--s-4); border: 1px solid var(--warning); border-radius: var(--r-md); background: var(--bg-raised); min-width: 0; }
+.proc-across .sec-head { margin: 0; }
+.proc-across-session { display: grid; gap: var(--s-1); }
+.proc-across-name { font-size: var(--t-body); font-weight: 550; overflow-wrap: anywhere; }
+.session-runtime { border-top: 1px solid var(--line-soft); padding-block: var(--s-2); }
+.session-runtime > summary { cursor: pointer; font-size: var(--t-small); font-weight: 550; }
+.session-runtime > summary span { color: var(--text-faint); margin-left: var(--s-2); font-weight: 400; }
+.session-runtime-body { display: grid; gap: var(--s-3); padding-top: var(--s-2); }

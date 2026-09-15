@@ -106,6 +106,10 @@ import { companion } from './companion';
 import * as accounts from './accounts';
 import * as usage from './usage';
 import * as scout from './improvement-scout';
+/* ── helper sweep · P5 runtime ── */
+import { registerP5Ipc } from './ipc-p5';
+import * as processWatch from './process-watch';
+/* ── end helper sweep · P5 runtime ── */
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -1440,7 +1444,24 @@ async function startAttendedServices(): Promise<StartupState> {
       // Last, once nothing is left that would replace them.
       registerHaltStopper({
         name: 'sessions',
-        stop: () => ({ name: 'sessions', stopped: killAll(), note: 'every live agent was signalled; working trees are untouched' }),
+        stop: async () => {
+          // helper sweep · P5 runtime: record every session's process tree
+          // while the ppid chain still proves whose each process is, then
+          // count what outlived the signal. The count is said, never acted on:
+          // a dev server an agent left behind is the operator's to stop.
+          await processWatch.captureBeforeStop();
+          const stopped = killAll();
+          const left = await processWatch.survivorCountAfter(new Promise<void>((resolve) => {
+            const poll = setInterval(() => {
+              if (!listSessions().some((s) => s.status !== 'exited')) { clearInterval(poll); resolve(); }
+            }, 100);
+            setTimeout(() => { clearInterval(poll); resolve(); }, 3_000);
+          }));
+          const survivors = left === 0
+            ? 'no process Wanigan recorded in their trees is still running'
+            : `${left} process${left === 1 ? '' : 'es'} they started ${left === 1 ? 'is' : 'are'} still running — see Fleet › Still running after the session ended`;
+          return { name: 'sessions', stopped, note: `every live agent was signalled; working trees are untouched; ${survivors}` };
+        },
       });
 
       stage = 'mobile control setup';
@@ -3301,6 +3322,11 @@ function registerIpc() {
   ipcMain.on('menu:composerShown', (event, shown: unknown) => {
     if (trustedSender(event.sender, event.senderFrame) && typeof shown === 'boolean') setComposerShown(shown);
   });
+
+  /* ── helper sweep · P5 runtime ── */
+  processWatch.setProcessSessionSource(() => listSessions());
+  registerP5Ipc(handle);
+  /* ── end helper sweep · P5 runtime ── */
 }
 
 /** Streams a run's results to disk without materialising them in memory. */
