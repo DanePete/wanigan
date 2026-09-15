@@ -1409,7 +1409,7 @@ export default function App() {
                      onNeedKey={() => jumpToSettings({ tab: 'agents', section: 'Claude Platform API key' })}
                      seed={batchSeed} onSeedConsumed={() => setBatchSeed(null)} />
           )}
-          {tab === 'insights' && <InsightsView />}
+          {tab === 'insights' && <InsightsView onOpenSession={openSession} />}
           {tab === 'usage' && <UsageView />}
           {tab === 'learning' && (
             <Learning projectId={projectId} projects={projects} providers={providers}

@@ -2,6 +2,8 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
+/* ── helper sweep · P4 cost ── */
+import { migrateCostSchema } from './cost-schema';
 
 let _db: Database.Database | null = null;
 
@@ -596,6 +598,8 @@ function migratePhases(d: Database.Database) {
   migrateCheckpoints(d);
   migrateConversationFlags(d);
   migrateClaudeUsage(d);
+  /* ── helper sweep · P4 cost ── */
+  migrateCostSchema(d);
 }
 
 /**

@@ -106,6 +106,8 @@ import { companion } from './companion';
 import * as accounts from './accounts';
 import * as usage from './usage';
 import * as scout from './improvement-scout';
+/* ── helper sweep · P4 cost ── */
+import { registerCostIpc } from './cost-ipc';
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -3301,6 +3303,9 @@ function registerIpc() {
   ipcMain.on('menu:composerShown', (event, shown: unknown) => {
     if (trustedSender(event.sender, event.senderFrame) && typeof shown === 'boolean') setComposerShown(shown);
   });
+
+  /* ── helper sweep · P4 cost ── */
+  registerCostIpc(handle, { liveSessionIds });
 }
 
 /** Streams a run's results to disk without materialising them in memory. */

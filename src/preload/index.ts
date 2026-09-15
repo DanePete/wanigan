@@ -5,6 +5,8 @@ import type { DiscoveryResult } from '../shared/discovery';
 import type { HandoffPlan, HandoffResult } from '../shared/handoff';
 import type { HandoverBegun, HandoverFinished } from '../shared/handover';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
+/* ── helper sweep · P4 cost ── */
+import type { SpendYieldReport } from '../shared/spend-yield';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AccountLimits,
@@ -906,6 +908,10 @@ const api = {
       listen('menu:route', h);
       return () => ipcRenderer.removeListener('menu:route', h);
     },
+  },
+  /* ── helper sweep · P4 cost ── */
+  cost: {
+    yield: (days?: number) => call<SpendYieldReport>('cost:yield', days),
   },
 };
 

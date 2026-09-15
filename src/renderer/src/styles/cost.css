@@ -1,0 +1,34 @@
+/* Cost, quota and context: spend yield, cost by cause, the Codex instruction
+   budget, and the small panels that hang off sessions and schedules. Every
+   colour, size and space here is a token from index.css; nothing is spelled. */
+
+.cost-card { display: flex; flex-direction: column; gap: var(--s-3); min-width: 0; }
+.cost-stats { margin-top: var(--s-2); }
+.cost-table-wrap { overflow-x: auto; min-width: 0; }
+.cost-table { min-width: calc(var(--page-max) * 0.6); }
+.cost-table td { vertical-align: top; }
+.cost-cell-money { display: block; font-variant-numeric: tabular-nums; }
+.cost-cell-sub { display: block; font-size: var(--t-tiny); color: var(--text-dim); line-height: 1.4; }
+.cost-row-toggle { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-1); min-width: 0; max-width: 100%; text-align: left; background: none; border: 0; padding: 0; color: var(--text); cursor: pointer; }
+.cost-row-toggle::before { content: '▸'; color: var(--text-faint); font-size: var(--t-tiny); }
+.cost-row-toggle[aria-expanded='true']::before { content: '▾'; }
+.cost-model { font-size: var(--t-tiny); color: var(--text-dim); }
+.cost-drill > td { background: var(--bg-sunk); }
+.cost-drill-list { list-style: none; margin: 0; padding: var(--s-2) 0; display: flex; flex-direction: column; gap: var(--s-2); }
+.cost-drill-list > li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); min-width: 0; }
+.cost-drill-list > li > .trunc { flex: 1 1 12rem; min-width: 0; }
+.cost-fine { font-size: var(--t-small); line-height: 1.55; }
+.cost-est { color: var(--text-dim); font-style: italic; }
+
+/* Cost by cause: one block per cause, each its own number. */
+.cost-causes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-4); }
+.cost-cause { border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: var(--card-pad-tight); display: flex; flex-direction: column; gap: var(--s-2); min-width: 0; }
+.cost-cause h4 { font-size: var(--t-body); font-weight: 600; }
+.cost-cause-value { font-size: var(--t-lead); font-variant-numeric: tabular-nums; }
+.cost-cause-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-1); font-size: var(--t-small); }
+.cost-cause-list > li { display: flex; gap: var(--s-2); align-items: baseline; min-width: 0; }
+.cost-cause-list > li > .trunc { flex: 1 1 auto; min-width: 0; }
+.cost-cause-list button { background: none; border: 0; padding: 0; color: var(--accent-ink); cursor: pointer; text-align: left; }
+@media (max-width: 760px) {
+  .cost-causes { grid-template-columns: minmax(0, 1fr); }
+}

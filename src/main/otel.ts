@@ -8,6 +8,8 @@ import { mergeCodexUsage } from './codex-usage';
 import { backendCostBasis, providerById } from './providers';
 import { sessionEffortRollup, type EffortRollupRow } from './spend';
 import { recordGoalTrace } from './goal-trace';
+/* ── helper sweep · P4 cost ── */
+import { recordVcsAttributes } from './vcs-telemetry';
 
 /**
  * Claude Code exports OpenTelemetry natively. Wanigan spawns the CLI, so it
@@ -274,6 +276,8 @@ function ingest(path: string, raw: Buffer, encoding: string | string[] | undefin
   const payload: unknown = JSON.parse(body.toString('utf8'));
   if (path === '/v1/metrics') recordMetrics(parseMetrics(payload));
   else if (path === '/v1/logs') recordEvents(parseLogs(payload));
+  /* ── helper sweep · P4 cost ── */
+  if (path !== '/v1/traces') recordVcsAttributes(payload);
   // /v1/traces is answered but not read. Traces are switched off in otelEnv;
   // an inherited OTEL_TRACES_EXPORTER would otherwise retry against a 404.
 }
@@ -325,6 +329,13 @@ export function otelEnv(waniganSessionId: string): Record<string, string> {
     OTEL_LOG_ASSISTANT_RESPONSES: 'false',
     OTEL_LOG_TOOL_CONTENT: 'false',
     OTEL_LOG_RAW_API_BODIES: 'false',
+    /* ── helper sweep · P4 cost ── */
+    // vcs.* repository attributes on every metric and event (2.1.269+; an older
+    // CLI ignores an env var it does not know, unlike a settings key). Spend
+    // yield joins cost to the repository the CLI saw. OTEL_LOG_TOOL_DETAILS,
+    // which would add the head revision to commit events, stays unset: it also
+    // logs tool parameters, and this receiver banks no content.
+    OTEL_METRICS_INCLUDE_REPOSITORY: '1',
   };
 }
 
