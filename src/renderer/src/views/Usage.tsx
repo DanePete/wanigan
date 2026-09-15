@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountLimits, ConsumptionPoint, LimitWindow, ModelConsumption, UsageSnapshot } from '@shared/types';
 import { harnessLabel } from '@shared/types';
+import type { ObservedLimitsReport } from '@shared/status-line';
 import { EmptyState, Note, PageHead, SectionHead, Stat } from '../components/bits';
+import { ObservedLimits } from '../components/ObservedLimits';
 import { useViewMemory } from '../components/viewMemory';
 import '../styles/usage.css';
 
@@ -338,13 +340,25 @@ export default function Usage() {
   }, [days]);
 
   useEffect(() => { load(false); }, [load]);
-  // Only the countdown ticks on its own. Re-probing on a timer would start a
-  // real CLI process behind the operator's back, so a fresh reading is always
-  // something they asked for.
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
+
+  // What running sessions' status lines reported. A database read, so unlike
+  // the probe it is allowed on a timer.
+  const [observed, setObserved] = useState<ObservedLimitsReport | null>(null);
+  const [observedErr, setObservedErr] = useState<string | null>(null);
+  const readObserved = useCallback(() => {
+    window.wanigan.usage.observed()
+      .then((next) => { setObserved(next); setObservedErr(null); })
+      .catch((e) => setObservedErr(msg(e)));
   }, []);
+  useEffect(() => { readObserved(); }, [readObserved]);
+
+  // Only the countdown and that local read tick on their own. Re-probing on a
+  // timer would start a real CLI process behind the operator's back, so a fresh
+  // probe reading is always something they asked for.
+  useEffect(() => {
+    const timer = setInterval(() => { setNow(Date.now()); readObserved(); }, 30_000);
+    return () => clearInterval(timer);
+  }, [readObserved]);
 
   /**
    * Where an exhausted window still has room on another account.
@@ -419,7 +433,7 @@ export default function Usage() {
                   aria-label="Consumption window">
             {WINDOWS.map((value) => <option key={value} value={value}>Last {value} days</option>)}
           </select>
-          <button className="btn btn-primary" disabled={busy} onClick={() => load(true)}>
+          <button className="btn btn-primary" disabled={busy} onClick={() => { load(true); readObserved(); }}>
             {busy ? 'Reading…' : 'Refresh limits'}
           </button>
         </div>
@@ -485,7 +499,21 @@ export default function Usage() {
               <p className="u-provenance">Provider readings. Token counts cannot tell you what a plan has left.</p>
               {snap === null && !err && <p className="faint">Reading each account…</p>}
               {snap === null && err && <EmptyState posture="could-not-read" title="Could not read your accounts" cue={err} />}
-              {limits.map((limit) => <LimitCard key={limit.accountId} limits={limit} now={now} />)}
+              {limits.map((limit) => (
+                <Fragment key={limit.accountId}>
+                  <LimitCard limits={limit} now={now} />
+                  {/* The status line is Claude Code's; a Codex login has no relay to read. */}
+                  {limit.harness === 'claude-code' && (
+                    <ObservedLimits label={limit.accountLabel} account={observed?.accounts.find((a) => a.accountId === limit.accountId)}
+                                    report={observed} error={observedErr} />
+                  )}
+                </Fragment>
+              ))}
+              {/* Readings filed under no account, or one Wanigan no longer lists,
+                  have no probe card to sit beside; they are still readings. */}
+              {!selected && (observed?.accounts ?? [])
+                .filter((a) => a.readings > 0 && !limits.some((l) => l.accountId === a.accountId))
+                .map((a) => <ObservedLimits key={`observed:${a.accountId ?? 'none'}`} label={a.accountLabel} account={a} report={observed} error={null} />)}
               {snap && limits.length === 0 && <p className="faint">{selected ? 'No limit reading for this account.' : 'No accounts are configured yet.'}</p>}
             </section>
             <section className="u-consumption" aria-label="Recorded consumption">

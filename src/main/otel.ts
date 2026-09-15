@@ -8,6 +8,9 @@ import { mergeCodexUsage } from './codex-usage';
 import { backendCostBasis, providerById } from './providers';
 import { sessionEffortRollup, type EffortRollupRow } from './spend';
 import { recordGoalTrace } from './goal-trace';
+import { flags } from './settings';
+import { buildInteractions, spansFromOtlp, TRACE_TURN_CAP, type SessionTraces, type StoredSpan } from '../shared/trace-spans';
+import { spendReport, type SpendSourceReport, type SpendSourceRow } from '../shared/spend-sources';
 
 /**
  * Claude Code exports OpenTelemetry natively. Wanigan spawns the CLI, so it
@@ -16,9 +19,9 @@ import { recordGoalTrace } from './goal-trace';
  * the agent reports about itself.
  *
  * The receiver is hand-rolled against the OTLP/JSON wire format rather than
- * built on the otel SDK: this understands seven metrics and three log events,
- * and a dependency that ships a full pipeline to do that is not a trade worth
- * making inside an Electron main process.
+ * built on the otel SDK: this understands seven metrics, three log events and
+ * one beta trace tree, and a dependency that ships a full pipeline to do that
+ * is not a trade worth making inside an Electron main process.
  */
 
 /** Datapoints arriving from a process that never got Wanigan's resource attribute. */
@@ -71,8 +74,8 @@ const TRACKED_METRICS: Record<string, string[]> = {
  * table again.
  *
  * `claude_code.llm_request` and `claude_code.tool` are NOT candidates: they are
- * tracing span names in the CLAUDE_CODE_ENHANCED_TELEMETRY_BETA module, and
- * otelEnv() pins OTEL_TRACES_EXPORTER to 'none'.
+ * tracing span names in the CLAUDE_CODE_ENHANCED_TELEMETRY_BETA module, which
+ * arrive as spans on /v1/traces when Settings turns traces on, and never here.
  */
 const LOG_KINDS: Record<string, ApiEvent['kind']> = {
   api_request: 'request',
@@ -272,10 +275,16 @@ function ingest(path: string, raw: Buffer, encoding: string | string[] | undefin
   if (enc && enc.includes('gzip')) body = gunzipSync(raw, { maxOutputLength: MAX_BODY_BYTES });
 
   const payload: unknown = JSON.parse(body.toString('utf8'));
-  if (path === '/v1/metrics') recordMetrics(parseMetrics(payload));
-  else if (path === '/v1/logs') recordEvents(parseLogs(payload));
-  // /v1/traces is answered but not read. Traces are switched off in otelEnv;
-  // an inherited OTEL_TRACES_EXPORTER would otherwise retry against a 404.
+  if (path === '/v1/metrics') {
+    recordMetrics(parseMetrics(payload));
+  } else if (path === '/v1/logs') {
+    recordEvents(parseLogs(payload));
+  } else {
+    // Stored whatever the setting says now: an export only arrives from a
+    // session launched with traces on, and turning the switch off afterwards
+    // is a decision about new launches, not a reason to drop a running one's.
+    recordSpans(payload);
+  }
 }
 
 /* ── environment ─────────────────────────────────────────────────────── */
@@ -303,6 +312,7 @@ export function otelEnv(waniganSessionId: string): Record<string, string> {
     OTEL_METRICS_EXPORTER: 'otlp',
     OTEL_LOGS_EXPORTER: 'otlp',
     OTEL_TRACES_EXPORTER: 'none',
+    ...traceEnv(waniganSessionId, p, t),
     OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json',
     OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${p}`,
     OTEL_METRIC_EXPORT_INTERVAL: '10000',
@@ -325,6 +335,42 @@ export function otelEnv(waniganSessionId: string): Record<string, string> {
     OTEL_LOG_ASSISTANT_RESPONSES: 'false',
     OTEL_LOG_TOOL_CONTENT: 'false',
     OTEL_LOG_RAW_API_BODIES: 'false',
+  };
+}
+
+/**
+ * The beta per-prompt trace exporter, when Settings has it on; nothing when off,
+ * which leaves otelEnv's OTEL_TRACES_EXPORTER=none in force.
+ *
+ * Read out of the 2.1.270 binary: the CLI builds a tracer only when telemetry
+ * is on AND CLAUDE_CODE_ENHANCED_TELEMETRY_BETA is truthy, gives it one batch
+ * processor per OTEL_TRACES_EXPORTER entry, and schedules exports every
+ * OTEL_TRACES_EXPORT_INTERVAL milliseconds. Every trace variable is pinned by
+ * its signal-specific name, which the SDK prefers over the generic one, for the
+ * same reason the metrics headers are: a traces endpoint or header left in the
+ * operator's shell would otherwise send a span tree of their session somewhere
+ * that is not this machine, or strip the token so every export 401s.
+ *
+ * The launch is recorded, because a session that asked for traces and got none
+ * is a different state from one that never asked, and the Timeline says which.
+ */
+function traceEnv(waniganSessionId: string, port: number, token: string): Record<string, string> {
+  if (!flags().tracesBeta) return {};
+  try {
+    db().prepare('INSERT OR IGNORE INTO session_trace_requests (session_id, requested_at) VALUES (?, ?)')
+      .run(attrSafe(waniganSessionId), Date.now());
+  } catch (error) {
+    // The spans still arrive and still draw; only "no trace for this turn"
+    // loses its footing, and a launch is never refused over bookkeeping.
+    console.warn('[wanigan] could not record that this session asked for traces:', error);
+  }
+  return {
+    CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: '1',
+    OTEL_TRACES_EXPORTER: 'otlp',
+    OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: 'http/json',
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: `http://127.0.0.1:${port}/v1/traces`,
+    OTEL_EXPORTER_OTLP_TRACES_HEADERS: `x-wanigan-token=${token}`,
+    OTEL_TRACES_EXPORT_INTERVAL: '5000',
   };
 }
 
@@ -430,9 +476,38 @@ function attrsKey(attrs: Record<string, string>, keys: string[]): string {
 
 type MetricDelta = { sessionId: string; metric: string; attrs: string; value: number; at: number };
 
-function parseMetrics(payload: unknown): MetricDelta[] {
+/**
+ * One cost or token datapoint by where inside the session it was spent.
+ *
+ * Read out of the 2.1.270 binary, the CLI builds both metrics' attributes as
+ * { model, speed (only when "fast"), query_source, effort, agent.name,
+ * skill.name, plugin.name, marketplace.name, mcp_server.name, mcp_tool.name }
+ * and adds `type` for tokens. A name the CLI will not log arrives as `custom`
+ * or `third-party` unless OTEL_LOG_TOOL_DETAILS=1 is in the environment the
+ * session inherited; Wanigan never sets it. These go to their own table, not
+ * into session_metrics' key: splitting that key by nine attributes would turn
+ * every running total into one row per turn.
+ */
+type SpendDelta = {
+  sessionId: string; day: string; metric: 'cost' | 'tokens'; tokenType: string; querySource: string;
+  agent: string; skill: string; plugin: string; mcpServer: string; effort: string; speed: string; model: string;
+  value: number; at: number;
+};
+
+const SPEND_METRICS: Record<string, SpendDelta['metric']> = {
+  'claude_code.cost.usage': 'cost',
+  'claude_code.token.usage': 'tokens',
+};
+
+/** Part of a primary key: a value that is not a name must not become an unbounded key. */
+function keyPart(attrs: Record<string, string>, key: string): string {
+  return (attrs[key] ?? '').trim().slice(0, 128);
+}
+
+function parseMetrics(payload: unknown): { metrics: MetricDelta[]; spend: SpendDelta[] } {
   const out: MetricDelta[] = [];
-  if (!isRecord(payload)) return out;
+  const spend: SpendDelta[] = [];
+  if (!isRecord(payload)) return { metrics: out, spend };
 
   for (const rm of asArray(payload.resourceMetrics)) {
     if (!isRecord(rm)) continue;
@@ -458,11 +533,21 @@ function parseMetrics(payload: unknown): MetricDelta[] {
           const attrs = attrsToObject(isRecord(dp) ? dp.attributes : null);
           const at = (isRecord(dp) ? millisOf(dp.timeUnixNano) : null) ?? Date.now();
           out.push({ sessionId, metric: name, attrs: attrsKey(attrs, keys), value, at });
+          const kind = SPEND_METRICS[name];
+          if (kind) {
+            spend.push({
+              sessionId, day: dayKey(new Date(at)), metric: kind, tokenType: kind === 'tokens' ? keyPart(attrs, 'type') : '',
+              querySource: keyPart(attrs, 'query_source'), agent: keyPart(attrs, 'agent.name'),
+              skill: keyPart(attrs, 'skill.name'), plugin: keyPart(attrs, 'plugin.name'),
+              mcpServer: keyPart(attrs, 'mcp_server.name'), effort: keyPart(attrs, 'effort'),
+              speed: keyPart(attrs, 'speed'), model: keyPart(attrs, 'model'), value, at,
+            });
+          }
         }
       }
     }
   }
-  return out;
+  return { metrics: out, spend };
 }
 
 type EventDelta = {
@@ -592,8 +677,13 @@ function detailFor(kind: ApiEvent['kind'], a: Record<string, string>): string | 
 
 /* ── writes ──────────────────────────────────────────────────────────── */
 
-function recordMetrics(deltas: MetricDelta[]): void {
-  if (!deltas.length) return;
+/**
+ * One transaction for both tables, so an export that fails part-way leaves the
+ * session's total and its attribution agreeing — the exporter is answered 200
+ * either way and will not send the datapoints again.
+ */
+function recordMetrics({ metrics, spend }: { metrics: MetricDelta[]; spend: SpendDelta[] }): void {
+  if (!metrics.length) return;
   const d = db();
   const up = d.prepare(`
     INSERT INTO session_metrics (session_id, metric, attrs, value, last_at)
@@ -602,9 +692,42 @@ function recordMetrics(deltas: MetricDelta[]): void {
       value   = value + excluded.value,
       last_at = MAX(session_metrics.last_at, excluded.last_at)
   `);
-  d.transaction((rows: MetricDelta[]) => {
-    for (const r of rows) up.run(r.sessionId, r.metric, r.attrs, r.value, r.at);
-  })(deltas);
+  const bySource = d.prepare(`
+    INSERT INTO session_spend_sources (session_id, day, metric, token_type, query_source, agent_name, skill_name,
+                                       plugin_name, mcp_server, effort, speed, model, value, last_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(session_id, day, metric, token_type, query_source, agent_name, skill_name, plugin_name, mcp_server,
+                effort, speed, model) DO UPDATE SET
+      value   = value + excluded.value,
+      last_at = MAX(session_spend_sources.last_at, excluded.last_at)
+  `);
+  d.transaction(() => {
+    for (const r of metrics) up.run(r.sessionId, r.metric, r.attrs, r.value, r.at);
+    for (const s of spend) {
+      bySource.run(s.sessionId, s.day, s.metric, s.tokenType, s.querySource, s.agent, s.skill, s.plugin, s.mcpServer,
+        s.effort, s.speed, s.model, s.value, s.at);
+    }
+  })();
+}
+
+/** Spans from one traces export, each under the session its resource named. A retry is ignored, not doubled. */
+function recordSpans(payload: unknown): void {
+  const exported = spansFromOtlp(payload);
+  if (!exported.length) return;
+  const d = db();
+  const now = Date.now();
+  const ins = d.prepare(`
+    INSERT OR IGNORE INTO session_spans
+      (session_id, trace_id, span_id, parent_span_id, name, start_at, end_at, status, attrs_json, received_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?)
+  `);
+  d.transaction(() => {
+    for (const { resourceSessionId, span } of exported) {
+      ins.run(resourceSessionId ? attrSafe(resourceSessionId) : UNATTRIBUTED, span.traceId, span.spanId,
+        span.parentSpanId, span.name, span.startAt, span.endAt, span.status,
+        Object.keys(span.attrs).length ? JSON.stringify(span.attrs) : null, now);
+    }
+  })();
 }
 
 function recordEvents(events: EventDelta[]): void {
@@ -677,31 +800,44 @@ function norm(s: string): string {
  * backend cannot be resolved at all is unverified rather than assumed billed.
  */
 function markUnverifiedCost(usage: Record<string, SessionUsage>): void {
-  const ids = Object.keys(usage);
-  if (!ids.length) return;
-  const marks = ids.map(() => '?').join(',');
-  const rows = db().prepare(
-    `SELECT id, provider_id, backend_id FROM session_log WHERE id IN (${marks})`
-  ).all(...ids) as { id: string; provider_id: string | null; backend_id: string | null }[];
+  for (const id of unverifiedSessions(Object.keys(usage))) {
+    const target = usage[id];
+    if (target) target.costStatus = 'unavailable';
+  }
+}
 
+/**
+ * The logged sessions among `ids` whose dollars nobody bills at the CLI's
+ * price, by the rule above. An id with no session_log row is not in the answer,
+ * exactly as markUnverifiedCost always treated one.
+ */
+function unverifiedSessions(ids: string[]): Set<string> {
+  const out = new Set<string>();
   // providerById() re-synchronises the pack registry, so the legacy fallback is
   // resolved once per distinct provider rather than once per session row.
   const cache = new Map<string, boolean>();
-  for (const row of rows) {
-    const target = usage[row.id];
-    if (!target) continue;
-    const backend = row.backend_id?.trim() ?? '';
-    const key = backend || `provider:${row.provider_id ?? ''}`;
-    let unverified = cache.get(key);
-    if (unverified === undefined) {
-      // backend_id was added after the first sessions were logged; those rows
-      // resolve their backend through the provider id they were written with.
-      const resolved = backend || providerById(row.provider_id ?? '')?.backendId;
-      unverified = backendCostBasis(resolved) === 'unverified';
-      cache.set(key, unverified);
+  // Chunked: a year of spend-by-source can name more sessions than SQLite
+  // binds in one statement.
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500);
+    const rows = db().prepare(
+      `SELECT id, provider_id, backend_id FROM session_log WHERE id IN (${chunk.map(() => '?').join(',')})`
+    ).all(...chunk) as { id: string; provider_id: string | null; backend_id: string | null }[];
+    for (const row of rows) {
+      const backend = row.backend_id?.trim() ?? '';
+      const key = backend || `provider:${row.provider_id ?? ''}`;
+      let unverified = cache.get(key);
+      if (unverified === undefined) {
+        // backend_id was added after the first sessions were logged; those rows
+        // resolve their backend through the provider id they were written with.
+        const resolved = backend || providerById(row.provider_id ?? '')?.backendId;
+        unverified = backendCostBasis(resolved) === 'unverified';
+        cache.set(key, unverified);
+      }
+      if (unverified) out.add(row.id);
     }
-    if (unverified) target.costStatus = 'unavailable';
   }
+  return out;
 }
 
 export function usageForMany(ids: string[]): Record<string, SessionUsage> {
@@ -1014,4 +1150,105 @@ export function sessionSpendTotal(sinceMs?: number): number {
  */
 export function effortBreakdown(): EffortRollupRow[] {
   return sessionEffortRollup(null);
+}
+
+/* ── spend by source ─────────────────────────────────────────────────── */
+
+/**
+ * The last `days` local days of session spend, grouped by query source, skill,
+ * plugin, MCP server and subagent. Local days for the same reason spendByDay
+ * uses them. A backend nobody bills at the CLI's price keeps its dollars apart,
+ * by the same judgement usageForMany applies to a session's total.
+ */
+export function spendBySource(days: number): SpendSourceReport {
+  // From the renderer over IPC; NaN falls back rather than reaching a Date.
+  const asked = Math.floor(Number(days));
+  const n = Number.isNaN(asked) ? 30 : Math.max(1, Math.min(365, asked));
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (n - 1));
+  const rows = db().prepare(`
+    SELECT session_id, metric, token_type, query_source, agent_name, skill_name, plugin_name, mcp_server,
+           SUM(value) AS value
+    FROM session_spend_sources WHERE day >= ?
+    GROUP BY session_id, metric, token_type, query_source, agent_name, skill_name, plugin_name, mcp_server
+  `).all(dayKey(start)) as {
+    session_id: string; metric: string; token_type: string; query_source: string; agent_name: string;
+    skill_name: string; plugin_name: string; mcp_server: string; value: number;
+  }[];
+  const unverified = unverifiedSessions([...new Set(rows.map((r) => r.session_id))]);
+  const out: SpendSourceRow[] = rows.map((r) => ({
+    metric: r.metric === 'cost' ? 'cost' : 'tokens',
+    tokenType: r.token_type, querySource: r.query_source, agent: r.agent_name, skill: r.skill_name,
+    plugin: r.plugin_name, mcpServer: r.mcp_server, value: r.value, unverified: unverified.has(r.session_id),
+  }));
+  return spendReport(out, n, start.getTime());
+}
+
+/* ── traces ──────────────────────────────────────────────────────────── */
+
+type SpanRow = {
+  trace_id: string; span_id: string; parent_span_id: string | null; name: string; start_at: number;
+  end_at: number | null; status: string; attrs_json: string | null;
+};
+
+function spanOf(r: SpanRow): StoredSpan {
+  let attrs: StoredSpan['attrs'] = {};
+  try {
+    const parsed: unknown = r.attrs_json ? JSON.parse(r.attrs_json) : {};
+    if (isRecord(parsed)) attrs = parsed as StoredSpan['attrs'];
+  } catch { /* written by a build that stored it differently; drawn without facts */ }
+  return {
+    traceId: r.trace_id, spanId: r.span_id, parentSpanId: r.parent_span_id, name: r.name, startAt: r.start_at,
+    endAt: r.end_at, status: r.status === 'ok' || r.status === 'error' ? r.status : 'unset', attrs,
+  };
+}
+
+export function sessionTraces(sessionId: string): SessionTraces {
+  const id = attrSafe(sessionId);
+  const d = db();
+  const traces = d.prepare(`
+    SELECT trace_id, MIN(start_at) AS first FROM session_spans WHERE session_id = ?
+    GROUP BY trace_id ORDER BY first DESC LIMIT ?
+  `).all(id, TRACE_TURN_CAP + 1) as { trace_id: string; first: number }[];
+  const kept = traces.slice(0, TRACE_TURN_CAP).map((t) => t.trace_id);
+  const rows = kept.length ? d.prepare(`
+    SELECT trace_id, span_id, parent_span_id, name, start_at, end_at, status, attrs_json
+    FROM session_spans WHERE session_id = ? AND trace_id IN (${kept.map(() => '?').join(',')})
+  `).all(id, ...kept) as SpanRow[] : [];
+  const spans = (d.prepare('SELECT COUNT(*) AS n FROM session_spans WHERE session_id = ?').get(id) as { n: number }).n;
+  const asked = d.prepare('SELECT 1 FROM session_trace_requests WHERE session_id = ?').get(id) !== undefined;
+  const log = d.prepare('SELECT harness_id FROM session_log WHERE id = ?').get(sessionId) as { harness_id: string | null } | undefined;
+  // Only Claude Code has these spans to send. Codex launched while the switch
+  // was on received the variables and asked for nothing it could export, so a
+  // turn of its has no missing trace to report.
+  const claude = !log?.harness_id || log.harness_id === 'claude-code';
+  return {
+    sessionId,
+    requested: spans > 0 || (asked && claude),
+    enabledNow: flags().tracesBeta,
+    spans,
+    capped: traces.length > TRACE_TURN_CAP,
+    interactions: buildInteractions(rows.map(spanOf)),
+  };
+}
+
+/**
+ * Retention for spans, on the event retention key: they are session evidence
+ * like hook events, and Settings describes one window. Bounded like
+ * pruneEvents; returns spans deleted.
+ */
+export function pruneSpans(olderThanMs: number, budgetMs = 250): number {
+  const cutoff = Date.now() - Math.max(0, Number.isFinite(olderThanMs) ? olderThanMs : 0);
+  const until = Date.now() + budgetMs;
+  const d = db();
+  const slice = d.prepare('DELETE FROM session_spans WHERE id IN (SELECT id FROM session_spans WHERE start_at < ? LIMIT 5000)');
+  let total = 0;
+  for (;;) {
+    const changes = slice.run(cutoff).changes;
+    total += changes;
+    if (changes < 5000 || Date.now() >= until) break;
+  }
+  d.prepare('DELETE FROM session_trace_requests WHERE requested_at < ?').run(cutoff);
+  return total;
 }

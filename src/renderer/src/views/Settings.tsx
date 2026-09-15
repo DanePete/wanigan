@@ -91,7 +91,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'connections', tabLabel: 'Connections', section: 'Before you leave', hint: 'Can this Mac be left alone and still answer', keywords: 'sleep awake battery power lid closed walk away leave readiness restart resume reachable overnight' },
   { tab: 'connections', tabLabel: 'Connections', section: 'MCP servers', hint: 'Tool servers agents may use', keywords: 'mcp server tools stdio http' },
   { tab: 'connections', tabLabel: 'Connections', section: 'GitHub intake', hint: 'Check GitHub for issues and failed CI on a timer', keywords: 'github gh issues issue comments labels labelled ci failed workflow runs poll timer interval intake triage inbox' },
-  { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Observation', hint: 'Telemetry, hooks, checkpoints, archive', keywords: 'telemetry hooks checkpoints notifications archive transcripts observation pet retention' },
+  { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Observation', hint: 'Telemetry, hooks, status line, traces, checkpoints, archive', keywords: 'telemetry hooks status line limits prompt cache traces waterfall beta checkpoints notifications archive transcripts observation pet retention' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Search transcripts', hint: 'Full-text search of the archive', keywords: 'transcript search fts archive conversation history full-text' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'What leaves this machine', hint: 'The egress report, host by host', keywords: 'egress network hosts privacy leaves machine report keychain' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Storage', hint: 'Retention and locally kept data', keywords: 'storage retention delete data disk days' },
@@ -1935,6 +1935,22 @@ function Observation({ prefs, pending, setFlag }: {
             Claude-compatible CLIs post an event when a tool starts, finishes, fails, or stops to ask
             for permission. With it off, those providers lose tool-level state. Codex uses its own
             per-session approval and completed-turn notification channel instead.
+          </Toggle>
+
+          <Toggle title="Status line readings" on={prefs.statusLine} busy={pending === 'status_line'}
+                  onChange={(v) => void setFlag('status_line', v)}>
+            New Claude Code sessions draw their status line through a small relay in Wanigan’s own data
+            directory. It records the provider’s five-hour and seven-day limit readings and the prompt cache’s
+            figures, then runs the status line your own settings define and prints exactly what it prints.
+            Rides the hook bus, and writes nothing into your repository or <span className="mono">~/.claude</span>.
+          </Toggle>
+
+          <Toggle title="Record per-prompt traces (beta)" on={prefs.tracesBeta} busy={pending === 'traces_beta'}
+                  onChange={(v) => void setFlag('traces_beta', v)}>
+            New Claude Code sessions export the CLI’s beta trace of each prompt — every model request, tool call
+            and wait on you, with its timing — to the same loopback receiver as telemetry, and the Timeline draws
+            it as a waterfall. Names, ids, durations and token counts are kept; anything carrying prompt, response,
+            command or tool text is dropped before it is stored. Needs Telemetry on.
           </Toggle>
 
           <Toggle title="Per-turn checkpoints" on={prefs.checkpoints} busy={pending === 'checkpoints'}
@@ -5576,8 +5592,9 @@ function Storage({ prefs, pending, setPref }: {
           <h4>How long hook events are kept</h4>
           <p>
             A busy session writes thousands of tool events. This is the window Wanigan keeps them for;
-            the timeline and the tool statistics read no further back than this. It does not touch
-            transcripts, costs or the policy ledger — those have their own controls.
+            the timeline and the tool statistics read no further back than this. Trace spans and status
+            line readings are kept for the same window. It does not touch transcripts, costs or the
+            policy ledger — those have their own controls.
           </p>
         </div>
         <div style={{ flex: 'none', display: 'flex', gap: 7, alignItems: 'center' }}>

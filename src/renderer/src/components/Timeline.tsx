@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionCheckpoint, SessionEvent } from '@shared/types';
+import type { SessionStatusLine } from '@shared/status-line';
+import { TRACE_TURN_CAP, tracesByTurn, type SessionTraces } from '@shared/trace-spans';
 import { Note, Section, Stat, Icon, ago, num } from './bits';
+import { PromptCacheReadout, TurnTrace, cacheSummary } from './SessionTelemetry';
 
 /**
  * What the agent DID, beside the terminal that says what it claimed.
@@ -88,6 +91,30 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
     void load();
   }, [load]);
 
+  // What the session's status line and beta traces reported. Read beside the
+  // rail, never instead of it: a failure here is said where the figures would
+  // be and leaves every event above untouched.
+  const [traces, setTraces] = useState<SessionTraces | null>(null);
+  const [tracesErr, setTracesErr] = useState<string | null>(null);
+  const [statusLine, setStatusLine] = useState<SessionStatusLine | null | undefined>(undefined);
+  const [statusLineErr, setStatusLineErr] = useState<string | null>(null);
+  const readTelemetry = useCallback(() => {
+    const why = (e: unknown) => (e instanceof Error ? e.message : String(e));
+    window.wanigan.usage.traces(sessionId)
+      .then((t) => { setTraces(t); setTracesErr(null); })
+      .catch((e) => setTracesErr(why(e)));
+    window.wanigan.usage.statusLine(sessionId)
+      .then((s) => { setStatusLine(s); setStatusLineErr(null); })
+      .catch((e) => setStatusLineErr(why(e)));
+  }, [sessionId]);
+  // Spans are exported every few seconds after they end, and a status line
+  // redraws without any hook firing, so neither can wait for the next event.
+  useEffect(() => {
+    readTelemetry();
+    const timer = setInterval(readTelemetry, 10_000);
+    return () => clearInterval(timer);
+  }, [readTelemetry]);
+
   // Whether the bus is on at all decides which empty state is honest: "nothing
   // happened yet" and "Wanigan is not listening" look identical on the rail.
   useEffect(() => {
@@ -143,6 +170,10 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
   );
 
   const groups = useMemo(() => groupTurns(rows, cps, all.length >= FETCH), [rows, cps, all.length]);
+  const traceTurns = useMemo(
+    () => tracesByTurn(groups.flatMap((g) => (g.promptAt === null ? [] : [g.promptAt])), traces?.interactions ?? []),
+    [groups, traces],
+  );
   const [turnOverrides, setTurnOverrides] = useState<Record<string, boolean>>({});
   useEffect(() => { setTurnOverrides({}); }, [sessionId]);
   // The newest turn is the one being watched; older turns start folded. A new
@@ -261,6 +292,9 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
         <details className="tl-summary"><summary><span>Tool timing</span><span>{num(tools.reduce((count, tool) => count + tool.calls, 0))} completed calls <Icon name="chevron-down" /></span></summary>
           <ToolSummary tools={tools} events={all.length} capped={all.length >= FETCH} />
         </details>
+        <details className="tl-summary"><summary><span>Prompt cache</span><span>{cacheSummary(statusLine, statusLineErr)} <Icon name="chevron-down" /></span></summary>
+          <PromptCacheReadout reading={statusLine} error={statusLineErr} />
+        </details>
 
         {filtered.length === 0 ? (
           <div className="tl-pad">
@@ -298,6 +332,16 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
               <p className="tl-note faint">
                 {num(folded)} tool {folded === 1 ? 'start is' : 'starts are'} folded into their
                 results — one row per call, timed end to end.
+              </p>
+            )}
+            {!filtering && traces && !traces.requested && traces.enabledNow && (
+              <p className="tl-note faint">
+                Per-prompt traces are on for new sessions; this one launched without them, so its turns have none.
+              </p>
+            )}
+            {!filtering && traces?.capped && (
+              <p className="tl-note faint">
+                Traces are loaded for the {TRACE_TURN_CAP} most recent prompts; older turns show none here.
               </p>
             )}
 
@@ -392,6 +436,9 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff }: {
                             </button>
                           )}
                         </div>
+                        {expanded && g.promptAt !== null && (
+                          <TurnTrace traces={traces} error={tracesErr} interactions={traceTurns.get(g.promptAt)} />
+                        )}
                         {expanded && (
                           <ol className="tl-rail tl-turnbody">
                             {g.rows.map((r) => (
