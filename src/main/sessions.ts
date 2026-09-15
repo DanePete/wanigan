@@ -18,6 +18,8 @@ import { promisify } from 'node:util';
 import type { Baseline, BudgetState, TrustLevel } from '../shared/types';
 import { otelEnv } from './otel';
 import * as accounts from './accounts';
+import { readableFromAccount } from './handoff';
+import { gateLaunch, type LaunchGate } from './config-pins';
 import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './hooks';
 import { finalizeSessionCheckpoints, forgetSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
 import { archiveSession, conversationTitle, titleFromTranscript, type ReadTitle } from './transcripts';
@@ -744,8 +746,8 @@ export function resumeAccountFor(
   sessionId: string, harness: string, requestedAccountId: string | null,
 ): { accountId: string | null; note: string | null } {
   if (!accounts.supportsAccounts(harness)) return { accountId: requestedAccountId, note: null };
-  const row = db().prepare('SELECT account_id FROM session_log WHERE id = ?')
-    .get(sessionId) as { account_id: string | null } | undefined;
+  const row = db().prepare('SELECT account_id, conversation_id FROM session_log WHERE id = ?')
+    .get(sessionId) as { account_id: string | null; conversation_id: string | null } | undefined;
   if (!row) throw new Error('This saved conversation no longer exists. Refresh Recent and choose another one.');
   if (!row.account_id) {
     return {
@@ -764,6 +766,16 @@ export function resumeAccountFor(
   }
   if (requestedAccountId && requestedAccountId !== owner.id) {
     const asked = accounts.byId(requestedAccountId);
+    // A Codex conversation handed over to another account is readable from
+    // that account's home too, and that is exactly what this refusal exists to
+    // check. Ask the filesystem rather than refuse on the recorded owner alone,
+    // or the handoff links the rollout and its own resume is turned away.
+    if (asked && harness === 'codex' && row.conversation_id && readableFromAccount(row.conversation_id, asked.id)) {
+      return {
+        accountId: asked.id,
+        note: `Continuing on “${asked.label}”: this conversation was handed over and is readable from that account’s directory.`,
+      };
+    }
     throw new Error(
       `This conversation belongs to the “${owner.label}” account, not “${asked?.label ?? requestedAccountId}”. `
       + `Resume it under “${owner.label}” — ${harnessName(harness)} may not find it under another account’s directory.`
@@ -801,6 +813,12 @@ export function goalCapsuleText(capsule: GoalCapsule): string {
       ? '- To record progress or take a path, call the wanigan_goal_checkpoint / wanigan_goal_claim MCP tools with this node id.'
       : '- This harness cannot claim or release a path from inside the session. Stay within the claimed path and name anything else you needed in your final answer.',
   ];
+  // Snapshot rule applies here too: these are the notes as they stood at launch.
+  const changes = capsule.changesRequested ?? [];
+  if (changes.length) {
+    lines.push('- A human reviewer requested changes to earlier work on this goal. Address each, or say in your final answer why you did not:');
+    for (const change of changes) lines.push(`  - (${new Date(change.decidedAt).toISOString()}) ${change.note}`);
+  }
   return lines.join('\n');
 }
 
@@ -1095,6 +1113,24 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     }
   };
 
+  // The repository's own executable configuration — hooks, MCP servers,
+  // helpers, env overrides, git hooks — checked against what was last let
+  // launch here, in the directory the agent will actually run in. A changed
+  // configuration launches only with the digest the operator accepted in the
+  // dialog; every other caller, a paired phone included, is refused with the
+  // reason. See config-pins.ts.
+  let configGate: LaunchGate;
+  try {
+    configGate = await gateLaunch(project.id, cwd, typeof opts.acceptConfigDigest === 'string' ? opts.acceptConfigDigest : null, true);
+  } catch (error) {
+    await rollbackLaunch();
+    throw error;
+  }
+  if (!configGate.allowed) {
+    await rollbackLaunch();
+    throw new Error(configGate.reason);
+  }
+
   // Attachments arrive after a session has started, so the directory must
   // exist and be granted to the CLI before its sandbox is created. Granting
   // this one session directory is deliberately narrower than granting all of
@@ -1384,6 +1420,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   meta.accountId = account?.id ?? null;
   meta.accountLabel = account?.label ?? null;
   meta.accountNote = account && pinnedAccount?.note ? pinnedAccount.note : null;
+  meta.configNote = configGate.note;
   meta.goalCapsule = capsuleDelivery;
 
   let proc: IPty;

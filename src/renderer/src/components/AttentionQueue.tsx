@@ -203,14 +203,15 @@ function Chip({ a, session, onJump }: {
   const project = session?.projectName ?? `session ${a.sessionId.slice(0, 6)}`;
   const verb = s.waits ? 'waiting' : 'running';
   const detail = a.detail ?? '';
+  const because = a.reason ? ` Because ${a.reason.because.charAt(0).toLowerCase()}${a.reason.because.slice(1)}` : '';
 
   return (
     <button
       className={`atq-chip${tier}`}
       style={{ '--k': s.color, '--k-soft': s.soft } as React.CSSProperties}
       onClick={() => onJump(a.sessionId)}
-      title={`${a.label} · ${project}\n${verb} ${dur(waited)}${detail ? `\n${detail}` : ''}\nClick to open this session.`}
-      aria-label={`${a.label}: ${project}, ${verb} ${dur(waited)}.${detail ? ` ${detail}.` : ''} Open this session.`}
+      title={`${a.label} · ${project}\n${verb} ${dur(waited)}${detail ? `\n${detail}` : ''}${because ? `\n${because.trim()}` : ''}\nClick to open this session.`}
+      aria-label={`${a.label}: ${project}, ${verb} ${dur(waited)}.${detail ? ` ${detail}.` : ''}${because} Open this session.`}
     >
       <span className="atq-glyph" aria-hidden="true">{s.glyph}</span>
       <span className="atq-body">

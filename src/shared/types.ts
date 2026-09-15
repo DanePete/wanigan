@@ -233,6 +233,8 @@ export type Session = {
    * saying.
    */
   accountNote?: string | null;
+  /** What the executable-config pin did at launch, when it did anything: a first-use pin or a reviewed change. */
+  configNote?: string | null;
   /** How the docket goal capsule reached this session, when one was requested. */
   goalCapsule?: GoalCapsuleDelivery | null;
   /** Repo state at launch — lets the code panel show only this session's work. */
@@ -294,6 +296,12 @@ export type LaunchOptions = {
    * instructions, recorded as a work-trace row, never mutated by the renderer.
    */
   goalCapsule?: GoalCapsule;
+  /**
+   * The executable-config digest the operator read and accepted in the launch
+   * dialog. Main recomputes the digest at launch and launches only when they
+   * match, so a configuration that moved again is asked about again.
+   */
+  acceptConfigDigest?: string;
 };
 
 /** A finished session, recoverable after a quit. */
@@ -753,6 +761,25 @@ export type Attention = {
   detail: string | null;
   /** The tool currently in flight, if one is. */
   tool: string | null;
+  /**
+   * Why this verdict and not another: the rule that decided it, the recorded
+   * event it read, and the rule stated with its threshold. Every verdict the
+   * classifier makes carries one; a verdict assembled elsewhere without the
+   * evidence leaves it out rather than inventing one.
+   */
+  reason?: AttentionReason;
+};
+
+export type AttentionRule =
+  | 'permission-request' | 'nonzero-exit' | 'repeated-failure' | 'recent-failure'
+  | 'exited' | 'turn-ended' | 'quiet' | 'no-progress' | 'working';
+
+export type AttentionReason = {
+  rule: AttentionRule;
+  /** The hook event the rule read, by name and arrival time; null when the rule read something else, such as an exit code. */
+  event: { name: string; at: number } | null;
+  /** The rule in words, with its threshold. */
+  because: string;
 };
 
 /* ── P4 · transcripts ───────────────────────────────────────────────── */
@@ -1382,6 +1409,11 @@ export type DocketNode = {
    */
   deferUntil: number | null;
   /**
+   * When this task was last reopened, or null. Gate proofs from before it
+   * describe work the reopen replaced and do not count toward completing it.
+   */
+  reopenedAt: number | null;
+  /**
    * The autopilot dispatcher has claimed this task and is about to launch it.
    * A queued task reads as 'ready' otherwise, so pressing Start raced the
    * dispatcher: both created a worktree and a PTY, the atomic claim decided
@@ -1423,6 +1455,12 @@ export type GoalCapsule = {
   siblingClaims: { nodeId: string; title: string; path: string }[];
   /** Whether this harness can claim/checkpoint through Wanigan's MCP tools. */
   canClaimLive: boolean;
+  /**
+   * What a human reviewer asked to change, newest first, from "Request changes"
+   * decisions on this goal. The note used to be stored and never reach any
+   * agent; this is how it reaches the one launched to address it.
+   */
+  changesRequested: { note: string; decidedAt: number }[];
   recordedAt: number;
 };
 

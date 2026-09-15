@@ -83,7 +83,7 @@ function decisionNotice(kind: DocketNodeKind, decision: 'approve' | 'request_cha
     return decision === 'approve' ? 'Task marked complete.' : 'Task marked failed. Reopen it when the next pass is ready.';
   }
   if (decision === 'approve') return 'Decision recorded: approved.';
-  if (decision === 'request_changes') return 'Changes requested. The review task is marked failed; reopen it when the revised work is ready for another pass.';
+  if (decision === 'request_changes') return 'Changes requested. Reopening the review sends the implementation and verification back, and your note goes to the next implementation session.';
   return 'Rejected. The review task is marked failed and this goal is recorded as rejected.';
 }
 
@@ -503,6 +503,7 @@ export default function Control({ projects, providers, onOpenSession }: {
                 </div>
                 : activeNode ? <NodeCard key={activeNode.id} node={activeNode} busy={busy ?? (loadError ? 'unavailable' : null)} note={notes[activeNode.id] ?? ''} claim={claims[activeNode.id] ?? ''}
                 prereqs={activeNode.dependsOn.map(id => detail.nodes.find(other => other.id === id)).filter((other): other is DocketNode => !!other)}
+                sendsBack={activeNode.kind === 'review' && /request changes/.test([...detail.proofs].filter(proof => proof.kind === 'decision' && proof.nodeId === activeNode.id).sort((a, b) => b.createdAt - a.createdAt)[0]?.summary ?? '')}
                 onPrerequisite={id => selectTask(id, true)} onSession={() => activeNode.sessionId && onOpenSession(activeNode.sessionId)}
                 onNote={value => setNotes(previous => ({ ...previous, [activeNode.id]: value }))} onClaim={value => setClaims(previous => ({ ...previous, [activeNode.id]: value }))}
                 onStart={() => start(activeNode)} onCheckpoint={() => checkpoint(activeNode)} onClaimAdd={() => addClaim(activeNode)} onProof={() => proof(activeNode)} onComplete={decision => complete(activeNode, decision)} onRetry={() => retry(activeNode)} />
@@ -669,8 +670,10 @@ function AutopilotCard({ docket, busy, confirming, armWith, armWithModel, armedW
  * than a chain the status word alone cannot say which, so each prerequisite is
  * listed with its own status.
  */
-function NodeCard({ node, busy, note, claim, prereqs, onPrerequisite, onSession, onNote, onClaim, onStart, onCheckpoint, onClaimAdd, onProof, onComplete, onRetry }: {
+function NodeCard({ node, busy, note, claim, prereqs, sendsBack, onPrerequisite, onSession, onNote, onClaim, onStart, onCheckpoint, onClaimAdd, onProof, onComplete, onRetry }: {
   node: DocketNode; busy: string | null; note: string; claim: string;
+  /** This review's latest decision asked for changes, so reopening it sends the implementation back. */
+  sendsBack: boolean;
   prereqs: { id: string; title: string; status: DocketNodeStatus }[];
   onPrerequisite: (id: string) => void; onSession: () => void;
   onNote: (value: string) => void; onClaim: (value: string) => void; onStart: () => void; onCheckpoint: () => void;
@@ -691,7 +694,9 @@ function NodeCard({ node, busy, note, claim, prereqs, onPrerequisite, onSession,
       {node.status === 'ready' && node.kind !== 'review' && (node.queued
         ? <Mark glyph="◴" word="queued by autopilot" tone="quiet" title="Autopilot has claimed this task and will launch it on its next sweep." />
         : <button className="btn btn-primary" onClick={onStart} disabled={busy !== null}>Start isolated task</button>)}
-      {reopenable && <><Hint>Reopen this task for another pass. Its dependents stay blocked until it completes.</Hint><button className="btn" onClick={onRetry} disabled={busy !== null} title="Reopen this task so it can be started again. Tasks waiting on it stay blocked until it completes.">Reopen task</button></>}
+      {reopenable && <><Hint>{sendsBack
+        ? 'Reopening sends the implementation and verification back. Your note goes to the next implementation session, and verification needs a new gate run.'
+        : 'Reopen this task for another pass. Its dependents stay blocked until it completes.'}</Hint><button className="btn" onClick={onRetry} disabled={busy !== null} title="Reopen this task so it can be started again. Tasks waiting on it stay blocked until it completes.">Reopen task</button></>}
       {node.kind === 'verify' && actionable && <button className="btn" onClick={onProof} disabled={busy !== null}>Run review gate</button>}
       {(actionable || node.sessionId) && (node.kind === 'review' ? <details className="control-note" open={noteOpen} onToggle={event => setNoteOpen(event.currentTarget.open)}><summary>{note.trim() ? 'Decision note added' : 'Add a decision note'}</summary><label><span className="label">Decision note</span><textarea className="field control-textarea" aria-label="Evidence or handoff note" value={note} onChange={event => onNote(event.target.value)} placeholder="What supports your decision?" disabled={busy !== null} /></label></details> : <label><span className="label">Evidence or handoff note</span><textarea className="field control-textarea" aria-label="Evidence or handoff note" value={note} onChange={event => onNote(event.target.value)} placeholder="What should the next person know?" disabled={busy !== null} /></label>)}
       {node.kind === 'implement' && actionable && <div className="control-inline"><input className="field" aria-label="Path to claim" value={claim} onChange={event => onClaim(event.target.value)} placeholder="src/path.ts" /><button className="btn" onClick={onClaimAdd} disabled={busy !== null || !claim.trim()}>Claim</button></div>}

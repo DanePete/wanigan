@@ -45,6 +45,7 @@ import * as attention from './attention';
 import * as transcripts from './transcripts';
 import * as worktrees from './worktrees';
 import { forecastCollisions } from './collisions';
+import * as configPins from './config-pins';
 import * as queue from './queue';
 import * as policy from './policy';
 import * as headless from './headless';
@@ -1635,9 +1636,12 @@ function registerIpc() {
     if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('No session was named.');
     return beginHandover(sessionId.trim());
   });
-  handle('handover:finish', (sessionId: unknown) => {
+  handle('handover:finish', (sessionId: unknown, toAccountId: unknown) => {
     if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('No session was named.');
-    return finishHandover(sessionId.trim());
+    if (toAccountId !== undefined && toAccountId !== null && typeof toAccountId !== 'string') {
+      throw new Error('That is not an account.');
+    }
+    return finishHandover(sessionId.trim(), typeof toAccountId === 'string' && toAccountId.trim() ? toAccountId.trim() : null);
   });
   handle('handoff:plan', (sessionId: unknown) =>
     (typeof sessionId === 'string' && sessionId.trim() ? handoffPlan(sessionId.trim()) : {
@@ -2239,6 +2243,30 @@ function registerIpc() {
   // Keyed on a project id; main resolves the repository and every worktree.
   handle('worktrees:forecast', (projectId: string) => forecastCollisions(projectId));
   handle('worktrees:orphans', () => worktrees.reconcileWorktrees(liveSessionIds()));
+  // The repository's executable config and whether it matches what was last let
+  // launch. Keyed on a project id and optionally one of that project's own
+  // worktrees; accepting recomputes the digest in main instead of trusting the
+  // one the renderer was shown.
+  const configRoot = async (projectId: unknown, worktree: unknown): Promise<{ id: string; root: string }> => {
+    const project = typeof projectId === 'string' ? projectById(projectId) : undefined;
+    if (!project) throw new Error('That project is not registered with Wanigan.');
+    if (typeof worktree !== 'string' || !worktree.trim()) return { id: project.id, root: assertManagedRoot(project.path, 'That project folder') };
+    const info = await worktrees.worktreeStatus(assertManagedRoot(worktree, 'That worktree'));
+    const projectRepo = await worktrees.repoRootFor(project.path);
+    if (!info || !projectRepo || fs.realpathSync.native(info.repoRoot) !== fs.realpathSync.native(projectRepo)) {
+      throw new Error('That worktree does not belong to this project.');
+    }
+    return { id: project.id, root: info.path };
+  };
+  handle('configPins:check', async (projectId: unknown, worktree?: unknown) => {
+    const { id, root } = await configRoot(projectId, worktree);
+    return configPins.checkConfig(id, root);
+  });
+  handle('configPins:accept', async (projectId: unknown, digest: unknown, worktree?: unknown) => {
+    if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest)) throw new Error('That is not a configuration digest.');
+    const { id, root } = await configRoot(projectId, worktree);
+    return configPins.acceptConfig(id, root, digest);
+  });
   handle('worktrees:relink', (p: string) => worktrees.relinkWorktree(assertManagedRoot(p, 'That worktree')));
   handle('worktrees:forSession', (id: string) => worktrees.worktreeForSession(id));
 
