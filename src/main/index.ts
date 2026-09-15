@@ -45,10 +45,13 @@ import * as attention from './attention';
 import * as transcripts from './transcripts';
 import * as worktrees from './worktrees';
 import { forecastCollisions } from './collisions';
+import * as configPins from './config-pins';
 import * as queue from './queue';
 import * as policy from './policy';
 import * as headless from './headless';
+import * as attempts from './attempts';
 import * as spend from './spend';
+import { budgetHold } from './budget-gate';
 import * as notify from './notify';
 import * as mobile from './mobile';
 import { mobileFleetSnapshot } from './fleet-snapshot';
@@ -101,6 +104,7 @@ import * as learning from './learning-service';
 // wraps consolidation and briefing, and has no retirement path of its own.
 import { retireKnowledgeItem } from './learning';
 import * as control from './control';
+import * as goalGate from './goal-gate';
 import * as interview from './interview';
 import { companion } from './companion';
 import * as accounts from './accounts';
@@ -360,6 +364,9 @@ function storedDemoMode(): boolean {
 /** Slower than the dispatcher: a goal becomes eligible when work finishes. */
 const AUTOPILOT_SWEEP_MS = 10_000;
 let autopilotTimer: NodeJS.Timeout | null = null;
+/** Hourly is only how often the timer asks; a pass runs at most once a day. */
+const ATTACHMENT_RECLAIM_CHECK_MS = 60 * 60_000;
+let attachmentReclaimTimer: NodeJS.Timeout | null = null;
 
 /**
  * How often the transcript reader is offered a slice of time.
@@ -936,6 +943,12 @@ async function startServices() {
   // Turn boundaries feed the checkpoint queue. Idempotent; the subscription
   // outlives window recreation on purpose — captures are per-session facts.
   checkpoints.initCheckpoints();
+  // Verified done. A goal that gates on stop runs its review gate when an
+  // agent stops; the nudge is the channel Control already re-reads on.
+  goalGate.initGoalGate(() => {
+    const w = liveWindow();
+    if (w && !w.isDestroyed()) w.webContents.send('queue:changed');
+  });
 
   if (f.hooks) {
     try {
@@ -1082,6 +1095,10 @@ async function startServices() {
     const name = projectById(projectId)?.name ?? projectId;
     queue.enqueue('headless', `${name} · ${runId}`, { runId, projectId });
   });
+  // An attempt is recorded and gated when its run ends, in whichever process
+  // ends it. Here rather than in the attended path alone, because the launchd
+  // scheduler dispatches the same queue and closes the same runs.
+  attempts.watchAttemptRuns();
   queue.setSlots(slotsSetting());
   // Schedules feed the dispatcher; the dispatcher decides when there is a slot.
   schedule.startScheduler(queueChanged);
@@ -1092,6 +1109,9 @@ async function startServices() {
     }
     await control.startQueuedNode(nodeId);
   });
+  // Registered before the dispatcher starts, so no tick can claim paid work in
+  // the moment before the budget is asked. The rules are in budget-gate.ts.
+  queue.registerGate(budgetHold);
   queue.startDispatcher(queueChanged);
   // The sweep only writes queue rows; the dispatcher above still decides when
   // one may start. It runs on its own slower interval because a goal becomes
@@ -1114,6 +1134,20 @@ async function startServices() {
       console.warn('[wanigan] autopilot sweep failed; skipping this pass:', e);
     }
   }, AUTOPILOT_SWEEP_MS);
+
+  // Attachment retention, once it is switched on in Settings: a pass at most
+  // once a day, recorded where the panel reads it. Off, this reads one setting
+  // and returns. Guarded against smoke because a pass inside the suite's process
+  // would delete fixtures another phase is still asserting on.
+  if (!smokeMode) {
+    const reclaim = () => {
+      try { attachments.reclaimAttachmentsIfDue(); }
+      catch (e) { console.warn('[wanigan] attachment retention pass failed; trying again later:', e); }
+    };
+    setTimeout(reclaim, 60_000).unref();
+    attachmentReclaimTimer = setInterval(reclaim, ATTACHMENT_RECLAIM_CHECK_MS);
+    attachmentReclaimTimer.unref();
+  }
 
   // Claude Code's transcripts are the one meter that can report on work
   // Wanigan never launched, and the first pass over them is measured in
@@ -1484,6 +1518,7 @@ function stopServices() {
   try { schedule.stopScheduler(); } catch { /* already down */ }
   try { queue.stopDispatcher(); } catch { /* already down */ }
   if (autopilotTimer) { clearInterval(autopilotTimer); autopilotTimer = null; }
+  if (attachmentReclaimTimer) { clearInterval(attachmentReclaimTimer); attachmentReclaimTimer = null; }
   if (transcriptTimer) { clearInterval(transcriptTimer); transcriptTimer = null; }
   try { hooks.stopHookServer(); } catch { /* already down */ }
   try { otel.stopCollector(); } catch { /* already down */ }
@@ -1636,9 +1671,12 @@ function registerIpc() {
     if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('No session was named.');
     return beginHandover(sessionId.trim());
   });
-  handle('handover:finish', (sessionId: unknown) => {
+  handle('handover:finish', (sessionId: unknown, toAccountId: unknown) => {
     if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('No session was named.');
-    return finishHandover(sessionId.trim());
+    if (toAccountId !== undefined && toAccountId !== null && typeof toAccountId !== 'string') {
+      throw new Error('That is not an account.');
+    }
+    return finishHandover(sessionId.trim(), typeof toAccountId === 'string' && toAccountId.trim() ? toAccountId.trim() : null);
   });
   handle('handoff:plan', (sessionId: unknown) =>
     (typeof sessionId === 'string' && sessionId.trim() ? handoffPlan(sessionId.trim()) : {
@@ -2192,6 +2230,19 @@ function registerIpc() {
   handle('transcripts:get', (id: string) => transcripts.transcriptFor(id));
   handle('transcripts:list', () => transcripts.archivedSessions());
   handle('transcripts:forget', (id: string) => { transcripts.forgetTranscript(id); return true; });
+  // Transcript recall, per project and only ever the operator's act. The
+  // setting and the MCP server's rule that lists the tool by it both existed,
+  // with nothing able to set it, so wanigan_recall_transcripts was reachable
+  // only from the smoke suite.
+  handle('transcripts:recall', () => Object.fromEntries(
+    listProjects().map((project) => [project.id, transcripts.recallEnabled(project.id)])));
+  handle('transcripts:setRecall', (projectId: unknown, enabled: unknown) => {
+    if (typeof projectId !== 'string' || !projectById(projectId)) {
+      throw new Error('That project is no longer in Wanigan. Reopen Settings and choose again.');
+    }
+    if (typeof enabled !== 'boolean') throw new Error('Transcript recall is either on or off.');
+    return transcripts.setRecallEnabled(projectId, enabled);
+  });
   // Context occupancy for the selected session. Resolved from this process's
   // own session record — the renderer names a session, never a path — and
   // gated on the harness that actually writes a transcript.
@@ -2240,6 +2291,30 @@ function registerIpc() {
   // Keyed on a project id; main resolves the repository and every worktree.
   handle('worktrees:forecast', (projectId: string) => forecastCollisions(projectId));
   handle('worktrees:orphans', () => worktrees.reconcileWorktrees(liveSessionIds()));
+  // The repository's executable config and whether it matches what was last let
+  // launch. Keyed on a project id and optionally one of that project's own
+  // worktrees; accepting recomputes the digest in main instead of trusting the
+  // one the renderer was shown.
+  const configRoot = async (projectId: unknown, worktree: unknown): Promise<{ id: string; root: string }> => {
+    const project = typeof projectId === 'string' ? projectById(projectId) : undefined;
+    if (!project) throw new Error('That project is not registered with Wanigan.');
+    if (typeof worktree !== 'string' || !worktree.trim()) return { id: project.id, root: assertManagedRoot(project.path, 'That project folder') };
+    const info = await worktrees.worktreeStatus(assertManagedRoot(worktree, 'That worktree'));
+    const projectRepo = await worktrees.repoRootFor(project.path);
+    if (!info || !projectRepo || fs.realpathSync.native(info.repoRoot) !== fs.realpathSync.native(projectRepo)) {
+      throw new Error('That worktree does not belong to this project.');
+    }
+    return { id: project.id, root: info.path };
+  };
+  handle('configPins:check', async (projectId: unknown, worktree?: unknown) => {
+    const { id, root } = await configRoot(projectId, worktree);
+    return configPins.checkConfig(id, root);
+  });
+  handle('configPins:accept', async (projectId: unknown, digest: unknown, worktree?: unknown) => {
+    if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest)) throw new Error('That is not a configuration digest.');
+    const { id, root } = await configRoot(projectId, worktree);
+    return configPins.acceptConfig(id, root, digest);
+  });
   handle('worktrees:relink', (p: string) => worktrees.relinkWorktree(assertManagedRoot(p, 'That worktree')));
   handle('worktrees:forSession', (id: string) => worktrees.worktreeForSession(id));
 
@@ -2273,6 +2348,23 @@ function registerIpc() {
   });
   handle('headless:runs', (limit?: number) => headless.headlessRuns(limit));
   handle('headless:cancel', (runId: string) => headless.cancelHeadless(runId));
+  handle('headless:answerHeld', (runId: unknown, projectId: unknown, decision: unknown, note: unknown) =>
+    headless.answerHeld(runId, projectId, decision, note));
+
+  // ══ attempts · best of N and the paired bench ═══════════════════════
+  // Every argument is validated in attempts.ts: a start is re-planned from
+  // scratch, ids must match their shape, and a cleanup takes a set id only —
+  // the worktree paths it removes come from the attempts' own records.
+  handle('attempts:sets', (limit?: unknown) => attempts.attemptSets(typeof limit === 'number' ? limit : 50));
+  handle('attempts:set', (setId: unknown) => attempts.attemptSet(setId));
+  handle('attempts:start', async (input: unknown) => {
+    const started = await attempts.startAttemptSet(input);
+    // As for headless:start: the runs are queued and may already be live.
+    syncAwake();
+    return started;
+  });
+  handle('attempts:keep', (setId: unknown, attemptId: unknown) => attempts.keepAttempt(setId, attemptId));
+  handle('attempts:removeOthers', (setId: unknown) => attempts.removeOtherWorktrees(setId));
 
   // ══ phase 11 · dispatcher ═══════════════════════════════════════════
   handle('queue:list', (limit?: number) => queue.listQueue(limit));
@@ -2761,6 +2853,8 @@ function registerIpc() {
   // setDocketBudget bounds it in the main process.
   handle('control:setBudget', (docketId: string, budgetUsd: number | null) =>
     control.setDocketBudget(docketId, budgetUsd));
+  handle('control:setGate', (docketId: string, input: { onStop: boolean; returnFailures: boolean }) =>
+    control.setGoalGate(docketId, input ?? {}));
   // The board reads the same rows the goal graph does, a second way. There is
   // no ticket table behind it — see control.boardCards.
   // ── the interview ────────────────────────────────────────────────────
@@ -2798,6 +2892,10 @@ function registerIpc() {
   handle('control:cancelMcpTask', (id: string) => control.cancelMcpTask(id));
   handle('control:resumeReceipts', (docketId: string) => control.resumeReceipts(docketId));
   handle('control:traces', (docketId: string, limit?: number) => control.traces(docketId, limit));
+  handle('control:plan', (docketId: unknown) => {
+    if (typeof docketId !== 'string' || !docketId) throw new Error('Choose a goal.');
+    return control.goalPlan(docketId);
+  });
 
   // ══ phase 26 · agent teams ══════════════════════════════════════════
   handle('teams:read', () => teams.readTeams());
@@ -2889,6 +2987,18 @@ function registerIpc() {
     attachments.attachBufferToSession(sessionId, Buffer.from(data), name));
   handle('attach:list', (sessionId: string) => attachments.sessionAttachments(sessionId));
   handle('attach:remove', (id: string) => attachments.removeAttachment(id));
+  // Retention for session attachment directories. The preview deletes nothing
+  // and may be asked about any window, so the panel can show what switching on
+  // would remove before anyone does. Only the stored window can delete.
+  handle('attach:retention', () => ({ ...attachments.attachmentRetention(), last: attachments.lastAttachmentReclaim() }));
+  handle('attach:reclaimPreview', (days?: unknown) => {
+    if (days !== undefined && (typeof days !== 'number' || !Number.isInteger(days) || days < 1 || days > 3650)) {
+      throw new Error('Preview a window of 1 to 3650 whole days.');
+    }
+    return attachments.previewAttachmentReclaim({ days: days as number | undefined });
+  });
+  handle('attach:setRetention', (days: unknown) => attachments.setAttachmentRetention(days));
+  handle('attach:reclaimNow', () => attachments.reclaimAttachmentsNow('on-request'));
   // Deliberately no trailing return: the human decides when to send.
   handle('attach:type', (sessionId: string, onlyUnreferenced?: boolean) => {
     const list = attachments.promptableSessionAttachments(sessionId)
@@ -3135,6 +3245,10 @@ function registerIpc() {
   handle('learning:candidateExplain', (id: string) => learning.explain(id));
   handle('learning:candidateSignals', (id: string) => learning.candidateSignals(id));
   handle('learning:relations', (itemId?: string) => learning.relations(itemId));
+  handle('learning:markContradiction', (firstId: unknown, secondId: unknown, reason: unknown) =>
+    learning.markContradiction(firstId, secondId, reason));
+  handle('learning:keepOverContradiction', (keepId: unknown, retireId: unknown, reason: unknown) =>
+    learning.keepOverContradiction(keepId, retireId, reason));
   handle('learning:freshness', (itemId: string) => learning.freshnessReport(itemId));
 
   // ══ phase 27 · observed sessions ════════════════════════════════════

@@ -62,6 +62,24 @@ function reachableFrom(home: string, source: string): boolean {
 }
 
 /**
+ * Whether one conversation is readable from one account's home right now.
+ *
+ * This is the fact an exact resume under that account rests on, and a handoff
+ * is precisely what changes it from no to yes. The resume path used to refuse
+ * every account but the one the conversation was recorded under, so the
+ * handoff linked the rollout into the other home and the resume that followed
+ * was then refused for being under the other home: the feature could not
+ * complete. Asked of the filesystem rather than of a record, because a link a
+ * person removed by hand is no longer a conversation Codex will find.
+ */
+export function readableFromAccount(threadId: string, accountId: string): boolean {
+  const account = accounts.byId(accountId);
+  if (!account || account.harness !== HARNESS) return false;
+  const source = rolloutFor(threadId);
+  return !!source && reachableFrom(account.configDir, source);
+}
+
+/**
  * What a session could be continued on, and why not when it could not.
  *
  * Read-only. It answers for a surface that has to decide whether to offer a

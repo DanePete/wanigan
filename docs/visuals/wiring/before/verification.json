@@ -1,0 +1,14 @@
+{
+  "at": "2026-09-15T03:03:41.721Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; no real agent calls",
+  "mode": "before",
+  "checks": [
+    "before: Settings offers Wanigan’s MCP server and no way to let a project’s sessions search its transcripts",
+    "before: Settings says the attachment directories only grow and that no control has reached the panel",
+    "before: the launch dialog says nothing when the project is already over its monthly budget",
+    "before: two selected knowledge items can only be retired; nothing records that they contradict each other",
+    "before: a finished run in Recent can be resumed, pinned, settled or forgotten, and its turns cannot be opened"
+  ],
+  "errors": [],
+  "failures": []
+}

@@ -10,12 +10,15 @@ import { createSession, killSession, listSessions } from './sessions';
 import * as review from './review';
 import * as otel from './otel';
 import { listGoalTrace, recordGoalTrace } from './goal-trace';
+import { latestGoalPlan } from './goal-plans';
 import { enqueue } from './queue';
+import { forgetTreeSnapshot, snapshotTree } from './tree-snapshot';
+import { failureExcerpt } from '../shared/gate-feedback';
 import type {
   BoardCard,
   ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode,
   DocketAutopilot, DocketNodeKind, DocketNodeStatus, DocketPlanNode, DocketProof, DocketRisk, DocketStatus,
-  GoalCapsule, GoalResumeReceipt, GoalTraceEvent,
+  GateProofDetail, GoalCapsule, GoalPlan, GoalResumeReceipt, GoalTraceEvent, OracleFlag, ProofTrigger,
   McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, WorkDocket,
 } from '../shared/types';
 // Aliased at the import so the graph rules below still read in this module's
@@ -33,12 +36,15 @@ type DocketRow = {
   risk: string; budget_usd: number | null; base_commit: string | null; status: string;
   created_at: number; updated_at: number;
   autopilot: number; autopilot_provider: string | null; autopilot_model: string | null;
+  gate_on_stop: number; return_failures: number;
 };
 type NodeRow = {
   id: string; docket_id: string; kind: string; title: string; instructions: string; depends_json: string;
   status: string; provider_id: string | null; model: string | null; session_id: string | null;
   worktree: string | null; started_at: number | null; ended_at: number | null; detail: string | null;
   claim_path: string | null; dispatch_state: string | null; defer_until: number | null;
+  reopened_at: number | null;
+  gate_returns: number;
 };
 
 const MAX_OBJECTIVE = 12_000;
@@ -72,6 +78,17 @@ const parseStrings = (value: string): string[] => {
 const now = () => Date.now();
 
 /**
+ * Review gates running in this process, by task.
+ *
+ * In memory on purpose: a gate is a child process of this Wanigan, and one
+ * that was running when the app quit is not running any more (review.ts closes
+ * its row as interrupted). Two gates in one working copy at once would race
+ * each other's build output, so a second request for the same task is refused
+ * or, for a gate an agent's stop asked for, folded into the one running.
+ */
+const gateRuns = new Map<string, { since: number; trigger: ProofTrigger }>();
+
+/**
  * The commit a goal or checkpoint was recorded against.
  *
  * This used to be its own `execFileSync` with no timeout and no hardened
@@ -93,6 +110,9 @@ function mapDocket(row: DocketRow): WorkDocket {
     budgetUsd: row.budget_usd, baseCommit: row.base_commit,
     status: row.status as DocketStatus, createdAt: row.created_at, updatedAt: row.updated_at,
     autopilot: autopilotState(row),
+    // Read as a pair so a row can never report hand-back on with the gate off,
+    // whatever an older write left in the column.
+    gate: { onStop: row.gate_on_stop === 1, returnFailures: row.gate_on_stop === 1 && row.return_failures === 1 },
   };
 }
 
@@ -217,6 +237,9 @@ function mapNodes(rows: NodeRow[], at: number = Date.now()): DocketNode[] {
       worktree: row.worktree, startedAt: row.started_at, endedAt: row.ended_at, detail: row.detail,
       queued: row.dispatch_state === 'queued',
       deferUntil: row.defer_until,
+      reopenedAt: row.reopened_at ?? null,
+      gateRunningSince: gateRuns.get(row.id)?.since ?? null,
+      gateReturns: row.gate_returns ?? 0,
     };
   });
 }
@@ -231,6 +254,13 @@ function nodeRow(id: string): NodeRow {
   const row = db().prepare('SELECT * FROM work_nodes WHERE id=?').get(id) as NodeRow | undefined;
   if (!row) throw new Error('Goal task not found.');
   return row;
+}
+
+/** The project a goal task belongs to, or null when the task no longer exists. */
+export function nodeProjectId(nodeId: string): string | null {
+  const row = db().prepare('SELECT d.project_id FROM work_nodes n JOIN work_dockets d ON d.id = n.docket_id WHERE n.id = ?')
+    .get(nodeId) as { project_id: string } | undefined;
+  return row?.project_id ?? null;
 }
 
 function touch(docketId: string): void {
@@ -270,8 +300,49 @@ function setDocketPhase(docketId: string): void {
 
 function proofRows(docketId: string): DocketProof[] {
   return (db().prepare('SELECT * FROM work_proofs WHERE docket_id=? ORDER BY created_at DESC').all(docketId) as Array<{
-    id: string; docket_id: string; node_id: string | null; kind: DocketProof['kind']; status: DocketProof['status']; summary: string; created_at: number;
-  }>).map((row) => ({ id: row.id, docketId: row.docket_id, nodeId: row.node_id, kind: row.kind, status: row.status, summary: row.summary, createdAt: row.created_at }));
+    id: string; docket_id: string; node_id: string | null; kind: DocketProof['kind']; status: DocketProof['status']; summary: string;
+    detail_json: string | null; created_at: number;
+  }>).map((row) => {
+    const gate = row.kind === 'test' ? gateDetailOf(row.detail_json) : undefined;
+    return { id: row.id, docketId: row.docket_id, nodeId: row.node_id, kind: row.kind, status: row.status, summary: row.summary, createdAt: row.created_at,
+      ...(gate ? { gate } : {}) };
+  });
+}
+
+/**
+ * A gate proof's recorded detail, minus the working-copy path it also holds.
+ *
+ * Undefined for a proof written before gates recorded a trigger: those rows
+ * never said which tree they ran on or who started them, and a reading that
+ * filled those in would be inventing evidence.
+ */
+function gateDetailOf(json: string | null): GateProofDetail | undefined {
+  let raw: unknown;
+  try { raw = JSON.parse(json ?? ''); } catch { return undefined; }
+  if (!raw || typeof raw !== 'object') return undefined;
+  const record = raw as Record<string, unknown>;
+  if (record.trigger !== 'operator' && record.trigger !== 'stop') return undefined;
+  const text = (value: unknown) => typeof value === 'string' ? value : null;
+  const count = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  const oracleRaw = record.oracle as { testFiles?: unknown; codeFiles?: unknown; flags?: unknown } | null | undefined;
+  const flags = Array.isArray(oracleRaw?.flags) ? (oracleRaw.flags as Record<string, unknown>[]).flatMap((flag): OracleFlag[] =>
+    flag?.kind === 'tests-edited-with-code' ? [{ kind: flag.kind, testFiles: count(flag.testFiles), codeFiles: count(flag.codeFiles) }]
+      : flag?.kind === 'test-without-assertion' && typeof flag.path === 'string' ? [{ kind: flag.kind, path: flag.path }] : []) : [];
+  const failureRaw = record.failure as Record<string, unknown> | null | undefined;
+  const handRaw = record.handBack as Record<string, unknown> | null | undefined;
+  return {
+    trigger: record.trigger,
+    tree: text(record.tree),
+    oracle: oracleRaw && typeof oracleRaw === 'object' ? { testFiles: count(oracleRaw.testFiles), codeFiles: count(oracleRaw.codeFiles), flags } : null,
+    oracleNote: text(record.oracleNote),
+    failure: failureRaw && typeof failureRaw === 'object' && typeof failureRaw.command === 'string'
+      ? { command: failureRaw.command, exitCode: typeof failureRaw.exitCode === 'number' ? failureRaw.exitCode : null,
+        excerpt: text(failureRaw.excerpt) ?? '', cut: failureRaw.cut === true }
+      : null,
+    handBack: handRaw && typeof handRaw === 'object' && typeof handRaw.sentence === 'string'
+      ? { sent: handRaw.sent === true, attempt: typeof handRaw.attempt === 'number' ? handRaw.attempt : null, sentence: handRaw.sentence }
+      : null,
+  };
 }
 
 function claimRows(docketId: string): DocketClaim[] {
@@ -298,7 +369,8 @@ export function listDockets(projectId?: string | null, limit = 80): WorkDocket[]
 
 export function docket(id: string): DocketDetail {
   const base = mapDocket(docketRow(id));
-  return { ...base, nodes: mapNodes(rawNodes(id)), claims: claimRows(id), proofs: proofRows(id), checkpoints: checkpointRows(id) };
+  return { ...base, nodes: mapNodes(rawNodes(id)), claims: claimRows(id), proofs: proofRows(id), checkpoints: checkpointRows(id),
+    reviewCommands: review.recipe(base.projectId).commands.length };
 }
 
 /** Exact, bounded read; a same-project session is not necessarily goal work. */
@@ -551,8 +623,23 @@ export function goalCapsuleFor(nodeId: string): GoalCapsule {
     }),
     siblingClaims: siblings.map((row) => ({ nodeId: row.node_id, title: row.title, path: row.path })),
     canClaimLive: false,
+    changesRequested: changesRequestedFor(parent.id),
+    plan: self.kind === 'plan' ? null : capsulePlan(parent.id),
     recordedAt: now(),
   };
+}
+
+function capsulePlan(docketId: string): GoalCapsule['plan'] {
+  const plan = latestGoalPlan(docketId);
+  return plan
+    ? { nodeTitle: plan.nodeTitle, state: plan.state, text: plan.text, truncated: plan.truncated, edited: plan.edited, capturedAt: plan.capturedAt }
+    : null;
+}
+
+/** The plan this goal's planning produced, for Control to show. */
+export function goalPlan(docketId: string): GoalPlan | null {
+  docketRow(docketId);
+  return latestGoalPlan(docketId);
 }
 
 export async function startNode(nodeId: string, input: { providerId: string; model?: string; effort?: string; permissionMode?: string }): Promise<DocketNode> {
@@ -603,7 +690,7 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
   // provider probe, PTY spawn). Two starts can both pass that check, and an
   // unconditional write would leave the loser's agent running, spending
   // tokens, attached to nothing. Claiming the row atomically decides it.
-  const claimed = db().prepare(`UPDATE work_nodes SET status='running',provider_id=?,model=?,session_id=?,worktree=?,started_at=?,detail=NULL,dispatch_state=NULL
+  const claimed = db().prepare(`UPDATE work_nodes SET status='running',provider_id=?,model=?,session_id=?,worktree=?,started_at=?,detail=NULL,dispatch_state=NULL,gate_returns=0
     WHERE id=? AND session_id IS NULL AND status!='running'`)
     .run(providerId, input.model?.trim() || null, session.id, session.worktree ?? null, now(), nodeId);
   if (claimed.changes === 0) {
@@ -781,7 +868,32 @@ function verificationTree(node: NodeRow): VerificationTree {
   return missing ?? { kind: 'none' };
 }
 
+/** A gate run's proof, and the failing command's full output when it failed. */
+export type GateRun = {
+  proof: DocketProof;
+  failing: { command: string; exitCode: number | null; output: string } | null;
+};
+
 export async function runProof(nodeId: string): Promise<DocketProof> {
+  const run = await runGate(nodeId, 'operator');
+  if ('skipped' in run) throw new Error('The review gate did not run.');
+  return run.proof;
+}
+
+/**
+ * The gate an agent's stop asked for.
+ *
+ * Skipped, with nothing written, when the working copy is exactly the tree the
+ * task's latest gate already ran against: an agent that stops to ask a question
+ * has changed nothing, and rerunning the same suite on the same bytes would
+ * spend minutes to record the same answer. Any change, including an untracked
+ * file, is a different tree and runs.
+ */
+export async function runGateOnStop(nodeId: string): Promise<GateRun | { skipped: 'unchanged' }> {
+  return runGate(nodeId, 'stop');
+}
+
+async function runGate(nodeId: string, trigger: ProofTrigger): Promise<GateRun | { skipped: 'unchanged' }> {
   const node = nodeRow(nodeId); const parent = docketRow(node.docket_id); const project = projectById(parent.project_id);
   if (!project) throw new Error('Project not found.');
   const tree = verificationTree(node);
@@ -792,33 +904,76 @@ export async function runProof(nodeId: string): Promise<DocketProof> {
       + 'pass for a change it never saw.',
     );
   }
-  const cwd = tree.kind === 'found' ? tree.path : project.path;
-  const run = await review.runAt(project.id, cwd);
-  const passed = run.status === 'passed';
-  // Which tree, named by the task that produced it — never by its path.
-  //
-  // A proof that does not say which working copy it ran in cannot be checked
-  // afterwards, which is the whole job here. But `summary` is one of the few
-  // fields that crosses to a paired phone (mobile/goals.ts sends it beside the
-  // decision buttons), and a worktree path is exactly what that wire is not
-  // allowed to carry. The path goes into detail_json, which stays on the Mac.
-  const where = tree.kind === 'found'
-    ? (tree.from.id === node.id ? '' : ` in the worktree from “${tree.from.title}”`)
-    : " in this goal's project checkout";
-  const summary = passed
-    ? `${run.results.length} review command(s) passed${where}.`
-    : `Review gate failed after ${run.results.length} command(s)${where}.`;
-  const proof: DocketProof = { id: uid('proof'), docketId: parent.id, nodeId, kind: 'test', status: passed ? 'passed' : 'failed', summary, createdAt: now() };
-  db().prepare(`INSERT INTO work_proofs (id,docket_id,node_id,kind,status,summary,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)`)
-    .run(proof.id, proof.docketId, proof.nodeId, proof.kind, proof.status, proof.summary,
-      JSON.stringify({
-        // Which working copy the commands actually ran in. Desktop-only: the
-        // phone reads `summary`, and this is the field that names a path.
-        cwd,
-        treeFrom: tree.kind === 'found' ? tree.from.title : null,
-        results: run.results.map((result) => ({ command: result.command, exitCode: result.exitCode, durationMs: result.durationMs })),
-      }), proof.createdAt);
-  touch(parent.id); return proof;
+  const active = gateRuns.get(nodeId);
+  if (active) {
+    throw new Error(active.trigger === 'stop'
+      ? 'The review gate is already running for this task, started when its agent stopped. Its result is recorded here when it finishes.'
+      : 'The review gate is already running for this task. Its result is recorded here when it finishes.');
+  }
+  gateRuns.set(nodeId, { since: now(), trigger });
+  try {
+    const cwd = tree.kind === 'found' ? tree.path : project.path;
+    const snapshot = await snapshotTree(cwd, parent.base_commit, nodeId);
+    if (trigger === 'stop' && snapshot.tree !== null && snapshot.tree === latestGateTree(parent.id, nodeId)) {
+      return { skipped: 'unchanged' };
+    }
+    const run = await review.runAt(project.id, cwd);
+    const passed = run.status === 'passed';
+    // Which tree, named by the task that produced it — never by its path.
+    //
+    // A proof that does not say which working copy it ran in cannot be checked
+    // afterwards, which is the whole job here. But `summary` is one of the few
+    // fields that crosses to a paired phone (mobile/goals.ts sends it beside the
+    // decision buttons), and a worktree path is exactly what that wire is not
+    // allowed to carry. The path goes into detail_json, which stays on the Mac.
+    const where = tree.kind === 'found'
+      ? (tree.from.id === node.id ? '' : ` in the worktree from “${tree.from.title}”`)
+      : " in this goal's project checkout";
+    const when = trigger === 'stop' ? ', run when its agent stopped' : '';
+    const summary = passed
+      ? `${run.results.length} review command(s) passed${where}${when}.`
+      : `Review gate failed after ${run.results.length} command(s)${where}${when}.`;
+    const last = passed ? null : run.results[run.results.length - 1] ?? null;
+    const excerpt = last ? failureExcerpt(last.output) : null;
+    const gate: GateProofDetail = {
+      trigger,
+      tree: snapshot.tree,
+      oracle: snapshot.oracle,
+      oracleNote: snapshot.oracle ? null : snapshot.note,
+      failure: last && excerpt ? { command: last.command, exitCode: last.exitCode, excerpt: excerpt.text, cut: excerpt.cut } : null,
+      handBack: null,
+    };
+    const proof: DocketProof = { id: uid('proof'), docketId: parent.id, nodeId, kind: 'test', status: passed ? 'passed' : 'failed', summary, createdAt: now(), gate };
+    db().prepare(`INSERT INTO work_proofs (id,docket_id,node_id,kind,status,summary,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)`)
+      .run(proof.id, proof.docketId, proof.nodeId, proof.kind, proof.status, proof.summary,
+        JSON.stringify({
+          // Which working copy the commands actually ran in. Desktop-only: the
+          // phone reads `summary`, and this is the field that names a path.
+          cwd,
+          treeFrom: tree.kind === 'found' ? tree.from.title : null,
+          results: run.results.map((result) => ({ command: result.command, exitCode: result.exitCode, durationMs: result.durationMs })),
+          ...gate,
+        }), proof.createdAt);
+    touch(parent.id);
+    return { proof, failing: last ? { command: last.command, exitCode: last.exitCode, output: last.output } : null };
+  } finally {
+    gateRuns.delete(nodeId);
+  }
+}
+
+/** The tree the task's latest gate ran against, since it was last reopened; null when none was recorded. */
+function latestGateTree(docketId: string, nodeId: string): string | null {
+  const reopened = (db().prepare('SELECT reopened_at FROM work_nodes WHERE id=?').get(nodeId) as
+    { reopened_at: number | null } | undefined)?.reopened_at ?? 0;
+  const row = db().prepare(`SELECT detail_json FROM work_proofs
+    WHERE docket_id=? AND node_id=? AND kind='test' AND created_at >= ? ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+    .get(docketId, nodeId, reopened) as { detail_json: string | null } | undefined;
+  return gateDetailOf(row?.detail_json ?? null)?.tree ?? null;
+}
+
+/** Whether a review gate is running for this task in this process right now. */
+export function gateRunning(nodeId: string): boolean {
+  return gateRuns.has(nodeId);
 }
 
 /**
@@ -827,10 +982,42 @@ export async function runProof(nodeId: string): Promise<DocketProof> {
  * proof would say "verified" about a tree that had since failed.
  */
 function hasPassedProof(docketId: string, nodeId: string): boolean {
+  // Only runs since the task was last reopened. A reopen after "Request
+  // changes" sends the work back; the pass recorded before it is about the tree
+  // the reviewer asked to change, and letting it complete the task again would
+  // approve the revision on the strength of the version it replaced.
+  const reopened = (db().prepare('SELECT reopened_at FROM work_nodes WHERE id=?').get(nodeId) as
+    { reopened_at: number | null } | undefined)?.reopened_at ?? 0;
   const latest = db().prepare(`SELECT status FROM work_proofs
-    WHERE docket_id=? AND node_id=? AND kind='test' ORDER BY created_at DESC, rowid DESC LIMIT 1`)
-    .get(docketId, nodeId) as { status: string } | undefined;
+    WHERE docket_id=? AND node_id=? AND kind='test' AND created_at >= ? ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+    .get(docketId, nodeId, reopened) as { status: string } | undefined;
   return latest?.status === 'passed';
+}
+
+/** Longest note a capsule carries from one decision; the whole note stays in the proof. */
+const CAPSULE_CHANGE_CHARS = 1_200;
+
+/**
+ * The reviewer's "Request changes" notes on a goal, newest first. Read from the
+ * decision proofs' Mac-only detail rather than from the review task's own detail
+ * field, which a reopen overwrites, and rather than from `summary`, which is
+ * one of the few fields that crosses to a paired phone.
+ */
+function changesRequestedFor(docketId: string, limit = 3): { note: string; decidedAt: number }[] {
+  const rows = db().prepare(`SELECT detail_json, created_at FROM work_proofs
+    WHERE docket_id=? AND kind='decision' ORDER BY created_at DESC, rowid DESC LIMIT 20`)
+    .all(docketId) as { detail_json: string; created_at: number }[];
+  const out: { note: string; decidedAt: number }[] = [];
+  for (const row of rows) {
+    let detail: unknown;
+    try { detail = JSON.parse(row.detail_json); } catch { continue; }
+    const record = detail as { decision?: unknown; note?: unknown };
+    if (record?.decision !== 'request_changes' || typeof record.note !== 'string' || !record.note.trim()) continue;
+    const flat = record.note.replace(/\s+/g, ' ').trim();
+    out.push({ note: flat.length > CAPSULE_CHANGE_CHARS ? `${flat.slice(0, CAPSULE_CHANGE_CHARS)}…` : flat, decidedAt: row.created_at });
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 function storeOutcome(node: NodeRow, accepted: boolean, testsPassed: boolean): void {
@@ -839,8 +1026,8 @@ function storeOutcome(node: NodeRow, accepted: boolean, testsPassed: boolean): v
   const model = node.model || usage?.models[0] || 'provider-default';
   // Whether the figure was reported is stored beside it. Writing 0 for an
   // unreported cost and 0 for a genuinely free session made the two
-  // indistinguishable one row later, and the router then read the unmetered
-  // provider as the cheapest one.
+  // indistinguishable one row later, and Model evidence then showed the
+  // unmetered provider as the cheapest one.
   const reported = usage?.costStatus === 'reported';
   const effort = db().prepare('SELECT effort FROM session_log WHERE id=?')
     .get(node.session_id ?? '') as { effort: string | null } | undefined;
@@ -858,12 +1045,21 @@ export function completeNode(nodeId: string, input: { detail?: string; decision?
   // A fanned-out goal can hold several verification tasks. Reading only the
   // first would let one green branch speak for a tree whose other branch failed
   // its gate, both in the approval check below and in the evidence stored for
-  // the router — so the whole set decides.
+  // Model evidence — so the whole set decides.
   const verifyNodes = node.kind === 'review' ? mapNodes(rawNodes(parent.id)).filter((value) => value.kind === 'verify') : [];
   const testsPassed = node.kind === 'verify' ? hasPassedProof(parent.id, nodeId)
     : node.kind === 'review' ? verifyNodes.length > 0 && verifyNodes.every((value) => hasPassedProof(parent.id, value.id))
       : true;
   if (node.kind === 'verify' && !testsPassed) throw new Error('Run and pass the review gate before completing verification. A claim without command evidence is not proof.');
+  // Verified done, when the goal asked for it: the agent stopping is its claim
+  // that the work is finished, and the gate passing is the evidence. Only this
+  // goal's own setting turns it on, so a goal that never opted in completes
+  // exactly as it always did.
+  if (node.kind === 'implement' && parent.gate_on_stop === 1 && decision === 'approve' && !hasPassedProof(parent.id, nodeId)) {
+    throw new Error(gateRuns.has(nodeId)
+      ? 'The review gate is still running for this task. It can be completed once the gate passes.'
+      : 'This goal holds implementation tasks until the review gate passes. The agent stopping is a claim that it is done; run the gate, or let it run when the agent next stops, and complete the task once it passes.');
+  }
   if (node.kind === 'review' && decision === 'approve' && !testsPassed) {
     const unproven = verifyNodes.filter((value) => !hasPassedProof(parent.id, value.id));
     throw new Error(verifyNodes.length === 0
@@ -873,14 +1069,21 @@ export function completeNode(nodeId: string, input: { detail?: string; decision?
   const failed = decision !== 'approve';
   db().prepare('UPDATE work_nodes SET status=?,ended_at=?,detail=? WHERE id=?')
     .run(failed ? 'failed' : 'completed', now(), detail, nodeId);
+  if (!failed) forgetTreeSnapshot(nodeId);
   releaseClaims(nodeId); setTaskStatus(nodeId, failed ? (decision === 'reject' ? 'cancelled' : 'failed') : 'completed');
   const proof: DocketProof = { id: uid('proof'), docketId: parent.id, nodeId, kind: node.kind === 'review' ? 'decision' : 'review',
     status: failed ? 'failed' : 'recorded', summary: node.kind === 'review' ? `Human decision: ${decision.replace('_', ' ')}.` : (detail ?? `${node.title} completed.`), createdAt: now() };
-  db().prepare('INSERT INTO work_proofs (id,docket_id,node_id,kind,status,summary,created_at) VALUES (?,?,?,?,?,?,?)')
-    .run(proof.id, proof.docketId, proof.nodeId, proof.kind, proof.status, proof.summary, proof.createdAt);
+  // The reviewer's note goes into detail_json, which stays on the Mac: it is
+  // what a reopened implementation is handed in its goal capsule, and `summary`
+  // crosses to a paired phone.
+  db().prepare('INSERT INTO work_proofs (id,docket_id,node_id,kind,status,summary,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(proof.id, proof.docketId, proof.nodeId, proof.kind, proof.status, proof.summary,
+      JSON.stringify(node.kind === 'review' ? { decision, note: detail } : {}), proof.createdAt);
   // The final decision is evidence about the work-producing agents, not just
-  // about the reviewer. Persist one outcome per launched phase so the router
-  // can compare implementation, verification and review models separately.
+  // about the reviewer. Persist one outcome per launched phase so Model
+  // evidence can compare implementation, verification and review models
+  // separately. Nothing routes on it: Control shows it where a person chooses
+  // the provider for the next task, and the choice stays theirs.
   if (node.kind === 'review') {
     for (const candidate of rawNodes(parent.id)) {
       if (candidate.provider_id) storeOutcome(candidate, decision === 'approve', testsPassed);
@@ -890,7 +1093,7 @@ export function completeNode(nodeId: string, input: { detail?: string; decision?
   // review pass above to overwrite it — but a goal that is abandoned before
   // review never reaches that loop, leaving those phases permanently recorded
   // as rejected work. An unreviewed phase has no verdict, and no verdict is
-  // not a rejection; the router is better served by silence than by a guess.
+  // not a rejection; the evidence is better served by silence than by a guess.
   if (node.kind === 'review' && decision === 'reject') db().prepare("UPDATE work_dockets SET status='rejected',updated_at=? WHERE id=?").run(now(), parent.id);
   else setDocketPhase(parent.id);
   return mapNodes(rawNodes(parent.id)).find((value) => value.id === nodeId)!;
@@ -1152,21 +1355,69 @@ export function retryNode(nodeId: string): DocketNode {
   if (!['failed', 'canceled'].includes(node.status)) {
     throw new Error(`Only a failed or canceled task can be reopened; this task is ${node.status}.`);
   }
+  // A review that asked for changes sends the work back, not only itself.
+  // Reopening the review alone used to put the same, unchanged implementation
+  // in front of the reviewer again: the implementation task was complete and
+  // nothing could run it a second time, so "Request changes" had no path to a
+  // change anywhere inside the goal.
+  const sendBack = node.kind === 'review' && latestDecision(node.docket_id, nodeId) === 'request_changes'
+    ? upstreamWork(node.docket_id, nodeId) : [];
+  reopen(node, `Reopened after ${node.status}.`);
+  for (const upstream of sendBack) reopen(upstream, 'Reopened: the reviewer requested changes.');
+  setDocketPhase(node.docket_id);
+  return mapNodes(rawNodes(node.docket_id)).find((value) => value.id === nodeId)!;
+}
+
+function reopen(node: NodeRow, detail: string): void {
   if (node.session_id) {
     // Recorded before the statement below drops the pointer. Dispatch already
     // wrote this pair for anything started since work_node_sessions existed;
     // this call is what covers a task dispatched before it did.
-    recordNodeSession(nodeId, node.docket_id, node.session_id);
+    recordNodeSession(node.id, node.docket_id, node.session_id);
     try { killSession(node.session_id); } catch { /* already exited */ }
   }
   db().prepare(`UPDATE work_nodes SET status='pending',session_id=NULL,started_at=NULL,ended_at=NULL,
-    dispatch_state=NULL,detail=? WHERE id=?`).run(`Reopened after ${node.status}.`, nodeId);
-  releaseClaims(nodeId);
+    dispatch_state=NULL,detail=?,reopened_at=?,gate_returns=0 WHERE id=?`).run(detail, now(), node.id);
+  releaseClaims(node.id);
   // The MCP task vocabulary has no 'pending': a reopened task is one waiting
   // to be started again, which is exactly what input_required means here.
-  setTaskStatus(nodeId, 'input_required');
-  setDocketPhase(node.docket_id);
-  return mapNodes(rawNodes(node.docket_id)).find((value) => value.id === nodeId)!;
+  setTaskStatus(node.id, 'input_required');
+}
+
+/** The newest human decision recorded on one review task, or null. */
+function latestDecision(docketId: string, nodeId: string): string | null {
+  const row = db().prepare(`SELECT detail_json FROM work_proofs WHERE docket_id=? AND node_id=? AND kind='decision'
+    ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(docketId, nodeId) as { detail_json: string } | undefined;
+  if (!row) return null;
+  try {
+    const decision = (JSON.parse(row.detail_json) as { decision?: unknown }).decision;
+    return typeof decision === 'string' ? decision : null;
+  } catch { return null; }
+}
+
+/**
+ * The completed implementation and verification tasks a review stands on,
+ * found by walking its dependencies. Plans are left alone: a reviewer asking for
+ * a different implementation has not rejected the plan, and replanning is a
+ * decision of its own.
+ */
+function upstreamWork(docketId: string, reviewId: string): NodeRow[] {
+  const rows = rawNodes(docketId);
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const seen = new Set<string>();
+  const out: NodeRow[] = [];
+  const walk = (id: string) => {
+    for (const dep of parseStrings(byId.get(id)?.depends_json ?? '[]')) {
+      if (seen.has(dep)) continue;
+      seen.add(dep);
+      const row = byId.get(dep);
+      if (!row) continue;
+      if ((row.kind === 'implement' || row.kind === 'verify') && row.status === 'completed') out.push(row);
+      walk(dep);
+    }
+  };
+  walk(reviewId);
+  return out;
 }
 
 /* ── autopilot ───────────────────────────────────────────────────────── */
@@ -1264,6 +1515,79 @@ export function setDocketBudget(docketId: string, budgetUsd: number | null): Doc
   }
   db().prepare('UPDATE work_dockets SET budget_usd=?,updated_at=? WHERE id=?').run(value, now(), docketId);
   return docket(docketId);
+}
+
+/* ── verified done ───────────────────────────────────────────────────── */
+
+/**
+ * Turn a goal's gate-on-stop and hand-back on or off.
+ *
+ * Both arrive from the renderer, so each has to be a real boolean; `"false"`
+ * is a string and would otherwise read as on. Hand-back without the gate has
+ * nothing to hand back, so it is stored off whenever the gate is. The gate
+ * needs commands to run, and a goal turned on with none would promise a check
+ * that could never happen, so that is refused where the operator can fix it.
+ */
+export function setGoalGate(docketId: string, input: { onStop?: unknown; returnFailures?: unknown }): DocketDetail {
+  const row = docketRow(docketId);
+  if (typeof input?.onStop !== 'boolean' || typeof input?.returnFailures !== 'boolean') {
+    throw new Error('Each gate setting has to be on or off.');
+  }
+  const onStop = input.onStop;
+  const returnFailures = onStop && input.returnFailures;
+  if (onStop && ['accepted', 'rejected'].includes(row.status)) throw new Error('This goal is finished, so there is no agent left to gate.');
+  if (onStop && !review.recipe(row.project_id).commands.length) {
+    throw new Error('This project has no review gate commands yet. Add them under Git › Review gate first; with none, there is nothing to run when an agent stops.');
+  }
+  db().prepare('UPDATE work_dockets SET gate_on_stop=?,return_failures=?,updated_at=? WHERE id=?')
+    .run(onStop ? 1 : 0, returnFailures ? 1 : 0, now(), docketId);
+  return docket(docketId);
+}
+
+export type StopGateTarget = {
+  nodeId: string; docketId: string; returnFailures: boolean; gateReturns: number;
+  budgetUsd: number | null; spendUsd: number;
+};
+
+/**
+ * The task a stopped session was running, if its goal gates on stop.
+ *
+ * Only implementation and verification tasks: a plan changes no code, and a
+ * review is the human decision. Ownership has to be unambiguous, the same rule
+ * `sessionGoal` holds, because a gate run in the wrong task's tree records a
+ * pass for work it never saw.
+ */
+export function stopGateTarget(sessionId: string): StopGateTarget | null {
+  const rows = db().prepare(`SELECT n.id AS node_id, n.docket_id, n.gate_returns, d.return_failures, d.budget_usd
+    FROM work_nodes n JOIN work_dockets d ON d.id = n.docket_id
+    WHERE n.session_id = ? AND n.status = 'running' AND n.kind IN ('implement','verify')
+      AND d.gate_on_stop = 1 AND d.status NOT IN ('accepted','rejected') LIMIT 2`)
+    .all(sessionId) as { node_id: string; docket_id: string; gate_returns: number; return_failures: number; budget_usd: number | null }[];
+  if (rows.length !== 1) return null;
+  const row = rows[0];
+  return {
+    nodeId: row.node_id, docketId: row.docket_id, returnFailures: row.return_failures === 1, gateReturns: row.gate_returns ?? 0,
+    budgetUsd: row.budget_usd, spendUsd: row.budget_usd === null ? 0 : autopilotSpend(row.docket_id).spendUsd,
+  };
+}
+
+/**
+ * Count one hand-back against the task, if the task is still the one that
+ * stopped and nobody counted this attempt first. The compare on the previous
+ * count is what keeps the cap a cap across two gates racing to the same slot.
+ */
+export function countHandBack(nodeId: string, sessionId: string, attempt: number): boolean {
+  return db().prepare(`UPDATE work_nodes SET gate_returns=? WHERE id=? AND session_id=? AND status='running' AND gate_returns=?`)
+    .run(attempt, nodeId, sessionId, attempt - 1).changes === 1;
+}
+
+/** What became of a failed gate after its proof was written. */
+export function recordHandBack(proofId: string, handBack: NonNullable<GateProofDetail['handBack']>): void {
+  const row = db().prepare('SELECT detail_json FROM work_proofs WHERE id=?').get(proofId) as { detail_json: string | null } | undefined;
+  if (!row) return;
+  let detail: Record<string, unknown> = {};
+  try { detail = JSON.parse(row.detail_json ?? '{}') as Record<string, unknown>; } catch { /* rewritten below */ }
+  db().prepare('UPDATE work_proofs SET detail_json=? WHERE id=?').run(JSON.stringify({ ...detail, handBack }), proofId);
 }
 
 /**

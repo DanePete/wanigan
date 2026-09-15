@@ -17,6 +17,8 @@
  * the record of how the work reached here.
  */
 import { HANDOVER_PROMPT, handoverSeed } from '../shared/context-handover';
+import * as accounts from './accounts';
+import { providerById } from './providers';
 import { createSession, listSessions, writeSession } from './sessions';
 import { lastAssistantTurn } from './transcripts';
 import type { Session } from '../shared/types';
@@ -51,6 +53,32 @@ export function beginHandover(sessionId: string): HandoverBegun {
 }
 
 /**
+ * The account the fresh session runs as.
+ *
+ * By default the one this session already runs as. The limit bubble offers a
+ * roomier account instead — "Work is at 96% of its week limit, Personal has
+ * room" — and until this existed the button under that sentence opened the new
+ * session on the pressed account anyway, so the one thing the offer promised
+ * was the thing it did not do. The id arrives from the renderer, so it has to
+ * name an account Wanigan holds for the harness this session runs: a Codex
+ * login cannot carry a Claude Code conversation, and an unknown id is refused
+ * rather than silently replaced by the default.
+ *
+ * A handover opens a fresh conversation seeded with a note, never a resume, so
+ * no transcript is being moved between accounts — which is what makes a change
+ * of account safe here when it is not for an exact resume.
+ */
+function carryAccount(session: Session, requested: string | null): string | null {
+  if (!requested || requested === session.accountId) return session.accountId ?? null;
+  const account = accounts.byId(requested);
+  const harness = providerById(session.providerId)?.harness ?? null;
+  if (!account || !harness || account.harness !== harness) {
+    throw new Error('That account does not run this session\u2019s agent, so the work was not carried there.');
+  }
+  return account.id;
+}
+
+/**
  * Read what the agent wrote and open the fresh session with it.
  *
  * Three outcomes, kept apart because they need different sentences. A note that
@@ -59,12 +87,17 @@ export function beginHandover(sessionId: string): HandoverBegun {
  * read at all, which is a different thing from an empty one and must not be
  * reported as though the agent had said nothing.
  */
-export async function finishHandover(sessionId: string): Promise<HandoverFinished> {
+export async function finishHandover(sessionId: string, toAccountId: string | null = null): Promise<HandoverFinished> {
   const session = liveSession(sessionId);
+  // Before the transcript is read or anything launches: a refused account must
+  // not cost a note that is then thrown away.
+  const accountId = carryAccount(session, toAccountId);
 
   let note: string | null;
   try {
-    note = lastAssistantTurn(session.projectPath, session.conversationId ?? null);
+    // Filed under the directory the CLI started in, which for an isolated
+    // session is its worktree and never the project.
+    note = lastAssistantTurn(session.worktree ?? session.projectPath, session.conversationId ?? null);
   } catch (error) {
     return {
       kind: 'unreadable',
@@ -75,14 +108,18 @@ export async function finishHandover(sessionId: string): Promise<HandoverFinishe
     return { kind: 'empty', reason: 'The agent did not write a handover note.' };
   }
 
-  // Same project, provider and account: a handover changes the conversation,
-  // never where the work happens or who it runs as.
+  // Same project and provider: a handover changes the conversation, never where
+  // the work happens. The account changes only when the operator took the
+  // offer that named a different one.
   const next = await createSession({
     providerId: session.providerId,
     projectId: session.projectId,
-    accountId: session.accountId ?? null,
+    accountId,
     model: session.model || undefined,
     initialPrompt: handoverSeed(note),
   });
   return { kind: 'carried', session: next, noteChars: note.length };
 }
+
+/** For the smoke suite: the account rule, without a live PTY to hand over. */
+export const __test = { carryAccount };

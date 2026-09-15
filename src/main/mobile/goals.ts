@@ -549,9 +549,16 @@ export function mobileGoalGate(record: DocketDetail): MobileGoalGate {
   // share this table, and counting one of those as a passing check would be
   // this screen reporting a human's word as a command result.
   const latest = new Map<string, DocketDetail['proofs'][number]>();
+  // The same rule control.ts approves by: a run from before a task was reopened
+  // describes work the reopen replaced, so it neither passes nor fails it now.
+  const reopenedAt = new Map<string, number>();
+  for (const node of nodes) {
+    if (typeof node?.id === 'string' && typeof node?.reopenedAt === 'number') reopenedAt.set(node.id, node.reopenedAt);
+  }
   for (const proof of proofs) {
     const nodeId = typeof proof?.nodeId === 'string' ? proof.nodeId : '';
     if (!nodeId || PROOF_KINDS.get(String(proof?.kind)) !== 'test') continue;
+    if (stamp(proof?.createdAt) < (reopenedAt.get(nodeId) ?? 0)) continue;
     const held = latest.get(nodeId);
     if (!held || stamp(proof?.createdAt) > stamp(held.createdAt)) latest.set(nodeId, proof);
   }
