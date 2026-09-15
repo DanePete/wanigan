@@ -231,6 +231,7 @@ export async function runSmoke(): Promise<void> {
     const p4 = await import('./smoke33');
     await p4.runSpendYieldSmoke(check, say);
     await p4.runCodexLoaderSmoke(check, say);
+    await p4.runSkillListingSmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

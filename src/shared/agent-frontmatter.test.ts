@@ -21,3 +21,13 @@ test('the version gate reads the CLI’s own version line', () => {
   assert.equal(versionAtLeast('2.2.0', '2.1.271'), true);
   assert.equal(versionAtLeast(null, '2.1.271'), null);
 });
+
+test('disable-model-invocation is set in place, added before the closing fence, or given a frontmatter', async () => {
+  const { withDisableModelInvocation } = await import('./agent-frontmatter.ts');
+  assert.equal(withDisableModelInvocation('---\nname: a\ndisable-model-invocation: false\n---\nbody', true),
+    '---\nname: a\ndisable-model-invocation: true\n---\nbody');
+  assert.equal(withDisableModelInvocation('---\nname: a\n---\nbody', true), '---\nname: a\ndisable-model-invocation: true\n---\nbody');
+  assert.equal(withDisableModelInvocation('body only', false), '---\ndisable-model-invocation: false\n---\nbody only');
+  assert.equal(withDisableModelInvocation('---\r\nname: a\r\n---\r\nbody', true), '---\r\nname: a\r\ndisable-model-invocation: true\r\n---\r\nbody');
+  assert.throws(() => withDisableModelInvocation('---\nname: a\nbody', true), /never closes/);
+});

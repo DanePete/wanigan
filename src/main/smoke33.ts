@@ -250,3 +250,72 @@ export async function runCodexLoaderSmoke(check: Check, say: Say): Promise<void>
     fs.rmSync(fakeHome, { recursive: true, force: true });
   }
 }
+
+export async function runSkillListingSmoke(check: Check, say: Say): Promise<void> {
+  say('── skills · listing cost and the manual-only switch');
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-skill-home-'));
+  const codexHome = path.join(fakeHome, '.codex');
+  const { repo } = scratchRepo('wanigan-skill-listing-');
+  const { db } = await import('./db');
+  const { addProject, removeProject } = await import('./store');
+  const project = await addProject(repo);
+  const ids: string[] = [];
+  try {
+    const write = (file: string, text: string) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
+    const claudePersonal = path.join(fakeHome, '.claude', 'skills', 'tidy', 'SKILL.md');
+    const codexPersonal = path.join(fakeHome, '.agents', 'skills', 'lean', 'SKILL.md');
+    const handWritten = path.join(fakeHome, '.agents', 'skills', 'mine', 'SKILL.md');
+    const projectSkill = path.join(repo, '.claude', 'skills', 'shared', 'SKILL.md');
+    write(claudePersonal, '---\nname: tidy\ndescription: tidy the imports before a commit\n---\nBody.\n');
+    write(codexPersonal, '---\nname: lean\ndescription: keep a diff small\n---\nBody.\n');
+    write(handWritten, '---\nname: mine\ndescription: written by hand\n---\nBody.\n');
+    write(projectSkill, '---\nname: shared\ndescription: the team skill\n---\nBody.\n');
+    fs.mkdirSync(codexHome, { recursive: true });
+    const project2 = (target: string, format: string, provider: string) => {
+      const id = `proj_smoke_${Math.random().toString(36).slice(2, 10)}`;
+      ids.push(id);
+      db().prepare(`INSERT INTO knowledge_projections (id, provider_id, adapter_id, scope, target_path, target_format, proposed_content, status, created_at, applied_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`).run(id, provider, provider, 'personal', target, format, 'x', 'applied', Date.now(), Date.now());
+    };
+    project2(claudePersonal, 'claude-skill', 'claude-code');
+    project2(codexPersonal, 'agent-skill', 'codex');
+
+    const listing = await import('./skill-listing');
+    const { refreshSkills } = await import('./skills');
+    refreshSkills();
+    const opts = { homeDir: fakeHome, codexHome };
+    const report = listing.skillListing(project.id, opts);
+    const claude = report.providers.find((p) => p.harness === 'claude-code')!;
+    const codex = report.providers.find((p) => p.harness === 'codex')!;
+    const tidy = claude.rows.find((r) => r.path === claudePersonal);
+    const shared = claude.rows.find((r) => r.path === projectSkill);
+    const lean = codex.rows.find((r) => r.path === codexPersonal);
+    const mine = codex.rows.find((r) => r.path === handWritten);
+    check(tidy?.toggle === true && shared?.toggle === false && lean?.toggle === true && mine?.toggle === false,
+      'the switch is offered only for personal skills Wanigan applied, never for a project or hand-written skill', { tidy, shared, lean, mine });
+    check(claude.estTokens > 0 && codex.estTokens > 0, 'each harness reports an estimated listing cost', { claude: claude.estTokens, codex: codex.estTokens });
+
+    let refused = '';
+    try { listing.setSkillModelInvocation({ projectId: project.id, harness: 'claude-code', path: projectSkill, allow: false }, opts); }
+    catch (e) { refused = e instanceof Error ? e.message : String(e); }
+    check(/review inbox/.test(refused) && !fs.readFileSync(projectSkill, 'utf8').includes('disable-model-invocation'),
+      'a project skill is refused with a pointer to the review inbox and its file is untouched', refused);
+
+    const afterCodex = listing.setSkillModelInvocation({ projectId: project.id, harness: 'codex', path: codexPersonal, allow: false }, opts);
+    const yaml = fs.readFileSync(path.join(path.dirname(codexPersonal), 'agents', 'openai.yaml'), 'utf8');
+    const leanAfter = afterCodex.providers.find((p) => p.harness === 'codex')!.rows.find((r) => r.path === codexPersonal);
+    check(/allow_implicit_invocation: false/.test(yaml) && leanAfter?.listed === false && leanAfter.estTokens === 0,
+      'making a Codex skill manual-only writes policy.allow_implicit_invocation: false and drops it from the listing estimate', { yaml, leanAfter });
+
+    const afterClaude = listing.setSkillModelInvocation({ projectId: project.id, harness: 'claude-code', path: claudePersonal, allow: false }, opts);
+    const tidyAfter = afterClaude.providers.find((p) => p.harness === 'claude-code')!.rows.find((r) => r.path === claudePersonal);
+    check(/disable-model-invocation: true/.test(fs.readFileSync(claudePersonal, 'utf8')) && tidyAfter?.listed === false,
+      'making a Claude Code skill manual-only sets disable-model-invocation: true in its frontmatter', tidyAfter);
+  } finally {
+    for (const id of ids) db().prepare('DELETE FROM knowledge_projections WHERE id = ?').run(id);
+    try { removeProject(project.id); } catch { /* scratch */ }
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+    try { (await import('./skills')).refreshSkills(); } catch { /* cache only */ }
+  }
+}

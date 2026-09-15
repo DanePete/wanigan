@@ -32,3 +32,27 @@ export function versionAtLeast(installed: string | null | undefined, since: stri
   for (let i = 0; i < 3; i++) if (have[i] !== want[i]) return have[i] > want[i];
   return true;
 }
+
+/**
+ * Sets `disable-model-invocation` in a SKILL.md's frontmatter, leaving every
+ * other line exactly as it was. A file with no frontmatter gains one holding
+ * only that key; a file whose frontmatter never closes is refused rather than
+ * rewritten, because there is no telling where the author meant it to end.
+ */
+export function withDisableModelInvocation(markdown: string, disabled: boolean): string {
+  const eol = markdown.includes('\r\n') ? '\r\n' : '\n';
+  const line = `disable-model-invocation: ${disabled ? 'true' : 'false'}`;
+  const lines = markdown.split(/\r?\n/);
+  if (lines[0] !== '---') return ['---', line, '---', ...lines].join(eol);
+  const close = lines.indexOf('---', 1);
+  if (close < 0) throw new Error('This SKILL.md opens a frontmatter block that never closes, so Wanigan will not rewrite it.');
+  const at = lines.slice(1, close).findIndex((l) => /^disable-model-invocation\s*:/.test(l));
+  if (at >= 0) lines[at + 1] = line;
+  else lines.splice(close, 0, line);
+  return lines.join(eol);
+}
+
+/** One line of a model-facing skill listing, the shape both harnesses use: name, then description. */
+export function claudeSkillListingLine(skill: { name: string; description: string }): string {
+  return `- ${skill.name}: ${skill.description}\n`;
+}

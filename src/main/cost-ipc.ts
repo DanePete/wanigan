@@ -4,6 +4,7 @@ import { codexLoaderReport } from './context/codex-loader';
 import { lintInstructionReferences } from './context/reference-lint';
 import { agentDefinitions } from './context/agent-definitions';
 import { projectionBudgetFor } from './learning-budget';
+import { setSkillModelInvocation, skillListing } from './skill-listing';
 
 /**
  * IPC for the cost, quota and context surfaces, registered from index.ts's
@@ -51,4 +52,11 @@ export function registerCostIpc(handle: Handle, deps: CostIpcDeps): void {
   handle('cost:agentDefinitions', (projectId: unknown) => agentDefinitions(project(projectId).path));
   handle('cost:projectionBudget', (candidateId: unknown, providerId: unknown) =>
     projectionBudgetFor(id(candidateId, 'That candidate'), id(providerId, 'That provider')));
+  const optionalProject = (value: unknown) => (value === null || value === undefined || value === '' ? null : project(value).id);
+  handle('cost:skillListing', (projectId: unknown) => skillListing(optionalProject(projectId)));
+  // A write to a personal skill file, so it is its own explicit channel with
+  // the choice spelled out; main re-reads the catalogue and refuses anything
+  // that is not a personal skill Wanigan applied.
+  handle('cost:setSkillModelInvocation', (projectId: unknown, harness: unknown, skillPath: unknown, allow: unknown) =>
+    setSkillModelInvocation({ projectId: optionalProject(projectId), harness, path: skillPath, allow }));
 }

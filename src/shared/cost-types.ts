@@ -86,3 +86,35 @@ export type AgentDefinitionsReport = {
 export type ProjectionBudgetView =
   | { applies: false; reason: string }
   | ({ applies: true; target: string; kind: 'agents-md' | 'skill' | 'user-instructions' } & ProjectionBudgetVerdict);
+
+export type SkillListingRow = {
+  harness: 'claude-code' | 'codex';
+  name: string;
+  description: string;
+  path: string;
+  /** Catalogue source for Claude Code; root for Codex. */
+  source: string;
+  /** Put in front of the model each turn; 'unknown' when the setting could not be read (counted as listed). */
+  listed: boolean | 'unknown';
+  decidedBy: 'disable-model-invocation' | 'allow_implicit_invocation' | 'skillOverrides' | 'default';
+  personal: boolean;
+  /** An applied Wanigan projection wrote this skill. */
+  managed: boolean;
+  /** The switch is offered: personal and managed. */
+  toggle: boolean;
+  estTokens: number;
+};
+
+export type SkillListingReport = {
+  providers: {
+    harness: 'claude-code' | 'codex';
+    label: string;
+    listed: number;
+    hidden: number;
+    unknown: number;
+    estTokens: number;
+    rows: SkillListingRow[];
+  }[];
+  codexHome: string;
+  note: string;
+};

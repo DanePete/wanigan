@@ -165,7 +165,7 @@ export function implicitPolicyOf(skillDir: string): boolean | null | 'unknown' {
   return yaml === null ? null : readImplicitInvocation(yaml);
 }
 
-export function codexSkillRows(projectId: string | null, home: string): CodexSkillRow[] {
+export function codexSkillRows(projectId: string | null, home: string, homeDir?: string): CodexSkillRow[] {
   const rows: CodexSkillRow[] = [];
   const seen = new Set<string>();
   const push = (skill: { name: string; description: string; path: string; dir: string }, root: CodexSkillRow['root']) => {
@@ -179,7 +179,7 @@ export function codexSkillRows(projectId: string | null, home: string): CodexSki
     });
   };
   try {
-    for (const skill of discoverSkills(projectId ?? undefined).agentSkills) {
+    for (const skill of discoverSkills(projectId ?? undefined, { homeDir }).agentSkills) {
       push({ name: skill.label || skill.name, description: skill.description, path: skill.path, dir: skill.dir },
         skill.source === 'agents-project' ? 'project' : 'personal');
     }
