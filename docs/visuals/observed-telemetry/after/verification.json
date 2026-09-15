@@ -1,0 +1,21 @@
+{
+  "at": "2026-09-15T03:50:55.959Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic status line readings, trace spans and spend; no real agent calls",
+  "mode": "after",
+  "checks": [
+    "Usage states each observed window with its provenance and age, forecasts the five-hour window from its readings, flags the jump, and refuses to forecast the seven-day window from one reading",
+    "the observed block sits beside the /usage probe figures, under the card, rather than replacing them",
+    "an account whose status lines carried no windows says so, draws no meter and estimates nothing",
+    "with the relay switched off, an account with no readings is told why rather than shown as empty",
+    "a failed read of the observations says could not read, never an empty or zero reading",
+    "the newest turn draws its model calls, tool call and the wait on you as a waterfall offset from the prompt, with the CLI’s own facts",
+    "the prompt cache readout gives the hit ratio, misses with the CLI’s own cause names and words, the TTL and expiry, and where the figures came from",
+    "a turn of a traced session with no spans says no trace recorded for this turn",
+    "a turn killed mid-flight is marked incomplete, names what is missing, and draws the unended tool call without a bar",
+    "spend by source splits the window into main, subagent and auxiliary, keeps unattributed and unbilled spend visible, and says the figures are the CLI’s own estimates",
+    "grouped by skill, a withheld name reads as withheld and spend with no skill is its own row",
+    "a window with no attributed rows says so, instead of a table of zeroes",
+    "a failed read says could not read, never an empty window"
+  ],
+  "errors": []
+}

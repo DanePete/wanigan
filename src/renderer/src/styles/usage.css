@@ -119,3 +119,20 @@
 }
 
 .pane.usage-view > * { flex-shrink: 0; }
+
+/* Observed limits: what sessions' status lines reported, set under the probe
+   card it sits beside and drawn lighter than it, because it is a second
+   instrument rather than a second copy of the first. */
+.u-observed { display: grid; gap: var(--s-3); min-width: 0; padding: var(--s-3) var(--s-4); margin-bottom: var(--s-4); border: 1px dashed var(--line); border-radius: var(--r-lg); }
+.u-observed-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--s-2); font-size: var(--t-micro); }
+.u-ow { display: grid; gap: var(--s-1); min-width: 0; }
+.u-ow-row { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s-3); }
+.u-ow-name { font-size: var(--t-small); font-weight: 600; }
+.u-ow-pct { font-size: var(--t-micro); font-variant-numeric: tabular-nums; }
+.u-ow-meter { display: block; width: 100%; height: var(--s-2); }
+.u-ow-track { fill: var(--line-soft); }
+.u-ow-fill { fill: var(--series-1); }
+.u-ow-fill.is-warning { fill: var(--warning); }
+.u-ow-fill.is-critical { fill: var(--critical); }
+.u-ow-line { margin: 0; font-size: var(--t-micro); line-height: 1.5; color: var(--text-dim); overflow-wrap: anywhere; }
+.u-ow-forecast, .u-ow-jump { color: var(--text); }

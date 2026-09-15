@@ -39,7 +39,7 @@ export function createDemoWorkspace(now = Date.now()) {
   }]));
   const settings: WaniganSettings = {
     spendCapUsd: 1, motion: 'full', navSidebar: 'closed', theme: 'dark', telemetry: false, hooks: false,
-    checkpoints: false, archiveTranscripts: false, notifications: false, mcpServerEnabled: false,
+    statusLine: false, tracesBeta: false, checkpoints: false, archiveTranscripts: false, notifications: false, mcpServerEnabled: false,
     pet: false, mobileRepositoryReview: false, defaultTrust: 'project', eventRetentionDays: 30,
     slots: { session: 4, headless: 2, batch: 1, scout: 1, node: 4 },
     learning: { enabled: false, contentMode: 'local-same-provider', automation: 'hybrid',

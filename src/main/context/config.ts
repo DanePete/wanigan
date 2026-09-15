@@ -409,6 +409,47 @@ function readPermissions(layers: LayerFile[], notes: string[]): ProjectConfig['p
   return out;
 }
 
+/* ── status line ─────────────────────────────────────────────────────── */
+
+export type StatusLineSource = { command: string; from: SettingsLayer; path: string };
+
+/**
+ * The status line command this project's settings would run if Wanigan had
+ * injected none, or null when no layer defines one.
+ *
+ * Wanigan's own status line rides the `--settings` file, which the CLI merges
+ * above the user, project and local layers — read out of the 2.1.270 binary,
+ * the merge order is user < project < local < flag < policy, and objects merge
+ * deep. So the injected entry sets only `type` and `command`, a person's
+ * `padding` and `refreshInterval` survive underneath it, and their `command` is
+ * what this function finds so the relay can still run it.
+ *
+ * The user layer is the one place this departs from readProjectConfig: it is
+ * read from `configDir`, because an account launched with CLAUDE_CONFIG_DIR has
+ * its settings there, and reading ~/.claude for it would run the personal
+ * account's status line inside the work account's session. The CLI itself
+ * resolves that directory as CLAUDE_CONFIG_DIR, else ~/.claude, NFC-normalised.
+ *
+ * Highest layer first, and the first layer holding a usable command wins: a
+ * layer whose statusLine has no command string fails the CLI's own schema and
+ * cannot be the command that runs.
+ */
+export function statusLineSource(projectPath: string, configDir: string | null): StatusLineSource | null {
+  const root = path.resolve(projectPath || '.');
+  const userDir = (configDir && configDir.trim() ? configDir : path.join(HOME, '.claude')).normalize('NFC');
+  const layers: LayerFile[] = LAYER_ORDER.map((layer) => {
+    const file = layer === 'user' ? path.join(userDir, 'settings.json') : LAYER_PATHS[layer](root);
+    return { layer, path: file, read: readJsonFile(file) };
+  });
+  for (const l of [...layers].reverse()) {
+    const entry = l.read.value?.statusLine;
+    if (!isRecord(entry) || entry.type !== 'command') continue;
+    if (typeof entry.command !== 'string' || !entry.command.trim()) continue;
+    return { command: entry.command, from: l.layer, path: l.path };
+  }
+  return null;
+}
+
 /* ── skill overrides ─────────────────────────────────────────────────── */
 
 /**

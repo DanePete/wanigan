@@ -581,6 +581,100 @@ function migratePhases(d: Database.Database) {
   migrateCheckpoints(d);
   migrateConversationFlags(d);
   migrateClaudeUsage(d);
+  migrateObservedTelemetry(d);
+}
+
+/**
+ * What the CLI reports about itself beyond cost and tool events: its status
+ * line's limit and cache readings, its beta per-prompt trace spans, and the
+ * attribution its cost and token metrics carry. Four new tables and nothing
+ * altered, so an install that never runs these features has four empty tables
+ * and every existing reader is untouched.
+ */
+function migrateObservedTelemetry(d: Database.Database) {
+  d.exec(`
+    -- One row per distinct status line reading. A reading identical to the
+    -- session's previous one only moves last_seen_at, so an idle session that
+    -- refreshes its status line every few seconds writes no rows. A redraw is
+    -- not a new reading of the provider, so the forecast reads observed_at only.
+    CREATE TABLE IF NOT EXISTS status_observations (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id            TEXT NOT NULL,
+      account_id            TEXT,
+      observed_at           INTEGER NOT NULL,
+      last_seen_at          INTEGER NOT NULL,
+      cli_version           TEXT,
+      reading_key           TEXT NOT NULL,
+      -- A window the CLI did not send is NULL in both columns, never 0.
+      five_hour_pct         REAL,
+      five_hour_resets_at   INTEGER,
+      seven_day_pct         REAL,
+      seven_day_resets_at   INTEGER,
+      spend_limit_pct       REAL,
+      spend_limit_resets_at INTEGER,
+      effort                TEXT,
+      pr_number             INTEGER,
+      pr_url                TEXT,
+      pr_review_state       TEXT,
+      prompt_id             TEXT,
+      cache_json            TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_status_obs_session ON status_observations(session_id, observed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_status_obs_account ON status_observations(account_id, observed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_status_obs_seen ON status_observations(last_seen_at);
+
+    -- Per-prompt trace spans, attributes already stripped of anything that is
+    -- conversation text. An exporter re-sends what it did not get a 2xx for, so
+    -- a span is its own identity and a retry is ignored rather than doubled.
+    CREATE TABLE IF NOT EXISTS session_spans (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id     TEXT NOT NULL,
+      trace_id       TEXT NOT NULL,
+      span_id        TEXT NOT NULL,
+      parent_span_id TEXT,
+      name           TEXT NOT NULL,
+      start_at       INTEGER NOT NULL,
+      end_at         INTEGER,
+      status         TEXT NOT NULL DEFAULT 'unset',
+      attrs_json     TEXT,
+      received_at    INTEGER NOT NULL,
+      UNIQUE (session_id, trace_id, span_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_spans ON session_spans(session_id, start_at);
+    -- Retention deletes by age; this keeps that a range scan.
+    CREATE INDEX IF NOT EXISTS idx_session_spans_start ON session_spans(start_at);
+
+    -- Sessions launched with the trace exporter on. A session that asked and
+    -- exported nothing for a turn is told apart from one that never asked.
+    CREATE TABLE IF NOT EXISTS session_trace_requests (
+      session_id   TEXT PRIMARY KEY,
+      requested_at INTEGER NOT NULL
+    );
+
+    -- Cost and token metrics by the attribution the CLI attaches to them,
+    -- bucketed by local day so a window is exact to the day. Kept beside
+    -- session_metrics rather than in it: adding these attributes to that
+    -- table's key would split every existing running total across new rows.
+    CREATE TABLE IF NOT EXISTS session_spend_sources (
+      session_id   TEXT NOT NULL,
+      day          TEXT NOT NULL,
+      metric       TEXT NOT NULL,
+      token_type   TEXT NOT NULL DEFAULT '',
+      query_source TEXT NOT NULL DEFAULT '',
+      agent_name   TEXT NOT NULL DEFAULT '',
+      skill_name   TEXT NOT NULL DEFAULT '',
+      plugin_name  TEXT NOT NULL DEFAULT '',
+      mcp_server   TEXT NOT NULL DEFAULT '',
+      effort       TEXT NOT NULL DEFAULT '',
+      speed        TEXT NOT NULL DEFAULT '',
+      model        TEXT NOT NULL DEFAULT '',
+      value        REAL NOT NULL DEFAULT 0,
+      last_at      INTEGER NOT NULL,
+      PRIMARY KEY (session_id, day, metric, token_type, query_source, agent_name, skill_name,
+                   plugin_name, mcp_server, effort, speed, model)
+    );
+    CREATE INDEX IF NOT EXISTS idx_spend_sources_day ON session_spend_sources(day);
+  `);
 }
 
 /**
