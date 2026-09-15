@@ -106,9 +106,14 @@ Codex's hook handlers are `command`, `mcpTool`, `prompt` or `agent`. There is no
 `http` handler, so a small forwarding command is required.
 
 **What is still unverified.** Whether the injected hooks fire during a real turn,
-and the exact payload each event carries. That takes one real Codex turn, which
-spends tokens, so it is the operator's step, and the capability stays marked
-unverified until it has run.
+and the exact payload each event carries. Starting a thread alone does not
+answer either question.
+
+- *observed*: a trusted `SessionStart` hook did not run within seven seconds of `thread/start` creating an ephemeral thread. It presumably waits for the first turn.
+- *observed*: `thread/start` also opened a websocket to `api.openai.com`. The throwaway home had no credentials, so it was refused with 401, and nothing was spent.
+
+One real Codex turn spends tokens, so it is the operator's step. The capability
+stays marked unverified until it has run.
 
 The app-server integration comes after hooks, not before. It is experimental,
 and it would make a second session renderer.
