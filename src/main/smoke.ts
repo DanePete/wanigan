@@ -239,6 +239,10 @@ export async function runSmoke(): Promise<void> {
     await runContradictionSmoke(check, say);
     runOutcomeEvidenceSmoke(check, say);
     await runPastTurnsSmoke(check, say);
+    const { runDeferredApprovalSmoke } = await import('./smoke21');
+    await runDeferredApprovalSmoke(check, say);
+    const { runGoalPlanSmoke } = await import('./smoke22');
+    await runGoalPlanSmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

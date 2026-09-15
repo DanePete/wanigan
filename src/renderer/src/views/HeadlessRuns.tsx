@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
-  HeadlessRowSummary, HeadlessRun, HeadlessStartRequest, Project, ProviderId, ProviderInfo,
+  HeadlessHeld, HeadlessRowSummary, HeadlessRun, HeadlessStartRequest, Project, ProviderId, ProviderInfo,
 } from '@shared/types';
-import { ConfirmNote, EmptyState, Note, PageHead, Pill, Reading, SectionHead, Segmented, Stat, ago, num, usd } from '../components/bits';
+import { ConfirmNote, EmptyState, Hint, Mark, Note, PageHead, Pill, Reading, SectionHead, Segmented, Stat, ago, num, usd } from '../components/bits';
 import '../styles/runs.css';
 import { useLiveViewMemory } from '../components/planningMemory';
 
@@ -41,7 +41,7 @@ type RowsState = { runId: string; rows: HeadlessRowSummary[] | null; error: stri
  * re-read its rows.
  */
 const runSignature = (run: HeadlessRun | null): string => (run
-  ? `${run.id}:${run.status}:${run.succeeded}:${run.failed}:${run.blocked}:${run.open}:${run.filesChanged}`
+  ? `${run.id}:${run.status}:${run.succeeded}:${run.failed}:${run.blocked}:${run.open}:${run.awaiting}:${run.filesChanged}`
   : '');
 
 /**
@@ -134,6 +134,8 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   const [budget, setBudget] = useLiveViewMemory('runBudget', '2');
   const [minutes, setMinutes] = useLiveViewMemory<number>('runMinutes', 15);
   const [isolate, setIsolate] = useLiveViewMemory('runIsolate', true);
+  // Off unless chosen for this run: see HeadlessConfig.holdForApproval.
+  const [holdForApproval, setHoldForApproval] = useLiveViewMemory('runHoldForApproval', false);
   const [busy, setBusy] = useLiveViewMemory('runBusy', false);
   const [err, setErr] = useLiveViewMemory<string | null>('runActionError', null);
   /**
@@ -349,7 +351,7 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
       name: name.trim() || `fan-out · ${new Date().toLocaleString()}`,
       providerId, projectIds: [...chosen], prompt: prompt.trim(), model: model.trim() || undefined,
       effort: effort.trim() || undefined, providerOptions,
-      maxBudgetUsd: perRepoBudget, timeoutMs: minutes * 60_000, isolate,
+      maxBudgetUsd: perRepoBudget, timeoutMs: minutes * 60_000, isolate, holdForApproval,
       // Written only when the selection really is the whole registered list, so
       // a run over three of eight repositories never carries — and never stores
       // in its config_json — a claim about a fan-out it did not do.
@@ -376,6 +378,7 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
   // waits for a second, deliberate press. (CLAUDE.md: destructive git work is
   // never one click.)
   const [confirmMerge, setConfirmMerge] = useState<string | null>(null);
+  const [answering, setAnswering] = useState<string | null>(null);
   const [merging, setMerging] = useLiveViewMemory<string | null>('runMerging', null);
   const [canceling, setCanceling] = useLiveViewMemory<string | null>('runCanceling', null);
   const [confirmCancel, setConfirmCancel] = useState<string | null>(null);
@@ -405,6 +408,17 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
       setRowsNonce(value => value + 1); setRevision(value => value + 1);
     } catch (e) { setErr(msg(e)); }
     finally { actionLock.current = false; setMerging(null); }
+  }
+
+  /** A person's answer to a held call. Main records it once and resumes the row, or stops it there. */
+  async function answer(row: HeadlessRowSummary, decision: 'allow' | 'deny' | 'stop', note: string) {
+    if (answering || actionLock.current) return;
+    actionLock.current = true; setErr(null); setAnswering(row.projectId);
+    try {
+      await window.wanigan.headless.answerHeld(row.runId, row.projectId, decision, note.trim() || undefined);
+      setRowsNonce(value => value + 1); setRevision(value => value + 1);
+    } catch (e) { setErr(msg(e)); }
+    finally { actionLock.current = false; setAnswering(null); }
   }
 
   // Both figures below are sums over the rows, so both are null until the rows
@@ -443,7 +457,7 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
     ? "this run's repositories could not be read"
     : "reading this run's repositories";
 
-  const filteredRuns = runs.filter(run => (!query.trim() || `${run.name} ${run.model}`.toLowerCase().includes(query.trim().toLowerCase())) && (filter === 'all' || filter === 'active' && run.open > 0 || filter === 'attention' && (run.failed > 0 || run.blocked > 0 || run.status === 'failed')));
+  const filteredRuns = runs.filter(run => (!query.trim() || `${run.name} ${run.model}`.toLowerCase().includes(query.trim().toLowerCase())) && (filter === 'all' || filter === 'active' && run.open > 0 || filter === 'attention' && (run.awaiting > 0 || run.failed > 0 || run.blocked > 0 || run.status === 'failed')));
 
   return (
     <main className="pane wide hr-view">
@@ -539,11 +553,19 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
             {TIMEOUTS.map((m) => <option key={m} value={m}>{m} minutes</option>)}
           </select></label>
           <label className="hr-check"><input type="checkbox" checked={isolate} onChange={(e) => setIsolate(e.target.checked)} /> isolate in worktrees</label>
+          <label className="hr-check"><input type="checkbox" checked={holdForApproval} onChange={(e) => setHoldForApproval(e.target.checked)} /> hold approvals for me</label>
           {/* Selecting every repository is a selection, not a declaration: this
               button deliberately does not tick the box below, and clears a tick
               that was already there. */}
 
         </div>
+          {holdForApproval && (
+            <Hint>
+              A call this project’s trust level would ask about stops that repository and waits here for your answer,
+              instead of being denied. Claude Code can hold a call only when the agent made it on its own: when it asks for
+              several tools at once, that call is decided by the CLI’s own permission rules instead, and a denial would not have been.
+            </Hint>
+          )}
           {/* The declaration sits with the repositories it is about: their names
               are the chips directly above, so this counts them rather than
               listing them again. The figure is the budget field's own value,
@@ -588,7 +610,7 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
           ) : filteredRuns.length === 0 ? <EmptyState posture="nothing-in-scope" title="No matching runs" cue="Try another name or clear the filters." /> : filteredRuns.map((r) => (
             <button key={r.id} className={`hr-run${r.id === selected ? ' on' : ''}`} data-run-id={r.id} onClick={() => setSelected(r.id)} aria-pressed={r.id === selected}>
               <strong>{r.name}</strong>
-              <span>{r.succeeded} succeeded · {r.failed} failed · {r.blocked} blocked · {r.open} open</span>
+              <span>{r.awaiting > 0 && <strong>{r.awaiting} waiting for you · </strong>}{r.succeeded} succeeded · {r.failed} failed · {r.blocked} blocked · {r.open} open</span>
               <small>{r.costStatus === 'unreported' ? 'no cost reported'
                 : r.costStatus === 'partial' ? `≥ ${usd(r.costUsd)}` : usd(r.costUsd)} · {ago(r.createdAt)}</small>
             </button>
@@ -673,7 +695,7 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
                 const expandable = row.hasError || row.hasOutput;
                 return (
                   <article key={`${row.runId}:${row.projectId}`} className="hr-row">
-                    <div className="hr-row-head"><div><strong>{row.projectName}</strong><span className="faint">{row.status} · {row.filesChanged} files · {rowCost(row)}</span></div>
+                    <div className="hr-row-head"><div><strong>{row.projectName}</strong><span className="faint">{row.status} · {row.filesChanged} {row.filesChanged === 1 ? 'file' : 'files'} · {rowCost(row)}</span></div>
                       {row.worktree && row.status === 'succeeded' && (
                         <button className="btn btn-sm" disabled={!!merging || !!canceling || !!rowsFor?.error || !!loadFailed} aria-expanded={confirmMerge === row.projectId}
                                 onClick={() => setConfirmMerge(confirmMerge === row.projectId ? null : row.projectId)}>
@@ -681,6 +703,17 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
                         </button>
                       )}
                     </div>
+                    {row.status === 'awaiting' && row.held && !row.held.answer && (
+                      <HeldCall held={row.held} busy={answering === row.projectId}
+                                onAnswer={(decision, note) => void answer(row, decision, note)} />
+                    )}
+                    {row.held?.answer && row.status !== 'awaiting' && (
+                      <p className="faint hr-held-past">
+                        {row.held.answer.decision === 'allow' ? 'You approved' : row.held.answer.decision === 'deny' ? 'You declined' : 'You stopped at'}{' '}
+                        a held {row.held.toolName} call {ago(row.held.answer.answeredAt)}
+                        {row.held.resumedAt ? `; the run resumed ${ago(row.held.resumedAt)}.` : row.held.answer.decision === 'stop' ? '.' : '; it resumes when a slot is free.'}
+                      </p>
+                    )}
                     {confirmMerge === row.projectId && (
                       <ConfirmNote
                         what={<>Squash-merge {row.filesChanged === 1 ? 'the 1 changed file' : `the ${num(row.filesChanged)} changed files`} from
@@ -725,5 +758,44 @@ export default function HeadlessRuns({ projects, providers }: { projects: Projec
         </section>
       </div>}
     </main>
+  );
+}
+
+/**
+ * A call a headless row stopped on, and the three answers it can take.
+ *
+ * The line shown is main's redacted, bounded summary of the call, never the
+ * whole input. Approve and decline both resume the conversation and spend
+ * again; stop ends the repository where it is. A note goes to the agent with
+ * the answer, so a decline can say what to do instead.
+ */
+function HeldCall({ held, busy, onAnswer }: {
+  held: HeadlessHeld;
+  busy: boolean;
+  onAnswer: (decision: 'allow' | 'deny' | 'stop', note: string) => void;
+}) {
+  const [note, setNote] = useState('');
+  return (
+    <div className="hr-held" role="group" aria-label={`Held ${held.toolName} call`}>
+      <p className="hr-held-lede">
+        <Mark glyph="⏸" word="waiting for you" tone="warn" />{' '}
+        Stopped on a <strong>{held.toolName}</strong> call that needs your approval, {ago(held.heldAt)}.
+      </p>
+      <code className="hr-held-call">{held.summary}</code>
+      <label className="hr-held-note">
+        <span className="label">Note to the agent (optional)</span>
+        <input className="field" value={note} maxLength={1000} onChange={(e) => setNote(e.target.value)}
+               placeholder="Why, or what to do instead" />
+      </label>
+      <div className="hr-held-actions">
+        <button className="btn btn-primary" disabled={busy} onClick={() => onAnswer('allow', note)}>Approve and resume</button>
+        <button className="btn" disabled={busy} onClick={() => onAnswer('deny', note)}>Decline and resume</button>
+        <button className="btn" disabled={busy} onClick={() => onAnswer('stop', note)}>Stop this repository</button>
+      </div>
+      <Hint>
+        Resuming continues this repository’s conversation under the same permissions and spends from its budget again.
+        Declining tells the agent no, with your note, and lets it carry on.
+      </Hint>
+    </div>
   );
 }

@@ -298,6 +298,9 @@ const api = {
       call<HeadlessRowDetail>('headless:rowDetail', runId, projectId),
     runs: (limit?: number) => call<HeadlessRun[]>('headless:runs', limit),
     cancel: (runId: string) => call<number>('headless:cancel', runId),
+    /** Answer a call a row held: approve or decline and resume, or stop the row there. */
+    answerHeld: (runId: string, projectId: string, decision: 'allow' | 'deny' | 'stop', note?: string) =>
+      call<HeadlessRowSummary>('headless:answerHeld', runId, projectId, decision, note),
   },
   // ── phase 11 · dispatcher ────────────────────────────────────────────
   queue: {
@@ -590,6 +593,8 @@ const api = {
     cancelMcpTask: (id: string) => call<McpTaskCancelReceipt>('control:cancelMcpTask', id),
     resumeReceipts: (docketId: string) => call<GoalResumeReceipt[]>('control:resumeReceipts', docketId),
     traces: (docketId: string, limit?: number) => call<GoalTraceEvent[]>('control:traces', docketId, limit),
+    /** The plan captured from this goal's planning session; the agent's text. */
+    plan: (docketId: string) => call<import('../shared/types').GoalPlan | null>('control:plan', docketId),
   },
   // ── phase 26 · agent teams ───────────────────────────────────────────
   teams: {

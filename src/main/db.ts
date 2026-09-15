@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { app } from 'electron';
 
@@ -1066,6 +1067,10 @@ function migrateAccounts(d: Database.Database) {
   // estimated" over the sum of both. Nullable on purpose — a row written
   // before this column existed reads as unknown, never as reported.
   addColumn(d, 'headless_rows', 'cost_reported', 'INTEGER');
+  // The call a row stopped on for a person's answer, and the answer: JSON,
+  // bounded and redacted before it is written (headless.ts). Null for every
+  // row that never held a call, including all rows from before the column.
+  addColumn(d, 'headless_rows', 'held_json', 'TEXT');
 }
 
 /**
@@ -1483,5 +1488,5 @@ export function newRunId(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-  return `run_${stamp}_${Math.random().toString(36).slice(2, 6)}`;
+  return `run_${stamp}_${randomBytes(2).toString('hex')}`;
 }

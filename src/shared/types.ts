@@ -1185,6 +1185,35 @@ export type HeadlessConfig = {
   timeoutMs: number;
   /** Worktree per repo, so a headless fleet never fights the working tree. */
   isolate: boolean;
+  /**
+   * Hold a call that needs approval for the operator, instead of denying it.
+   * Opted into per run: Claude Code ignores a hold when the model asked for
+   * several tools at once, and that call then falls to the CLI's own
+   * permission rules, where a plain deny could not be ignored. See
+   * src/shared/deferred-approvals.ts.
+   */
+  holdForApproval?: boolean;
+};
+
+/**
+ * A call a headless row stopped on, waiting for a person.
+ *
+ * `summary` is the redacted, bounded line a person decides on, never the
+ * whole input. `permissionMode` is what the run was deferred under, because
+ * the CLI does not restore it on resume and a resume under another mode is
+ * not the same run.
+ */
+export type HeadlessHeld = {
+  toolUseId: string;
+  toolName: string;
+  summary: string;
+  cliSessionId: string;
+  permissionMode: string;
+  heldAt: number;
+  /** Null until someone answers. `stop` ends the row without resuming it. */
+  answer: { decision: 'allow' | 'deny' | 'stop'; note: string | null; answeredAt: number } | null;
+  /** When the resumed run started, so one answer can never resume twice. */
+  resumedAt: number | null;
 };
 
 /**
@@ -1203,7 +1232,7 @@ export type HeadlessRow = {
   projectId: string;
   projectName: string;
   projectPath: string;
-  status: 'pending' | 'running' | 'succeeded' | 'errored' | 'timeout' | 'canceled' | 'blocked';
+  status: 'pending' | 'running' | 'succeeded' | 'errored' | 'timeout' | 'canceled' | 'blocked' | 'awaiting';
   costUsd: number;
   /**
    * Whether the CLI named a cost at all. `costUsd` cannot answer this: a run
@@ -1220,6 +1249,8 @@ export type HeadlessRow = {
   worktree: string | null;
   startedAt: number | null;
   endedAt: number | null;
+  /** The call this row is waiting on, or last waited on; null when it never held one. */
+  held: HeadlessHeld | null;
 };
 
 /**
@@ -1265,6 +1296,8 @@ export type HeadlessRun = {
   failed: number;
   blocked: number;
   open: number;
+  /** Rows stopped on a held call, waiting for a person's answer. */
+  awaiting: number;
   filesChanged: number;
 };
 
@@ -1441,6 +1474,19 @@ export type DocketClaim = {
  * session. The objective, instructions and acceptance checks travel in the
  * first prompt as before; this carries only what was missing there.
  */
+/** A plan captured from a goal task's planning session. `text` is the agent's own words. */
+export type GoalPlan = {
+  docketId: string;
+  nodeId: string;
+  nodeTitle: string;
+  state: 'proposed' | 'accepted';
+  text: string;
+  truncated: boolean;
+  edited: boolean;
+  planFilePath: string | null;
+  capturedAt: number;
+};
+
 export type GoalCapsule = {
   docketId: string;
   docketTitle: string;
@@ -1461,6 +1507,13 @@ export type GoalCapsule = {
    * agent; this is how it reaches the one launched to address it.
    */
   changesRequested: { note: string; decidedAt: number }[];
+  /**
+   * The goal's accepted plan (or, failing that, its latest proposal) as it
+   * stood at launch, for every task but the planning one. Written by the
+   * planning agent, and handed on labelled as that. Null when no plan was
+   * captured.
+   */
+  plan: { nodeTitle: string; state: 'proposed' | 'accepted'; text: string; truncated: boolean; edited: boolean; capturedAt: number } | null;
   recordedAt: number;
 };
 
@@ -2253,7 +2306,8 @@ export function harnessLabel(harness: string): string {
 }
 
 export type PolicyDecision = {
-  decision: 'allow' | 'deny' | 'ask';
+  /** `defer` only ever answers an unattended run that opted into holding calls. */
+  decision: 'allow' | 'deny' | 'ask' | 'defer';
   reason: string;
   /** The rule that fired, for the ledger. */
   rule: string;
@@ -2268,7 +2322,7 @@ export type LedgerEntry = {
   trust: TrustLevel;
   toolName: string;
   summary: string;
-  decision: 'allow' | 'deny' | 'ask';
+  decision: 'allow' | 'deny' | 'ask' | 'defer';
   rule: string;
   reason: string;
 };

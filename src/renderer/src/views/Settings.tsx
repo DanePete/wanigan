@@ -261,6 +261,8 @@ const DECISION: Record<LedgerEntry['decision'], MarkSpec> = {
   allow: { glyph: '✓', word: 'allowed', color: 'var(--good)' },
   ask:   { glyph: '?', word: 'asked',   color: 'var(--warning)' },
   deny:  { glyph: '⊘', word: 'denied',  color: 'var(--critical)' },
+  // An unattended run that stopped on the call for a person's answer.
+  defer: { glyph: '⏸', word: 'held',    color: 'var(--warning)' },
 };
 
 /**

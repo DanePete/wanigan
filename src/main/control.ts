@@ -10,12 +10,13 @@ import { createSession, killSession, listSessions } from './sessions';
 import * as review from './review';
 import * as otel from './otel';
 import { listGoalTrace, recordGoalTrace } from './goal-trace';
+import { latestGoalPlan } from './goal-plans';
 import { enqueue } from './queue';
 import type {
   BoardCard,
   ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode,
   DocketAutopilot, DocketNodeKind, DocketNodeStatus, DocketPlanNode, DocketProof, DocketRisk, DocketStatus,
-  GoalCapsule, GoalResumeReceipt, GoalTraceEvent,
+  GoalCapsule, GoalPlan, GoalResumeReceipt, GoalTraceEvent,
   McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, WorkDocket,
 } from '../shared/types';
 // Aliased at the import so the graph rules below still read in this module's
@@ -561,8 +562,22 @@ export function goalCapsuleFor(nodeId: string): GoalCapsule {
     siblingClaims: siblings.map((row) => ({ nodeId: row.node_id, title: row.title, path: row.path })),
     canClaimLive: false,
     changesRequested: changesRequestedFor(parent.id),
+    plan: self.kind === 'plan' ? null : capsulePlan(parent.id),
     recordedAt: now(),
   };
+}
+
+function capsulePlan(docketId: string): GoalCapsule['plan'] {
+  const plan = latestGoalPlan(docketId);
+  return plan
+    ? { nodeTitle: plan.nodeTitle, state: plan.state, text: plan.text, truncated: plan.truncated, edited: plan.edited, capturedAt: plan.capturedAt }
+    : null;
+}
+
+/** The plan this goal's planning produced, for Control to show. */
+export function goalPlan(docketId: string): GoalPlan | null {
+  docketRow(docketId);
+  return latestGoalPlan(docketId);
 }
 
 export async function startNode(nodeId: string, input: { providerId: string; model?: string; effort?: string; permissionMode?: string }): Promise<DocketNode> {

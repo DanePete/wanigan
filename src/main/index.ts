@@ -2335,6 +2335,8 @@ function registerIpc() {
   });
   handle('headless:runs', (limit?: number) => headless.headlessRuns(limit));
   handle('headless:cancel', (runId: string) => headless.cancelHeadless(runId));
+  handle('headless:answerHeld', (runId: unknown, projectId: unknown, decision: unknown, note: unknown) =>
+    headless.answerHeld(runId, projectId, decision, note));
 
   // ══ phase 11 · dispatcher ═══════════════════════════════════════════
   handle('queue:list', (limit?: number) => queue.listQueue(limit));
@@ -2854,6 +2856,10 @@ function registerIpc() {
   handle('control:cancelMcpTask', (id: string) => control.cancelMcpTask(id));
   handle('control:resumeReceipts', (docketId: string) => control.resumeReceipts(docketId));
   handle('control:traces', (docketId: string, limit?: number) => control.traces(docketId, limit));
+  handle('control:plan', (docketId: unknown) => {
+    if (typeof docketId !== 'string' || !docketId) throw new Error('Choose a goal.');
+    return control.goalPlan(docketId);
+  });
 
   // ══ phase 26 · agent teams ══════════════════════════════════════════
   handle('teams:read', () => teams.readTeams());

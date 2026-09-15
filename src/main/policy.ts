@@ -30,6 +30,12 @@ export type PolicyContext = {
    * headless fan-out is the one caller that sets it, and it sets it false.
    */
   attended?: boolean;
+  /**
+   * An unattended run that opted into holding calls for the operator, on a CLI
+   * that supports it (src/shared/deferred-approvals.ts). Read only together
+   * with `attended === false`: an attended session has a person to ask.
+   */
+  holdAsks?: boolean;
 };
 
 /* ── trust levels ─────────────────────────────────────────────────────── */
@@ -569,6 +575,35 @@ export function registerPolicyContext(ctx: PolicyContext): void {
  */
 export function releasePolicyContext(sessionId: string): void {
   contexts.delete(sessionId);
+  heldAnswers.delete(sessionId);
+}
+
+/**
+ * The operator's answers to calls a run held, waiting for the resumed run to
+ * re-emit them. Keyed by the hook session id and the CLI's own tool_use id, and
+ * spent on first use: an answer is for that one call, never for the next call
+ * that happens to look like it.
+ */
+type HeldAnswer = { decision: 'allow' | 'deny'; note: string | null };
+const heldAnswers = new Map<string, Map<string, HeldAnswer>>();
+
+export function answerHeldCall(sessionId: string, toolUseId: string, answer: HeldAnswer): void {
+  if (!sessionId || !toolUseId) return;
+  const answers = heldAnswers.get(sessionId) ?? new Map<string, HeldAnswer>();
+  answers.set(toolUseId, answer);
+  heldAnswers.set(sessionId, answers);
+}
+
+function operatorAnswer(ctx: PolicyContext, input: HookInput): PolicyDecision | null {
+  const toolUseId = typeof input.tool_use_id === 'string' ? input.tool_use_id : '';
+  const answers = ctx.sessionId ? heldAnswers.get(ctx.sessionId) : undefined;
+  const answer = toolUseId ? answers?.get(toolUseId) : undefined;
+  if (!answers || !answer) return null;
+  answers.delete(toolUseId);
+  const note = answer.note ? ` Their note: ${answer.note}` : '';
+  return answer.decision === 'allow'
+    ? { decision: 'allow', reason: `The operator approved this call after the run held it.${note}`, rule: 'unattended.held.approved' }
+    : { decision: 'deny', reason: `The operator declined this call after the run held it.${note} Carry on without it.`, rule: 'unattended.held.declined' };
 }
 
 /**
@@ -593,8 +628,17 @@ export function contextForSession(sessionId: string | null): PolicyContext | nul
  * to be asked. Denying says the true thing, costs one tool call rather than the
  * whole timeout, and leaves the agent free to do the rest of its work.
  */
-function nobodyToAsk(d: PolicyDecision): PolicyDecision {
+function nobodyToAsk(ctx: PolicyContext, d: PolicyDecision): PolicyDecision {
   if (d.decision !== 'ask') return d;
+  // A run that opted in holds the question instead: the CLI ends the run with
+  // the call recorded, and a person answers before anything resumes.
+  if (ctx.holdAsks === true) {
+    return {
+      decision: 'defer',
+      reason: `Held for the operator: this run stops here until someone answers. The question was: ${d.reason}`,
+      rule: `${d.rule}.held`,
+    };
+  }
   return {
     decision: 'deny',
     reason: `This run is unattended, so there was nobody to put the question to and Wanigan denied it. The question was: ${d.reason}`,
@@ -633,8 +677,14 @@ function unevaluable(): PolicyDecision {
  */
 export function answerFor(ctx: PolicyContext, input: HookInput): PolicyDecision | null {
   try {
+    // A person already answered this exact call, while its run was held.
+    const answered = ctx.attended === false ? operatorAnswer(ctx, input) : null;
+    if (answered) {
+      recordDecision(ctx, input, answered);
+      return answered;
+    }
     const decided = decideFor(ctx, input);
-    const answer = ctx.attended === false ? nobodyToAsk(decided) : decided;
+    const answer = ctx.attended === false ? nobodyToAsk(ctx, decided) : decided;
     recordDecision(ctx, input, answer);
     return answer;
   } catch {
@@ -659,10 +709,10 @@ export function answerFor(ctx: PolicyContext, input: HookInput): PolicyDecision 
  * from TRUST_COPY because the label is the half that is true, and the agent
  * should name the level the same way the Settings screen does.
  *
- * No budget figure appears here, and none should be added. Nothing in Wanigan
- * refuses, pauses or throttles work when a budget is breached — budgetBreached()
- * draws a banner and stops there — so a remaining-spend sentence would be
- * announcing a constraint that does not exist.
+ * No budget figure appears here, and none should be added. A reached budget
+ * holds queued work before it starts (budget-gate.ts) and never interrupts a
+ * run already under way, so a remaining-spend sentence to a running agent would
+ * describe a constraint it cannot meet mid-run.
  */
 export function trustBriefing(ctx: PolicyContext): string {
   const where = ctx.projectPath ? ` (${ctx.projectPath})` : '';
@@ -676,9 +726,10 @@ export function trustBriefing(ctx: PolicyContext): string {
   // Only for a run with nobody watching, and only because it changes what the
   // agent should expect back. Everywhere else an unevaluable call becomes a
   // prompt somebody answers, and saying this there would be false.
-  return ctx.attended === false
-    ? `${line} Nobody is watching this run, so a call Wanigan cannot evaluate is denied rather than queued for approval.`
-    : line;
+  if (ctx.attended !== false) return line;
+  return ctx.holdAsks === true
+    ? `${line} Nobody is watching this run live: a call that needs approval ends the run with the call held for the operator, who answers before it resumes, and a call Wanigan cannot evaluate is denied.`
+    : `${line} Nobody is watching this run, so a call Wanigan cannot evaluate is denied rather than queued for approval.`;
 }
 
 /* ── the ledger ───────────────────────────────────────────────────────── */
@@ -736,7 +787,8 @@ function notableAllow(ctx: PolicyContext, tool: string, input: HookInput): boole
 export function recordDecision(ctx: PolicyContext, input: HookInput, decision: PolicyDecision): void {
   const tool = (input.tool_name ?? '').trim();
   if (!tool) return;
-  if (decision.decision === 'allow' && !notableAllow(ctx, tool, input)) return;
+  // A person's answer to a held call is always written down, allow included.
+  if (decision.decision === 'allow' && !decision.rule.startsWith('unattended.held.') && !notableAllow(ctx, tool, input)) return;
 
   db()
     .prepare(
@@ -787,7 +839,9 @@ function toEntry(r: LedgerRow): LedgerEntry {
     trust: asTrust(r.trust) ?? 'project',
     toolName: r.tool_name,
     summary: r.summary,
-    decision: r.decision === 'deny' || r.decision === 'ask' ? r.decision : 'allow',
+    // Every value the gate writes, named; an unrecognised one is still read as
+    // allow, which is the ledger's behaviour for rows from before a value existed.
+    decision: r.decision === 'deny' || r.decision === 'ask' || r.decision === 'defer' ? r.decision : 'allow',
     rule: r.rule,
     reason: r.reason,
   };

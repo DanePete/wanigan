@@ -6,6 +6,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { app } from 'electron';
 import { db } from './db';
 import { recordGoalTrace } from './goal-trace';
+import { planFromHook, recordGoalPlan } from './goal-plans';
 import { getSetting } from './settings';
 import { answerFor, contextForSession, trustBriefing } from './policy';
 import type {
@@ -738,6 +739,11 @@ function store(sessionId: string, event: string, input: HookInput, at: number): 
     };
     recordGoalTrace({ sessionId, source: 'hook', kind: event, status: ok === 0 ? 'failed' : 'recorded',
       toolName, summary, durationMs, costUsd: 0, inTokens: 0, outTokens: 0, createdAt: at });
+    // A goal task's plan, proposed and then accepted, becomes that goal's
+    // evidence and reaches the tasks after it (goal-plans.ts). Only goal work
+    // records anything; its own try, like the trace, never costs a tool call.
+    const plan = planFromHook(event, toolName, input as Record<string, unknown>);
+    if (plan) { try { recordGoalPlan(sessionId, plan, at); } catch { /* the event row above stands either way */ } }
     if (event === 'PostModelSwitch') {
       // The row above is the evidence; this is the correction it implies. Kept
       // inside its own try because a stale model field is a smaller wrong than

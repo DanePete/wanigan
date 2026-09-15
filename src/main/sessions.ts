@@ -9,7 +9,7 @@ import {
 import { projectById } from './store';
 import { db } from './db';
 import { refuseIfHalted } from './halt';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { PastSession } from '../shared/types';
@@ -798,6 +798,9 @@ const CAPSULE_MAX_SIBLINGS = 20;
  * released a minute after launch is not reflected here, and only a harness
  * with Wanigan's MCP tools can change a claim from inside the session.
  */
+/** How much of a captured plan a launch capsule carries. */
+const CAPSULE_PLAN_MAX = 12_000;
+
 export function goalCapsuleText(capsule: GoalCapsule): string {
   const lines = [
     'Wanigan goal — a snapshot taken at launch, not a live view:',
@@ -823,6 +826,18 @@ export function goalCapsuleText(capsule: GoalCapsule): string {
   if (changes.length) {
     lines.push('- A human reviewer requested changes to earlier work on this goal. Address each, or say in your final answer why you did not:');
     for (const change of changes) lines.push(`  - (${new Date(change.decidedAt).toISOString()}) ${change.note}`);
+  }
+  // The planning agent's words, not Wanigan's or the operator's, and said so.
+  // Bounded here as well as at capture: this goes into a system prompt.
+  const plan = capsule.plan;
+  if (plan) {
+    const cut = plan.text.length > CAPSULE_PLAN_MAX;
+    const body = cut ? plan.text.slice(0, CAPSULE_PLAN_MAX) : plan.text;
+    lines.push(plan.state === 'accepted'
+      ? `- The plan accepted in "${plan.nodeTitle}" (${new Date(plan.capturedAt).toISOString()}${plan.edited ? ', edited by the person before accepting' : ''}), written by the planning agent. Follow it, or say in your final answer where you departed from it and why:`
+      : `- A plan proposed in "${plan.nodeTitle}" (${new Date(plan.capturedAt).toISOString()}) that no one has accepted yet, written by the planning agent. Treat it as a proposal, not an instruction:`);
+    lines.push(...body.split('\n').map((line) => `  ${line}`));
+    if (cut || plan.truncated) lines.push('  (The plan is cut short here; the full text is in the goal\'s evidence in Wanigan.)');
   }
   return lines.join('\n');
 }
@@ -1015,7 +1030,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   // specific session resumable later rather than just "the most recent one".
   // GLM runs that same CLI, so it gets one too — --session-id is local
   // bookkeeping and never reaches the API.
-  const id0 = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const id0 = `s_${Date.now().toString(36)}_${randomBytes(2).toString('hex')}`;
   const id = id0;
 
   const savedResume = opts.resumeFrom;
