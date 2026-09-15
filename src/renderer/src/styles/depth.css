@@ -102,3 +102,8 @@
 /* ── rejected steps on the Timeline ────────────────────────────────────── */
 .tl-word.dp-rejected-word { color: var(--serious); background: var(--serious-soft); }
 .tl-hint.dp-rejected-why { white-space: normal; overflow-wrap: anywhere; color: var(--text-dim); }
+
+/* ── scoped code review rules, beside the diff ─────────────────────────── */
+.dp-rules-block { display: grid; gap: var(--s-1); margin-top: var(--s-2); min-width: 0; }
+.dp-rules-source { font-size: var(--t-small); overflow-wrap: anywhere; }
+.dp-rules-list { margin: 0; padding-left: var(--s-4); display: grid; gap: var(--s-1); font-size: var(--t-small); line-height: 1.5; overflow-wrap: anywhere; }

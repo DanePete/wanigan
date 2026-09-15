@@ -626,3 +626,59 @@ export async function runRejectedStepSmoke(check: Check, say: Say): Promise<void
   hooks.cleanupHookSettings(sid);
   policy.releasePolicyContext(sid);
 }
+
+/** Item 11: Code Review Rules collected from the path to each changed file, scoped, cited, and carried by Send review and a goal's review task. */
+export async function runReviewRulesSmoke(check: Check, say: Say): Promise<void> {
+  say('── depth · code review rules, scoped');
+  const repo = repoFixture('wanigan-p7-rules-');
+  const { addProject, removeProject } = await import('./store');
+  const { reviewEvidence } = await import('./review-work');
+  const { rulesForCheckout, rulesForWorktree } = await import('./review-rules');
+  const { formatScopedRules } = await import('../shared/review-rules');
+  const { formatReviewSubmission, reviewableFiles } = await import('../shared/review-marks');
+  let wt: string | null = null;
+  try {
+    repo.write('AGENTS.md', '# Guide\n\n## Code Review Rules\n\n- Migrations are additive.\n');
+    repo.write('packages/api/AGENTS.md', '## Code review rules\n- API errors are typed; never throw a string.\n');
+    repo.write('packages/web/CLAUDE.md', '## Code Review Rules\n- No inline styles.\n');
+    repo.write('packages/api/src/pay.ts', 'export const pay = 1;\n');
+    repo.write('packages/web/src/app.tsx', 'export const app = 1;\n');
+    repo.git('add', '-A'); repo.git('commit', '-qm', 'base');
+    const base = repo.git('rev-parse', 'HEAD').trim();
+    const project = await addProject(repo.dir);
+    const sid = `p7-rules-${Date.now()}`;
+    insertSession(sid, project.id, repo.dir, base);
+    repo.write('packages/api/src/pay.ts', 'export const pay = 2;\n');
+    repo.write('scratch/try.ts', 'throw "x";\n');
+
+    const evidence = await reviewEvidence(sid);
+    const changed = reviewableFiles(evidence!.files).map((f) => f.path);
+    const rules = await rulesForCheckout(evidence!.root, changed);
+    check(JSON.stringify(changed) === JSON.stringify(['packages/api/src/pay.ts']), 'rules: the reviewed paths leave scratch out', JSON.stringify(changed));
+    check(rules.map((r) => r.file).join() === 'AGENTS.md,packages/api/AGENTS.md', 'rules: the root and the nested file on the path to the change are collected; a sibling package’s file is not', JSON.stringify(rules.map((r) => r.file)));
+    const text = formatScopedRules(rules);
+    const message = formatReviewSubmission({
+      anchor: 'x', files: evidence!.files,
+      marks: [{ path: 'packages/api/src/pay.ts', state: 'rejected', note: 'Why a number?', contentHash: evidence!.files.find((f) => f.path === 'packages/api/src/pay.ts')!.contentHash, worktree: repo.dir, baseCommit: base, markedAt: 1 }],
+      rules: text,
+    });
+    check(message.ok && message.text.includes('cite the rule a finding relies on') && message.text.includes('From `packages/api/AGENTS.md` › Code review rules') && !message.text.includes('No inline styles'),
+      'rules: Send review carries the scoped rules, cited by file and heading, with the instruction to cite', message.ok ? message.text : message.reason);
+    const alone = formatReviewSubmission({ anchor: 'x', files: evidence!.files, marks: [], rules: text });
+    check(!alone.ok, 'rules: rules on their own are never a review to send');
+
+    // A goal's review task: the implementation worktree against the goal's base.
+    wt = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-p7-rules-wt-')));
+    fs.rmSync(wt, { recursive: true, force: true });
+    repo.git('worktree', 'add', '-q', '-b', 'p7-rules', wt, base);
+    fs.writeFileSync(path.join(wt, 'packages/web/src/app.tsx'), 'export const app = 2;\n');
+    const goalRules = await rulesForWorktree(wt, base);
+    check(goalRules.map((r) => r.file).join() === 'AGENTS.md,packages/web/CLAUDE.md', 'rules: a review task’s rules are scoped to what its implementation worktree changed', JSON.stringify(goalRules.map((r) => r.file)));
+    const control = await source('main/control.ts');
+    check(control.includes("node.kind === 'review' && inherited ? formatScopedRules(await rulesForWorktree(inherited, parent.base_commit)") && control.includes('initialPrompt: launchPrompt'),
+      'rules: a goal’s review task launches with the scoped rules in its prompt');
+  } finally {
+    if (wt) { try { repo.git('worktree', 'remove', '--force', wt); } catch { /* best effort */ } }
+    try { const { listProjects } = await import('./store'); const p = listProjects().find((x) => x.path === repo.dir); if (p) removeProject(p.id); } catch { /* best effort */ }
+  }
+}

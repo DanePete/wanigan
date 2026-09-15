@@ -211,6 +211,9 @@ export function formatReviewSubmission(input: {
   marks: readonly ReviewMark[];
   lineNotes?: readonly ReviewNote[];
   dependencies?: readonly ReviewDependencyLine[];
+  /* ── helper sweep · P7 depth ── */
+  /** The scoped Code Review Rules block (shared/review-rules.ts), appended as written; never an item on its own. */
+  rules?: string;
 }): { ok: true; text: string; items: number } | { ok: false; reason: string } {
   const files = reviewableFiles(input.files);
   const rejected: { file: ReviewFile; review: FileReview }[] = [];
@@ -269,6 +272,8 @@ export function formatReviewSubmission(input: {
   if (approved > 0) {
     lines.push('', `${approved} other file${approved === 1 ? ' is' : 's are'} approved as ${approved === 1 ? 'it stands' : 'they stand'}.`);
   }
+  /* ── helper sweep · P7 depth ── */
+  if (input.rules?.trim()) lines.push('', input.rules.trim());
   return { ok: true, text: lines.join('\n'), items };
 }
 

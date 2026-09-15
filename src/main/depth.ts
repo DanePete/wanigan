@@ -10,6 +10,10 @@ import { scratchReason } from '../shared/scratch-files';
 import { db } from './db';
 import { historyRewriteAskSettings, setHistoryRewriteAsk } from './policy';
 import { gateRejections } from './rejections';
+import { rulesForCheckout } from './review-rules';
+import { reviewEvidence } from './review-work';
+import { reviewableFiles } from '../shared/review-marks';
+import { formatScopedRules } from '../shared/review-rules';
 
 /**
  * The wiring for the review-depth helpers (helper sweep P7): one start function
@@ -42,6 +46,14 @@ export function registerDepthIpc(handle: Handle, options: DepthIpcOptions): void
   handle('depth:asksList', (sessionId: unknown) => asksFor(sessionId));
   handle('depth:asksTick', (itemId: unknown, ticked: unknown) => tickAsk(itemId, ticked));
   handle('depth:setLoopBudgets', (docketId: unknown, budgets: unknown) => setLoopBudgets(idArg(docketId, 'goal'), budgets));
+  handle('depth:reviewRules', async (sessionId: unknown) => {
+    const evidence = await reviewEvidence(idArg(sessionId, 'session'));
+    if (!evidence) return { rules: [], changed: 0, text: '' };
+    // The rules a review is held to are the ones covering the files it reviews: scratch and pre-existing edits are not those.
+    const changed = reviewableFiles(evidence.files).map((f) => f.path);
+    const rules = await rulesForCheckout(evidence.root, changed);
+    return { rules, changed: changed.length, text: formatScopedRules(rules) };
+  });
   handle('depth:rejections', (sessionId: unknown) => gateRejections(sessionId));
   handle('depth:historyRewriteAsk', () => historyRewriteAskSettings());
   handle('depth:setHistoryRewriteAsk', (projectId: unknown, on: unknown) => setHistoryRewriteAsk(projectId, on));

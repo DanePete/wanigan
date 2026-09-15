@@ -1042,6 +1042,7 @@ const api = {
         call<import('../shared/exec-config').ConfigPinCheck>('configPins:acceptInstructions', projectId, digest, worktree ?? null),
       setAsk: (projectId: string, on: boolean) => call<boolean>('configPins:setInstructionAsk', projectId, on),
     },
+    reviewRules: (sessionId: string) => call<{ rules: import('../shared/review-rules').ScopedRules[]; changed: number; text: string }>('depth:reviewRules', sessionId),
     rejections: (sessionId: string) => call<import('../shared/rejections').GateRejection[]>('depth:rejections', sessionId),
     historyRewriteAsk: () => call<{ projectId: string; enabled: boolean }[]>('depth:historyRewriteAsk'),
     setHistoryRewriteAsk: (projectId: string, on: boolean) => call<boolean>('depth:setHistoryRewriteAsk', projectId, on),

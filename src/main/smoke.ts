@@ -272,6 +272,7 @@ export async function runSmoke(): Promise<void> {
     await p7.runScratchSmoke(check, say);
     await p7.runHistoryRewriteAskSmoke(check, say);
     await p7.runRejectedStepSmoke(check, say);
+    await p7.runReviewRulesSmoke(check, say);
     /* ── end helper sweep · P7 depth ── */
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);

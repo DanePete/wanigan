@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { MaintainabilityView } from '@shared/maintainability';
 import type { ReviewWorkFile } from '@shared/review-work';
 import { SCRATCH_WORDS } from '@shared/scratch-files';
+import { CITE_INSTRUCTION, type ScopedRules } from '@shared/review-rules';
 import { Mark, Note, num } from './bits';
 import '../styles/depth.css';
 
@@ -120,6 +121,41 @@ export function ScratchFilesSection({ sessionId, files, selected, onOpen, onChan
         ))}
       </ul>
       {err && <Note tone="error">{err}</Note>}
+    </details>
+  );
+}
+
+/**
+ * The `Code Review Rules` sections that cover this diff, beside it: from the
+ * AGENTS.md and CLAUDE.md files on the path from the repository root to each
+ * changed file. Send review carries the same block, cited, with the instruction
+ * to cite the rule a finding relies on.
+ */
+export function ReviewRulesSection({ sessionId, refreshKey }: { sessionId: string; refreshKey: string }) {
+  const [data, setData] = useState<{ rules: ScopedRules[]; changed: number } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    window.wanigan.depth.reviewRules(sessionId)
+      .then((d) => { if (live) { setData(d); setErr(null); } })
+      .catch((e) => { if (live) setErr(e instanceof Error ? e.message : String(e)); });
+    return () => { live = false; };
+  }, [sessionId, refreshKey]);
+  const count = data?.rules.reduce((n, r) => n + r.rules.length, 0) ?? 0;
+  return (
+    <details className="rw-section dp-rules" open={count > 0}>
+      <summary>Code review rules <span className="faint">{data ? count ? `${count} rule${count === 1 ? '' : 's'} from ${data.rules.length} section${data.rules.length === 1 ? '' : 's'}` : 'none cover this diff' : err ? 'unreadable' : 'reading…'}</span></summary>
+      {err && <Note tone="error">{err}</Note>}
+      {data && !data.rules.length && (
+        <p className="faint rw-section-empty">No AGENTS.md or CLAUDE.md on the path to the {num(data.changed)} changed file{data.changed === 1 ? '' : 's'} has a Code Review Rules section.</p>
+      )}
+      {data?.rules.map((r) => (
+        <div key={`${r.file}:${r.line}`} className="dp-rules-block">
+          <div className="dp-rules-source"><span className="mono">{r.file}</span> › {r.heading} <span className="faint dp-fine">line {r.line} · covers {num(r.covers.length)} changed file{r.covers.length === 1 ? '' : 's'}{r.scope ? ` under ${r.scope}/` : ''}</span></div>
+          <ul className="dp-rules-list">{r.rules.map((rule, i) => <li key={i}>{rule}</li>)}</ul>
+        </div>
+      ))}
+      {data && data.rules.length > 0 && <p className="faint rw-section-empty">Send review includes these, with the instruction to {CITE_INSTRUCTION}.</p>}
     </details>
   );
 }

@@ -13,6 +13,8 @@ import { listGoalTrace, recordGoalTrace } from './goal-trace';
 import { enqueue } from './queue';
 /* ── helper sweep · P7 depth ── */
 import { implementationChangedLines } from './goal-diff';
+import { rulesForWorktree } from './review-rules';
+import { formatScopedRules } from '../shared/review-rules';
 import { dispatchVerdict, isHoldReason, parseLoopBudgets, type GoalHold, type GoalLoopBudgets, type HoldReason } from '../shared/goal-budgets';
 /* ── end helper sweep · P7 depth ── */
 import type {
@@ -611,11 +613,15 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
     ? verificationTree(nodeRow(nodeId))
     : { kind: 'none' as const };
   const inherited = inheritedTree.kind === 'found' ? inheritedTree.path : null;
+  /* ── helper sweep · P7 depth ── a review task is handed the Code Review Rules that cover what it reviews, cited. */
+  const reviewRules = node.kind === 'review' && inherited ? formatScopedRules(await rulesForWorktree(inherited, parent.base_commit).catch(() => [])) : '';
+  const launchPrompt = reviewRules ? `${prompt}\n\n${reviewRules}` : prompt;
+  /* ── end helper sweep · P7 depth ── */
   let session: Awaited<ReturnType<typeof createSession>>;
   try {
     session = await createSession({ providerId, projectId: project.id, model: input.model?.trim() || undefined,
       effort: input.effort?.trim() || undefined, permissionMode: input.permissionMode?.trim() || (node.kind === 'implement' ? 'acceptEdits' : 'plan'),
-      isolate: !inherited, initialPrompt: prompt, goalCapsule: capsule },
+      isolate: !inherited, initialPrompt: launchPrompt, goalCapsule: capsule },
       inherited ? { useWorktree: inherited } : {});
   } catch (error) {
     if (takenClaim) releaseClaim(takenClaim.id);

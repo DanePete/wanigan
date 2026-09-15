@@ -16,7 +16,7 @@ import {
   StageHunksPanel, findInPatch, scopedFiles, useReviewWork, type FindHit, type ReviewScope,
 } from './ReviewWorkbench';
 /* ── helper sweep · P7 depth ── */
-import { MaintainabilitySection, ScratchFilesSection } from './DepthReview';
+import { MaintainabilitySection, ReviewRulesSection, ScratchFilesSection } from './DepthReview';
 /* ── end helper sweep · P7 depth ── */
 type Editor = { id: string; label: string; path: string };
 type Changed = { path: string; index: string; work: string; staged: boolean; untracked: boolean; preexisting?: boolean; committed?: boolean };
@@ -441,6 +441,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
     setSending(true); setSent(null);
     try {
       const deps = await window.wanigan.reviewWork.dependencies(sessionId).catch(() => null);
+      /* ── helper sweep · P7 depth ── */
+      const rules = await window.wanigan.depth.reviewRules(sessionId).catch(() => null);
       const lineNotes = notesAnchor === review.anchor ? notes : [];
       const result = formatReviewSubmission({
         anchor: review.anchor,
@@ -448,6 +450,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
         marks: marksFromReviews(review.files, review.root, review.base),
         lineNotes,
         dependencies: deps ? deps.manifests.flatMap((m) => m.lines.map((text) => ({ text }))) : [],
+        rules: rules?.text ?? '',
       });
       if (!result.ok) { setSent({ tone: 'warn', text: result.reason }); return; }
       const where = appendToComposerDraft(sessionId, result.text);
@@ -969,6 +972,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                   <DependenciesSection sessionId={sessionId} refreshKey={reviewKey} />
                   <ClaimsSection sessionId={sessionId} refreshKey={reviewKey} />
                   {/* ── helper sweep · P7 depth ── */}
+                  <ReviewRulesSection sessionId={sessionId} refreshKey={reviewKey} />
                   <MaintainabilitySection sessionId={sessionId} refreshKey={reviewKey} />
                 </div>
               )}
