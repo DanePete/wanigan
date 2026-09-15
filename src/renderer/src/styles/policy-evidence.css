@@ -35,3 +35,8 @@
 .pe-trace[open] summary { margin-bottom: var(--s-2); }
 .pe-trace-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
 .pe-trace-steps li { display: grid; gap: var(--s-1); padding: var(--s-2); border-radius: var(--r-sm); background: var(--bg-sunk); min-width: 0; }
+
+/* ── the gate self-test ────────────────────────────────────────────────── */
+.pe-selftest { display: grid; gap: var(--s-2); margin-top: var(--s-4); }
+.pe-selftest-line { font-size: var(--t-small); display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); }
+.pe-selftest-line.failed { font-weight: 600; }

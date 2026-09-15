@@ -18,7 +18,7 @@ import ThemeControl from '../components/ThemeControl';
 import type { ResolvedTheme } from '../theme-boot';
 import '../styles/settings.css';
 /* ── helper sweep · P1 policy ── */
-import { LedgerTrace, tracesTool } from '../components/PolicyEvidence';
+import { GateSelfTestPanel, LedgerTrace, tracesTool } from '../components/PolicyEvidence';
 
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
 type ProviderKeyStatus = { present: boolean; fingerprint: string | null; fromEnv: boolean; stored: boolean };
@@ -3365,6 +3365,9 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
           </>
         )}
       </Frame>
+
+      {/* ── helper sweep · P1 policy ── */}
+      <GateSelfTestPanel />
 
       <div className="set-sub">Ledger</div>
       <Frame v={summary.v} what="the ledger summary" onRetry={summary.reload}>

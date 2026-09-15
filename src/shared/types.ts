@@ -3500,3 +3500,13 @@ export type StoredTrace = {
   notes: string[];
   decided: { decision: 'allow' | 'deny' | 'ask'; rule: string };
 };
+
+/** One recorded run of the gate's fixture corpus. See shared/policy-selftest.ts. */
+export type GateSelfTestRun = {
+  id: number;
+  at: number;
+  rules: number;
+  passed: number;
+  failures: { rule: string; arm: 'refuse' | 'allow'; expected: string; got: string }[];
+  uncovered: string[];
+};

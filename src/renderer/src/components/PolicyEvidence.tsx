@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import type { StoredTrace } from '@shared/types';
-import { Mark, type Tone } from './bits';
+import { useEffect, useState } from 'react';
+import type { GateSelfTestRun, StoredTrace } from '@shared/types';
+import { Mark, Note, SectionHead, ago, type Tone } from './bits';
 import '../styles/policy-evidence.css';
 
 /**
@@ -66,5 +66,64 @@ export function LedgerTrace({ id }: { id: number }) {
             </>
           )}
     </details>
+  );
+}
+
+/**
+ * Whether the gate's own fixtures behaved as specified, from the last recorded
+ * run. A failure is listed by rule and arm, and nothing about a failing run is
+ * softened: a gate that does not pass its own tests is the headline.
+ */
+export function GateSelfTestPanel() {
+  const [run, setRun] = useState<GateSelfTestRun | null | 'loading' | 'error'>('loading');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    window.wanigan.policyEvidence.selfTest()
+      .then((r) => { if (live) setRun(r); })
+      .catch(() => { if (live) setRun('error'); });
+    return () => { live = false; };
+  }, []);
+  const again = async () => {
+    setBusy(true);
+    try { setRun(await window.wanigan.policyEvidence.runSelfTest()); }
+    catch { setRun('error'); }
+    finally { setBusy(false); }
+  };
+  const failed = run && typeof run === 'object' && run.passed < run.rules;
+  return (
+    <section className="pe-selftest" aria-label="Gate self-test">
+      <SectionHead label="Gate self-test"
+                   right={<button type="button" className="btn btn-sm" disabled={busy} onClick={() => void again()}>{busy ? 'Running…' : 'Run again'}</button>} />
+      {run === 'loading' ? <p className="faint pe-fine">Reading the last run…</p>
+        : run === 'error' ? <Note tone="error">Wanigan could not read or run the gate self-test.</Note>
+          : run === null ? <p className="dim pe-fine">No run is recorded yet. It runs when Wanigan starts; run it now to see the result.</p>
+            : (
+              <>
+                <p className={`pe-selftest-line${failed ? ' failed' : ''}`}>
+                  <Mark glyph={failed ? '!' : '✓'} word={`Gate self-test: ${run.passed}/${run.rules} rules behaved as specified`} tone={failed ? 'bad' : 'ok'} />
+                  <span className="faint pe-fine"> {ago(run.at)}</span>
+                </p>
+                {run.failures.length > 0 && (
+                  <ul className="pe-notes" aria-label="Rules that did not behave as specified">
+                    {run.failures.map((f, i) => (
+                      <li key={`${f.rule}-${f.arm}-${i}`}>
+                        <code>{f.rule}</code>, {f.arm === 'refuse' ? 'the payload it must refuse or ask about' : 'the ordinary payload it must allow'}:
+                        expected {f.expected}, got {f.got}.
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {run.uncovered.length > 0 && (
+                  <p className="pe-alarm">No fixtures for: {run.uncovered.join(', ')}.</p>
+                )}
+                <p className="faint pe-fine">
+                  Each rule is run against one payload it must refuse or ask about and one ordinary payload it must allow,
+                  with a synthetic home and project folder. A pass says the rules behave as written; it does not make them
+                  containment, and it says nothing about a particular file on this Mac.
+                </p>
+              </>
+            )}
+    </section>
   );
 }

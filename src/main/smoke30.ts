@@ -159,3 +159,19 @@ export async function runGateParserSmoke(check: Check, say: Say): Promise<void> 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
+
+export async function runGateSelfTestSmoke(check: Check, say: Say): Promise<void> {
+  say('── helper sweep · P1 · the gate tests itself at start');
+  const evidence = await import('./policy-evidence');
+  const run = await import('./policy-selftest-run');
+  const { POLICY_RULES } = await import('../shared/policy-rules');
+  evidence.startPolicyEvidence();
+  const latest = run.latestGateSelfTest();
+  check(!!latest && latest.rules === POLICY_RULES.length,
+    'starting the policy evidence records a self-test run over every registered rule', latest);
+  check(!!latest && latest.passed === latest.rules && latest.failures.length === 0 && latest.uncovered.length === 0,
+    `and in this build every rule behaved as specified (${latest?.passed}/${latest?.rules})`, latest?.failures);
+  const again = run.runAndRecordGateSelfTest();
+  check(again.id > (latest?.id ?? 0) && run.latestGateSelfTest()?.id === again.id,
+    'a run on demand is recorded too, and becomes the one Settings shows');
+}
