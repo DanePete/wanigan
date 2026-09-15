@@ -1,0 +1,46 @@
+{
+  "at": "2026-09-15T04:50:00.671Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic sessions, review and second-opinion services; no real agent calls",
+  "mode": "before",
+  "commit": "e133cf15fd998d368bd9397674772a07da9b32d9",
+  "uncommittedChanges": 0,
+  "checks": [
+    "before: the code rail shows the review verdict and Send review, with no way to ask a second model and no record of one",
+    "before: the Spending report has no record of second opinions"
+  ],
+  "errors": [],
+  "shots": [
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p9-opinions/docs/visuals/helper-p9-opinions/before/code-rail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p9-opinions/docs/visuals/helper-p9-opinions/before/code-rail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p9-opinions/docs/visuals/helper-p9-opinions/before/insights-spending-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p9-opinions/docs/visuals/helper-p9-opinions/before/insights-spending-detail-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)",
+      "element": true
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p9-opinions/docs/visuals/helper-p9-opinions/before/insights-spending-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p9-opinions/docs/visuals/helper-p9-opinions/before/insights-spending-detail-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)",
+      "element": true
+    }
+  ]
+}

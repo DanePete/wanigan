@@ -272,6 +272,10 @@ export async function runSmoke(): Promise<void> {
     await p5.runModelSubstitutionSmoke(check, say);
     await p5.runConfigFilesSmoke(check, say);
     /* ── end helper sweep · P5 runtime ── */
+    /* ── helper sweep · P9 opinions ── */
+    const { runSecondOpinionSmoke } = await import('./smoke38');
+    await runSecondOpinionSmoke(check, say);
+    /* ── end helper sweep · P9 opinions ── */
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

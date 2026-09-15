@@ -1101,3 +1101,31 @@ export function recallTranscripts(scope: RecallScope, rawQuery: unknown, rawLimi
     note: hits.length ? null : `No archived turn in scope matched “${query}”.`,
   };
 }
+
+/* ── helper sweep · P9 opinions ── */
+/**
+ * The operator's own messages in a Claude Code conversation, oldest first, for
+ * the search for decisions nobody asked for. The archived copy when there is
+ * one, else the live file — by exact conversation id only, never the newest
+ * file in the directory, which could be another conversation's. Tool results
+ * ride in user-role records but are not messages, and neither are the
+ * `<command-…>` wrappers a slash command leaves.
+ */
+export function operatorMessages(sessionId: string, cwds: readonly string[], conversationId: string | null): { messages: string[]; source: string | null } {
+  let turns = transcriptFor(sessionId).turns;
+  let source: string | null = turns.length ? 'the archived transcript' : null;
+  if (!turns.length && conversationId) {
+    for (const cwd of cwds) {
+      const file = exactTranscriptPath(cwd, conversationId);
+      if (!file) continue;
+      try {
+        turns = parseTranscript(readForParse(file).text, Date.now()).turns;
+        source = "Claude Code's transcript";
+      } catch { turns = []; }
+      break;
+    }
+  }
+  const messages = turns.filter((t) => t.role === 'user').map((t) => t.text.trim()).filter((t) => t && !t.startsWith('<'));
+  return { messages, source };
+}
+/* ── end helper sweep · P9 opinions ── */
