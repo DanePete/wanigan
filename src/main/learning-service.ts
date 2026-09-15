@@ -84,6 +84,8 @@ import {
   type ReviewAction,
 } from './learning';
 import { truncateUtf8Bytes } from './learning/util';
+/* ── helper sweep · P4 cost ── */
+import { budgetForCompiled } from './learning-budget';
 
 const CONSOLIDATION_INTERVAL_MS = 5 * 60_000;
 /**
@@ -1597,6 +1599,18 @@ export function applyCandidateToProvider(id: string, providerId: string) {
         + 'Edit the proposal so it reads as a skill, or apply it as an instruction instead.',
       );
     }
+  }
+  /* ── helper sweep · P4 cost ── */
+  // Codex's budgets, checked on the same bytes. A rule compiled into AGENTS.md
+  // past project_doc_max_bytes is one no Codex session reads, so it is refused
+  // with the byte it would have ended at; an approaching budget is only a
+  // warning, which the review inbox shows before Apply (learning-budget.ts).
+  if (projection.adapterId === 'codex') {
+    const budget = budgetForCompiled({
+      projectId: candidate.projectId, targetPath: projection.targetPath, targetFormat: projection.targetFormat,
+      proposedContent: projection.proposedContent, homeDir: app.getPath('home'),
+    });
+    if (budget.applies && budget.verdict === 'refuse') throw new Error(`Codex budget check refused this projection: ${budget.reason}`);
   }
   const applied = applyProjection(projection.id, safety);
   const item = applied.itemId ? getKnowledgeItem(applied.itemId) : null;

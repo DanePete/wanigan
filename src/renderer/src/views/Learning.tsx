@@ -27,6 +27,8 @@ import { Explainer, Hint, Icon, Mark, Note, PageHead, SectionHead, Segmented, ag
 import { useDialog } from '../components/useDialog';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import '../styles/learning.css';
+/* ── helper sweep · P4 cost ── */
+import ProjectionBudgetNote from '../components/ProjectionBudgetNote';
 
 type LearningTab = 'overview' | 'inbox' | 'knowledge' | 'context' | 'experiments';
 
@@ -1704,6 +1706,8 @@ function CandidateCard({ candidate, providers, busy, act }: {
           : <p className="faint">Reading the stored signals…</p>
       )}
       {editing ? <textarea className="field mono" aria-label="Candidate text" rows={9} value={text} onChange={(e) => setText(e.target.value)} /> : <pre className="candidate-patch">{candidate.proposedText}</pre>}
+      {/* ── helper sweep · P4 cost ── */}
+      {PROJECTABLE_KINDS.includes(candidate.targetKind) && target && <ProjectionBudgetNote candidateId={candidate.id} providerId={target} />}
       {candidate.conflicts.length > 0 && <div className="candidate-conflicts"><strong>Conflicts to resolve</strong>{candidate.conflicts.map((c) => <p key={`${c.itemId}-${c.relation}`}>{c.relation}: {c.title} — {c.reason}</p>)}</div>}
       <div className="candidate-targets">
         <div><span className="label">Provider targets</span><select className="field" aria-label="Provider target" value={target} onChange={(e) => setTarget(e.target.value)}>{providers.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select></div>

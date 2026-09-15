@@ -153,3 +153,100 @@ export async function runSpendYieldSmoke(check: Check, say: Say): Promise<void> 
     fs.rmSync(repo, { recursive: true, force: true });
   }
 }
+
+export async function runCodexLoaderSmoke(check: Check, say: Say): Promise<void> {
+  say('── context · Codex loader budget, stale references, subagents');
+  const { repo, git } = scratchRepo('wanigan-codex-loader-');
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-codex-home-'));
+  const home = path.join(fakeHome, '.codex');
+  fs.mkdirSync(home, { recursive: true });
+  const { addProject, removeProject } = await import('./store');
+  const project = await addProject(repo);
+  try {
+    const loader = await import('./context/codex-loader');
+    fs.mkdirSync(path.join(repo, 'pkg', 'deep'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'AGENTS.md'), `# root\n${'r'.repeat(90)}\n`);
+    fs.writeFileSync(path.join(repo, 'pkg', 'AGENTS.override.md'), `# override\n${'o'.repeat(40)}\n`);
+    fs.writeFileSync(path.join(repo, 'pkg', 'AGENTS.md'), 'shadowed\n');
+    fs.writeFileSync(path.join(repo, 'pkg', 'deep', 'TEAM.md'), `# team\n${'t'.repeat(60)}\n`);
+    fs.writeFileSync(path.join(home, 'config.toml'), [
+      'model = "gpt-6-astra"',
+      'project_doc_max_bytes = 180',
+      'project_doc_fallback_filenames = ["TEAM.md"]',
+      '[skills]',
+      'max_context_tokens = 99999',
+    ].join('\n'));
+    fs.writeFileSync(path.join(home, 'models_cache.json'), JSON.stringify({ models: [{ slug: 'gpt-6-astra', context_window: 272000 }] }));
+    fs.mkdirSync(path.join(home, 'skills', '.system', 'hidden', 'agents'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'skills', '.system', 'hidden', 'SKILL.md'), '---\nname: hidden\ndescription: never listed\n---\n');
+    fs.writeFileSync(path.join(home, 'skills', '.system', 'hidden', 'agents', 'openai.yaml'), 'policy:\n  allow_implicit_invocation: false\n');
+    fs.mkdirSync(path.join(home, 'skills', '.system', 'shown'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'skills', '.system', 'shown', 'SKILL.md'), '---\nname: shown\ndescription: listed every turn\n---\n');
+
+    const config = loader.readCodexConfig(home);
+    check(config.maxBytes === 180 && config.maxBytesFrom === 'config' && config.fallbacks.join() === 'TEAM.md' && config.skillsMaxTokens === 99999,
+      'config.toml overrides for the byte budget, fallback names and skills budget are read', config);
+    const { chain, root } = loader.chainForCwd(path.join(repo, 'pkg', 'deep'), config);
+    check(root === fs.realpathSync(repo) || root === repo, 'the project root is the directory holding .git', root);
+    check(chain.files.map((f) => f.name).join() === 'AGENTS.md,AGENTS.override.md,TEAM.md',
+      'one file per directory, root first, the override winning over AGENTS.md and a fallback name read', chain.files.map((f) => f.name));
+    const team = chain.files[2];
+    check(team.status === 'truncated' && team.droppedRange !== null && team.droppedRange[1] === team.bytes && chain.loadedBytes === 180,
+      'the file that crosses project_doc_max_bytes is cut, with the byte range that never loads', JSON.stringify(team));
+    check(chain.files[1].shadows.includes('AGENTS.md'), 'the shadowed AGENTS.md beside an override is named', chain.files[1]);
+
+    const rows = loader.codexSkillRows(null, home);
+    const hidden = rows.find((r) => r.name === 'hidden');
+    const shown = rows.find((r) => r.name === 'shown');
+    check(hidden?.listed === false && hidden.implicit === false && shown?.listed === true && (shown?.estTokens ?? 0) > 0,
+      'a skill whose openai.yaml sets allow_implicit_invocation: false is not counted in the listing estimate', { hidden, shown });
+
+    const { budgetForCompiled } = await import('./learning-budget');
+    const block = `<!-- wanigan:begin k -->\n${'x'.repeat(40)}\n<!-- wanigan:end k -->\n`;
+    const verdict = budgetForCompiled({ projectId: null, codexHome: home, targetPath: path.join(repo, 'pkg', 'deep', 'AGENTS.md'),
+      targetFormat: 'codex-agents', proposedContent: block, homeDir: fakeHome });
+    check(verdict.applies && verdict.verdict === 'refuse' && /project_doc_max_bytes/.test(verdict.reason ?? ''),
+      'a projection whose managed block would land past the cut is refused with the reason', JSON.stringify(verdict));
+    const ok = budgetForCompiled({ projectId: null, codexHome: home, targetPath: path.join(home, 'AGENTS.md'), targetFormat: 'codex-agents',
+      proposedContent: block, homeDir: fakeHome });
+    check(ok.applies && ok.kind === 'user-instructions' && ok.verdict === 'ok',
+      'the Codex home AGENTS.md is the user’s instructions and is not measured against the project budget', JSON.stringify(ok));
+
+    const learningService = await import('./learning-service');
+    const applySrc = fs.readFileSync(path.join(process.cwd(), 'src', 'main', 'learning-service.ts'), 'utf8');
+    check(typeof learningService.applyCandidateToProvider === 'function' && /budgetForCompiled\(/.test(applySrc) && /verdict === 'refuse'/.test(applySrc),
+      'the apply path itself calls the budget check and refuses on it, not only the inbox note');
+
+    say('── context · stale references in CLAUDE.md and AGENTS.md');
+    fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'src', 'engine.ts'), 'export {};\n');
+    fs.writeFileSync(path.join(repo, 'CLAUDE.md'), [
+      '# Notes', 'Start in `src/engine.ts`, then `src/engin.ts` and `lib/gone/thing.md`.',
+      'Never flag `https://example.com/a/b`, `~/.claude/x`, `$HOME/y`, `src/**/*.ts` or and/or `read/write`.',
+      '```bash', 'git status && definitely-not-a-real-program-wanigan --x', '```',
+    ].join('\n'));
+    git('add', '-A'); git('commit', '-qm', 'docs');
+    const { lintInstructionReferences } = await import('./context/reference-lint');
+    const lint = await lintInstructionReferences(null, repo);
+    const texts = lint.issues.map((i) => i.text).sort();
+    check(texts.join() === 'definitely-not-a-real-program-wanigan,lib/gone/thing.md,src/engin.ts',
+      'missing paths and a command not on PATH are flagged, and URLs, globs, ~/ and $VARS stay quiet', lint.issues);
+    check(lint.issues.find((i) => i.text === 'src/engin.ts')?.suggestion === 'src/engine.ts',
+      'a missing path carries a did-you-mean from git ls-files', lint.issues);
+
+    say('── context · subagents that skip CLAUDE.md');
+    fs.mkdirSync(path.join(repo, '.claude', 'agents'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.claude', 'agents', 'lean.md'), '---\nname: lean\ndescription: takes everything from the prompt\nomitClaudeMd: true\n---\nBody.\n');
+    fs.writeFileSync(path.join(repo, '.claude', 'agents', 'normal.md'), '---\nname: normal\ndescription: ordinary\n---\nBody.\n');
+    const { agentDefinitions } = await import('./context/agent-definitions');
+    const defs = await agentDefinitions(repo);
+    const lean = defs.agents.find((a) => a.name === 'lean' && a.scope === 'project');
+    const normal = defs.agents.find((a) => a.name === 'normal' && a.scope === 'project');
+    check(lean?.omitClaudeMd === true && normal?.omitClaudeMd === false,
+      'an agent with omitClaudeMd: true is marked, and one without is not', { lean, normal });
+  } finally {
+    try { removeProject(project.id); } catch { /* scratch */ }
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  }
+}

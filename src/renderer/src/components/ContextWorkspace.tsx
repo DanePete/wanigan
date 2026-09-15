@@ -10,6 +10,9 @@ export const CONTEXT_AREAS = [
   {key:'config',label:'Settings & hooks',detail:'Layers and commands',icon:'sliders'},
   {key:'budget',label:'Startup budget',detail:'Estimated input cost',icon:'gauge'},
   {key:'learning',label:'Learning briefing',detail:'Approved knowledge',icon:'layers'},
+  /* ── helper sweep · P4 cost ── */
+  {key:'codex',label:'Codex loader',detail:'AGENTS.md budget and skills',icon:'compass'},
+  {key:'subagents',label:'Subagents',detail:'Which skip CLAUDE.md',icon:'grid'},
 ] as const satisfies readonly {key:string;label:string;detail:string;icon:IconName}[];
 export type ContextArea = typeof CONTEXT_AREAS[number]['key'];
 type Source = {path:string;kind:'instruction'|'memory'};

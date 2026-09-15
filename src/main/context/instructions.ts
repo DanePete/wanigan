@@ -1086,6 +1086,16 @@ export function isServablePath(p: string): boolean {
   return servable.has(p);
 }
 
+/* ── helper sweep · P4 cost ── */
+/**
+ * The Codex AGENTS.md chain is produced by a different scan (codex-loader.ts),
+ * and its rows open in the same reader. Only that scanner calls this, with the
+ * exact paths it listed — the same membership rule, a second producer.
+ */
+export function markInstructionPathsServable(paths: string[]): void {
+  markServable(paths.filter((p) => /\.md$/i.test(p)));
+}
+
 export function refreshInstructions(): void {
   cache.clear();
 }

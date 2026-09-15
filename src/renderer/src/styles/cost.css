@@ -32,3 +32,12 @@
 @media (max-width: 760px) {
   .cost-causes { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* The AGENTS.md budget meter: a native <meter>, so its value is announced. */
+.cost-meter { width: 100%; height: var(--s-3); }
+.cost-meter::-webkit-meter-bar { background: var(--bg-sunk); border: 1px solid var(--line-soft); border-radius: var(--r-pill); }
+.cost-meter::-webkit-meter-optimum-value { background: var(--good); border-radius: var(--r-pill); }
+.cost-meter::-webkit-meter-suboptimum-value { background: var(--warning); border-radius: var(--r-pill); }
+.cost-meter::-webkit-meter-even-less-good-value { background: var(--bad); border-radius: var(--r-pill); }
+.cost-chain td { vertical-align: top; }
+.cost-budget-note { margin-top: var(--s-2); }
