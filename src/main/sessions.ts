@@ -24,13 +24,14 @@ import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './h
 import { finalizeSessionCheckpoints, forgetSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
 import { archiveSession, conversationTitle, titleFromTranscript, type ReadTitle } from './transcripts';
 import { createWorktree, removeWorktree, repoRootFor, worktreeStatus } from './worktrees';
-import { trustFor } from './policy';
+import { trustFor, waniganCredentialDirs } from './policy';
+import { claudeSandboxSettings, sandboxApplies } from '../shared/sandbox-policy';
 import { slots } from './queue';
 import { budgetBreached } from './spend';
 import { cleanupMcpConfig, writeMcpConfig } from './mcp/registry';
 import { noteOutput, forgetSession } from './attention';
 import { shouldBumpUnread } from '../shared/unread';
-import { flags, learningSettings } from './settings';
+import { flags, learningSettings, sandboxShell } from './settings';
 import { attachmentsDir, cleanupSessionAttachments, markSessionAttachmentsSent, prepareAttachmentDir } from './attachments';
 import { redactCredentials } from './redact';
 import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } from './learning';
@@ -1176,7 +1177,10 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
         // it the file names only the base events, and SubagentStart/Stop,
         // PostModelSwitch, CwdChanged, InstructionsLoaded and Elicitation are
         // never asked for — every surface reading them sees nothing.
-        const settingsFile = writeHookSettings(id0, cwd, undefined, { cliVersion: detected.version });
+        // Claude Code's sandbox rides in the same file when the operator chose
+        // it for this trust level, denying shell reads of Wanigan's tokens.
+        const sandbox = sandboxApplies(sandboxShell(), trust) ? claudeSandboxSettings(waniganCredentialDirs()) : null;
+        const settingsFile = writeHookSettings(id0, cwd, undefined, { cliVersion: detected.version, sandbox });
         if (settingsFile) injected.push('--settings', settingsFile);
       }
       if (detected.capabilities.mcp) {

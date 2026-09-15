@@ -1027,6 +1027,7 @@ export default function Settings({
             <Projects projects={projects} onAddProject={onAddProject} onRemoveProject={onRemoveProject} />
             <Worktrees />
             <Trust projects={projects} onAddProject={onAddProject} />
+            <SandboxShellSection prefs={prefs} pending={pending} setPref={setPref} />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('automation')} active={settingsTab === 'automation'}>
@@ -3223,6 +3224,47 @@ const LEDGER_WINDOWS: { id: string; word: string; ms: number | null }[] = [
   { id: '30d', word: 'Last 30 days', ms: 30 * 24 * 60 * 60 * 1000 },
 ];
 
+/**
+ * Claude Code's own sandbox for shell commands, chosen by trust level.
+ *
+ * Off by default, because a sandboxed command that needs the network or a
+ * path outside the allowed ones is refused or asked about, which changes what
+ * an agent gets done. What it is and is not is said before the choice, not in
+ * a tooltip after it: the sandbox confines the shell tool and nothing else.
+ */
+function SandboxShellSection({ prefs, pending, setPref }: {
+  prefs: WaniganSettings | null; pending: string | null; setPref: (k: string, v: string) => Promise<void>;
+}) {
+  if (!prefs) return null;
+  return (
+    <Section title="Sandbox shell commands"
+             hint="Ask Claude Code to run the shell commands an agent runs inside its own sandbox.">
+      <Callout level="warning" title="A sandbox for shell commands, not for the agent.">
+        Claude Code’s sandbox confines the commands its shell tool runs. It does not confine the file tools,
+        MCP servers or hooks, and it has been escaped before. When it is on, Wanigan also tells it that no
+        command may read the folders holding other sessions’ Wanigan credentials.
+      </Callout>
+      <div className="set-sub">Which sessions</div>
+      <Options
+        label="Sandbox shell commands"
+        value={prefs.sandboxShell}
+        options={[
+          { id: 'off', word: 'Off', detail: 'Commands run with the agent’s own permissions, as before.' },
+          { id: 'below-trusted', word: 'Below Trusted', detail: 'Read only and Project sessions run commands in the sandbox. Trusted sessions do not.' },
+          { id: 'always', word: 'Always', detail: 'Every Claude Code session runs its commands in the sandbox, Trusted included.' },
+        ]}
+        onPick={(value) => { if (pending !== 'sandbox_shell') void setPref('sandbox_shell', value); }}
+      />
+      <p className="set-sandbox-notes">
+        If the sandbox cannot start on this Mac, a sandboxed session exits at launch and says why, rather than
+        running its commands unsandboxed. A command that reaches the network or writes outside the allowed paths
+        is refused or asked about, and in a headless run nothing can answer. The choice applies to Claude Code
+        sessions started after it; sessions already running, and Codex sessions, are unchanged.
+      </p>
+    </Section>
+  );
+}
+
 function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: () => void }) {
   const [deniedOnly, setDeniedOnly] = useState(false);
   const [saved, setSaved] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
@@ -3289,9 +3331,9 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
     <Section title="Trust and the policy ledger"
              hint="What an agent in a project is allowed to reach for, and a written record of every decision Wanigan made about it.">
       <Callout level="warning" title="This is defence in depth. It is not containment, and it is not a security boundary.">
-        Wanigan checks each tool call against the level below and writes the answer down. It does not
-        sandbox the agent, it cannot see inside a command it allowed, and it cannot stop a process
-        that is already running. The 2026 Claude Code CVEs went <em>through allowlisted commands</em> —
+        Wanigan checks each tool call against the level below and writes the answer down. On its own it
+        does not sandbox the agent (the section below asks Claude Code to, for shell commands only), it
+        cannot see inside a command it allowed, and it cannot stop a process that is already running. The 2026 Claude Code CVEs went <em>through allowlisted commands</em> —
         a permitted tool doing an unexpected thing is exactly the case a policy layer is blind to.
         The OS sandbox is the boundary. Treat this as an audit trail with brakes, and do not point an
         agent at anything on the strength of it.

@@ -7,6 +7,7 @@ import { app } from 'electron';
 import { db } from './db';
 import { recordGoalTrace } from './goal-trace';
 import { planFromHook, recordGoalPlan } from './goal-plans';
+import type { ClaudeSandboxSettings } from '../shared/sandbox-policy';
 import { getSetting } from './settings';
 import { answerFor, contextForSession, trustBriefing } from './policy';
 import type {
@@ -267,6 +268,8 @@ export type HookSettingsOptions = {
    * and unknown earns the base event set only.
    */
   cliVersion?: string | null;
+  /** Claude Code's sandbox block, when sandboxing applies to this launch (shared/sandbox-policy.ts). */
+  sandbox?: ClaudeSandboxSettings | null;
 };
 
 /** The leading dotted triple of a `--version` line; null when there is none. */
@@ -341,7 +344,9 @@ export function writeHookSettings(
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { fs.chmodSync(dir, 0o700); } catch { /* best effort on odd filesystems */ }
   const file = path.join(dir, `${safeName(waniganSessionId)}.json`);
-  fs.writeFileSync(file, JSON.stringify({ hooks }, null, 2), { mode: 0o600 });
+  // The sandbox rides in the same --settings file on purpose: the binary
+  // honours its keys from CLI settings and ignores them from a repository.
+  fs.writeFileSync(file, JSON.stringify(options.sandbox ? { hooks, sandbox: options.sandbox } : { hooks }, null, 2), { mode: 0o600 });
   // writeFileSync honours mode only when it creates the file; an overwrite keeps
   // whatever the old one had. This file is a bearer credential.
   try { fs.chmodSync(file, 0o600); } catch { /* best effort on odd filesystems */ }

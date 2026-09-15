@@ -5,9 +5,9 @@ import path from 'node:path';
 import { db, logEvent, newRunId } from './db';
 import { cliVersionOf, detectProviders, providerById, refreshProviderPacks, shellPath } from './providers';
 import { listProjects, projectById } from './store';
-import { trustFor, registerPolicyContext, releasePolicyContext, answerHeldCall } from './policy';
+import { trustFor, registerPolicyContext, releasePolicyContext, answerHeldCall, waniganCredentialDirs } from './policy';
 import { writeHookSettings, cleanupHookSettings } from './hooks';
-import { flags, learningSettings } from './settings';
+import { flags, learningSettings, sandboxShell } from './settings';
 import { createWorktree, removeWorktree } from './worktrees';
 import { gateLaunch } from './config-pins';
 import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } from './learning';
@@ -18,6 +18,7 @@ import * as accounts from './accounts';
 import { redirectsAnthropicApi, stripAmbientAnthropicCredentials } from './sessions';
 import { rememberReportedContextWindows } from './transcripts';
 import { redactCredentials } from './redact';
+import { claudeSandboxSettings, sandboxApplies } from '../shared/sandbox-policy';
 import { DEFER_SINCE, cliSupportsDefer, heldCallSummary, readDeferredOutcome, type DeferredOutcome } from '../shared/deferred-approvals';
 import type {
   AgentAccount, HeadlessConfig, HeadlessHeld, HeadlessRow, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, TrustLevel,
@@ -1066,13 +1067,14 @@ async function runRow(runId: string, projectId: string): Promise<void> {
         : !hooksOn ? 'Hooks are off in Settings'
         : `holding needs Claude Code ${DEFER_SINCE} or later, and this is ${cliVersion ?? 'an unreadable version'}`) + '.');
   }
+  const sandbox = sandboxApplies(sandboxShell(), trust) ? claudeSandboxSettings(waniganCredentialDirs()) : null;
   let hookSettings: string | null = takesHooks && hooksOn ? writeHookSettings(hookId, cwd, {
     providerId: def.id,
     backendId: def.backendId,
     projectId,
     projectPath: row.project_path,
     query: cfg.prompt,
-  }, { cliVersion }) : null;
+  }, { cliVersion, sandbox }) : null;
   if (hookSettings) {
     registerPolicyContext({
       sessionId: hookId,

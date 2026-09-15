@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { db } from './db';
+import { dataDir, db } from './db';
 import { halted } from './halt';
 import { redactCredentials } from './redact';
 import { getSetting, setSetting } from './settings';
@@ -272,6 +272,46 @@ function credentialTarget(input: HookInput, root: string | null): string | null 
   return null;
 }
 
+/* ── Wanigan's own credentials ──────────────────────────────────────── */
+
+/**
+ * The directories where Wanigan writes the bearer tokens it hands sessions:
+ * one hook settings file and one MCP config per launch, owner-only on disk. An
+ * agent runs as the same user, so file permissions do not keep one session out
+ * of another's. A session holding another's hook token can post events as that
+ * session, including the SessionEnd that revokes its gate; one holding its MCP
+ * token can call Wanigan's tools as it. Neither is ever a repository's own
+ * work, which is why this is refused at every trust level, Trusted included.
+ *
+ * The same two paths are what the sandbox block denies to shell commands when
+ * sandboxing is on (sandbox-policy.ts). This gate covers the file tools and a
+ * shell command that names the path; the sandbox covers the command that does
+ * not name it.
+ */
+export function waniganCredentialDirs(): string[] {
+  const root = dataDir();
+  return [path.join(root, 'hooks'), path.join(root, 'mcp')];
+}
+
+function waniganCredentialTarget(input: HookInput, root: string | null): string | null {
+  const dirs = waniganCredentialDirs();
+  const hit = (abs: string): string | null => {
+    const real = realish(abs);
+    return dirs.find((dir) => prefixed(dir, abs) || prefixed(realish(dir), real)) ?? null;
+  };
+  const p = targetPath(input);
+  if (p) {
+    const found = hit(absolutise(root, p));
+    if (found) return found;
+  }
+  const cmd = str(input.tool_input?.command);
+  for (const token of cmd.match(PATH_TOKEN) ?? []) {
+    const found = hit(absolutise(root, token));
+    if (found) return found;
+  }
+  return null;
+}
+
 /* ── shell inspection ─────────────────────────────────────────────────── */
 
 /**
@@ -459,8 +499,17 @@ export function decideFor(ctx: PolicyContext, input: HookInput): PolicyDecision 
     );
   }
 
-  // Checked before anything else so that TRUST_COPY.trusted — "Nothing is
-  // denied by Wanigan" — stays literally true.
+  // Above trust for the same reason the halt is: see waniganCredentialDirs.
+  const waniganSecret = waniganCredentialTarget(input, ctx.projectPath);
+  if (waniganSecret) {
+    return deny(
+      `This reaches ${waniganSecret}, where Wanigan keeps the bearer tokens of every session it runs. Another session's token is never this session's work, so it is refused at every trust level.`,
+      'wanigan-credentials.deny',
+    );
+  }
+
+  // Checked before anything else except the two refusals above, so that
+  // TRUST_COPY.trusted stays literally true.
   if (ctx.trust === 'trusted') {
     return allow(`${TRUST_COPY.trusted.label}: Wanigan denies nothing here.`, 'trusted.allow');
   }
@@ -718,7 +767,7 @@ export function trustBriefing(ctx: PolicyContext): string {
   const where = ctx.projectPath ? ` (${ctx.projectPath})` : '';
   const line =
     ctx.trust === 'trusted'
-      ? `Wanigan is running this session at ${TRUST_COPY.trusted.label} trust: it denies nothing, and it still writes shell commands, non-read MCP calls and writes outside the working directory to its policy ledger.`
+      ? `Wanigan is running this session at ${TRUST_COPY.trusted.label} trust: it denies nothing except reading other sessions' Wanigan credentials, and it still writes shell commands, non-read MCP calls and writes outside the working directory to its policy ledger.`
       : ctx.trust === 'readonly'
         ? `Wanigan is running this session at ${TRUST_COPY.readonly.label} trust: reads, searches and lookups are allowed, and a file write, shell command or non-read MCP call is put to the operator as an approval prompt — attempt it when the change is worth asking for, and describe it instead when it is not.`
         : `Wanigan is running this session at ${TRUST_COPY.project.label} trust: writes and shell commands are allowed inside the working directory${where}, and anything resolving outside it, or touching the credential directories under your home folder, is put to the operator as an approval prompt rather than denied outright.`;

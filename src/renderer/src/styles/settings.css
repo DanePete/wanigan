@@ -430,3 +430,6 @@ a.set-mini, a.btn { text-decoration: none; }
 .set-retention-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
 .set-retention-days { display: inline-flex; align-items: center; gap: var(--s-1); font-size: var(--t-small); color: var(--text-dim); }
 .set-retention-days .field { width: 7ch; text-align: right; }
+
+/* Sandbox shell commands: what the choice does and does not do, in text. */
+.set-sandbox-notes { margin: var(--s-2) 0 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.55; max-width: 80ch; }
