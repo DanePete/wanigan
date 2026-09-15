@@ -1,0 +1,9 @@
+# One finding, in one commit, ignored by its exact fingerprint.
+#
+# cf66478 added a PEM-shaped fixture to src/shared/pr-readiness.test.ts whose
+# body lines read "bodyline": a redaction test, not a key. The fixture now uses
+# "smokekeymaterial", the value .gitleaks.toml allowlists, but `gitleaks detect`
+# reads history, and the earlier commit is still in it. A fingerprint names
+# that commit, file, rule and line and nothing else, so a real credential
+# anywhere else, including later in the same file, still fails the scan.
+cf66478224c5d779d20a6d7590a177e5510c2a43:src/shared/pr-readiness.test.ts:private-key:249
