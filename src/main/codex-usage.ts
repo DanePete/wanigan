@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import { db } from './db';
 import { codexRolloutPaths } from './codex-sessions';
 import type { SessionUsage } from '../shared/types';
+import { tallyJsonLines } from '../shared/rollout-format';
+import { noteTally, noteUnreadable, rolloutFormatOf } from './codex-rollout-health';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TAIL_BYTES = 4 * 1024 * 1024;
@@ -35,11 +37,24 @@ function readSnapshot(file: string): Snapshot | null {
   const cached = files.get(file);
   if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return cached.value;
 
+  // A compressed rollout read as UTF-8 parses as nothing, which this function
+  // used to return as "no counters" — indistinguishable from a thread that
+  // never spent a token. It still returns null, but the file is now counted as
+  // unreadable, and the Usage screen says how many there are.
+  const format = rolloutFormatOf(file);
+  if (format.kind !== 'jsonl') {
+    if (format.kind !== 'empty') noteUnreadable(file, format);
+    files.set(file, { size: stat.size, mtimeMs: stat.mtimeMs, value: null });
+    return null;
+  }
+
   let fd: number | null = null;
   let text = '';
+  let windowStart = 0;
   try {
     fd = fs.openSync(file, 'r');
     const start = Math.max(0, stat.size - TAIL_BYTES);
+    windowStart = start;
     const bytes = Buffer.alloc(stat.size - start);
     const read = fs.readSync(fd, bytes, 0, bytes.length, start);
     text = bytes.subarray(0, read).toString('utf8');
@@ -48,6 +63,10 @@ function readSnapshot(file: string): Snapshot | null {
   } finally {
     if (fd !== null) try { fs.closeSync(fd); } catch { /* already closed */ }
   }
+
+  // Format drift is visible only if refused lines are counted. The first line
+  // of a tail window is cut by the window itself and is not held against it.
+  noteTally(file, tallyJsonLines(text, windowStart > 0));
 
   let value: Snapshot | null = null;
   const lines = text.split('\n');

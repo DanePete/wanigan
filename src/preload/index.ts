@@ -7,6 +7,7 @@ import type { HandoverBegun, HandoverFinished } from '../shared/handover';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
 /* ── helper sweep · P5 runtime ── */
 import type { SessionProcesses, StopSurvivorResult } from '../shared/process-tree';
+import type { CodexReaderHealth } from '../shared/rollout-format';
 /* ── end helper sweep · P5 runtime ── */
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
@@ -843,6 +844,9 @@ const api = {
     survivors: () => call<SessionProcesses[]>('processes:survivors'),
     capture: () => call<boolean>('processes:capture'),
     stop: (sessionId: string, pid: number) => call<StopSurvivorResult>('processes:stop', sessionId, pid),
+  },
+  codexReaders: {
+    health: (force?: boolean) => call<CodexReaderHealth>('codexReaders:health', force === true),
   },
   /* ── end helper sweep · P5 runtime ── */
   on: {

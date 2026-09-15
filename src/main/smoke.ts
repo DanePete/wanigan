@@ -230,6 +230,7 @@ export async function runSmoke(): Promise<void> {
     /* ── helper sweep · P5 runtime ── */
     const p5 = await import('./smoke34');
     await p5.runProcessHygieneSmoke(check, say);
+    await p5.runCodexReaderSmoke(check, say);
     /* ── end helper sweep · P5 runtime ── */
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);

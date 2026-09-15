@@ -7,6 +7,8 @@
  * guards. Every argument arriving here came from the renderer and is untrusted.
  */
 import * as processWatch from './process-watch';
+import { codexReaderHealth } from './codex-rollout-health';
+import { detectProviders } from './providers';
 
 type Handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => void;
 
@@ -23,4 +25,16 @@ export function registerP5Ipc(handle: Handle): void {
   // tree is recorded while the ppid chain still proves whose it is.
   handle('processes:capture', () => processWatch.captureBeforeStop().then(() => true));
   handle('processes:stop', (sessionId: unknown, pid: unknown) => processWatch.stopSurvivor(sessionId, pid));
+
+  // ── honest Codex readers ────────────────────────────────────────────
+  // The version is the installed Codex CLI Wanigan would launch now: the
+  // readers read files that CLI writes, so a format change arrives with it.
+  handle('codexReaders:health', async (force: unknown) => {
+    let version: string | null = null;
+    try {
+      const codex = (await detectProviders()).find((p) => p.harnessId === 'codex' && p.path);
+      version = codex?.version ?? null;
+    } catch { /* detection failed: the stored version stands */ }
+    return codexReaderHealth(version, force === true);
+  });
 }

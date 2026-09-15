@@ -130,3 +130,60 @@ export async function runProcessHygieneSmoke(check: Check, say: Say): Promise<vo
     watch.setProcessSessionSource(() => []);
   }
 }
+
+/**
+ * helper sweep · P5 runtime — honest Codex readers.
+ *
+ * A temporary Codex home with three rollouts: a plain one carrying a line that
+ * is not JSON, one named `.jsonl` whose bytes are a zstd frame, and one named
+ * `.jsonl.zst`. The real `~/.codex` is never walked: the health read is scoped
+ * to the temporary home explicitly.
+ */
+export async function runCodexReaderSmoke(check: Check, say: Say): Promise<void> {
+  say('── helper sweep · P5 runtime · honest Codex readers');
+  const os = await import('node:os');
+  const health = await import('./codex-rollout-health');
+  const usage = await import('./codex-usage');
+  health.resetCodexReaderHealth();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-codex-home-'));
+  try {
+    const day = path.join(home, 'sessions', '2026', '09', '14');
+    fs.mkdirSync(day, { recursive: true });
+    const plain = path.join(day, 'rollout-2026-09-14T10-00-00-11111111-2222-4333-8444-555555555555.jsonl');
+    fs.writeFileSync(plain, [
+      JSON.stringify({ timestamp: '2026-09-14T10:00:00.000Z', type: 'session_meta', payload: { id: '11111111-2222-4333-8444-555555555555', cwd: home, source: 'cli' } }),
+      '{"timestamp": "2026-09-14T10:00:01.000Z", "type": "event_msg", "payload": {"type": "tok',
+      JSON.stringify({ timestamp: '2026-09-14T10:00:02.000Z', type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 100, cached_input_tokens: 40, output_tokens: 7 } } } }),
+    ].join('\n') + '\n');
+    const disguised = path.join(day, 'rollout-2026-09-14T11-00-00-22222222-2222-4333-8444-555555555555.jsonl');
+    fs.writeFileSync(disguised, Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x24, 0x00, 0x01, 0x00, 0x00]));
+    const named = path.join(day, 'rollout-2026-09-14T12-00-00-33333333-2222-4333-8444-555555555555.jsonl.zst');
+    fs.writeFileSync(named, Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x00]));
+
+    const snapshot = usage.__test.readSnapshot(plain);
+    check(snapshot?.totalTokens === 107 && snapshot?.cacheRead === 40,
+      'a plain rollout still reads its counters when one line in it is not JSON', snapshot);
+    check(usage.__test.readSnapshot(disguised) === null,
+      'a zstd frame under a .jsonl name yields no counters — and is not read as a zero-usage thread', null);
+
+    const read = health.codexReaderHealth('0.154.0', true, [home]);
+    const row = read.accounts[0];
+    check(row?.rollouts === 3 && row.unreadable === 2,
+      'the account is counted with 2 of 3 rollouts in a format this version cannot read', row);
+    check(!!row && row.codecs.includes('zstd'), 'the codec is named from the file’s magic bytes', row?.codecs);
+    check(!!row && row.unparsedLines === 1 && row.filesWithUnparsed === 1,
+      'the reader’s refused line is counted, so format drift is visible rather than silent', row);
+    check(read.cliVersion === '0.154.0', 'the Codex CLI version the readers ran against is recorded', read.cliVersion);
+    const next = health.recordReaderCliVersion('0.155.0');
+    check(next.version === '0.155.0' && next.previous === '0.154.0',
+      'a new Codex CLI keeps the previous version beside it, so a format change can be dated', next);
+    health.recordReaderCliVersion('0.154.0');
+
+    const sessionsSrc = sourceOf('src/main/codex-sessions.ts');
+    check(/rolloutFormatOf\(rolloutPath\)[\s\S]{0,900}cannot read \(compressed rollout\)/.test(sessionsSrc),
+      'exact recovery refuses a compressed rollout by name instead of calling its metadata inconsistent');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+    health.resetCodexReaderHealth();
+  }
+}

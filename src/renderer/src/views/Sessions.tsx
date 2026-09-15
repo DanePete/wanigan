@@ -25,6 +25,7 @@ import { bindingMatches, modalOpen } from '../bindings';
 import '../styles/sessions.css';
 /* helper sweep · P5 runtime */
 import SessionRuntimeDetails from '../components/SessionRuntimeDetails';
+import CodexReaderNote from '../components/CodexReaderNote';
 
 /* ── phase 21 · what an attachment looks like ─────────────────────────
    The shapes live in the main process (src/main/attachments.ts) and cross the
@@ -1254,6 +1255,8 @@ function ExactCodexRecoveryDialog({ projects, defaultProjectId, onClose, onRecov
           Recovery launches only <span className="mono">codex resume &lt;UUID&gt;</span> through Wanigan’s normal terminal
           harness. If Codex says another writer is active or bootstrap fails, Wanigan changes no Recent history.
         </p>
+        {/* helper sweep · P5 runtime */}
+        <CodexReaderNote context="recovery" />
         {error && (
           <div style={{ background: 'var(--bad-soft)', color: 'var(--bad)', border: '1px solid var(--bad)',
                         borderRadius: 'var(--r-sm)', padding: '7px 10px', marginTop: 12,

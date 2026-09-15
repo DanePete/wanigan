@@ -26,3 +26,7 @@
 .session-runtime > summary { cursor: pointer; font-size: var(--t-small); font-weight: 550; }
 .session-runtime > summary span { color: var(--text-faint); margin-left: var(--s-2); font-weight: 400; }
 .session-runtime-body { display: grid; gap: var(--s-3); padding-top: var(--s-2); }
+.codex-reader-quiet { margin: 0; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.5; max-width: 90ch; }
+.codex-reader-note { display: grid; }
+.codex-reader-line { display: block; line-height: 1.5; }
+.codex-reader-why { color: var(--text-dim); margin-top: var(--s-1); }
