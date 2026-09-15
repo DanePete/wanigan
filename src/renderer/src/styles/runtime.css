@@ -102,3 +102,7 @@
 .config-files li { display: grid; gap: var(--s-1); font-size: var(--t-small); }
 .config-files code { font-family: var(--mono); font-size: var(--t-micro); color: var(--text-dim); overflow-wrap: anywhere; }
 .config-files-detail { color: var(--text-faint); line-height: 1.45; }
+
+/* Continue in Codex sits in the row's organise panel, under tags and section,
+   rather than in the hover strip over the conversation's name. */
+.sessions-view .past-row .past-more { flex-basis: 100%; display: flex; padding: 0 var(--s-2) var(--s-2); }

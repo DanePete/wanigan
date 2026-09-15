@@ -218,8 +218,23 @@ for (const theme of ['dark', 'light']) {
   else await shoot(page, `${theme}-sessions-runtime`);
 
   // Recent: Continue in Codex on the Claude row only, then the consent dialog.
+  // It lives in each row's "#" panel (with tags and section), so every row's
+  // panel is opened in turn and the offers are counted across them.
   const codexButtons = page.locator('.past-codex');
-  expect(await codexButtons.count() === 1, `${theme}: Continue in Codex is offered on the Claude conversation and not the Codex one`, await codexButtons.count());
+  const more = page.getByRole('button', { name: /^Tags, section and more for / });
+  let offered = 0;
+  let claudeRow = -1;
+  for (let i = 0; i < await more.count(); i++) {
+    await more.nth(i).evaluate((el) => el.click());
+    await page.waitForTimeout(250);
+    const here = await codexButtons.count();
+    if (here && claudeRow < 0) claudeRow = i;
+    offered += here;
+    await more.nth(i).evaluate((el) => el.click());
+    await page.waitForTimeout(150);
+  }
+  expect(offered === 1, `${theme}: Continue in Codex is offered on the Claude conversation and not the Codex one`, offered);
+  if (claudeRow >= 0) { await more.nth(claudeRow).evaluate((el) => el.click()); await page.waitForTimeout(250); }
   if (AFTER && await codexButtons.count()) {
     await codexButtons.first().evaluate((el) => el.click());
     await page.waitForTimeout(700);

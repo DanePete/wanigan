@@ -1059,7 +1059,11 @@ html { scrollbar-color: var(--line) transparent; }
     border-radius: var(--r-sm);
     background: linear-gradient(to right, transparent, var(--bg-sunk) 8px);
     opacity: 0;
+    /* The strip's fade and gaps are paint, not controls: a click there reaches
+       the conversation underneath. Only the buttons take the pointer. */
+    pointer-events: none;
   }
+  .past-actions > * { pointer-events: auto; }
   .past-row:hover .past-actions,
   .past-row:focus-within .past-actions { opacity: 1; }
 }

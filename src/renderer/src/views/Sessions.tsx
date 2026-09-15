@@ -1006,16 +1006,13 @@ export default function Sessions({
                       is no hover to wait for, so they stay exactly as they
                       were; see the coarse-pointer rule in index.css. */}
                   <div className="past-actions">
-                  {/* helper sweep · P5 runtime: explicit, per row, Claude harness only. */}
-                  {providers.find((x) => x.id === p.providerId)?.harnessId === 'claude-code' && p.conversationId && (
-                    <FocusBtn className="past-x faint past-codex" aria-label={`Continue ${p.title ?? p.projectName} in Codex…`}
-                              onClick={() => setContinueInCodex(p)}>
-                      ⇢ Codex…
-                    </FocusBtn>
-                  )}
-                  {/* helper sweep · P6 ux: tags and a section for this conversation. */}
+                  {/* helper sweep · P6 ux: tags and a section for this conversation, and (P5) carrying it
+                      into Codex. One button for both: every action added to this hover strip widens an
+                      overlay that sits on the row's own name, and two more had pushed it past the middle
+                      of a 240px rail, so hovering a conversation put a button under the pointer. */}
                   <FocusBtn className="past-x faint" aria-expanded={organising === p.id}
-                            aria-label={`Tags and section for ${p.title ?? p.projectName}`}
+                            title="Tags, section, and continuing in another agent"
+                            aria-label={`Tags, section and more for ${p.title ?? p.projectName}`}
                             onClick={() => setOrganising((cur) => (cur === p.id ? null : p.id))}>
                     #
                   </FocusBtn>
@@ -1047,8 +1044,19 @@ export default function Sessions({
                   </FocusBtn>
                   </div>
                   {organising === p.id && (
-                    <OrganisePanel sessionId={p.id} name={p.title ?? p.projectName} snapshot={org.snapshot}
-                                   onChanged={org.reload} onError={onError} showSectionOrder />
+                    <>
+                      <OrganisePanel sessionId={p.id} name={p.title ?? p.projectName} snapshot={org.snapshot}
+                                     onChanged={org.reload} onError={onError} showSectionOrder />
+                      {/* helper sweep · P5 runtime: explicit, per row, Claude harness only. */}
+                      {providers.find((x) => x.id === p.providerId)?.harnessId === 'claude-code' && p.conversationId && (
+                        <div className="past-more">
+                          <FocusBtn className="btn ghost past-codex" aria-label={`Continue ${p.title ?? p.projectName} in Codex…`}
+                                    onClick={() => setContinueInCodex(p)}>
+                            ⇢ Continue in Codex…
+                          </FocusBtn>
+                        </div>
+                      )}
+                    </>
                   )}
                   {forgetting === p.id && (
                     <ConfirmNote

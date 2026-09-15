@@ -302,6 +302,11 @@ export const STUB = `
     // it with a Proxy and Settings died on title.trim. helper-p8.ts
     // namingTemplates returns strings or null, and null is a fresh project.
     'naming.get': { title: null, branch: null },
+    // Send review appends the scoped rules' text to the message it writes; a
+    // Proxy there threw inside the formatter and no draft was written, so every
+    // probe that sends a review timed out. depth.ts depth:reviewRules always
+    // returns this shape, and empty is a repository with no review rules.
+    'depth.reviewRules': { rules: [], changed: 0, text: '' },
     'policyEvidence.autoMode': { trust: 'project', cliVersion: null, status: 'not-verified', block: null,
       providerLabel: null, note: 'No Claude Code CLI was detected, so no auto-mode block is written.' },
     // The model-assist card renders its consent branch off status.consent and

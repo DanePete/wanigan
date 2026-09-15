@@ -250,7 +250,7 @@ for (const theme of ['light', 'dark']) {
       'pinned first, then each section with its members in order, then the unfiled rows', orderText);
     expect(await page.locator('.ux-tag-filter[aria-label="Filter Recent conversations by tag"] .chip').count() === 4,
       'Recent offers a filter for each tag its rows carry, plus Any tag');
-    const organiseBtn = page.locator('button[aria-label="Tags and section for Flaky checkout test"]').first();
+    const organiseBtn = page.locator('button[aria-label="Tags, section and more for Flaky checkout test"]').first();
     if (await organiseBtn.count()) { await organiseBtn.click(); await page.waitForTimeout(400); }
     expect(await page.locator('button[aria-label="Move Flaky checkout test up in This week"]').count() === 1,
       'a filed Recent row can be moved up and down within its section by named buttons');
