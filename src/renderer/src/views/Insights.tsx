@@ -3,6 +3,12 @@ import type { BudgetState, Project, Reconciliation, UnifiedSpendDay } from '@sha
 import { Note, PageHead, Segmented, Stat, num, usd } from '../components/bits';
 import '../styles/insights.css';
 import { useViewMemory } from '../components/viewMemory';
+/* ── helper sweep · P4 cost ── */
+import SpendYield from '../components/SpendYield';
+import CodexCredits from '../components/CodexCredits';
+import CostCauses from '../components/CostCauses';
+import type { CodexCreditsReport, CostCausesReport } from '@shared/cost-types';
+import type { SpendYieldReport } from '@shared/spend-yield';
 
 /**
  * Where the money went, across all three surfaces — and by which meter.
@@ -387,12 +393,16 @@ const TTL = {
    * process, so this is set to the bound rather than to a refresh rate.
    */
   burn: 10 * 60_000,
+  /** Outcomes move when a worktree is merged or removed; the read also asks git about reverts. */
+  yield: 60_000,
 } as const;
 
 /* ── the view ─────────────────────────────────────────────────────────── */
 
-export default function InsightsView({ onOpenRun, projects: given }: {
+export default function InsightsView({ onOpenRun, onOpenSession, projects: given }: {
   onOpenRun?: (id: string) => void;
+  /** Drill-through from a spend row to a session that is still running. */
+  onOpenSession?: (id: string) => void;
   /**
    * The shell already holds the project list and hands it to every other view.
    * Insights kept a private copy on a 15-second timer instead, so the two could
@@ -415,6 +425,12 @@ export default function InsightsView({ onOpenRun, projects: given }: {
   const [codexUsage, setCodexUsage] = useState<CodexUsage | null>(null);
   const [transcripts, setTranscripts] = useState<TranscriptMeter | null>(null);
   const [burn, setBurn] = useState<BurnWindow[]>([]);
+  const [yieldReport, setYieldReport] = useState<SpendYieldReport | null>(null);
+  const [yieldError, setYieldError] = useState<string | null>(null);
+  const [credits, setCredits] = useState<CodexCreditsReport | null>(null);
+  const [creditsError, setCreditsError] = useState<string | null>(null);
+  const [causes, setCauses] = useState<CostCausesReport | null>(null);
+  const [causesError, setCausesError] = useState<string | null>(null);
   const [meterMode, setMeterMode] = useViewMemory<MeterMode>('meter', 'both');
   const [errs, setErrs] = useState<{ batch?: string; spend?: string; budgets?: string }>({});
   const [ready, setReady] = useState(false);
@@ -535,6 +551,33 @@ export default function InsightsView({ onOpenRun, projects: given }: {
               .catch(() => {});
           }
         } catch { /* A machine with no Claude transcripts is not an error. */ }
+      })(),
+      (async () => {
+        if (!due(`yield:${d}`, TTL.yield, force)) return;
+        try {
+          const value = await window.wanigan.cost.yield(d);
+          stamp(`yield:${d}`);
+          if (!alive.current || d !== daysRef.current) return;
+          setYieldReport(value); setYieldError(null);
+        } catch (e) { if (alive.current) setYieldError(msg(e)); }
+      })(),
+      (async () => {
+        if (!due(`credits:${d}`, TTL.codex, force)) return;
+        try {
+          const value = await window.wanigan.cost.codexCredits(d);
+          stamp(`credits:${d}`);
+          if (!alive.current || d !== daysRef.current) return;
+          setCredits(value); setCreditsError(null);
+        } catch (e) { if (alive.current) setCreditsError(msg(e)); }
+      })(),
+      (async () => {
+        if (!due(`causes:${d}`, TTL.rollups, force)) return;
+        try {
+          const value = await window.wanigan.cost.causes(d, 14);
+          stamp(`causes:${d}`);
+          if (!alive.current || d !== daysRef.current) return;
+          setCauses(value); setCausesError(null);
+        } catch (e) { if (alive.current) setCausesError(msg(e)); }
       })(),
       (async () => {
         if (!due('burn', TTL.burn, force)) return;
@@ -823,6 +866,8 @@ export default function InsightsView({ onOpenRun, projects: given }: {
             <SurfaceOverTime rows={rows} days={days} onWiden={() => setDays(90)} />
 
             <SpendByProject rows={byProject} days={days} />
+            <SpendYield report={yieldReport} error={yieldError} onOpenSession={onOpenSession} />
+            <CodexCredits report={credits} error={creditsError} />
             <details className="ins-comparison">
               <summary>Compare with synchronous pricing</summary>
               <SyncComparison rows={rows} days={days} totals={win} onWiden={() => setDays(90)} />
@@ -832,6 +877,7 @@ export default function InsightsView({ onOpenRun, projects: given }: {
             <div className="ins-intro"><h2>Tokens &amp; pace</h2><p>Live provider windows, {days}-day transcripts, and all-time effort and cache.</p></div>
             <BurnRate windows={burn} />
             <TranscriptMeterCard meter={transcripts} days={days} />
+            <CostCauses report={causes} error={causesError} onOpenSession={onOpenSession} />
             {codexUsage && codexUsage.totalTokens > 0 && <CodexActivity usage={codexUsage} />}
             <EffortDistribution rows={effort} />
             <UnifiedCache rows={cache} />

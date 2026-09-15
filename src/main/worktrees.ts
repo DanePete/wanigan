@@ -4,6 +4,7 @@ import { db, dataDir } from './db';
 import { runGit, head as headOf, repoState } from './git';
 import { listProjects } from './store';
 import type { WorktreeInfo } from '../shared/types';
+import { removalOutcome, revertCheckDue, revertGrepPattern, type WorktreeOutcome } from '../shared/spend-yield';
 
 /**
  * Three agents on one working tree overwrite each other's edits, and the loser
@@ -70,6 +71,69 @@ function rowFor(p: string): Row | undefined {
 
 function markRemoved(p: string) {
   db().prepare('UPDATE worktrees SET removed_at = ? WHERE path = ? AND removed_at IS NULL').run(Date.now(), p);
+}
+
+/* ── outcomes ────────────────────────────────────────────────────────── */
+
+/**
+ * What happened to the work, written at the moment it happened. Spend yield
+ * (spend-yield.ts) reads these columns to say whether the money a session cost
+ * shipped; a row with no outcome is reported as not recorded, so the only way a
+ * worktree lands in a bucket is through one of the two writes below.
+ */
+function recordMerged(p: string, sha: string | null, target: string, commits: number) {
+  db().prepare(`
+    UPDATE worktrees SET outcome = 'merged', outcome_at = ?, merge_sha = ?, merge_target = ?, outcome_commits = ?,
+      reverted_by = NULL, revert_checked_at = NULL
+    WHERE path = ?
+  `).run(Date.now(), sha, target, commits, p);
+}
+
+function recordRemoval(p: string, input: { dirty: number | null; ahead: number | null; tip: string | null; forced: boolean }) {
+  const row = db().prepare('SELECT outcome, created_head FROM worktrees WHERE path = ? ORDER BY created_at DESC LIMIT 1').get(p) as
+    { outcome: WorktreeOutcome | null; created_head: string | null } | undefined;
+  if (!row) return;
+  const outcome = removalOutcome({ previous: row.outcome, createdHead: row.created_head, ...input });
+  if (outcome === null || outcome === row.outcome) return;
+  db().prepare(`
+    UPDATE worktrees SET outcome = ?, outcome_at = ?, outcome_commits = ?, outcome_dirty = ?
+    WHERE path = ?
+  `).run(outcome, Date.now(), input.ahead, input.dirty, p);
+}
+
+/**
+ * Whether a merged SHA was later reverted on the branch it landed on, asked of
+ * git lazily and remembered. `git revert` writes "This reverts commit <sha>"
+ * into the message, for a plain commit and for `revert -m 1` of a merge alike,
+ * so a grep over the target's history is the whole check. A revert of one of
+ * the merged commits rather than of the merge itself is not detected, and the
+ * surface says "reverted" only for the case that is.
+ *
+ * Bounded per call: a history view is not allowed to become forty git
+ * processes because a month of merges all fell due at once.
+ */
+export async function checkReverts(limit = 12): Promise<number> {
+  const rows = db().prepare(`
+    SELECT path, repo_root, merge_sha, merge_target, reverted_by, revert_checked_at
+    FROM worktrees WHERE outcome = 'merged' AND merge_sha IS NOT NULL AND reverted_by IS NULL
+    ORDER BY COALESCE(revert_checked_at, 0) ASC LIMIT 200
+  `).all() as { path: string; repo_root: string; merge_sha: string; merge_target: string | null; reverted_by: string | null; revert_checked_at: number | null }[];
+  const now = Date.now();
+  let checked = 0;
+  for (const row of rows) {
+    if (checked >= limit) break;
+    if (!revertCheckDue({ mergeSha: row.merge_sha, revertedBy: row.reverted_by, checkedAt: row.revert_checked_at }, now)) continue;
+    const pattern = revertGrepPattern(row.merge_sha);
+    if (!pattern || !row.merge_target || !fs.existsSync(row.repo_root)) continue;
+    checked++;
+    const r = await git(row.repo_root, ['log', '--fixed-strings', `--grep=${pattern}`, '--format=%H', row.merge_target, '--'], 20_000);
+    // A failed log is not "not reverted": leave the check due so the next read asks again.
+    if (!r.ok) continue;
+    const by = r.stdout.split('\n').map((line) => line.trim()).find(Boolean) ?? null;
+    db().prepare('UPDATE worktrees SET reverted_by = ?, revert_checked_at = ? WHERE path = ? AND merge_sha = ?')
+      .run(by, now, row.path, row.merge_sha);
+  }
+  return checked;
 }
 
 /* ── repo identity ───────────────────────────────────────────────────── */
@@ -385,13 +449,17 @@ export async function createWorktree(repoRoot: string, label: string, sessionId:
 
   const abs = canon(dir);
   const now = Date.now();
+  // A reused path starts a new life: whatever outcome an earlier worktree at
+  // this path recorded belongs to that one, not to the session now starting.
   db().prepare(`
-    INSERT INTO worktrees (path, repo_root, branch, session_id, created_at, removed_at)
-    VALUES (?,?,?,?,?,NULL)
+    INSERT INTO worktrees (path, repo_root, branch, session_id, created_at, removed_at, created_head)
+    VALUES (?,?,?,?,?,NULL,?)
     ON CONFLICT(path) DO UPDATE SET
       repo_root = excluded.repo_root, branch = excluded.branch,
-      session_id = excluded.session_id, created_at = excluded.created_at, removed_at = NULL
-  `).run(abs, root, branch, sessionId, now);
+      session_id = excluded.session_id, created_at = excluded.created_at, removed_at = NULL,
+      created_head = excluded.created_head, outcome = NULL, outcome_at = NULL, merge_sha = NULL,
+      merge_target = NULL, outcome_commits = NULL, outcome_dirty = NULL, reverted_by = NULL, revert_checked_at = NULL
+  `).run(abs, root, branch, sessionId, now, head);
 
   // Link before the caller launches an agent into it: a session that starts
   // without vendor/ fails its first hook and cannot autoload, and the error it
@@ -636,6 +704,11 @@ async function runMerge(
     }
   }
 
+  // The commit the merge made, read back from the tree it landed in. A failed
+  // read keeps the outcome and loses only the SHA — the merge happened.
+  const landed = await headOf(target.path);
+  recordMerged(info.path, landed, base, ahead.count);
+
   const how = squash ? `Squashed ${plural(ahead.count, 'commit')}` : `Merged ${plural(ahead.count, 'commit')}`;
   const touched = files === null
     ? `. git could not list the files it touched (${gitSaid(changed)}), so that count is missing rather than zero`
@@ -696,6 +769,7 @@ export async function removeWorktree(p: string, force: boolean): Promise<{ remov
   }
 
   await git(info.repoRoot, ['worktree', 'prune'], 30_000);
+  recordRemoval(abs, { dirty: dirty.count, ahead: info.ahead, tip: info.head, forced: force });
   markRemoved(abs);
 
   const kept = info.branch

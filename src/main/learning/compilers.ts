@@ -2,18 +2,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createProjectionPreview } from './projections';
 import { getCandidate } from './repository';
+/* ── helper sweep · P4 cost ── */
+// The content builders live in shared so test:shared can hold their bytes
+// stable (src/shared/projection-content.test.ts).
+import {
+  canonicalSelectors, codexDirectoryScope, dominantEol, managedMarkdown as managedContent, pathRuleFrontmatter,
+  skillBody as skillContent, slug, stripLeadingFrontmatter,
+} from '../../shared/projection-content';
 import type {
   ArtifactCompilation, ArtifactCompilerContext, KnowledgeCandidate, ProjectionSafety,
   ProviderArtifactCompiler,
 } from './types';
 
 const MAX_EXISTING_BYTES = 512 * 1024;
-
-function slug(value: string): string {
-  const result = value.normalize('NFKD').toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
-  return result || 'wanigan-skill';
-}
 
 function reader(context: ArtifactCompilerContext): (file: string) => string | null {
   if (context.readExisting) return context.readExisting;
@@ -26,44 +27,12 @@ function reader(context: ArtifactCompilerContext): (file: string) => string | nu
   };
 }
 
-function dominantEol(existing: string | null): '\n' | '\r\n' {
-  if (!existing) return '\n';
-  const crlf = (existing.match(/\r\n/g) ?? []).length;
-  const lf = (existing.match(/\n/g) ?? []).length - crlf;
-  return crlf > lf ? '\r\n' : '\n';
-}
-
-function stripLeadingFrontmatter(existing: string | null): string | null {
-  if (existing == null) return null;
-  const match = /^---\r?\n(?:[\s\S]*?\r?\n)?---[ \t]*(?:\r?\n)*/.exec(existing);
-  return match ? existing.slice(match[0].length) : existing;
-}
-
 function managedMarkdown(existing: string | null, candidate: KnowledgeCandidate): string {
-  const key = candidate.itemId ?? candidate.id;
-  const begin = `<!-- wanigan:begin ${key} -->`;
-  const end = `<!-- wanigan:end ${key} -->`;
-  // Splicing LF into a CRLF file leaves mixed endings that trip whitespace
-  // checks, so the block adopts the surrounding file's dominant ending.
-  const eol = dominantEol(existing);
-  const body = candidate.proposedText
-    .replaceAll('<!-- wanigan:begin', '<!-- wanigan-user:begin')
-    .replaceAll('<!-- wanigan:end', '<!-- wanigan-user:end')
-    .trim().replace(/\r?\n/g, eol);
-  const block = `${begin}${eol}## ${candidate.title}${eol}${eol}${body}${eol}${end}`;
-  const source = (existing ?? '').trimEnd();
-  const start = source.indexOf(begin);
-  const finish = start === -1 ? -1 : source.indexOf(end, start + begin.length);
-  if (start !== -1 && finish !== -1) {
-    return `${source.slice(0, start)}${block}${source.slice(finish + end.length)}`.trimEnd() + eol;
-  }
-  return source ? `${source}${eol}${eol}${block}${eol}` : `${block}${eol}`;
+  return managedContent(existing, { key: candidate.itemId ?? candidate.id, title: candidate.title, proposedText: candidate.proposedText });
 }
 
 function skillBody(candidate: KnowledgeCandidate): string {
-  const content = candidate.proposedText.trim();
-  if (content.startsWith('---\n')) return `${content}\n`;
-  return `---\nname: ${slug(candidate.title)}\ndescription: ${JSON.stringify(candidate.rationale.slice(0, 500))}\n---\n\n# ${candidate.title}\n\n${content}\n`;
+  return skillContent({ title: candidate.title, rationale: candidate.rationale, proposedText: candidate.proposedText });
 }
 
 function result(
@@ -154,7 +123,7 @@ function claudeCompile(candidate: KnowledgeCandidate, context: ArtifactCompilerC
   } else if (candidate.scope === 'path') {
     const root = requireProjectRoot(context);
     target = path.join(root, '.claude', 'rules', `${slug(candidate.title)}.md`);
-    const selectors = (candidate.pathScope ?? '').split(/[\n,]/).map((v) => v.trim()).filter(Boolean);
+    const selectors = canonicalSelectors(candidate.pathScope);
     if (!selectors.length) return result(candidate, context, adapterId, 'unsupported', 'Claude path rules require at least one path selector.');
     // Claude Code honors `paths:` frontmatter only as the first bytes of the
     // rule file; buried anywhere else the rule silently loads for every path.
@@ -162,7 +131,7 @@ function claudeCompile(candidate: KnowledgeCandidate, context: ArtifactCompilerC
     // leading frontmatter is replaced — one file cannot carry two scopes.
     const existing = stripLeadingFrontmatter(reader(context)(target));
     const eol = dominantEol(existing);
-    const frontmatter = `---${eol}paths:${eol}${selectors.map((v) => `  - ${JSON.stringify(v)}`).join(eol)}${eol}---${eol}${eol}`;
+    const frontmatter = pathRuleFrontmatter(selectors, eol);
     return result(
       candidate, context, adapterId, 'file', 'Compiled to Claude Code native scoped instructions.',
       target, 'claude-path-rule', frontmatter + managedMarkdown(existing, candidate),
@@ -172,18 +141,6 @@ function claudeCompile(candidate: KnowledgeCandidate, context: ArtifactCompilerC
   }
   const existing = reader(context)(target);
   return result(candidate, context, adapterId, 'file', 'Compiled to Claude Code native scoped instructions.', target, 'claude-instructions', managedMarkdown(existing, candidate));
-}
-
-function codexDirectoryScope(scope: string): string | null {
-  const selectors = scope.split(/[\n,]/).map((v) => v.trim().replace(/^\.\//, '')).filter(Boolean);
-  if (selectors.length !== 1) return null;
-  const selector = selectors[0].replaceAll('\\', '/');
-  if (/[*?\[]/.test(selector.replace(/\/\*\*\/?$/, ''))) return null;
-  if (!selector.endsWith('/**')) return null;
-  const dir = selector.slice(0, -3).replace(/\/$/, '');
-  const normalized = path.posix.normalize(dir);
-  return normalized && normalized !== '..' && !normalized.startsWith('../') && !path.isAbsolute(normalized)
-    ? normalized : null;
 }
 
 function codexCompile(candidate: KnowledgeCandidate, context: ArtifactCompilerContext): ArtifactCompilation {

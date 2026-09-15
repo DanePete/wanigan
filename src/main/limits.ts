@@ -3,6 +3,8 @@ import { detectProviders } from './providers';
 import { allLimits as claudeLimits } from './claude-limits';
 import { readCodexStatus, type CodexLimitWindow, type CodexStatus } from './codex-status';
 import type { AccountLimits, AgentAccount, LimitWindow } from '../shared/types';
+/* ── helper sweep · P4 cost ── */
+import { recordLimitReadings } from './schedule-cost';
 
 /**
  * What is left, for every account on this machine, whatever agent it belongs to.
@@ -141,6 +143,10 @@ export async function allAccountLimits(force = false): Promise<AccountLimits[]> 
     claudeLimits(force, claudeAccounts),
     Promise.all(codexAccounts.map((account) => codexLimitsFor(account, force))),
   ]);
+  /* ── helper sweep · P4 cost ── */
+  // Kept on disk so a scheduler in another process can apply admission rules
+  // against the last reading instead of probing, or refuse when there is none.
+  recordLimitReadings([...claudeRows, ...codexRows]);
   return [...claudeRows, ...codexRows, ...others.map(unsupported)];
 }
 

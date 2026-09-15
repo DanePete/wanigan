@@ -237,6 +237,17 @@ export async function runSmoke(): Promise<void> {
     await p3.runStageHunksSmoke(check, say);
     await p3.runProofAndPrSmoke(check, say);
     /* ── end helper sweep · P3 review ── */
+    /* ── helper sweep · P4 cost ── */
+    const p4 = await import('./smoke33');
+    await p4.runSpendYieldSmoke(check, say);
+    await p4.runCodexLoaderSmoke(check, say);
+    await p4.runSkillListingSmoke(check, say);
+    await p4.runCodexCreditsSmoke(check, say);
+    await p4.runCacheWarmthSmoke(check, say);
+    await p4.runCostCausesSmoke(check, say);
+    await p4.runScheduleGuardSmoke(check, say);
+    await p4.runWindowShareSmoke(check, say);
+    await p4.runSessionAnatomySmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

@@ -2,6 +2,9 @@ import { db } from './db';
 import { halted } from './halt';
 import { cancelQueued, enqueue } from './queue';
 import { projectById } from './store';
+/* ── helper sweep · P4 cost ── */
+import { admissionRefusal, previousRunsFor } from './schedule-cost';
+import { withPreviousRuns } from '../shared/schedule-guard';
 
 /**
  * Durable schedules.
@@ -666,6 +669,29 @@ function claimAndQueue(row: Row, now: number): boolean {
     return false;
   }
 
+  /* ── helper sweep · P4 cost ── */
+  // The opt-in admission rule, asked before the fire is claimed so a skip is
+  // recorded the same way an outstanding-fire skip is: the schedule advances,
+  // history says why, and nothing is queued. Read outside the transaction
+  // because it only reads; the compare-and-swap below still decides who
+  // records the skip when two schedulers race.
+  const refusal = admissionRefusal(s, now);
+  if (refusal) {
+    const skipped = d.prepare(`
+      UPDATE schedules
+         SET last_at=?, last_status='skipped', last_detail=?, next_at=?
+       WHERE id=? AND enabled=1 AND next_at=?
+    `).run(now, refusal, next, s.id, row.next_at);
+    if (skipped.changes) {
+      d.prepare('INSERT INTO schedule_runs (schedule_id, at, status, detail) VALUES (?,?,?,?)')
+        .run(s.id, now, 'skipped', refusal);
+    }
+    return false;
+  }
+  // The previous-runs section, when this schedule opted in. Computed here so
+  // the exact text is stored on the fire and travels in the queued prompt.
+  const injected = s.kind === 'headless' ? previousRunsFor(s.id) : null;
+
   const fire = d.transaction(() => {
     // A schedule whose period is shorter than its own run duration would
     // otherwise enqueue on every tick and stack pending fires behind the one
@@ -703,15 +729,18 @@ function claimAndQueue(row: Row, now: number): boolean {
     // gets. Both writes are in this transaction, so a crash between them
     // cannot leave an item nobody can attribute or a fire nobody dispatched.
     const fireId = Number(
-      d.prepare('INSERT INTO schedule_runs (schedule_id, at, status, detail) VALUES (?,?,?,?)')
-        .run(s.id, now, 'queued', null).lastInsertRowid
+      d.prepare('INSERT INTO schedule_runs (schedule_id, at, status, detail, injected_context) VALUES (?,?,?,?,?)')
+        .run(s.id, now, 'queued', null, injected).lastInsertRowid
     );
 
     let status = 'queued';
     let detail: string | null = null;
     try {
+      const payload = s.payload as Record<string, unknown>;
       enqueue(s.kind, label, {
-        ...(s.payload as Record<string, unknown>),
+        ...payload,
+        /* ── helper sweep · P4 cost ── */
+        ...(injected && typeof payload.prompt === 'string' ? { prompt: withPreviousRuns(payload.prompt, injected) } : {}),
         scheduleId: s.id,
         scheduleFireId: fireId,
         projectId: s.projectId,

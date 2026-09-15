@@ -146,3 +146,21 @@ export function codexUsageSummary(): CodexUsageSummary {
 }
 
 export const __test = { readSnapshot };
+
+/* ── helper sweep · P4 cost ── */
+/**
+ * The cumulative counters per conversation, as they stand at the rollout's last
+ * token_count event. The credits estimate needs the input total with its cached
+ * subset, which is `inTokens + cacheRead` here.
+ */
+export function codexThreadTotals(conversationIds: readonly string[]): Map<string, { file: string; inTokens: number; cacheRead: number; outTokens: number; lastAt: number | null }> {
+  const ids = [...new Set(conversationIds.map((id) => id.toLowerCase()).filter((id) => UUID.test(id)))];
+  const paths = codexRolloutPaths(ids);
+  const out = new Map<string, { file: string; inTokens: number; cacheRead: number; outTokens: number; lastAt: number | null }>();
+  for (const id of ids) {
+    const file = paths.get(id);
+    const snapshot = file ? readSnapshot(file) : null;
+    if (file && snapshot) out.set(id, { file, inTokens: snapshot.inTokens, cacheRead: snapshot.cacheRead, outTokens: snapshot.outTokens, lastAt: snapshot.lastAt });
+  }
+  return out;
+}

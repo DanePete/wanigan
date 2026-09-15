@@ -6,6 +6,9 @@ import type { ConfigPinCheck } from '@shared/exec-config';
 import { Chip, EmptyState, Explainer, Icon, Mark as SharedMark, Note, PageHead, Pill, Reading, SectionHead, Stat, ago, num, usd, type Tone } from '../components/bits';
 import ContextWorkspace, { ContextFileLink } from '../components/ContextWorkspace';
 import { useViewMemory } from '../components/viewMemory';
+/* ── helper sweep · P4 cost ── */
+import { CodexLoaderPanel, ReferenceLintPanel, SubagentsPanel } from '../components/ContextCost';
+import type { AgentDefinitionsReport, CodexLoaderReport, ReferenceLintReport } from '@shared/cost-types';
 
 /**
  * "What will my agent actually know when it starts?"
@@ -307,6 +310,10 @@ type Data = {
   pin: ConfigPinCheck | null;
   pinRead: boolean;
   errors: Errors;
+  /* ── helper sweep · P4 cost ── */
+  codexLoader: { report: CodexLoaderReport | null; error: string | null };
+  references: { report: ReferenceLintReport | null; error: string | null };
+  subagents: { report: AgentDefinitionsReport | null; error: string | null };
 };
 
 export default function Context(props: Parameters<typeof ContextProject>[0]) {
@@ -379,6 +386,21 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
       pid ? window.wanigan.context.observed(pid) : Promise.resolve(null),
       pid ? window.wanigan.configPins.check(pid) : Promise.resolve(null),
     ]);
+    /* ── helper sweep · P4 cost ── */
+    // Three more readings with their own areas. Each failure stays in its own
+    // area as a note rather than joining the page-level error, because the
+    // Claude Code chain this view is about is still correct without them.
+    const [rcl, rrl, rsa] = pid ? await Promise.allSettled([
+      window.wanigan.cost.codexLoader(pid),
+      window.wanigan.cost.referenceLint(pid),
+      window.wanigan.cost.agentDefinitions(pid),
+    ]) : [null, null, null];
+    const settled = <T,>(r: PromiseSettledResult<T> | null) => r === null
+      ? { report: null, error: 'No project is selected.' }
+      : r.status === 'fulfilled' ? { report: r.value, error: null } : { report: null, error: msg(r.reason) };
+    const codexLoader = settled(rcl);
+    const references = settled(rrl);
+    const subagents = settled(rsa);
 
     if(mine!==read.current || !alive.current)return;
     const chain = ri.status === 'fulfilled' ? (ri.value as InstructionChain) : null;
@@ -425,7 +447,7 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
     const observedRead = rob.status === 'fulfilled' && !!pid;
     const pin = rpin.status === 'fulfilled' ? rpin.value : null;
     const pinRead = rpin.status === 'fulfilled' && !!pid;
-    setD({ readAt:Date.now(), chain, memory, config, agents, codexAgents, budget, managed, learn, observed, observedRead, pin, pinRead, errors });
+    setD({ readAt:Date.now(), chain, memory, config, agents, codexAgents, budget, managed, learn, observed, observedRead, pin, pinRead, errors, codexLoader, references, subagents });
     setBusy(false);
   }, [path, pid]);
 
@@ -626,7 +648,8 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
     onInit={runInit} initMsg={initMsg} busy={initBusy}/>;
   const panels = {
     chain:e.instructions?<PanelError channel="instructions" detail={e.instructions} onRetry={()=>load(true)}/>
-      :shows.chain&&chain?<InstructionsPanel chain={chain} managed={d.managed} observed={d.observed} observedRead={d.observedRead}/>:emptyArea('chain'),
+      :shows.chain&&chain?<><InstructionsPanel chain={chain} managed={d.managed} observed={d.observed} observedRead={d.observedRead}/>
+        <ReferenceLintPanel report={d.references.report} error={d.references.error}/></>:emptyArea('chain'),
     rules:e.instructions?<PanelError channel="rules" detail={e.instructions} onRetry={()=>load(true)}/>
       :shows.rules?<RulesPanel rules={rules} root={project.path} managed={d.managed} chain={chain!}/>:emptyArea('rules'),
     agents:<>{e.agents?<PanelError channel="AGENTS.md" detail={e.agents} onRetry={()=>load(true)}/>
@@ -642,8 +665,12 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
       :e.budget?<PanelError channel="budget" detail={e.budget} onRetry={()=>load(true)}/>
       :shows.budget&&d.budget?<BudgetPanel b={d.budget}/>:emptyArea('budget'),
     learning:<LearningPanel settings={d.learn.settings} overview={d.learn.overview} onOpenLearning={onOpenLearning}/>,
+    codex:<CodexLoaderPanel report={d.codexLoader.report} error={d.codexLoader.error}/>,
+    subagents:<SubagentsPanel report={d.subagents.report} error={d.subagents.error}/>,
   };
   const knownSources=[...(chain?.files.filter(file=>file.exists).map(file=>file.path)??[]),
+    ...(d.codexLoader.report?.chain.files.map(file=>file.path)??[]),
+    ...(d.references.report?.files.map(file=>file.path)??[]),
     ...(d.memory?.files.map(file=>file.path)??[]),...(d.memory?.index?[d.memory.index.path]:[])];
   return <div className="pane wide ctx ctx-view">
     <Head project={project} projects={projects} onPick={setPinned} onRescan={()=>load(true)} busy={busy}/>
@@ -654,14 +681,18 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
         memory:'Claude Code’s launch index and the topic files it leads to. This is a read-only view.',
         config:'Claude Code’s winning settings, their source layers, and commands that can run.',
         budget:'Estimated instruction-file input for Claude Code. These figures are not measured usage.',
-        learning:'Approved knowledge available to the launch-time briefing.'}}
+        learning:'Approved knowledge available to the launch-time briefing.',
+        codex:'What Codex is given at launch in this project: its AGENTS.md chain, where the byte budget cuts, and the skills listing.',
+        subagents:'Agent definitions a session can spawn, and which of them start without any CLAUDE.md.'}}
       counts={{chain:chain?.files.length,rules:chain?rules.length:undefined,
-        memory:d.memory?.files.length,config:d.config?.settings.length}}
-      issues={{chain:!!e.instructions||!!chain?.files.some(file=>file.warnings.length),
+        memory:d.memory?.files.length,config:d.config?.settings.length,
+        codex:d.codexLoader.report?.chain.files.length,subagents:d.subagents.report?.agents.length}}
+      issues={{chain:!!e.instructions||!!chain?.files.some(file=>file.warnings.length)||(d.references.report?.issues.length??0)>0,
         rules:!!e.instructions||rules.some(rule=>rule.conditional?.matchingFiles===0),
         agents:!!e.agents||!!(d.agents?.present&&!d.agents.imported&&!d.agents.symlinked),
         memory:!!e.memory||!!d.memory?.indexBudget?.overBudget,
-        config:!!e.config,budget:!!e.budget||!!e.instructions}}
+        config:!!e.config,budget:!!e.budget||!!e.instructions,
+        codex:!!d.codexLoader.report&&d.codexLoader.report.chain.droppedBytes>0}}
       guide={<Explainer id="context-reading-guide" title="About this reading" defaultHidden>
         This predicts the Claude Code loader from local files, including profiles that use that harness.
         Where a session has reported the instruction files it actually loaded, that report sits under the load order.

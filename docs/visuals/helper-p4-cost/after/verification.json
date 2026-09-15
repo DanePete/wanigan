@@ -1,0 +1,259 @@
+{
+  "before": false,
+  "generatedBy": "scripts/probe-helper-p4-cost.mjs",
+  "checks": [
+    {
+      "ok": true,
+      "label": "dark · palette applied (body rgb(23, 30, 36))"
+    },
+    {
+      "ok": true,
+      "label": "dark · insights-where-the-money-went: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · insights-where-the-money-went: no clipped headings or values"
+    },
+    {
+      "ok": true,
+      "label": "dark · insights-where-the-money-went: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · a project row expands to its sessions"
+    },
+    {
+      "ok": true,
+      "label": "dark · insights-codex-credits: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · insights-codex-credits: no clipped headings or values"
+    },
+    {
+      "ok": true,
+      "label": "dark · insights-codex-credits: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · insights-cost-by-cause: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · insights-cost-by-cause: no clipped headings or values"
+    },
+    {
+      "ok": true,
+      "label": "dark · insights-cost-by-cause: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · stale references listed with a did-you-mean"
+    },
+    {
+      "ok": true,
+      "label": "dark · Codex loader names the byte range past the budget"
+    },
+    {
+      "ok": true,
+      "label": "dark · Codex budget meter present"
+    },
+    {
+      "ok": true,
+      "label": "dark · subagent with omitClaudeMd marked"
+    },
+    {
+      "ok": true,
+      "label": "dark · skills-listing-cost: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · skills-listing-cost: no clipped headings or values"
+    },
+    {
+      "ok": true,
+      "label": "dark · skills-listing-cost: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · the manual-only switch asks for confirmation naming the file it writes"
+    },
+    {
+      "ok": true,
+      "label": "dark · schedules-admission-and-memory: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · schedules-admission-and-memory: no clipped headings or values"
+    },
+    {
+      "ok": true,
+      "label": "dark · schedules-admission-and-memory: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · usage-window-share: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · usage-window-share: no clipped headings or values"
+    },
+    {
+      "ok": true,
+      "label": "dark · usage-window-share: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · learning-inbox-codex-budget: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · learning-inbox-codex-budget: no clipped headings or values"
+    },
+    {
+      "ok": true,
+      "label": "dark · learning-inbox-codex-budget: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · cold-cache note shows under a draft in an idle Claude session"
+    },
+    {
+      "ok": true,
+      "label": "dark · the note names idle time, size and the inferred lifetime"
+    },
+    {
+      "ok": true,
+      "label": "dark · anatomy labels each value observed, inferred or not recorded"
+    },
+    {
+      "ok": true,
+      "label": "light · palette applied (body rgb(244, 246, 248))"
+    },
+    {
+      "ok": true,
+      "label": "light · insights-where-the-money-went: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · insights-where-the-money-went: no clipped headings or values"
+    },
+    {
+      "ok": true,
+      "label": "light · insights-where-the-money-went: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · a project row expands to its sessions"
+    },
+    {
+      "ok": true,
+      "label": "light · insights-codex-credits: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · insights-codex-credits: no clipped headings or values"
+    },
+    {
+      "ok": true,
+      "label": "light · insights-codex-credits: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · insights-cost-by-cause: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · insights-cost-by-cause: no clipped headings or values"
+    },
+    {
+      "ok": true,
+      "label": "light · insights-cost-by-cause: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · stale references listed with a did-you-mean"
+    },
+    {
+      "ok": true,
+      "label": "light · Codex loader names the byte range past the budget"
+    },
+    {
+      "ok": true,
+      "label": "light · Codex budget meter present"
+    },
+    {
+      "ok": true,
+      "label": "light · subagent with omitClaudeMd marked"
+    },
+    {
+      "ok": true,
+      "label": "light · skills-listing-cost: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · skills-listing-cost: no clipped headings or values"
+    },
+    {
+      "ok": true,
+      "label": "light · skills-listing-cost: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · the manual-only switch asks for confirmation naming the file it writes"
+    },
+    {
+      "ok": true,
+      "label": "light · schedules-admission-and-memory: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · schedules-admission-and-memory: no clipped headings or values"
+    },
+    {
+      "ok": true,
+      "label": "light · schedules-admission-and-memory: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · usage-window-share: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · usage-window-share: no clipped headings or values"
+    },
+    {
+      "ok": true,
+      "label": "light · usage-window-share: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · learning-inbox-codex-budget: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · learning-inbox-codex-budget: no clipped headings or values"
+    },
+    {
+      "ok": true,
+      "label": "light · learning-inbox-codex-budget: no NaN/undefined/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · cold-cache note shows under a draft in an idle Claude session"
+    },
+    {
+      "ok": true,
+      "label": "light · the note names idle time, size and the inferred lifetime"
+    },
+    {
+      "ok": true,
+      "label": "light · anatomy labels each value observed, inferred or not recorded"
+    },
+    {
+      "ok": true,
+      "label": "no page errors while rendering"
+    }
+  ],
+  "pageErrors": []
+}

@@ -49,11 +49,6 @@
       "count": 1
     }
   },
-  "src/main/learning/compilers.ts": {
-    "no-useless-escape": {
-      "count": 1
-    }
-  },
   "src/main/mobile/git.ts": {
     "no-useless-escape": {
       "count": 1

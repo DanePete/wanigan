@@ -5,6 +5,10 @@ import type { DiscoveryResult } from '../shared/discovery';
 import type { HandoffPlan, HandoffResult } from '../shared/handoff';
 import type { HandoverBegun, HandoverFinished } from '../shared/handover';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
+/* ── helper sweep · P4 cost ── */
+import type { SpendYieldReport } from '../shared/spend-yield';
+import type { SessionAnatomy } from '../shared/session-anatomy';
+import type { AgentDefinitionsReport, CacheWarmthFacts, CodexCreditsReport, CostCausesReport, ScheduleCostDetail, ScheduleCostSettings, WindowShareReport, CodexLoaderReport, ProjectionBudgetView, ReferenceLintReport, SkillListingReport } from '../shared/cost-types';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AccountLimits,
@@ -978,6 +982,25 @@ const api = {
     latestRegression: (nodeId: string) => call<RegressionProofRecord | null>('proof:latestRegression', nodeId),
   },
   /* ── end helper sweep · P3 review ── */
+  /* ── helper sweep · P4 cost ── */
+  cost: {
+    yield: (days?: number) => call<SpendYieldReport>('cost:yield', days),
+    codexCredits: (days?: number) => call<CodexCreditsReport>('cost:codexCredits', days),
+    cacheWarmth: (sessionId: string) => call<CacheWarmthFacts>('cost:cacheWarmth', sessionId),
+    causes: (days?: number, mcpDays?: number) => call<CostCausesReport>('cost:causes', days, mcpDays),
+    windowShare: () => call<WindowShareReport>('cost:windowShare'),
+    anatomy: (sessionId: string) => call<SessionAnatomy & { harness: string | null }>('cost:anatomy', sessionId),
+    scheduleDetail: (scheduleId: string) => call<ScheduleCostDetail>('cost:scheduleDetail', scheduleId),
+    setScheduleSettings: (scheduleId: string, patch: Partial<Omit<ScheduleCostSettings, 'scheduleId'>>) =>
+      call<ScheduleCostSettings>('cost:setScheduleSettings', scheduleId, patch),
+    codexLoader: (projectId: string) => call<CodexLoaderReport>('cost:codexLoader', projectId),
+    referenceLint: (projectId: string) => call<ReferenceLintReport>('cost:referenceLint', projectId),
+    agentDefinitions: (projectId: string) => call<AgentDefinitionsReport>('cost:agentDefinitions', projectId),
+    projectionBudget: (candidateId: string, providerId: string) => call<ProjectionBudgetView>('cost:projectionBudget', candidateId, providerId),
+    skillListing: (projectId: string | null) => call<SkillListingReport>('cost:skillListing', projectId),
+    setSkillModelInvocation: (projectId: string | null, harness: 'claude-code' | 'codex', skillPath: string, allow: boolean) =>
+      call<SkillListingReport>('cost:setSkillModelInvocation', projectId, harness, skillPath, allow),
+  },
 };
 
 contextBridge.exposeInMainWorld('wanigan', api);

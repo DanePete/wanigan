@@ -115,6 +115,8 @@ import * as regressionProof from './regression-proof';
 import { prDraft } from './pr-evidence';
 import { DEFAULT_RISK_RULES } from '../shared/risk-tiers';
 /* ── end helper sweep · P3 review ── */
+/* ── helper sweep · P4 cost ── */
+import { registerCostIpc } from './cost-ipc';
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -3351,6 +3353,8 @@ function registerIpc() {
 
   /* ── helper sweep · P2 attention ── */
   registerHelperAttentionIpc(handle);
+  /* ── helper sweep · P4 cost ── */
+  registerCostIpc(handle, { liveSessionIds, trusted: (event) => trustedSender(event.sender, event.senderFrame) && !demoWindows.has(event.sender) });
 }
 
 /** Streams a run's results to disk without materialising them in memory. */

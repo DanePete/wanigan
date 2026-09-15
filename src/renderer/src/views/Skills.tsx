@@ -3,6 +3,8 @@ import type { ForgedSkill, Project, ProviderInfo, SkillDiagnostic, SkillInstallR
 import { Chip, EmptyState, Hint, Icon, Mark, Note, PageHead, Reading, Section, SectionHead, Segmented, ago, num } from '../components/bits';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import '../styles/skills.css';
+/* ── helper sweep · P4 cost ── */
+import SkillListingCost from '../components/SkillListingCost';
 
 /**
  * The skills on this machine, as a catalogue you can fire into a running agent
@@ -192,7 +194,7 @@ export default function Skills({ projectId, providers, activeSessionId }: {
     activeSessionId={activeSessionId} pinned={pinnedLive && pinned !== projectId} onPin={setPinned} />;
 }
 
-type SkillsArea = 'library' | 'write' | 'sources';
+type SkillsArea = 'library' | 'write' | 'sources' | 'listing';
 
 function SkillsWorkspace({ scopeId, project, projects, projectsErr, retryProjects, providers, activeSessionId, pinned, onPin }: {
   scopeId?: string; project: Project | null; projects: Project[] | null; projectsErr: string | null; retryProjects: () => void;
@@ -286,8 +288,8 @@ function SkillsWorkspace({ scopeId, project, projects, projectsErr, retryProject
     {pinned && <div className="skills-pin"><Hint>{scopeId ? `Project skills from ${project?.name ?? scopeId}.` : 'Project skills excluded.'} This choice stays within Skills.</Hint><button className="link" onClick={() => onPin(null)}>Follow the app’s project</button></div>}
     {flash && <Note tone={flash.tone} onDismiss={() => setFlash(null)}>{flash.text}</Note>}
     <div className="skills-workspace">
-      <div className="skills-navigation"><Segmented label="Skills workspace" value={area} onChange={setArea} options={[{value:'library',label:'Library'},{value:'write',label:'Write'},{value:'sources',label:'Sources'}]} /><Hint>{cat ? `${num(total)} Claude Code skills · scanned ${ago(cat.scannedAt)}` : 'Claude Code catalogue'}</Hint></div>
-      <div className="skills-scroll" data-area={area} ref={panelRef} tabIndex={0} aria-label={`${area === 'library' ? 'Skill library' : area === 'write' ? 'Skill writer' : 'Skill sources'}`}>
+      <div className="skills-navigation"><Segmented label="Skills workspace" value={area} onChange={setArea} options={[{value:'library',label:'Library'},{value:'write',label:'Write'},{value:'sources',label:'Sources'},{value:'listing',label:'Listing cost'}]} /><Hint>{cat ? `${num(total)} Claude Code skills · scanned ${ago(cat.scannedAt)}` : 'Claude Code catalogue'}</Hint></div>
+      <div className="skills-scroll" data-area={area} ref={panelRef} tabIndex={0} aria-label={`${area === 'library' ? 'Skill library' : area === 'write' ? 'Skill writer' : area === 'listing' ? 'Skill listing cost' : 'Skill sources'}`}>
         {loadErr && <Note tone="error">The skill scan did not finish: {loadErr}.{cat ? ' The last successful scan is still shown.' : ' No catalogue has been read.'} <button className="link" disabled={scanning} onClick={() => void load(true)}>Scan again</button></Note>}
         {area === 'library' && (!cat ? !loadErr && <Reading what="skill directories" /> : <div className="skills-library">
           <aside className="skills-directory" aria-label="Skill catalogue">
@@ -310,6 +312,8 @@ function SkillsWorkspace({ scopeId, project, projects, projectsErr, retryProject
             : <EmptyState posture="could-not-read" title="This repository is unavailable" cue="Choose an available repository, or choose No repository to write a personal skill." action={<button className="btn" onClick={retryProjects}>Retry project list</button>} />
           : <SkillWriter key={project?.id ?? 'personal'} project={project} providers={providers} onInstalled={() => void load(true)} />}</div>
         {area === 'sources' && (cat ? <Roots cat={cat} /> : !loadErr && <Reading what="skill sources" />)}
+        {/* ── helper sweep · P4 cost ── */}
+        {area === 'listing' && <SkillListingCost key={scopeId ?? 'personal'} projectId={scopeId ?? null} />}
       </div>
     </div>
   </div>;

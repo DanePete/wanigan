@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountLimits, ConsumptionPoint, LimitWindow, ModelConsumption, UsageSnapshot } from '@shared/types';
 import { harnessLabel } from '@shared/types';
 import { EmptyState, Note, PageHead, SectionHead, Stat } from '../components/bits';
+/* ── helper sweep · P4 cost ── */
+import WindowShare from '../components/WindowShare';
 import { useViewMemory } from '../components/viewMemory';
 import '../styles/usage.css';
 
@@ -517,6 +519,9 @@ export default function Usage() {
               )}
             </section>
           </div>
+
+          {/* ── helper sweep · P4 cost ── */}
+          <WindowShare accountId={selected?.id ?? null} refreshKey={snap?.limits.length ?? 0} />
 
           {limits.some((l) => l.factors.length > 0) && (
             <details className="u-factors">
