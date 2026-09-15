@@ -490,3 +490,36 @@ export function runOutcomeEvidenceSmoke(check: Check, say: Say): void {
     check(false, 'the outcome evidence checks ran without throwing', String(error));
   }
 }
+
+/**
+ * A finished run's turns and timeline can be read without resuming it.
+ *
+ * Main answers the checkpoint and event reads for any recorded session, and the
+ * panels that ask were rendered only for sessions in the live list, so after a
+ * restart they were unreachable.
+ */
+export async function runPastTurnsSmoke(check: Check, say: Say): Promise<void> {
+  say('── sessions · a finished run\'s turns are reachable from Recent after a restart');
+  try {
+    const { db } = await import('./db');
+    const checkpoints = await import('./checkpoints');
+    const id = `s_past_turns_${Date.now().toString(36)}`;
+    db().prepare(`INSERT INTO session_checkpoints (session_id, turn, kind, at, repo_root, commit_hash, tree_hash, files_changed, status)
+      VALUES (?, 0, 'session-start', ?, ?, NULL, NULL, NULL, 'ok')`).run(id, Date.now(), os.tmpdir());
+    const rows = checkpoints.listCheckpoints(id);
+    check(rows.length === 1 && rows[0].sessionId === id,
+      'the main process lists checkpoints for a session id that no live session holds', rows.length);
+    db().prepare('DELETE FROM session_checkpoints WHERE session_id = ?').run(id);
+
+    const sessionsView = appSource('src/renderer/src/views/Sessions.tsx');
+    const panel = appSource('src/renderer/src/components/PastSessionEvidence.tsx');
+    const codePanel = appSource('src/renderer/src/components/CodePanel.tsx');
+    check(sessionsView.includes('onClick={() => setInspecting(p)}') && sessionsView.includes('<PastSessionEvidence session={inspecting}'),
+      'each Recent row opens the finished run\'s evidence, so it no longer needs a live session to be read');
+    check(panel.includes('sessionId={session.id} initialTab="turns"') && panel.includes('<Timeline key={`past-tl-${session.id}`} sessionId={session.id}')
+      && codePanel.includes("useState<'changes' | 'files' | 'turns'>(initialTab)"),
+    'that panel opens the Code panel on the run\'s own turns and the Timeline on its own events, by the finished run\'s id');
+  } catch (error) {
+    check(false, 'the past turns checks ran without throwing', String(error));
+  }
+}

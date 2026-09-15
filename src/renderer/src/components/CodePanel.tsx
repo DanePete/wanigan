@@ -52,8 +52,10 @@ function deriveTurns(rows: SessionCheckpoint[]): TurnRow[] {
  * writers on one file while an agent is mid-edit is a merge conflict waiting
  * to happen, so everything here is read-only.
  */
-export default function CodePanel({ projectPath, projectName, sessionId, checkpointsSupported, focusTurn, onFocusTurnHandled, onSendToBatch }: {
+export default function CodePanel({ projectPath, projectName, sessionId, checkpointsSupported, focusTurn, onFocusTurnHandled, onSendToBatch, initialTab = 'changes' }: {
   projectPath: string; projectName: string; sessionId?: string;
+  /** The tab it opens on; a finished run is read from its turns. */
+  initialTab?: 'changes' | 'files' | 'turns';
   /** Whether this session's harness proved turn boundaries at launch. */
   checkpointsSupported?: boolean;
   /** A jump from the Timeline: open this turn's diff. Nonce re-fires repeats. */
@@ -61,7 +63,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   onFocusTurnHandled?: () => void;
   onSendToBatch?: (files: string[]) => void;
 }) {
-  const [tab, setTab] = useState<'changes' | 'files' | 'turns'>('changes');
+  const [tab, setTab] = useState<'changes' | 'files' | 'turns'>(initialTab);
   // Default to this session's work. "All" exists because pre-existing dirt is
   // still worth seeing — it just isn't the agent's doing.
   const [scope, setScope] = useState<'session' | 'all'>('session');
