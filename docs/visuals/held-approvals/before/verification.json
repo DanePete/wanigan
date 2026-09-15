@@ -1,0 +1,10 @@
+{
+  "at": "2026-09-15T03:27:00.521Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; no real agent calls",
+  "mode": "before",
+  "checks": [
+    "before: a row that stopped for approval reads only as its status word, with nothing to answer",
+    "before: a new run offers worktree isolation and no way to hold calls for approval"
+  ],
+  "errors": []
+}

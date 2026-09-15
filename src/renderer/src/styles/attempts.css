@@ -1,0 +1,83 @@
+/* Attempts: sets of one task beside the comparison or bench report they produced. */
+.at-workspace { display: grid; grid-template-columns: minmax(250px, .62fr) minmax(0, 1.7fr); gap: var(--s-6); flex: 1; min-height: 0; }
+.at-history { display: flex; flex-direction: column; gap: var(--s-3); min-height: 0; min-width: 0; }
+.at-list { overflow-y: auto; min-height: 0; padding-right: var(--s-2); scrollbar-gutter: stable; }
+.at-set { display: grid; gap: var(--s-2); width: 100%; padding: var(--s-4); border: 1px solid transparent; border-bottom-color: var(--line-soft); border-radius: var(--r-md); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.at-set:hover { background: var(--bg-soft); }
+.at-set.on { border-color: var(--line); background: var(--bg-selected); }
+.at-set strong { font-size: var(--t-body); font-weight: 550; line-height: 1.45; overflow-wrap: anywhere; }
+.at-set span, .at-set small { color: var(--text-faint); font-size: var(--t-small); line-height: 1.5; }
+.at-detail { min-width: 0; overflow-y: auto; padding: var(--s-2) var(--s-3) var(--s-5) var(--s-5); border-left: 1px solid var(--line-soft); scrollbar-gutter: stable; }
+
+.at-reading { display: flex; flex-direction: column; gap: var(--s-4); min-width: 0; }
+.at-title { display: grid; gap: var(--s-2); justify-items: start; min-width: 0; }
+.at-title h2 { margin: 0; font-size: var(--t-title); font-weight: 450; letter-spacing: -.03em; line-height: 1.25; overflow-wrap: anywhere; }
+.at-title p { margin: 0; font-size: var(--t-small); line-height: 1.5; }
+.stat-grid.at-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.at-task summary { color: var(--text-dim); cursor: pointer; font-size: var(--t-small); }
+.at-task pre { max-height: 220px; overflow: auto; margin: var(--s-2) 0 0; padding: var(--s-3); border-radius: var(--r-md); background: var(--bg-sunk); color: var(--text-dim); white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: var(--t-small); line-height: 1.6; }
+.at-note { margin: 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.55; max-width: 78ch; }
+
+.at-scroll { overflow-x: auto; min-width: 0; }
+.at-table { min-width: 720px; }
+.at-table th[scope="row"] { font-weight: 400; }
+/* Two classes, so it beats table.grid's middle alignment wherever the sheets land in the bundle. */
+.at-table.grid th, .at-table.grid td { vertical-align: top; }
+.at-table .btn { white-space: nowrap; }
+.at-oracle { min-width: 16ch; }
+.at-table thead th { color: var(--text-faint); font-weight: 500; white-space: nowrap; }
+.at-table tr.at-kept { background: var(--bg-soft); }
+.at-attempt { display: block; margin-bottom: var(--s-1); color: var(--text); overflow-wrap: anywhere; }
+.at-figure { display: inline-grid; gap: var(--s-1); justify-items: end; }
+td:not(.r) > .at-figure { justify-items: start; }
+.at-figure > span { font-variant-numeric: tabular-nums; }
+.at-figure small, .at-gate-note, .at-error { display: block; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.45; max-width: 34ch; overflow-wrap: anywhere; white-space: normal; text-align: left; }
+.at-error { color: var(--bad); margin-top: var(--s-1); }
+.at-gate-note { margin-top: var(--s-1); }
+.at-flags { display: grid; gap: var(--s-1); margin: 0; padding-left: var(--s-4); color: var(--text-dim); font-size: var(--t-micro); line-height: 1.45; max-width: 40ch; }
+
+.at-report, .at-compare, .at-cleanup { display: flex; flex-direction: column; gap: var(--s-3); min-width: 0; }
+.at-verdict { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-5); padding-top: var(--s-3); border-top: 1px solid var(--line-soft); }
+.at-verdict > div { display: flex; flex-direction: column; gap: var(--s-2); min-width: 0; }
+.at-reasons { display: grid; gap: var(--s-1); margin: 0; padding-left: var(--s-4); color: var(--text-dim); font-size: var(--t-small); line-height: 1.55; }
+.at-lead { margin: 0; font-size: var(--t-body); line-height: 1.5; }
+.at-cleanup > .btn { align-self: flex-start; }
+.at-paths { display: grid; gap: var(--s-1); margin: var(--s-2) 0; padding-left: var(--s-4); font-size: var(--t-micro); overflow-wrap: anywhere; }
+.at-results { display: grid; gap: var(--s-2); margin: 0; padding: 0; list-style: none; font-size: var(--t-small); }
+.at-results li { display: grid; gap: var(--s-1); overflow-wrap: anywhere; }
+.at-results small { color: var(--text-faint); font-size: var(--t-micro); line-height: 1.45; }
+
+.at-compose { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(280px, 1fr); gap: var(--s-6); min-width: 0; margin: 0; padding: 0; border: 0; overflow-y: auto; }
+.at-launch { display: flex; flex-direction: column; gap: var(--s-4); min-width: 0; padding: var(--s-2) 0 var(--s-5); }
+.at-launch h2, .at-launch-side h2 { margin: 0; font-size: var(--t-title); font-weight: 450; letter-spacing: -.03em; line-height: 1.25; }
+.at-launch > .seg { align-self: flex-start; }
+.at-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-4); }
+.at-field { display: flex; flex-direction: column; gap: var(--s-2); min-width: 0; }
+.at-field .label { color: var(--text-dim); }
+.at-prompt textarea { min-height: 140px; resize: vertical; line-height: 1.6; }
+.at-arms { display: flex; flex-direction: column; gap: var(--s-3); }
+.at-arm { display: grid; grid-template-columns: auto minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, .8fr) auto; align-items: end; gap: var(--s-3); padding: var(--s-3); border: 1px solid var(--line-soft); border-radius: var(--r-md); }
+.at-arm-n { display: grid; place-items: center; width: 22px; height: 22px; margin-bottom: var(--s-1); border: 1px solid var(--line); border-radius: var(--r-pill); color: var(--text-faint); font-size: var(--t-micro); }
+.at-launch-side { display: flex; flex-direction: column; gap: var(--s-4); min-width: 0; padding: var(--s-2) var(--s-3) var(--s-5) var(--s-5); border-left: 1px solid var(--line-soft); }
+.at-launch-side > .btn { align-self: flex-start; }
+.at-check { display: inline-flex; align-items: center; gap: var(--s-2); min-height: 32px; color: var(--text-dim); font-size: var(--t-small); }
+.at-check input { inline-size: 17px; block-size: 17px; flex: none; accent-color: var(--accent); }
+/* In the narrow side column a confirmation reads as a paragraph, then its buttons beneath it. */
+.at-launch-side .confirm-note .note-body { flex-basis: 100%; }
+.at-launch-side .confirm-note .note-actions { margin-left: 0; }
+.at-ceiling { margin: 0; padding: var(--s-3); border-radius: var(--r-md); background: var(--bg-sunk); color: var(--text-dim); font-size: var(--t-small); line-height: 1.6; }
+
+@media (max-width: 1050px) {
+  .at-workspace { grid-template-columns: minmax(220px, .7fr) minmax(0, 1.3fr); gap: var(--s-4); }
+  .at-detail { padding-left: var(--s-4); }
+  .at-compose { grid-template-columns: minmax(0, 1.2fr) minmax(240px, 1fr); gap: var(--s-4); }
+  .at-arm { grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); }
+  .at-verdict { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 720px) {
+  .at-workspace, .at-compose { display: flex; flex-direction: column; flex: none; overflow: visible; gap: var(--s-5); }
+  .at-list { max-height: 240px; }
+  .at-detail, .at-launch-side { overflow: visible; border-left: 0; border-top: 1px solid var(--line-soft); padding: var(--s-4) 0 0; }
+  .at-form-grid, .at-arm { grid-template-columns: minmax(0, 1fr); }
+  .stat-grid.at-stats { grid-template-columns: minmax(0, 1fr); }
+}

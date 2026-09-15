@@ -52,8 +52,12 @@ function deriveTurns(rows: SessionCheckpoint[]): TurnRow[] {
  * writers on one file while an agent is mid-edit is a merge conflict waiting
  * to happen, so everything here is read-only.
  */
-export default function CodePanel({ projectPath, projectName, sessionId, checkpointsSupported, focusTurn, onFocusTurnHandled, onSendToBatch }: {
+export default function CodePanel({ projectPath, projectName, sessionId, checkpointsSupported, focusTurn, onFocusTurnHandled, onSendToBatch, initialTab = 'changes', live = true }: {
   projectPath: string; projectName: string; sessionId?: string;
+  /** The tab it opens on; a finished run is read from its turns. */
+  initialTab?: 'changes' | 'files' | 'turns';
+  /** False for a finished run: there is no agent writing, so nothing to follow. */
+  live?: boolean;
   /** Whether this session's harness proved turn boundaries at launch. */
   checkpointsSupported?: boolean;
   /** A jump from the Timeline: open this turn's diff. Nonce re-fires repeats. */
@@ -61,7 +65,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   onFocusTurnHandled?: () => void;
   onSendToBatch?: (files: string[]) => void;
 }) {
-  const [tab, setTab] = useState<'changes' | 'files' | 'turns'>('changes');
+  const [tab, setTab] = useState<'changes' | 'files' | 'turns'>(initialTab);
   // Default to this session's work. "All" exists because pre-existing dirt is
   // still worth seeing — it just isn't the agent's doing.
   const [scope, setScope] = useState<'session' | 'all'>('session');
@@ -392,7 +396,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
             Turns{turns.length > 1 ? ` (${turns.length - 1})` : ''}
           </button>
         )}
-        {sessionId && (
+        {sessionId && live && (
           <button
             className="pill"
             aria-pressed={follow}

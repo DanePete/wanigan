@@ -5829,7 +5829,7 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
     // numbers stay plausible and only shrink when somebody presses Reopen.
     const controlSrcP8 = sourceOf('src/main/control.ts');
     check(controlSrcP8.includes('UNION SELECT session_id FROM work_node_sessions WHERE docket_id=?')
-      && controlSrcP8.includes('recordNodeSession(nodeId, node.docket_id, node.session_id);')
+      && controlSrcP8.includes('recordNodeSession(node.id, node.docket_id, node.session_id);')
       && controlSrcP8.includes('recordNodeSession(nodeId, parent.id, session.id);')
       && !/const sessions = \(db\(\)\.prepare\("SELECT session_id FROM work_nodes WHERE docket_id=\? AND session_id IS NOT NULL"\)/.test(controlSrcP8),
       'a goal’s spend is read from the union of its live session pointers and the sessions work_node_sessions has recorded for its tasks, both dispatch and reopen write that record, and the single-table read that let a reopened task refund its own spend is gone',
@@ -7904,9 +7904,9 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const unversionedWrites = [...hookLaunchSessionsSrc.matchAll(/writeHookSettings\([^;]*?\);/gs),
     ...hookLaunchHeadlessSrc.matchAll(/writeHookSettings\([^;]*?\) : null;/gs)]
     .map((m) => m[0]).filter((call) => !call.includes('cliVersion'));
-  check(hookLaunchSessionsSrc.includes('writeHookSettings(id0, cwd, undefined, { cliVersion: detected.version })')
+  check(hookLaunchSessionsSrc.includes('writeHookSettings(id0, cwd, undefined, { cliVersion: detected.version, sandbox })')
     && hookLaunchHeadlessSrc.includes('await cliVersionOf(def, bin)')
-    && hookLaunchHeadlessSrc.includes('}, { cliVersion }) : null;')
+    && hookLaunchHeadlessSrc.includes('}, { cliVersion, sandbox }) : null;')
     && unversionedWrites.length === 0,
   'both launch paths hand the settings file the probed version of the binary they spawn, so a current CLI is asked for the version-gated events and not the base set alone',
   JSON.stringify({ unversionedWrites }));

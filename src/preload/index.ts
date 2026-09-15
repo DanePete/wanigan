@@ -8,6 +8,7 @@ import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/c
 import type { SecretScanReport, SecretScanRequest } from '../shared/secret-scan';
 import type { AssistedByPreview } from '../shared/assisted-by';
 import type { LedgerChainStatus } from '../shared/ledger-chain';
+import type { AttemptCleanupResult, AttemptSetDetail, AttemptSetSummary, AttemptStartInput } from '../shared/attempts';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AccountLimits,
@@ -261,6 +262,9 @@ const api = {
     get: (id: string) => call<{ turns: TranscriptTurn[]; note: string | null; bytes: number }>('transcripts:get', id),
     list: () => call<{ sessionId: string; bytes: number; turns: number; archivedAt: number }[]>('transcripts:list'),
     forget: (id: string) => call<boolean>('transcripts:forget', id),
+    /** Project id → whether its sessions may call wanigan_recall_transcripts. */
+    recall: () => call<Record<string, boolean>>('transcripts:recall'),
+    setRecall: (projectId: string, enabled: boolean) => call<boolean>('transcripts:setRecall', projectId, enabled),
     context: (sessionId: string) => call<import('../shared/types').ClaudeContextUsage>('transcripts:context', sessionId),
   },
   // ── phase 9 · worktrees ──────────────────────────────────────────────
@@ -278,6 +282,13 @@ const api = {
     forecast: (projectId: string) =>
       call<import('../shared/collisions').CollisionForecast>('worktrees:forecast', projectId),
   },
+  /** The repository's executable config against what was last let launch. */
+  configPins: {
+    check: (projectId: string, worktree?: string | null) =>
+      call<import('../shared/exec-config').ConfigPinCheck>('configPins:check', projectId, worktree ?? null),
+    accept: (projectId: string, digest: string, worktree?: string | null) =>
+      call<import('../shared/exec-config').ConfigPinCheck>('configPins:accept', projectId, digest, worktree ?? null),
+  },
   // ── phase 10 · headless fan-out ──────────────────────────────────────
   headless: {
     // `allProjects` is the operator saying "every registered repository" out
@@ -291,6 +302,20 @@ const api = {
       call<HeadlessRowDetail>('headless:rowDetail', runId, projectId),
     runs: (limit?: number) => call<HeadlessRun[]>('headless:runs', limit),
     cancel: (runId: string) => call<number>('headless:cancel', runId),
+    /** Answer a call a row held: approve or decline and resume, or stop the row there. */
+    answerHeld: (runId: string, projectId: string, decision: 'allow' | 'deny' | 'stop', note?: string) =>
+      call<HeadlessRowSummary>('headless:answerHeld', runId, projectId, decision, note),
+  },
+  // ── attempts · one task, several runs, one pinned commit ─────────────
+  attempts: {
+    sets: (limit?: number) => call<AttemptSetSummary[]>('attempts:sets', limit),
+    /** The set with every attempt and the report computed from what they recorded. */
+    set: (setId: string) => call<AttemptSetDetail>('attempts:set', setId),
+    /** Queues one pinned headless run per attempt. Main re-validates every field. */
+    start: (input: AttemptStartInput) => call<AttemptSetDetail>('attempts:start', input),
+    keep: (setId: string, attemptId: string) => call<AttemptSetDetail>('attempts:keep', setId, attemptId),
+    /** Removes the other attempts' worktrees without force; main chooses the paths. */
+    removeOthers: (setId: string) => call<AttemptCleanupResult>('attempts:removeOthers', setId),
   },
   // ── phase 11 · dispatcher ────────────────────────────────────────────
   queue: {
@@ -451,7 +476,9 @@ const api = {
   /** Carrying a filling conversation into a fresh session. */
   handover: {
     begin: (sessionId: string) => call<HandoverBegun>('handover:begin', sessionId),
-    finish: (sessionId: string) => call<HandoverFinished>('handover:finish', sessionId),
+    /** `toAccountId` only when the operator took an offer that named a different account. */
+    finish: (sessionId: string, toAccountId?: string | null) =>
+      call<HandoverFinished>('handover:finish', sessionId, toAccountId ?? null),
   },
   /** Continuing one conversation on another account of the same harness. */
   handoff: {
@@ -570,6 +597,8 @@ const api = {
       call<DocketDetail>('control:setAutopilot', docketId, input),
     setBudget: (docketId: string, budgetUsd: number | null) =>
       call<DocketDetail>('control:setBudget', docketId, budgetUsd),
+    setGate: (docketId: string, input: { onStop: boolean; returnFailures: boolean }) =>
+      call<DocketDetail>('control:setGate', docketId, input),
     checkpoint: (nodeId: string, note: string) => call<DocketCheckpoint>('control:checkpoint', nodeId, note),
     runProof: (nodeId: string) => call<DocketProof>('control:runProof', nodeId),
     complete: (nodeId: string, input?: { detail?: string; decision?: 'approve' | 'request_changes' | 'reject' }) =>
@@ -587,6 +616,8 @@ const api = {
     cancelMcpTask: (id: string) => call<McpTaskCancelReceipt>('control:cancelMcpTask', id),
     resumeReceipts: (docketId: string) => call<GoalResumeReceipt[]>('control:resumeReceipts', docketId),
     traces: (docketId: string, limit?: number) => call<GoalTraceEvent[]>('control:traces', docketId, limit),
+    /** The plan captured from this goal's planning session; the agent's text. */
+    plan: (docketId: string) => call<import('../shared/types').GoalPlan | null>('control:plan', docketId),
   },
   // ── phase 26 · agent teams ───────────────────────────────────────────
   teams: {
@@ -636,6 +667,10 @@ const api = {
     paste: (sessionId: string, data: ArrayBuffer, name: string) => call<any>('attach:paste', sessionId, data, name),
     list: (sessionId: string) => call<any[]>('attach:list', sessionId),
     remove: (id: string) => call<boolean>('attach:remove', id),
+    retention: () => call<{ enabled: boolean; days: number; last: import('../shared/types').AttachmentReclaimSummary | null }>('attach:retention'),
+    reclaimPreview: (days?: number) => call<import('../shared/types').AttachmentReclaimPreview>('attach:reclaimPreview', days),
+    setRetention: (days: number) => call<{ enabled: boolean; days: number }>('attach:setRetention', days),
+    reclaimNow: () => call<import('../shared/types').AttachmentReclaimSummary>('attach:reclaimNow'),
     // onlyUnreferenced: name just the files that are not already in the prompt,
     // so attaching a second file does not repeat the first.
     type: (sessionId: string, onlyUnreferenced?: boolean) =>
@@ -761,6 +796,10 @@ const api = {
     // stay, and the reason is recorded as an operational signal. The reason is
     // required: main rejects an empty one.
     retireItem: (id: string, reason: string) => call<KnowledgeItem>('learning:retireItem', id, reason),
+    markContradiction: (firstId: string, secondId: string, reason: string) =>
+      call<KnowledgeRelation>('learning:markContradiction', firstId, secondId, reason),
+    keepOverContradiction: (keepId: string, retireId: string, reason: string) =>
+      call<{ kept: KnowledgeItem; retired: KnowledgeItem }>('learning:keepOverContradiction', keepId, retireId, reason),
     // Main answers this channel with BriefingPreview: the capsule plus the
     // launch state around it — whether learning was on, the profile's declared
     // harness, how a launch would deliver the text, and what proof that

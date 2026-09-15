@@ -5,6 +5,7 @@ import {
   type WaniganSettings,
   type MotionSetting,
   type QueueSlots,
+  type SandboxShell,
   type ThemeSetting,
   type TrustLevel,
 } from '../shared/types';
@@ -179,6 +180,11 @@ export function setUserPreference(key: unknown, value: unknown): WaniganSettings
         throw new Error('The sidebar is either open or closed.');
       }
       break;
+    case 'sandbox_shell':
+      if (preferenceValue !== 'off' && preferenceValue !== 'below-trusted' && preferenceValue !== 'always') {
+        throw new Error('Sandboxing is off, below Trusted, or always.');
+      }
+      break;
     case 'event_retention_days': {
       if (!/^[1-9]\d{0,3}$/.test(preferenceValue)) {
         throw new Error('Event retention must be a whole number of days.');
@@ -247,6 +253,12 @@ function explainerFlags(): Record<`explainer.${string}`, 'hidden' | 'shown'> {
   return out as Record<`explainer.${string}`, 'hidden' | 'shown'>;
 }
 
+/** Off unless chosen: a sandbox changes what an agent can get done. See shared/sandbox-policy.ts. */
+export function sandboxShell(): SandboxShell {
+  const value = getSetting('sandbox_shell', 'off');
+  return value === 'below-trusted' || value === 'always' ? value : 'off';
+}
+
 /** The destination drawer starts closed; an explicit preference still wins. */
 export function navSidebar(): 'open' | 'closed' {
   return getSetting('nav_sidebar', 'closed') === 'open' ? 'open' : 'closed';
@@ -272,6 +284,7 @@ export function allSettings(): WaniganSettings {
     slots: slotsSetting(),
     eventRetentionDays: eventRetentionDays(),
     defaultTrust: (getSetting('default_trust', 'project') as TrustLevel),
+    sandboxShell: sandboxShell(),
     learning: learningSettings(),
   };
 }

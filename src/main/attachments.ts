@@ -5,6 +5,7 @@ import { isPickedPath, PICKED_MAX } from './browse';
 import { getSetting, setSetting } from './settings';
 import { uploadFile, isUploadable } from './batch/files';
 import { findModel, DEFAULT_MODEL } from './batch/pricing';
+import type { AttachmentReclaimPreview, AttachmentReclaimSummary } from '../shared/types';
 
 /**
  * Attachments — files a person hands to an agent.
@@ -1386,6 +1387,63 @@ export function reclaimAttachments(
   }
 
   return report;
+}
+
+/* ── retention, wired ───────────────────────────────────────────────── */
+
+/*
+ * The planner and the reclaim above were complete and nothing called either,
+ * while Settings told the operator the tree "only grows" and that no control
+ * had reached the panel yet. These are the three things the panel and the app
+ * need: a preview for any window, a pass that records what it did, and a check
+ * the app runs on a timer that only acts once retention is switched on.
+ */
+
+const LAST_RECLAIM_SETTING = 'attachment_reclaim_last';
+/** Once a day is plenty for a window measured in days, and cheap to skip. */
+const RECLAIM_EVERY_MS = DAY_MS;
+
+export function previewAttachmentReclaim(opts: { now?: number; days?: number } = {}): AttachmentReclaimPreview {
+  const plan = planAttachmentReclaim(opts);
+  const kept: AttachmentReclaimPreview['kept'] = {};
+  for (const skip of plan.skipped) kept[skip.reason] = (kept[skip.reason] ?? 0) + 1;
+  return {
+    enabled: plan.enabled, windowDays: plan.windowDays, cutoff: plan.cutoff, scanned: plan.scanned,
+    directories: plan.candidates.length, filesEligible: plan.filesEligible, bytesEligible: plan.bytesEligible, kept,
+  };
+}
+
+export function lastAttachmentReclaim(): AttachmentReclaimSummary | null {
+  try {
+    const parsed = JSON.parse(getSetting(LAST_RECLAIM_SETTING, 'null')) as AttachmentReclaimSummary | null;
+    return parsed && typeof parsed.ranAt === 'number' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Run a reclaim and keep its summary, so what was removed is visible after
+ * the fact. Retention still has to be switched on: reclaimAttachments deletes
+ * nothing otherwise, and this adds no way around that.
+ */
+export function reclaimAttachmentsNow(how: AttachmentReclaimSummary['how'], now = Date.now()): AttachmentReclaimSummary {
+  const report = reclaimAttachments({ now });
+  const summary: AttachmentReclaimSummary = {
+    ranAt: report.ranAt, how, windowDays: report.windowDays, scanned: report.scanned,
+    directories: report.reclaimed.length, filesRemoved: report.filesRemoved, bytesFreed: report.bytesFreed,
+    kept: report.skipped.length, errors: report.errors.length, firstError: report.errors[0]?.message ?? null,
+  };
+  if (report.enabled) setSetting(LAST_RECLAIM_SETTING, JSON.stringify(summary));
+  return summary;
+}
+
+/** The timer's question: switched on, and no pass in the last day. */
+export function reclaimAttachmentsIfDue(now = Date.now()): AttachmentReclaimSummary | null {
+  if (!attachmentRetention().enabled) return null;
+  const last = lastAttachmentReclaim();
+  if (last && now - last.ranAt < RECLAIM_EVERY_MS) return null;
+  return reclaimAttachmentsNow('scheduled', now);
 }
 
 /**

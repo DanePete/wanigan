@@ -17,6 +17,7 @@ import AttentionQueue from '../components/AttentionQueue';
 import SessionGoalTrail from '../components/SessionGoalTrail';
 import Timeline from '../components/Timeline';
 import SessionLearning from '../components/SessionLearning';
+import PastSessionEvidence from '../components/PastSessionEvidence';
 import Pet from '../components/Pet';
 import { ConfirmNote, EmptyState, Explainer, Icon, Mark, Note, PageHead, ago, num, usd } from '../components/bits';
 import type { Tone } from '../components/bits';
@@ -295,6 +296,8 @@ export default function Sessions({
   const [activeShown, setActiveShown] = useState(8);
   /** The Recent row whose Forget is awaiting confirmation, if any. */
   const [forgetting, setForgetting] = useState<string | null>(null);
+  // A finished run whose turns and timeline are open for reading.
+  const [inspecting, setInspecting] = useState<PastSession | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
   const [teachSession, setTeachSession] = useState<Session | null>(null);
   const activeRef = useRef<string | null>(null);
@@ -826,6 +829,11 @@ export default function Sessions({
                       is no hover to wait for, so they stay exactly as they
                       were; see the coarse-pointer rule in index.css. */}
                   <div className="past-actions">
+                  <FocusBtn className="past-x past-turns faint"
+                            aria-label={`Read the turns and timeline of ${p.title ?? p.projectName} without resuming it`}
+                            onClick={() => setInspecting(p)}>
+                    turns
+                  </FocusBtn>
                   <FocusBtn className="past-x faint"
                             title={p.pinnedAt != null
                               ? 'Unpin — back to its place by recency'
@@ -1189,6 +1197,10 @@ export default function Sessions({
       )}
       {teachSession && (
         <SessionTeachModal session={teachSession} onClose={() => setTeachSession(null)} onError={onError} />
+      )}
+      {inspecting && (
+        <PastSessionEvidence session={inspecting} onClose={() => setInspecting(null)}
+                             providerLabel={providers.find((x) => x.id === inspecting.providerId)?.label ?? inspecting.providerId} />
       )}
     </div>
   );

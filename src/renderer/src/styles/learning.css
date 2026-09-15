@@ -509,3 +509,7 @@
 .learning-proposal-reader .candidate-patch { min-height: 0; padding: var(--s-3) 0; }
 .learning-proposal-reader .candidate-rationale { font-size: var(--t-small); }
 .learning-overview .learning-window > .faint { font-size: var(--t-micro); }
+
+/* Resolving a recorded contradiction: keep one side, from either item's Evidence. */
+.knowledge-contest-actions { display: flex; flex-wrap: wrap; gap: var(--s-1); margin-top: var(--s-1); }
+.knowledge-contest-actions .btn { max-width: 100%; overflow-wrap: anywhere; white-space: normal; text-align: left; }

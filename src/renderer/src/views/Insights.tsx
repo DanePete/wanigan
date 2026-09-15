@@ -746,7 +746,8 @@ export default function InsightsView({ onOpenRun, projects: given }: {
             </li>
             <li>
               <strong>Set a budget.</strong> A cap with no spend against it still draws its meter,
-              and it is the only way to be warned before the money is gone.
+              it warns before the money is gone, and once it is reached it holds the work nobody is
+              watching start.
             </li>
           </ul>
           <BudgetEditor projects={projects} buds={buds} onSaved={setBuds} />
@@ -934,6 +935,7 @@ function BreachBanner({ breached }: { breached: BudgetState[] }) {
       </strong>{' '}
       A cap that only speaks once it has been exceeded is a receipt, not a budget — these are listed
       while there is still a month left to change.
+      {over.length > 0 && ' Headless runs, scheduled batches and autopilot goal tasks in a scope that is over wait in the queue until its budget is raised or the month turns.'}
       <ul className="ins-breach">
         {breached.map((b) => {
           const m = budgetMark(b);
@@ -2191,6 +2193,9 @@ function BudgetEditor({ projects, buds, scope, onSaved, onCancel }: {
           : <>Setting a new cap for <strong>{named}</strong>. A cap of 0 tracks the scope without
              capping it. Scopes overlap on purpose: spend in a repo also counts against{' '}
              <em>All projects</em>.</>}
+        {' '}Once this month’s spend reaches a cap, headless runs, scheduled batches and autopilot goal
+        tasks in that scope wait in the queue until it is raised or the month turns. A session you
+        start yourself is not held.
       </p>
 
       {err && (

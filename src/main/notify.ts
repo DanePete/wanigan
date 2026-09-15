@@ -824,6 +824,29 @@ export function announceRunEnded(runId: string): void {
 }
 
 /**
+ * A headless row stopped on a call it held for a person.
+ *
+ * Urgent, because the row is doing nothing until someone answers, and the run
+ * stays open until then. The body names the repository and the tool, never the
+ * command or path: that text is the agent's, and a notification is read by
+ * whoever is near the screen.
+ */
+export function announceHeld(runId: string, projectName: string, toolName: string): void {
+  if (!claim(`held:${runId}:${projectName}:${toolName}`, RUN_ENDED_DEDUPE_MS)) return;
+  let name = 'A headless run';
+  try {
+    name = (db().prepare('SELECT name FROM runs WHERE id = ?').get(runId) as { name: string } | undefined)?.name ?? name;
+  } catch { /* the name is presentation */ }
+  notify({
+    title: `${name} is waiting for you`,
+    body: `${projectName} stopped on a ${toolName} call that needs your approval. Approve, decline or stop it in Runs.`,
+    urgent: true,
+    hold: true,
+    target: { kind: 'run', runId },
+  });
+}
+
+/**
  * A submission was refused by the spend cap. Always urgent: this one is not a
  * report on work that happened, it is work that did NOT happen and is waiting
  * on a decision — a silent version of it reads as "the batch is running".
