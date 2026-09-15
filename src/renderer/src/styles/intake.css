@@ -1,0 +1,31 @@
+/* GitHub intake — tokens come from index.css; no colour declared here. */
+
+/* It sits inside Control's event inbox, an article already laid out as a grid
+   with its own gap, so the section only separates itself from the form below
+   with a rule and keeps every line wrapping: a repository name, a reason from
+   gh or a gap sentence can each be longer than the column is wide. */
+.intake { display: grid; gap: var(--s-2); min-width: 0; padding-block: var(--s-3); border-block: 1px solid var(--line-soft); }
+.intake > .sec-head { margin: 0; }
+.intake-lead,
+.intake-timer,
+.intake-counts,
+.intake-detail,
+.intake-reason,
+.intake-said { margin: 0; font-size: var(--t-small); line-height: 1.5; overflow-wrap: anywhere; }
+.intake-lead,
+.intake-detail { color: var(--text-dim); }
+
+.intake-project { display: grid; gap: var(--s-1); min-width: 0; padding-top: var(--s-2); border-top: 1px solid var(--line-soft); }
+.intake-project-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-3); min-width: 0; }
+.intake-project-line > .btn { margin-inline-start: auto; }
+.intake-repo { min-width: 0; color: var(--text-dim); font-family: var(--mono); font-size: var(--t-micro); overflow-wrap: anywhere; }
+
+/* Fired, ran and how it ended: three marks that wrap as a unit each, never one
+   status word, so a check that never ran cannot read as one that did. */
+.intake-states { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-3); margin: 0; font-size: var(--t-small); }
+.intake-by { color: var(--text-faint); }
+.intake-words { font-family: var(--mono); font-size: var(--t-micro); }
+
+.intake-unwatched > summary { cursor: pointer; color: var(--text-dim); font-size: var(--t-small); }
+.intake-unwatched > ul { display: grid; gap: var(--s-1); margin: var(--s-1) 0 0; padding-inline-start: var(--s-4);
+                         color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; overflow-wrap: anywhere; }
