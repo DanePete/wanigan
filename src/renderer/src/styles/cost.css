@@ -50,3 +50,12 @@
 .cost-injection { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: var(--t-small); background: var(--bg-sunk); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: var(--s-3); margin: 0; max-height: calc(var(--s-6) * 12); overflow: auto; }
 .cost-injected-fires > summary { cursor: pointer; color: var(--text-dim); font-size: var(--t-small); }
 .cost-share-meter { width: calc(var(--s-6) * 4); flex: none; }
+
+/* Session anatomy, inside the Timeline's summary drawer. */
+.cost-anatomy-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-2); margin: 0; padding: var(--s-2) 0 var(--s-4); }
+.cost-anatomy-row { display: grid; grid-template-columns: minmax(0, 11rem) minmax(0, 1fr); gap: var(--s-3); align-items: baseline; }
+.cost-anatomy-row dt { color: var(--text-dim); font-size: var(--t-small); }
+.cost-anatomy-row dd { margin: 0; display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); align-items: baseline; min-width: 0; }
+.cost-anatomy-row dd > strong { font-variant-numeric: tabular-nums; }
+.cost-anatomy-status { font-size: var(--t-tiny); color: var(--text-faint); border: 1px solid var(--line-soft); border-radius: var(--r-pill); padding-inline: var(--s-2); }
+.cost-anatomy-status.is-inferred { color: var(--warning); border-color: var(--warning-soft); }

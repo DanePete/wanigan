@@ -12,6 +12,7 @@ import { cacheWarmth } from './cache-warmth';
 import { costCauses } from './cost-causes';
 import { admissionRefusal, noteOperatorInput, previousRunsFor, scheduleCostSettings, scheduleOutcomes, setScheduleCostSettings, windowShare } from './schedule-cost';
 import type { ScheduleCostDetail } from '../shared/cost-types';
+import { anatomyFor } from './session-anatomy';
 
 /**
  * IPC for the cost, quota and context surfaces, registered from index.ts's
@@ -70,6 +71,7 @@ export function registerCostIpc(handle: Handle, deps: CostIpcDeps): void {
   // the choice spelled out; main re-reads the catalogue and refuses anything
   // that is not a personal skill Wanigan applied.
   handle('cost:windowShare', () => windowShare(deps.liveSessionIds()));
+  handle('cost:anatomy', (sessionId: unknown) => anatomyFor(id(sessionId, 'That session')));
   handle('cost:scheduleDetail', (scheduleId: unknown): ScheduleCostDetail => {
     const sid = id(scheduleId, 'That schedule');
     const row = db().prepare('SELECT id, kind, payload_json, project_id FROM schedules WHERE id = ?').get(sid) as

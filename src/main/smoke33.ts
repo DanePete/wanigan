@@ -571,3 +571,41 @@ export async function runWindowShareSmoke(check: Check, say: Say): Promise<void>
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
+
+export async function runSessionAnatomySmoke(check: Check, say: Say): Promise<void> {
+  say('── timeline · session anatomy');
+  const { db } = await import('./db');
+  const id = `anatomy-${Date.now()}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-anatomy-'));
+  try {
+    const t0 = Date.now() - 3600_000;
+    db().prepare('INSERT INTO session_log (id, provider_id, harness_id, project_path, project_name, started_at, ended_at) VALUES (?,?,?,?,?,?,?)')
+      .run(id, 'claude', 'claude-code', dir, 'anatomy', t0, t0 + 50 * 60_000);
+    const ev = db().prepare('INSERT INTO session_events (session_id, at, event, tool_name, duration_ms) VALUES (?,?,?,?,?)');
+    const m = (n: number) => t0 + n * 60_000;
+    ev.run(id, m(1), 'InstructionsLoaded', null, null);
+    ev.run(id, m(2), 'PostToolUse', 'Read', 100);
+    ev.run(id, m(5), 'PermissionRequest', 'Bash', null);
+    ev.run(id, m(7), 'PostToolUse', 'Bash', 3_000);
+    ev.run(id, m(12), 'PostToolUse', 'Edit', 500);
+    ev.run(id, m(13), 'PreCompact', null, null);
+    ev.run(id, m(14), 'PostCompact', null, null);
+    ev.run(id, m(15), 'SubagentStart', null, null);
+    ev.run(id, m(20), 'Stop', null, null);
+    ev.run(id, m(30), 'UserPromptSubmit', null, null);
+    db().prepare("INSERT INTO session_api_events (session_id, at, kind, in_tokens, cache_read, cache_write) VALUES (?,?,?,?,?,?)").run(id, m(10), 'request', 10, 80_000, 5_000);
+    const { anatomyFor } = await import('./session-anatomy');
+    const a = anatomyFor(id);
+    check(a.orientationMs.status === 'observed' && a.orientationMs.value === 12 * 60_000,
+      'orientation runs from launch to the first completed edit, observed', a.orientationMs);
+    check(a.editsAndCommandsMs.value === 3_500 && a.waitingMs.status === 'inferred' && a.waitingMs.value === 2 * 60_000 + 10 * 60_000,
+      'edit and command time is the measured durations; waiting is permission plus idle-after-Stop, labelled inferred', { work: a.editsAndCommandsMs, wait: a.waitingMs });
+    check(a.peakContextTokens.value === 85_010 && a.compactions.value === 1 && a.subagents.status === 'observed' && a.subagents.value === 1,
+      'peak context, compactions and subagents are observed from the recorded usage and events', { peak: a.peakContextTokens, c: a.compactions, s: a.subagents });
+  } finally {
+    db().prepare('DELETE FROM session_log WHERE id = ?').run(id);
+    db().prepare('DELETE FROM session_events WHERE session_id = ?').run(id);
+    db().prepare('DELETE FROM session_api_events WHERE session_id = ?').run(id);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
