@@ -451,3 +451,29 @@ a.set-mini, a.btn { text-decoration: none; }
 .set-chain-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
 .set-chain-text { flex: 1 1 18rem; min-width: 0; font-size: var(--t-small); line-height: 1.5; overflow-wrap: anywhere; }
 .set-chain-note { margin: 0; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.5; overflow-wrap: anywhere; }
+
+/* Keyboard: one row per binding — what it does, the chord in effect, and what
+   can be done about it. The chord column is sized by its content so a long
+   composite ("?  ·  ⌘/") never squeezes the name, and every note spans the row
+   so a refusal sits directly under the chord it refused. */
+.set-keys-rules { margin: 0 0 var(--s-3); max-width: 80ch; }
+.set-keys-group { margin-top: var(--s-3); }
+.set-keys-group + .set-keys-group { margin-top: var(--s-4); }
+.set-keys { list-style: none; margin: 0; padding: 0; }
+.set-keys-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--s-1) var(--s-3); align-items: center; padding: var(--s-2) 0; border-top: 1px solid var(--line-soft); }
+.set-keys-row:first-child { border-top: none; }
+.set-keys-what { display: grid; gap: var(--s-1); min-width: 0; }
+.set-keys-name { font-size: var(--t-small); font-weight: 600; overflow-wrap: anywhere; }
+.set-keys-does { color: var(--text-dim); font-size: var(--t-micro); line-height: 1.45; overflow-wrap: anywhere; }
+.set-keys-chord { display: flex; align-items: center; gap: var(--s-2); justify-self: end; }
+.set-keys-chord kbd { display: inline-block; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: var(--r-sm); padding: var(--s-1) var(--s-2); background: var(--bg-raised); color: var(--text); font-family: var(--font-ui); font-size: var(--t-small); white-space: nowrap; }
+.set-keys-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--s-2); min-width: 0; }
+.set-keys-note, .set-keys-refusal { grid-column: 1 / -1; margin: 0; font-size: var(--t-micro); line-height: 1.5; max-width: 80ch; }
+.set-keys-note { color: var(--text-faint); }
+.set-keys-listening { color: var(--accent); font-weight: 600; }
+.set-keys-refusal { color: var(--critical); font-size: var(--t-small); }
+.set-keys-ignored { margin: var(--s-1) 0 0; padding-left: var(--s-4); }
+@media (max-width: 720px) {
+  .set-keys-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .set-keys-actions { grid-column: 1 / -1; justify-content: flex-start; }
+}

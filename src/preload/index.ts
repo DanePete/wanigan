@@ -11,6 +11,7 @@ import type { LedgerChainStatus } from '../shared/ledger-chain';
 import type { ObservedLimitsReport, SessionStatusLine } from '../shared/status-line';
 import type { SessionTraces } from '../shared/trace-spans';
 import type { SpendSourceReport } from '../shared/spend-sources';
+import type { KeymapState, KeymapWrite } from '../shared/keymap';
 import type { AttemptCleanupResult, AttemptSetDetail, AttemptSetSummary, AttemptStartInput } from '../shared/attempts';
 import type { FailedLogReport, PrReadinessReport } from '../shared/pr-readiness';
 import type { IntakeOverview, IntakePoll, IntakeTimer } from '../shared/intake';
@@ -778,6 +779,15 @@ const api = {
     all: () => call<WaniganSettings>('settings:all'),
     set: (k: string, v: string) => call<WaniganSettings>('settings:set', k, v),
     setTheme: (theme: ThemeSetting) => call<WaniganSettings>('settings:setTheme', theme),
+  },
+  // Keyboard shortcuts. Main validates every write against the binding table
+  // and answers a refused chord with its named reason as data, so the row that
+  // asked can print why; only a failure to answer at all rejects.
+  keymap: {
+    get: () => call<KeymapState>('keymap:get'),
+    set: (id: string, chord: string) => call<KeymapWrite>('keymap:set', id, chord),
+    reset: (id: string) => call<KeymapWrite>('keymap:reset', id),
+    resetAll: () => call<KeymapState>('keymap:resetAll'),
   },
   // ── Wanigan Compound · provider-neutral learning ───────────────────
   learning: {

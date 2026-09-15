@@ -33,6 +33,7 @@ import type {
 } from '../shared/types';
 import { assertManagedRoot, assertOpenablePath } from './roots';
 import { installApplicationMenu, setComposerShown } from './menu';
+import { keymapState, resetAllKeybindings, resetKeybinding, setKeybinding } from './keymap';
 import { automationRun } from './automation';
 import { adapterTrustPrompt, manifestTrustPrompt } from './pack-consent';
 
@@ -1622,6 +1623,12 @@ function registerIpc() {
         if (channel === 'demo:set') return { ok: true, data: switchDemoWindow(args[0]) };
         if (channel === 'demo:copyPrompt') return { ok: true, data: await copyDemoPrompt(args[0]) };
         if (channel === 'window:visible') return { ok: true, data: !!win?.isVisible() && !win?.isMinimized() };
+        // The keymap is the operator's keyboard, not workspace data, and the
+        // one menu bar above a demo window prints it: a demo window that read
+        // the defaults instead would press chords that menu does not print.
+        // Only the read is shared; a write from a demo window still falls to
+        // the demo reader below and is refused.
+        if (channel === 'keymap:get') return { ok: true, data: keymapState() };
         const data = demo ? demo.read(channel, args) : await fn(...args as never[]);
         if (demo && channel === 'settings:set' && args[0] === 'nav_sidebar') installApplicationMenu(() => win, args[1] === 'open');
         return { ok: true, data };
@@ -3463,6 +3470,28 @@ function registerIpc() {
     return next;
   });
   handle('settings:setTheme', (value: ThemeSetting) => { setTheme(value); return allSettings(); });
+
+  // ══ keyboard shortcuts ══════════════════════════════════════════════
+  // Ids and chords from the renderer are untrusted text, so every write is
+  // validated here with shared/keymap.ts — the module the window matches with —
+  // and a refused chord comes back as data naming its reason. The menu bar
+  // prints the effective chords, so it is rebuilt after anything that moved one.
+  handle('keymap:get', () => keymapState());
+  handle('keymap:set', (id: unknown, chord: unknown) => {
+    const result = setKeybinding(id, chord);
+    if (result.applied) installApplicationMenu(() => win);
+    return result;
+  });
+  handle('keymap:reset', (id: unknown) => {
+    const result = resetKeybinding(id);
+    if (result.applied) installApplicationMenu(() => win);
+    return result;
+  });
+  handle('keymap:resetAll', () => {
+    const state = resetAllKeybindings();
+    installApplicationMenu(() => win);
+    return state;
+  });
 
   // Hot-path traffic: fire-and-forget, no round trip.
   ipcMain.on('sessions:write', (event, id: string, data: string) => {

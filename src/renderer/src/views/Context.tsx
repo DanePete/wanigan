@@ -4,6 +4,7 @@ import type {
 } from '@shared/types';
 import type { ConfigPinCheck } from '@shared/exec-config';
 import { Chip, EmptyState, Explainer, Icon, Mark as SharedMark, Note, PageHead, Pill, Reading, SectionHead, Stat, ago, num, usd, type Tone } from '../components/bits';
+import { chordNow, useChord } from '../bindings';
 import ContextWorkspace, { ContextFileLink } from '../components/ContextWorkspace';
 import { useViewMemory } from '../components/viewMemory';
 
@@ -473,7 +474,7 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
         && (x.harnessId ?? x.providerProfile?.harness) === 'claude-code');
       if (!s) {
         setInitMsg({ tone: 'info', text:
-          `No Claude Code session is running in ${project.name}. /init is Claude Code's own command, so it needs one: open Sessions, start one with ⌘T, then come back — this button types /init into a live session, it does not start one.` });
+          `No Claude Code session is running in ${project.name}. /init is Claude Code's own command, so it needs one: open Sessions, start one with ${chordNow('new-session').glyphs}, then come back — this button types /init into a live session, it does not start one.` });
         return;
       }
       await window.wanigan.skills.send(s.id, '/init');
@@ -1030,6 +1031,8 @@ function fmtValue(v: unknown): string {
 }
 
 function ConfigPanel({ c }: { c: ProjectConfig }) {
+  const skillsChord = useChord('view:skills').glyphs;
+  const paletteChord = useChord('palette').glyphs;
   const projectHooks = c.hooks.filter((h) => h.from === 'project' || h.from === 'local');
   const shared = c.hooks.filter((h) => h.from === 'project');
   const also = [
@@ -1197,7 +1200,7 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
       <p className="faint" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 11 }}>
         Skills are not in this table. Everything under <span className="mono">.claude/skills</span> in this
         repo, in your home directory and in every installed plugin is catalogued in the Skills view:{' '}
-        <span className="mono">⌘⇧S</span>, or ⌘K → Skills.
+        <span className="mono">{skillsChord}</span>, or {paletteChord} → Skills.
       </p>
 
       {c.notes.length > 0 && (
