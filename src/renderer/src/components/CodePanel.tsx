@@ -623,6 +623,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
     [walkNotes, sel, review, diffAnchor]
   );
   useEffect(() => { setWalk(null); setAgentNoteMsg(null); }, [sessionId]);
+  // A walk with nothing left to visit ends, rather than resuming by itself when a note next appears.
+  useEffect(() => { if (walk !== null && !walkNotes.length) setWalk(null); }, [walk, walkNotes.length]);
   /* ── end helper sweep · P10 notes ── */
 
   const crumbs = useMemo(() => {

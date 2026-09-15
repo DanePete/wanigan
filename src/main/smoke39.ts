@@ -228,8 +228,9 @@ export async function runChangeNotesSmoke(check: Check, say: Say): Promise<void>
     // The launch hint, at its call site and in its own rule.
     const { app } = await import('electron');
     const src = fs.readFileSync(path.join(app.getAppPath(), 'src/main/sessions.ts'), 'utf8');
-    check(src.includes('launchInstructionParts(capsuleText, learnedText, mcpFile !== null && changeNoteToolGranted(opts.providerId))'),
-      'the launch composes its instruction text through the hint rule, gated on a written MCP config and the profile\'s grant');
+    check(src.includes('const noteToolWired = mcpFile !== null && mcpServerInfo() !== null && changeNoteToolGranted(opts.providerId);')
+      && src.includes('launchInstructionParts(capsuleText, learnedText, noteToolWired)'),
+      'the launch composes its instruction text through the hint rule, gated on a written MCP config, Wanigan\'s listener being up, and the profile\'s grant');
     check(shared.CHANGE_NOTE_HINT.length < 200 && shared.launchInstructionParts('', '', true).length === 0 && shared.launchInstructionParts('C', '', false).join() === 'C',
       'the hint is under 200 characters, never the only instruction text, and absent when not granted');
     const moduleSrc = fs.readFileSync(path.join(app.getAppPath(), 'src/main/change-notes.ts'), 'utf8');
