@@ -410,3 +410,24 @@
 .session-handoff-label { font-size: var(--t-small); font-weight: 550; color: var(--text); }
 .session-handoff-why { font-size: var(--t-micro); color: var(--text-dim); line-height: 1.4; }
 .session-handoff-note { font-size: var(--t-micro); color: var(--text-faint); line-height: 1.4; padding: 0 var(--s-2) var(--s-1); }
+
+/* ── helper sweep · P2 attention ─────────────────────────────────────── */
+.sessions-view .past-row:has(.session-tab-menu) { flex-wrap: wrap; }
+.sessions-view .session-tab-menu {
+  flex-basis: 100%;
+  display: grid; grid-template-columns: 1fr; gap: var(--s-1);
+  padding: var(--s-1) var(--s-2) var(--s-2);
+}
+.sessions-view .session-resume-cue { color: var(--text-faint); }
+.sessions-view .session-away,
+.sessions-view .session-limit { flex: none; padding: var(--s-2) var(--s-5) 0; }
+.sessions-view .session-away .note-body,
+.sessions-view .session-limit .note-body { line-height: 1.5; overflow-wrap: anywhere; }
+.sessions-view .session-away-lead { font-weight: 600; }
+.session-away-cue { color: var(--text-faint); font-size: var(--t-small); }
+.sessions-view .session-away-list,
+.sessions-view .session-away-recap { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-3); margin-top: var(--s-1); font-size: var(--t-small); }
+.sessions-view .session-limit-actions { display: inline-flex; gap: var(--s-2); margin-left: var(--s-2); vertical-align: middle; }
+.sessions-view .session-limit-ask { font-size: var(--t-small); color: var(--text-dim); }
+.session-resume-warning .session-resume-reasons { margin: var(--s-3) 0; padding-left: var(--s-5); line-height: 1.5; }
+.session-resume-warning .session-resume-actions { display: flex; justify-content: flex-end; gap: var(--s-2); margin-top: var(--s-4); }

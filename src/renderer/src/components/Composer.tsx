@@ -239,7 +239,7 @@ function joinDraft(current: string, addition: string): string {
   return current.trim() ? `${current.replace(/\s+$/, '')}\n\n${addition}` : addition;
 }
 
-type ComposerAppend = { sessionId: string; text: string; handled: boolean };
+type ComposerAppend = { sessionId: string; text: string; handled: boolean; note?: string };
 
 /**
  * Puts text into a session's message box without sending it. A mounted
@@ -248,8 +248,10 @@ type ComposerAppend = { sessionId: string; text: string; handled: boolean };
  * stored draft is appended directly and appears when the box is opened. Either
  * way the operator reads it and presses Send or Queue.
  */
-export function appendToComposerDraft(sessionId: string, text: string): 'composer' | 'stored' {
-  const detail: ComposerAppend = { sessionId, text, handled: false };
+export function appendToComposerDraft(sessionId: string, text: string, note?: string): 'composer' | 'stored' {
+  // `note` is the sentence the composer flashes when it takes the text; review
+  // notes keep their own wording when a caller does not give one.
+  const detail: ComposerAppend = { sessionId, text, handled: false, ...(note ? { note } : {}) };
   window.dispatchEvent(new CustomEvent<ComposerAppend>('wanigan:composer-append', { detail }));
   if (detail.handled) return 'composer';
   const drafts = readDrafts();
@@ -351,7 +353,7 @@ export default function Composer({ session, onError }: {
       if (!detail || detail.sessionId !== sessionId || typeof detail.text !== 'string') return;
       detail.handled = true;
       setDraft((current) => joinDraft(current, detail.text));
-      setFlash('Review notes added below your draft. Nothing is sent until you send it.');
+      setFlash(detail.note ?? 'Review notes added below your draft. Nothing is sent until you send it.');
       window.setTimeout(() => setFlash(null), 4000);
       requestAnimationFrame(() => {
         const el = areaRef.current;
@@ -535,7 +537,7 @@ export default function Composer({ session, onError }: {
             rows={Math.min(6, Math.max(2, draft.split('\n').length))}
             value={draft}
             placeholder={session.status === 'starting' ? 'Waiting for the agent’s prompt…' : state.mode === 'blocked'
-              ? 'Session exited — resume it from Recent to keep talking'
+              ? 'Session exited — press Resume above to start it again on this conversation'
               : 'What should we work on next?'}
             aria-label="Message the agent"
             // A textarea's implicit role is textbox and HTML-ARIA permits no

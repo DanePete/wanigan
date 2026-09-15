@@ -1950,6 +1950,9 @@ function Observation({ prefs, pending, setFlag }: {
             a turn. Wanigan hands the text to macOS and nothing leaves the machine.
           </Toggle>
 
+          {/* helper sweep · P2 attention */}
+          <ProviderStatusToggle />
+
           <Toggle title="Keep a pet" on={prefs.pet} busy={pending === 'pet'}
                   onChange={(v) => void setFlag('pet', v)}>
             A Tamagotchi in the corner of the Sessions view, emulated off the documented
@@ -5723,4 +5726,36 @@ export function DemoPanel() {
       </div>
     </div>
   </Section>;
+}
+
+/* ── helper sweep · P2 attention ─────────────────────────────────────── */
+
+/**
+ * The switch for reading public status pages. Its own read and write rather
+ * than the generic preference bridge: the poller in main keeps what it read,
+ * and switching it off has to drop that too, not just stop the next request.
+ */
+function ProviderStatusToggle() {
+  const [report, setReport] = useState<Awaited<ReturnType<typeof window.wanigan.helper.statusReport>> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    window.wanigan.helper.statusReport().then((r) => { if (live) setReport(r); }).catch((e) => { if (live) setErr(msg(e)); });
+    return () => { live = false; };
+  }, []);
+  if (!report) return err ? <p className="dim">Provider status checks could not be read: {err}</p> : null;
+  return (
+    <Toggle title="Provider status checks" on={report.enabled} busy={busy}
+            onChange={(next) => {
+              setBusy(true);
+              window.wanigan.helper.setStatusChecks(next).then(setReport, (e) => setErr(msg(e))).finally(() => setBusy(false));
+            }}>
+      When a Claude or Codex session fails or stalls, reads status.claude.com or status.openai.com and names an open
+      incident on that provider in the attention queue. It is a plain public GET with no credential and no user data —
+      nothing about your projects or sessions is sent — made at most every three minutes and only while such a session
+      is live or has just failed.
+      {report.lastCheckedAt ? ` Last read ${new Date(report.lastCheckedAt).toLocaleTimeString()}${report.lastError ? ` — ${report.lastError}` : ''}.` : ' Not read yet this run.'}
+    </Toggle>
+  );
 }

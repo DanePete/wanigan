@@ -8,6 +8,7 @@ import { Chip, EmptyState, Note, PageHead, SectionHead, Segmented, Stat, ago, nu
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 import ObservedBand from '../components/ObservedBand';
 import TeamPanel from '../components/TeamPanel';
+import HelperVerdict from '../components/HelperVerdict';
 
 /**
  * The whole crew on one screen — the view you leave open on a second monitor
@@ -727,6 +728,9 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onContr
           {att.reason.event && <> Read from <span className="mono">{att.reason.event.name}</span>, {ago(att.reason.event.at)}.</>}
         </span>
       )}
+      {/* helper sweep · P2 attention: the denial, incident, limit, spin and
+          question behind the verdict, and the snooze beside it. */}
+      <HelperVerdict att={att} session={s} onOpenSession={onOpen} />
 
       <Spark values={spark} live={u.lastAt} />
 

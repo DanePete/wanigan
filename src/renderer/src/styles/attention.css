@@ -263,3 +263,49 @@
 .alert-inbox .alert-card-title { white-space: normal; line-height: 1.4; }
 .alert-inbox .alert-card-text { margin-top: var(--s-1); line-height: 1.5; }
 .alert-inbox .alert-card-acts:empty { display: none; }
+
+/* ── helper sweep · P2 attention ─────────────────────────────────────── */
+
+/* A chip and the actions its verdict offers, side by side in the scroller.
+   Siblings, because the chip is itself a button. */
+.atq-item { flex: none; display: flex; align-items: stretch; gap: var(--s-1); }
+.atq-actions {
+  display: flex; flex-direction: column; justify-content: center; gap: var(--s-1);
+}
+.atq-act {
+  display: inline-flex; align-items: center; justify-content: flex-start;
+  padding: 0 var(--s-2); min-height: calc(var(--s-4) + var(--s-1));
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--bg-sunk); color: var(--text-dim);
+  font-size: var(--t-micro); font-weight: 600; white-space: nowrap;
+}
+.atq-act:hover { background: var(--bg-soft); color: var(--text); border-color: var(--text-faint); }
+.atq-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.atq-helper { color: var(--text-dim); }
+
+/* The Fleet inspector's evidence blocks. Each is a mark, one sentence of
+   evidence, a quieter line saying where the evidence came from, and then the
+   controls — in that order, so a control is never read before its reason. */
+.helper-verdict { display: flex; flex-direction: column; gap: var(--s-2); margin-top: var(--s-2); }
+.helper-verdict:empty { display: none; }
+.helper-block {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-1);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line-soft); border-radius: var(--r-md);
+  background: var(--bg-sunk);
+}
+.helper-block[data-kind="snooze"] { flex-direction: row; flex-wrap: wrap; align-items: center; background: transparent; }
+.helper-line { margin: 0; font-size: var(--t-small); color: var(--text); line-height: 1.45; overflow-wrap: anywhere; }
+.helper-cue { margin: 0; font-size: var(--t-micro); color: var(--text-faint); line-height: 1.45; overflow-wrap: anywhere; }
+.helper-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1); }
+.helper-question { display: flex; flex-direction: column; gap: var(--s-1); width: 100%; }
+.helper-tag {
+  display: inline-block; margin-right: var(--s-2); padding: 0 var(--s-1);
+  border: 1px solid var(--line); border-radius: var(--r-xs);
+  font-size: var(--t-micro); color: var(--text-dim);
+}
+.helper-options { margin: 0; padding-left: var(--s-5); font-size: var(--t-small); color: var(--text-dim); }
+.helper-options li { margin: 0; line-height: 1.5; }
+.helper-option { color: var(--text); font-weight: 600; }
+.helper-flash { font-size: var(--t-micro); color: var(--text-dim); min-height: 1em; }
+.helper-flash:empty { display: none; }

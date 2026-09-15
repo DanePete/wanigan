@@ -1,0 +1,180 @@
+{
+  "generator": "scripts/probe-helper-p2-attention.mjs",
+  "mode": "after",
+  "renderer": "out/renderer served over http with the preload bridge stubbed",
+  "at": "2026-09-15T03:54:02.538Z",
+  "results": [
+    {
+      "ok": true,
+      "label": "palette switched (rgb(244, 246, 248))"
+    },
+    {
+      "ok": true,
+      "label": "the attention strip rendered"
+    },
+    {
+      "ok": true,
+      "label": "the strip shows the waiting sessions"
+    },
+    {
+      "ok": true,
+      "label": "the denial chip carries Tell it to retry and Open the timeline"
+    },
+    {
+      "ok": true,
+      "label": "the incident chip carries its status-page link"
+    },
+    {
+      "ok": true,
+      "label": "the snoozed session is counted and left out of the strip"
+    },
+    {
+      "ok": true,
+      "label": "the strip counts each word separately, so a denial and a failure are not both called denials"
+    },
+    {
+      "ok": true,
+      "label": "the snoozed session has no chip"
+    },
+    {
+      "ok": true,
+      "label": "the new strip controls are not clipped"
+    },
+    {
+      "ok": true,
+      "label": "returning to a tab shows what was recorded since, with Claude’s recap labelled as Claude’s"
+    },
+    {
+      "ok": true,
+      "label": "the tab menu offers Mark unread and the snooze presets"
+    },
+    {
+      "ok": true,
+      "label": "the exited session is on screen"
+    },
+    {
+      "ok": true,
+      "label": "an exited tab has an in-place Resume that says it starts a new process on the same conversation"
+    },
+    {
+      "ok": true,
+      "label": "an exited tab that stopped on a limit offers Resume at the reset time"
+    },
+    {
+      "ok": true,
+      "label": "the resume controls are not clipped"
+    },
+    {
+      "ok": true,
+      "label": "Fleet rendered its roster"
+    },
+    {
+      "ok": true,
+      "label": "the inspector shows the denial verdict"
+    },
+    {
+      "ok": true,
+      "label": "the inspector shows the denial’s evidence and actions, and the four snooze presets"
+    },
+    {
+      "ok": true,
+      "label": "the inspector lists the question’s options read-only and says to answer in the terminal"
+    },
+    {
+      "ok": true,
+      "label": "Settings rendered its Observation switches"
+    },
+    {
+      "ok": true,
+      "label": "Settings has the provider status switch, saying it is a public GET with no user data"
+    },
+    {
+      "ok": true,
+      "label": "palette switched (rgb(23, 30, 36))"
+    },
+    {
+      "ok": true,
+      "label": "the attention strip rendered"
+    },
+    {
+      "ok": true,
+      "label": "the strip shows the waiting sessions"
+    },
+    {
+      "ok": true,
+      "label": "the denial chip carries Tell it to retry and Open the timeline"
+    },
+    {
+      "ok": true,
+      "label": "the incident chip carries its status-page link"
+    },
+    {
+      "ok": true,
+      "label": "the snoozed session is counted and left out of the strip"
+    },
+    {
+      "ok": true,
+      "label": "the strip counts each word separately, so a denial and a failure are not both called denials"
+    },
+    {
+      "ok": true,
+      "label": "the snoozed session has no chip"
+    },
+    {
+      "ok": true,
+      "label": "the new strip controls are not clipped"
+    },
+    {
+      "ok": true,
+      "label": "returning to a tab shows what was recorded since, with Claude’s recap labelled as Claude’s"
+    },
+    {
+      "ok": true,
+      "label": "the tab menu offers Mark unread and the snooze presets"
+    },
+    {
+      "ok": true,
+      "label": "the exited session is on screen"
+    },
+    {
+      "ok": true,
+      "label": "an exited tab has an in-place Resume that says it starts a new process on the same conversation"
+    },
+    {
+      "ok": true,
+      "label": "an exited tab that stopped on a limit offers Resume at the reset time"
+    },
+    {
+      "ok": true,
+      "label": "the resume controls are not clipped"
+    },
+    {
+      "ok": true,
+      "label": "Fleet rendered its roster"
+    },
+    {
+      "ok": true,
+      "label": "the inspector shows the denial verdict"
+    },
+    {
+      "ok": true,
+      "label": "the inspector shows the denial’s evidence and actions, and the four snooze presets"
+    },
+    {
+      "ok": true,
+      "label": "the inspector lists the question’s options read-only and says to answer in the terminal"
+    },
+    {
+      "ok": true,
+      "label": "Settings rendered its Observation switches"
+    },
+    {
+      "ok": true,
+      "label": "Settings has the provider status switch, saying it is a public GET with no user data"
+    },
+    {
+      "ok": true,
+      "label": "no page errors while driving the views"
+    }
+  ]
+}

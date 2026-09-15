@@ -281,6 +281,10 @@ export async function runHelperAttentionSmoke(check: Check, say: Say): Promise<v
       const fresh = triage.resumeCheck(rowId);
       check(fresh.outsideWriter !== null && fresh.liveInWanigan === null && fresh.fork.supported && fresh.fork.how === '--fork-session',
         'a transcript written seconds ago by nothing Wanigan runs is an outside writer, and a Claude fork is offered', fresh);
+      db().prepare('UPDATE session_log SET ended_at = ? WHERE id = ?').run(Date.now(), rowId);
+      check(triage.resumeCheck(rowId).outsideWriter === null,
+        'a transcript last written before Wanigan’s own run of it ended is that run’s write, not a second writer');
+      db().prepare('UPDATE session_log SET ended_at = NULL WHERE id = ?').run(rowId);
       const old = Date.now() / 1000 - 3600;
       fs.utimesSync(path.join(configDir, 'projects', slug, `${conversation}.jsonl`), old, old);
       check(triage.resumeCheck(rowId).outsideWriter === null, 'an hour-old transcript is not a second writer');

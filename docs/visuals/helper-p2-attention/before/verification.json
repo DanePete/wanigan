@@ -1,0 +1,68 @@
+{
+  "generator": "scripts/probe-helper-p2-attention.mjs",
+  "mode": "before",
+  "renderer": "out/renderer served over http with the preload bridge stubbed",
+  "at": "2026-09-15T03:54:33.283Z",
+  "results": [
+    {
+      "ok": true,
+      "label": "palette switched (rgb(244, 246, 248))"
+    },
+    {
+      "ok": true,
+      "label": "the attention strip rendered"
+    },
+    {
+      "ok": true,
+      "label": "the strip shows the waiting sessions"
+    },
+    {
+      "ok": true,
+      "label": "the exited session is on screen"
+    },
+    {
+      "ok": true,
+      "label": "Fleet rendered its roster"
+    },
+    {
+      "ok": true,
+      "label": "the inspector shows the denial verdict"
+    },
+    {
+      "ok": true,
+      "label": "Settings rendered its Observation switches"
+    },
+    {
+      "ok": true,
+      "label": "palette switched (rgb(23, 30, 36))"
+    },
+    {
+      "ok": true,
+      "label": "the attention strip rendered"
+    },
+    {
+      "ok": true,
+      "label": "the strip shows the waiting sessions"
+    },
+    {
+      "ok": true,
+      "label": "the exited session is on screen"
+    },
+    {
+      "ok": true,
+      "label": "Fleet rendered its roster"
+    },
+    {
+      "ok": true,
+      "label": "the inspector shows the denial verdict"
+    },
+    {
+      "ok": true,
+      "label": "Settings rendered its Observation switches"
+    },
+    {
+      "ok": true,
+      "label": "no page errors while driving the views"
+    }
+  ]
+}

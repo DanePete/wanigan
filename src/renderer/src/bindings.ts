@@ -47,6 +47,15 @@ export const BINDINGS: Binding[] = [
     does: 'This cheat sheet', scope: 'not-field', skipsTerminal: false },
   { id: 'sidebar',     keys: '⌥⌘S', aria: 'Alt+Meta+S', group: 'Anywhere',
     does: 'Show or hide the destination list', scope: 'not-terminal', skipsTerminal: false },
+  /* ── helper sweep · P2 attention ── */
+  // ⌘J and ⌘⇧T were free in routes.ts, in this table and in menu.ts. ⌘⇧T is
+  // the browser and editor chord for reopening a closed tab; J is for jump,
+  // and a plain ⌘ letter avoids Option, which on macOS turns the letter into
+  // another character before bindingMatches ever sees it.
+  { id: 'next-needs-you', keys: '⌘J', aria: 'Meta+J Control+J', group: 'Anywhere',
+    does: 'Jump to the next session that needs you, in attention order, skipping snoozed', scope: 'not-terminal', skipsTerminal: false },
+  { id: 'reopen-tab',  keys: '⌘⇧T', aria: 'Meta+Shift+T Control+Shift+T', group: 'Anywhere',
+    does: 'Reopen the last closed session tab — resumes its conversation in a new process', scope: 'not-terminal', skipsTerminal: false },
 
   { id: 'rail-move',   keys: '↑ ↓  Home  End', aria: 'ArrowUp ArrowDown Home End', group: 'Destination list',
     does: 'Move focus in the list — Enter or Space opens the focused view', scope: 'not-terminal', skipsTerminal: false },

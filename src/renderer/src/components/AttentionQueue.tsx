@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Attention, AttentionKind, Session } from '@shared/types';
 import { ago } from './bits';
+import { clockAt, draftDenialRetry } from './attentionActions';
 
 /**
  * Which of nine agents needs a human, and which has needed one longest.
@@ -45,7 +46,13 @@ const POLL_MS = 2_000;
 const BURST_MS = 250;
 const PREF = 'wanigan.attention.all';
 
-export default function AttentionQueue({ onJump }: { onJump: (sessionId: string) => void }) {
+export default function AttentionQueue({ onJump, onOpenTimeline, onQueue }: {
+  onJump: (sessionId: string) => void;
+  /** Hands the ranked list to the owner, so it is not polled twice. */
+  onQueue?: (items: Attention[]) => void;
+  /** Show a session's Timeline; the denial chip's second action. */
+  onOpenTimeline?: (sessionId: string) => void;
+}) {
   const [items, setItems] = useState<Attention[] | null>(null);
   const [sessions, setSessions] = useState<Record<string, Session>>({});
   const [err, setErr] = useState<string | null>(null);
@@ -68,14 +75,16 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
         window.wanigan.sessions.list(),
       ]);
       if (!alive.current || sequence !== request.current) return;
-      setItems(list.filter(item => live.some(session => session.id === item.sessionId)));
+      const filtered = list.filter(item => live.some(session => session.id === item.sessionId));
+      setItems(filtered);
+      onQueue?.(filtered);
       setSessions(Object.fromEntries(live.map((s) => [s.id, s] as const)));
       setErr(null);
     } catch (e) {
       if (!alive.current || sequence !== request.current) return;
       setErr(e instanceof Error ? e.message : String(e));
     }
-  }, []);
+  }, [onQueue]);
 
   useEffect(() => {
     alive.current = true;
@@ -120,8 +129,13 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
     );
   }
 
-  const shown = showAll ? items : items.filter((a) => NEEDS_YOU.includes(a.kind));
-  const hidden = items.length - shown.length;
+  // A snoozed session leaves the strip entirely, whatever the filter: "not now"
+  // is the operator's own ranking. It is counted, so a strip that reads
+  // "nothing waiting" while three sessions are snoozed says so.
+  const awake = items.filter((a) => !a.helper?.snoozedUntil);
+  const snoozed = items.length - awake.length;
+  const shown = showAll ? awake : awake.filter((a) => NEEDS_YOU.includes(a.kind));
+  const hidden = awake.length - shown.length;
   const liveCount = Object.values(sessions).filter(session => session.status !== 'exited').length;
 
   if (shown.length === 0) {
@@ -129,6 +143,7 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
       <div className="atq atq-quiet" role="region" aria-label="Attention queue">
         <span className="label">Attention</span>
         <span className="atq-none">{err ? 'Attention unavailable.' : items.length === 0 && liveCount > 0 ? 'Waiting for an attention signal.' : 'Nothing waiting.'}</span>
+        {!err && snoozed > 0 && <span className="atq-hint">{snoozed} snoozed.</span>}
         {!err && items.length === 0 ? (
           <span className="atq-hint">
             {liveCount > 0 ? `${liveCount} live ${liveCount === 1 ? 'session' : 'sessions'}. No attention state has been reported yet.` : 'No sessions running. Start one with ⌘T and it appears here the moment it blocks.'}
@@ -153,7 +168,10 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
   // gave each kind, so the summary can never drift from the chips.
   const counts: { kind: AttentionKind; n: number; word: string }[] = [];
   for (const a of shown) {
-    const seen = counts.find((c) => c.kind === a.kind);
+    // Grouped by the word, not only the kind: one kind now carries several
+    // words ("Failed", "Denied by auto mode", "Stalled"), and a count keyed on
+    // the kind printed "2 denied by auto mode" for one denial and one failure.
+    const seen = counts.find((c) => c.kind === a.kind && c.word === a.label.toLowerCase());
     if (seen) seen.n += 1;
     else counts.push({ kind: a.kind, n: 1, word: a.label.toLowerCase() });
   }
@@ -165,6 +183,7 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
         <span className="atq-count" aria-live="polite">
           {counts.map((c) => `${c.n} ${c.word}`).join(' · ')}
           {hidden > 0 && <span className="atq-quiet-n"> · {hidden} hidden</span>}
+          {snoozed > 0 && <span className="atq-quiet-n"> · {snoozed} snoozed</span>}
         </span>
       </div>
 
@@ -172,7 +191,7 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
           body never scrolls sideways to accommodate them. */}
       <div className="atq-scroll">
         {shown.map((a) => (
-          <Chip key={a.sessionId} a={a} session={sessions[a.sessionId]} onJump={onJump} />
+          <Item key={a.sessionId} a={a} session={sessions[a.sessionId]} onJump={onJump} onOpenTimeline={onOpenTimeline} />
         ))}
         {err && <Failure msg={err} onRetry={() => void load()} />}
       </div>
@@ -230,9 +249,71 @@ function Chip({ a, session, onJump }: {
         {detail && (a.kind === 'permission' || a.kind === 'error') && (
           <span className="atq-detail">{detail}</span>
         )}
+        {helperLine(a) && <span className="atq-detail atq-helper">{helperLine(a)}</span>}
       </span>
     </button>
   );
+}
+
+/* ── helper sweep · P2 attention ───────────────────────────────────────── */
+
+/**
+ * A chip, plus what its verdict offers beside it. Siblings rather than
+ * children: a button inside a button is invalid, and the chip's own click is
+ * "open this session", which the actions must not also trigger.
+ */
+function Item({ a, session, onJump, onOpenTimeline }: {
+  a: Attention; session: Session | undefined; onJump: (sessionId: string) => void;
+  onOpenTimeline?: (sessionId: string) => void;
+}) {
+  const helper = a.helper;
+  const [drafted, setDrafted] = useState(false);
+  const project = session?.projectName ?? `session ${a.sessionId.slice(0, 6)}`;
+  const actions = helper?.denial || helper?.incident;
+  return (
+    <div className="atq-item">
+      <Chip a={a} session={session} onJump={onJump} />
+      {actions && (
+        <div className="atq-actions" role="group" aria-label={`Actions for ${project}`}>
+          {helper?.denial && (
+            <>
+              <button type="button" className="atq-act" onClick={() => {
+                if (draftDenialRetry(a)) { setDrafted(true); onJump(a.sessionId); }
+              }}>
+                {drafted ? 'Retry line drafted' : 'Tell it to retry'}
+              </button>
+              {onOpenTimeline && (
+                <button type="button" className="atq-act" onClick={() => onOpenTimeline(a.sessionId)}>
+                  Open the timeline
+                </button>
+              )}
+            </>
+          )}
+          {helper?.incident && (
+            <button type="button" className="atq-act" onClick={() => void window.wanigan.shell.openExternal(helper.incident!.url)}
+                    aria-label={`Open the status page for ${helper.incident.name}`}>
+              Status page ↗
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The one extra line a helper verdict adds under a chip's detail, or null. */
+function helperLine(a: Attention): string | null {
+  const h = a.helper;
+  if (!h) return null;
+  // An error chip already prints the classifier's detail, which names the
+  // incident; a stalled one does not, so it gets the line.
+  if (h.incident && a.kind !== 'error' && a.kind !== 'permission') return `Open incident: ${h.incident.name}`;
+  if (h.questions) {
+    const n = h.questions.items[0]?.options.length ?? 0;
+    return `${n} option${n === 1 ? '' : 's'} — answer in the terminal`;
+  }
+  if (h.limit?.state === 'waiting') return h.limit.reset ? `Resets ${clockAt(h.limit.reset.resetsAt)}` : 'Reset time not known';
+  return null;
 }
 
 /**

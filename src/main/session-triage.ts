@@ -204,12 +204,32 @@ export function resumeCheck(sessionId: unknown, now: number = Date.now()): Resum
         : 'This conversation has no saved id to fork from.' }
       : { supported: false, how: null, why: `The ${harness} harness has no fork Wanigan has verified.` };
 
+  // A write made before one of Wanigan's own runs of this conversation ended
+  // is that run's, not a stranger's: a tab that exited ten seconds ago leaves
+  // its transcript ten seconds old, and warning about it would warn about
+  // ourselves on every in-place resume.
+  let ownUntil = 0;
+  if (conversation) {
+    try {
+      const ended = db().prepare("SELECT MAX(COALESCE(ended_at, 0)) m FROM session_log WHERE conversation_id = ? AND origin = 'wanigan'")
+        .get(conversation) as { m: number | null } | undefined;
+      ownUntil = Number(ended?.m ?? 0);
+    } catch { /* no record is no exemption */ }
+    for (const s of listSessions()) {
+      if (s.conversationId === conversation && s.endedAt) ownUntil = Math.max(ownUntil, s.endedAt);
+    }
+  }
+  const ours = modifiedAt !== null && ownUntil > 0 && modifiedAt <= ownUntil + OWN_WRITE_SLACK_MS;
+
   return {
     liveInWanigan: live ? { sessionId: live.id, title: live.displayTitle || live.title } : null,
-    outsideWriter: outsideWriter(modifiedAt, now, !!live) ? { modifiedAt: modifiedAt! } : null,
+    outsideWriter: !ours && outsideWriter(modifiedAt, now, !!live) ? { modifiedAt: modifiedAt! } : null,
     fork,
   };
 }
+
+/** A transcript flush can land a moment after the process reports its exit. */
+const OWN_WRITE_SLACK_MS = 5_000;
 
 function launchOptionsFor(row: LogRow): LaunchOptions {
   if (!row.project_id) throw new Error('That conversation’s project is no longer registered in Wanigan.');

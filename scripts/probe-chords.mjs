@@ -219,6 +219,28 @@ const PROBES = {
       return consumed ? null : 'nothing consumed the chord with an exited session selected';
     },
   },
+  // helper sweep · P2 attention. The stub ranks s1 (storefront) as Asking and
+  // opens Sessions elsewhere, so the jump has somewhere to land.
+  'next-needs-you': {
+    async run(page) {
+      await stepOffTerminal(page);
+      const before = await page.locator('.session-item.active').first().textContent().catch(() => null);
+      await press(page, ariaFor('next-needs-you'));
+      await page.waitForTimeout(500);
+      const after = await page.locator('.session-item.active').first().textContent().catch(() => null);
+      return before !== after || /storefront|Checkout/i.test(after ?? '') ? null : `the selection did not jump (${before})`;
+    },
+  },
+  // Reopening resumes a conversation over IPC, which this harness stubs, so
+  // reaching the handler is the honest limit.
+  'reopen-tab': {
+    weak: true,
+    async run(page) {
+      await stepOffTerminal(page);
+      const consumed = await pressAndAskIfConsumed(page, ariaFor('reopen-tab'));
+      return consumed ? null : 'nothing consumed the chord';
+    },
+  },
   interrupt: {
     weak: true,
     async run(page) {

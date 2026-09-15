@@ -33,6 +33,8 @@ import ErrorBoundary from './components/ErrorBoundary';
 import ShortcutSheet from './components/ShortcutSheet';
 import { useDialog, OVERLAY_ROOT_ID } from './components/useDialog';
 import { AnnounceProvider, AnnounceRegion, type AnnounceAction } from './components/announce';
+/* helper sweep · P2 attention */
+import HelperShellKeys from './components/HelperShellKeys';
 import { ViewMemoryProvider, ViewMemoryScope } from './components/viewMemory';
 import { COMPOSER_MENU_EVENT, readComposerShown, writeComposerShown } from './components/composerPreference';
 import { useThemePreference } from './theme';
@@ -1175,6 +1177,8 @@ export default function App() {
     <div className="shell mission-shell">
     <AnnounceProvider onError={announceError}>
     <ViewMemoryProvider>
+      {/* helper sweep · P2 attention: ⌘J, ⌘⇧T and notification replies. */}
+      <HelperShellKeys activeSessionId={activeSessionId} openSession={openSession} />
       {startup?.phase === 'recovery' && (
         <section className="startup-recovery" role="alert">
           <div>

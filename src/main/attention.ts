@@ -445,7 +445,7 @@ function classify(session: Session, now: number): Attention {
     return mk(session, 'error', denied.at, `event:${denied.id}`,
       `${join(denied.toolName, denied.summary) ?? 'A tool call'} — ${reasonWords ?? 'no reason recorded'}`,
       denied.toolName, now,
-      why('auto-mode-denied', denied, `Claude Code's auto mode refused a tool call in the last ${minutes(DENIAL_WINDOW_MS)}, and neither a new prompt nor the same call succeeding has settled it.`),
+      why('auto-mode-denied', denied, `Auto mode in Claude Code refused a tool call in the last ${minutes(DENIAL_WINDOW_MS)}, and neither a new prompt nor the same call succeeding has settled it.`),
       DENIED_LABEL,
       { denial: { tool: denied.toolName, summary: denied.summary, reason: reasonWords, at: denied.at,
         retryDraft: retryDraft(denied.toolName, denied.summary) } });

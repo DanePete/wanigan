@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
-  LaunchModelCatalogue, LaunchModelRow, LaunchOptions, PastSession, Project, ProviderInfo,
-  Session, TrustLevel, WorktreeInfo,
+  Attention, AwaySummary, LaunchModelCatalogue, LaunchModelRow, LaunchOptions, PastSession, Project, ProviderInfo,
+  ResumeCheck, Session, TrustLevel, WorktreeInfo,
 } from '@shared/types';
 import { TRUST_LEVELS, trustCopy, trustGlyph } from '@shared/types';
 import { launchFieldChoices } from '@shared/launch-fields';
@@ -22,6 +22,9 @@ import { ConfirmNote, EmptyState, Explainer, Icon, Mark, Note, PageHead, ago, nu
 import type { Tone } from '../components/bits';
 import { useDialog } from '../components/useDialog';
 import { bindingMatches, modalOpen } from '../bindings';
+/* helper sweep · P2 attention */
+import { AwayNote, LimitResumeNote, ResumeWarningDialog, TabTriageMenu } from '../components/SessionTriage';
+import { OPEN_TIMELINE_EVENT } from '../components/attentionActions';
 import '../styles/sessions.css';
 
 /* ── phase 21 · what an attachment looks like ─────────────────────────
@@ -399,19 +402,32 @@ export default function Sessions({
     window.wanigan.policy.defaultTrust().then(setDefaultTrust).catch(() => setDefaultTrust(null));
   }, []);
 
-  async function resume(p: PastSession) {
+  /* helper sweep · P2 attention: a resume is checked for a second writer
+     first, and the operator chooses between a fork, resuming anyway, or not. */
+  const [resumeWarning, setResumeWarning] = useState<{ target: ResumeTarget; check: ResumeCheck; name: string } | null>(null);
+  async function resume(p: ResumeTarget, how: 'check' | 'anyway' | 'fork' = 'check') {
     if (resumePendingRef.current) return;
     resumePendingRef.current = true;
     setResuming(p.id);
     try {
-      const s = await window.wanigan.sessions.create({
-        providerId: p.providerId,
-        projectId: p.projectId ?? '',
-        model: p.model ?? undefined,
-        effort: p.effort ?? undefined,
-        permissionMode: p.permissionMode ?? undefined,
-        resumeFrom: { sessionId: p.id, conversationId: p.conversationId },
-      });
+      if (how === 'check') {
+        let check: ResumeCheck | null = null;
+        try { check = await window.wanigan.helper.resumeCheck(p.id); } catch { /* no record: the launch path has its own guards */ }
+        if (check && (check.liveInWanigan || check.outsideWriter)) {
+          setResumeWarning({ target: p, check, name: p.title ?? p.projectName });
+          return;
+        }
+      }
+      const s = how === 'fork'
+        ? await window.wanigan.helper.resumeAsFork(p.id)
+        : await window.wanigan.sessions.create({
+          providerId: p.providerId,
+          projectId: p.projectId ?? '',
+          model: p.model ?? undefined,
+          effort: p.effort ?? undefined,
+          permissionMode: p.permissionMode ?? undefined,
+          resumeFrom: { sessionId: p.id, conversationId: p.conversationId },
+        });
       await refresh();
       select(s.id);
     } catch (e) { onError(msg(e)); }
@@ -485,6 +501,49 @@ export default function Sessions({
       });
     } catch (e) { onError(msg(e)); }
   }, [onActiveChange, onError, selectedProjectId]);
+
+  /* ── helper sweep · P2 attention ─────────────────────────────────────── */
+  // The ranked queue the strip already reads, kept here for the rail's snooze
+  // marks rather than polled a second time.
+  const [queue, setQueue] = useState<Attention[]>([]);
+  const snoozedUntil = useCallback((id: string) => queue.find((a) => a.sessionId === id)?.helper?.snoozedUntil ?? null, [queue]);
+  const [triageFor, setTriageFor] = useState<string | null>(null);
+  const [away, setAway] = useState<AwaySummary | null>(null);
+  // "Since you last looked": main records when a tab leaves the screen and,
+  // when it comes back after two minutes or more, answers with what was
+  // recorded in between. Main holds the mark, not this view, because this view
+  // unmounts on every route change and a mark kept here would reset each time.
+  useEffect(() => {
+    if (!activeId) return;
+    let live = true;
+    setAway(null);
+    window.wanigan.helper.sessionReturned(activeId)
+      .then((summary) => { if (live && summary) setAway(summary); })
+      .catch(() => {});
+    return () => {
+      live = false;
+      void window.wanigan.helper.sessionLeft(activeId).catch(() => {});
+    };
+  }, [activeId]);
+  const openTimelineFor = useCallback((id: string) => {
+    select(id);
+    setRailPane((prev) => {
+      const merged = { ...prev, [id]: 'timeline' as RailPane };
+      writePanes(merged, sessionsRef.current.map((s) => s.id));
+      return merged;
+    });
+    localStorage.setItem('wanigan.code', '1');
+    setShowRail(true);
+    setCompactDetails(true);
+  }, [select]);
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const id = (e as CustomEvent<{ sessionId: string }>).detail?.sessionId;
+      if (id && sessionsRef.current.some((s) => s.id === id)) openTimelineFor(id);
+    };
+    window.addEventListener(OPEN_TIMELINE_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_TIMELINE_EVENT, onOpen);
+  }, [openTimelineFor]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -651,7 +710,7 @@ export default function Sessions({
     <div className="pane sessions-view">
       {/* P3 · who is blocked, worst wait first. Above everything, because the
           answer to "where do I go next" outranks the rail and the terminal. */}
-      <AttentionQueue onJump={select} />
+      <AttentionQueue onJump={select} onOpenTimeline={openTimelineFor} onQueue={setQueue} />
 
       <div ref={sessionsBoxRef}
            className={`sessions${sessionPickerCompact ? ' sessions--compact-picker' : ''}${sessionPickerOpen ? ' sessions--picker-open' : ''}`}
@@ -732,6 +791,7 @@ export default function Sessions({
                                   constant, and a constant on every row is
                                   noise rather than information. */}
                               {multiAccount && s.accountLabel && ` · ${s.accountLabel}`}
+                              {snoozedUntil(s.id) && ' · snoozed'}
                             </span>
                           </span>
                           {/* One increment is one second in which output
@@ -754,6 +814,13 @@ export default function Sessions({
                                   title={`Name this session — two agents in ${s.projectName} are otherwise the same row`}
                                   aria-label={`Rename the ${providerLabel} session in ${s.projectName}`}
                                   onClick={() => startRename(s)}>✎</FocusBtn>
+                        <FocusBtn className="past-x faint session-tab-triage" aria-expanded={triageFor === s.id}
+                                  aria-label={`Mark unread or snooze the ${providerLabel} session in ${s.projectName}`}
+                                  onClick={() => setTriageFor((cur) => (cur === s.id ? null : s.id))}>⋯</FocusBtn>
+                        {triageFor === s.id && (
+                          <TabTriageMenu session={s} snoozedUntil={snoozedUntil(s.id)} onError={onError}
+                                         onClose={() => setTriageFor(null)} />
+                        )}
                       </div>
                     );
                   })}
@@ -958,6 +1025,9 @@ export default function Sessions({
                 </span>
                 <span className="session-context-separator" aria-hidden="true">/</span>
                 {active.status === 'running' ? 'Running' : `Exited ${active.exitCode ?? '—'}`}
+                {active.status === 'exited' && active.conversationId && (
+                  <span className="session-resume-cue"> · Resume starts a new process on this same conversation</span>
+                )}
               </> : 'Choose a conversation or start something new.'}
               actions={<>
                 <FocusBtn ref={sessionPickerButtonRef} className="btn session-picker-trigger"
@@ -966,6 +1036,13 @@ export default function Sessions({
                   onClick={() => setSessionPickerOpen((open) => !open)}>
                   <Icon name="panel" /> Sessions
                 </FocusBtn>
+                {active?.status === 'exited' && active.conversationId && (
+                  <FocusBtn className="btn btn-primary session-resume-inplace" disabled={resuming !== null}
+                    aria-label={`Resume ${nameOf(active) || active.projectName}: starts a new process on the same conversation`}
+                    onClick={() => void resume(resumeTargetOf(active))}>
+                    {resuming === active.id ? 'Resuming…' : 'Resume'}
+                  </FocusBtn>
+                )}
                 {active?.status === 'exited' && <FocusBtn className="btn session-tab-close"
                   title="Close exited session (⌘⌫)" aria-label={`Close exited session for ${active.projectName}`}
                   onClick={() => void closeTab(active.id)}>Close session</FocusBtn>}
@@ -984,6 +1061,10 @@ export default function Sessions({
           </div>
 
           {active && <SessionGoalTrail key={`goal-${active.id}`} sessionId={active.id} onOpen={onOpenGoal} />}
+          {active && away?.sessionId === active.id && <AwayNote summary={away} onDismiss={() => setAway(null)} />}
+          {active?.status === 'exited' && active.conversationId && (
+            <LimitResumeNote key={`limit-${active.id}`} session={active} onError={onError} />
+          )}
 
           {active && (
             <SessionHeader key={active.id} session={active} defaultTrust={defaultTrust} onRefresh={refresh}
@@ -1190,6 +1271,16 @@ export default function Sessions({
       {teachSession && (
         <SessionTeachModal session={teachSession} onClose={() => setTeachSession(null)} onError={onError} />
       )}
+      {resumeWarning && (
+        <ResumeWarningDialog check={resumeWarning.check} name={resumeWarning.name}
+          onClose={() => setResumeWarning(null)}
+          onFork={() => { const t = resumeWarning.target; setResumeWarning(null); void resume(t, 'fork'); }}
+          // A conversation already live in Wanigan cannot be resumed a second
+          // time at all — the launch path refuses it — so only an outside
+          // writer leaves "anyway" on the table.
+          onAnyway={resumeWarning.check.liveInWanigan ? null
+            : () => { const t = resumeWarning.target; setResumeWarning(null); void resume(t, 'anyway'); }} />
+      )}
     </div>
   );
 }
@@ -1323,6 +1414,20 @@ function SessionTeachModal({ session, onClose, onError }: {
       </section>
     </div>,
   );
+}
+
+/* ── helper sweep · P2 attention ───────────────────────────────────────── */
+
+/** What a resume needs, whether it starts from a Recent row or an exited tab. */
+type ResumeTarget = Pick<PastSession, 'id' | 'conversationId' | 'providerId' | 'projectId' | 'model' | 'effort'
+  | 'permissionMode' | 'projectName'> & { title?: string | null };
+
+function resumeTargetOf(s: Session): ResumeTarget {
+  return {
+    id: s.id, conversationId: s.conversationId ?? null, providerId: s.providerId, projectId: s.projectId,
+    model: s.model ?? null, effort: s.effort ?? null, permissionMode: s.permissionMode ?? null,
+    projectName: s.projectName, title: s.displayTitle ?? null,
+  };
 }
 
 /* ── the rail's segmented control ─────────────────────────────────────── */
@@ -2262,7 +2367,7 @@ function SessionDock({ session, att, open, onToggle, children }: {
           <FocusBtn className="btn btn-sm" onClick={() => void att.typeReference()}
                     disabled={att.items.length === 0 || att.busy || exited}
                     title={exited
-                      ? 'This session has exited, so there is no prompt to type into. Resume it from Recent, then add the file.'
+                      ? 'This session has exited, so there is no prompt to type into. Press Resume above, then add the file.'
                       : 'Attaching already names these files in your prompt. Use this to name them again — after clearing the input, say.'}>
             Name again
           </FocusBtn>
