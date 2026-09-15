@@ -1,0 +1,54 @@
+/* merge readiness — tokens come from index.css; no colour declared here. */
+
+/* Opened from the Git bar's Merge readiness button, directly under the bar it
+   belongs to. It scrolls inside the same 40vh cap as the review gate beside it:
+   at 55vh a 1000px window left the repository browser about a hundred pixels,
+   and an answer with a hundred review threads would have taken the rest.
+   `hidden` keeps the answer while it is closed, and needs its own rule because
+   `display: flex` outranks the user-agent `[hidden]` style. */
+.readiness { flex: none; display: flex; flex-direction: column; gap: var(--s-3); max-height: 40vh; overflow: auto;
+             padding: var(--s-3) var(--s-5); border-bottom: 1px solid var(--line-soft); background: var(--bg-soft); }
+.readiness[hidden] { display: none; }
+.readiness > .sec-head,
+.readiness-block > .sec-head { margin: 0; }
+.readiness-lead,
+.readiness-foot,
+.readiness-faint { margin: 0; color: var(--text-faint); font-size: var(--t-small); line-height: 1.5; overflow-wrap: anywhere; }
+.readiness-lead { max-width: 72ch; color: var(--text-dim); }
+
+.readiness-pr,
+.readiness-merge { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-3); margin: 0; font-size: var(--t-small); }
+.readiness-pr-number { font-family: var(--mono); font-weight: 600; }
+.readiness-pr-title { min-width: 0; overflow-wrap: anywhere; }
+.readiness-merge > span { min-width: 0; overflow-wrap: anywhere; }
+.readiness-raw { color: var(--text-faint); font-family: var(--mono); font-size: var(--t-micro); }
+
+.readiness-block { display: flex; flex-direction: column; gap: var(--s-2); }
+.readiness-counts { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-3); margin: 0; font-size: var(--t-small); }
+.readiness-list { display: flex; flex-direction: column; gap: var(--s-2); margin: 0; padding: 0; list-style: none; }
+
+/* A row is the checkbox, mark and name on the left and its buttons on the
+   right; everything under them — GitHub's description, the comment, the log —
+   spans both columns and is inset past the checkbox. */
+.readiness-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s-1) var(--s-3); align-items: baseline;
+                 font-size: var(--t-small); }
+.readiness-row > :not(.readiness-pick):not(.readiness-actions) { grid-column: 1 / -1; }
+.readiness-pick { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); min-width: 0; }
+.readiness-unpicked { padding-inline-start: var(--s-5); }
+.readiness-name { min-width: 0; overflow-wrap: anywhere; }
+.readiness-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--s-1); }
+.readiness-detail { margin: 0; padding-inline-start: var(--s-5); color: var(--text-dim); font-size: var(--t-micro); line-height: 1.5;
+                    overflow-wrap: anywhere; }
+.readiness-author { font-weight: 600; }
+.readiness-row > .note { margin-inline-start: var(--s-5); }
+.readiness-log { display: flex; flex-direction: column; gap: var(--s-1); padding-inline-start: var(--s-5); }
+.readiness-log > .readiness-detail { padding-inline-start: 0; }
+.readiness-log pre { margin: 0; padding: var(--s-2) var(--s-3); max-height: 240px; overflow: auto; border: 1px solid var(--line-soft);
+                     border-radius: var(--r-sm); background: var(--bg-sunk); font-family: var(--mono); font-size: var(--t-micro);
+                     line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.readiness-more > summary { cursor: pointer; color: var(--text-dim); font-size: var(--t-small); }
+.readiness-more[open] > summary { margin-bottom: var(--s-2); }
+
+.readiness-send { display: flex; flex-direction: column; gap: var(--s-2); padding-top: var(--s-3); border-top: 1px solid var(--line-soft); }
+.readiness-send-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); font-size: var(--t-small); }
+.readiness-send-row .field { width: auto; min-width: 0; max-width: 100%; font-size: var(--t-small); }

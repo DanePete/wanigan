@@ -7,6 +7,7 @@ import type { HandoverBegun, HandoverFinished } from '../shared/handover';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
 import type { KeymapState, KeymapWrite } from '../shared/keymap';
 import type { AttemptCleanupResult, AttemptSetDetail, AttemptSetSummary, AttemptStartInput } from '../shared/attempts';
+import type { FailedLogReport, PrReadinessReport } from '../shared/pr-readiness';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AccountLimits,
@@ -528,6 +529,9 @@ const api = {
     prStatus: (root: string, force?: boolean) => call<any>('gh:prStatus', root, force),
     createPr: (root: string, input: { title: string; body?: string; draft?: boolean; base?: string }) =>
       call<{ url: string | null; detail: string }>('gh:createPr', root, input),
+    // Both contact GitHub through gh, so both are called only from a press.
+    readiness: (projectId: string) => call<PrReadinessReport>('gh:readiness', projectId),
+    failedLog: (projectId: string, link: string) => call<FailedLogReport>('gh:failedLog', projectId, link),
   },
   // ── phase 25 · durable schedules ─────────────────────────────────────
   schedule: {
