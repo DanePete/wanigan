@@ -9,6 +9,7 @@ import type { SecretScanReport, SecretScanRequest } from '../shared/secret-scan'
 import type { AssistedByPreview } from '../shared/assisted-by';
 import type { LedgerChainStatus } from '../shared/ledger-chain';
 import type { AttemptCleanupResult, AttemptSetDetail, AttemptSetSummary, AttemptStartInput } from '../shared/attempts';
+import type { FailedLogReport, PrReadinessReport } from '../shared/pr-readiness';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AccountLimits,
@@ -536,6 +537,9 @@ const api = {
     prStatus: (root: string, force?: boolean) => call<any>('gh:prStatus', root, force),
     createPr: (root: string, input: { title: string; body?: string; draft?: boolean; base?: string }) =>
       call<{ url: string | null; detail: string }>('gh:createPr', root, input),
+    // Both contact GitHub through gh, so both are called only from a press.
+    readiness: (projectId: string) => call<PrReadinessReport>('gh:readiness', projectId),
+    failedLog: (projectId: string, link: string) => call<FailedLogReport>('gh:failedLog', projectId, link),
   },
   // ── phase 25 · durable schedules ─────────────────────────────────────
   schedule: {

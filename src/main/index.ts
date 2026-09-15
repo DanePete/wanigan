@@ -73,6 +73,7 @@ import { scanFor } from './secret-scan';
 import { assistedByPreview } from './assisted-by';
 import { verifyLedger } from './ledger-chain';
 import * as gh from './gh';
+import * as prReadiness from './pr-readiness';
 import { demoOn, setDemo, demoState } from './demo';
 import { readPreflight } from './preflight';
 import { discoverProjects, wasDiscovered } from './discovery';
@@ -2771,6 +2772,12 @@ function registerIpc() {
   // Same confinement as git:*; auth and hosts stay inside gh itself.
   handle('gh:prStatus', (root: string, force?: boolean) => gh.prStatusReport(gitRoot(root), force === true));
   handle('gh:createPr', (root: string, input: unknown) => gh.createPr(gitRoot(root), input));
+  // Merge readiness, read on a press: mergeability, checks and review threads
+  // for the project's branch, then one failing check's log on a second press.
+  // Keyed on a project id; main resolves the repository, and fetches a log only
+  // for a check its own last read of that project returned. Nothing is posted.
+  handle('gh:readiness', (projectId: string) => prReadiness.readinessReport(projectId));
+  handle('gh:failedLog', (projectId: string, link: string) => prReadiness.failedCheckLog(projectId, link));
 
   // ══ phase 25 · schedules ════════════════════════════════════════════
   handle('schedule:list', () => schedule.listSchedules());
