@@ -257,12 +257,83 @@ export async function runScriptLauncherSmoke(check: Check, say: Say, tmp: string
   check(!terminals.listOperatorTerminals().some((x) => x.id === t.id), 'closing forgets the tab');
 }
 
+export async function runMcpToolGrantSmoke(check: Check, say: Say, tmp: string): Promise<void> {
+  say('── helper sweep · P8 mac · Wanigan MCP tools per provider profile');
+  const server = await import('./mcp/server');
+  const registry = await import('./mcp/registry');
+  const grants = await import('./mcp/tool-grants');
+  const { db } = await import('./db');
+  const { addProject } = await import('./store');
+  const dir = path.join(tmp, 'mcp-grants');
+  fs.mkdirSync(dir, { recursive: true });
+  const project = await addProject(dir);
+  const wasRunning = server.mcpServerInfo() !== null;
+  const info = await server.startMcpServer();
+  const stamp = Date.now().toString(36);
+  const sessions = { all: `s_p8all_${stamp}`, none: `s_p8none_${stamp}`, some: `s_p8some_${stamp}` };
+  const insert = db().prepare('INSERT INTO session_log (id, provider_id, project_id, project_path, project_name, started_at) VALUES (?,?,?,?,?,?)');
+  insert.run(sessions.all, 'p8-all', project.id, dir, project.name, Date.now());
+  insert.run(sessions.none, 'p8-none', project.id, dir, project.name, Date.now());
+  insert.run(sessions.some, 'p8-some', project.id, dir, project.name, Date.now());
+  const files: (string | null)[] = [];
+  try {
+    check(JSON.stringify([...grants.WANIGAN_TOOL_CATALOGUE.map((t) => t.name)].sort()) === JSON.stringify(server.servedToolNames().sort()),
+      'the grant catalogue names exactly the tools the server serves, so no tool can slip past a grant by being missing from it',
+      { catalogue: grants.WANIGAN_TOOL_CATALOGUE.map((t) => t.name), served: server.servedToolNames() });
+    check(grants.toolGrantFor('p8-all').mode === 'all', 'a profile nobody has configured keeps every tool, as before the switch existed');
+    grants.setToolGrant('p8-none', { mode: 'none' });
+    grants.setToolGrant('p8-some', { mode: 'some', tools: ['wanigan_list_sessions'] });
+    let refused = '';
+    try { grants.setToolGrant('p8-some', { mode: 'some', tools: ['wanigan_list_sessions', 'wanigan_rm_rf'] }); } catch (e) { refused = String(e); }
+    check(/no tool named/.test(refused) && grants.toolGrantFor('p8-some').tools.join() === 'wanigan_list_sessions',
+      'a grant naming a tool Wanigan does not have is refused, and the stored grant is unchanged', refused);
+
+    const tokenOf = (file: string | null) => {
+      if (!file) return '';
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { mcpServers?: { wanigan?: { headers?: { Authorization?: string } } } };
+      return parsed.mcpServers?.wanigan?.headers?.Authorization?.replace(/^Bearer\s+/, '') ?? '';
+    };
+    const allFile = registry.writeMcpConfig(project.id, dir, sessions.all, 'p8-all');
+    const noneFile = registry.writeMcpConfig(project.id, dir, sessions.none, 'p8-none');
+    const someFile = registry.writeMcpConfig(project.id, dir, sessions.some, 'p8-some');
+    files.push(allFile, noneFile, someFile);
+    check(tokenOf(allFile).length > 40 && tokenOf(someFile).length > 40, 'profiles granted any tools get Wanigan\'s server in their per-launch config');
+    check(tokenOf(noneFile) === '', 'a profile granted none gets no Wanigan server and no capability in its per-launch config', noneFile && fs.readFileSync(noneFile, 'utf8'));
+
+    const rpc = async (token: string, method: string, params: Record<string, unknown> = {}) => {
+      const response = await fetch(info.url, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+      return await response.json() as { result?: { tools?: { name: string }[]; isError?: boolean; content?: { text: string }[] } };
+    };
+    const someList = await rpc(tokenOf(someFile), 'tools/list');
+    check(someList.result?.tools?.map((t) => t.name).join() === 'wanigan_list_sessions', 'a partial grant lists only the granted tool', someList.result?.tools);
+    const allowed = await rpc(tokenOf(someFile), 'tools/call', { name: 'wanigan_list_sessions', arguments: {} });
+    check(allowed.result?.isError !== true, 'a granted tool answers', allowed.result);
+    const blocked = await rpc(tokenOf(someFile), 'tools/call', { name: 'wanigan_list_projects', arguments: {} });
+    check(blocked.result?.isError === true && /wanigan_list_projects is not granted to p8-some sessions/.test(blocked.result.content?.[0]?.text ?? ''),
+      'calling a tool outside the grant is refused by name with a clear sentence, even by a client that never listed', blocked.result);
+    const allList = await rpc(tokenOf(allFile), 'tools/list');
+    check((allList.result?.tools?.length ?? 0) >= 14, 'an unconfigured profile still lists every tool', allList.result?.tools?.length);
+    grants.setToolGrant('p8-all', { mode: 'none' });
+    const narrowed = await rpc(tokenOf(allFile), 'tools/call', { name: 'wanigan_list_sessions', arguments: {} });
+    check(narrowed.result?.isError === true && /not granted/.test(narrowed.result.content?.[0]?.text ?? ''),
+      'narrowing a grant takes effect on the next call from a session already running', narrowed.result);
+    check(!grants.goalToolsGranted('p8-some') && grants.goalToolsGranted('never-configured'),
+      'a launch capsule offers the Goal tools only to a profile granted both of them');
+  } finally {
+    for (const f of files) registry.cleanupMcpConfig(f);
+    for (const id of Object.values(sessions)) registry.cleanupMcpConfig(null, id);
+    if (!wasRunning) server.stopMcpServer();
+  }
+}
+
 export async function runP8Smoke(check: Check, say: Say): Promise<void> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-p8-'));
   try {
     await runMacPresenceSmoke(check, say);
     await runAutomationSocketSmoke(check, say, tmp);
     await runScriptLauncherSmoke(check, say, tmp);
+    await runMcpToolGrantSmoke(check, say, tmp);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

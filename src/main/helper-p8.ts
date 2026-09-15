@@ -5,6 +5,8 @@ import {
   automationLedger, automationStatus, startAutomationSocket, stopAutomationSocket, takeAutomationDrafts,
 } from './automation-socket';
 import * as terminalsMod from './operator-terminals';
+import { WANIGAN_TOOL_CATALOGUE, setToolGrant, toolGrantFor } from './mcp/tool-grants';
+import { validProfileId } from '../shared/mcp-tool-grants';
 
 /**
  * The Mac around the app, local automation and attribution, wired once.
@@ -56,6 +58,13 @@ export function registerP8Ipc(handle: Handle): void {
   handle('opterm:close', (id: unknown) => terminalsMod.closeOperatorTerminal(id));
   handle('opterm:resize', (id: unknown, cols: unknown, rows: unknown) => terminalsMod.resizeOperatorTerminal(id, cols, rows));
   handle('opterm:write', (id: unknown, data: unknown) => terminalsMod.writeOperatorTerminal(id, data));
+
+  // Which of Wanigan's own MCP tools each provider profile's sessions get.
+  handle('mcpTools:state', (profileIds: unknown) => {
+    const ids = Array.isArray(profileIds) ? profileIds.filter(validProfileId).slice(0, 100) : [];
+    return { catalogue: WANIGAN_TOOL_CATALOGUE.map((t) => ({ ...t })), grants: Object.fromEntries(ids.map((id) => [id, toolGrantFor(id)])) };
+  });
+  handle('mcpTools:set', (profileId: unknown, grant: unknown) => setToolGrant(profileId, grant));
 }
 
 export function startP8Services(next: P8Deps): void {

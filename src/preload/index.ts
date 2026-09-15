@@ -51,6 +51,7 @@ import type {
 import type { MacSettings } from '../shared/mac-presence';
 import type { AutomationLedgerRow, AutomationStatus } from '../shared/automation-protocol';
 import type { OperatorTerminal, ScriptListing, ScriptSource } from '../shared/project-scripts';
+import type { McpToolGrant, McpToolInfo } from '../shared/mcp-tool-grants';
 /* ── end helper sweep · P8 mac ── */
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -1010,6 +1011,10 @@ const api = {
       call<OperatorTerminal>('scripts:run', projectId, source, name, target ?? null),
     recentRuns: (projectId: string) =>
       call<{ at: number; cwd: string; source: string; name: string; command: string; exitCode: number | null }[]>('scripts:recentRuns', projectId),
+  },
+  mcpTools: {
+    state: (profileIds: string[]) => call<{ catalogue: McpToolInfo[]; grants: Record<string, McpToolGrant> }>('mcpTools:state', profileIds),
+    set: (profileId: string, grant: McpToolGrant) => call<McpToolGrant>('mcpTools:set', profileId, grant),
   },
   operatorTerminal: {
     open: (projectId: string, target?: string | null) => call<OperatorTerminal>('opterm:open', projectId, target ?? null),

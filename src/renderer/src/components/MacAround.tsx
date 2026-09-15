@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { MacSettings } from '@shared/mac-presence';
 import type { AutomationLedgerRow, AutomationStatus } from '@shared/automation-protocol';
-import { Mark, Note, Section, ago } from './bits';
+import type { McpToolGrant, McpToolInfo } from '@shared/mcp-tool-grants';
+import type { ProviderInfo } from '@shared/types';
+import { Mark, Note, Section, Segmented, ago } from './bits';
 import { useAnnounce } from './announce';
 import { appendToComposerDraft } from './Composer';
 import '../styles/mac-around.css';
@@ -177,6 +179,78 @@ export function AutomationSocketSettings() {
           </table>
         </div>
       )}
+    </Section>
+  );
+}
+
+/* ── Wanigan's own MCP tools, per provider profile ───────────────────── */
+
+export function McpToolGrantsSettings({ providers }: { providers: ProviderInfo[] }) {
+  const [catalogue, setCatalogue] = useState<McpToolInfo[]>([]);
+  const [grants, setGrants] = useState<Record<string, McpToolGrant>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  const ids = providers.map((p) => p.id).join('|');
+  useEffect(() => {
+    let live = true;
+    window.wanigan.mcpTools.state(ids ? ids.split('|') : [])
+      .then((s) => { if (live) { setCatalogue(s.catalogue); setGrants(s.grants); } }, (e) => { if (live) setError(msg(e)); });
+    return () => { live = false; };
+  }, [ids]);
+  const save = (profileId: string, grant: McpToolGrant) => {
+    setError(null);
+    window.wanigan.mcpTools.set(profileId, grant)
+      .then((g) => setGrants((prev) => ({ ...prev, [profileId]: g })), (e) => setError(msg(e)));
+  };
+
+  return (
+    <Section title="Wanigan tools per provider"
+             hint="Which of Wanigan’s own MCP tools each provider profile’s sessions receive. Applies to sessions launched after a change; the server also refuses any tool a running session’s profile is no longer granted.">
+      {error && <Note tone="error">{error}</Note>}
+      <div className="p8-grants">
+        {providers.map((p) => {
+          const grant = grants[p.id];
+          if (!grant) return null;
+          const count = grant.mode === 'all' ? catalogue.length : grant.mode === 'none' ? 0 : grant.tools.length;
+          return (
+            <div key={p.id} className="p8-grant">
+              <div className="p8-grant-head">
+                <strong>{p.label}</strong>
+                <span className="mono p8-fine">{p.id}</span>
+                {!p.capabilities.mcp && <Mark glyph="○" word="MCP not detected in this CLI" tone="quiet" />}
+                <span className="p8-fine">{count} of {catalogue.length} tools</span>
+              </div>
+              <Segmented label={`Wanigan tools for ${p.label}`} value={grant.mode}
+                options={[{ value: 'all', label: 'All tools' }, { value: 'none', label: 'None' }, { value: 'some', label: 'Selected' }]}
+                onChange={(mode) => {
+                  if (mode === 'some') { setOpen(p.id); save(p.id, { mode: 'some', tools: grant.mode === 'all' ? catalogue.map((t) => t.name) : grant.tools }); }
+                  else save(p.id, { mode, tools: [] });
+                }} />
+              {grant.mode === 'none' && <p className="p8-fine">Sessions from this profile get no Wanigan server in their MCP config at all.</p>}
+              {grant.mode === 'some' && (
+                <details className="p8-grant-tools" open={open === p.id}>
+                  <summary>Choose tools</summary>
+                  <ul>
+                    {catalogue.map((t) => {
+                      const checked = grant.tools.includes(t.name);
+                      return (
+                        <li key={t.name}>
+                          <label className="p8-check">
+                            <input type="checkbox" checked={checked}
+                                   onChange={() => save(p.id, { mode: 'some', tools: checked ? grant.tools.filter((x) => x !== t.name) : [...grant.tools, t.name] })} />
+                            <span className="mono">{t.name}</span>
+                            <span className="p8-fine">{t.title}{t.readOnly ? ' · read-only' : ''}</span>
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </details>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </Section>
   );
 }

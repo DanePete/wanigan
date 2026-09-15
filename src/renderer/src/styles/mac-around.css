@@ -14,6 +14,15 @@
 .p8-ledger .mark { white-space: nowrap; }
 .p8-when { white-space: nowrap; color: var(--text-faint); }
 
+/* Wanigan tools per provider profile. */
+.p8-grants { display: grid; gap: var(--s-2); }
+.p8-grant { display: grid; gap: var(--s-2); padding: var(--s-2) var(--s-3); border: 1px solid var(--line-soft); border-radius: var(--r-sm); }
+.p8-grant-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); font-size: var(--t-small); }
+.p8-grant-head > .p8-fine:last-child { margin-left: auto; }
+.p8-grant-tools summary { cursor: pointer; font-size: var(--t-small); color: var(--text-dim); }
+.p8-grant-tools ul { display: grid; gap: var(--s-1); margin: var(--s-2) 0 0; padding: 0; list-style: none; }
+.p8-check { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); font-size: var(--t-small); }
+
 /* The script launcher. */
 .p8-scripts { display: grid; gap: var(--s-2); width: min(720px, 100%); max-height: min(760px, 100%); overflow: auto; padding: var(--s-4); }
 .p8-target { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
