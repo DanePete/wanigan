@@ -1,0 +1,143 @@
+{
+  "at": "2026-09-15T05:38:52.741Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; no real agent calls",
+  "mode": "after",
+  "commit": "6cd5341846df36ea86b2229e022c48d0a1e55dd5",
+  "uncommittedChanges": 5,
+  "checks": [
+    "the Mission room carries This week: sessions, merged and discarded with the git rule, goals, gates, open worktrees, half-finished conversations and observed cost, with Export Markdown…",
+    "Scripts lists package.json, Makefile and justfile entries with the favourite first, the command each runs, a worktree choice, and no Run for a name that is not shell-safe",
+    "Run opens \"your terminal\" in a dock apart from the session tabs, labelled as operator-run and outside the policy gate",
+    "the Recent row of a conversation with a broken chain says how many messages may be skipped; an intact one says nothing",
+    "resuming it first asks, repeating the sentence and saying the transcript was read and not changed",
+    "the Files tab shows lines added in turns against lines still present, Export as git notes…, and Show who wrote this marking each range with its session and turn",
+    "each command hook offers Test with sample input; the result shows exit code, stderr, and what Claude Code would make of it",
+    "Settings › App carries the Dock count and the menu-bar list, each saying what it shows and what it never shows",
+    "Wanigan tools per provider sets all, none or a chosen subset per profile",
+    "the automation socket shows where it listens, keeps the token out of the window, and ledgers every call with its peer process",
+    "Session names and branches previews the title and branch live against a sample prompt, marks a valid ref, and refuses a format git would reject"
+  ],
+  "errors": [],
+  "shots": [
+    {
+      "file": "docs/visuals/helper-p8-mac/after/mission-week-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/mission-week-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/scripts-launcher-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/scripts-launcher-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/your-terminal-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/your-terminal-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/recent-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/recent-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/resume-chain-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/resume-chain-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/code-attribution-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/code-attribution-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/context-hook-bench-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/context-hook-bench-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/settings-app-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/settings-app-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/settings-mcp-tools-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/settings-mcp-tools-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/settings-automation-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/settings-automation-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/settings-naming-invalid-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/settings-naming-invalid-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/settings-naming-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p8-mac/after/settings-naming-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    }
+  ]
+}

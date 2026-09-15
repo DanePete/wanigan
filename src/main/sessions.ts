@@ -28,6 +28,9 @@ import { trustFor } from './policy';
 import { slots } from './queue';
 import { budgetBreached } from './spend';
 import { cleanupMcpConfig, writeMcpConfig } from './mcp/registry';
+/* ── helper sweep · P8 mac ── */
+import { goalToolsGranted } from './mcp/tool-grants';
+import { launchBranch, launchTitle } from './naming';
 import { noteOutput, forgetSession } from './attention';
 import { shouldBumpUnread } from '../shared/unread';
 import { flags, learningSettings } from './settings';
@@ -1132,7 +1135,9 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   }
   if (!worktree && (opts.isolate || resumeTree.needsFreshIsolation)) {
     try {
-      const wt = await createWorktree(project.path, project.name, id0);
+      /* helper sweep · P8 mac: the project's branch template, from the redacted launch prompt. */
+      const wt = await createWorktree(project.path, project.name, id0, undefined,
+        launchBranch(project, opts.initialPrompt?.trim() ? redactCredentials(opts.initialPrompt.trim()) : null, id0));
       worktree = wt.path;
       createdWorktree = true;
     } catch (e) {
@@ -1209,7 +1214,8 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
         if (settingsFile) injected.push('--settings', settingsFile);
       }
       if (detected.capabilities.mcp) {
-        mcpFile = writeMcpConfig(project.id, cwd, id0);
+        /* helper sweep · P8 mac: the profile decides which Wanigan tools this session is granted. */
+        mcpFile = writeMcpConfig(project.id, cwd, id0, opts.providerId);
         if (mcpFile) injected.push('--mcp-config', mcpFile);
       }
     }
@@ -1279,7 +1285,8 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   let capsuleDelivery: GoalCapsuleDelivery | null = null;
   if (opts.goalCapsule) {
     if (instructionChannel) {
-      capsuleText = goalCapsuleText({ ...opts.goalCapsule, canClaimLive: mcpFile !== null });
+      /* helper sweep · P8 mac: the capsule only offers the Goal tools this profile was granted. */
+      capsuleText = goalCapsuleText({ ...opts.goalCapsule, canClaimLive: mcpFile !== null && goalToolsGranted(opts.providerId) });
       capsuleDelivery = { channel: def.harness === 'codex' ? 'developer-instructions' : 'system-prompt', reason: null };
     } else {
       capsuleDelivery = {
@@ -1524,7 +1531,8 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   const inheritedTitle = savedResume
     ? ((db().prepare('SELECT title FROM session_log WHERE id = ?').get(savedResume.sessionId) as { title?: string | null } | undefined)?.title ?? null)
     : null;
-  const derivedTitle = deriveSessionTitle(initialPrompt) ?? inheritedTitle;
+  /* helper sweep · P8 mac: through the project's title template when it has one; identical to deriveSessionTitle when it does not. */
+  const derivedTitle = (initialPrompt ? launchTitle(project, initialPrompt, id) : null) ?? deriveSessionTitle(initialPrompt) ?? inheritedTitle;
   if (derivedTitle) meta.displayTitle = derivedTitle;
 
   const recordSessionHistory = () => {

@@ -13,6 +13,10 @@ import { trustFor } from '../policy';
 import * as control from '../control';
 import { recallEnabled, recallTranscripts } from '../transcripts';
 import type { ProviderId, RunConfig, SourceConfig, SystemBlock } from '../../shared/types';
+/* ── helper sweep · P8 mac ── */
+import { toolGrantFor } from './tool-grants';
+import { refusal, toolGranted } from '../../shared/mcp-tool-grants';
+import { providerById } from '../providers';
 
 /**
  * The outbound half of MCP: Wanigan itself, as a server a running session can
@@ -408,8 +412,27 @@ const RECALL_TOOL: ToolDef = {
 
 /** The tool list this caller sees: the fixed set, plus recall when its project opted in. */
 function toolsFor(caller: McpCaller): ToolDef[] {
-  return recallEnabled(caller.projectId) ? [...TOOLS, RECALL_TOOL] : TOOLS;
+  const all = recallEnabled(caller.projectId) ? [...TOOLS, RECALL_TOOL] : TOOLS;
+  /* ── helper sweep · P8 mac ── only the tools this session's profile was granted are listed. */
+  const grant = toolGrantFor(callerProfile(caller));
+  return all.filter((tool) => toolGranted(grant, tool.name));
 }
+
+/* ── helper sweep · P8 mac ── */
+/**
+ * The provider profile a caller's session was launched under, read from its
+ * own session row — frozen at launch, never anything the client sent.
+ */
+function callerProfile(caller: McpCaller): string | null {
+  const row = db().prepare('SELECT provider_id FROM session_log WHERE id = ?').get(caller.sessionId) as { provider_id: string | null } | undefined;
+  return row?.provider_id ?? null;
+}
+
+/** Every tool name this server can serve, for the offline suite to hold against the grant catalogue. */
+export function servedToolNames(): string[] {
+  return [...TOOLS, RECALL_TOOL].map((tool) => tool.name);
+}
+/* ── end helper sweep · P8 mac ── */
 
 /**
  * The scope a recall is confined to, read from the caller's own session row
@@ -646,6 +669,14 @@ function requireRunProject(run: { project_id: string | null }, caller: McpCaller
 }
 
 async function callTool(name: string, args: Record<string, unknown>, caller: McpCaller): Promise<ToolResult> {
+  /* ── helper sweep · P8 mac ── checked on every call, not only at listing:
+     a client that never listed, or listed before the operator narrowed the
+     grant, is refused here by name. Unknown names fall through to the default
+     case's "No such tool". */
+  const profile = callerProfile(caller);
+  if (servedToolNames().includes(name) && !toolGranted(toolGrantFor(profile), name)) {
+    return toolError(refusal(name, providerById(profile ?? '')?.label ?? profile ?? 'this provider’s'));
+  }
   switch (name) {
     case 'wanigan_estimate_run': {
       const cfg = scopedRunConfig(args, caller);

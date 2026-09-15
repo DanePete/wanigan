@@ -610,6 +610,8 @@ function migratePhases(d: Database.Database) {
   /* ── end helper sweep · P9 opinions ── */
   /* ── helper sweep · P6 ux ── */
   migrateHelperUx(d);
+  /* ── helper sweep · P8 mac ── */
+  migrateHelperMac(d);
 }
 
 /**
@@ -1928,3 +1930,80 @@ function migrateHelperUx(d: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_recent_section_members_section ON recent_section_members(section_id, position);
   `);
 }
+
+/* ── helper sweep · P8 mac ── */
+
+/**
+ * What the Mac-around-the-app package keeps: a ledger of every automation
+ * socket call, favourite project scripts and the commands an operator ran from
+ * them, and line ranges attributed to the session that wrote them. All
+ * additive; a build without these tables simply never reads them.
+ */
+function migrateHelperMac(d: Database.Database) {
+  d.exec(`
+    -- One row per automation socket call: the verb, the peer process as pid
+    -- and executable (never argv), and what happened. Sizes, never text.
+    CREATE TABLE IF NOT EXISTS automation_ledger (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      at           INTEGER NOT NULL,
+      verb         TEXT NOT NULL,
+      session_id   TEXT,
+      project_id   TEXT,
+      peer_pid     INTEGER,
+      peer_command TEXT NOT NULL,
+      outcome      TEXT NOT NULL,
+      detail       TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_automation_ledger_at ON automation_ledger(at DESC);
+
+    -- A script the operator starred, per project. The source says which file
+    -- defines it, so a package.json "test" and a Makefile "test" are two rows.
+    CREATE TABLE IF NOT EXISTS script_favourites (
+      project_id TEXT NOT NULL,
+      source     TEXT NOT NULL,
+      name       TEXT NOT NULL,
+      added_at   INTEGER NOT NULL,
+      PRIMARY KEY (project_id, source, name)
+    );
+
+    -- A command the operator ran in their own terminal from the script
+    -- launcher. Recorded as the operator's, apart from anything an agent ran.
+    CREATE TABLE IF NOT EXISTS operator_runs (
+      id          TEXT PRIMARY KEY,
+      at          INTEGER NOT NULL,
+      project_id  TEXT,
+      cwd         TEXT NOT NULL,
+      source      TEXT NOT NULL,
+      name        TEXT NOT NULL,
+      command     TEXT NOT NULL,
+      exit_code   INTEGER,
+      ended_at    INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_operator_runs_project ON operator_runs(project_id, at DESC);
+
+    -- Lines a session added, as ranges per file per commit (or per checkpoint
+    -- turn for work never committed). Recomputed wholesale per session.
+    CREATE TABLE IF NOT EXISTS line_attribution (
+      session_id  TEXT NOT NULL,
+      commit_hash TEXT NOT NULL,
+      origin      TEXT NOT NULL,
+      turn        INTEGER,
+      file        TEXT NOT NULL,
+      start_line  INTEGER NOT NULL,
+      end_line    INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_line_attribution_session ON line_attribution(session_id);
+    CREATE INDEX IF NOT EXISTS idx_line_attribution_commit ON line_attribution(commit_hash, file);
+    CREATE TABLE IF NOT EXISTS line_attribution_runs (
+      session_id  TEXT PRIMARY KEY,
+      computed_at INTEGER NOT NULL,
+      repo_root   TEXT NOT NULL,
+      base        TEXT,
+      head        TEXT,
+      lines_added INTEGER NOT NULL,
+      commits     INTEGER NOT NULL,
+      detail      TEXT
+    );
+  `);
+}
+/* ── end helper sweep · P8 mac ── */

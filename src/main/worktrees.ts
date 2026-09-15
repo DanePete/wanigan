@@ -5,6 +5,8 @@ import { runGit, head as headOf, repoState } from './git';
 import { listProjects } from './store';
 import type { WorktreeInfo } from '../shared/types';
 import { removalOutcome, revertCheckDue, revertGrepPattern, type WorktreeOutcome } from '../shared/spend-yield';
+/* ── helper sweep · P8 mac ── */
+import { refProblem } from '../shared/naming-templates';
 
 /**
  * Three agents on one working tree overwrite each other's edits, and the loser
@@ -385,7 +387,15 @@ export async function createWorktree(
      (a fetched pull request head). The base is still what is recorded as the
      merge target, so the worktree behaves like every other Wanigan worktree. */
   checkoutOverride?: string,
+  /* helper sweep · P8 mac: a project's branch template, already rendered. */
+  branchName?: string | null,
 ): Promise<WorktreeInfo> {
+  /* ── helper sweep · P8 mac ── a project's branch template, already rendered;
+     held to git's ref rules here too, because this is the line before git. */
+  if (branchName) {
+    const why = refProblem(branchName);
+    if (why) throw new Error(`The project's branch naming template produced “${branchName}”, which git would refuse: ${why} Change it in Settings → Projects & safety.`);
+  }
   const root = await repoRootFor(repoRoot);
   if (!root) {
     throw new Error(`${repoRoot} is not a git repository, so there is nothing to branch from. Add the project's repo root instead, or run this session without isolation.`);
@@ -418,7 +428,8 @@ export async function createWorktree(
   const slug = slugify(label);
   const stem = `${path.basename(root)}-${short}`;
   let dir = path.join(parent, stem);
-  let branch = `wanigan/${slug}-${short}`;
+  const branchBase = branchName || `wanigan/${slug}-${short}`;
+  let branch = branchBase;
   // A re-run of the same session, or two labels colliding on one short id, must
   // not land on an existing branch — git would refuse, and forcing it would
   // reset someone else's work.
@@ -427,7 +438,7 @@ export async function createWorktree(
       throw new Error(`Could not find a free worktree name for ${path.basename(root)} — 50 of them already exist under ${parent}. Remove the ones you are done with first.`);
     }
     dir = path.join(parent, `${stem}-${n}`);
-    branch = `wanigan/${slug}-${short}-${n}`;
+    branch = `${branchBase}-${n}`;
   }
 
   // A worktree add is a full checkout; on a big repo that is minutes, and the

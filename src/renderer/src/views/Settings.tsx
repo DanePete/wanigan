@@ -12,6 +12,8 @@ import { harnessLabel, proposeAccountDir, signInCommand } from '@shared/accounts
 import { TRUST_COPY, TRUST_LEVELS, trustCopy } from '@shared/types';
 import { DEMO_PROMPTS } from '@shared/demo';
 import { ConfirmNote, Explainer, Icon, Note, PageHead, Reading, Section, SectionHead, Stat, ago, num } from '../components/bits';
+/* helper sweep · P8 mac */
+import { AutomationSocketSettings, DockAndMenuBarSettings, McpToolGrantsSettings, NamingTemplateSettings } from '../components/MacAround';
 import type { IconName } from '../components/bits';
 import { useRememberedScroll } from '../components/viewMemory';
 import ThemeControl from '../components/ThemeControl';
@@ -88,11 +90,16 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'agents', tabLabel: 'Agents', section: 'Grok · xAI', hint: 'xAI key for Grok sessions', keywords: 'grok xai x.ai key anthropic-compatible elon' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Projects', hint: 'Add and remove repositories', keywords: 'project repository folder add remove' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Worktrees', hint: 'Isolated worktrees and cleanup', keywords: 'worktree isolated branch cleanup orphan' },
+  /* helper sweep · P8 mac */
+  { tab: 'projects', tabLabel: 'Projects & safety', section: 'Session names and branches', hint: 'Title and worktree branch formats per project', keywords: 'naming title branch format template ticket jira prefix worktree name' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Trust and the policy ledger', hint: 'Trust levels, decisions, export', keywords: 'trust policy ledger permission audit export' },
   { tab: 'automation', tabLabel: 'Automation', section: 'Spending', hint: 'Cap the estimated cost per batch run', keywords: 'spend cap cost limit usd budget' },
   { tab: 'automation', tabLabel: 'Automation', section: 'Dispatcher', hint: 'Concurrency limits and the queue', keywords: 'concurrency limits queue dispatcher interactive headless batch parallel' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Phone monitor', hint: 'iPad/phone monitor, alerts, remote', keywords: 'phone ipad mobile tailscale ntfy push alerts remote pairing' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Before you leave', hint: 'Can this Mac be left alone and still answer', keywords: 'sleep awake battery power lid closed walk away leave readiness restart resume reachable overnight' },
+  /* helper sweep · P8 mac */
+  { tab: 'connections', tabLabel: 'Connections', section: 'Wanigan tools per provider', hint: 'All, none or selected Wanigan MCP tools per profile', keywords: 'mcp tools grant provider profile claude codex subset disable wanigan server per-provider' },
+  { tab: 'connections', tabLabel: 'Connections', section: 'Automation socket', hint: 'A local, owner-only socket your scripts can drive', keywords: 'automation socket unix script cli draft send ledger token local api' },
   { tab: 'connections', tabLabel: 'Connections', section: 'MCP servers', hint: 'Tool servers agents may use', keywords: 'mcp server tools stdio http' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Observation', hint: 'Telemetry, hooks, checkpoints, archive', keywords: 'telemetry hooks checkpoints notifications archive transcripts observation pet retention' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Search transcripts', hint: 'Full-text search of the archive', keywords: 'transcript search fts archive conversation history full-text' },
@@ -105,6 +112,8 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'backup', tabLabel: 'Backup', section: 'Config files Wanigan rewrites', hint: 'Which state files parse, and what is refused', keywords: 'config state json parse corrupt trust mcp pack atomic environment NODE_OPTIONS' },
   { tab: 'app', tabLabel: 'App', section: 'Appearance', hint: 'Theme: system, light, dark', keywords: 'appearance theme light dark system colour color' },
   { tab: 'app', tabLabel: 'App', section: 'Motion', hint: 'Animation comfort', keywords: 'motion animation reduce comfort' },
+  /* helper sweep · P8 mac */
+  { tab: 'app', tabLabel: 'App', section: 'Dock and menu bar', hint: 'A count on the Dock icon and live sessions in the menu bar', keywords: 'dock badge menu bar tray menubar status item count attention halt' },
   { tab: 'app', tabLabel: 'App', section: 'Demo mode', hint: 'Fictional workspace and demo prompts', keywords: 'demo mode mask screenshot share names prompt copy demonstration sample ai companion' },
 ];
 
@@ -1033,6 +1042,8 @@ export default function Settings({
           <SettingsTabPanel tab={settingsTabInfo('projects')} active={settingsTab === 'projects'}>
             <Projects projects={projects} onAddProject={onAddProject} onRemoveProject={onRemoveProject} />
             <Worktrees />
+            {/* helper sweep · P8 mac */}
+            <NamingTemplateSettings projects={projects} />
             <Trust projects={projects} onAddProject={onAddProject} />
           </SettingsTabPanel>
 
@@ -1085,6 +1096,9 @@ export default function Settings({
           <SettingsTabPanel tab={settingsTabInfo('connections')} active={settingsTab === 'connections'}>
             <PhoneMonitor />
             <Mcp projects={projects} prefs={prefs} pending={pending} setFlag={setFlag} />
+            {/* helper sweep · P8 mac */}
+            <McpToolGrantsSettings providers={providers} />
+            <AutomationSocketSettings />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={settingsTabInfo('privacy')} active={settingsTab === 'privacy'}>
@@ -1105,6 +1119,8 @@ export default function Settings({
           <SettingsTabPanel tab={settingsTabInfo('app')} active={settingsTab === 'app'}>
             <Appearance preference={themePreference} resolved={resolvedTheme} onChange={onThemeChange} />
             <Motion prefs={prefs} pending={pending} setPref={setPref} />
+            {/* helper sweep · P8 mac */}
+            <DockAndMenuBarSettings />
             <DemoPanel />
           </SettingsTabPanel>
         </div>

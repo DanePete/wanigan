@@ -72,6 +72,17 @@ import type { Adjudication, OpinionKind, OpinionLedger, OpinionPreview, OpinionP
 
 /* ── helper sweep · P1 policy ── */
 import type { ApprovalDetail, AutoModeView, ExposureLeadView, FatigueReport, GateSelfTestRun, GrantSetting, PolicySignal, SkillSurfaceView, StoredTrace } from '../shared/types';
+/* ── helper sweep · P8 mac ── */
+import type { MacSettings } from '../shared/mac-presence';
+import type { AutomationLedgerRow, AutomationStatus } from '../shared/automation-protocol';
+import type { OperatorTerminal, ScriptListing, ScriptSource } from '../shared/project-scripts';
+import type { McpToolGrant, McpToolInfo } from '../shared/mcp-tool-grants';
+import type { NamingTemplates } from '../shared/naming-templates';
+import type { WeeklyRecap } from '../shared/weekly-recap';
+import type { HookBenchResult } from '../shared/hook-bench';
+import type { ChainCheck } from '../shared/transcript-chain';
+import type { AnnotatedRange, AttributionSummary } from '../shared/line-attribution';
+/* ── end helper sweep · P8 mac ── */
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -1125,6 +1136,83 @@ const api = {
     openCodeRail: (sessionId: string) => call<{ opened: boolean }>('ux:openCodeRail', sessionId),
     railSession: (sessionId: string) => call<{ id: string; projectName: string; root: string; title: string | null; live: boolean; checkpointsSupported: boolean }>('ux:railSession', sessionId),
   },
+  /* ── helper sweep · P8 mac ── */
+  mac: {
+    settings: () => call<MacSettings>('mac:settings'),
+    setSetting: (key: keyof MacSettings, value: boolean) => call<MacSettings>('mac:setSetting', key, value),
+  },
+  automation: {
+    status: () => call<AutomationStatus>('automation:status'),
+    ledger: (limit?: number) => call<AutomationLedgerRow[]>('automation:ledger', limit),
+    takeDrafts: () => call<{ sessionId: string; text: string; at: number }[]>('automation:takeDrafts'),
+    // A script put words into a session's composer through the automation
+    // socket. The renderer lands them as a draft; nothing is sent from here.
+    onDraft: (cb: (draft: { sessionId: string; text: string }) => void) => {
+      const h = (_e: unknown, draft: { sessionId: string; text: string }) => cb(draft);
+      listen('automation:draft', h);
+      return () => ipcRenderer.removeListener('automation:draft', h);
+    },
+  },
+  // The script launcher and the operator's own terminals. Main rebuilds every
+  // command line from the file on disk; the renderer names a script, not text.
+  scripts: {
+    list: (projectId: string, target?: string | null) => call<ScriptListing>('scripts:list', projectId, target ?? null),
+    favourite: (projectId: string, source: ScriptSource, name: string, on: boolean) =>
+      call<{ source: ScriptSource; name: string }[]>('scripts:favourite', projectId, source, name, on),
+    run: (projectId: string, source: ScriptSource, name: string, target?: string | null) =>
+      call<OperatorTerminal>('scripts:run', projectId, source, name, target ?? null),
+    recentRuns: (projectId: string) =>
+      call<{ at: number; cwd: string; source: string; name: string; command: string; exitCode: number | null }[]>('scripts:recentRuns', projectId),
+  },
+  attribution: {
+    summary: (sessionId: string) => call<AttributionSummary>('attribution:summary', sessionId),
+    compute: (sessionId: string) => call<AttributionSummary>('attribution:compute', sessionId),
+    file: (sessionId: string, rel: string) => call<{ ranges: AnnotatedRange[]; lines: number; unmarked: number; note: string | null }>('attribution:file', sessionId, rel),
+    exportNotes: (sessionId: string) => call<{ written: number; skipped: number; ref: string; cancelled?: boolean }>('attribution:exportNotes', sessionId),
+  },
+  chain: {
+    check: (ids: string[]) => call<Record<string, ChainCheck>>('chain:check', ids),
+  },
+  hookBench: {
+    run: (target: { projectPath: string; source: string; event: string; ordinal: number }) =>
+      call<HookBenchResult | { cancelled: true }>('hookBench:run', target),
+  },
+  recap: {
+    week: (projectId: string, back = 0) => call<WeeklyRecap>('recap:week', projectId, back),
+    exportMarkdown: (projectId: string, back = 0) => call<string | null>('recap:export', projectId, back),
+  },
+  naming: {
+    get: (projectId: string) => call<NamingTemplates>('naming:get', projectId),
+    set: (projectId: string, templates: NamingTemplates) => call<NamingTemplates>('naming:set', projectId, templates),
+  },
+  mcpTools: {
+    state: (profileIds: string[]) => call<{ catalogue: McpToolInfo[]; grants: Record<string, McpToolGrant> }>('mcpTools:state', profileIds),
+    set: (profileId: string, grant: McpToolGrant) => call<McpToolGrant>('mcpTools:set', profileId, grant),
+  },
+  operatorTerminal: {
+    open: (projectId: string, target?: string | null) => call<OperatorTerminal>('opterm:open', projectId, target ?? null),
+    list: () => call<OperatorTerminal[]>('opterm:list'),
+    scrollback: (id: string) => call<string>('opterm:scrollback', id),
+    close: (id: string) => call<OperatorTerminal[]>('opterm:close', id),
+    resize: (id: string, cols: number, rows: number) => call<boolean>('opterm:resize', id, cols, rows),
+    write: (id: string, data: string) => call<boolean>('opterm:write', id, data),
+    onData: (cb: (chunk: { id: string; data: string }) => void) => {
+      const h = (_e: unknown, chunk: { id: string; data: string }) => cb(chunk);
+      listen('opterm:data', h);
+      return () => ipcRenderer.removeListener('opterm:data', h);
+    },
+    onExit: (cb: (exit: { id: string; exitCode: number }) => void) => {
+      const h = (_e: unknown, exit: { id: string; exitCode: number }) => cb(exit);
+      listen('opterm:exit', h);
+      return () => ipcRenderer.removeListener('opterm:exit', h);
+    },
+    onList: (cb: (list: OperatorTerminal[]) => void) => {
+      const h = (_e: unknown, list: OperatorTerminal[]) => cb(list);
+      listen('opterm:list', h);
+      return () => ipcRenderer.removeListener('opterm:list', h);
+    },
+  },
+  /* ── end helper sweep · P8 mac ── */
 };
 
 contextBridge.exposeInMainWorld('wanigan', api);

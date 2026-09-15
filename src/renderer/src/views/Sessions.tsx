@@ -29,6 +29,10 @@ import { OPEN_TIMELINE_EVENT } from '../components/attentionActions';
 import { arrangeRecent, filterByTag, type TagColor } from '@shared/session-organize';
 import { NewSectionForm, OrganisePanel, SectionHeading, TagChips, TagFilter, useOrganisation } from '../components/SessionOrganize';
 import SessionCopyActions from '../components/SessionCopyActions';
+/* helper sweep · P8 mac */
+import { OPEN_SCRIPTS_EVENT, type OpenScriptsDetail } from '../components/ScriptLauncher';
+import { ResumeChainDialog } from '../components/ResumeChainDialog';
+import { chainWarning, type ChainCheck } from '@shared/transcript-chain';
 import '../styles/sessions.css';
 /* helper sweep · P5 runtime */
 import SessionRuntimeDetails from '../components/SessionRuntimeDetails';
@@ -291,6 +295,15 @@ export default function Sessions({
   const org = useOrganisation(organiseIds);
   const [organising, setOrganising] = useState<string | null>(null);
   const [recentTag, setRecentTag] = useState<string | null>(null);
+  /* helper sweep · P8 mac: each Recent conversation's transcript chain, read-only and cached in main by size and mtime. */
+  const [chains, setChains] = useState<Record<string, ChainCheck>>({});
+  const pastIds = past.filter((p) => p.live && p.conversationId).map((p) => p.id).join('|');
+  useEffect(() => {
+    if (!pastIds) return;
+    let live = true;
+    window.wanigan.chain.check(pastIds.split('|')).then((r) => { if (live) setChains(r); }).catch(() => {});
+    return () => { live = false; };
+  }, [pastIds]);
   /**
    * Whether this machine has more than one account at all.
    *
@@ -423,12 +436,24 @@ export default function Sessions({
   /* helper sweep · P2 attention: a resume is checked for a second writer
      first, and the operator chooses between a fork, resuming anyway, or not. */
   const [resumeWarning, setResumeWarning] = useState<{ target: ResumeTarget; check: ResumeCheck; name: string } | null>(null);
-  async function resume(p: ResumeTarget, how: 'check' | 'anyway' | 'fork' = 'check') {
+  /* helper sweep · P8 mac: the transcript's message chain is checked first,
+     read-only; 'chain-ok' is a resume the operator confirmed past that warning,
+     which still goes through the collision check below. */
+  const [chainWarningFor, setChainWarningFor] = useState<{ target: ResumeTarget; check: Extract<ChainCheck, { checked: true }>; name: string } | null>(null);
+  async function resume(p: ResumeTarget, how: 'check' | 'chain-ok' | 'anyway' | 'fork' = 'check') {
     if (resumePendingRef.current) return;
     resumePendingRef.current = true;
     setResuming(p.id);
     try {
       if (how === 'check') {
+        let chain: ChainCheck | null = null;
+        try { chain = (await window.wanigan.chain.check([p.id]))[p.id] ?? null; } catch { /* an unreadable transcript is no evidence of a break */ }
+        if (chain?.checked && chain.skipped > 0) {
+          setChainWarningFor({ target: p, check: chain, name: p.title ?? p.projectName });
+          return;
+        }
+      }
+      if (how === 'check' || how === 'chain-ok') {
         let check: ResumeCheck | null = null;
         try { check = await window.wanigan.helper.resumeCheck(p.id); } catch { /* no record: the launch path has its own guards */ }
         if (check && (check.liveInWanigan || check.outsideWriter)) {
@@ -950,6 +975,8 @@ export default function Sessions({
                       </span>
                       {/* helper sweep · P6 ux */}
                       <TagChips tags={org.tagsOf(p.id)} />
+                      {/* helper sweep · P8 mac */}
+                      {(() => { const c = chains[p.id]; const w = c?.checked ? chainWarning(c) : null; return w ? <span className="past-chain">⚠ {w}</span> : null; })()}
                     </span>
                     <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>
                       {resuming === p.id ? '…' : '↻'}
@@ -1153,6 +1180,16 @@ export default function Sessions({
                 {active?.status === 'exited' && <FocusBtn className="btn session-tab-close"
                   title="Close exited session (⌘⌫)" aria-label={`Close exited session for ${active.projectName}`}
                   onClick={() => void closeTab(active.id)}>Close session</FocusBtn>}
+                {/* helper sweep · P8 mac: the project's scripts, run in the operator's own terminal. */}
+                {(active?.projectId ?? selectedProjectId ?? projects[0]?.id) && (
+                  <FocusBtn className="btn session-scripts"
+                    aria-label="Scripts: run this project's package.json scripts, Makefile targets and justfile recipes in your own terminal"
+                    onClick={() => window.dispatchEvent(new CustomEvent<OpenScriptsDetail>(OPEN_SCRIPTS_EVENT, {
+                      detail: { projectId: (active?.projectId ?? selectedProjectId ?? projects[0]?.id)!, target: active?.worktree ?? null },
+                    }))}>
+                    <Icon name="play" /> Scripts
+                  </FocusBtn>
+                )}
                 <FocusBtn className="btn tab-new-session" onClick={() => setDialog(true)}
                   title="New session (⌘T)" aria-label="New session (Command T)"><Icon name="plus" /> New session</FocusBtn>
                 <FocusBtn className="btn session-side-panel-toggle" aria-pressed={detailsVisible}
@@ -1404,6 +1441,12 @@ export default function Sessions({
           // writer leaves "anyway" on the table.
           onAnyway={resumeWarning.check.liveInWanigan ? null
             : () => { const t = resumeWarning.target; setResumeWarning(null); void resume(t, 'anyway'); }} />
+      )}
+      {/* helper sweep · P8 mac */}
+      {chainWarningFor && (
+        <ResumeChainDialog name={chainWarningFor.name} check={chainWarningFor.check}
+          onClose={() => setChainWarningFor(null)}
+          onResume={() => { const t = chainWarningFor.target; setChainWarningFor(null); void resume(t, 'chain-ok'); }} />
       )}
     </div>
   );

@@ -4,6 +4,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { db, dataDir, ensurePrivateDir, ensurePrivateFile } from '../db';
 import { projectById } from '../store';
 import { issueMcpSessionCapability, revokeMcpSessionCapabilities } from './capabilities';
+/* ── helper sweep · P8 mac ── */
+import { toolGrantFor } from './tool-grants';
+import { grantsAnything } from '../../shared/mcp-tool-grants';
 import type {
   McpApprovedCommand, McpServerClassification, McpServerConfig, McpServerReview,
   McpServerStatus, McpServerTrustState,
@@ -682,7 +685,7 @@ type HttpEntry = { type: 'http'; url: string; headers?: Record<string, string> }
  * — the same placeholder the batch presets use — so one global server row can
  * serve every repo instead of being duplicated per project.
  */
-export function writeMcpConfig(projectId: string | null, projectPath: string, sessionId?: string): string | null {
+export function writeMcpConfig(projectId: string | null, projectPath: string, sessionId?: string, profileId?: string): string | null {
   const fill = (v: string) => v.split(PROJECT_PATH_SLOT).join(projectPath);
   const entries: Record<string, StdioEntry | HttpEntry> = {};
 
@@ -732,7 +735,12 @@ export function writeMcpConfig(projectId: string | null, projectPath: string, se
   // Wanigan's own server, when it is running. This is the point of the whole
   // phase: a session that finds itself facing ten thousand rows can hand them
   // to the batch engine instead of grinding through them at full price.
-  const capability = sessionId && projectId
+  //
+  // helper sweep · P8 mac: a profile the operator granted no Wanigan tools
+  // gets no Wanigan server in its config and no capability minted for it. The
+  // server still refuses any tool outside a partial grant on every call; this
+  // is the half that keeps a "none" profile from being able to connect at all.
+  const capability = sessionId && projectId && grantsAnything(toolGrantFor(profileId))
     ? issueMcpSessionCapability(sessionId, projectId)
     : null;
   if (capability) {

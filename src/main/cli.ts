@@ -33,7 +33,9 @@ const OK = 0;
 const FAILED = 1;
 const USAGE = 2;
 
-const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'phone-launch', 'phone-start', 'learn-probe', 'learn-phrase', 'learn-sweep', 'learn-consolidate', 'help'] as const;
+const COMMANDS = ['runs', 'status', 'poll', 'export', 'queue', 'sessions', 'phone-launch', 'phone-start', 'learn-probe', 'learn-phrase', 'learn-sweep', 'learn-consolidate', 'help',
+  /* ── helper sweep · P8 mac ── */
+  'socket'] as const;
 type Command = (typeof COMMANDS)[number];
 
 // Scout rows are created only by the fixed weekly schedule. Keeping this
@@ -505,6 +507,11 @@ function cmdHelp(): number {
                                repeated success can never resolve
   learn-consolidate            run one consolidation pass now, and report how
                                much of the queue it reached
+  socket <verb> …              the automation socket's reference client, against
+                               a running Wanigan with the socket turned on:
+                               list | status <session> | draft <session> <text…>
+                               | send <session> <text…>
+                               | new <projectId> <prompt…> [--provider <id>]
   help                         this
 
 Runs against the same database the app uses, so anything queued here is
@@ -716,6 +723,8 @@ export async function runCli(argv: string[]): Promise<number> {
       case 'learn-phrase': return await cmdLearnPhrase(rest);
       case 'learn-sweep': return await cmdLearnSweep(rest);
       case 'learn-consolidate': return await cmdLearnConsolidate();
+      /* ── helper sweep · P8 mac ── */
+      case 'socket': return await cmdSocket(rest);
     }
     return USAGE;
   } catch (e) {
@@ -723,6 +732,28 @@ export async function runCli(argv: string[]): Promise<number> {
     return FAILED;
   }
 }
+
+/* ── helper sweep · P8 mac ── */
+
+/**
+ * The automation socket's reference client. It talks to a running Wanigan over
+ * the socket rather than opening the database, because every verb it carries
+ * is something only the live app can do — a composer draft, a PTY write, an
+ * approval dialog — and the socket is where those are ledgered.
+ */
+async function cmdSocket(args: string[]): Promise<number> {
+  const { clientCommand } = await import('../shared/automation-protocol');
+  // Not automation-socket.ts: that module imports the session manager, which
+  // loads node-pty, and a client has no business starting a PTY library.
+  const { automationPathsUnder, automationRequest } = await import('./automation-client');
+  const command = clientCommand(args);
+  if (!command.ok) { err(command.error); return USAGE; }
+  const answer = await automationRequest(automationPathsUnder(app.getPath('userData')), command.request);
+  if (answer.ok) { out(JSON.stringify(answer.data, null, 2)); return OK; }
+  err(answer.error ?? 'The socket refused the request.');
+  return FAILED;
+}
+/* ── end helper sweep · P8 mac ── */
 
 /**
  * Auto-update is deliberately not wired.

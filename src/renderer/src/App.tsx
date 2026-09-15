@@ -39,6 +39,9 @@ import HelperShellKeys from './components/HelperShellKeys';
 import HelperUxKeys from './components/HelperUxKeys';
 import { shortcutRows, type ShortcutRow } from './bindings';
 import { chordEventInit, shortcutQuery, shortcutRunnability } from '@shared/shortcut-search';
+/* helper sweep · P8 mac */
+import { AutomationDraftLanding } from './components/MacAround';
+import OperatorTerminals from './components/ScriptLauncher';
 import { ViewMemoryProvider, ViewMemoryScope } from './components/viewMemory';
 import { COMPOSER_MENU_EVENT, readComposerShown, writeComposerShown } from './components/composerPreference';
 import { useThemePreference } from './theme';
@@ -168,6 +171,8 @@ const IN_APP_ALERT_MS = 12_000;
  * two-step confirm has if the first step never expires.
  */
 const HALT_ARM_MS = 6_000;
+/* helper sweep · P8 mac: raised when the menu-bar item asks for the halt confirmation. */
+const ARM_HALT_EVENT = 'wanigan:arm-halt';
 
 type InAppAlertCard = InAppAlert & { id: string };
 /** Likewise for the shared project list: identity, name, path and branch. */
@@ -950,6 +955,11 @@ export default function App() {
           window.dispatchEvent(new CustomEvent(COMPOSER_MENU_EVENT, { detail: { show: route.show } }));
           if (route.show) go('sessions');
           break;
+        /* helper sweep · P8 mac: the menu-bar "Halt all agents…" arms the
+           header control; the second click is still the operator's, here. */
+        case 'halt':
+          window.dispatchEvent(new CustomEvent(ARM_HALT_EVENT));
+          break;
       }
     });
     return () => { off(); };
@@ -1230,6 +1240,10 @@ export default function App() {
       <HelperShellKeys activeSessionId={activeSessionId} openSession={openFromTriage} />
       {/* helper sweep · P6 ux: ⌘> quotes a selection into a message box. */}
       <HelperUxKeys activeSessionId={activeSessionId} />
+      {/* helper sweep · P8 mac: a script's draft lands in the composer, unsent. */}
+      <AutomationDraftLanding openSession={openFromTriage} />
+      {/* helper sweep · P8 mac: the script launcher and the operator's own terminals. */}
+      {!demoOn && <OperatorTerminals />}
       {startup?.phase === 'recovery' && (
         <section className="startup-recovery" role="alert">
           <div>
@@ -1837,13 +1851,22 @@ function HaltControl({ halt, onChange }: { halt: HaltState | null; onChange: (ne
     return () => window.clearTimeout(timer);
   }, [armed, armedAt]);
 
+  /* helper sweep · P8 mac: arm, and put focus on the confirming click, so the
+     menu-bar route lands on the same two-step control and nothing else. */
+  const haltButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const arm = () => { setArmedAt(Date.now()); window.requestAnimationFrame(() => haltButton.current?.focus()); };
+    window.addEventListener(ARM_HALT_EVENT, arm);
+    return () => window.removeEventListener(ARM_HALT_EVENT, arm);
+  }, []);
+
   // While it is pulled the banner below owns the state and the way out of it.
   // A second control saying the same thing in the header would be one more
   // place for the two to disagree.
   if (halt?.halted) return null;
 
   return (
-    <button className={`hdr-halt${armed ? ' armed' : ''}`} type="button" disabled={busy}
+    <button ref={haltButton} className={`hdr-halt${armed ? ' armed' : ''}`} type="button" disabled={busy}
             title="Stop every agent, schedule and queue, and refuse to start anything until you clear it"
             aria-label={armed
               ? 'Confirm: stop every agent, schedule and queue'

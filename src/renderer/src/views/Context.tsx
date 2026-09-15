@@ -11,6 +11,8 @@ import { CodexLoaderPanel, ReferenceLintPanel, SubagentsPanel } from '../compone
 import type { AgentDefinitionsReport, CodexLoaderReport, ReferenceLintReport } from '@shared/cost-types';
 /* ── helper sweep · P1 policy ── */
 import AutoModePanel from '../components/AutoModePanel';
+/* helper sweep · P8 mac */
+import { HookBenchButton, HookBenchResultView, type BenchOutcome } from '../components/HookBench';
 
 /**
  * "What will my agent actually know when it starts?"
@@ -662,7 +664,7 @@ function ContextProject({ projectId, projects, projectsRead, onReloadProjects, o
     config:<>{project&&<ConfigPinPanel projectId={project.id} pin={d.pin} read={d.pinRead}
         onChanged={pin=>setD(prev=>prev?{...prev,pin,pinRead:true}:prev)}/>}
       {e.config?<PanelError channel="settings" detail={e.config} onRetry={()=>load(true)}/>
-      :shows.config&&d.config?<ConfigPanel c={d.config}/>:emptyArea('config')}
+      :shows.config&&d.config?<ConfigPanel c={d.config} projectPath={project?.path ?? null}/>:emptyArea('config')}
       {/* ── helper sweep · P1 policy ── */}
       {project&&<AutoModePanel projectId={project.id}/>}</>,
     budget:e.instructions?<PanelError channel="instructions for the budget" detail={e.instructions} onRetry={()=>load(true)}/>
@@ -1064,7 +1066,9 @@ function fmtValue(v: unknown): string {
   } catch { return String(v); }
 }
 
-function ConfigPanel({ c }: { c: ProjectConfig }) {
+function ConfigPanel({ c, projectPath = null }: { c: ProjectConfig; projectPath?: string | null }) {
+  /* helper sweep · P8 mac: the hook bench's last result, shown under the hooks table. */
+  const [bench, setBench] = useState<BenchOutcome>(null);
   const projectHooks = c.hooks.filter((h) => h.from === 'project' || h.from === 'local');
   const shared = c.hooks.filter((h) => h.from === 'project');
   const also = [
@@ -1145,7 +1149,7 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
       ) : (
         <div className="ctx-scroll">
           <table className="grid">
-            <thead><tr><th>Event</th><th>Matcher</th><th>From</th><th>Runs</th><th>Defined in</th></tr></thead>
+            <thead><tr><th>Event</th><th>Matcher</th><th>From</th><th>Runs</th><th>Defined in</th><th>Test</th></tr></thead>
             <tbody>
               {c.hooks.map((h, i) => (
                 <tr key={h.event + h.source + i}>
@@ -1162,12 +1166,16 @@ function ConfigPanel({ c }: { c: ProjectConfig }) {
                     <span className="faint"> · {h.type}</span>
                   </td>
                   <td><span className="ctx-path faint">{h.source}</span></td>
+                  {/* helper sweep · P8 mac: position among this file's hooks for this event, as main re-reads it. */}
+                  <td><HookBenchButton projectPath={projectPath} hook={h} label={`${h.event} · ${h.matcher ?? 'any'}`} onOutcome={setBench}
+                        ordinal={c.hooks.slice(0, i).filter((x) => x.source === h.source && x.event === h.event).length} /></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+      <HookBenchResultView outcome={bench} onClose={() => setBench(null)} />
       {projectHooks.length > 0 && (
         <p className="faint" style={{ fontSize: 'var(--t-small)', marginTop: 6, lineHeight: 1.5 }}>
           {plural(projectHooks.length, 'hook')} are defined inside this project rather than in your home

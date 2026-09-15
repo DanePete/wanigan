@@ -10,6 +10,8 @@ import type { OrbPlay } from '../orb/runtime';
 import { usePresenceReactions } from '../orb/presence';
 import { Icon, Note, PageHead, Pill, SectionHead, Segmented, ago } from '../components/bits';
 import '../styles/mission.css';
+/* helper sweep · P8 mac */
+import WeeklyRecapSection from '../components/WeeklyRecap';
 
 const stateWord = { permission: 'Permission needed', error: 'Needs a look', finished: 'Turn finished',
   idle: 'Idle', working: 'Working', unknown: 'No attention signal' };
@@ -203,6 +205,8 @@ export default function MissionRoom({ story, followedSession, sessions=[], onFol
       {!snapshot && !error && <p className="dim">Loading your spaces…</p>}
       {snapshot && snapshot.running === 0 && snapshot.projects.length > 0 && <button className="mission-start" type="button" onClick={onNewSession}><Icon name="plus" />Start a session</button>}
     </section>
+    {/* helper sweep · P8 mac: this week, for this space, from recorded evidence. */}
+    {!demo && <WeeklyRecapSection projectId={projectId} />}
     <div className="mission-observed">{snapshot && <>{demo ? 'Fictional sample workspace' : <>From local records · Updated {ago(snapshot.readAt)}</>}{snapshot.sessionsTruncated && ' · Recent sessions shown'}</>}</div>
   </main>;
 }
