@@ -21,6 +21,7 @@
 
 import { parseShell, programOf, type ShellSegment } from './shell-parse.ts';
 import { expandHome, resolve } from './posix-path.ts';
+import { readComposerScripts, readJustfile, readMakefile, readPackageScripts, recipeCommand, type Makefile } from './script-manifests.ts';
 
 export type RunnerKind = 'npm' | 'pnpm' | 'yarn' | 'bun' | 'make' | 'just' | 'composer';
 
@@ -255,125 +256,37 @@ function runnersIn(command: string, cwd: string, home: string): { runner: Runner
 
 type Entry = { from: string; lines: { command: string; kind: ExplainStep['kind'] }[]; refs: { kind: RunnerKind; name: string }[]; raw: string };
 
+/*
+ * The manifests are read by script-manifests.ts, which the script launcher
+ * reads through too, so the target a person sees listed there is the target
+ * resolved here. These two adapters keep this module's contract: null is a
+ * file that could not be read as a manifest, and a `scripts` that is not an
+ * object reads as a manifest with no scripts, so the alias is reported missing
+ * rather than unreadable.
+ */
 function parsePackage(text: string | null | undefined): Record<string, string> | null {
   if (typeof text !== 'string') return null;
-  try {
-    const v: unknown = JSON.parse(text);
-    if (!v || typeof v !== 'object') return null;
-    const scripts = (v as { scripts?: unknown }).scripts;
-    if (!scripts || typeof scripts !== 'object') return {};
-    const out: Record<string, string> = {};
-    for (const [k, body] of Object.entries(scripts as Record<string, unknown>)) {
-      if (typeof body === 'string') out[k] = body;
-    }
-    return out;
-  } catch {
-    return null;
-  }
+  const read = readPackageScripts(text);
+  if (!read.ok) return read.problem === 'scripts-not-an-object' ? {} : null;
+  return Object.fromEntries(read.scripts.map((s) => [s.name, s.body]));
 }
 
 function parseComposer(text: string | null | undefined): Record<string, string[]> | null {
   if (typeof text !== 'string') return null;
-  try {
-    const v: unknown = JSON.parse(text);
-    if (!v || typeof v !== 'object') return null;
-    const scripts = (v as { scripts?: unknown }).scripts;
-    if (!scripts || typeof scripts !== 'object') return {};
-    const out: Record<string, string[]> = {};
-    for (const [k, body] of Object.entries(scripts as Record<string, unknown>)) {
-      if (typeof body === 'string') out[k] = [body];
-      else if (Array.isArray(body)) out[k] = body.filter((x): x is string => typeof x === 'string');
-    }
-    return out;
-  } catch {
-    return null;
-  }
+  const read = readComposerScripts(text);
+  if (!read.ok) return read.problem === 'scripts-not-an-object' ? {} : null;
+  return Object.fromEntries(read.scripts.map((s) => [s.name, s.lines]));
 }
 
-type MakeRule = { targets: string[]; prereqs: string[]; recipe: string[]; line: number };
-type Makefile = { rules: MakeRule[]; vars: Record<string, string>; includes: boolean; defaultGoal: string | null; recipePrefix: boolean };
-
-export function parseMakefile(text: string): Makefile {
-  const rules: MakeRule[] = [];
-  const vars: Record<string, string> = {};
-  let includes = false;
-  let defaultGoal: string | null = null;
-  let recipePrefix = false;
-  const physical = text.replace(/\r\n/g, '\n').split('\n');
-  let current: MakeRule | null = null;
-  for (let n = 0; n < physical.length; n++) {
-    let line = physical[n];
-    while (line.endsWith('\\') && n + 1 < physical.length) {
-      n += 1;
-      line = `${line.slice(0, -1)} ${physical[n].replace(/^\s+/, '')}`;
-    }
-    if (line.startsWith('\t')) {
-      if (current) current.recipe.push(line.slice(1));
-      continue;
-    }
-    if (!line.trim() || /^\s*#/.test(line)) continue;
-    current = null;
-    const trimmed = line.trim();
-    if (/^-?(include|sinclude)\s/.test(trimmed)) { includes = true; continue; }
-    if (/^\.RECIPEPREFIX\s*[:?]?=/.test(trimmed)) { recipePrefix = true; continue; }
-    const assign = /^(?:export\s+|override\s+)?([A-Za-z_.][A-Za-z0-9_.-]*)\s*(::?=|\?=|\+=|!=|=)\s*(.*)$/.exec(trimmed);
-    if (assign) {
-      if (assign[1] === '.DEFAULT_GOAL') defaultGoal = assign[3].trim();
-      else vars[assign[1]] = assign[2] === '+=' && vars[assign[1]] ? `${vars[assign[1]]} ${assign[3]}` : assign[3];
-      continue;
-    }
-    const rule = /^([^:#=]+?)\s*(::?)\s*([^=].*)?$/.exec(trimmed);
-    if (rule) {
-      const [deps, inline] = (rule[3] ?? '').split(/;(.*)/s);
-      current = {
-        targets: rule[1].trim().split(/\s+/),
-        prereqs: (deps ?? '').replace(/\|/g, ' ').trim().split(/\s+/).filter(Boolean),
-        recipe: inline && inline.trim() ? [inline.trim()] : [],
-        line: n + 1,
-      };
-      rules.push(current);
-    }
-  }
-  return { rules, vars, includes, defaultGoal, recipePrefix };
+/** Why a JSON manifest that exists could not be read, in words. */
+function jsonProblem(manifest: string, text: string): string {
+  const read = readPackageScripts(text);
+  return !read.ok && read.problem === 'not-an-object' ? `${manifest} is not a JSON object` : `${manifest} is not valid JSON`;
 }
 
-type Recipe = { name: string; deps: string[]; body: string[]; shebang: boolean; line: number };
-type Justfile = { recipes: Recipe[]; vars: Record<string, string>; imports: boolean; shellSet: boolean };
-
-export function parseJustfile(text: string): Justfile {
-  const recipes: Recipe[] = [];
-  const vars: Record<string, string> = {};
-  let imports = false;
-  let shellSet = false;
-  let current: Recipe | null = null;
-  const lines = text.replace(/\r\n/g, '\n').split('\n');
-  for (let n = 0; n < lines.length; n++) {
-    const line = lines[n];
-    if (/^[ \t]+\S/.test(line)) {
-      if (current) {
-        const body = line.replace(/^[ \t]+/, '');
-        if (!current.body.length && body.startsWith('#!')) current.shebang = true;
-        current.body.push(body);
-      }
-      continue;
-    }
-    if (!line.trim()) continue;
-    current = null;
-    if (/^\s*#/.test(line) || /^\[.*\]\s*$/.test(line)) continue;
-    if (/^(import|mod)\b/.test(line)) { imports = true; continue; }
-    if (/^set\s+shell\b/.test(line)) { shellSet = true; continue; }
-    if (/^set\s/.test(line) || /^alias\s/.test(line)) continue;
-    const assign = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_-]*)\s*:=\s*(.*)$/.exec(line);
-    if (assign) { vars[assign[1]] = assign[2]; continue; }
-    const head = /^@?([A-Za-z_][A-Za-z0-9_-]*)([^:]*?):(?!=)\s*(.*)$/.exec(line);
-    if (head) {
-      const deps = (head[3] ?? '').replace(/\([^)]*\)/g, (m) => m.slice(1, -1).split(/\s+/)[0] ?? '').split(/\s+/).filter((d) => d && d !== '&&');
-      current = { name: head[1], deps, body: [], shebang: false, line: n + 1 };
-      recipes.push(current);
-    }
-  }
-  return { recipes, vars, imports, shellSet };
-}
+/** Kept under their old names: callers and tests read a Makefile or justfile through these. */
+export const parseMakefile = readMakefile;
+export const parseJustfile = readJustfile;
 
 /* ── resolving ───────────────────────────────────────────────────────── */
 
@@ -416,7 +329,7 @@ function resolvePackage(call: RunnerCall, files: ManifestFiles, steps: ExplainSt
   if (scripts === null) {
     notes.push(text === null || text === undefined
       ? `There is no package.json at ${call.manifest}, so Wanigan cannot say what "${name}" runs.`
-      : `${call.manifest} is not valid JSON, so Wanigan cannot say what "${name}" runs.`);
+      : `${jsonProblem(call.manifest, text)}, so Wanigan cannot say what "${name}" runs.`);
     return false;
   }
   // Three answers, kept apart: not asked (no launch commit), absent at launch
@@ -475,7 +388,7 @@ function resolveComposer(call: RunnerCall, files: ManifestFiles, steps: ExplainS
   const scripts = parseComposer(text);
   const name = call.script ?? '';
   if (scripts === null) {
-    notes.push(text === null || text === undefined ? `There is no composer.json at ${call.manifest}.` : `${call.manifest} is not valid JSON.`);
+    notes.push(text === null || text === undefined ? `There is no composer.json at ${call.manifest}.` : `${jsonProblem(call.manifest, text)}.`);
     return false;
   }
   const launchText = files.launch ? files.launch[call.manifest] : undefined;
@@ -563,7 +476,7 @@ function resolveMake(call: RunnerCall, files: ManifestFiles, steps: ExplainStep[
       }
       const from = `Makefile › ${target}`;
       for (const line of rule.recipe) {
-        const cmd = line.replace(/^[@+-]+/, '').trim();
+        const cmd = recipeCommand(line, 'make');
         if (!cmd) continue;
         steps.push({ depth, from, command: cmd, kind: 'body' });
         for (const v of makeVarsIn(cmd)) {
@@ -613,7 +526,7 @@ function resolveJust(call: RunnerCall, files: ManifestFiles, steps: ExplainStep[
     const from = `justfile › ${name}`;
     if (recipe.shebang) notes.push(`${name} is a script for ${recipe.body[0].slice(2).trim()}, not shell lines; Wanigan shows it but cannot read what it does.`);
     for (const line of recipe.body) {
-      const cmd = line.replace(/^[@-]+/, '').trim();
+      const cmd = recipeCommand(line, 'just');
       if (!cmd || cmd.startsWith('#!')) continue;
       steps.push({ depth, from, command: cmd, kind: recipe.shebang ? 'interpreter-script' : 'body' });
       for (const m of cmd.matchAll(/\{\{\s*([^}]+?)\s*\}\}/g)) {
