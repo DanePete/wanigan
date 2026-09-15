@@ -71,10 +71,12 @@
 .rw-adv-line { margin: 0; font-size: var(--t-micro); line-height: 1.45; overflow-wrap: anywhere; }
 .rw-adv-ids { display: flex; flex-wrap: wrap; gap: var(--s-1); margin: 0; padding: 0; list-style: none; }
 .rw-adv-mal { border-color: var(--bad); color: var(--bad); }
-.rw-adv-coverage { display: grid; gap: var(--s-1); margin: 0; font-size: var(--t-micro); line-height: 1.45; }
-.rw-adv-cov { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 var(--s-2); }
-.rw-adv-cov dt { grid-row: span 2; color: var(--text-dim); }
-.rw-adv-cov dd { margin: 0; overflow-wrap: anywhere; }
+.rw-adv-coverage { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 var(--s-2); margin: 0; font-size: var(--t-micro); line-height: 1.45; }
+/* One grid for every ecosystem, so the names line up in one column. */
+.rw-adv-cov { display: contents; }
+.rw-adv-cov dt { grid-column: 1; grid-row: span 2; color: var(--text-dim); padding-top: var(--s-1); }
+.rw-adv-cov dd { grid-column: 2; margin: 0; overflow-wrap: anywhere; }
+.rw-adv-cov dd:first-of-type { padding-top: var(--s-1); }
 .rw-claims { margin-top: var(--s-2); }
 .rw-claims li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 var(--s-2); align-items: baseline; }
 .rw-claim-quote { overflow-wrap: anywhere; }

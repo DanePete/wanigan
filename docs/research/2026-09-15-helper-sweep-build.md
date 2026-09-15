@@ -4,7 +4,7 @@ Built 14–15 September 2026 on `feat/helper-sweep`, from the
 [helper sweep report](https://claude.ai/artifact/3bVrmdHkLTJScrKDQa1rfU) (raw
 findings in the main checkout at `.claude/research-2026-09-14-sweep/`). Nine
 packages were built in parallel worktrees and merged here in this order: P2, P3,
-P4, P1, P5, P9, P6, P8, P7. After the merges, an integration pass connected
+P4, P1, P5, P9, P6, P8, P7. P11 (dependencies, finished) was built on top of that. After the merges, an integration pass connected
 pieces that had been built separately.
 
 Nothing is pushed. No real agent session or paid call was started by any build,
@@ -29,7 +29,7 @@ what the report listed.
 | 6 | Usage-limit wait named, not stalled | Partly | P2: `limit-wait` / `limit-reset` / `limit-stopped`; resume-at-reset persisted and cancellable. The CLI sends no event when a wait *starts*, so the state is inferred from StopFailure `rate_limit` and says so |
 | 7 | Codex instruction budget meter | Built | P4: Codex loader in Context, projection pre-check, stale-reference lint |
 | 8 | Spend yield | Built | P4: worktree outcome columns, revert detection, `OTEL_METRICS_INCLUDE_REPOSITORY`; Insights › Where the money went |
-| 9 | New dependencies as review items | Partly | P3: parsers for ten manifest kinds, install-command detection. No per-turn attribution, no network advisory lookup |
+| 9 | New dependencies as review items | Built | P3: parsers for ten manifest kinds, install-command detection. P11: the turn that first made each change, read from the checkpoints, with a jump to its diff and whether an install ran in it (`shared/dependency-turns.ts`); an opt-in OSV advisory lookup with per-ecosystem coverage, publish-time "new, review" for npm and PyPI, malware first, and a cache with ages (`shared/dependency-advisories.ts`), disclosed in Settings and on the egress report |
 | 10 | What a session left running | Built | P5: process tree, listening ports, survivors after exit or Halt, verified stop. Codex background terminals: unsupported in 0.154 (no app-server method) |
 | 11 | Triage keys | Built | P2: snooze, mark unread, ⌘J next-needs-you, ⌘⇧T reopen, in-place Resume |
 | 12 | Provider incidents | Built | P2: status.claude.com unresolved incidents; status.openai.com has no such endpoint, so its list is filtered by title |
@@ -149,4 +149,5 @@ Not built: keeping a lid-closed Mac awake. It needs a privileged helper installe
 
 - The screenshot probes stub the preload bridge. They prove layout, wording and both themes, not IPC. Smoke covers the main process against real SQLite, git and the hook listener.
 - These were never exercised live: the menu-bar item, the Dock badge, macOS notification replies, the pop-out window's IPC, the Codex import's resume, and a real limit-wait signal from Claude Code.
-- No duplicate code was consolidated. P8's script listing and P1's script resolution each parse `package.json`, Makefiles and justfiles separately.
+- P8's script listing and P1's script resolution each parsed `package.json`, Makefiles and justfiles separately, and disagreed on a `define` body, a target-specific variable, a target named `override-config` and an array of scripts. P11 made `shared/script-manifests.ts` the one reader for both, with tests that the two surfaces agree on the same fixtures.
+- The advisory lookup was verified against the live OSV, npm and PyPI APIs on 2026-09-15; smoke runs it against a loopback stub. A real click in the running app has not reached the live hosts.

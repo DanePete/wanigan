@@ -108,7 +108,7 @@ export function DependencyAdvisories({ sessionId, refreshKey, hasCandidates }: {
               <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void check(false)}>
                 {busy ? 'Checking…' : 'Check advisories'}
               </button>
-              {looked && !busy && <button type="button" className="btn btn-sm" onClick={() => void check(true)}>Check again, ignoring stored answers</button>}
+              {looked && !busy && <button type="button" className="btn btn-sm" onClick={() => void check(true)}>Check again</button>}
             </>
           : enabled === false && <span className="faint">Lookups are off. Turn on “Dependency advisory lookups” in Settings to check these packages against OSV.</span>}
       </div>
@@ -118,6 +118,7 @@ export function DependencyAdvisories({ sessionId, refreshKey, hasCandidates }: {
           {requests.length
             ? `This check sent ${requests.map((r) => `${r.count} request${r.count === 1 ? '' : 's'} to ${r.host}`).join(', ')}.`
             : 'Every answer came from earlier checks; no request was sent.'}
+          {' '}An advisory answer is reused for a day; Check again asks OSV now.
         </p>
       )}
       {report && !looked && report.mode === 'cache-only' && (

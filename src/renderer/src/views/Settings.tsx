@@ -107,7 +107,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'connections', tabLabel: 'Connections', section: 'Wanigan tools per provider', hint: 'All, none or selected Wanigan MCP tools per profile', keywords: 'mcp tools grant provider profile claude codex subset disable wanigan server per-provider' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Automation socket', hint: 'A local, owner-only socket your scripts can drive', keywords: 'automation socket unix script cli draft send ledger token local api' },
   { tab: 'connections', tabLabel: 'Connections', section: 'MCP servers', hint: 'Tool servers agents may use', keywords: 'mcp server tools stdio http' },
-  { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Observation', hint: 'Telemetry, hooks, checkpoints, archive', keywords: 'telemetry hooks checkpoints notifications archive transcripts observation pet retention' },
+  { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Observation', hint: 'Telemetry, hooks, checkpoints, archive', keywords: 'telemetry hooks checkpoints notifications archive transcripts observation pet retention advisories osv dependencies packages' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Search transcripts', hint: 'Full-text search of the archive', keywords: 'transcript search fts archive conversation history full-text' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'What leaves this machine', hint: 'The egress report, host by host', keywords: 'egress network hosts privacy leaves machine report keychain' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Storage', hint: 'Retention and locally kept data', keywords: 'storage retention delete data disk days' },
