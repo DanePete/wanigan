@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { app } from 'electron';
@@ -410,7 +411,7 @@ export async function runContradictionSmoke(check: Check, say: Say): Promise<voi
   try {
     const learningRecords = await import('./learning');
     const service = await import('./learning-service');
-    const tag = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const tag = `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
     const promote = (title: string, text: string) => {
       const signals = ['a', 'b'].map((side) => learningRecords.recordSignal({
         kind: 'explicit-teach', providerId: 'orbit.profile-v9', backendId: 'orbit.backend-v9',
