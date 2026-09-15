@@ -1,0 +1,10 @@
+{
+  "at": "2026-09-15T04:45:47.828Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic intake answers, events and timer; no network and no real agent calls",
+  "mode": "before",
+  "checks": [
+    "before: Review’s event inbox holds only events typed in by hand, and nothing in it reads GitHub",
+    "before: Settings › Connections has no GitHub intake timer"
+  ],
+  "errors": []
+}

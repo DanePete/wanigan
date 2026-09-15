@@ -1260,6 +1260,26 @@ export function addEvent(input: { projectId?: string | null; source: string; kin
   return row;
 }
 
+/**
+ * addEvent for a fact that lives somewhere else, recorded at most once per
+ * project. Issue intake reads GitHub on overlapping windows, so the same issue,
+ * comment or failed run is read again on purpose; the key names the fact, and
+ * the unique index on (project_id, external_key) refuses the repeat in SQLite
+ * itself, where two polls racing cannot both slip past a read-then-insert.
+ * Returns null when the fact was already recorded, whatever became of that
+ * event since: an issue somebody dismissed does not come back because GitHub
+ * still has it. Everything else is exactly addEvent.
+ */
+export function addExternalEvent(input: { projectId: string; source: string; kind: string; summary: string; externalKey: string }): ControlEvent | null {
+  if (!projectById(input.projectId)) throw new Error('Event project not found.');
+  const externalKey = safeText(input.externalKey, 'Event external key', 400);
+  const row: ControlEvent = { id: uid('event'), projectId: input.projectId, source: safeText(input.source, 'Event source', 100),
+    kind: safeText(input.kind, 'Event kind', 100), summary: safeText(input.summary, 'Event summary', 2_000), status: 'new', docketId: null, createdAt: now() };
+  const inserted = db().prepare('INSERT INTO control_events (id,project_id,source,kind,summary,status,created_at,external_key) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING')
+    .run(row.id, row.projectId, row.source, row.kind, row.summary, row.status, row.createdAt, externalKey);
+  return inserted.changes > 0 ? row : null;
+}
+
 export function triageEvent(eventId: string, input: { title?: string; acceptance?: string[]; risk?: DocketRisk }): DocketDetail {
   const event = db().prepare('SELECT * FROM control_events WHERE id=?').get(eventId) as { project_id: string | null; summary: string; status: string } | undefined;
   if (!event) throw new Error('Event not found.');

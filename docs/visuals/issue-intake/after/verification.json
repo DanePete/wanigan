@@ -1,0 +1,16 @@
+{
+  "at": "2026-09-15T04:45:34.339Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic intake answers, events and timer; no network and no real agent calls",
+  "mode": "after",
+  "checks": [
+    "opening Review and its event inbox checks GitHub zero times; the section names what it reads, that nothing is written to GitHub, and that the timer only watches while Wanigan runs",
+    "a timed check shows fired, ran and succeeded as three marks with times, the new events by kind beside the facts already recorded, the window, and the gap as a warning, none of it clipped",
+    "a failed check shows the not-signed-in reason with gh’s own words and when the last success finished, the remote it watches when that is not origin, and a GitLab project folded under “not watched” with its reason",
+    "GitHub events show their kind as glyph and word, the summary without its repeated link, and Open on GitHub — level with the row’s other buttons — hands the external-open path exactly the event’s link; a typed event keeps its bold kind and no link; rows past the six shown are counted",
+    "a press checks one project by id, and its line becomes the new check: fired by a press, nothing new, no gap",
+    "a check that never ran reads “did not run” and “skipped” with its reason and no gh words, one in progress reads “still reading”, and a refused press says the check was not recorded",
+    "an intake read that fails after one succeeded keeps the last answer under a warning, and one that never succeeded says it could not be read — never that no project is watched",
+    "Settings › Connections shows the timer off by default at 15 minutes; a nine-minute interval is refused in main’s words with nothing saved, and a twenty-minute interval and the switch each save and say what now happens"
+  ],
+  "errors": []
+}

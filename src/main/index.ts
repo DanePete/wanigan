@@ -71,6 +71,7 @@ import { xaiModels, verifyXaiKey } from './xai';
 import * as gitOps from './git';
 import * as gh from './gh';
 import * as prReadiness from './pr-readiness';
+import * as intake from './intake';
 import { demoOn, setDemo, demoState } from './demo';
 import { readPreflight } from './preflight';
 import { discoverProjects, wasDiscovered } from './discovery';
@@ -1105,6 +1106,15 @@ async function startServices() {
   queue.setSlots(slotsSetting());
   // Schedules feed the dispatcher; the dispatcher decides when there is a slot.
   schedule.startScheduler(queueChanged);
+  // GitHub intake tells an open Control view when a poll ends, whoever fired it.
+  // The timer loop always runs here and reads its own setting each minute, so it
+  // polls only once the operator has turned it on; smoke drives tickIntake()
+  // directly, and a loop in the suite's process would poll its fixtures twice.
+  intake.setIntakeChangedNotifier(() => {
+    const w = liveWindow();
+    if (w && !w.isDestroyed()) w.webContents.send('intake:changed');
+  });
+  if (!smokeMode) intake.startIntakeTimer();
   queue.registerRunner('node', async (payload) => {
     const nodeId = (payload as { nodeId?: unknown } | null)?.nodeId;
     if (typeof nodeId !== 'string' || !nodeId) {
@@ -1519,6 +1529,8 @@ function stopServices() {
   hooks.setLearningBriefingHook(null);
   hooks.setModelSwitchHook(null);
   try { schedule.stopScheduler(); } catch { /* already down */ }
+  try { intake.stopIntakeTimer(); } catch { /* already down */ }
+  intake.setIntakeChangedNotifier(null);
   try { queue.stopDispatcher(); } catch { /* already down */ }
   if (autopilotTimer) { clearInterval(autopilotTimer); autopilotTimer = null; }
   if (attachmentReclaimTimer) { clearInterval(attachmentReclaimTimer); attachmentReclaimTimer = null; }
@@ -2782,6 +2794,14 @@ function registerIpc() {
   // for a check its own last read of that project returned. Nothing is posted.
   handle('gh:readiness', (projectId: string) => prReadiness.readinessReport(projectId));
   handle('gh:failedLog', (projectId: string, link: string) => prReadiness.failedCheckLog(projectId, link));
+  // Issue intake: opened, labelled, commented and CI-failed facts read through
+  // gh on a press or on the opt-in timer, recorded as Control events. A press is
+  // keyed on a project id and main resolves the repository from its remotes; the
+  // timer's input is validated in main before it is stored. Nothing is posted.
+  handle('intake:overview', () => intake.intakeOverview());
+  handle('intake:check', (projectId: string) => intake.checkGitHub(projectId));
+  handle('intake:timer', () => intake.intakeTimer());
+  handle('intake:setTimer', (input: unknown) => intake.setIntakeTimer(input));
 
   // ══ phase 25 · schedules ════════════════════════════════════════════
   handle('schedule:list', () => schedule.listSchedules());
