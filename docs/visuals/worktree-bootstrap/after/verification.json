@@ -1,0 +1,20 @@
+{
+  "at": "2026-09-15T02:46:10.687Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic git, worktree and session services; no real agent calls",
+  "mode": "after",
+  "checks": [
+    "opening Worktree setup reads the project’s settings once, by project id alone",
+    "the stored choice (clone), the include file’s 3 patterns and both command lists are shown, and saving is off until something changes",
+    "recent runs list both phases; a failed setup names the command, its exit code, duration and that the launch went ahead, and opens to each command’s recorded output",
+    "saving sends both lists for the project id and says that nothing ran",
+    "a save the person cancels in main’s dialog shows main’s sentence and stays unsaved",
+    "choosing skip stores it for the project at once and says existing worktrees keep what they have",
+    "each worktree row states its setup verdict, ports, dependency outcome and include copies; a clone that fell back says why; an unreadable include file is not reported as zero copies; a worktree with no record shows nothing",
+    "the failed setup’s output tail opens under its row, and no bootstrap line is clipped in the narrow branch pane",
+    "ticking isolation shows the project’s stored dependency choice, what setup and the include file will do, and that a changed choice is saved only when the session starts",
+    "starting stores the changed choice for the project before the launch request, which asks for isolation",
+    "a settings read that failed says so with a retry, never shows an empty command list, and still shows the recorded runs",
+    "the dialog says it could not read the project’s worktree settings instead of offering a choice it cannot compare"
+  ],
+  "errors": []
+}

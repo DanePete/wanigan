@@ -1,0 +1,44 @@
+/* Worktree setup: the project panel beside the review gate, the dependency
+   choice in the launch dialog, and the note under a worktree's branch row. */
+
+.wt-setup { display: grid; grid-template-columns: minmax(260px, .85fr) minmax(0, 1.4fr); gap: var(--s-6); padding: var(--s-5); border-top: 1px solid var(--line-soft); background: var(--bg-raised); }
+.wt-setup-config, .wt-setup-runs { min-width: 0; }
+.wt-setup .sec-head { margin: 0 0 var(--s-3); }
+.wt-setup-cue { font-size: var(--t-body); color: var(--text-dim); line-height: 1.5; margin: 0 0 var(--s-3); max-width: 55ch; }
+.wt-setup-config > .label { display: block; margin: var(--s-3) 0 var(--s-1); }
+.wt-setup-config textarea { width: 100%; resize: vertical; font-size: var(--t-small); line-height: 1.6; }
+.wt-setup-field { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); }
+.wt-setup-caption { margin: var(--s-2) 0; color: var(--text-faint); font-size: var(--t-small); line-height: 1.5; overflow-wrap: anywhere; }
+.wt-setup-actions { display: flex; gap: var(--s-2); flex-wrap: wrap; margin-top: var(--s-3); }
+.wt-setup-notice { color: var(--text-dim); font-size: var(--t-small); margin-top: var(--s-3); }
+
+.wt-run { border-bottom: 1px solid var(--line); }
+.wt-run > summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-3); padding-block: var(--s-3); font-size: var(--t-small); }
+.wt-run > summary::before { content: '›'; color: var(--text-faint); }
+.wt-run[open] > summary::before { content: '⌄'; }
+.wt-run-tree { font-family: var(--mono); color: var(--text); overflow-wrap: anywhere; }
+.wt-run-facts { color: var(--text-dim); overflow-wrap: anywhere; min-width: 0; }
+.wt-run time { margin-left: auto; color: var(--text-faint); }
+.wt-run-command { margin-block: var(--s-3); }
+.wt-run-command > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--s-2); font-size: var(--t-small); }
+.wt-run-command code { overflow-wrap: anywhere; }
+.wt-run-command > div > span { color: var(--text-faint); }
+.wt-run-command pre, .wt-boot-tail pre { padding: var(--s-3); margin-top: var(--s-2); border-radius: var(--r-sm); border: 1px solid var(--line-soft); background: var(--bg-sunk); color: var(--text); font-size: var(--t-small); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; }
+
+/* Under a branch row: indented to the branch name, wrapping rather than
+   clipping, because a narrow pane is where the forecast's one-line mark was
+   clipped out of sight. */
+.wt-boot { padding: 0 var(--s-3) var(--s-2) var(--s-6); color: var(--text-dim); font-size: var(--t-micro); min-width: 0; }
+.wt-boot-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); margin: 0 0 var(--s-1); line-height: 1.5; overflow-wrap: anywhere; min-width: 0; }
+.wt-boot-line > span { min-width: 0; }
+.wt-boot-tail > summary { cursor: pointer; color: var(--text-faint); }
+.wt-boot-tail pre { font-size: var(--t-micro); max-height: 180px; }
+
+/* The launch dialog's dependency choice, under "Isolate in a worktree". */
+.wt-deps { margin: calc(-1 * var(--s-2)) 0 var(--s-4); padding: var(--s-2) var(--s-3); border-left: 2px solid var(--line); }
+.wt-deps .wt-setup-field .label { margin: 0; }
+.wt-deps .wt-setup-caption { margin: var(--s-1) 0 0; }
+
+@media (max-width: 900px) {
+  .wt-setup { grid-template-columns: minmax(0, 1fr); gap: var(--s-4); padding: var(--s-3); }
+}
