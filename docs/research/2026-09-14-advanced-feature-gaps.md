@@ -173,6 +173,11 @@ those prompts" when an ask rule or a hook forces them.
 
 ### Large, or waiting on a decision
 
+[Gaps not built, and why](2026-09-15-gap-decisions.md) records what was decided
+for each item below that was not built. It covers the supervisor's gate problem,
+how Codex 0.154.0 trusts an injected hook (checked against its own app-server), ACP, visual
+verification, voice, other platforms, auto-update and split terminals.
+
 - **Sessions that survive a quit.** Claude Code's supervisor hosts background
   sessions that survive terminal close, auto-update and sleep. You start them
   with `claude --bg`, reattach with `attach`, and list them with
