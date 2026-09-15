@@ -12,6 +12,8 @@ import { harnessLabel, proposeAccountDir, signInCommand } from '@shared/accounts
 import { TRUST_COPY, TRUST_LEVELS, trustCopy } from '@shared/types';
 import { DEMO_PROMPTS } from '@shared/demo';
 import { ConfirmNote, Explainer, Icon, Note, PageHead, Reading, Section, SectionHead, Stat, ago, num } from '../components/bits';
+/* helper sweep · P8 mac */
+import { DockAndMenuBarSettings } from '../components/MacAround';
 import type { IconName } from '../components/bits';
 import { useRememberedScroll } from '../components/viewMemory';
 import ThemeControl from '../components/ThemeControl';
@@ -96,6 +98,8 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'backup', tabLabel: 'Backup', section: 'Restore a backup', hint: 'Put a copy back in place', keywords: 'backup restore replace recovery' },
   { tab: 'app', tabLabel: 'App', section: 'Appearance', hint: 'Theme: system, light, dark', keywords: 'appearance theme light dark system colour color' },
   { tab: 'app', tabLabel: 'App', section: 'Motion', hint: 'Animation comfort', keywords: 'motion animation reduce comfort' },
+  /* helper sweep · P8 mac */
+  { tab: 'app', tabLabel: 'App', section: 'Dock and menu bar', hint: 'A count on the Dock icon and live sessions in the menu bar', keywords: 'dock badge menu bar tray menubar status item count attention halt' },
   { tab: 'app', tabLabel: 'App', section: 'Demo mode', hint: 'Fictional workspace and demo prompts', keywords: 'demo mode mask screenshot share names prompt copy demonstration sample ai companion' },
 ];
 
@@ -1093,6 +1097,8 @@ export default function Settings({
           <SettingsTabPanel tab={settingsTabInfo('app')} active={settingsTab === 'app'}>
             <Appearance preference={themePreference} resolved={resolvedTheme} onChange={onThemeChange} />
             <Motion prefs={prefs} pending={pending} setPref={setPref} />
+            {/* helper sweep · P8 mac */}
+            <DockAndMenuBarSettings />
             <DemoPanel />
           </SettingsTabPanel>
         </div>

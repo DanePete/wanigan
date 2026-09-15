@@ -47,6 +47,9 @@ import type {
   ClaimsReview, DependencyReview, MergeCheck, PrDraft, RegressionProofRecord, ReviewImageSide, ReviewSummary, ReviewWork, StagePlan, TurnStat,
 } from '../shared/review-work';
 /* ── end helper sweep · P3 review ── */
+/* ── helper sweep · P8 mac ── */
+import type { MacSettings } from '../shared/mac-presence';
+/* ── end helper sweep · P8 mac ── */
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -978,6 +981,12 @@ const api = {
     latestRegression: (nodeId: string) => call<RegressionProofRecord | null>('proof:latestRegression', nodeId),
   },
   /* ── end helper sweep · P3 review ── */
+  /* ── helper sweep · P8 mac ── */
+  mac: {
+    settings: () => call<MacSettings>('mac:settings'),
+    setSetting: (key: keyof MacSettings, value: boolean) => call<MacSettings>('mac:setSetting', key, value),
+  },
+  /* ── end helper sweep · P8 mac ── */
 };
 
 contextBridge.exposeInMainWorld('wanigan', api);

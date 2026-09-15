@@ -3390,7 +3390,10 @@ export type MenuRoute =
   | { kind: 'shortcuts' }
   | { kind: 'sidebar' }
   /** Carries the intent, not a toggle: the item's label was "Show" or "Hide" when it was chosen. */
-  | { kind: 'composer'; show: boolean };
+  | { kind: 'composer'; show: boolean }
+  /* ── helper sweep · P8 mac ── */
+  /** The menu-bar item "Halt all agents…": arms the header's own two-step confirmation, never pulls the handle. */
+  | { kind: 'halt' };
 
 /** Where the Claude CLI installs a plugin. Validated in main, not just typed. */
 export type PluginScope = 'user' | 'project' | 'local';

@@ -1,0 +1,6 @@
+/* The Mac around the app, local automation and attribution (helper sweep · P8).
+   Marks carry a glyph and a word; colour is the last channel, never the only one. */
+
+.p8-switch-state { color: var(--text-faint); }
+.p8-switch-state[data-on='true'] { color: var(--good); }
+.p8-switches { display: grid; }

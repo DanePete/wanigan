@@ -115,6 +115,9 @@ import * as regressionProof from './regression-proof';
 import { prDraft } from './pr-evidence';
 import { DEFAULT_RISK_RULES } from '../shared/risk-tiers';
 /* ── end helper sweep · P3 review ── */
+/* ── helper sweep · P8 mac ── */
+import { registerP8Ipc, startP8Services, stopP8Services } from './helper-p8';
+/* ── end helper sweep · P8 mac ── */
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -1465,6 +1468,8 @@ async function startAttendedServices(): Promise<StartupState> {
       startPoller();
       /* ── helper sweep · P2 attention ── */
       startHelperAttentionServices(liveWindow, smokeMode);
+      /* ── helper sweep · P8 mac ── */
+      startP8Services({ reveal: revealWindow, liveWindow, smoke: smokeMode });
       return publishStartupState({ phase: 'ready', stage: null, message: null });
     } catch (error) {
       return enterStartupRecovery(stage, error);
@@ -1501,6 +1506,8 @@ function stopServices() {
   try { mcpServer.stopMcpServer(); } catch { /* already down */ }
   /* ── helper sweep · P2 attention ── */
   try { stopHelperAttentionServices(); } catch { /* already down */ }
+  /* ── helper sweep · P8 mac ── */
+  try { stopP8Services(); } catch { /* already down */ }
 }
 
 /** Switch storage partitions by replacing only the window. The live sessions
@@ -3351,7 +3358,35 @@ function registerIpc() {
 
   /* ── helper sweep · P2 attention ── */
   registerHelperAttentionIpc(handle);
+  /* ── helper sweep · P8 mac ── */
+  registerP8Ipc(handle);
 }
+
+/* ── helper sweep · P8 mac ── */
+/**
+ * Bring the window forward for a surface outside it — the menu-bar list, an
+ * automation approval — creating it again if the operator had closed it, and
+ * resolve once the renderer can take a message. A new window's listeners are
+ * registered in effects that run after its load event, so a route sent at
+ * did-finish-load would land on nothing; the short wait is for those.
+ */
+function revealWindow(): Promise<BrowserWindow | null> {
+  if (quitDraining || !uiInitialized) return Promise.resolve(null);
+  let created = false;
+  if (!win || win.isDestroyed()) { createWindow(); created = true; }
+  const shown = win;
+  if (!shown || shown.isDestroyed()) return Promise.resolve(null);
+  if (shown.isMinimized()) shown.restore();
+  shown.show();
+  shown.focus();
+  if (process.platform === 'darwin') app.focus({ steal: true });
+  const ready = () => liveWindow();
+  if (!created && !shown.webContents.isLoading()) return Promise.resolve(ready());
+  return new Promise((resolve) => {
+    shown.webContents.once('did-finish-load', () => { setTimeout(() => resolve(ready()), 600); });
+  });
+}
+/* ── end helper sweep · P8 mac ── */
 
 /** Streams a run's results to disk without materialising them in memory. */
 function writeExport(runId: string, format: 'jsonl' | 'csv', filePath: string): string {
