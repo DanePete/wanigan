@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { db } from './db';
 import { repoState, scopeOf, type RepoState } from './git';
@@ -91,7 +92,7 @@ export async function addProject(dir: string): Promise<Project> {
   await assertWholeRepo(abs);
 
   const project: Project = {
-    id: `prj_${Math.random().toString(36).slice(2, 10)}`,
+    id: `prj_${randomBytes(4).toString('hex')}`,
     path: abs,
     name: path.basename(abs),
     branch: await gitBranch(abs),

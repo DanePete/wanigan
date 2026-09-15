@@ -23,9 +23,14 @@ export async function runSandboxAndCredentialSmoke(check: Check, say: Say): Prom
   const previousMode = getSetting('sandbox_shell', '__wanigan_smoke_missing__');
   const hookIds: string[] = [];
   try {
-    const [hooksDir, mcpDir] = policy.waniganCredentialDirs();
-    check(hooksDir === path.join(dataDir(), 'hooks') && mcpDir === path.join(dataDir(), 'mcp'),
-      'the refused folders are the ones Wanigan writes hook and MCP bearer tokens into');
+    const [hooksDir, mcpDir, statusDir] = policy.waniganCredentialDirs();
+    check(hooksDir === path.join(dataDir(), 'hooks') && mcpDir === path.join(dataDir(), 'mcp') && statusDir === path.join(dataDir(), 'statusline')
+      && policy.waniganCredentialDirs().length === 3,
+      'the refused folders are the ones Wanigan writes bearer tokens into: hook settings, MCP configs, and the status line relay\'s curl configs');
+    const relayRead = policy.decideFor({ sessionId: null, projectId: null, projectPath: work, trust: 'trusted' },
+      { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: path.join(statusDir, 'someone-else.curl') } });
+    check(relayRead.decision === 'deny' && relayRead.rule === 'wanigan-credentials.deny',
+      'reading another session\'s status line relay config, which carries its hook bearer, is refused at Trusted too', relayRead.rule);
     const read = { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: path.join(hooksDir, 'someone-else.json') } };
     const grep = { hook_event_name: 'PreToolUse', tool_name: 'Grep', tool_input: { pattern: 'Bearer', path: mcpDir } };
     const shell = { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: `cat ${path.join(hooksDir, 'x.json')} | head` } };
