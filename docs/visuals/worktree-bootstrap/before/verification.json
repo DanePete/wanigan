@@ -1,0 +1,11 @@
+{
+  "at": "2026-09-15T02:43:24.184Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic git, worktree and session services; no real agent calls",
+  "mode": "before",
+  "checks": [
+    "before: Changes offers the review gate and nothing about what a new worktree is given",
+    "before: worktree branch rows say nothing about dependencies, copies, ports or setup",
+    "before: ticking isolation offers no dependency choice and says nothing about setup"
+  ],
+  "errors": []
+}

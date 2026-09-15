@@ -251,6 +251,8 @@ export async function runSmoke(): Promise<void> {
     await runAttemptsSmoke(check, say);
     const { runMergeReadinessSmoke } = await import('./smoke15');
     await runMergeReadinessSmoke(check, say);
+    const { runWorktreeBootstrapSmoke } = await import('./smoke16');
+    await runWorktreeBootstrapSmoke(check, say);
     const { runCodexHookSmoke } = await import('./smoke28');
     await runCodexHookSmoke(check, say);
   } catch (e) {
