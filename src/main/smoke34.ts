@@ -349,3 +349,72 @@ export async function runCodexImportSmoke(check: Check, say: Say): Promise<void>
   const realLedgerAfter = fs.existsSync(realLedger) ? fs.statSync(realLedger).mtimeMs : null;
   check(realLedgerBefore === realLedgerAfter, 'the real ~/.codex import ledger was not touched', { realLedgerBefore, realLedgerAfter });
 }
+
+/**
+ * helper sweep · P5 runtime — per-account health and a diagnostics bundle.
+ *
+ * The doctor is exercised through a stand-in `codex` that prints Codex
+ * 0.154.0's recorded report for an unauthenticated home and exits 1, the way
+ * the real one does: the real doctor probes OpenAI's endpoints, and this suite
+ * stays off the network. The bundle is built, previewed and saved for real.
+ */
+export async function runHealthAndDiagnosticsSmoke(check: Check, say: Say): Promise<void> {
+  say('── helper sweep · P5 runtime · per-account health and a diagnostics bundle');
+  const os = await import('node:os');
+  const { execFileSync } = await import('node:child_process');
+  const doctor = await import('./codex-doctor');
+  const diagnostics = await import('./diagnostics');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-health-'));
+  try {
+    const report = JSON.stringify({
+      schemaVersion: 1, overallStatus: 'fail', codexVersion: '0.154.0',
+      checks: {
+        'auth.credentials': { id: 'auth.credentials', category: 'auth', status: 'fail', summary: 'no Codex credentials were found', remediation: 'Run codex login or provide an API key through a supported auth env var.' },
+        'config.load': { id: 'config.load', category: 'config', status: 'ok', summary: 'config loaded', remediation: null },
+      },
+    });
+    const fixture = path.join(root, 'report.json');
+    fs.writeFileSync(fixture, report);
+    const fake = path.join(root, 'codex');
+    fs.writeFileSync(fake, `#!/bin/sh\nif [ "$1" = "doctor" ] && [ "$2" = "--json" ]; then cat "${fixture}"; exit 1; fi\nexit 2\n`, { mode: 0o755 });
+    const ran = await doctor.doctorWithBinary(fake, { PATH: '/usr/bin:/bin', CODEX_HOME: root });
+    check(ran.exitCode === 1 && ran.report.state === 'report',
+      'a doctor that exits 1 with a well-formed report is read as a report, not a crash', ran);
+    check(ran.report.state === 'report' && ran.report.failing.map((c) => c.id).join() === 'auth.credentials',
+      'the unauthenticated account’s failing check is named', ran.report);
+    const old = path.join(root, 'old-codex');
+    fs.writeFileSync(old, `#!/bin/sh\nif [ "$2" = "--json" ]; then echo "error: unexpected argument '--json' found" >&2; exit 2; fi\necho "Codex doctor summary: 3 ok, 1 failed"\nexit 1\n`, { mode: 0o755 });
+    const fallback = await doctor.doctorWithBinary(old, { PATH: '/usr/bin:/bin' });
+    check(fallback.report.state === 'summary-text' && /1 failed/.test(fallback.report.state === 'summary-text' ? fallback.report.text : ''),
+      'a Codex without --json falls back to --summary, shown as text and not parsed into checks', fallback.report);
+    const junk = path.join(root, 'junk-codex');
+    fs.writeFileSync(junk, '#!/bin/sh\necho "{\\"schemaVersion\\": 7}"\nexit 0\n', { mode: 0o755 });
+    const unreadable = await doctor.doctorWithBinary(junk, { PATH: '/usr/bin:/bin' });
+    check(unreadable.report.state === 'unreadable', 'a report in an unknown schema is unreadable, never "no failing checks"', unreadable.report);
+
+    const preview = await diagnostics.previewDiagnostics();
+    const names = preview.files.map((f) => f.name);
+    check(['app.json', 'settings.redacted.json', 'providers.json', 'gate-results.json', 'preflight.json', 'table-counts.json', 'readme.txt'].every((n) => names.includes(n)),
+      'the preview lists every file the bundle will hold, with what each one says', names);
+    check(preview.excluded.some((e) => /transcripts/.test(e)) && preview.files.every((f) => f.bytes > 0 && f.describes.length > 0),
+      'and states what is deliberately left out', preview.excluded);
+    const target = path.join(root, 'bundle.zip');
+    let refusedMismatch = false;
+    try { await diagnostics.saveDiagnostics(null, [...names, 'extra.json'], target); } catch { refusedMismatch = true; }
+    check(refusedMismatch && !fs.existsSync(target), 'a save whose file list differs from the preview is refused, and writes nothing');
+    const saved = await diagnostics.saveDiagnostics(null, names, target);
+    check(saved === target && fs.existsSync(target), 'the bundle is saved as a zip with ditto', saved);
+    const listing = execFileSync('/usr/bin/unzip', ['-l', target]).toString();
+    check(names.every((n) => listing.includes(n)), 'the zip holds exactly the previewed files', listing.split('\n').length);
+    const unpacked = path.join(root, 'unpacked');
+    execFileSync('/usr/bin/ditto', ['-x', '-k', target, unpacked]);
+    const all = execFileSync('/bin/cat', names.map((n) => path.join(unpacked, 'bundle', n))).toString();
+    const counts = JSON.parse(fs.readFileSync(path.join(unpacked, 'bundle', 'table-counts.json'), 'utf8')) as Record<string, unknown>;
+    check(Object.values(counts).every((v) => typeof v === 'number') && 'session_log' in counts,
+      'table counts are numbers per table and nothing else', Object.keys(counts).length);
+    check(!all.includes(os.homedir() + path.sep), 'no file in the bundle spells out the home directory');
+    check(!/sk-[A-Za-z0-9_-]{8,}|"initial_prompt"|BEGIN [A-Z ]*PRIVATE KEY/.test(all), 'and none carries a key, a prompt column or a private key');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}

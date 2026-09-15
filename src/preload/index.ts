@@ -11,6 +11,8 @@ import type { CodexReaderHealth } from '../shared/rollout-format';
 import type { HeadlessOutcome } from '../shared/headless-outcome';
 import type { HeadlessRefusal } from '../shared/slash-commands';
 import type { CodexImportOutcome, CodexImportPlan } from '../shared/codex-import';
+import type { DoctorReport } from '../shared/codex-doctor';
+import type { DiagnosticsPreview } from '../shared/diagnostics';
 /* ── end helper sweep · P5 runtime ── */
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
@@ -859,6 +861,13 @@ const api = {
     plan: (sessionId: string, accountId?: string | null) => call<CodexImportPlan>('codexImport:plan', sessionId, accountId ?? null),
     run: (sessionId: string, accountId: string, confirmedPath: string) =>
       call<CodexImportOutcome>('codexImport:run', sessionId, accountId, confirmedPath),
+  },
+  codexDoctor: {
+    run: (accountId: string) => call<{ accountId: string; label: string; ranAt: number; durationMs: number; exitCode: number | null; report: DoctorReport }>('codexDoctor:run', accountId),
+  },
+  diagnostics: {
+    preview: () => call<DiagnosticsPreview>('diagnostics:preview'),
+    save: (names: string[]) => call<string | null>('diagnostics:save', names),
   },
   /* ── end helper sweep · P5 runtime ── */
   on: {

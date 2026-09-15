@@ -12,6 +12,9 @@ import { detectProviders } from './providers';
 import { recentRefusals } from './headless-guard';
 import { headlessOutcomes } from './headless';
 import { importIntoCodex, planCodexImport } from './codex-import';
+import { runCodexDoctor } from './codex-doctor';
+import { previewDiagnostics, saveDiagnostics } from './diagnostics';
+import { BrowserWindow } from 'electron';
 
 type Handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => void;
 
@@ -54,4 +57,9 @@ export function registerP5Ipc(handle: Handle): void {
   handle('codexImport:plan', (sessionId: unknown, accountId: unknown) => planCodexImport(sessionId, accountId));
   handle('codexImport:run', (sessionId: unknown, accountId: unknown, confirmedPath: unknown) =>
     importIntoCodex(sessionId, accountId, confirmedPath));
+
+  // ── per-account health and a diagnostics bundle ─────────────────────
+  handle('codexDoctor:run', (accountId: unknown) => runCodexDoctor(accountId));
+  handle('diagnostics:preview', () => previewDiagnostics());
+  handle('diagnostics:save', (names: unknown) => saveDiagnostics(BrowserWindow.getFocusedWindow(), names));
 }
