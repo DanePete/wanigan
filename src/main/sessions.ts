@@ -9,7 +9,7 @@ import {
 import { projectById } from './store';
 import { db } from './db';
 import { refuseIfHalted } from './halt';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { PastSession } from '../shared/types';
@@ -18,18 +18,21 @@ import { promisify } from 'node:util';
 import type { Baseline, BudgetState, TrustLevel } from '../shared/types';
 import { otelEnv } from './otel';
 import * as accounts from './accounts';
+import { readableFromAccount } from './handoff';
+import { gateLaunch, type LaunchGate } from './config-pins';
 import { writeHookSettings, cleanupHookSettings, recordProviderEvent } from './hooks';
 import { finalizeSessionCheckpoints, forgetSessionCheckpoints, registerSessionCheckpoints } from './checkpoints';
 import { archiveSession, conversationTitle, titleFromTranscript, type ReadTitle } from './transcripts';
 import { createWorktree, removeWorktree, repoRootFor, worktreeLaunchEnv, worktreeStatus } from './worktrees';
 import { WORKTREE_ENV_NAMES } from '../shared/worktree-bootstrap';
-import { trustFor } from './policy';
+import { trustFor, waniganCredentialDirs } from './policy';
+import { claudeSandboxSettings, sandboxApplies } from '../shared/sandbox-policy';
 import { slots } from './queue';
 import { budgetBreached } from './spend';
 import { cleanupMcpConfig, writeMcpConfig } from './mcp/registry';
 import { noteOutput, forgetSession } from './attention';
 import { shouldBumpUnread } from '../shared/unread';
-import { flags, learningSettings } from './settings';
+import { flags, learningSettings, sandboxShell } from './settings';
 import { attachmentsDir, cleanupSessionAttachments, markSessionAttachmentsSent, prepareAttachmentDir } from './attachments';
 import { redactCredentials } from './redact';
 import { buildBriefing, recordSessionBriefing, refreshDeliveredKnowledgeTtl } from './learning';
@@ -484,6 +487,11 @@ function submitInitialCodexPrompt(live: Live, cwd: string, prompt: string): void
 
 export function initSessions(getWindow: () => BrowserWindow | null) {
   reconcileAbandonedSessions();
+  // Off the launch path: each is a file copy and a parse, and nothing on screen
+  // waits for them.
+  setTimeout(() => {
+    try { archiveInterruptedTranscripts(); } catch { /* an archive must never cost a launch */ }
+  }, 5_000).unref();
   try { backfillCodexThreadIds(); }
   catch (e) { console.warn('[wanigan] Codex session identity backfill skipped:', e); }
   broadcast = (channel, payload) => {
@@ -749,8 +757,8 @@ export function resumeAccountFor(
   sessionId: string, harness: string, requestedAccountId: string | null,
 ): { accountId: string | null; note: string | null } {
   if (!accounts.supportsAccounts(harness)) return { accountId: requestedAccountId, note: null };
-  const row = db().prepare('SELECT account_id FROM session_log WHERE id = ?')
-    .get(sessionId) as { account_id: string | null } | undefined;
+  const row = db().prepare('SELECT account_id, conversation_id FROM session_log WHERE id = ?')
+    .get(sessionId) as { account_id: string | null; conversation_id: string | null } | undefined;
   if (!row) throw new Error('This saved conversation no longer exists. Refresh Recent and choose another one.');
   if (!row.account_id) {
     return {
@@ -769,6 +777,16 @@ export function resumeAccountFor(
   }
   if (requestedAccountId && requestedAccountId !== owner.id) {
     const asked = accounts.byId(requestedAccountId);
+    // A Codex conversation handed over to another account is readable from
+    // that account's home too, and that is exactly what this refusal exists to
+    // check. Ask the filesystem rather than refuse on the recorded owner alone,
+    // or the handoff links the rollout and its own resume is turned away.
+    if (asked && harness === 'codex' && row.conversation_id && readableFromAccount(row.conversation_id, asked.id)) {
+      return {
+        accountId: asked.id,
+        note: `Continuing on “${asked.label}”: this conversation was handed over and is readable from that account’s directory.`,
+      };
+    }
     throw new Error(
       `This conversation belongs to the “${owner.label}” account, not “${asked?.label ?? requestedAccountId}”. `
       + `Resume it under “${owner.label}” — ${harnessName(harness)} may not find it under another account’s directory.`
@@ -786,6 +804,9 @@ const CAPSULE_MAX_SIBLINGS = 20;
  * released a minute after launch is not reflected here, and only a harness
  * with Wanigan's MCP tools can change a claim from inside the session.
  */
+/** How much of a captured plan a launch capsule carries. */
+const CAPSULE_PLAN_MAX = 12_000;
+
 export function goalCapsuleText(capsule: GoalCapsule): string {
   const lines = [
     'Wanigan goal — a snapshot taken at launch, not a live view:',
@@ -806,6 +827,24 @@ export function goalCapsuleText(capsule: GoalCapsule): string {
       ? '- To record progress or take a path, call the wanigan_goal_checkpoint / wanigan_goal_claim MCP tools with this node id.'
       : '- This harness cannot claim or release a path from inside the session. Stay within the claimed path and name anything else you needed in your final answer.',
   ];
+  // Snapshot rule applies here too: these are the notes as they stood at launch.
+  const changes = capsule.changesRequested ?? [];
+  if (changes.length) {
+    lines.push('- A human reviewer requested changes to earlier work on this goal. Address each, or say in your final answer why you did not:');
+    for (const change of changes) lines.push(`  - (${new Date(change.decidedAt).toISOString()}) ${change.note}`);
+  }
+  // The planning agent's words, not Wanigan's or the operator's, and said so.
+  // Bounded here as well as at capture: this goes into a system prompt.
+  const plan = capsule.plan;
+  if (plan) {
+    const cut = plan.text.length > CAPSULE_PLAN_MAX;
+    const body = cut ? plan.text.slice(0, CAPSULE_PLAN_MAX) : plan.text;
+    lines.push(plan.state === 'accepted'
+      ? `- The plan accepted in "${plan.nodeTitle}" (${new Date(plan.capturedAt).toISOString()}${plan.edited ? ', edited by the person before accepting' : ''}), written by the planning agent. Follow it, or say in your final answer where you departed from it and why:`
+      : `- A plan proposed in "${plan.nodeTitle}" (${new Date(plan.capturedAt).toISOString()}) that no one has accepted yet, written by the planning agent. Treat it as a proposal, not an instruction:`);
+    lines.push(...body.split('\n').map((line) => `  ${line}`));
+    if (cut || plan.truncated) lines.push('  (The plan is cut short here; the full text is in the goal\'s evidence in Wanigan.)');
+  }
   return lines.join('\n');
 }
 
@@ -997,7 +1036,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   // specific session resumable later rather than just "the most recent one".
   // GLM runs that same CLI, so it gets one too — --session-id is local
   // bookkeeping and never reaches the API.
-  const id0 = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const id0 = `s_${Date.now().toString(36)}_${randomBytes(2).toString('hex')}`;
   const id = id0;
 
   const savedResume = opts.resumeFrom;
@@ -1108,6 +1147,24 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
     }
   };
 
+  // The repository's own executable configuration — hooks, MCP servers,
+  // helpers, env overrides, git hooks — checked against what was last let
+  // launch here, in the directory the agent will actually run in. A changed
+  // configuration launches only with the digest the operator accepted in the
+  // dialog; every other caller, a paired phone included, is refused with the
+  // reason. See config-pins.ts.
+  let configGate: LaunchGate;
+  try {
+    configGate = await gateLaunch(project.id, cwd, typeof opts.acceptConfigDigest === 'string' ? opts.acceptConfigDigest : null, true);
+  } catch (error) {
+    await rollbackLaunch();
+    throw error;
+  }
+  if (!configGate.allowed) {
+    await rollbackLaunch();
+    throw new Error(configGate.reason);
+  }
+
   // Attachments arrive after a session has started, so the directory must
   // exist and be granted to the CLI before its sandbox is created. Granting
   // this one session directory is deliberately narrower than granting all of
@@ -1133,7 +1190,10 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
         // it the file names only the base events, and SubagentStart/Stop,
         // PostModelSwitch, CwdChanged, InstructionsLoaded and Elicitation are
         // never asked for — every surface reading them sees nothing.
-        const settingsFile = writeHookSettings(id0, cwd, undefined, { cliVersion: detected.version });
+        // Claude Code's sandbox rides in the same file when the operator chose
+        // it for this trust level, denying shell reads of Wanigan's tokens.
+        const sandbox = sandboxApplies(sandboxShell(), trust) ? claudeSandboxSettings(waniganCredentialDirs()) : null;
+        const settingsFile = writeHookSettings(id0, cwd, undefined, { cliVersion: detected.version, sandbox });
         if (settingsFile) injected.push('--settings', settingsFile);
       }
       if (detected.capabilities.mcp) {
@@ -1397,6 +1457,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   meta.accountId = account?.id ?? null;
   meta.accountLabel = account?.label ?? null;
   meta.accountNote = account && pinnedAccount?.note ? pinnedAccount.note : null;
+  meta.configNote = configGate.note;
   meta.goalCapsule = capsuleDelivery;
 
   let proc: IPty;
@@ -1808,6 +1869,63 @@ export function reconcileAbandonedSessions(now = Date.now()): number {
   }
 }
 
+/** How far back an interrupted execution is still looked at on launch. */
+const INTERRUPTED_ARCHIVE_WINDOW_MS = 30 * 24 * 60 * 60_000;
+/** Archive attempts per launch: each is a file copy and a parse. */
+const INTERRUPTED_ARCHIVE_MAX = 25;
+
+/**
+ * Transcripts of executions that ended without Wanigan seeing them end.
+ *
+ * Archiving runs in the PTY's exit handler, and three endings never reach it:
+ * an app crash, a force quit, and a quit whose SIGKILL escalation outran
+ * node-pty. The row is closed with -1 (reconcileAbandonedSessions, or killAll),
+ * and the conversation's only copy stays in Claude Code's folder, where an
+ * upgrade or a cleanup can remove it. A session that crashed was never
+ * archived, so the one conversation most worth reading afterwards was the one
+ * most likely to be lost.
+ *
+ * Exact files only. An interrupted row's ended_at is when Wanigan noticed, not
+ * when the agent stopped — possibly days later — so the lifetime window the
+ * exit path guesses inside could reach a transcript someone else wrote since.
+ * And only the newest execution of a conversation: a later resume's archive
+ * already holds everything an earlier one would copy, and copying the file now
+ * would file the later turns under the earlier session.
+ */
+export function archiveInterruptedTranscripts(now = Date.now()): { archived: number; notFound: number } {
+  const result = { archived: 0, notFound: 0 };
+  if (!flags().archiveTranscripts) return result;
+  let rows: Array<{ id: string; project_path: string; conversation_id: string }>;
+  try {
+    rows = db().prepare(`
+      SELECT s.id, s.project_path, s.conversation_id
+        FROM session_log s
+       WHERE s.origin = 'wanigan' AND s.exit_code = -1 AND s.conversation_id IS NOT NULL
+         AND s.started_at >= ?
+         AND NOT EXISTS (SELECT 1 FROM transcripts t WHERE t.session_id = s.id)
+         AND NOT EXISTS (SELECT 1 FROM session_log later
+                          WHERE later.conversation_id = s.conversation_id AND later.started_at > s.started_at)
+       ORDER BY s.started_at DESC
+    `).all(now - INTERRUPTED_ARCHIVE_WINDOW_MS) as typeof rows;
+  } catch {
+    return result;
+  }
+  let attempts = 0;
+  for (const row of rows) {
+    if (attempts >= INTERRUPTED_ARCHIVE_MAX) break;
+    let outcome: ReturnType<typeof archiveSession>;
+    try { outcome = archiveSession(row.id, row.project_path, row.conversation_id, { exactOnly: true }); }
+    catch { continue; }
+    // A harness that writes no transcript costs a row read and no attempt, so a
+    // run of Codex sessions cannot use up the Claude ones' turn.
+    if (outcome.unsupported) continue;
+    attempts++;
+    if (outcome.ok) result.archived++;
+    else result.notFound++;
+  }
+  return result;
+}
+
 /**
  * Is there a Codex execution whose identity the repair pass could still fix?
  *
@@ -1959,7 +2077,8 @@ function readTitles(shown: Array<[string, SessionLogRow]>): Map<string, NonNulla
       continue;
     }
     try {
-      const found = conversationTitle(String(r.project_path), conversationId);
+      const found = conversationTitle(String(r.project_path), conversationId,
+        typeof r.worktree === 'string' && r.worktree ? r.worktree : null);
       if (found) out.set(String(r.id), found);
     } catch { /* unnamed is the honest fallback */ }
   }

@@ -40,9 +40,18 @@ export function diagnoseKnowledge(options: OptimizerOptions = {}): OptimizerDiag
     });
   }
 
+  // Recording a contradiction quarantines both sides, so a finding that looked
+  // only at active items could never see one. It reads quarantined items in
+  // the same scope too; a resolved relation is already filtered out above.
+  const contested = options.projectId === undefined
+    ? listKnowledgeItems({ statuses: ['active', 'quarantined'], limit: 1_000 })
+    : [
+        ...listKnowledgeItems({ projectId: options.projectId, statuses: ['active', 'quarantined'], limit: 1_000 }),
+        ...listKnowledgeItems({ scope: 'personal', statuses: ['active', 'quarantined'], limit: 1_000 }),
+      ];
   for (const relation of listRelations(undefined, true)) {
     if (relation.relation !== 'contradicts') continue;
-    if (!items.some((item) => item.id === relation.fromItemId || item.id === relation.toItemId)) continue;
+    if (!contested.some((item) => item.id === relation.fromItemId || item.id === relation.toItemId)) continue;
     out.push({
       kind: 'contradiction', severity: 'error', itemIds: [relation.fromItemId, relation.toItemId],
       title: 'Unresolved contradiction', detail: 'Conflicting artifacts must be resolved before either is retrieved.',
