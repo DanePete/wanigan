@@ -138,6 +138,9 @@ import { registerP8Ipc, startP8Services, stopP8Services } from './helper-p8';
 /* ── helper sweep · P7 depth ── */
 import { recordPhoneAsks, registerDepthIpc, startDepthServices } from './depth';
 /* ── end helper sweep · P7 depth ── */
+/* ── helper sweep · P10 notes ── */
+import { registerChangeNotesIpc } from './change-notes';
+/* ── end helper sweep · P10 notes ── */
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -3462,6 +3465,11 @@ function registerIpc() {
   /* ── helper sweep · P7 depth ── */
   registerDepthIpc(handle, { gitRoot });
   /* ── end helper sweep · P7 depth ── */
+  /* ── helper sweep · P10 notes ── */
+  // Agent change notes in the code rail: read, dismiss, and record a quote into
+  // the operator's own review note. Session and note ids are validated in main.
+  registerChangeNotesIpc(handle);
+  /* ── end helper sweep · P10 notes ── */
 }
 
 /* ── helper sweep · P8 mac ── */

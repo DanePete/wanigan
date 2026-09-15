@@ -30,6 +30,11 @@ export const WANIGAN_TOOL_CATALOGUE: readonly McpToolInfo[] = [
   { name: 'wanigan_list_sessions', title: 'This session', readOnly: true },
   { name: 'wanigan_start_session', title: 'Start an agent session (always asks you)', readOnly: false },
   { name: 'wanigan_recall_transcripts', title: 'Recall this project’s archived transcripts (only where the project opted in)', readOnly: true },
+  /* ── helper sweep · P10 notes ── */
+  { name: 'wanigan_annotate_change', title: 'Explain its own change in a note on a hunk (never your notes)', readOnly: false },
+  { name: 'wanigan_list_change_notes', title: 'List its own change notes', readOnly: true },
+  { name: 'wanigan_withdraw_change_note', title: 'Withdraw one of its own change notes', readOnly: false },
+  /* ── end helper sweep · P10 notes ── */
 ];
 
 const KNOWN = WANIGAN_TOOL_CATALOGUE.map((t) => t.name);
@@ -44,6 +49,13 @@ export function goalToolsGranted(profileId: string | null | undefined): boolean 
   const grant = toolGrantFor(profileId);
   return toolGranted(grant, 'wanigan_goal_checkpoint') && toolGranted(grant, 'wanigan_goal_claim');
 }
+
+/* ── helper sweep · P10 notes ── */
+/** Whether a launch may tell the agent about change notes: only a profile granted the annotate tool is told it exists. */
+export function changeNoteToolGranted(profileId: string | null | undefined): boolean {
+  return toolGranted(toolGrantFor(profileId), 'wanigan_annotate_change');
+}
+/* ── end helper sweep · P10 notes ── */
 
 export function setToolGrant(profileId: unknown, input: unknown): McpToolGrant {
   if (!validProfileId(profileId)) throw new Error('That is not a provider profile id.');

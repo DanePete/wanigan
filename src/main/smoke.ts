@@ -299,6 +299,10 @@ export async function runSmoke(): Promise<void> {
     await p7.runRejectedStepSmoke(check, say);
     await p7.runReviewRulesSmoke(check, say);
     /* ── end helper sweep · P7 depth ── */
+    /* ── helper sweep · P10 notes ── */
+    const { runChangeNotesSmoke } = await import('./smoke39');
+    await runChangeNotesSmoke(check, say);
+    /* ── end helper sweep · P10 notes ── */
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

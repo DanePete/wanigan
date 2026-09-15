@@ -91,6 +91,9 @@ import type { SessionFiles } from '../shared/session-files';
 import type { AgentGitMarks } from '../shared/agent-git';
 import type { CompactionMark } from '../shared/compaction';
 /* ── end helper sweep · P7 depth ── */
+/* ── helper sweep · P10 notes ── */
+import type { ChangeNotesForReview } from '../shared/change-notes';
+/* ── end helper sweep · P10 notes ── */
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -1252,6 +1255,16 @@ const api = {
     },
   },
   /* ── end helper sweep · P7 depth ── */
+  /* ── helper sweep · P10 notes ── */
+  // What agents wrote about their own diff. The renderer reads and acts as the
+  // operator; nothing here can write a note as the agent.
+  changeNotes: {
+    list: (sessionId: string) => call<ChangeNotesForReview>('changeNotes:list', sessionId),
+    dismiss: (sessionId: string, noteId: string) => call<{ id: string; at: number }>('changeNotes:dismiss', sessionId, noteId),
+    /** Record that the operator quoted a note into their own review note; the copy itself stays in the review tray. */
+    quote: (sessionId: string, noteId: string) => call<{ id: string; at: number }>('changeNotes:quote', sessionId, noteId),
+  },
+  /* ── end helper sweep · P10 notes ── */
 };
 
 contextBridge.exposeInMainWorld('wanigan', api);

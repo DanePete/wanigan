@@ -30,6 +30,10 @@ import { budgetBreached } from './spend';
 import { cleanupMcpConfig, writeMcpConfig } from './mcp/registry';
 /* ── helper sweep · P8 mac ── */
 import { goalToolsGranted } from './mcp/tool-grants';
+/* ── helper sweep · P10 notes ── */
+import { changeNoteToolGranted } from './mcp/tool-grants';
+import { launchInstructionParts } from '../shared/change-notes';
+/* ── end helper sweep · P10 notes ── */
 import { launchBranch, launchTitle } from './naming';
 import { noteOutput, forgetSession } from './attention';
 import { shouldBumpUnread } from '../shared/unread';
@@ -1302,7 +1306,11 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   // replaces has not been confirmed against the binary (none was on the machine
   // that wrote this) — folding both texts into one entry is right under either
   // answer. Claude's --append-system-prompt is folded the same way for symmetry.
-  const instructions = [capsuleText, learnedText].filter(Boolean).join('\n\n');
+  /* ── helper sweep · P10 notes ── one line about wanigan_annotate_change, only
+     where this launch wired Wanigan's MCP server and the profile is granted the
+     tool, and only on instruction text already being injected: it never turns a
+     launch with no capsule and no briefing into one with a system-prompt addition. */
+  const instructions = launchInstructionParts(capsuleText, learnedText, mcpFile !== null && changeNoteToolGranted(opts.providerId)).join('\n\n');
   if (instructions) {
     if (def.harness === 'codex') {
       learnedArgs.push('--config', `developer_instructions=${JSON.stringify(instructions)}`);
