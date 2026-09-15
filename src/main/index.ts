@@ -31,7 +31,7 @@ import type {
   SourceConfig, ThemeSetting, TrustLevel,
 } from '../shared/types';
 import { assertManagedRoot, assertOpenablePath } from './roots';
-import { installApplicationMenu } from './menu';
+import { installApplicationMenu, setComposerShown } from './menu';
 import { automationRun } from './automation';
 import { adapterTrustPrompt, manifestTrustPrompt } from './pack-consent';
 
@@ -3352,6 +3352,11 @@ function registerIpc() {
   });
   ipcMain.on('sessions:resize', (event, id: string, cols: number, rows: number) => {
     if (trustedSender(event.sender, event.senderFrame) && !demoWindows.has(event.sender) && !changingDemoWindow) resizeSession(id, cols, rows);
+  });
+  // The View menu's Show/Hide Composer label. A demo window reports too: the
+  // label describes the window on screen, and it changes nothing but a word.
+  ipcMain.on('menu:composerShown', (event, shown: unknown) => {
+    if (trustedSender(event.sender, event.senderFrame) && typeof shown === 'boolean') setComposerShown(shown);
   });
 }
 

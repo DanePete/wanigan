@@ -4,7 +4,7 @@
   "private": true,
   "description": "Desktop control surface for local coding agents. Run a crew of Claude Code and Codex sessions across every repo from one window.",
   "author": "Dead North LLC",
-  "homepage": "https://wanigan.deadnorth.io",
+  "homepage": "https://wanigan.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/deadnorth/wanigan.git"
