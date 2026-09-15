@@ -30,6 +30,13 @@
 .p8-preview dt { color: var(--text-faint); }
 .p8-preview dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 
+/* This week. */
+.p8-recap { display: grid; gap: var(--s-2); }
+.p8-recap-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s-2); }
+.p8-recap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: var(--s-2); }
+.p8-recap-list ul { display: grid; gap: var(--s-1); margin: var(--s-1) 0 0; padding: 0; list-style: none; }
+.p8-recap-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); font-size: var(--t-small); min-width: 0; }
+
 /* The script launcher. */
 .p8-scripts { display: grid; gap: var(--s-2); width: min(720px, 100%); max-height: min(760px, 100%); overflow: auto; padding: var(--s-4); }
 .p8-target { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }

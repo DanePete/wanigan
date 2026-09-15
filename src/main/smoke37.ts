@@ -391,6 +391,79 @@ export async function runNamingTemplateSmoke(check: Check, say: Say, tmp: string
   }
 }
 
+export async function runWeeklyRecapSmoke(check: Check, say: Say, tmp: string): Promise<void> {
+  say('── helper sweep · P8 mac · this week, from evidence');
+  const { execFileSync } = await import('node:child_process');
+  const recapMod = await import('./weekly-recap');
+  const shared = await import('../shared/weekly-recap');
+  const worktrees = await import('./worktrees');
+  const { addProject } = await import('./store');
+  const { db } = await import('./db');
+
+  const repo = path.join(tmp, 'recap-repo');
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' }).toString().trim();
+  git(repo, 'init', '-q', '-b', 'main');
+  git(repo, 'config', 'user.email', 'smoke@wanigan.test');
+  git(repo, 'config', 'user.name', 'Smoke');
+  fs.writeFileSync(path.join(repo, 'README.md'), '# recap\n');
+  git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'base');
+  const base = git(repo, 'rev-parse', 'HEAD');
+  const project = await addProject(repo);
+  const now = Date.now();
+  const insert = db().prepare(`INSERT INTO session_log (id, conversation_id, provider_id, project_id, project_path, project_name, started_at, ended_at, exit_code, worktree, baseline_head, title)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+
+  // Merged: a worktree whose commit reached main.
+  const merged = await worktrees.createWorktree(repo, project.name, 's_recap_merged1');
+  fs.writeFileSync(path.join(merged.path, 'a.txt'), 'merged work\n');
+  git(merged.path, 'add', '-A'); git(merged.path, 'commit', '-qm', 'merged work');
+  git(repo, 'merge', '-q', '--no-ff', '-m', 'merge', merged.branch!);
+  insert.run('s_recap_merged1', 'c_merged', 'claude', project.id, repo, project.name, now - 3_000, now - 2_000, 0, merged.path, base, 'Merged work');
+  // Half-finished: committed, exited, never merged, worktree still there.
+  const open = await worktrees.createWorktree(repo, project.name, 's_recap_open02');
+  fs.writeFileSync(path.join(open.path, 'b.txt'), 'unmerged\n');
+  git(open.path, 'add', '-A'); git(open.path, 'commit', '-qm', 'unmerged work');
+  insert.run('s_recap_open02', 'c_open', 'claude', project.id, repo, project.name, now - 2_500, now - 1_500, 0, open.path, base, 'Half-finished work');
+  // Discarded: committed, then the worktree was removed unmerged.
+  const gone = await worktrees.createWorktree(repo, project.name, 's_recap_gone03');
+  fs.writeFileSync(path.join(gone.path, 'c.txt'), 'thrown away\n');
+  git(gone.path, 'add', '-A'); git(gone.path, 'commit', '-qm', 'thrown away');
+  insert.run('s_recap_gone03', 'c_gone', 'codex', project.id, repo, project.name, now - 2_000, now - 1_000, 1, gone.path, base, 'Discarded work');
+  await worktrees.removeWorktree(gone.path, true);
+
+  db().prepare('INSERT INTO review_runs (id, project_id, started_at, ended_at, status, results_json) VALUES (?,?,?,?,?,?)')
+    .run('rr_recap_1', project.id, now - 1_000, now - 900, 'failed', JSON.stringify([{ command: 'npm test', exitCode: 1, output: '', durationMs: 5 }, { command: 'npm run lint', exitCode: 0, output: '', durationMs: 5 }]));
+  db().prepare('INSERT INTO work_dockets (id, project_id, title, objective, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?)')
+    .run('dk_recap_1', project.id, 'Checkout totals', 'x', 'accepted', now - 5_000, now - 800);
+  db().prepare('INSERT INTO session_api_events (session_id, at, kind, cost_usd) VALUES (?,?,?,?)').run('s_recap_merged1', now - 2_500, 'request', 1.25);
+  db().prepare('INSERT INTO operator_runs (id, at, project_id, cwd, source, name, command) VALUES (?,?,?,?,?,?,?)')
+    .run('or_recap_1', now - 500, project.id, repo, 'Makefile', 'test', 'make test');
+
+  try {
+    const recap = await recapMod.weeklyRecap(project.id, 0);
+    check(recap.sessionsRun === 3 && recap.conversations === 3, 'sessions run this week are counted from session_log', recap);
+    check(recap.outcomeMethod === 'git' && recap.merged === 1 && recap.discarded === 1,
+      'with no recorded outcome column, merged and discarded are read from git: one branch contained in main, one removed unmerged', { merged: recap.merged, discarded: recap.discarded, method: recap.outcomeMethod });
+    check(recap.halfFinished.length === 1 && recap.halfFinished[0].sessionId === 's_recap_open02',
+      'the conversation that exited with its worktree open and unmerged is the half-finished one', recap.halfFinished);
+    check(recap.worktreesOpen.some((w) => w.path === open.path) && !recap.worktreesOpen.some((w) => w.path === merged.path || w.path === gone.path),
+      'open worktrees exclude the merged and the removed ones', recap.worktreesOpen.map((w) => w.branch));
+    check(recap.gatesFailed === 1 && recap.failedCommands.join() === 'npm test', 'a failed review gate is counted and names only the command that failed', recap.failedCommands);
+    check(recap.goalsAccepted.length === 1 && recap.goalsAccepted[0].title === 'Checkout totals', 'an accepted goal is counted');
+    check(recap.cost?.usd === 1.25 && recap.cost.sessionsReporting === 1, 'cost is the reported cost of this week\'s sessions, with how many reported', recap.cost);
+    check(recap.operatorRuns === 1, 'commands the operator ran from the script launcher are counted apart from agent work');
+    const md = shared.recapMarkdown(recap, now);
+    check(/\| Work merged \| 1 \|/.test(md) && /read from git/.test(md) && /Half-finished work/.test(md) && /No model wrote any of this/.test(md),
+      'the Markdown export carries the counts, the half-finished conversation and the merge rule it used', md.slice(0, 400));
+    const lastWeek = await recapMod.weeklyRecap(project.id, 1);
+    check(lastWeek.nothingRecorded && lastWeek.merged === 0, 'last week, with nothing recorded, says so', lastWeek);
+  } finally {
+    await worktrees.removeWorktree(merged.path, true).catch(() => {});
+    await worktrees.removeWorktree(open.path, true).catch(() => {});
+  }
+}
+
 export async function runP8Smoke(check: Check, say: Say): Promise<void> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-p8-'));
   try {
@@ -399,6 +472,7 @@ export async function runP8Smoke(check: Check, say: Say): Promise<void> {
     await runScriptLauncherSmoke(check, say, tmp);
     await runMcpToolGrantSmoke(check, say, tmp);
     await runNamingTemplateSmoke(check, say, tmp);
+    await runWeeklyRecapSmoke(check, say, tmp);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

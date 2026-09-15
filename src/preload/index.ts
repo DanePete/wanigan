@@ -53,6 +53,7 @@ import type { AutomationLedgerRow, AutomationStatus } from '../shared/automation
 import type { OperatorTerminal, ScriptListing, ScriptSource } from '../shared/project-scripts';
 import type { McpToolGrant, McpToolInfo } from '../shared/mcp-tool-grants';
 import type { NamingTemplates } from '../shared/naming-templates';
+import type { WeeklyRecap } from '../shared/weekly-recap';
 /* ── end helper sweep · P8 mac ── */
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -1012,6 +1013,10 @@ const api = {
       call<OperatorTerminal>('scripts:run', projectId, source, name, target ?? null),
     recentRuns: (projectId: string) =>
       call<{ at: number; cwd: string; source: string; name: string; command: string; exitCode: number | null }[]>('scripts:recentRuns', projectId),
+  },
+  recap: {
+    week: (projectId: string, back = 0) => call<WeeklyRecap>('recap:week', projectId, back),
+    exportMarkdown: (projectId: string, back = 0) => call<string | null>('recap:export', projectId, back),
   },
   naming: {
     get: (projectId: string) => call<NamingTemplates>('naming:get', projectId),

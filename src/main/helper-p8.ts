@@ -8,6 +8,7 @@ import * as terminalsMod from './operator-terminals';
 import { WANIGAN_TOOL_CATALOGUE, setToolGrant, toolGrantFor } from './mcp/tool-grants';
 import { validProfileId } from '../shared/mcp-tool-grants';
 import { namingTemplates, setNamingTemplates } from './naming';
+import { exportWeeklyRecap, weeklyRecap } from './weekly-recap';
 
 /**
  * The Mac around the app, local automation and attribution, wired once.
@@ -70,6 +71,10 @@ export function registerP8Ipc(handle: Handle): void {
   // Per-project title and branch naming templates.
   handle('naming:get', (projectId: unknown) => namingTemplates(projectId));
   handle('naming:set', (projectId: unknown, templates: unknown) => setNamingTemplates(projectId, templates));
+
+  // This week, per project, from evidence.
+  handle('recap:week', (projectId: unknown, back: unknown) => weeklyRecap(projectId, back));
+  handle('recap:export', (projectId: unknown, back: unknown) => exportWeeklyRecap(deps?.liveWindow() ?? null, projectId, back));
 }
 
 export function startP8Services(next: P8Deps): void {
