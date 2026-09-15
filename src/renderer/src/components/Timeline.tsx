@@ -49,11 +49,13 @@ const KINDS = [
 ] as const;
 type Kind = (typeof KINDS)[number]['id'];
 
-export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff, onRevealFile }: {
+export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff, onRevealFile, focusEvent }: {
   sessionId: string;
   onOpenFile?: (path: string) => void;
   /* ── helper sweep · P7 depth ── open a file in the code rail's reader rather than an external editor. */
   onRevealFile?: (path: string) => void;
+  /* ── helper sweep · P7 depth ── scroll to and mark this row once it is loaded. Nonce re-fires repeats. */
+  focusEvent?: { eventId: number; nonce: number } | null;
   /** Jump to this turn's diff in the code panel. Offered only for checkpoint-matched turns. */
   onOpenTurnDiff?: (turn: number) => void;
 }) {
@@ -173,6 +175,26 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff, onReve
     }
     return out;
   }, [groups, shown, isExpanded]);
+
+  /* ── helper sweep · P7 depth ── */
+  const [focused, setFocused] = useState<number | null>(null);
+  const handledFocus = useRef<number | null>(null);
+  useEffect(() => {
+    if (!focusEvent || handledFocus.current === focusEvent.nonce) return;
+    const group = groups.find((g) => g.rows.some((r) => r.e.id === focusEvent.eventId));
+    // Not loaded yet: this runs again when the rows arrive.
+    if (!group) return;
+    handledFocus.current = focusEvent.nonce;
+    setQ(''); setKind('all');
+    setTurnOverrides((m) => ({ ...m, [group.key]: true }));
+    const through = groups.indexOf(group);
+    setShown((s) => Math.max(s, groups.slice(0, through + 1).reduce((n, g) => n + g.rows.length, 0)));
+    setFocused(focusEvent.eventId);
+    window.requestAnimationFrame(() => {
+      scroll.current?.querySelector(`[data-event-id="${focusEvent.eventId}"]`)?.scrollIntoView({ block: 'center' });
+    });
+  }, [focusEvent, groups]);
+  /* ── end helper sweep · P7 depth ── */
 
   const folded = all.length - rows.length;
   const filtering = kind !== 'all' || q.trim() !== '';
@@ -327,7 +349,7 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff, onReve
                     return (
                       <li key={r.e.id} className="tl-li">
                         {newDay && <p className="tl-day"><span>{dayLabel(r.e.at)}</span></p>}
-                        <Row r={r} max={maxSpan} now={now} onOpenFile={onOpenFile} />
+                        <Row r={r} max={maxSpan} now={now} onOpenFile={onOpenFile} focused={focused === r.e.id} />
                       </li>
                     );
                   })}
@@ -413,7 +435,7 @@ export default function Timeline({ sessionId, onOpenFile, onOpenTurnDiff, onReve
                           <ol className="tl-rail tl-turnbody">
                             {g.rows.map((r) => (
                               <li key={r.e.id} className="tl-li">
-                                <Row r={r} max={maxSpan} now={now} onOpenFile={onOpenFile} />
+                                <Row r={r} max={maxSpan} now={now} onOpenFile={onOpenFile} focused={focused === r.e.id} />
                               </li>
                             ))}
                           </ol>
@@ -712,8 +734,10 @@ function markFor(r: Row): Mark {
   }
 }
 
-function Row({ r, max, now, onOpenFile }: {
+function Row({ r, max, now, onOpenFile, focused }: {
   r: Row; max: number; now: number; onOpenFile?: (path: string) => void;
+  /* ── helper sweep · P7 depth ── */
+  focused?: boolean;
 }) {
   const e = r.e;
   const m = markFor(r);
@@ -769,13 +793,13 @@ function Row({ r, max, now, onOpenFile }: {
   ].filter(Boolean).join(' · ');
 
   return open ? (
-    <button type="button" className="tl-row tl-row-open" data-tier={tier}
+    <button type="button" className="tl-row tl-row-open" data-tier={tier} data-event-id={e.id} data-focused={focused || undefined}
             title={`Open ${e.paths.join('\n')}`} aria-label={`${label} — open ${file}`}
             onClick={open}>
       {body}
     </button>
   ) : (
-    <div className="tl-row" data-tier={tier}>{body}</div>
+    <div className="tl-row" data-tier={tier} data-event-id={e.id} data-focused={focused || undefined}>{body}</div>
   );
 }
 

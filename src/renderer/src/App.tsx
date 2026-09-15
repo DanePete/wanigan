@@ -39,6 +39,9 @@ import { ViewMemoryProvider, ViewMemoryScope } from './components/viewMemory';
 import { COMPOSER_MENU_EVENT, readComposerShown, writeComposerShown } from './components/composerPreference';
 import { useThemePreference } from './theme';
 import { claudeContextLabel, selectedProviderStatus, selectedSessionTelemetry } from '@shared/provider-status';
+/* ── helper sweep · P7 depth ── */
+import { openTimeline } from './components/attentionActions';
+/* ── end helper sweep · P7 depth ── */
 
 type CodexStatus = {
   fetchedAt: number; plan: string | null; spendControlReached: boolean | null;
@@ -1435,7 +1438,9 @@ export default function App() {
           )}
           {tab === 'plugins' && <Plugins />}
           {tab === 'schedules' && <Schedules projects={projects} />}
-          {tab === 'git' && <Git projects={projects} projectsRead={projectsRead} selectedProjectId={spaceId ?? projectId} onPickProject={choose} />}
+          {tab === 'git' && <Git projects={projects} projectsRead={projectsRead} selectedProjectId={spaceId ?? projectId} onPickProject={choose}
+            /* ── helper sweep · P7 depth ── */
+            onOpenSessionEvent={(sessionId, eventId) => { openTimeline(sessionId, eventId); openFromTriage(sessionId); }} />}
           {tab === 'runs' && <HeadlessRuns projects={projects} providers={providers} />}
           {tab === 'settings' && (demoOn ? <main className="pane">
             <PageHead title="Settings" eyebrow="Demo workspace" lead="These appearance choices apply only to this demo." />

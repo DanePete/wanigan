@@ -266,6 +266,7 @@ export async function runSmoke(): Promise<void> {
     await p7.runGoalBudgetSmoke(check, say);
     await p7.runMaintainabilitySmoke(check, say);
     await p7.runSessionFilesSmoke(check, say);
+    await p7.runAgentGitSmoke(check, say);
     /* ── end helper sweep · P7 depth ── */
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);

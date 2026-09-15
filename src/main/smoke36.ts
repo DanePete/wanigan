@@ -316,3 +316,57 @@ export async function runSessionFilesSmoke(check: Check, say: Say): Promise<void
   check(stored.n === 1 && !refs.some((r) => r.path.includes('Fix the total')), 'files: the prompt itself is not stored, only the paths it named');
   hooks.cleanupHookSettings(sid);
 }
+
+/** Item 5: git commands an agent ran, joined to the Git view's commit and branch rows through the real reflog. */
+export async function runAgentGitSmoke(check: Check, say: Say): Promise<void> {
+  say('── depth · git commands the agent ran, in the Git view');
+  const { agentGitMarks } = await import('./agent-git');
+  const repo = repoFixture('wanigan-p7-agentgit-');
+  repo.write('a.txt', 'one\n');
+  repo.git('add', '-A'); repo.git('commit', '-qm', 'base');
+  const sid = `p7-agentgit-${Date.now()}`;
+  insertSession(sid, null, repo.dir, null, { title: 'Retry checkout' });
+  const bash = (command: string, run: () => void) => {
+    const pre = Date.now();
+    insertEvent(sid, 'PreToolUse', { tool: 'Bash', summary: command, at: pre });
+    run();
+    return insertEvent(sid, 'PostToolUse', { tool: 'Bash', summary: command, at: Date.now(), ok: 1 });
+  };
+  repo.write('a.txt', 'two\n');
+  const commitEvent = bash('git commit -am "agent: two"', () => repo.git('commit', '-qam', 'agent: two'));
+  const agentSha = repo.git('rev-parse', 'HEAD').trim();
+  const switchEvent = bash('git switch -c agent-branch', () => repo.git('switch', '-q', '-c', 'agent-branch'));
+  bash('git status', () => repo.git('status'));
+  // The operator's own commit, well outside any agent call's window.
+  await new Promise((r) => setTimeout(r, 2_300));
+  repo.write('a.txt', 'three\n');
+  repo.git('commit', '-qam', 'operator: three');
+  const operatorSha = repo.git('rev-parse', 'HEAD').trim();
+
+  const marks = await agentGitMarks(repo.dir);
+  check(marks.sessions === 1 && marks.commands === 2 && marks.reflogRead, 'agent git: the session in this repository and its two history-moving git calls are found; git status is not one', JSON.stringify({ sessions: marks.sessions, commands: marks.commands }));
+  const onCommit = marks.commits[agentSha] ?? [];
+  check(onCommit.length === 1 && onCommit[0].join === 'reflog' && onCommit[0].eventId === commitEvent && onCommit[0].sessionTitle === 'Retry checkout' && onCommit[0].verb === 'commit',
+    'agent git: the commit the agent made is marked run by its session, joined through the reflog, with its timeline event', JSON.stringify(onCommit));
+  check(!marks.commits[operatorSha], 'agent git: the operator’s own commit is unmarked');
+  const onBranch = marks.branches['agent-branch'] ?? [];
+  check(onBranch.some((m) => m.verb === 'checkout' && m.eventId === switchEvent && m.join === 'reflog'), 'agent git: the branch the agent switched to is marked on its branch row', JSON.stringify(marks.branches));
+
+  // A repository whose reflog records nothing can only be joined by time, and says so.
+  const quiet = repoFixture('wanigan-p7-agentgit-noreflog-');
+  quiet.git('config', 'core.logAllRefUpdates', 'false');
+  quiet.write('b.txt', 'one\n');
+  const qsid = `p7-agentgit-quiet-${Date.now()}`;
+  insertSession(qsid, null, quiet.dir, null, { title: 'No reflog' });
+  const qpre = Date.now() - 1500;
+  insertEvent(qsid, 'PreToolUse', { tool: 'Bash', summary: 'git commit -m first', at: qpre });
+  quiet.git('add', '-A'); quiet.git('commit', '-qm', 'first');
+  const qsha = quiet.git('rev-parse', 'HEAD').trim();
+  insertEvent(qsid, 'PostToolUse', { tool: 'Bash', summary: 'git commit -m first', at: Date.now() + 500, ok: 1 });
+  const qmarks = await agentGitMarks(quiet.dir);
+  check(qmarks.commits[qsha]?.[0]?.join === 'time', 'agent git: with no reflog entry the join is labelled by time', JSON.stringify(qmarks.commits));
+
+  const view = await source('renderer/src/views/Git.tsx');
+  check(view.includes('<RunByInline marks={agentGit?.commits[c.hash]} />') && view.includes('<RunByList marks={agentGit?.branches[b.name]}'),
+    'agent git: the Git view draws the marks on commit rows and branch rows');
+}

@@ -25,6 +25,9 @@ import { bindingMatches, modalOpen } from '../bindings';
 /* helper sweep · P2 attention */
 import { AwayNote, LimitResumeNote, ResumeWarningDialog, TabTriageMenu } from '../components/SessionTriage';
 import { OPEN_TIMELINE_EVENT } from '../components/attentionActions';
+/* ── helper sweep · P7 depth ── */
+import { takePendingTimelineFocus } from '../components/attentionActions';
+/* ── end helper sweep · P7 depth ── */
 import '../styles/sessions.css';
 
 /* ── phase 21 · what an attachment looks like ─────────────────────────
@@ -233,6 +236,12 @@ export default function Sessions({
   const [compactDetails, setCompactDetails] = useState(false);
   const detailReader = useRef<HTMLDivElement>(null);
   useEffect(() => { setCompactDetails(false); }, [activeId, compactLayout]);
+  /* ── helper sweep · P7 depth ── a row requested before this view mounted, for the session now in front. */
+  useEffect(() => {
+    if (!activeId) return;
+    const eventId = takePendingTimelineFocus(activeId);
+    if (eventId !== null) setEventFocus({ sessionId: activeId, eventId, nonce: Date.now() });
+  }, [activeId]);
   useEffect(() => {
     if (compactLayout && compactDetails) detailReader.current?.querySelector<HTMLButtonElement>('button')?.focus();
   }, [compactLayout, compactDetails]);
@@ -266,6 +275,8 @@ export default function Sessions({
   const [turnFocus, setTurnFocus] = useState<{ sessionId: string; turn: number; nonce: number } | null>(null);
   /* ── helper sweep · P7 depth ── a file the Timeline's file panel asked the code rail to open. */
   const [fileFocus, setFileFocus] = useState<{ sessionId: string; path: string; nonce: number } | null>(null);
+  /* ── helper sweep · P7 depth ── a timeline row another view asked to be shown (the Git view's "run by"). */
+  const [eventFocus, setEventFocus] = useState<{ sessionId: string; eventId: number; nonce: number } | null>(null);
   /*
    * Three agents in one repo were three identical rows. The launch title is
    * assigned once and is "<provider> · <project>" for all three of them, so the
@@ -541,7 +552,12 @@ export default function Sessions({
   useEffect(() => {
     const onOpen = (e: Event) => {
       const id = (e as CustomEvent<{ sessionId: string }>).detail?.sessionId;
-      if (id && sessionsRef.current.some((s) => s.id === id)) openTimelineFor(id);
+      if (id && sessionsRef.current.some((s) => s.id === id)) {
+        openTimelineFor(id);
+        /* ── helper sweep · P7 depth ── */
+        const eventId = takePendingTimelineFocus(id);
+        if (eventId !== null) setEventFocus({ sessionId: id, eventId, nonce: Date.now() });
+      }
     };
     window.addEventListener(OPEN_TIMELINE_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_TIMELINE_EVENT, onOpen);
@@ -1216,7 +1232,8 @@ export default function Sessions({
                                 onRevealFile={(p) => {
                                   setFileFocus({ sessionId: active.id, path: p, nonce: Date.now() });
                                   setPane(active.id, 'code');
-                                }} />
+                                }}
+                                focusEvent={eventFocus?.sessionId === active.id ? { eventId: eventFocus.eventId, nonce: eventFocus.nonce } : null} />
                     ) : (
                       <div style={{ overflowY: 'auto', minHeight: 0, borderLeft: '1px solid var(--line)' }}>
                         <SessionLearning key={`sl-${active.id}`} sessionId={active.id}

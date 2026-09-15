@@ -3,6 +3,7 @@ import { loopBudgetMeasure, setLoopBudgets } from './control';
 import { maintainabilityFor } from './maintainability';
 import { onHookInput } from './hooks';
 import { observeFileRefs, sessionFiles } from './session-files';
+import { agentGitMarks } from './agent-git';
 
 /**
  * The wiring for the review-depth helpers (helper sweep P7): one start function
@@ -27,11 +28,15 @@ export function startDepthServices(): void {
   onHookInput((stored, input, cwd) => { observeFileRefs(stored, input, cwd); });
 }
 
-export function registerDepthIpc(handle: Handle): void {
+/** What index.ts supplies: the managed-root check every Git view channel goes through. */
+export type DepthIpcOptions = { gitRoot: (root: unknown) => string };
+
+export function registerDepthIpc(handle: Handle, options: DepthIpcOptions): void {
   handle('depth:asksRecord', (sessionId: unknown, text: unknown) => recordAsks(sessionId, text, 'composer'));
   handle('depth:asksList', (sessionId: unknown) => asksFor(sessionId));
   handle('depth:asksTick', (itemId: unknown, ticked: unknown) => tickAsk(itemId, ticked));
   handle('depth:setLoopBudgets', (docketId: unknown, budgets: unknown) => setLoopBudgets(idArg(docketId, 'goal'), budgets));
+  handle('depth:agentGit', (root: unknown) => agentGitMarks(options.gitRoot(root)));
   handle('depth:sessionFiles', (sessionId: unknown) => sessionFiles(sessionId));
   handle('depth:maintainability', (sessionId: unknown) => maintainabilityFor(sessionId));
   handle('depth:loopMeasure', (docketId: unknown) => loopBudgetMeasure(idArg(docketId, 'goal')));
