@@ -396,3 +396,57 @@ export async function runCacheWarmthSmoke(check: Check, say: Say): Promise<void>
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
+
+export async function runCostCausesSmoke(check: Check, say: Say): Promise<void> {
+  say('── cost · cost by cause');
+  const { db } = await import('./db');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-causes-'));
+  const stamp = Date.now();
+  const session = `causes-${stamp}`;
+  const conversation = `c0ffee00-0000-4000-8000-${String(stamp).slice(-12).padStart(12, '0')}`;
+  const serverId = `mcp_causes_${stamp}`;
+  try {
+    const now = Date.now();
+    db().prepare(`INSERT INTO session_log (id, conversation_id, provider_id, harness_id, project_path, project_name, started_at, title)
+      VALUES (?,?,?,?,?,?,?,?)`).run(session, conversation, 'claude', 'claude-code', dir, 'causes', now - 3600_000, 'cause study');
+    const usage = db().prepare(`INSERT INTO claude_usage_events (request_key, at, model, cwd, session_id, sidechain, in_tokens, out_tokens, cache_read, cache_write_5m, cache_write_1h)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+    usage.run(`${stamp}|a`, now - 40 * 60_000, 'claude-fable-5', dir, conversation, 0, 10, 10, 20_000, 1_000, 0);
+    usage.run(`${stamp}|b`, now - 39 * 60_000, 'claude-fable-5', dir, conversation, 0, 10, 10, 21_000, 0, 0);
+    usage.run(`${stamp}|c`, now - 10 * 60_000, 'claude-fable-5', dir, conversation, 0, 10, 10, 0, 0, 30_000);
+    const ev = db().prepare('INSERT INTO session_events (session_id, at, event, tool_name, paths_json) VALUES (?,?,?,?,?)');
+    const file = path.join(dir, 'src', 'big.ts');
+    for (let i = 0; i < 4; i++) ev.run(session, now - (30 - i) * 60_000, 'PostToolUse', 'Read', JSON.stringify([file]));
+    ev.run(session, now - 20 * 60_000, 'PostToolUse', 'Edit', JSON.stringify([file]));
+    ev.run(session, now - 19 * 60_000, 'PostToolUse', 'Read', JSON.stringify([file]));
+    db().prepare('INSERT INTO mcp_servers (id, project_id, name, transport, command, enabled, created_at) VALUES (?,?,?,?,?,?,?)')
+      .run(serverId, null, `quiet-${stamp}`, 'stdio', 'true', 1, now - 30 * 24 * 3600_000);
+    const stored = path.join(dir, `${session}.jsonl`);
+    fs.writeFileSync(stored, [
+      JSON.stringify({ type: 'assistant', version: '2.1.271', message: { diagnostics: { cache_miss_reason: { type: 'tools_changed', cache_missed_input_tokens: 4100 } } } }),
+      JSON.stringify({ type: 'assistant', version: '2.1.271', message: { diagnostics: { cache_miss_reason: { type: 'tools_changed' } } } }),
+      JSON.stringify({ type: 'assistant', version: '2.1.271', message: { content: [] } }),
+    ].join('\n'));
+    db().prepare('INSERT INTO transcripts (session_id, source_path, stored_path, archived_at) VALUES (?,?,?,?)').run(session, stored, stored, now);
+
+    const { costCauses } = await import('./cost-causes');
+    const report = costCauses(7, 14, new Set([session]));
+    const mine = report.idle.conversations.find((c) => c.conversation === conversation);
+    check(mine?.gaps === 1 && mine.cappedTokens === 21_000 && mine.uncappedTokens === 30_000 && mine.sessionId === session,
+      'an idle-gap cache write is attributed, capped at the previous request’s footprint, with the uncapped bound and the session named', mine);
+    const read = report.reads.rows.find((r) => r.sessionId === session);
+    check(read?.reads === 4 && read.path === file && read.live === true,
+      'a file read four times before an edit is flagged as a repeated read, and the read after the edit starts a new run', read);
+    check(report.mcp.unused.some((s) => s.id === serverId && s.lastCalledAt === null),
+      'an enabled MCP server with no calls in the window is listed as never called', report.mcp.unused.map((s) => s.name));
+    check(report.cacheMiss.recorded && report.cacheMiss.types.find((t) => t.type === 'tools_changed')?.count === 2 && (report.cacheMiss.missedTokens ?? 0) >= 4100,
+      'cache-miss reasons are counted by type from the session’s archived transcript', report.cacheMiss);
+  } finally {
+    db().prepare('DELETE FROM session_log WHERE id = ?').run(session);
+    db().prepare('DELETE FROM claude_usage_events WHERE session_id = ?').run(conversation);
+    db().prepare('DELETE FROM session_events WHERE session_id = ?').run(session);
+    db().prepare('DELETE FROM mcp_servers WHERE id = ?').run(serverId);
+    db().prepare('DELETE FROM transcripts WHERE session_id = ?').run(session);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}

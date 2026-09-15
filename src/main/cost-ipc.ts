@@ -7,6 +7,7 @@ import { projectionBudgetFor } from './learning-budget';
 import { setSkillModelInvocation, skillListing } from './skill-listing';
 import { codexCredits } from './codex-credits';
 import { cacheWarmth } from './cache-warmth';
+import { costCauses } from './cost-causes';
 
 /**
  * IPC for the cost, quota and context surfaces, registered from index.ts's
@@ -44,6 +45,7 @@ function project(value: unknown) {
 export function registerCostIpc(handle: Handle, deps: CostIpcDeps): void {
   handle('cost:yield', (window: unknown) => spendYield(days(window), deps.liveSessionIds()));
   handle('cost:codexCredits', (window: unknown) => codexCredits(days(window)));
+  handle('cost:causes', (window: unknown, mcpWindow: unknown) => costCauses(days(window), days(mcpWindow), deps.liveSessionIds()));
   handle('cost:cacheWarmth', (sessionId: unknown) => cacheWarmth(id(sessionId, 'That session')));
   handle('cost:codexLoader', (projectId: unknown) => {
     const p = project(projectId);

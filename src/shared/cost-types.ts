@@ -149,3 +149,33 @@ export type CacheWarmthFacts = {
   contextTokens: number | null;
   ttl: import('./cache-warmth').CacheTtl;
 };
+
+export type CostCausesReport = {
+  days: number;
+  idle: {
+    conversations: (import('./cost-causes').IdleGapRewrite & { sessionId: string | null; live: boolean; title: string | null; where: string | null })[];
+    gaps: number;
+    cappedTokens: number;
+    uncappedTokens: number;
+    requestsRead: number;
+    truncated: boolean;
+  };
+  reads: {
+    rows: (import('./cost-causes').RepeatedRead & { live: boolean; title: string | null; where: string | null })[];
+    files: number;
+    sessions: number;
+    /** Reads past the second, summed over every flagged file. */
+    extraReads: number;
+  };
+  mcp: { days: number; configured: number; unused: import('./cost-causes').McpServerUse[]; hooklessNote: string };
+  cacheMiss: {
+    recorded: boolean;
+    types: { type: string; count: number }[];
+    missedTokens: number | null;
+    transcriptsScanned: number;
+    sessionsConsidered: number;
+    cliVersions: string[];
+    sessions: { sessionId: string; live: boolean; title: string | null; where: string; types: Record<string, number> }[];
+    note: string;
+  };
+};
