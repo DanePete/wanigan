@@ -54,6 +54,9 @@ import type {
 
 /* ── helper sweep · P1 policy ── */
 import type { ApprovalDetail, AutoModeView, ExposureLeadView, FatigueReport, GateSelfTestRun, GrantSetting, PolicySignal, SkillSurfaceView, StoredTrace } from '../shared/types';
+/* ── helper sweep · P7 depth ── */
+import type { AskMessage } from '../shared/ask-items';
+/* ── end helper sweep · P7 depth ── */
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -1019,6 +1022,17 @@ const api = {
     setSkillModelInvocation: (projectId: string | null, harness: 'claude-code' | 'codex', skillPath: string, allow: boolean) =>
       call<SkillListingReport>('cost:setSkillModelInvocation', projectId, harness, skillPath, allow),
   },
+  /* ── helper sweep · P7 depth ── */
+  // Review depth. Every argument is validated again in main.
+  depth: {
+    asks: {
+      /** Called by the composer after it has written a message into the terminal. */
+      record: (sessionId: string, text: string) => call<number>('depth:asksRecord', sessionId, text),
+      list: (sessionId: string) => call<AskMessage[]>('depth:asksList', sessionId),
+      tick: (itemId: number, ticked: boolean) => call<{ id: number; tickedAt: number | null }>('depth:asksTick', itemId, ticked),
+    },
+  },
+  /* ── end helper sweep · P7 depth ── */
 };
 
 contextBridge.exposeInMainWorld('wanigan', api);

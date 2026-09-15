@@ -260,6 +260,10 @@ export async function runSmoke(): Promise<void> {
     await p1.runGrantSmoke(check, say);
     await p1.runSkillSurfaceSmoke(check, say);
     await p1.runExposureSmoke(check, say);
+    /* ── helper sweep · P7 depth ── */
+    const p7 = await import('./smoke36');
+    await p7.runAskItemsSmoke(check, say);
+    /* ── end helper sweep · P7 depth ── */
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

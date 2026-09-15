@@ -119,6 +119,9 @@ import { DEFAULT_RISK_RULES } from '../shared/risk-tiers';
 import { registerCostIpc } from './cost-ipc';
 /* ── helper sweep · P1 policy ── */
 import * as policyEvidence from './policy-evidence';
+/* ── helper sweep · P7 depth ── */
+import { recordPhoneAsks, registerDepthIpc, startDepthServices } from './depth';
+/* ── end helper sweep · P7 depth ── */
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -951,6 +954,9 @@ async function startServices() {
   checkpoints.initCheckpoints();
   /* ── helper sweep · P1 policy ── */
   policyEvidence.startPolicyEvidence();
+  /* ── helper sweep · P7 depth ── */
+  startDepthServices();
+  /* ── end helper sweep · P7 depth ── */
 
   if (f.hooks) {
     try {
@@ -1281,6 +1287,9 @@ function configureMobileSources(): void {
       const session = listSessions().find((value) => value.id === sessionId && value.status !== 'exited');
       if (!session) throw new Error('That session is no longer running.');
       writeSession(sessionId, `${prompt}\r`);
+      /* ── helper sweep · P7 depth ── */
+      recordPhoneAsks(sessionId, prompt);
+      /* ── end helper sweep · P7 depth ── */
     },
     key: async (sessionId, sequence) => {
       // The sequence came out of mobile/control.ts's closed list, so it is not
@@ -3361,6 +3370,9 @@ function registerIpc() {
   registerHelperAttentionIpc(handle);
   /* ── helper sweep · P4 cost ── */
   registerCostIpc(handle, { liveSessionIds, trusted: (event) => trustedSender(event.sender, event.senderFrame) && !demoWindows.has(event.sender) });
+  /* ── helper sweep · P7 depth ── */
+  registerDepthIpc(handle);
+  /* ── end helper sweep · P7 depth ── */
 }
 
 /** Streams a run's results to disk without materialising them in memory. */

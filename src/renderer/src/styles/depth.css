@@ -1,0 +1,22 @@
+/* Review depth (helper sweep P7): the asks checklist, a session's file panel,
+   maintainability numbers, scoped review rules, scratch files, compaction
+   dividers and rejected steps. Every colour, size and space is a token. */
+
+.dp-fine { font-size: var(--t-micro); line-height: 1.5; }
+.dp-pad { padding: 0 0 var(--s-3); margin: 0; }
+
+/* ── asks in this turn ─────────────────────────────────────────────────── */
+.dp-asks .dp-ask-message { display: grid; gap: var(--s-2); padding-bottom: var(--s-3); min-width: 0; }
+.dp-ask-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+.dp-ask { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--s-2); align-items: start; padding: var(--s-2); border-radius: var(--r-sm); background: var(--bg-sunk); min-width: 0; }
+.dp-ask input { margin-top: var(--s-1); }
+.dp-ask-body { display: grid; gap: var(--s-1); min-width: 0; }
+.dp-ask-text { font-size: var(--t-small); line-height: 1.5; overflow-wrap: anywhere; cursor: pointer; }
+.dp-ask[data-ticked='true'] .dp-ask-text { color: var(--text-dim); }
+.dp-hints { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-1); font-size: var(--t-micro); }
+.dp-hints li { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); align-items: baseline; min-width: 0; }
+.dp-hints code { font-family: var(--mono); font-size: var(--t-micro); overflow-wrap: anywhere; }
+.dp-ask-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
+.dp-ask-older { border-top: 1px dashed var(--line-soft); padding-block: var(--s-2); }
+.dp-ask-older > summary { cursor: pointer; color: var(--text-dim); font-size: var(--t-micro); }
+.dp-ask-older[open] > summary { margin-bottom: var(--s-2); }
