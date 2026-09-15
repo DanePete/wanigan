@@ -169,6 +169,66 @@ export async function runHelperUxSmoke(check: Check, say: Say): Promise<void> {
       'the IPC wrapper consults the rail check with the channel and its arguments, and only after the main-window check fails');
     check(![...CODE_RAIL_CHANNELS].some((c) => /^(sessions:(write|create|kill|close|interrupt)|key:|settings:|shell:|browse:|ux:copy|transcripts:)/.test(c)),
       'no rail channel writes to a PTY, launches, touches settings or keys, opens a shell path, copies or reads a transcript');
+
+    /* ── 6b · a real rail window, opened and held to its session ──────── */
+    // The smoke process registers no IPC and opens no window, so the rail had
+    // only ever been checked with a fake sender. Here main's own handler opens a
+    // real BrowserWindow on the built renderer, and the sender check is asked
+    // about that window's real webContents and frame.
+    const { BrowserWindow } = await import('electron');
+    const { pathToFileURL, fileURLToPath } = await import('node:url');
+    const entry = path.join(__dirname, '../renderer/index.html');
+    if (!fs.existsSync(entry)) {
+      check(false, 'the built renderer exists for the rail window check (run npm run build first)', entry);
+    } else {
+      const mainWin = new BrowserWindow({ show: false });
+      const handlers = new Map<string, (...args: never[]) => unknown>();
+      ux.registerHelperUxIpc((channel, fn) => { handlers.set(channel, fn as (...args: never[]) => unknown); }, {
+        rendererEntryPath: () => entry,
+        developmentRendererUrl: () => null,
+        trustedRendererUrl: (raw) => { try { return path.resolve(fileURLToPath(new URL(raw))) === path.resolve(entry); } catch { return false; } },
+        openSafeExternal: () => false,
+        mainWindow: () => mainWin,
+      });
+      const openRail = handlers.get('ux:openCodeRail') as ((id: unknown) => { opened: boolean }) | undefined;
+      const opened = openRail?.('s_p6_other');
+      const rail = BrowserWindow.getAllWindows().find((w) => w !== mainWin && w.getTitle().startsWith('Code —'));
+      check(opened?.opened === true && !!rail && ux.codeRailWindowCount() === 1,
+        'the open handler creates one real rail window for a recorded session', { opened, titles: BrowserWindow.getAllWindows().map((w) => w.getTitle()) });
+      if (rail) {
+        await new Promise<void>((resolve) => {
+          if (!rail.webContents.isLoading()) { resolve(); return; }
+          rail.webContents.once('did-finish-load', () => resolve());
+          setTimeout(resolve, 15_000);
+        });
+        // Electron exposes no getter for a window's webPreferences, so the page
+        // itself is asked: no Node globals reach it, and the preload bridge does.
+        const page = await rail.webContents.executeJavaScript('({ require: typeof require, process: typeof process, bridge: typeof window.wanigan, rail: typeof window.wanigan?.ux?.railSession })')
+          .catch((e: unknown) => ({ error: String(e) })) as Record<string, string>;
+        check(page.require === 'undefined' && page.process === 'undefined' && page.bridge === 'object' && page.rail === 'function',
+          'inside the rail window no Node global reaches the page, and the typed preload bridge does', page);
+        const url = rail.webContents.getURL();
+        check(url.startsWith(pathToFileURL(entry).href) && /view=code-rail/.test(url) && /session=s_p6_other/.test(url),
+          'it loaded the bundled renderer with the code-rail view for that session', url);
+        const wc = rail.webContents;
+        const frame = wc.mainFrame;
+        check(ux.codeRailSenderAllowed(wc, frame, 'code:read', [projectDir, 'src/app.ts'])
+          && ux.codeRailSenderAllowed(wc, frame, 'ux:railSession', ['s_p6_other']),
+          'its real frame may read its own session’s folder and ask for its own session');
+        check(!ux.codeRailSenderAllowed(wc, frame, 'code:read', [tmp, 'shop/src/app.ts'])
+          && !ux.codeRailSenderAllowed(wc, frame, 'ux:railSession', ['s_p6_first'])
+          && !ux.codeRailSenderAllowed(wc, frame, 'sessions:write', ['s_p6_other', 'rm -rf /'])
+          && !ux.codeRailSenderAllowed(wc, frame, 'settings:set', ['x', 'y']),
+          'the same real frame is refused another folder, another session, a PTY write and a settings change');
+        const again = openRail?.('s_p6_other');
+        check(again?.opened === false && ux.codeRailWindowCount() === 1, 'opening the same session again brings the window forward instead of a second one', again);
+        mainWin.destroy();
+        await new Promise((r) => setTimeout(r, 2_600));
+        check(ux.codeRailWindowCount() === 0 && rail.isDestroyed(), 'when the main window goes, the rail window closes with it');
+      }
+      if (!mainWin.isDestroyed()) mainWin.destroy();
+      ux.closeCodeRailWindows();
+    }
   } catch (e) {
     check(false, `helper ux smoke threw: ${e instanceof Error ? e.stack ?? e.message : String(e)}`);
   } finally {
