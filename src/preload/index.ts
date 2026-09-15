@@ -1042,6 +1042,7 @@ const api = {
         call<import('../shared/exec-config').ConfigPinCheck>('configPins:acceptInstructions', projectId, digest, worktree ?? null),
       setAsk: (projectId: string, on: boolean) => call<boolean>('configPins:setInstructionAsk', projectId, on),
     },
+    rejections: (sessionId: string) => call<import('../shared/rejections').GateRejection[]>('depth:rejections', sessionId),
     historyRewriteAsk: () => call<{ projectId: string; enabled: boolean }[]>('depth:historyRewriteAsk'),
     setHistoryRewriteAsk: (projectId: string, on: boolean) => call<boolean>('depth:setHistoryRewriteAsk', projectId, on),
     /** "Count this file" on a scratch file, or take it back. Kept per project and path. */

@@ -590,3 +590,39 @@ export async function runHistoryRewriteAskSmoke(check: Check, say: Say): Promise
     try { const { listProjects } = await import('./store'); const p = listProjects().find((x) => x.path === repo.dir); if (p) removeProject(p.id); } catch { /* best effort */ }
   }
 }
+
+/** Item 10: a denied step stays on the Timeline as "Rejected", with the rule or reason. */
+export async function runRejectedStepSmoke(check: Check, say: Say): Promise<void> {
+  say('── depth · denied steps stay visible');
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-p7-rejected-')));
+  const hooks = await import('./hooks');
+  const policy = await import('./policy');
+  const { gateRejections } = await import('./rejections');
+  const { rejectedRows } = await import('../shared/rejections');
+  await hooks.startHookServer();
+  const sid = `p7-rejected-${Date.now()}`;
+  insertSession(sid, null, dir, null);
+  policy.registerPolicyContext({ sessionId: sid, projectId: null, projectPath: dir, trust: 'project' });
+  const handler = hookHandlerOf(hooks.writeHookSettings(sid, dir));
+  if (!handler) { check(false, 'rejected: no hook capability'); return; }
+  const denied = await postHook(handler, { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: dir, tool_input: { command: 'bash -c "rm -rf ~"' } });
+  await postHook(handler, { hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: dir, tool_input: { command: 'ls' } });
+  await postHook(handler, { hook_event_name: 'PostToolUse', tool_name: 'Bash', cwd: dir, tool_input: { command: 'ls' }, tool_response: { stdout: '' } });
+  await postHook(handler, { hook_event_name: 'PermissionDenied', tool_name: 'Bash', cwd: dir, tool_input: { command: 'git push -f origin main' }, reason: 'Force push to main is on the soft-deny list' });
+  const decision = (denied.hookSpecificOutput as { permissionDecision?: string } | undefined)?.permissionDecision;
+  const events = hooks.sessionEvents(sid, 50);
+  const marks = rejectedRows(events, gateRejections(sid));
+  const pre = events.find((e) => e.event === 'PreToolUse' && (e.summary ?? '').includes('rm -rf'));
+  const ls = events.find((e) => e.event === 'PreToolUse' && e.summary === 'ls');
+  const classifier = events.find((e) => e.event === 'PermissionDenied');
+  check(decision === 'deny' && !!pre && marks.get(pre.id)?.source === 'gate' && marks.get(pre.id)?.rule === 'bash.destructive-root',
+    'rejected: the PreToolUse the gate denied is marked Rejected with the rule that denied it', JSON.stringify({ decision, mark: pre && marks.get(pre.id) }));
+  check(!!ls && !marks.has(ls.id), 'rejected: an allowed call is not marked');
+  check(!!classifier && marks.get(classifier.id)?.source === 'classifier' && /soft-deny/.test(marks.get(classifier.id)?.reason ?? ''),
+    'rejected: a PermissionDenied row is Rejected with the classifier’s reason', JSON.stringify(classifier && marks.get(classifier.id)));
+  const timeline = await source('renderer/src/components/Timeline.tsx');
+  check(timeline.includes('rejectedRows(all, denials)') && timeline.includes("word: 'Rejected'") && timeline.includes('rejected</span>'),
+    'rejected: the Timeline draws the rows as Rejected and counts them apart from failures');
+  hooks.cleanupHookSettings(sid);
+  policy.releasePolicyContext(sid);
+}
