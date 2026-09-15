@@ -1,9 +1,9 @@
 {
-  "at": "2026-09-15T15:10:19.530Z",
+  "at": "2026-09-15T15:20:19.975Z",
   "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic sessions, review and change-note services; no real agent calls",
   "mode": "after",
-  "commit": "7dfd799b54bc1ff5378004ca68ddad5522c69eb3",
-  "uncommittedChanges": 3,
+  "commit": "dd6a35695a7b3fe7d8a7ffdb3ca8a9a559bcba0b",
+  "uncommittedChanges": 0,
   "checks": [
     "the rail counts \"3 notes written by the agent\", one where the code changed since, and the one the agent withdrew",
     "a note sits under the last line it covers, marked \"written by the agent\" with the session title, and only its two lines carry the agent rule",
