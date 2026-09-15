@@ -6,7 +6,11 @@ import { halted } from './halt';
 import { redactCredentials } from './redact';
 import { getSetting, setSetting } from './settings';
 import { TRUST_COPY, TRUST_LEVELS } from '../shared/types';
-import type { HookInput, LedgerEntry, PolicyDecision, TrustLevel } from '../shared/types';
+import type { HookInput, LedgerEntry, PolicyDecision, StoredTrace, TrustLevel } from '../shared/types';
+import {
+  MCP_READ_VERB, WRITE_TOOLS, evaluate, insideRoot, isShellTool, mcpTool, nobodyToAsk, targetPath,
+  type Evaluation, type PolicyTrace, type RuleEnv,
+} from '../shared/policy-rules';
 
 /**
  * Trust levels and the ledger.
@@ -104,78 +108,20 @@ export function setTrust(projectId: string, level: TrustLevel): void {
   }
 }
 
-/* ── tool classification ──────────────────────────────────────────────── */
+/* ── the rules ────────────────────────────────────────────────────────── */
 
-/**
- * What 'readonly' allows.
+/*
+ * The rules themselves live in shared/policy-rules.ts, pure, so the gate's own
+ * fixture corpus can run them under `node --test` and again at app start. This
+ * module supplies the two things they cannot compute without a process — where
+ * a path really resolves, and whether the halt switch is on — and owns the
+ * ledger the answers are written to.
  *
- * WebFetch and WebSearch are reads, but they are reads that leave the machine,
- * and a URL is a fine place to put text you were only supposed to read. They
- * are allowed here deliberately — a level that cannot look anything up is a
- * level nobody keeps switched on. Note the drift this leaves behind:
- * TRUST_COPY.readonly tells the user "network calls are denied", which is a
- * promise this list does not keep. The copy in shared/types.ts is the half that
- * is wrong; fix it there rather than quietly denying WebFetch here, because a
- * user who has read that sentence is making decisions based on it.
+ * THIS IS DEFENCE IN DEPTH OVER THE OS SANDBOX. IT IS NOT CONTAINMENT. The
+ * comment at the top of policy-rules.ts says why at length; the short version
+ * is that every rule reads the text of a call, and text is a thing an agent
+ * can arrange.
  */
-const READ_TOOLS = new Set([
-  'Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'NotebookRead', 'TodoWrite',
-  'ExitPlanMode', 'ListMcpResourcesTool', 'ReadMcpResourceTool', 'ReadMcpResourceDirTool',
-]);
-
-/** Tools whose whole purpose is to change something on this machine. */
-const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'ApplyPatch']);
-
-/** Codex and Claude Code name the same capability differently. */
-const SHELL_TOOLS = new Set(['bash', 'shell', 'local_shell', 'exec_command', 'run_command', 'run_terminal_cmd']);
-
-function isShellTool(tool: string, input: HookInput): boolean {
-  if (tool === 'SlashCommand') return false; // its `command` is a slash command, not a shell line
-  if (SHELL_TOOLS.has(tool.toLowerCase())) return true;
-  return typeof input.tool_input?.command === 'string';
-}
-
-function mcpTool(tool: string): { server: string; name: string } | null {
-  if (!tool.startsWith('mcp__')) return null;
-  const parts = tool.split('__');
-  if (parts.length < 3) return null;
-  const server = parts[1];
-  let name = parts.slice(2).join('__');
-  // Servers commonly repeat their own name in every tool ('zendesk_get_ticket'),
-  // which would hide the verb from the prefix test.
-  if (name.startsWith(`${server}_`)) name = name.slice(server.length + 1);
-  return { server, name };
-}
-
-const MCP_READ_VERB = /^(get|list|read|search|fetch|query|describe|find|view|show|lookup|inspect|count|check|preview|summar)/i;
-
-/* ── path containment ─────────────────────────────────────────────────── */
-
-const PATH_KEYS = ['file_path', 'notebook_path', 'path', 'filePath', 'notebookPath', 'target_file', 'absolute_path'];
-
-function str(v: unknown): string {
-  return typeof v === 'string' ? v : '';
-}
-
-function targetPath(input: HookInput): string {
-  const ti = input.tool_input ?? {};
-  for (const k of PATH_KEYS) {
-    const v = str(ti[k]);
-    if (v) return v;
-  }
-  return '';
-}
-
-function expandHome(p: string): string {
-  const home = os.homedir();
-  if (p === '~') return home;
-  if (p.startsWith('~/')) return path.join(home, p.slice(2));
-  return p.replace(/^\$\{?HOME\}?(?=\/|$)/, home);
-}
-
-function prefixed(base: string, full: string): boolean {
-  return full === base || full.startsWith(base + path.sep);
-}
 
 /**
  * Resolve a path to its nearest existing ancestor's real location. A file that
@@ -198,349 +144,35 @@ function realish(p: string): string {
   return p;
 }
 
-/**
- * Containment is decided AFTER resolution, never by hunting for '..' in the raw
- * string: 'notes..md' is a legitimate filename, and '/etc/passwd' never needed
- * a '..' to get there. path.resolve collapses the traversal, then both ends go
- * through realpath and the prefix test decides.
- *
- * Both ends, not just the target. A symlink inside the project pointing at
- * ~/.ssh is lexically inside and must still be denied — but on macOS a project
- * added as /tmp/x really lives at /private/tmp/x, and comparing a real path
- * against a lexical root would deny every write in it. Resolving the root too
- * closes the first hole without opening the second.
+/** The file-system half of the rules, read fresh per call. */
+export function ruleEnv(): RuleEnv {
+  return { home: os.homedir(), realish, cwd: process.cwd() };
+}
+
+function evaluateCall(ctx: PolicyContext, input: HookInput): Evaluation {
+  return evaluate({ trust: ctx.trust, projectPath: ctx.projectPath }, input, ruleEnv(), { halted: halted() });
+}
+
+/*
+ * The halt outranks trust, and that ordering is the point of checking it inside
+ * the gate rather than at a launch site. Killing a PTY is a signal, and a CLI
+ * wedged hard enough to be worth halting over is exactly the one that may not
+ * act on it — but it still has to come back through this gate before it can
+ * touch a file, run a command or spend a token. It sits above the trusted
+ * branch too: a trusted project is a statement about which repositories
+ * Wanigan may act in without asking, not an exemption from the emergency stop.
  */
-function insideRoot(root: string, target: string): boolean {
-  const base = path.resolve(root);
-  const full = path.resolve(base, expandHome(target));
-  return prefixed(realish(base), realish(full));
-}
-
-function absolutise(root: string | null, target: string): string {
-  const t = expandHome(target);
-  return path.resolve(root ? path.resolve(root) : process.cwd(), t);
-}
-
-/* ── credentials ──────────────────────────────────────────────────────── */
-
-/**
- * Home-anchored only. A project's own .claude/ directory is ordinary work and
- * agents edit it constantly; ~/.claude holds the credentials for every session
- * Wanigan will ever run, and the two must not be confused.
- */
-const CREDENTIAL_PATHS = ['.ssh', '.aws', '.claude', '.gnupg', '.docker', '.kube', '.npmrc', '.netrc', path.join('.config', 'gh')];
-
-/**
- * Resolved on both ends, for the same reason insideRoot is. A lexical compare
- * here was the whole hole: a dotfiles repo containing `ssh -> ~/.ssh` puts a
- * private key at a path that is lexically inside the project, and nothing else
- * checks reads — readonlyDecision allows every READ_TOOLS entry outright and
- * projectDecision only path-checks writes and shell commands. So the key could
- * be read and then handed to WebFetch, with notableAllow writing no ledger row
- * for either. The raw prefix test is kept alongside as the cheap first answer.
- */
-function credentialHit(abs: string): string | null {
-  const home = os.homedir();
-  const real = realish(abs);
-  for (const rel of CREDENTIAL_PATHS) {
-    const root = path.join(home, rel);
-    if (prefixed(root, abs) || prefixed(realish(root), real)) return root;
-  }
-  return null;
-}
-
-/** Path-shaped tokens in a shell command, absolute or home-relative. */
-const PATH_TOKEN = /(?:~|\$\{?HOME\}?|\/)[^\s;|&'"<>()]*/g;
-
-function credentialTarget(input: HookInput, root: string | null): string | null {
-  const p = targetPath(input);
-  if (p) {
-    const hit = credentialHit(absolutise(root, p));
-    if (hit) return hit;
-  }
-  const cmd = str(input.tool_input?.command);
-  for (const token of cmd.match(PATH_TOKEN) ?? []) {
-    const hit = credentialHit(absolutise(root, token));
-    if (hit) return hit;
-  }
-  return null;
-}
-
-/* ── shell inspection ─────────────────────────────────────────────────── */
-
-/**
- * THIS IS DEFENCE IN DEPTH OVER THE OS SANDBOX. IT IS NOT CONTAINMENT.
- *
- * Everything below is a string matcher over a shell command, which makes it a
- * speed bump. It is bypassed by `$(printf '\x72\x6d')`, by an alias, by a make
- * target, by a script the agent wrote thirty seconds ago, by base64, by any
- * indirection at all. The 2026 CVEs did not even need that much:
- * CVE-2026-22708 poisoned a Cursor execution environment so that an
- * allowlisted `git branch` delivered the payload, and CVE-2025-59532 showed a
- * Codex CLI sandbox boundary being redefined by the agent's own output.
- * Neither would have tripped a single rule here, because neither ran a command
- * that looked dangerous.
- *
- * What these rules buy is a pause and a ledger row on the shapes a human would
- * recognise on sight. Real containment is the OS sandbox, a container, or a
- * machine you are willing to rebuild. This comment exists so that nobody later
- * reads the list below, concludes Wanigan blocks bad commands, and ships
- * something genuinely dangerous behind it.
- *
- * Known and deliberate holes, so the shape of the gap is on the record: no
- * variable expansion, no alias or function resolution, no quoting-aware
- * tokenizer, and no follow-through on a two-step `curl -o x && sh x`.
- */
-
-/**
- * `hard` marks the findings no popup should offer a "yes" to — a fork bomb has
- * no attended-approval story. Everything else is a judgment call, and judgment
- * calls go to the person watching as an ask rather than a wall.
- */
-type BashFinding = { rule: string; reason: string; hard?: boolean };
-
-const PIPE_TO_INTERPRETER =
-  /\b(?:curl|wget)\b[^|]*\|\s*(?:sudo\s+)?(?:[\w./-]*\/)?(?:sh|bash|zsh|ksh|dash|python[\d.]*|node|perl|ruby)\b/i;
-const PROCESS_SUB_FETCH = /\b(?:sh|bash|zsh|source|\.)\s+<\(\s*(?:curl|wget)\b/i;
-const FORK_BOMB = /:\s*\(\s*\)\s*\{.*\|.*&.*\}\s*;\s*:/;
-const RAW_DISK = /\b(?:mkfs(?:\.\w+)?|diskutil\s+erase\w*)\b|\bdd\b[^|;&]*\bof=\/dev\//i;
-const PROTECTED_BRANCHES = new Set(['main', 'master', 'trunk', 'develop', 'production', 'prod', 'release', 'staging']);
-/** Commands whose job is to change something at their target path. */
-const MUTATING_BINARIES = new Set(['rm', 'rmdir', 'mv', 'cp', 'tee', 'install', 'ln', 'chmod', 'chown', 'chgrp', 'touch', 'mkdir', 'truncate', 'shred', 'unlink', 'rsync']);
-/** Of those, the ones that only write to their final argument. */
-const DEST_ONLY = new Set(['cp', 'mv', 'ln', 'install', 'rsync']);
-
-function segments(command: string): string[] {
-  return command.split(/\n|;|&&|\|\||\||&/).map((s) => s.trim()).filter(Boolean);
-}
-
-function tokens(segment: string): string[] {
-  return segment.match(/(?:"[^"]*"|'[^']*'|[^\s])+/g)?.map((t) => t.replace(/^['"]|['"]$/g, '')) ?? [];
-}
-
-/** Tokens we cannot evaluate — a guess here would be a lie either way. */
-function opaque(token: string): boolean {
-  return token.includes('$(') || token.includes('`') || /\$\{?[A-Za-z_]/.test(token.replace(/^\$\{?HOME\}?/, ''));
-}
-
-function inspectBash(command: string, root: string | null): BashFinding | null {
-  if (PIPE_TO_INTERPRETER.test(command) || PROCESS_SUB_FETCH.test(command)) {
-    return {
-      rule: 'bash.curl-pipe-shell',
-      reason: 'This pipes a download straight into an interpreter, so what runs is whatever the server returns at that moment. Approve it only if you trust the source right now; downloading and reading it first is safer.',
-    };
-  }
-  if (FORK_BOMB.test(command)) {
-    return { rule: 'bash.fork-bomb', reason: 'This is a fork bomb. It will take the machine down until it is rebooted.', hard: true };
-  }
-  if (RAW_DISK.test(command)) {
-    return { rule: 'bash.raw-disk', reason: 'This writes to a raw device or reformats a volume. Run it yourself, from a shell, if you truly mean it.', hard: true };
-  }
-
-  for (const seg of segments(command)) {
-    // Matched on the leading token rather than anywhere in the string, so that
-    // `echo sudo` and `grep sudo /var/log` are not findings.
-    if (tokens(seg)[0] === 'sudo') {
-      return { rule: 'bash.sudo', reason: 'sudo runs outside the project’s authority by definition. Approve it if you meant to grant that.' };
-    }
-    const found = inspectRedirects(seg, root) ?? inspectGitPush(seg) ?? inspectMutation(seg, root);
-    if (found) return found;
-  }
-  return null;
-}
-
-/** `>` / `>>` to an absolute or home path outside the project. */
-function inspectRedirects(segment: string, root: string | null): BashFinding | null {
-  if (!root) return null;
-  const re = /(?:^|[^0-9>&])>>?\s*(['"]?)((?:~|\$\{?HOME\}?|\/)[^\s;|&'"<>]*)\1/g;
-  for (const m of segment.matchAll(re)) {
-    const target = m[2];
-    if (opaque(target)) continue;
-    const abs = absolutise(root, target);
-    if (abs === '/dev/null' || abs.startsWith('/dev/std') || abs === '/dev/tty') continue;
-    if (!insideRoot(root, abs)) {
-      return {
-        rule: 'bash.redirect-outside',
-        reason: `This redirects output into ${abs}, which is outside the project. Approve it if that is where it belongs, or raise this project to ${TRUST_COPY.trusted.label} in Settings to stop being asked.`,
-      };
-    }
-  }
-  return null;
-}
-
-function inspectGitPush(segment: string): BashFinding | null {
-  const t = tokens(segment);
-  if (t[0] !== 'git' || !t.includes('push')) return null;
-  // --force-with-lease is the careful version and stays allowed: it refuses the
-  // push if the remote moved, which is the whole failure mode being guarded.
-  const forced = t.some((x) => x === '--force' || x === '-f' || x === '--mirror') || t.some((x) => /^\+/.test(x));
-  if (!forced) return null;
-  const named = t.filter((x) => !x.startsWith('-')).map((x) => x.replace(/^\+/, '').split(':').pop() ?? '');
-  const hit = named.find((x) => PROTECTED_BRANCHES.has(x)) ?? (t.includes('--mirror') || t.includes('--all') ? 'every branch' : null);
-  if (!hit) return null;
-  return {
-    rule: 'bash.force-push-protected',
-    reason: `A force push to ${hit} rewrites history other people have already pulled. Approve it only if this branch is yours to rewrite; --force-with-lease after a fetch is the careful version.`,
-  };
-}
-
-/** A mutating command whose target resolves outside the project. */
-function inspectMutation(segment: string, root: string | null): BashFinding | null {
-  const t = tokens(segment);
-  const bin = path.basename(t[0] ?? '');
-  if (!MUTATING_BINARIES.has(bin)) return null;
-
-  // `rm` and `chmod` mutate every path they are given; `cp` and `mv` mutate
-  // only the last one. Checking a copy's source would deny `cp /etc/hosts ./x`,
-  // which reads a file the agent could have read anyway.
-  const args = t.slice(1).filter((x) => !x.startsWith('-'));
-  const candidates = DEST_ONLY.has(bin) ? args.slice(-1) : args;
-
-  for (const token of candidates) {
-    if (opaque(token)) continue;
-    // A glob is judged by the directory it expands within — 'rm -rf /*' is 'rm -rf /'.
-    const candidate = /[*?]/.test(token) ? path.dirname(token.replace(/[*?].*$/, 'x')) : token;
-    if (!candidate) continue;
-    const abs = absolutise(root, candidate);
-    if (abs === path.parse(abs).root || abs === os.homedir()) {
-      return {
-        rule: 'bash.destructive-root',
-        reason: `This runs ${bin} against ${abs}. Nothing an agent is asked to do needs that; run it yourself if you meant it.`,
-        hard: true,
-      };
-    }
-    if (root && !insideRoot(root, abs)) {
-      return {
-        rule: 'bash.target-outside',
-        reason: `This ${bin}s ${abs}, which is outside the project. Approve it if you mean it, or raise this project to ${TRUST_COPY.trusted.label} in Settings to stop being asked.`,
-      };
-    }
-  }
-  return null;
-}
-
-/* ── the decision ─────────────────────────────────────────────────────── */
-
-function allow(reason: string, rule: string): PolicyDecision {
-  return { decision: 'allow', reason, rule };
-}
-function deny(reason: string, rule: string): PolicyDecision {
-  return { decision: 'deny', reason, rule };
-}
-function ask(reason: string, rule: string): PolicyDecision {
-  return { decision: 'ask', reason, rule };
-}
-
 export function decideFor(ctx: PolicyContext, input: HookInput): PolicyDecision {
-  const tool = (input.tool_name ?? '').trim();
-  if (!tool) return allow('Not a tool call.', 'no-tool');
-
-  // The halt outranks trust, and that ordering is the point of putting it here
-  // rather than at a launch site. Killing a PTY is a signal, and a CLI wedged
-  // hard enough to be worth halting over is exactly the one that may not act on
-  // it — but it still has to come back through this gate before it can touch a
-  // file, run a command or spend a token. This is the line that makes the
-  // difference between "no new work starts" and "nothing more happens".
-  //
-  // It is deliberately above the trusted branch. A trusted project is a
-  // statement about which repositories Wanigan may act in without asking; it is
-  // not a statement that the operator's emergency stop does not apply there,
-  // and reading it as one would exempt the projects an operator trusts most.
-  if (halted()) {
-    return deny(
-      'Wanigan is halted. Every tool call is refused until the halt is cleared at the Mac.',
-      'halted.deny',
-    );
-  }
-
-  // Checked before anything else so that TRUST_COPY.trusted — "Nothing is
-  // denied by Wanigan" — stays literally true.
-  if (ctx.trust === 'trusted') {
-    return allow(`${TRUST_COPY.trusted.label}: Wanigan denies nothing here.`, 'trusted.allow');
-  }
-
-  const cred = credentialTarget(input, ctx.projectPath);
-  if (cred) {
-    // A question, not a wall: the operator watching the session is exactly the
-    // person who can tell a requested read of ~/.aws from an exfiltration, and
-    // nobodyToAsk still turns this into a denial when nobody is watching.
-    return ask(
-      `This touches ${cred}, where your credentials live — reading a private key is half of an exfiltration. Approve it only if you asked for exactly this.`,
-      'credential-path'
-    );
-  }
-
-  return ctx.trust === 'readonly' ? readonlyDecision(tool, input) : projectDecision(ctx, tool, input);
+  return evaluateCall(ctx, input).decision;
 }
 
-function readonlyDecision(tool: string, input: HookInput): PolicyDecision {
-  const mcp = mcpTool(tool);
-  if (mcp) {
-    return MCP_READ_VERB.test(mcp.name)
-      ? allow(`${mcp.server} ${mcp.name} reads.`, 'readonly.mcp-read')
-      : ask(
-          `${mcp.server} ${mcp.name} is not a read, and ${TRUST_COPY.readonly.label} allows only reads without asking. Approve this one call, or set the project to ${TRUST_COPY.project.label} in Settings if the agent should change things freely.`,
-          'readonly.mcp-write'
-        );
-  }
-  if (READ_TOOLS.has(tool)) return allow(`${tool} reads.`, 'readonly.read');
-  if (isShellTool(tool, input)) {
-    return ask(
-      `Shell commands need your approval at ${TRUST_COPY.readonly.label} trust. Approve this one, or set the project to ${TRUST_COPY.project.label} in Settings if the agent should run commands freely.`,
-      'readonly.shell'
-    );
-  }
-  if (WRITE_TOOLS.has(tool)) {
-    return ask(
-      `${tool} changes files, which ${TRUST_COPY.readonly.label} holds for your approval. Approve it, or set the project to ${TRUST_COPY.project.label} in Settings if the agent should edit the repo freely.`,
-      'readonly.write'
-    );
-  }
-  // Unknown tool at the strictest level: denying blocks harmless things and
-  // allowing defeats the level, so hand it to the person who can tell.
-  return ask(
-    `Wanigan does not know what ${tool} does, and ${TRUST_COPY.readonly.label} allows only known reads. Approve it if it only reads.`,
-    'readonly.unknown'
-  );
-}
-
-function projectDecision(ctx: PolicyContext, tool: string, input: HookInput): PolicyDecision {
-  const root = ctx.projectPath;
-
-  if (isShellTool(tool, input)) {
-    const command = str(input.tool_input?.command);
-    const found = inspectBash(command, root);
-    if (found) return found.hard ? deny(found.reason, found.rule) : ask(found.reason, found.rule);
-    if (!root) {
-      return ask(
-        `Wanigan does not know this session's project directory, so it cannot tell whether this command stays inside it. Approve it if you know where it runs.`,
-        'project.no-root'
-      );
-    }
-    return allow('Command shows none of the escapes Wanigan checks for.', 'project.command');
-  }
-
-  if (WRITE_TOOLS.has(tool)) {
-    const target = targetPath(input);
-    if (!target) {
-      return ask(`Wanigan could not tell which file ${tool} would change. Approve it if the path is inside the project.`, 'project.unknown-target');
-    }
-    if (!root) {
-      return ask(
-        `Wanigan does not know this session's project directory, so it cannot tell whether ${absolutise(null, target)} is inside it. Approve it if it is.`,
-        'project.no-root'
-      );
-    }
-    if (!insideRoot(root, target)) {
-      return ask(
-        `${tool} targets ${absolutise(root, target)}, which is outside ${root}. Approve it if that is where the change belongs, or raise this project to ${TRUST_COPY.trusted.label} in Settings to stop being asked.`,
-        'project.write-outside'
-      );
-    }
-    return allow(`${tool} stays inside the project.`, 'project.write-inside');
-  }
-
-  return allow(`${TRUST_COPY.project.label} allows everything that is not a write or a command outside the project.`, 'project.allow');
+/**
+ * The per-command trace behind a decision: every command the line would run,
+ * the wrappers that led to it, the directory it runs in, and the rule — if any
+ * — each one tripped. The ledger stores this beside the decision.
+ */
+export function explain(ctx: PolicyContext, input: HookInput): PolicyTrace {
+  return evaluateCall(ctx, input).trace;
 }
 
 /* ── who is on the other end ──────────────────────────────────────────── */
@@ -584,25 +216,6 @@ export function contextForSession(sessionId: string | null): PolicyContext | nul
 }
 
 /**
- * An 'ask' is a question, and a question needs somebody to answer it.
- *
- * On an unattended run there is nobody: headless.ts spawns with stdin on
- * /dev/null precisely because there is no keyboard, so an 'ask' handed back to
- * the CLI is not a checkpoint — it is the row sitting still until its per-repo
- * timeout fires and reports a timeout for something that was only ever waiting
- * to be asked. Denying says the true thing, costs one tool call rather than the
- * whole timeout, and leaves the agent free to do the rest of its work.
- */
-function nobodyToAsk(d: PolicyDecision): PolicyDecision {
-  if (d.decision !== 'ask') return d;
-  return {
-    decision: 'deny',
-    reason: `This run is unattended, so there was nobody to put the question to and Wanigan denied it. The question was: ${d.reason}`,
-    rule: `${d.rule}.unattended`,
-  };
-}
-
-/**
  * The answer when the gate itself failed — a rule that threw, or a ledger write
  * that did.
  *
@@ -619,11 +232,12 @@ function nobodyToAsk(d: PolicyDecision): PolicyDecision {
  * hit this looks nothing like a run that simply had little to do.
  */
 function unevaluable(): PolicyDecision {
-  return deny(
-    'Wanigan could not work out whether this call is allowed, and this run has nobody at the keyboard to ask, ' +
-    'so it was denied rather than allowed. Open this repository as an interactive session if you need to approve it yourself.',
-    'unattended.unevaluable'
-  );
+  return {
+    decision: 'deny',
+    reason: 'Wanigan could not work out whether this call is allowed, and this run has nobody at the keyboard to ask, ' +
+      'so it was denied rather than allowed. Open this repository as an interactive session if you need to approve it yourself.',
+    rule: 'unattended.unevaluable',
+  };
 }
 
 /**
@@ -633,9 +247,9 @@ function unevaluable(): PolicyDecision {
  */
 export function answerFor(ctx: PolicyContext, input: HookInput): PolicyDecision | null {
   try {
-    const decided = decideFor(ctx, input);
+    const { decision: decided, trace } = evaluateCall(ctx, input);
     const answer = ctx.attended === false ? nobodyToAsk(decided) : decided;
-    recordDecision(ctx, input, answer);
+    recordDecision(ctx, input, answer, trace);
     return answer;
   } catch {
     if (ctx.attended !== false) return null;
@@ -683,6 +297,10 @@ export function trustBriefing(ctx: PolicyContext): string {
 
 /* ── the ledger ───────────────────────────────────────────────────────── */
 
+function str(v: unknown): string {
+  return typeof v === 'string' ? v : '';
+}
+
 function clip(s: string, max = 400): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
@@ -724,7 +342,7 @@ function notableAllow(ctx: PolicyContext, tool: string, input: HookInput): boole
   if (!WRITE_TOOLS.has(tool)) return false;
   const target = targetPath(input);
   if (!target) return true;
-  return !ctx.projectPath || !insideRoot(ctx.projectPath, target);
+  return !ctx.projectPath || !insideRoot(ruleEnv(), ctx.projectPath, target);
 }
 
 /**
@@ -733,15 +351,15 @@ function notableAllow(ctx: PolicyContext, tool: string, input: HookInput): boole
  * be added that does — the value of the table is that its contents cannot be
  * tidied up after the thing you would want to tidy up has happened.
  */
-export function recordDecision(ctx: PolicyContext, input: HookInput, decision: PolicyDecision): void {
+export function recordDecision(ctx: PolicyContext, input: HookInput, decision: PolicyDecision, trace?: PolicyTrace): void {
   const tool = (input.tool_name ?? '').trim();
   if (!tool) return;
   if (decision.decision === 'allow' && !notableAllow(ctx, tool, input)) return;
 
   db()
     .prepare(
-      `INSERT INTO policy_ledger (at, session_id, project_id, trust, tool_name, summary, decision, rule, reason)
-       VALUES (?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO policy_ledger (at, session_id, project_id, trust, tool_name, summary, decision, rule, reason, trace_json)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
       Date.now(),
@@ -752,8 +370,43 @@ export function recordDecision(ctx: PolicyContext, input: HookInput, decision: P
       summarise(tool, input),
       decision.decision,
       decision.rule,
-      decision.reason
+      decision.reason,
+      /* ── helper sweep · P1 policy ── */
+      traceJson(trace),
     );
+}
+
+/* ── helper sweep · P1 policy ── */
+const MAX_TRACE_STEPS = 40;
+
+/**
+ * The trace as stored: bounded, and redacted like every other string in this
+ * table, because a traced command is the same command the summary redacts.
+ * Only a trace that says something beyond the decision is kept — a Read with
+ * no shell steps and no notes would be a row of nulls.
+ */
+function traceJson(trace: PolicyTrace | undefined): string | null {
+  if (!trace || (!trace.steps.length && !trace.notes.length)) return null;
+  const steps = trace.steps.slice(0, MAX_TRACE_STEPS).map((st) => ({
+    ...st,
+    text: clip(redactCredentials(st.text), 300),
+    cwd: st.cwd ? clip(redactCredentials(st.cwd), 300) : null,
+    reason: st.reason ? clip(redactCredentials(st.reason), 400) : null,
+  }));
+  return JSON.stringify({
+    steps,
+    omitted: Math.max(0, trace.steps.length - MAX_TRACE_STEPS),
+    notes: trace.notes.slice(0, 10),
+    decided: { decision: trace.decided.decision, rule: trace.decided.rule },
+  });
+}
+
+/** The stored trace for one ledger row, or null when the row carries none. */
+export function ledgerTrace(id: number): StoredTrace | null {
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const row = db().prepare('SELECT trace_json FROM policy_ledger WHERE id = ?').get(id) as { trace_json: string | null } | undefined;
+  if (!row?.trace_json) return null;
+  try { return JSON.parse(row.trace_json) as StoredTrace; } catch { return null; }
 }
 
 type LedgerRow = {

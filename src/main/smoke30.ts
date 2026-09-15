@@ -126,3 +126,36 @@ export async function runApprovalExplainSmoke(check: Check, say: Say): Promise<v
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
+
+export async function runGateParserSmoke(check: Check, say: Say): Promise<void> {
+  say('── helper sweep · P1 · the gate reads the shell before it matches');
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-gate-')));
+  try {
+    const hooks = await import('./hooks');
+    const policy = await import('./policy');
+    await hooks.startHookServer();
+    const sessionId = 's_smoke_p1_gate';
+    policy.registerPolicyContext({ sessionId, projectId: 'prj_smoke_p1_gate', projectPath: dir, trust: 'project', attended: true });
+    const handler = handlerOf(hooks.writeHookSettings(sessionId, dir));
+    check(handler !== null, 'the gate smoke session has a hook capability');
+    if (!handler) return;
+
+    const reply = await post(handler, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'env CI=1 bash -c "rm -rf ~"' } });
+    const out = reply.hookSpecificOutput as { permissionDecision?: string; permissionDecisionReason?: string } | undefined;
+    check(out?.permissionDecision === 'deny' && /Instead, name the specific directory/.test(out.permissionDecisionReason ?? ''),
+      'a destructive command inside env and bash -c is denied over the wire, and the reason says what to do instead', out);
+    const row = policy.ledger(20).find((r) => r.sessionId === sessionId && r.rule === 'bash.destructive-root');
+    const trace = row ? policy.ledgerTrace(row.id) : null;
+    check(!!trace && trace.steps.some((s) => s.rule === 'bash.destructive-root' && s.via.includes('bash -c') && s.via.includes('env')),
+      'the ledger row stores the matched rule and the per-command trace, wrappers included', trace);
+
+    const quoted = await post(handler, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git log --grep="fix|sudo" --oneline' } });
+    check((quoted.hookSpecificOutput as { permissionDecision?: string } | undefined)?.permissionDecision === 'allow',
+      'a quoted pipe and a quoted sudo are text, and the call is allowed');
+
+    policy.releasePolicyContext(sessionId);
+    hooks.cleanupHookSettings(sessionId);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}

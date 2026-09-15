@@ -3484,3 +3484,19 @@ export type MobileApprovalCard = {
     notes: string[];
   }[];
 };
+
+/** A ledger row's stored trace: which command in the line fired which rule. */
+export type StoredTrace = {
+  steps: {
+    text: string;
+    via: string[];
+    origin: string;
+    cwd: string | null;
+    rule: string | null;
+    decision: 'allow' | 'deny' | 'ask';
+    reason: string | null;
+  }[];
+  omitted: number;
+  notes: string[];
+  decided: { decision: 'allow' | 'deny' | 'ask'; rule: string };
+};

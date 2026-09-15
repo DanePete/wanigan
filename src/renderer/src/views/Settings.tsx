@@ -17,6 +17,8 @@ import { useRememberedScroll } from '../components/viewMemory';
 import ThemeControl from '../components/ThemeControl';
 import type { ResolvedTheme } from '../theme-boot';
 import '../styles/settings.css';
+/* ── helper sweep · P1 policy ── */
+import { LedgerTrace, tracesTool } from '../components/PolicyEvidence';
 
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
 type ProviderKeyStatus = { present: boolean; fingerprint: string | null; fromEnv: boolean; stored: boolean };
@@ -3545,6 +3547,8 @@ function Trust({ projects, onAddProject }: { projects: Project[]; onAddProject: 
                           <div className="set-wrap">{r.summary}</div>
                           <div className="faint set-sub-line">rule: {r.rule}</div>
                           <div className="faint set-wrap" style={{ fontSize: '10.5px', marginTop: 2 }}>{r.reason}</div>
+                          {/* ── helper sweep · P1 policy ── */}
+                          {tracesTool(r.toolName) && <LedgerTrace id={r.id} />}
                         </td>
                         <td><Mark {...DECISION[r.decision]} /></td>
                       </tr>

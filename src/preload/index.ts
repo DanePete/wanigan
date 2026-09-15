@@ -37,7 +37,7 @@ import type {
   DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, WorkDocket, LaunchModelCatalogue, UnifiedSpendDay,} from '../shared/types';
 
 /* ── helper sweep · P1 policy ── */
-import type { ApprovalDetail } from '../shared/types';
+import type { ApprovalDetail, StoredTrace } from '../shared/types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -840,6 +840,7 @@ const api = {
   /* ── helper sweep · P1 policy ── */
   policyEvidence: {
     approval: (sessionId: string, sinceAt?: number) => call<ApprovalDetail | null>('policyEvidence:approval', sessionId, sinceAt),
+    trace: (ledgerId: number) => call<StoredTrace | null>('policyEvidence:trace', ledgerId),
   },
   on: {
     startupChanged: (cb: (state: { phase: 'starting' | 'ready' | 'recovery'; stage: string | null; message: string | null }) => void) => {

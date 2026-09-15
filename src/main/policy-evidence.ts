@@ -1,5 +1,6 @@
 import { onHookInput } from './hooks';
 import { approvalDetailFor, attachApprovalExplanation } from './approval-explain';
+import { ledgerTrace } from './policy';
 
 /**
  * The wiring for the policy evidence built around the gate: what a script alias
@@ -32,4 +33,6 @@ function timeArg(value: unknown): number {
 export function registerPolicyEvidenceIpc(handle: Handle): void {
   handle('policyEvidence:approval', (sessionId: unknown, sinceAt: unknown) =>
     approvalDetailFor(sessionIdArg(sessionId), timeArg(sinceAt)));
+  handle('policyEvidence:trace', (id: unknown) =>
+    ledgerTrace(typeof id === 'number' && Number.isInteger(id) ? id : -1));
 }
