@@ -55,6 +55,24 @@ export async function runMacPresenceSmoke(check: Check, say: Say): Promise<void>
   check(clicked.join(',') === 'session:s1,halt,open', 'each menu item routes to its own handler and the halt item only asks', clicked);
   check(menu.items[0].enabled === false, 'the heading row is not clickable', menu.items[0]);
 
+  // A real Tray and a real Dock badge, created by the module's own draw loop
+  // and read back from Electron. A menu-bar item appears on this Mac for the
+  // few hundred milliseconds between turning the switch on and off.
+  settings.setMacSetting('menuBarSessions', true);
+  settings.setMacSetting('dockBadge', true);
+  presence.startMacPresence({ reveal: async () => null });
+  const drawn = presence.presenceSnapshot();
+  check(drawn.tray && (process.platform !== 'darwin' || typeof drawn.title === 'string') && !!drawn.tooltip && !/PROMPT/.test(`${drawn.title}${drawn.tooltip}`),
+    'turning the menu-bar list on creates a real Electron Tray with a title and tooltip and no prompt text', drawn);
+  check(process.platform !== 'darwin' || drawn.badge === shared.badgeText(0),
+    'the Dock badge Electron reports is the badge text for the count (no session needs anyone here, so none)', drawn.badge);
+  settings.setMacSetting('menuBarSessions', false);
+  settings.setMacSetting('dockBadge', false);
+  presence.startMacPresence({ reveal: async () => null });
+  const cleared = presence.presenceSnapshot();
+  check(!cleared.tray && (process.platform !== 'darwin' || cleared.badge === ''), 'turning both off destroys the Tray and clears the badge', cleared);
+  presence.stopMacPresence();
+
   const px = 36;
   const image = nativeImage.createFromBitmap(Buffer.from(shared.trayGlyphBgra(px, true)), { width: px, height: px, scaleFactor: 2 });
   image.setTemplateImage(true);
@@ -172,14 +190,36 @@ export async function runAutomationSocketSmoke(check: Check, say: Say, tmp: stri
       'an approval nobody answers is refused at its deadline and the dialog is closed, never approved late', unanswered);
     check(socketMod.APPROVAL_TIMEOUT_MS === 5 * 60_000, 'the real deadline is five minutes', socketMod.APPROVAL_TIMEOUT_MS);
 
+    // A client in its own process, the way a script on this Mac would call:
+    // plain Node (this Electron binary run as Node), reading the token file and
+    // writing one line. The ledger must name that process, not this one.
+    const { execFile } = await import('node:child_process');
+    const clientScript = path.join(base, 'client.cjs');
+    fs.writeFileSync(clientScript, `const net = require('node:net'); const fs = require('node:fs');
+const token = fs.readFileSync(${JSON.stringify(paths.token)}, 'utf8').trim();
+const c = net.connect(${JSON.stringify(paths.socket)}, () => c.write(JSON.stringify({ token, verb: 'list', id: 'ext' }) + '\\n'));
+let buf = ''; c.setEncoding('utf8');
+c.on('data', (d) => { buf += d; if (buf.includes('\\n')) { process.stdout.write(JSON.stringify({ pid: process.pid, answer: buf.split('\\n')[0] })); c.destroy(); } });
+c.on('error', (e) => { process.stdout.write(JSON.stringify({ pid: process.pid, error: String(e) })); });`);
+    const external = await new Promise<{ pid: number; answer?: string; error?: string }>((resolve) => {
+      execFile(process.execPath, [clientScript], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 15_000 },
+        (error, stdout) => { try { resolve(JSON.parse(stdout)); } catch { resolve({ pid: -1, error: String(error ?? stdout) }); } });
+    });
+    const extRow = db().prepare("SELECT peer_pid, peer_command, outcome FROM automation_ledger WHERE verb = 'list' ORDER BY id DESC LIMIT 1").get() as
+      { peer_pid: number | null; peer_command: string; outcome: string } | undefined;
+    check(!!external.answer && /"ok":true/.test(external.answer) && /s_asking/.test(external.answer),
+      'a client in a separate process lists sessions over the real socket with the token file', external);
+    check(extRow?.outcome === 'answered' && extRow.peer_pid === external.pid && extRow.peer_pid !== process.pid && extRow.peer_command.length > 0,
+      'the ledger names that separate process by its own pid and executable, read through lsof', { extRow, clientPid: external.pid, self: process.pid });
+
     const ledger = db().prepare('SELECT verb, outcome, peer_pid, peer_command, detail FROM automation_ledger ORDER BY id').all() as
       { verb: string; outcome: string; peer_pid: number | null; peer_command: string; detail: string | null }[];
     const outcomes = ledger.map((r) => `${r.verb}:${r.outcome}`);
     check(['list:answered', 'status:answered', 'list:refused', 'unknown:refused', 'draft:drafted-held', 'send:refused', 'send:sent', 'send:queued', 'send:sent-from-queue', 'new:asked', 'new:declined']
       .every((o) => outcomes.includes(o)), 'every call, refusals included, wrote a ledger row', outcomes);
     const named = ledger.filter((r) => r.peer_pid !== null);
-    check(named.length > 0 && named.every((r) => r.peer_pid === process.pid && r.peer_command.length > 0),
-      'the ledger names the peer process read through lsof — here this very process, since the client ran in it',
+    check(named.length > 0 && named.every((r) => r.peer_command.length > 0) && named.filter((r) => r.peer_pid === process.pid).length === named.length - 1,
+      'the ledger names the peer process read through lsof — this very process for the in-process client, the separate one for its single call',
       ledger.slice(0, 3));
     check(!ledger.some((r) => (r.detail ?? '').includes('run the tests') || (r.detail ?? '').includes('CI is red') || r.peer_command.includes('CI is red')),
       'the ledger records sizes, never the text a script sent');

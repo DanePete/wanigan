@@ -35,6 +35,8 @@ let timer: NodeJS.Timeout | null = null;
 let tray: Tray | null = null;
 let lastBadge = '';
 let lastTraySignature = '';
+/** Electron has no getter for a Tray's tooltip; kept so the snapshot can report it. */
+let lastTooltip: string | null = null;
 let needsReview = new Set<string>();
 let reviewReadAt = 0;
 let reviewReading = false;
@@ -129,6 +131,7 @@ function draw(): void {
   tray.setImage(glyph(!state.model.quiet));
   tray.setTitle(state.model.title);
   tray.setToolTip(state.model.tooltip);
+  lastTooltip = state.model.tooltip;
   tray.setContextMenu(Menu.buildFromTemplate(trayTemplate(state.model, {
     open: () => { void openWindow(); },
     halt: () => { void armHalt(); },
@@ -149,6 +152,22 @@ export function startMacPresence(next: Deps): void {
   if (!timer) timer = setInterval(draw, REFRESH_MS);
   reviewReadAt = 0;
   draw();
+}
+
+/**
+ * What is drawn right now, read back from Electron rather than from this
+ * module's intentions: whether a menu-bar item exists, the title and tooltip it
+ * carries, and the Dock's badge text. For the offline suite, which otherwise
+ * never saw a real Tray created or a real badge set.
+ */
+export function presenceSnapshot(): { tray: boolean; title: string | null; tooltip: string | null; badge: string | null } {
+  const alive = !!tray && !tray.isDestroyed();
+  return {
+    tray: alive,
+    title: alive && process.platform === 'darwin' ? tray!.getTitle() : null,
+    tooltip: alive ? lastTooltip : null,
+    badge: process.platform === 'darwin' && app.dock ? app.dock.getBadge() : null,
+  };
 }
 
 export function stopMacPresence(): void {
