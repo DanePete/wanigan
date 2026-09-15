@@ -1514,6 +1514,8 @@ function migrateHelperSweepP5(d: Database.Database) {
   addColumn(d, 'headless_rows', 'outcome', 'TEXT');
   addColumn(d, 'headless_rows', 'outcome_reason', 'TEXT');
   addColumn(d, 'headless_rows', 'outcome_detail', 'TEXT');
+  // A session launched with Claude Code's --restricted: no command tools.
+  addColumn(d, 'session_log', 'review_only', 'INTEGER');
   d.exec(`
     -- A Claude conversation imported into Codex through Codex's own importer:
     -- which transcript, into which account, and the thread Codex named.
@@ -1530,6 +1532,22 @@ function migrateHelperSweepP5(d: Database.Database) {
     );
     -- Where each launch value came from, resolved when the renderer launched it.
     -- Values are words and environment NAMES only; no environment value is kept.
+    -- A goal's review task launches with no command tools unless turned off here.
+    CREATE TABLE IF NOT EXISTS goal_review_only (
+      docket_id  TEXT PRIMARY KEY,
+      enabled    INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    -- Worktrees Wanigan fetched a pull or merge request head into.
+    CREATE TABLE IF NOT EXISTS pr_review_worktrees (
+      path       TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      pr_number  INTEGER NOT NULL,
+      forge      TEXT NOT NULL,
+      ref        TEXT NOT NULL,
+      head       TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS session_launch_provenance (
       session_id  TEXT PRIMARY KEY,
       at          INTEGER NOT NULL,

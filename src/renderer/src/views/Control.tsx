@@ -3,6 +3,8 @@ import type {
   ControlEvent, DocketAutopilot, DocketDetail, DocketNode, DocketNodeKind, DocketNodeStatus, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
 } from '@shared/types';
 import { Chip, ConfirmNote, EmptyState, Explainer, Hint, Icon, Mark, Note, PageHead, Pill, Reading, SectionHead, ago, markOf, usd } from '../components/bits';
+/* helper sweep · P5 runtime */
+import { GoalReviewOnlyToggle } from '../components/ReviewOnly';
 import type { MarkSpec } from '../components/bits';
 import Interview from './Interview';
 import { useViewMemory } from '../components/viewMemory';
@@ -701,6 +703,8 @@ function NodeCard({ node, busy, note, claim, prereqs, sendsBack, onPrerequisite,
       {(actionable || node.sessionId) && (node.kind === 'review' ? <details className="control-note" open={noteOpen} onToggle={event => setNoteOpen(event.currentTarget.open)}><summary>{note.trim() ? 'Decision note added' : 'Add a decision note'}</summary><label><span className="label">Decision note</span><textarea className="field control-textarea" aria-label="Evidence or handoff note" value={note} onChange={event => onNote(event.target.value)} placeholder="What supports your decision?" disabled={busy !== null} /></label></details> : <label><span className="label">Evidence or handoff note</span><textarea className="field control-textarea" aria-label="Evidence or handoff note" value={note} onChange={event => onNote(event.target.value)} placeholder="What should the next person know?" disabled={busy !== null} /></label>)}
       {node.kind === 'implement' && actionable && <div className="control-inline"><input className="field" aria-label="Path to claim" value={claim} onChange={event => onClaim(event.target.value)} placeholder="src/path.ts" /><button className="btn" onClick={onClaimAdd} disabled={busy !== null || !claim.trim()}>Claim</button></div>}
       {node.kind === 'review' && actionable ? <div className="control-review-actions"><button className="btn btn-primary" onClick={() => onComplete('approve')} disabled={busy !== null}>Approve</button><button className="btn" onClick={() => onComplete('request_changes')} disabled={busy !== null}>Request changes</button><button className="btn btn-danger" onClick={() => onComplete('reject')} disabled={busy !== null}>Reject</button></div> : actionable && <button className="btn" onClick={() => onComplete('approve')} disabled={busy !== null}>Mark complete</button>}
+      {/* helper sweep · P5 runtime */}
+      {node.kind === 'review' && node.status === 'ready' && <GoalReviewOnlyToggle docketId={node.docketId} />}
       {node.kind === 'review' && node.status === 'ready' && <button className="btn btn-sm" onClick={onStart} disabled={busy !== null || node.queued}>Start isolated task</button>}
       {node.status === 'blocked' && <Hint>This task waits for its prerequisites to complete.</Hint>}
       {node.status === 'completed' && <Hint>This task is complete. Its recorded evidence stays available alongside it.</Hint>}

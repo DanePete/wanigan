@@ -1427,7 +1427,7 @@ export default function App() {
           )}
           {tab === 'plugins' && <Plugins />}
           {tab === 'schedules' && <Schedules projects={projects} />}
-          {tab === 'git' && <Git projects={projects} projectsRead={projectsRead} selectedProjectId={spaceId ?? projectId} onPickProject={choose} />}
+          {tab === 'git' && <Git projects={projects} projectsRead={projectsRead} selectedProjectId={spaceId ?? projectId} onPickProject={choose} onOpenSession={openSession} />}
           {tab === 'runs' && <HeadlessRuns projects={projects} providers={providers} />}
           {tab === 'settings' && (demoOn ? <main className="pane">
             <PageHead title="Settings" eyebrow="Demo workspace" lead="These appearance choices apply only to this demo." />

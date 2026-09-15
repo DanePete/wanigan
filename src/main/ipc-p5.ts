@@ -16,6 +16,7 @@ import { runCodexDoctor } from './codex-doctor';
 import { previewDiagnostics, saveDiagnostics } from './diagnostics';
 import { BrowserWindow } from 'electron';
 import { envNamesFor, launchProvenanceFor } from './launch-provenance';
+import { goalReviewOnly, preparePrReview, setGoalReviewOnly } from './review-only';
 
 type Handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => void;
 
@@ -66,6 +67,14 @@ export function registerP5Ipc(handle: Handle): void {
 
   // ── where each launch value came from ───────────────────────────────
   handle('launchProvenance:forSession', (sessionId: unknown) => launchProvenanceFor(sessionId));
+
+  // ── reviewer sessions with no command tools, and Review PR ──────────
+  handle('review:preparePr', (projectId: unknown, prNumber: unknown) => preparePrReview(projectId, prNumber));
+  handle('review:goalReviewOnly', (docketId: unknown) => {
+    if (typeof docketId !== 'string' || !docketId) throw new Error('A goal is required.');
+    return goalReviewOnly(docketId);
+  });
+  handle('review:setGoalReviewOnly', (docketId: unknown, enabled: unknown) => setGoalReviewOnly(docketId, enabled));
   // Names only: the dialog shows which variables a profile sets, never a value.
   handle('launchProvenance:envNames', (providerId: unknown) => {
     const def = typeof providerId === 'string' ? providerById(providerId) : null;

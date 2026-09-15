@@ -3,6 +3,8 @@ import type { GhPr, GhStatusReport, Project, WorktreeInfo } from '@shared/types'
 import type { CollisionForecast, CollisionOutcome, CollisionPair, CollisionSide } from '@shared/collisions';
 import { ConfirmNote, EmptyState, Mark, Note, PageHead, Reading, SectionHead, Segmented, ago, type Tone } from '../components/bits';
 import ReviewGate from '../components/ReviewGate';
+/* helper sweep · P5 runtime */
+import { ReviewPrAction } from '../components/ReviewOnly';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 
 type GFile = { path: string; index: string; work: string; staged: boolean; untracked: boolean; conflicted: boolean };
@@ -268,10 +270,12 @@ function findFile(status: Status, path: string): { file: GFile; staged: boolean 
   return work ? { file: work, staged: false } : null;
 }
 
-export default function Git({ projects, projectsRead, selectedProjectId, onPickProject }: {
+export default function Git({ projects, projectsRead, selectedProjectId, onPickProject, onOpenSession }: {
   projects: Project[];
   selectedProjectId?: string;
   onPickProject: (id: string) => void;
+  /** helper sweep · P5 runtime: where a Review PR session opens. */
+  onOpenSession?: (id: string) => void;
   /** Whether a project-list read has returned in the shell. The list seeds
       empty and a failed read leaves it empty, so its length alone cannot tell
       "you have no projects" from "nobody has looked yet". */
@@ -715,6 +719,8 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
                 Create PR
               </button>
             )}
+            {/* helper sweep · P5 runtime */}
+            {project && !st.subpath && <ReviewPrAction project={project} projects={projects} onOpenSession={onOpenSession} />}
             <button className="btn" disabled={!!busy} onClick={() => void act('Fetch', () => window.wanigan.git.fetch(st.root))}>
               {busy === 'Fetch' ? '…' : 'Fetch'}
             </button>

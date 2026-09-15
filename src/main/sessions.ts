@@ -40,6 +40,11 @@ import {
   validateExactCodexThread,
 } from './codex-sessions';
 
+/* ── helper sweep · P5 runtime ── */
+import { assertReviewWorktree, restrictedFlagSupported, reviewOnlyRefusal } from './review-only';
+import { RESTRICTED_FLAG } from '../shared/pr-review';
+/* ── end helper sweep · P5 runtime ── */
+
 const exec = promisify(execFile);
 
 /** Main owns notification policy; the PTY manager only reports the lifecycle fact. */
@@ -991,6 +996,17 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   assertSessionSlotAvailable();
   assertBudgetAllowsLaunch(project.id);
   assertProviderCredentials(def);
+  // helper sweep · P5 runtime: review-only is decided before anything exists
+  // to roll back. The worktree is one Wanigan prepared for this project.
+  const reviewOnly = opts.reviewOnly === true;
+  if (reviewOnly) {
+    const refusal = reviewOnlyRefusal({ harness: def.harness, source: def.source, permissionMode: opts.permissionMode ?? null });
+    if (refusal) throw new Error(refusal);
+  }
+  const reviewWorktree = opts.reviewWorktree !== undefined && !internal.useWorktree
+    ? await assertReviewWorktree(opts.reviewWorktree, project.id)
+    : null;
+  if (reviewWorktree) internal = { ...internal, useWorktree: reviewWorktree };
 
   const PATH = await shellPath();
   // Launch the exact binary detection found, not whatever PATH resolves to now.
@@ -1003,6 +1019,9 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   }
   def = refreshedDef;
   const resolvedBin = detected.path;
+  if (reviewOnly && !(await restrictedFlagSupported(resolvedBin))) {
+    throw new Error(`This Claude Code (${detected.version ?? 'unknown version'}) does not list ${RESTRICTED_FLAG} in its help, so Wanigan cannot start a session with no command tools. Update Claude Code.`);
+  }
   const harnessProven = def.source === 'builtin' || detected.capabilities.probed;
   const extra = (opts.extraArgs ?? '').trim().split(/\s+/).filter(Boolean);
 
@@ -1275,7 +1294,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   let args: string[];
   try {
     args = [
-      ...idArgs, ...injected, ...attachmentArgs, ...learnedArgs, ...lifecycleArgs,
+      ...idArgs, ...injected, ...(reviewOnly ? [RESTRICTED_FLAG] : []), ...attachmentArgs, ...learnedArgs, ...lifecycleArgs,
       ...def.launchArgs(extra, {
         ...opts.providerOptions,
         model: resumeCodex ? undefined : opts.model || undefined,
@@ -1422,6 +1441,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   meta.accountNote = account && pinnedAccount?.note ? pinnedAccount.note : null;
   meta.configNote = configGate.note;
   meta.goalCapsule = capsuleDelivery;
+  if (reviewOnly) meta.reviewOnly = true;
 
   let proc: IPty;
   try {
@@ -1517,6 +1537,9 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   if (!exactRecovery) {
     try {
       recordSessionHistory();
+      if (reviewOnly) {
+        try { db().prepare('UPDATE session_log SET review_only=1 WHERE id=?').run(id); } catch { /* evidence only */ }
+      }
     } catch (e) {
       if (resumeKey) resumingConversations.delete(resumeKey);
       try { proc.kill(); } catch { /* do not orphan an unrecorded writer */ }

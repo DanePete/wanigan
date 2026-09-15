@@ -10,6 +10,7 @@ import ObservedBand from '../components/ObservedBand';
 import TeamPanel from '../components/TeamPanel';
 /* helper sweep · P5 runtime */
 import SessionProcessesPanel, { SurvivorsAcrossSessions } from '../components/SessionProcesses';
+import { ReviewOnlyMark } from '../components/ReviewOnly';
 
 /**
  * The whole crew on one screen — the view you leave open on a second monitor
@@ -721,6 +722,7 @@ function Card({ session: s, att, usage: u, spark, branch, trust, onOpen, onContr
         </span>
         {branch && <><span aria-hidden="true">·</span><span>{branch}</span></>}
         {s.worktree && <><span aria-hidden="true">·</span><span title={s.worktree}>isolated</span></>}
+        {s.reviewOnly && <><span aria-hidden="true">·</span><ReviewOnlyMark session={s} /></>}
       </div>
 
       <span className="fleet-detail">

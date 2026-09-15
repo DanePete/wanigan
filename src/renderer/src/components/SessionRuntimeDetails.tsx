@@ -1,6 +1,7 @@
 import type { Session } from '@shared/types';
 import SessionProcessesPanel from './SessionProcesses';
 import { SessionProvenance } from './LaunchProvenance';
+import { ReviewOnlyMark } from './ReviewOnly';
 import '../styles/runtime.css';
 
 /**
@@ -12,6 +13,9 @@ import '../styles/runtime.css';
 export default function SessionRuntimeDetails({ session }: { session: Session }) {
   return (
     <>
+      {session.reviewOnly && (
+        <p className="session-review-only"><ReviewOnlyMark session={session} /> Started with --restricted: Claude Code removed its command and code-running tools and WebFetch.</p>
+      )}
       <details className="session-runtime">
         <summary>Processes and ports<span>{session.status === 'exited' ? 'what it left running' : 'what it is running'}</span></summary>
         <div className="session-runtime-body">

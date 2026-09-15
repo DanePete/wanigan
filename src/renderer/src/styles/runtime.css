@@ -79,3 +79,15 @@
 .launch-provenance { margin-top: var(--s-2); font-size: var(--t-small); }
 .launch-provenance > summary { cursor: pointer; color: var(--text-dim); }
 .launch-provenance .provenance-list > div { grid-template-columns: 1fr; gap: 0; }
+.review-only-field { display: grid; gap: var(--s-2); margin-block: var(--s-2); }
+.review-only-check { display: flex; gap: var(--s-2); align-items: flex-start; font-size: var(--t-small); cursor: pointer; }
+.review-only-check input { margin-top: var(--s-1); flex: none; }
+.review-only-check > span { display: grid; gap: var(--s-1); min-width: 0; }
+.review-only-hint { color: var(--text-dim); line-height: 1.45; }
+.review-only-error { color: var(--bad); }
+.review-only-goal { margin-block: var(--s-2); }
+.review-pr-form { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; flex-basis: 100%; padding-block: var(--s-2); }
+.review-pr-form .field { width: 7rem; }
+.review-pr-label { font-size: var(--t-small); color: var(--text-dim); }
+.review-pr-hint { flex-basis: 100%; color: var(--text-faint); font-size: var(--t-micro); line-height: 1.45; }
+.session-review-only { margin: 0; padding-block: var(--s-2); display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: baseline; font-size: var(--t-small); color: var(--text-dim); }

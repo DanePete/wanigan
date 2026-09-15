@@ -453,3 +453,135 @@ export async function runLaunchProvenanceSmoke(check: Check, say: Say): Promise<
   check(/handle\('sessions:create'[\s\S]{0,200}createSession\(opts\);[\s\S]{0,120}recordLaunchProvenance\(created, opts\)/.test(index),
     'the renderer’s launch handler records provenance at the call site');
 }
+
+/**
+ * helper sweep · P5 runtime — reviewer sessions with no command tools, and
+ * Review PR #N.
+ *
+ * The PR fetch runs against real git with a local bare repository standing in
+ * for origin, so nothing leaves the machine: one origin publishes
+ * refs/pull/7/head, and a second is reached through a url.insteadOf rewrite of
+ * https://gitlab.com/… so the GitLab branch is exercised on a GitLab-looking
+ * origin without a network. No agent is launched: the review-only refusals are
+ * the checks that run before one would be.
+ */
+export async function runReviewOnlySmoke(check: Check, say: Say): Promise<void> {
+  say('── helper sweep · P5 runtime · reviewer sessions and Review PR #N');
+  const os = await import('node:os');
+  const { execFileSync } = await import('node:child_process');
+  const review = await import('./review-only');
+  const sessions = await import('./sessions');
+  const control = await import('./control');
+  const { addProject, removeProject } = await import('./store');
+  const { removeWorktree } = await import('./worktrees');
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-review-pr-')));
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' }).toString().trim();
+  const made: string[] = [];
+  let projectId: string | null = null;
+  let gitlabProjectId: string | null = null;
+  try {
+    check(review.reviewOnlyRefusal({ harness: 'codex', source: 'builtin' })?.includes('Claude Code sessions only') === true,
+      'review only is refused for a Codex profile, which has no verified way to remove its command tools');
+    check(review.reviewOnlyRefusal({ harness: 'claude-code', source: 'builtin', permissionMode: 'bypassPermissions' })?.includes('bypassPermissions') === true,
+      'and refused with bypassPermissions, as Claude Code itself refuses it');
+    check(review.reviewOnlyRefusal({ harness: 'claude-code', source: 'local' }) !== null,
+      'a local pack on the Claude harness is not trusted to honour --restricted');
+    check(review.reviewOnlyRefusal({ harness: 'claude-code', source: 'builtin', permissionMode: 'plan' }) === null, 'a built-in Claude profile may');
+
+    const withFlag = path.join(root, 'claude-new');
+    fs.writeFileSync(withFlag, '#!/bin/sh\necho "  --restricted                          Restricted mode: removes the built-in"\n', { mode: 0o755 });
+    const withoutFlag = path.join(root, 'claude-old');
+    fs.writeFileSync(withoutFlag, '#!/bin/sh\necho "  --resume   Resume a conversation"\n', { mode: 0o755 });
+    check(await review.restrictedFlagSupported(withFlag) && !(await review.restrictedFlagSupported(withoutFlag)),
+      '--restricted is looked for in the help of the binary about to run, not assumed from a version');
+
+    const src = sourceOf('src/main/sessions.ts');
+    check(/\.\.\.\(reviewOnly \? \[RESTRICTED_FLAG\] : \[\]\)/.test(src) && /restrictedFlagSupported\(resolvedBin\)/.test(src),
+      'a review-only Claude launch adds --restricted to argv, after checking the resolved binary lists it');
+
+    // Review PR against a local bare origin.
+    const origin = path.join(root, 'origin.git');
+    const work = path.join(root, 'work');
+    execFileSync('git', ['init', '-q', '--bare', origin]);
+    execFileSync('git', ['init', '-q', '-b', 'main', work]);
+    git(work, 'config', 'user.email', 'smoke@wanigan.test'); git(work, 'config', 'user.name', 'Smoke');
+    fs.writeFileSync(path.join(work, 'README.md'), '# base\n');
+    git(work, 'add', '-A'); git(work, 'commit', '-qm', 'base');
+    git(work, 'remote', 'add', 'origin', origin);
+    git(work, 'push', '-q', 'origin', 'main');
+    git(work, 'checkout', '-q', '-b', 'feature');
+    fs.writeFileSync(path.join(work, 'feature.txt'), 'the change under review\n');
+    git(work, 'add', '-A'); git(work, 'commit', '-qm', 'feature');
+    const prHead = git(work, 'rev-parse', 'HEAD');
+    git(work, 'push', '-q', 'origin', 'HEAD:refs/pull/7/head');
+    git(work, 'checkout', '-q', 'main');
+    git(work, 'branch', '-q', '-D', 'feature');
+    const branchesBefore = git(work, 'branch', '--list').split('\n').map((b) => b.replace('*', '').trim()).sort();
+    const project = await addProject(work);
+    projectId = project.id;
+
+    let codexMessage = '';
+    try {
+      await sessions.createSession({ providerId: 'codex', projectId: project.id, reviewOnly: true } as Parameters<typeof sessions.createSession>[0]);
+    } catch (error) { codexMessage = error instanceof Error ? error.message : String(error); }
+    check(/Claude Code sessions only/.test(codexMessage),
+      'a review-only launch on a Codex profile is refused by name and never starts an agent', codexMessage);
+
+    let badNumber = '';
+    try { await review.preparePrReview(project.id, '7; rm -rf /'); } catch (error) { badNumber = error instanceof Error ? error.message : String(error); }
+    check(/Enter a pull request number/.test(badNumber), 'a PR number that is not a number is refused before git runs', badNumber);
+
+    let missing = '';
+    try { await review.preparePrReview(project.id, '8'); } catch (error) { missing = error instanceof Error ? error.message : String(error); }
+    check(/git fetch origin pull\/8\/head: .*(couldn't find remote ref|not our ref|fatal)/i.test(missing),
+      'a PR that origin does not have is reported in git’s own words', missing);
+
+    const ready = await review.preparePrReview(project.id, '#7');
+    made.push(ready.worktree);
+    check(ready.forge === 'other' && ready.ref === 'pull/7/head' && ready.head === prHead,
+      'the pull request head is fetched from origin by pull/N/head', ready);
+    check(fs.existsSync(path.join(ready.worktree, 'feature.txt')) && git(ready.worktree, 'rev-parse', 'HEAD') === prHead,
+      'into a new Wanigan-managed worktree checked out at that head', ready.worktree);
+    const branchesAfter = git(work, 'branch', '--list').split('\n').map((b) => b.replace('*', '').trim()).filter((b) => !b.startsWith('wanigan/') && !b.startsWith('+ wanigan/')).sort();
+    check(JSON.stringify(branchesAfter) === JSON.stringify(branchesBefore) && git(work, 'rev-parse', 'main') !== prHead,
+      'and no branch of the operator’s moved', { branchesBefore, branchesAfter });
+    check(/pull request #7/.test(ready.prompt) && /no command tools/.test(ready.prompt), 'the prompt stub names the PR and the missing command tools', ready.prompt);
+    check(await review.assertReviewWorktree(ready.worktree, project.id) === ready.worktree,
+      'the prepared worktree is accepted as this project’s review worktree');
+    let foreign = '';
+    try { await review.assertReviewWorktree(work, project.id); } catch (error) { foreign = error instanceof Error ? error.message : String(error); }
+    check(/not a review worktree/.test(foreign), 'any other folder handed in by the renderer is refused', foreign);
+
+    // GitLab: a GitLab-looking origin, rewritten to a local bare repository.
+    const glOrigin = path.join(root, 'gitlab.git');
+    const glWork = path.join(root, 'gitlab-work');
+    execFileSync('git', ['init', '-q', '--bare', glOrigin]);
+    execFileSync('git', ['clone', '-q', origin, glWork]);
+    git(glWork, 'config', 'user.email', 'smoke@wanigan.test'); git(glWork, 'config', 'user.name', 'Smoke');
+    git(glWork, 'remote', 'set-url', 'origin', 'https://gitlab.com/acme/app.git');
+    git(glWork, 'config', `url.${glOrigin}.insteadOf`, 'https://gitlab.com/acme/app.git');
+    git(glWork, 'push', '-q', 'origin', `${prHead}:refs/merge-requests/3/head`);
+    const glProject = await addProject(glWork);
+    gitlabProjectId = glProject.id;
+    const gl = await review.preparePrReview(glProject.id, '!3');
+    made.push(gl.worktree);
+    check(gl.forge === 'gitlab' && gl.ref === 'merge-requests/3/head' && gl.head === prHead && /merge request !3/.test(gl.prompt),
+      'a GitLab origin fetches merge-requests/N/head instead', gl);
+
+    const goal = control.createDocket({ projectId: project.id, title: 'Review default', objective: 'Check the review toggle.', acceptance: ['It persists.'], risk: 'low' });
+    check(review.goalReviewOnly(goal.id) === true, 'a goal’s review task has no command tools by default');
+    review.setGoalReviewOnly(goal.id, false);
+    check(review.goalReviewOnly(goal.id) === false, 'and the per-goal toggle turns it off');
+    let unknownGoal = '';
+    try { review.setGoalReviewOnly('dock_missing', true); } catch (error) { unknownGoal = error instanceof Error ? error.message : String(error); }
+    check(/no longer exists/.test(unknownGoal), 'a toggle for a goal that does not exist is refused', unknownGoal);
+    const controlSrc = sourceOf('src/main/control.ts');
+    check(/node\.kind === 'review' && !!reviewDef && goalReviewOnly\(parent\.id\)/.test(controlSrc),
+      'the review task launch reads the goal toggle at its call site');
+  } finally {
+    for (const wt of made) { try { await removeWorktree(wt, true); } catch { /* best effort */ } }
+    if (projectId) try { removeProject(projectId); } catch { /* gone */ }
+    if (gitlabProjectId) try { removeProject(gitlabProjectId); } catch { /* gone */ }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}

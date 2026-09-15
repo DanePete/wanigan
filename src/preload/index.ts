@@ -14,6 +14,7 @@ import type { CodexImportOutcome, CodexImportPlan } from '../shared/codex-import
 import type { DoctorReport } from '../shared/codex-doctor';
 import type { DiagnosticsPreview } from '../shared/diagnostics';
 import type { LaunchOrigin, LaunchProvenanceInput, LaunchValue } from '../shared/launch-provenance';
+import type { Forge } from '../shared/pr-review';
 /* ── end helper sweep · P5 runtime ── */
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
@@ -869,6 +870,13 @@ const api = {
   diagnostics: {
     preview: () => call<DiagnosticsPreview>('diagnostics:preview'),
     save: (names: string[]) => call<string | null>('diagnostics:save', names),
+  },
+  reviewOnly: {
+    preparePr: (projectId: string, prNumber: string) => call<{
+      projectId: string; prNumber: number; forge: Forge; ref: string; head: string; worktree: string; branch: string; prompt: string; noun: string;
+    }>('review:preparePr', projectId, prNumber),
+    goal: (docketId: string) => call<boolean>('review:goalReviewOnly', docketId),
+    setGoal: (docketId: string, enabled: boolean) => call<boolean>('review:setGoalReviewOnly', docketId, enabled),
   },
   launchProvenance: {
     forSession: (sessionId: string) => call<{ origin: LaunchOrigin; values: LaunchValue[] } | null>('launchProvenance:forSession', sessionId),

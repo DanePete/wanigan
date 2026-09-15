@@ -8,6 +8,7 @@ import { Hint, Mark, Note, Icon, SectionHead, ago } from './bits';
 import '../styles/launch.css';
 /* helper sweep · P5 runtime */
 import { DialogProvenance } from './LaunchProvenance';
+import { ReviewOnlyField, type NewSessionPrefill } from './ReviewOnlyField';
 import { useDialog } from './useDialog';
 
 /** Same filled progression the session header uses: ◇ → ◈ → ◆ reads in greyscale. */
@@ -84,7 +85,7 @@ function OpenField({ id, label, value, choices, placeholder, onChange }: {
 }
 
 export default function NewSessionDialog({
-  providers, projects, defaultProjectId, liveSessions, onClose, onCreate,
+  providers, projects, defaultProjectId, liveSessions, onClose, onCreate, prefill,
 }: {
   providers: ProviderInfo[];
   projects: Project[];
@@ -93,6 +94,8 @@ export default function NewSessionDialog({
   liveSessions: Session[];
   onClose: () => void;
   onCreate: (opts: LaunchOptions) => Promise<void>;
+  /** helper sweep · P5 runtime: Review PR opens this dialog on a prepared worktree. */
+  prefill?: NewSessionPrefill;
 }) {
   /*
    * The dialog re-resolves providers itself when you ask it to, because the
@@ -136,7 +139,8 @@ export default function NewSessionDialog({
   const [effort, setEffort] = useState('');
   const [permissionMode, setPermissionMode] = useState('');
   const [extraArgs, setExtraArgs] = useState('');
-  const [initialPrompt, setInitialPrompt] = useState('');
+  const [initialPrompt, setInitialPrompt] = useState(prefill?.initialPrompt ?? '');
+  const [reviewOnly, setReviewOnly] = useState(prefill?.reviewOnly === true);
   const [providerOptions, setProviderOptions] = useState<Record<string, string | boolean>>({});
   const [isolate, setIsolate] = useState(false);
   // null means "whatever this project resolves to" rather than a chosen account,
@@ -492,7 +496,10 @@ export default function NewSessionDialog({
     if (missingField) { setErr(`${missingField.label} is required by this provider profile.`); return; }
     setBusy(true); setErr(null);
     try {
-      await onCreate({ providerId, projectId, model, effort, permissionMode, providerOptions, extraArgs, initialPrompt, isolate, accountId,
+      await onCreate({ providerId, projectId, model, effort, permissionMode, providerOptions, extraArgs, initialPrompt,
+        isolate: prefill?.worktree ? false : isolate, accountId,
+        ...(reviewOnly && provider?.harnessId === 'claude-code' ? { reviewOnly: true } : {}),
+        ...(prefill?.worktree ? { reviewWorktree: prefill.worktree.path } : {}),
         acceptConfigDigest: configChanged && configAccepted && configCheck ? configCheck.snapshot.digest : undefined });
       onClose();
     } catch (e) {
@@ -1048,6 +1055,8 @@ export default function NewSessionDialog({
             )}
           </span>
         </label>
+        {/* helper sweep · P5 runtime */}
+        <ReviewOnlyField harness={provider?.harnessId} checked={reviewOnly} onChange={setReviewOnly} worktree={prefill?.worktree ?? null} />
 
         </section><section className="launch-section" id="launch-message"><SectionHead label="Give it a starting point" />
         <label className="label" htmlFor="launch-first-message">First message <span>(optional)</span></label>
@@ -1113,7 +1122,8 @@ export default function NewSessionDialog({
             <div><dt>Agent</dt><dd>{provider?.label ?? 'Not selected'}</dd></div>
             <div><dt>Model</dt><dd>{model || 'CLI default'}</dd></div>
             {effortField.supported && <div><dt>Effort</dt><dd>{effort || 'CLI default'}</dd></div>}
-            <div><dt>Workspace</dt><dd>{isolate ? 'New isolated worktree' : 'Project checkout'}</dd></div>
+            <div><dt>Workspace</dt><dd>{prefill?.worktree ? `Review worktree · ${prefill.worktree.label}` : isolate ? 'New isolated worktree' : 'Project checkout'}</dd></div>
+            {reviewOnly && provider?.harnessId === 'claude-code' && <div><dt>Tools</dt><dd>Review only · no command tools</dd></div>}
             <div><dt>Trust</dt><dd>{trust ? trustCopy(trust).label : trustErr ? 'Could not read' : 'Reading…'}</dd></div>
             <div><dt>Permissions</dt><dd>{permissionMode || 'CLI default'}</dd></div>
             <div><dt>Repository config</dt><dd>{configRead === 'reading' ? 'Reading…'
@@ -1136,7 +1146,7 @@ export default function NewSessionDialog({
               account: accountRes?.account
                 ? { label: accountRes.account.label, source: accountRes.source === 'none' ? 'none' : accountRes.source }
                 : { label: null, source: 'none', reason: accountRes?.reason ?? null },
-              isolation: { isolated: isolate, reusedWorktree: false },
+              isolation: { isolated: isolate || !!prefill?.worktree, reusedWorktree: false },
               extraArgs,
             }} />
           )}

@@ -314,7 +314,13 @@ async function linkIgnoredDeps(repoRoot: string, worktree: string): Promise<Link
   return linked;
 }
 
-export async function createWorktree(repoRoot: string, label: string, sessionId: string): Promise<WorktreeInfo> {
+export async function createWorktree(
+  repoRoot: string, label: string, sessionId: string,
+  /* helper sweep · P5 runtime: check out this commit instead of the base
+     (a fetched pull request head). The base is still what is recorded as the
+     merge target, so the worktree behaves like every other Wanigan worktree. */
+  checkoutOverride?: string,
+): Promise<WorktreeInfo> {
   const root = await repoRootFor(repoRoot);
   if (!root) {
     throw new Error(`${repoRoot} is not a git repository, so there is nothing to branch from. Add the project's repo root instead, or run this session without isolation.`);
@@ -361,7 +367,7 @@ export async function createWorktree(repoRoot: string, label: string, sessionId:
 
   // A worktree add is a full checkout; on a big repo that is minutes, and the
   // default timeout would abandon it half-written with the branch already made.
-  const add = await git(root, ['worktree', 'add', '-b', branch, dir, startPoint], 10 * 60_000);
+  const add = await git(root, ['worktree', 'add', '-b', branch, dir, checkoutOverride ?? startPoint], 10 * 60_000);
   if (!add.ok) {
     throw new Error(`Could not create a worktree for "${label}": ${gitSaid(add)}. The repo is untouched; check that ${parent} is writable and on the same filesystem as the repo.`);
   }
@@ -401,7 +407,7 @@ export async function createWorktree(repoRoot: string, label: string, sessionId:
       .run(JSON.stringify(linked.map((l) => l.path)), abs);
   }
 
-  return { path: abs, branch, head, repoRoot: root, sessionId, dirty: 0, ahead: 0, linked };
+  return { path: abs, branch, head: checkoutOverride ?? head, repoRoot: root, sessionId, dirty: 0, ahead: 0, linked };
 }
 
 /**

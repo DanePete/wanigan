@@ -11,6 +11,10 @@ import * as review from './review';
 import * as otel from './otel';
 import { listGoalTrace, recordGoalTrace } from './goal-trace';
 import { enqueue } from './queue';
+/* ── helper sweep · P5 runtime ── */
+import { providerById } from './providers';
+import { goalReviewOnly, reviewOnlyRefusal } from './review-only';
+/* ── end helper sweep · P5 runtime ── */
 import type {
   BoardCard,
   ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode,
@@ -592,11 +596,18 @@ export async function startNode(nodeId: string, input: { providerId: string; mod
     ? verificationTree(nodeRow(nodeId))
     : { kind: 'none' as const };
   const inherited = inheritedTree.kind === 'found' ? inheritedTree.path : null;
+  // helper sweep · P5 runtime: a review task has no command tools by default,
+  // per goal, where the profile can honour it. Anywhere it cannot, the session
+  // launches as before rather than being refused over a default.
+  const reviewDef = node.kind === 'review' ? providerById(providerId) : null;
+  const permissionMode = input.permissionMode?.trim() || (node.kind === 'implement' ? 'acceptEdits' : 'plan');
+  const reviewOnly = node.kind === 'review' && !!reviewDef && goalReviewOnly(parent.id)
+    && reviewOnlyRefusal({ harness: reviewDef.harness, source: reviewDef.source, permissionMode }) === null;
   let session: Awaited<ReturnType<typeof createSession>>;
   try {
     session = await createSession({ providerId, projectId: project.id, model: input.model?.trim() || undefined,
-      effort: input.effort?.trim() || undefined, permissionMode: input.permissionMode?.trim() || (node.kind === 'implement' ? 'acceptEdits' : 'plan'),
-      isolate: !inherited, initialPrompt: prompt, goalCapsule: capsule },
+      effort: input.effort?.trim() || undefined, permissionMode,
+      isolate: !inherited, initialPrompt: prompt, goalCapsule: capsule, ...(reviewOnly ? { reviewOnly: true } : {}) },
       inherited ? { useWorktree: inherited } : {});
   } catch (error) {
     if (takenClaim) releaseClaim(takenClaim.id);
