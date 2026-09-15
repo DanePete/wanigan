@@ -12,7 +12,7 @@ import type {
   AccountLimits,
   AwakeState,
   ExpiringResults,
-  LaunchOptions, PastSession, Project, ProviderInfo, Session, RunConfig, SourceConfig,
+  LaunchOptions, ObserveOnlyHooks, PastSession, Project, ProviderInfo, Session, RunConfig, SourceConfig,
   SessionUsage, ApiEvent, SessionEvent, Attention, TranscriptHit, TranscriptTurn,
   WorktreeInfo, HeadlessRowDetail, HeadlessRowSummary, HeadlessRun, HeadlessStartRequest,
   QueueItem, QueueSlots, QueueState,
@@ -81,6 +81,9 @@ const api = {
     list: () => call<ProviderInfo[]>('providers:list'),
     modelCatalogue: (providerId: string) =>
       call<LaunchModelCatalogue>('providers:modelCatalogue', providerId),
+    /** Codex profiles only: whether its hook events reach Wanigan, asking Codex once per version. */
+    checkObserveOnlyHooks: (providerId: string) =>
+      call<ObserveOnlyHooks>('providers:checkObserveOnlyHooks', providerId),
   },
   providerPacks: {
     list: (includeRemoved?: boolean) => call<ProviderPackInfo[]>('providerPacks:list', includeRemoved),

@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import type { ProviderCapabilities, ProviderId, ProviderInfo, ProviderLaunchField } from '../shared/types';
 import { getProviderKey } from './keys';
 import { probeProviderAdapter } from './provider-adapter';
+import { observeOnlyHooksStatus } from './codex-hooks';
 import {
   createDefaultProviderPackRegistry,
   type ProviderCapabilityDeclaration,
@@ -648,7 +649,13 @@ async function capabilitiesFor(def: ProviderDef, resolved: string | null, PATH: 
   return observed;
 }
 
-function providerProbeEnvironment(PATH: string): NodeJS.ProcessEnv {
+/**
+ * What every probe of an installed CLI runs with: PATH and the few identity
+ * and locale variables a program needs to start, and no credential. Exported
+ * for Codex's hook-trust probe (codex-hooks.ts), which starts the same binary
+ * and must be held to the same environment.
+ */
+export function providerProbeEnvironment(PATH: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { PATH };
   for (const name of ['HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL']) {
     if (process.env[name] !== undefined) env[name] = process.env[name];
@@ -810,7 +817,13 @@ export async function detectProviders(): Promise<ProviderInfo[]> {
     PROVIDERS.map(async (def): Promise<ProviderInfo> => {
       const resolved = await which(def);
       const version = resolved ? await probeVersion(def, resolved, p) : null;
-      const capabilities = await capabilitiesFor(def, resolved, p);
+      const probed = await capabilitiesFor(def, resolved, p);
+      // Outside capabilitiesFor's cache, because a first hook event changes
+      // this line while the binary stays the same. Read from what is already
+      // known: detection never starts Codex's app-server to fill it in.
+      const capabilities = def.harness === 'codex' && resolved
+        ? { ...probed, observeOnlyHooks: observeOnlyHooksStatus({ bin: resolved, version, proven: def.source === 'builtin' || probed.probed }) }
+        : probed;
       return {
         id: def.id,
         label: def.label,
