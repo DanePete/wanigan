@@ -4,7 +4,7 @@ import type {
   AgentAccount, AttachmentReclaimPreview, AttachmentReclaimSummary,
   WaniganSettings, BackupCheck, BackupRestoreSummary, BackupSummary,
   EgressHost, LedgerEntry, McpServerConfig, McpServerReview, MotionSetting, ThemeSetting,
-  MobileAlertChannels, MobileMonitorConfig, MobileMonitorStatus, Project, ProviderInfo, ProviderManifestInspection,
+  MobileAlertChannels, MobileMonitorConfig, MobileMonitorStatus, ObserveOnlyHooks, Project, ProviderInfo, ProviderManifestInspection,
   ProviderPackInfo, ProviderProfileInfo, QueueItem, QueueSlots, QueueState,
   TranscriptHit, TranscriptTurn, TrustLevel, UploadedFile, WorktreeInfo,
 } from '@shared/types';
@@ -13,8 +13,11 @@ import { TRUST_COPY, TRUST_LEVELS, trustCopy } from '@shared/types';
 import { DEMO_PROMPTS } from '@shared/demo';
 import { INTAKE_MAX_INTERVAL_MINUTES, INTAKE_MIN_INTERVAL_MINUTES, type IntakeTimer } from '@shared/intake';
 import type { LedgerBreakKind, LedgerChainStatus } from '@shared/ledger-chain';
-import { ConfirmNote, Explainer, Icon, Note, PageHead, Reading, Section, SectionHead, Stat, ago, num } from '../components/bits';
-import type { IconName } from '../components/bits';
+// bits' Mark takes a tone and draws its colour from tokens. This file's own
+// older Mark below takes a literal colour, and is left as it is.
+import { ConfirmNote, Explainer, Icon, Mark as ToneMark, Note, PageHead, Reading, Section, SectionHead, Stat, ago, num } from '../components/bits';
+import type { IconName, Tone } from '../components/bits';
+import { observeOnlyHooksSentence } from '@shared/codex-hooks';
 import KeyboardSettings from '../components/KeyboardSettings';
 import { useChord } from '../bindings';
 import { useRememberedScroll } from '../components/viewMemory';
@@ -825,7 +828,8 @@ export default function Settings({
           <SettingsTabPanel tab={settingsTabInfo('agents')} active={settingsTab === 'agents'}>
             <Section title="Installed agent runtimes" hint="Resolved from your login shell's PATH, then from editor extension directories.">
               {providers.map((p) => (
-                <div className="set-runtime-row" key={p.id}>
+                <Fragment key={p.id}>
+                <div className="set-runtime-row">
                   <span style={{ fontWeight: 600, minWidth: 110 }}>{p.label}</span>
                   {p.path ? (
                     <>
@@ -836,6 +840,8 @@ export default function Settings({
                     <span className="faint">not found — <code className="mono">{p.bin}</code> is not on PATH or in an editor extension</span>
                   )}
                 </div>
+                {p.harnessId === 'codex' && p.path && <CodexHookEvents provider={p} />}
+                </Fragment>
               ))}
             </Section>
 
@@ -1226,6 +1232,68 @@ type Review = {
     | { s: 'err'; message: string }
     | { s: 'ready'; text: string; sha256: string | null };
 };
+
+type CodexHookCheck = { s: 'checking' } | { s: 'ok'; v: ObserveOnlyHooks } | { s: 'err'; message: string };
+
+/**
+ * Each of the three sentences opens with its own state word ("observed on",
+ * "injected and trusted on", "not available:"), so the mark is the glyph and
+ * the sentence is its word. A second word beside it read "observed observed".
+ */
+const HOOK_MARKS: Record<ObserveOnlyHooks['state'], { glyph: string; word: string; tone: Tone }> = {
+  observed: { glyph: '✓', word: '', tone: 'ok' },
+  trusted: { glyph: '◐', word: '', tone: 'accent' },
+  unavailable: { glyph: '✕', word: '', tone: 'warn' },
+};
+
+/**
+ * Codex hook events for one installed Codex runtime, in the three shapes the
+ * capability can take (shared/codex-hooks.ts). Detection fills the answer in
+ * when Codex has already been asked on this version; otherwise it is asked
+ * here, once, and "checking" is only ever that wait. A failed read says it
+ * could not read, and is never drawn as one of the three.
+ */
+function CodexHookEvents({ provider }: { provider: ProviderInfo }) {
+  const known = provider.capabilities.observeOnlyHooks ?? null;
+  const [check, setCheck] = useState<CodexHookCheck | null>(null);
+  useEffect(() => {
+    if (known) return;
+    let current = true;
+    setCheck({ s: 'checking' });
+    window.wanigan.providers.checkObserveOnlyHooks(provider.id)
+      .then((v) => { if (current) setCheck({ s: 'ok', v }); })
+      .catch((e: unknown) => { if (current) setCheck({ s: 'err', message: msg(e) }); });
+    return () => { current = false; };
+  }, [known, provider.id]);
+
+  const status = known ?? (check?.s === 'ok' ? check.v : null);
+  const when = (at: number) => new Date(at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  return (
+    <div className="set-runtime-hooks" data-codex-hooks={status?.state ?? check?.s ?? 'checking'}>
+      <span className="set-runtime-hooks-label">Hook events</span>
+      {status ? (
+        <>
+          <ToneMark {...HOOK_MARKS[status.state]} />
+          <span className="set-runtime-hooks-text">{observeOnlyHooksSentence(status, when)}</span>
+          {status.state === 'unavailable' && status.detail && <span className="set-runtime-hooks-detail faint">{status.detail}</span>}
+        </>
+      ) : check?.s === 'err' ? (
+        <>
+          <ToneMark glyph="?" word="could not read" tone="bad" />
+          <span className="set-runtime-hooks-text">{check.message}</span>
+        </>
+      ) : (
+        <>
+          <ToneMark glyph="…" word="checking" tone="quiet" />
+          <span className="set-runtime-hooks-text">asking Codex's app-server whether it trusts Wanigan's hooks, with a throwaway home and no model call</span>
+        </>
+      )}
+      <span className="set-runtime-hooks-note faint">
+        These hooks only report what a Codex session did. They print nothing and decide nothing, so the trust gate does not cover Codex.
+      </span>
+    </div>
+  );
+}
 
 function ProviderPacks({ providers }: { providers: ProviderInfo[] }) {
   const [tick, setTick] = useState(0);

@@ -5,8 +5,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   detectProviders, effectiveProviderBackendId, launchFieldsFor, missingCredentialIds, providerById, providerPackRegistry, refreshProviderPacks,
-  runsClaudeCli, usesAnthropicAccount,
+  runsClaudeCli, usesAnthropicAccount, providerProbeEnvironment, shellPath,
 } from './providers';
+import * as codexHooks from './codex-hooks';
 import {
   initSessions, listSessions, createSession, writeSession, resizeSession,
   killSession, closeSession, scrollback, markRead, shutdownAll, sessionBaseline, interruptSession,
@@ -1763,6 +1764,25 @@ function registerIpc() {
       supports: def.supports,
       launchFields: launchFieldsFor(def),
     });
+  });
+  /*
+   * Codex hook events for one installed Codex profile, asking Codex when its
+   * version has not been asked yet (codex-hooks.ts). Takes an id and resolves
+   * the binary here, so the renderer cannot name a program for main to start.
+   * What it starts is Codex's app-server with a throwaway home, for a hook
+   * listing only: no thread, no model call, nothing spent.
+   */
+  handle('providers:checkObserveOnlyHooks', async (providerId: unknown) => {
+    if (typeof providerId !== 'string' || !providerId) throw new Error('Name the provider profile to check.');
+    const def = providerById(providerId);
+    const detected = (await detectProviders()).find((provider) => provider.id === providerId);
+    if (!def || !detected) throw new Error('That provider profile is not loaded.');
+    if (def.harness !== 'codex') throw new Error(`${def.label} does not run Codex, so it has no Codex hook events.`);
+    if (!detected.path) throw new Error(`${def.label} is not installed.`);
+    return codexHooks.checkObserveOnlyHooks(
+      { bin: detected.path, version: detected.version, proven: def.source === 'builtin' || detected.capabilities.probed },
+      providerProbeEnvironment(await shellPath()),
+    );
   });
   handle('providerPacks:list', (includeRemoved?: boolean) =>
     publicProviderPacks(includeRemoved === true));

@@ -261,6 +261,8 @@ export async function runSmoke(): Promise<void> {
     await runKeymapSmoke(check, say);
     const { runAttemptsSmoke } = await import('./smoke27');
     await runAttemptsSmoke(check, say);
+    const { runCodexHookSmoke } = await import('./smoke28');
+    await runCodexHookSmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

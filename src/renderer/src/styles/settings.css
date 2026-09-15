@@ -54,6 +54,14 @@
 .set-key-status { display: flex; gap: 8px 11px; align-items: center; flex-wrap: wrap; margin-bottom: 11px; }
 .set-key-status .btn:first-of-type { margin-left: auto; }
 .set-runtime-row, .set-project-row { display: flex; gap: 11px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line-soft); min-width: 0; }
+/* Codex hook events, under the Codex runtime row they describe and indented
+   from it the same way. The sentence wraps rather than truncates: its reason
+   is the half a reader needs, and a clipped reason reads as a different one. */
+.set-runtime-hooks { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-2); padding: 0 0 var(--s-2) var(--s-1); font-size: var(--t-small); min-width: 0; }
+.set-runtime-hooks-label { color: var(--text-dim); font-weight: 600; }
+.set-runtime-hooks-text { flex: 1 1 16em; min-width: 0; overflow-wrap: anywhere; }
+.set-runtime-hooks-detail, .set-runtime-hooks-note { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; font-size: var(--t-micro); }
+
 /* Under the row it belongs to and indented from it, so a repository reads as
    one entry with a setting rather than two list items. */
 .set-project-account { display: flex; align-items: center; gap: 8px; padding: 0 0 8px 2px; font-size: var(--t-small); }
