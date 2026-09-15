@@ -361,6 +361,9 @@ function storedDemoMode(): boolean {
 /** Slower than the dispatcher: a goal becomes eligible when work finishes. */
 const AUTOPILOT_SWEEP_MS = 10_000;
 let autopilotTimer: NodeJS.Timeout | null = null;
+/** Hourly is only how often the timer asks; a pass runs at most once a day. */
+const ATTACHMENT_RECLAIM_CHECK_MS = 60 * 60_000;
+let attachmentReclaimTimer: NodeJS.Timeout | null = null;
 
 /**
  * How often the transcript reader is offered a slice of time.
@@ -1119,6 +1122,20 @@ async function startServices() {
     }
   }, AUTOPILOT_SWEEP_MS);
 
+  // Attachment retention, once it is switched on in Settings: a pass at most
+  // once a day, recorded where the panel reads it. Off, this reads one setting
+  // and returns. Guarded against smoke because a pass inside the suite's process
+  // would delete fixtures another phase is still asserting on.
+  if (!smokeMode) {
+    const reclaim = () => {
+      try { attachments.reclaimAttachmentsIfDue(); }
+      catch (e) { console.warn('[wanigan] attachment retention pass failed; trying again later:', e); }
+    };
+    setTimeout(reclaim, 60_000).unref();
+    attachmentReclaimTimer = setInterval(reclaim, ATTACHMENT_RECLAIM_CHECK_MS);
+    attachmentReclaimTimer.unref();
+  }
+
   // Claude Code's transcripts are the one meter that can report on work
   // Wanigan never launched, and the first pass over them is measured in
   // gigabytes. It runs here rather than on the Insights load so a person who
@@ -1488,6 +1505,7 @@ function stopServices() {
   try { schedule.stopScheduler(); } catch { /* already down */ }
   try { queue.stopDispatcher(); } catch { /* already down */ }
   if (autopilotTimer) { clearInterval(autopilotTimer); autopilotTimer = null; }
+  if (attachmentReclaimTimer) { clearInterval(attachmentReclaimTimer); attachmentReclaimTimer = null; }
   if (transcriptTimer) { clearInterval(transcriptTimer); transcriptTimer = null; }
   try { hooks.stopHookServer(); } catch { /* already down */ }
   try { otel.stopCollector(); } catch { /* already down */ }
@@ -2927,6 +2945,18 @@ function registerIpc() {
     attachments.attachBufferToSession(sessionId, Buffer.from(data), name));
   handle('attach:list', (sessionId: string) => attachments.sessionAttachments(sessionId));
   handle('attach:remove', (id: string) => attachments.removeAttachment(id));
+  // Retention for session attachment directories. The preview deletes nothing
+  // and may be asked about any window, so the panel can show what switching on
+  // would remove before anyone does. Only the stored window can delete.
+  handle('attach:retention', () => ({ ...attachments.attachmentRetention(), last: attachments.lastAttachmentReclaim() }));
+  handle('attach:reclaimPreview', (days?: unknown) => {
+    if (days !== undefined && (typeof days !== 'number' || !Number.isInteger(days) || days < 1 || days > 3650)) {
+      throw new Error('Preview a window of 1 to 3650 whole days.');
+    }
+    return attachments.previewAttachmentReclaim({ days: days as number | undefined });
+  });
+  handle('attach:setRetention', (days: unknown) => attachments.setAttachmentRetention(days));
+  handle('attach:reclaimNow', () => attachments.reclaimAttachmentsNow('on-request'));
   // Deliberately no trailing return: the human decides when to send.
   handle('attach:type', (sessionId: string, onlyUnreferenced?: boolean) => {
     const list = attachments.promptableSessionAttachments(sessionId)

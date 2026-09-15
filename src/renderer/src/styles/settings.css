@@ -422,3 +422,11 @@ a.set-mini, a.btn { text-decoration: none; }
 .set-recall-lede { margin: 0 0 var(--s-2); color: var(--text-dim); font-size: var(--t-small); line-height: 1.55; max-width: 72ch; }
 .set-recall-lede code { overflow-wrap: anywhere; }
 .set-recall-list { display: flex; flex-direction: column; }
+
+/* Attachment retention: a preview, a confirmation, and what each pass removed. */
+.set-retention { display: flex; flex-direction: column; gap: var(--s-2); margin-top: var(--s-2); }
+.set-retention-lede, .set-retention-last, .set-retention-preview { margin: 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.55; }
+.set-retention-last { color: var(--text-faint); }
+.set-retention-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.set-retention-days { display: inline-flex; align-items: center; gap: var(--s-1); font-size: var(--t-small); color: var(--text-dim); }
+.set-retention-days .field { width: 7ch; text-align: right; }

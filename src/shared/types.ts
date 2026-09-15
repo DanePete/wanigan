@@ -1978,6 +1978,36 @@ export type McpServerReview = {
 
 /* ── P13 · uploaded rows ────────────────────────────────────────────── */
 
+/**
+ * What an attachment reclaim would remove now, for a window that may not be
+ * switched on yet. Nothing has been deleted to produce it. `kept` counts the
+ * session directories left alone, by the reason each was left.
+ */
+export type AttachmentReclaimPreview = {
+  enabled: boolean;
+  windowDays: number;
+  cutoff: number;
+  scanned: number;
+  directories: number;
+  filesEligible: number;
+  bytesEligible: number;
+  kept: Partial<Record<'session-still-open' | 'no-session-record' | 'resumed-later' | 'within-window' | 'referenced' | 'holds-agent-output' | 'unreadable', number>>;
+};
+
+/** One recorded reclaim pass. Bytes are measured from files confirmed gone. */
+export type AttachmentReclaimSummary = {
+  ranAt: number;
+  how: 'scheduled' | 'on-request';
+  windowDays: number;
+  scanned: number;
+  directories: number;
+  filesRemoved: number;
+  bytesFreed: number;
+  kept: number;
+  errors: number;
+  firstError: string | null;
+};
+
 export type UploadedFile = {
   hash: string;
   fileId: string;

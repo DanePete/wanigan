@@ -639,6 +639,10 @@ const api = {
     paste: (sessionId: string, data: ArrayBuffer, name: string) => call<any>('attach:paste', sessionId, data, name),
     list: (sessionId: string) => call<any[]>('attach:list', sessionId),
     remove: (id: string) => call<boolean>('attach:remove', id),
+    retention: () => call<{ enabled: boolean; days: number; last: import('../shared/types').AttachmentReclaimSummary | null }>('attach:retention'),
+    reclaimPreview: (days?: number) => call<import('../shared/types').AttachmentReclaimPreview>('attach:reclaimPreview', days),
+    setRetention: (days: number) => call<{ enabled: boolean; days: number }>('attach:setRetention', days),
+    reclaimNow: () => call<import('../shared/types').AttachmentReclaimSummary>('attach:reclaimNow'),
     // onlyUnreferenced: name just the files that are not already in the prompt,
     // so attaching a second file does not repeat the first.
     type: (sessionId: string, onlyUnreferenced?: boolean) =>

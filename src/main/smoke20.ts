@@ -320,3 +320,80 @@ export async function runRecallSwitchSmoke(check: Check, say: Say): Promise<void
     check(false, 'the recall switch checks ran without throwing', String(error));
   }
 }
+
+/**
+ * Attachment retention is reachable, previews before it deletes, and reports
+ * what it removed.
+ *
+ * The planner and the measured reclaim were complete, nothing called either,
+ * and Settings said the directories only grow. These checks stage real
+ * attachments into real session directories and run the same calls the panel
+ * and the daily timer make.
+ */
+export async function runAttachmentRetentionSmoke(check: Check, say: Say): Promise<void> {
+  say('── attachments · retention previews before it deletes, and records what it removed');
+  const { db } = await import('./db');
+  const attachments = await import('./attachments');
+  const { getSetting, setSetting } = await import('./settings');
+  const nonce = Date.now().toString(36);
+  const DAY = 24 * 60 * 60_000;
+  const now = Date.now();
+  const ids = { inert: `s_ret_inert_${nonce}`, named: `s_ret_named_${nonce}`, agent: `s_ret_agent_${nonce}`, recent: `s_ret_recent_${nonce}` };
+  const previousRetention = attachments.attachmentRetention();
+  const previousLast = getSetting('attachment_reclaim_last', '__wanigan_smoke_missing__');
+  try {
+    const log = db().prepare('INSERT INTO session_log (id, provider_id, project_path, project_name, started_at, ended_at, exit_code) VALUES (?,?,?,?,?,?,?)');
+    log.run(ids.inert, 'claude', os.tmpdir(), 'retention', now - 41 * DAY, now - 40 * DAY, 0);
+    log.run(ids.named, 'claude', os.tmpdir(), 'retention', now - 41 * DAY, now - 40 * DAY, 0);
+    log.run(ids.agent, 'claude', os.tmpdir(), 'retention', now - 41 * DAY, now - 40 * DAY, 0);
+    log.run(ids.recent, 'claude', os.tmpdir(), 'retention', now - 2 * DAY, now - DAY, 0);
+    const stage = (id: string) => attachments.attachBufferToSession(id, Buffer.from(`staged for ${id}\n`), 'notes.txt');
+    const inert = stage(ids.inert);
+    const named = stage(ids.named);
+    stage(ids.agent);
+    const recent = stage(ids.recent);
+    attachments.markAttachmentsReferenced([named.id], now - 40 * DAY);
+    const report = path.join(attachments.attachmentsDir(ids.agent), 'report.md');
+    fs.writeFileSync(report, '# what the agent wrote\n');
+    attachments.setAttachmentRetention(0);
+
+    const preview = attachments.previewAttachmentReclaim({ now, days: 30 });
+    check(fs.existsSync(inert.storedPath) && preview.directories >= 1 && (preview.kept.referenced ?? 0) >= 1
+      && (preview.kept['holds-agent-output'] ?? 0) >= 1 && (preview.kept['within-window'] ?? 0) >= 1,
+    'a preview for a window that is not switched on counts what would go and why the rest stays, and deletes nothing', preview);
+
+    const refused = attachments.reclaimAttachmentsNow('on-request', now);
+    check(fs.existsSync(inert.storedPath) && refused.filesRemoved === 0 && attachments.reclaimAttachmentsIfDue(now) === null,
+      'with retention off, neither a requested pass nor the daily check removes anything', refused);
+
+    attachments.setAttachmentRetention(30);
+    const pass = attachments.reclaimAttachmentsIfDue(now);
+    check(!!pass && pass.how === 'scheduled' && !fs.existsSync(inert.storedPath) && pass.filesRemoved >= 1
+      && pass.bytesFreed >= Buffer.byteLength(`staged for ${ids.inert}\n`),
+    'switched on, the daily check removes an inert directory past the window, counting bytes from files confirmed gone', pass);
+    check(fs.existsSync(named.storedPath) && fs.existsSync(report) && fs.existsSync(recent.storedPath),
+      'a directory named in a prompt, one holding the agent\'s own output and one inside the window all survive that pass');
+    check(attachments.lastAttachmentReclaim()?.ranAt === pass?.ranAt && attachments.reclaimAttachmentsIfDue(now + 60_000) === null,
+      'the pass is recorded where Settings reads it, and a second check within the day does not run another');
+
+    const index = appSource('src/main/index.ts');
+    check(index.includes("handle('attach:reclaimPreview'") && index.includes('attachments.reclaimAttachmentsIfDue()')
+      && /setInterval\(reclaim, ATTACHMENT_RECLAIM_CHECK_MS\)/.test(index),
+    'the app answers the panel over IPC and runs the daily check on a timer, so retention is reachable and not only callable');
+    const settings = appSource('src/renderer/src/views/Settings.tsx');
+    check(settings.includes('<AttachmentRetention />') && !settings.includes('This screen cannot yet measure or reclaim it'),
+      'Settings shows the control where it used to say no control had reached the panel');
+  } catch (error) {
+    check(false, 'the attachment retention checks ran without throwing', String(error));
+  } finally {
+    try {
+      attachments.setAttachmentRetention(previousRetention.days);
+      if (previousLast === '__wanigan_smoke_missing__') db().prepare("DELETE FROM settings WHERE k = 'attachment_reclaim_last'").run();
+      else setSetting('attachment_reclaim_last', previousLast);
+      for (const id of Object.values(ids)) {
+        attachments.cleanupSessionAttachments(id);
+        db().prepare('DELETE FROM session_log WHERE id = ?').run(id);
+      }
+    } catch { /* the smoke database is thrown away */ }
+  }
+}
