@@ -230,6 +230,9 @@ export async function runSmoke(): Promise<void> {
     /* ── helper sweep · P2 attention ── */
     const { runHelperAttentionSmoke } = await import('./smoke31');
     await runHelperAttentionSmoke(check, say);
+    /* ── helper sweep · P6 ux ── */
+    const { runHelperUxSmoke } = await import('./smoke35');
+    await runHelperUxSmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

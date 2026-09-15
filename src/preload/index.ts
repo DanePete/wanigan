@@ -39,6 +39,8 @@ import type {
 import type {
   AwaySummary, LimitResumeOffer, ProviderStatusReport, ResumeAtReset, ResumeCheck, SnoozePreset,
 } from '../shared/types';
+/* ── helper sweep · P6 ux ── */
+import type { OrganiseSnapshot, SectionRow, SessionOrganisation, TagColor } from '../shared/session-organize';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -938,6 +940,35 @@ const api = {
     setStatusChecks: (on: boolean) => call<ProviderStatusReport>('helper:setStatusChecks', on),
     denialRetryDrafted: (sessionId: string) => call<boolean>('helper:denialRetryDrafted', sessionId),
     takeReplies: () => call<{ sessionId: string; text: string; at: number }[]>('helper:takeReplies'),
+  },
+
+  /* ── helper sweep · P6 ux ── */
+  ux: {
+    organise: (sessionIds: string[]) => call<OrganiseSnapshot>('ux:organise', sessionIds),
+    addTags: (sessionId: string, raw: string) => call<SessionOrganisation>('ux:addTags', sessionId, raw),
+    removeTag: (sessionId: string, tag: string) => call<SessionOrganisation>('ux:removeTag', sessionId, tag),
+    setTagColor: (tag: string, color: TagColor) => call<TagColor>('ux:setTagColor', tag, color),
+    createSection: (name: string) => call<SectionRow[]>('ux:createSection', name),
+    renameSection: (id: string, name: string) => call<SectionRow[]>('ux:renameSection', id, name),
+    moveSection: (id: string, delta: -1 | 1) => call<SectionRow[]>('ux:moveSection', id, delta),
+    deleteSection: (id: string) => call<SectionRow[]>('ux:deleteSection', id),
+    placeInSection: (sessionId: string, sectionId: string | null) => call<SessionOrganisation>('ux:placeInSection', sessionId, sectionId),
+    moveInSection: (sessionId: string, delta: -1 | 1) => call<SessionOrganisation>('ux:moveInSection', sessionId, delta),
+    resolvePath: (sessionId: string, raw: string) => call<
+      | { ok: true; absolute: string; rel: string | null; line: number | null; column: number | null; directory: boolean }
+      | { ok: false; reason: string }>('ux:resolvePath', sessionId, raw),
+    revealPath: (sessionId: string, raw: string) => call<boolean>('ux:revealPath', sessionId, raw),
+    copyText: (text: string) => call<{ chars: number }>('ux:copyText', text),
+    copyAvailability: (sessionId: string) => call<{
+      lastResponse: { ok: true; from: string } | { ok: false; reason: string };
+      conversationId: string | null;
+    }>('ux:copyAvailability', sessionId),
+    copyLastResponse: (sessionId: string) => call<{ chars: number; from: string }>('ux:copyLastResponse', sessionId),
+    copyConversationId: (sessionId: string) => call<{ chars: number }>('ux:copyConversationId', sessionId),
+    copyTranscriptMarkdown: (sessionId: string) => call<{ chars: number; turns: number; redacted: boolean; note: string | null }>('ux:copyTranscriptMarkdown', sessionId),
+    liveSessionFor: (sessionId: string) => call<{ sessionId: string; title: string } | null>('ux:liveSessionFor', sessionId),
+    openCodeRail: (sessionId: string) => call<{ opened: boolean }>('ux:openCodeRail', sessionId),
+    railSession: (sessionId: string) => call<{ id: string; projectName: string; root: string; title: string | null; live: boolean; checkpointsSupported: boolean }>('ux:railSession', sessionId),
   },
 };
 
