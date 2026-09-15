@@ -2298,6 +2298,14 @@ function registerIpc() {
     const { id, root } = await configRoot(projectId, worktree);
     return configPins.acceptConfig(id, root, digest);
   });
+  /* ── helper sweep · P7 depth ── instruction files beside the pin, resolved through the same root check. */
+  handle('configPins:acceptInstructions', async (projectId: unknown, digest: unknown, worktree?: unknown) => {
+    if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest)) throw new Error('That is not an instruction digest.');
+    const { id, root } = await configRoot(projectId, worktree);
+    return configPins.acceptInstructions(id, root, digest);
+  });
+  handle('configPins:setInstructionAsk', (projectId: unknown, on: unknown) => configPins.setInstructionAsk(projectId, on));
+  /* ── end helper sweep · P7 depth ── */
   handle('worktrees:relink', (p: string) => worktrees.relinkWorktree(assertManagedRoot(p, 'That worktree')));
   handle('worktrees:forSession', (id: string) => worktrees.worktreeForSession(id));
 

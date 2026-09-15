@@ -64,6 +64,9 @@ export type ConfigPinCheck = {
   /** Against the newest accepted pin; null when there is none to compare with. */
   diff: ExecDiff | null;
   lastAccepted: { how: 'first-use' | 'reviewed'; at: number; root: string } | null;
+  /* ── helper sweep · P7 depth ── */
+  /** The instruction files beside the executable config, which by default never block. See shared/instruction-pins.ts. */
+  instructions?: import('./instruction-pins').InstructionCheck | null;
 };
 
 export type Hash = (text: string) => string;

@@ -69,3 +69,16 @@
 .dp-compact-rule { height: 0; border-top: 1px dashed var(--accent); }
 .dp-compact-text { text-align: center; line-height: 1.5; overflow-wrap: anywhere; max-width: 60ch; }
 .dp-compact-text .faint { color: var(--text-faint); }
+
+/* ── instruction files beside the pin ──────────────────────────────────── */
+.dp-instr { display: grid; gap: var(--s-2); margin-top: var(--s-4); min-width: 0; }
+.dp-instr-ask { margin-top: var(--s-1); }
+.dp-instr-diffs { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); min-width: 0; }
+.dp-instr-diffs summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); align-items: center; font-size: var(--t-small); }
+.dp-instr-diffs code { font-family: var(--mono); font-size: var(--t-micro); overflow-wrap: anywhere; }
+.dp-instr-diff { margin: var(--s-1) 0 0; padding: var(--s-2); border-radius: var(--r-sm); background: var(--bg-sunk); font-family: var(--mono); font-size: var(--t-micro); line-height: 1.5; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18rem; }
+.dp-dl { display: block; }
+.dp-dl-add { color: var(--good); background: var(--good-soft); }
+.dp-dl-del { color: var(--critical); background: var(--critical-soft); }
+.dp-dl-gap { color: var(--text-faint); }
+.dp-check { display: inline-flex; align-items: center; gap: var(--s-2); font-size: var(--t-small); }

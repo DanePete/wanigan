@@ -415,3 +415,71 @@ export async function runCompactionSmoke(check: Check, say: Say): Promise<void> 
     'compaction: the transcript reader gets a divider at each boundary, in order, between the real turns', JSON.stringify(read.turns.map((t) => t.compact ? 'divider' : t.role)));
   hooks.cleanupHookSettings(sid);
 }
+
+/** Item 7: instruction files join the pinned config — shown by default, asked about only where the project opted in. */
+export async function runInstructionPinSmoke(check: Check, say: Say): Promise<void> {
+  say('── depth · instruction files beside the pinned config');
+  const repo = repoFixture('wanigan-p7-instr-');
+  const { addProject, removeProject } = await import('./store');
+  const pins = await import('./config-pins');
+  try {
+    repo.write('CLAUDE.md', '@AGENTS.md\n');
+    repo.write('AGENTS.md', '# Rules\n\nRun npm test before handing off.\n');
+    repo.write('.claude/rules/testing.md', 'Tests live beside the code.\n');
+    repo.write('packages/api/AGENTS.md', 'API errors are typed.\n');
+    repo.write('node_modules/dep/AGENTS.md', 'not the project’s\n');
+    repo.write('docs/notes.md', 'not an instruction file\n');
+    repo.git('add', '-A'); repo.git('commit', '-qm', 'base');
+    const project = await addProject(repo.dir);
+
+    const first = await pins.checkConfig(project.id, repo.dir);
+    const paths = first.instructions?.files.map((f) => f.path).sort();
+    check(first.instructions?.state === 'first-use' && JSON.stringify(paths) === JSON.stringify(['.claude/rules/testing.md', 'AGENTS.md', 'CLAUDE.md', 'packages/api/AGENTS.md']),
+      'instructions: CLAUDE.md, .claude/rules, AGENTS.md and a nested AGENTS.md are read; node_modules is not', JSON.stringify(paths));
+    check(first.state === 'none' && first.snapshot.items.length === 0, 'instructions: they are kept out of the executable digest, so a repo with only instructions still runs nothing of its own');
+    const firstGate = await pins.gateLaunch(project.id, repo.dir, null, true);
+    check(firstGate.allowed && (firstGate.note ?? '').includes('instructions (not executable)'), 'instructions: the first attended launch records the baseline and says so', firstGate);
+
+    repo.write('AGENTS.md', '# Rules\n\nRun npm test before handing off.\nNever push to main.\n');
+    repo.write('CLAUDE.local.md', 'my own notes\n');
+    const changed = await pins.checkConfig(project.id, repo.dir);
+    const agents = changed.instructions?.diff.find((d) => d.path === 'AGENTS.md');
+    check(changed.instructions?.state === 'changed' && agents?.added === 1 && agents.lines.some((l) => l.kind === 'add' && l.text === 'Never push to main.')
+      && changed.instructions.diff.some((d) => d.path === 'CLAUDE.local.md' && d.status === 'added'),
+      'instructions: a change since the last trusted launch comes with a line diff', JSON.stringify(changed.instructions?.diff.map((d) => [d.path, d.status, d.added, d.removed])));
+    check(changed.state === 'none', 'instructions: an instruction change does not move the executable pin');
+
+    const headlessShown = await pins.gateLaunch(project.id, repo.dir, null, false);
+    check(headlessShown.allowed && /changed since the last trusted launch/.test(headlessShown.note ?? '') && (await pins.checkConfig(project.id, repo.dir)).instructions?.state === 'changed',
+      'instructions: show-only by default — an unattended run goes ahead with a note and does not advance the baseline', headlessShown);
+    const shownGate = await pins.gateLaunch(project.id, repo.dir, null, true);
+    const afterShown = await pins.checkConfig(project.id, repo.dir);
+    check(shownGate.allowed && afterShown.instructions?.state === 'same' && afterShown.instructions.lastTrusted?.how === 'shown',
+      'instructions: an attended launch with the change on screen becomes the new baseline', afterShown.instructions?.lastTrusted);
+
+    pins.setInstructionAsk(project.id, true);
+    repo.write('.claude/rules/testing.md', 'Tests live beside the code.\nUse the real database.\n');
+    const refused = await pins.gateLaunch(project.id, repo.dir, null, true);
+    const refusedHeadless = await pins.gateLaunch(project.id, repo.dir, null, false);
+    check(!refused.allowed && /asks before launching with changed instruction files/.test(refused.reason) && !refusedHeadless.allowed && /nobody to accept/.test(refusedHeadless.reason),
+      'instructions: where the project opted in, a changed file asks again, and an unattended run is refused', { refused, refusedHeadless });
+    const pending = await pins.checkConfig(project.id, repo.dir);
+    let stale = false;
+    try { await pins.acceptInstructions(project.id, repo.dir, first.instructions!.digest); } catch { stale = true; }
+    check(stale, 'instructions: accepting a digest that is not what is on disk is refused');
+    const accepted = await pins.acceptInstructions(project.id, repo.dir, pending.instructions!.digest);
+    const allowed = await pins.gateLaunch(project.id, repo.dir, null, true);
+    check(accepted.instructions?.state === 'same' && accepted.instructions.lastTrusted?.how === 'reviewed' && allowed.allowed,
+      'instructions: once accepted the launch goes ahead, recorded as reviewed');
+
+    // An executable change still gates as before, with instructions unchanged.
+    repo.write('.mcp.json', JSON.stringify({ mcpServers: { docs: { command: 'npx', args: ['docs-mcp'] } } }));
+    const execFirst = await pins.gateLaunch(project.id, repo.dir, null, true);
+    check(execFirst.allowed && /Pinned this repository's executable config at first launch/.test(execFirst.note ?? ''), 'instructions: the executable pin still records its own first use', JSON.stringify(execFirst));
+    const dialog = await source('renderer/src/components/NewSessionDialog.tsx');
+    check(dialog.includes('<LaunchInstructionReview check={instructions}') && dialog.indexOf('window.wanigan.depth.instructions.accept(') < dialog.indexOf('await onCreate({'),
+      'instructions: the launch dialog shows the review and records an acceptance before it creates the session');
+  } finally {
+    try { const { listProjects } = await import('./store'); const p = listProjects().find((x) => x.path === repo.dir); if (p) removeProject(p.id); } catch { /* best effort */ }
+  }
+}

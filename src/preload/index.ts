@@ -1036,6 +1036,12 @@ const api = {
       list: (sessionId: string) => call<AskMessage[]>('depth:asksList', sessionId),
       tick: (itemId: number, ticked: boolean) => call<{ id: number; tickedAt: number | null }>('depth:asksTick', itemId, ticked),
     },
+    instructions: {
+      /** Accept the instruction files on disk now as reviewed; main refuses a digest that moved since it was shown. */
+      accept: (projectId: string, digest: string, worktree?: string | null) =>
+        call<import('../shared/exec-config').ConfigPinCheck>('configPins:acceptInstructions', projectId, digest, worktree ?? null),
+      setAsk: (projectId: string, on: boolean) => call<boolean>('configPins:setInstructionAsk', projectId, on),
+    },
     compactions: (sessionId: string) => call<{ marks: CompactionMark[]; transcript: 'live' | 'archived' | 'none' }>('depth:compactions', sessionId),
     agentGit: (root: string) => call<AgentGitMarks & { sessions: number; commands: number; reflogRead: boolean }>('depth:agentGit', root),
     sessionFiles: (sessionId: string) => call<SessionFiles & { root: string | null }>('depth:sessionFiles', sessionId),
