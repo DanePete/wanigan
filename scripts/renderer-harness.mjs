@@ -283,6 +283,23 @@ export const STUB = `
       tokenFingerprint: '', error: null, lastPushAt: null, lastPushError: null,
     },
     'demo.state': { on: false, source: 'live' },
+    // A record with a field named after an array method is the worst case for
+    // anything(): provenance.values resolved to Array.prototype.values, so the
+    // Sessions view died on values.map and took every probe that opens it into
+    // the error boundary. Main returns a real array or null
+    // (launch-provenance.ts launchProvenanceFor), and null — "not launched from
+    // this window, nothing recorded" — is the honest fixture.
+    'launchProvenance.forSession': null,
+    // The auto-mode panel looks its status word up in a table; anything()
+    // answered status with a Proxy that is no key of it, and Context died on
+    // status.glyph. Main always sends one of the three states
+    // (shared/auto-mode.ts), and "not verified" is the one that asks for nothing.
+    // Schedules spreads the preview ({...value, cron}), and a spread Proxy keeps
+    // none of its fields, so the view died on preview.fires.length and was never
+    // reviewable here. index.ts schedule:preview always returns this shape.
+    'schedule.preview': { fires: [], describe: 'every weekday at 09:00' },
+    'policyEvidence.autoMode': { trust: 'project', cliVersion: null, status: 'not-verified', block: null,
+      providerLabel: null, note: 'No Claude Code CLI was detected, so no auto-mode block is written.' },
     // The model-assist card renders its consent branch off status.consent and
     // prints providerId into the DOM. anything() answers that with a Proxy,
     // which is truthy, so the card would take the approved branch and then die
