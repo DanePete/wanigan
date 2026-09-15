@@ -4,11 +4,13 @@ Built 14–15 September 2026 on `feat/helper-sweep`, from the
 [helper sweep report](https://claude.ai/artifact/3bVrmdHkLTJScrKDQa1rfU) (raw
 findings in the main checkout at `.claude/research-2026-09-14-sweep/`). Nine
 packages were built in parallel worktrees and merged here in this order: P2, P3,
-P4, P1, P5, P9, P6, P8, P7. P11 (dependencies, finished) was built on top of that. After the merges, an integration pass connected
-pieces that had been built separately.
+P4, P1, P5, P9, P6, P8, P7. After the merges, an integration pass connected
+pieces that had been built separately. A second round then added P10 (agents
+explain their own diff) and P11 (dependencies, finished), and live checks in
+real Electron for the pieces only screenshots had covered.
 
-Nothing is pushed. No real agent session or paid call was started by any build,
-test or probe. Every package has before and after screenshots in both themes
+The branch is pushed to origin (`feat/helper-sweep`), not merged to `main`. No
+real agent session or paid call was started by any build, test or probe. Every package has before and after screenshots in both themes
 under `docs/visuals/helper-<package>/`, taken by `scripts/probe-helper-<package>.mjs`.
 
 ## Status against the report
@@ -66,7 +68,7 @@ Built:
 - Decisions nobody asked for (P9, same backend only).
 - Line-level attribution computed locally, with an explicit git-notes export (P8).
 
-Not built: agent-authored annotations on the diff (hunk-style).
+- Agents explain their own diff (P10): Wanigan MCP tools `wanigan_annotate_change`, `wanigan_list_change_notes` and `wanigan_withdraw_change_note`. A note is bound by the per-launch token to the calling session, and must sit inside a hunk of that session's own diff. Notes show in the code rail marked "written by the agent", go stale per line, and can be walked in order. The operator can dismiss one or quote it into their own note; agents can never write a human note, and smoke traces every SQL statement to prove it. Claude Code sessions only, because Wanigan writes MCP config only for Claude Code launches.
 
 ### Session state and talking to sessions (P2, P5, P6)
 
@@ -148,6 +150,14 @@ Not built: keeping a lid-closed Mac awake. It needs a privileged helper installe
 ## Known limits of the evidence
 
 - The screenshot probes stub the preload bridge. They prove layout, wording and both themes, not IPC. Smoke covers the main process against real SQLite, git and the hook listener.
-- These were never exercised live: the menu-bar item, the Dock badge, macOS notification replies, the pop-out window's IPC, the Codex import's resume, and a real limit-wait signal from Claude Code.
+- Now exercised inside real Electron by smoke:
+  - a real `Tray` is created and destroyed, and the Dock badge is read back;
+  - the automation socket is called from a separate process, and the ledger names that process's pid;
+  - the pop-out code window opens on the bundled renderer, keeps Node globals out of the page, and holds its real frame to its own session and folder. It closes with the main window.
+- Still never exercised live:
+  - macOS notification replies, which need a person to click;
+  - resuming a conversation imported into Codex, which would add a thread to the operator's real Codex history;
+  - a real limit-wait signal from Claude Code, which sends no event when a wait starts.
+- Playwright's Electron driver hangs before a window on this machine, so the live checks run inside the smoke process instead.
 - P8's script listing and P1's script resolution each parsed `package.json`, Makefiles and justfiles separately, and disagreed on a `define` body, a target-specific variable, a target named `override-config` and an array of scripts. P11 made `shared/script-manifests.ts` the one reader for both, with tests that the two surfaces agree on the same fixtures.
 - The advisory lookup was verified against the live OSV, npm and PyPI APIs on 2026-09-15; smoke runs it against a loopback stub. A real click in the running app has not reached the live hosts.
