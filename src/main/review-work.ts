@@ -25,6 +25,9 @@ import type {
 import { markScratch, promotedPaths } from './scratch';
 import { scratchReason } from '../shared/scratch-files';
 /* ── end helper sweep · P7 depth ── */
+/* ── helper sweep · P11 deps ── */
+import { dependencyTurnAttributions, type ManifestForTurns } from './dependency-turns';
+/* ── end helper sweep · P11 deps ── */
 
 /**
  * Reviewing a session's work: the diff against the commit it started from, the
@@ -588,31 +591,45 @@ async function manifestText(t: Target, f: ReviewFile, side: 'before' | 'after'):
   return { text: fs.readFileSync(abs, 'utf8'), error: null };
 }
 
-async function dependencyReviewFor(t: Target, files: readonly ReviewFile[]): Promise<DependencyReview> {
+async function dependencyReviewFor(t: Target, files: readonly ReviewFile[], opts: { turns?: boolean } = {}): Promise<DependencyReview> {
   const manifests: ManifestReview[] = [];
+  /* ── helper sweep · P11 deps ── the readings each attribution starts and ends with. */
+  const forTurns: ManifestForTurns[] = [];
   for (const f of files) {
     const kind = manifestKind(f.path);
     if (!kind) continue;
     const [before, after] = await Promise.all([manifestText(t, f, 'before'), manifestText(t, f, 'after')]);
     const fail = before.error ?? after.error;
-    if (fail) { manifests.push({ path: f.path, kind, changes: [], lines: [], note: null, error: fail }); continue; }
+    if (fail) { manifests.push({ path: f.path, kind, changes: [], lines: [], note: null, error: fail, attributions: null }); continue; }
     const a = readManifest(kind, before.text);
     const b = readManifest(kind, after.text);
     if (!a.ok || !b.ok) {
-      manifests.push({ path: f.path, kind, changes: [], lines: [], note: null, error: !a.ok ? `Base version: ${a.reason}` : `Working tree: ${(b as { reason: string }).reason}` });
+      manifests.push({ path: f.path, kind, changes: [], lines: [], note: null, error: !a.ok ? `Base version: ${a.reason}` : `Working tree: ${(b as { reason: string }).reason}`, attributions: null });
       continue;
     }
     const changes = diffDependencies(a.entries, b.entries);
-    manifests.push({ path: f.path, kind, changes, lines: changes.map((c) => describeDepChange(c, f.path)), note: b.note ?? a.note, error: null });
+    manifests.push({ path: f.path, kind, changes, lines: changes.map((c) => describeDepChange(c, f.path)), note: b.note ?? a.note, error: null, attributions: null });
+    forTurns.push({ path: f.path, kind, base: a.entries, now: b.entries, changes });
   }
+  const recorded = hooksRecorded(t.sessionId);
   const installs = shellCommands(t.sessionId).filter((c) => isInstallCommand(c.command)).map((c) => ({ command: c.command, ok: c.ok, exitCode: c.exitCode, at: c.at }));
-  return { manifests, installs, hooksRecorded: hooksRecorded(t.sessionId) };
+  /* ── helper sweep · P11 deps ── which turn made each change, read from the per-turn checkpoints. */
+  if (opts.turns && forTurns.length && fs.existsSync(t.root)) {
+    const byPath = await dependencyTurnAttributions({ sessionId: t.sessionId, root: t.root, manifests: forTurns, hooksRecorded: recorded });
+    for (const m of manifests) m.attributions = byPath[m.path] ?? null;
+  }
+  /* ── end helper sweep · P11 deps ── */
+  return { manifests, installs, hooksRecorded: recorded };
 }
 
-export async function dependencyReview(sessionId: unknown): Promise<DependencyReview> {
+/**
+ * The IPC channel forwards only the session id, so `opts` is main's own: the
+ * advisory lookup reads the same review without paying for turn attribution.
+ */
+export async function dependencyReview(sessionId: unknown, opts: { turns?: boolean } = { turns: true }): Promise<DependencyReview> {
   const t = await targetFor(String(sessionId));
   const branch = await readBranch(t);
-  return dependencyReviewFor(t, branch.files);
+  return dependencyReviewFor(t, branch.files, { turns: opts.turns !== false });
 }
 
 /* ── claims in the final message ─────────────────────────────────────── */

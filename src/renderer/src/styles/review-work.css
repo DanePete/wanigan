@@ -58,6 +58,9 @@
 .rw-manifest-path { font-size: var(--t-micro); color: var(--text-dim); overflow-wrap: anywhere; }
 .rw-dep-list, .rw-claims { display: grid; gap: var(--s-1); margin: 0; padding: 0; list-style: none; }
 .rw-dep-list li { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); align-items: baseline; overflow-wrap: anywhere; }
+/* helper sweep · P11 deps: which turn made the change, on its own line under the package. */
+.rw-dep-origin { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); align-items: baseline; font-size: var(--t-micro); line-height: 1.45; }
+.rw-dep-turn { flex: none; }
 .rw-claims { margin-top: var(--s-2); }
 .rw-claims li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 var(--s-2); align-items: baseline; }
 .rw-claim-quote { overflow-wrap: anywhere; }
