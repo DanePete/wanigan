@@ -157,7 +157,8 @@ export async function runMergeReadinessSmoke(check: Check, say: Say): Promise<vo
     setScene({ 'list.err': 'none of the git remotes configured for this repository point to a known GitHub host.\n', 'list.code': '1', 'auth-gitlab.com.code': '1' });
     r = await readinessReport(gitlab.id);
     const askedGitlab = calls().some((c) => c[0] === 'auth' && c[2] === '--hostname=gitlab.com');
-    check(r.status.kind === 'not-github' && /gitlab\.com/.test(r.status.detail) && askedGitlab,
+    check(r.status.kind === 'not-github'
+      && r.status.detail.startsWith('This repository’s remotes point at gitlab.com, and gh is signed in to none of them.') && askedGitlab,
       'remotes only on a host gh is not signed in to read as not a GitHub repository, after asking gh about that host by name', JSON.stringify(r.status));
 
     setScene({ 'list.err': 'HTTP 401: Bad credentials (https://api.github.com/graphql)\n', 'list.code': '1', 'auth-github.com.code': '1' });
