@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type {
-  AgentAccount,
+  AgentAccount, AttachmentReclaimPreview, AttachmentReclaimSummary,
   WaniganSettings, BackupCheck, BackupRestoreSummary, BackupSummary,
   EgressHost, LedgerEntry, McpServerConfig, McpServerReview, MotionSetting, ThemeSetting,
   MobileAlertChannels, MobileMonitorConfig, MobileMonitorStatus, Project, ProviderInfo, ProviderManifestInspection,
@@ -4253,6 +4253,218 @@ function McpEnableReview({ server, scopeName, scopePath, template, resolved, rea
   );
 }
 
+/**
+ * Which projects' sessions may search their own archived transcripts.
+ *
+ * transcripts.ts kept the per-project setting and the MCP server listed the
+ * tool by it, but nothing could switch it on, so the tool existed only in the
+ * smoke suite. Off by default and never global: a session that can read past
+ * conversations can quote them, so each project is the operator's own choice.
+ * The two conditions it depends on — Wanigan's server running, transcripts
+ * being archived — are stated where they are false rather than left implied.
+ */
+function RecallProjects({ projects, serverOn, archiving }: { projects: Project[]; serverOn: boolean; archiving: boolean }) {
+  const states = useLoad(() => window.wanigan.transcripts.recall(), [projects.length]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+
+  async function flip(project: Project, on: boolean) {
+    setResult(null);
+    setBusy(project.id);
+    try {
+      await window.wanigan.transcripts.setRecall(project.id, on);
+      states.reload();
+      setResult({
+        tone: 'ok',
+        text: on
+          ? `Sessions in ${project.name} can now call wanigan_recall_transcripts. Sessions that start from now on are offered it; one already running may not see it until it restarts.`
+          : `Recall is off for ${project.name}. The next call from any session there is refused, including one already running.`,
+      });
+    } catch (e) { setResult({ tone: 'error', text: msg(e) }); }
+    finally { setBusy(null); }
+  }
+
+  return (
+    <>
+      <div className="set-sub">Transcript recall</div>
+      <p className="set-recall-lede">
+        A project switched on here gives its agents one more tool from Wanigan’s server:
+        {' '}<code>wanigan_recall_transcripts</code>, a search over that project’s archived Claude Code
+        transcripts that returns short, redacted snippets. It never reaches another project, another
+        account or another model backend, and nothing is added to a session unless the agent calls it.
+      </p>
+      {!serverOn && (
+        <Note tone="warn">Wanigan’s MCP server is off, so no session is offered this tool whatever is switched on below.</Note>
+      )}
+      {!archiving && (
+        <Note tone="warn">Transcript archiving is off, so nothing new is added for recall to find.</Note>
+      )}
+      <Frame v={states.v} what="transcript recall" onRetry={states.reload}>
+        {(on) => projects.length ? (
+          <div className="set-recall-list">
+            {projects.map((project) => (
+              <Toggle key={project.id} title={project.name} on={on[project.id] === true} busy={busy === project.id}
+                      onChange={(next) => void flip(project, next)}>
+                {on[project.id] === true
+                  ? 'Its sessions can search this project’s archived transcripts.'
+                  : 'Off. Its sessions are not told past conversations can be searched.'}
+              </Toggle>
+            ))}
+          </div>
+        ) : <p className="set-recall-lede">Add a project first; recall is switched on one project at a time.</p>}
+      </Frame>
+      <Result r={result} />
+    </>
+  );
+}
+
+const KEPT_REASON: Record<keyof AttachmentReclaimPreview['kept'], string> = {
+  'within-window': 'inside the window',
+  'referenced': 'named in a prompt',
+  'holds-agent-output': 'holding something the agent wrote',
+  'session-still-open': 'still open',
+  'resumed-later': 'resumed by a later session',
+  'no-session-record': 'with no session on record',
+  'unreadable': 'unreadable',
+};
+
+function keptSentence(kept: AttachmentReclaimPreview['kept']): string {
+  const parts = (Object.keys(KEPT_REASON) as (keyof typeof KEPT_REASON)[])
+    .filter((reason) => (kept[reason] ?? 0) > 0)
+    .map((reason) => `${num(kept[reason] ?? 0)} ${KEPT_REASON[reason]}`);
+  return parts.length ? `Kept: ${parts.join(', ')}.` : 'Nothing is kept back.';
+}
+
+function reclaimSentence(pass: AttachmentReclaimSummary): string {
+  const removed = pass.filesRemoved
+    ? `removed ${plural(pass.filesRemoved, 'file')} from ${plural(pass.directories, 'directory', 'directories')} and freed ${bytes(pass.bytesFreed)}`
+    : 'removed nothing';
+  const errors = pass.errors ? ` ${plural(pass.errors, 'directory', 'directories')} could not be fully removed: ${pass.firstError ?? 'no detail'}.` : '';
+  return `${pass.how === 'scheduled' ? 'The daily pass' : 'A pass you started'} ${ago(pass.ranAt)} ${removed}, and kept ${plural(pass.kept, 'directory', 'directories')}.${errors}`;
+}
+
+/**
+ * Retention for session attachment directories.
+ *
+ * attachments.ts had a complete planner and a measured reclaim, and nothing
+ * called either, while this panel said the tree only grows because no control
+ * had reached it. Switching retention on is the one act here that can delete
+ * anything, so it waits behind a preview of exactly what would go now and a
+ * confirmation. Every pass afterwards, the daily one included, is reported
+ * from what was measured, not from what was planned.
+ */
+function AttachmentRetention() {
+  const [tick, setTick] = useState(0);
+  const state = useLoad(() => window.wanigan.attach.retention(), [tick]);
+  const [days, setDays] = useState('30');
+  const [preview, setPreview] = useState<AttachmentReclaimPreview | null>(null);
+  const [confirm, setConfirm] = useState<'switch-on' | 'reclaim' | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const wanted = Number(days);
+  const validDays = Number.isInteger(wanted) && wanted >= 1 && wanted <= 3650;
+
+  async function look(windowDays?: number) {
+    setResult(null); setBusy(true);
+    try { setPreview(await window.wanigan.attach.reclaimPreview(windowDays)); }
+    catch (e) { setResult({ tone: 'error', text: msg(e) }); }
+    finally { setBusy(false); }
+  }
+
+  async function switchOn() {
+    setBusy(true); setResult(null);
+    try {
+      await window.wanigan.attach.setRetention(wanted);
+      const pass = await window.wanigan.attach.reclaimNow();
+      setResult({ tone: 'ok', text: `Retention is on at ${plural(wanted, 'day')}. ${reclaimSentence(pass)}` });
+      setPreview(null); setConfirm(null); setTick((t) => t + 1);
+    } catch (e) { setResult({ tone: 'error', text: msg(e) }); }
+    finally { setBusy(false); }
+  }
+
+  async function reclaim() {
+    setBusy(true); setResult(null);
+    try {
+      const pass = await window.wanigan.attach.reclaimNow();
+      setResult({ tone: 'ok', text: reclaimSentence(pass) });
+      setPreview(null); setConfirm(null); setTick((t) => t + 1);
+    } catch (e) { setResult({ tone: 'error', text: msg(e) }); }
+    finally { setBusy(false); }
+  }
+
+  async function switchOff() {
+    setBusy(true); setResult(null);
+    try {
+      await window.wanigan.attach.setRetention(0);
+      setResult({ tone: 'ok', text: 'Retention is off. Nothing is removed from now on; what was already reclaimed stays reclaimed.' });
+      setPreview(null); setConfirm(null); setTick((t) => t + 1);
+    } catch (e) { setResult({ tone: 'error', text: msg(e) }); }
+    finally { setBusy(false); }
+  }
+
+  const previewText = preview && (
+    <>
+      With a {num(preview.windowDays)}-day window, {num(preview.directories)} of{' '}
+      {plural(preview.scanned, 'session directory', 'session directories')} qualify now:{' '}
+      {plural(preview.filesEligible, 'file')}, {bytes(preview.bytesEligible)}. {keptSentence(preview.kept)}
+    </>
+  );
+
+  return (
+    <Frame v={state.v} what="attachment retention" onRetry={state.reload}>
+      {(r) => (
+        <div className="set-retention">
+          <p className="set-retention-lede">
+            {r.enabled
+              ? <><strong>Retention is on: {plural(r.days, 'day')}.</strong> Once a day, Wanigan removes a session’s
+                  directory when the session ended longer ago than that, nothing in it was named in a prompt,
+                  nothing later resumed from it, and it holds only files Wanigan staged. Anything the agent
+                  wrote there keeps the whole directory.</>
+              : <><strong>Retention is off.</strong> Nothing is removed. Preview a window to see what it would
+                  remove now; a directory is only ever removed when its session ended before the window,
+                  nothing in it was named in a prompt, and it holds only files Wanigan staged.</>}
+          </p>
+          {r.last && !result && <p className="set-retention-last">{reclaimSentence(r.last)}</p>}
+
+          <div className="set-retention-controls">
+            {!r.enabled && (
+              <label className="set-retention-days">
+                <span>Window</span>
+                <input className="field mono" type="number" min={1} max={3650} aria-label="Attachment retention window in days"
+                       value={days} onChange={(e) => { setDays(e.target.value); setPreview(null); setConfirm(null); }} />
+                <span className="faint">days</span>
+              </label>
+            )}
+            <button className="btn" disabled={busy || (!r.enabled && !validDays)}
+                    onClick={() => { setConfirm(null); void look(r.enabled ? undefined : wanted); }}>Preview</button>
+            {r.enabled ? (
+              <>
+                <button className="btn" disabled={busy} onClick={() => { setResult(null); setConfirm('reclaim'); void look(); }}>Reclaim now…</button>
+                <button className="btn" disabled={busy} onClick={() => void switchOff()}>Switch off</button>
+              </>
+            ) : (
+              <button className="btn" disabled={busy || !validDays || !preview || preview.windowDays !== wanted}
+                      onClick={() => setConfirm('switch-on')}>Switch on…</button>
+            )}
+          </div>
+
+          {preview && !confirm && <p className="set-retention-preview">{previewText}</p>}
+          {confirm && preview && (
+            <ConfirmNote
+              what={confirm === 'switch-on'
+                ? <>Keep attachment directories for {plural(wanted, 'day')}? {previewText} They are removed now,
+                    and a pass runs once a day after this.</>
+                : <>Reclaim now? {previewText}</>}
+              verb={confirm === 'switch-on' ? 'Switch on and reclaim' : 'Reclaim'} busy={busy}
+              onRun={confirm === 'switch-on' ? switchOn : reclaim} onCancel={() => setConfirm(null)} />
+          )}
+          <Result r={result} />
+        </div>
+      )}
+    </Frame>
+  );
+}
+
 function Mcp({ projects, prefs, pending, setFlag }: {
   projects: Project[]; prefs: WaniganSettings | null; pending: string | null;
   setFlag: (k: string, on: boolean) => Promise<void>;
@@ -4476,6 +4688,9 @@ function Mcp({ projects, prefs, pending, setFlag }: {
           </div>
         )}
       </Frame>
+
+      <RecallProjects projects={projects} serverOn={Boolean(prefs?.mcpServerEnabled)}
+                      archiving={prefs?.archiveTranscripts ?? true} />
 
       <div className="set-sub">Servers given to agents</div>
       {draft && (
@@ -5125,13 +5340,7 @@ function Storage({ prefs, pending, setPref }: {
                   session exits — deleting it would turn an intact conversation into a page of dead
                   links — which means the tree only grows.
                 </p>
-                <p className="dim" style={{ fontSize: 'var(--t-small)', lineHeight: 1.55, marginTop: 7 }}>
-                  <strong>This screen cannot yet measure or reclaim it.</strong> The two figures above
-                  cover transcripts and uploaded batch files only, so they are not the size of
-                  Wanigan’s data directory. Until an age-based retention control reaches this panel,
-                  the honest answer is that these directories are not listed here and nothing in the
-                  app removes them.
-                </p>
+                <AttachmentRetention />
               </div>
             </>
           );

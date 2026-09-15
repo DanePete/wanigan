@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AccountResolution, AgentAccount, LaunchModelCatalogue, LaunchOptions, Project, ProviderId, ProviderInfo, Session, TrustLevel } from '@shared/types';
+import type { AccountResolution, AgentAccount, BudgetState, LaunchModelCatalogue, LaunchOptions, Project, ProviderId, ProviderInfo, Session, TrustLevel } from '@shared/types';
 import { TRUST_LEVELS, permissionModeCopy, trustCopy, trustGlyph } from '@shared/types';
 import { intersectChoices, launchFieldChoices, type LaunchChoice } from '@shared/launch-fields';
 import { providerTint } from '@shared/provider-status';
@@ -443,6 +443,24 @@ export default function NewSessionDialog({
     return () => { live = false; };
   }, [projectId]);
   const configChanged = configCheck?.state === 'changed';
+
+  // A launch someone starts is never held by a budget: they are the one
+  // deciding to spend. They are told when this project or the whole account is
+  // already over, before the agent's first call adds to it — and told when the
+  // budgets could not be read, since no note is not the same as within budget.
+  const [overBudget, setOverBudget] = useState<BudgetState[] | 'unread'>([]);
+  useEffect(() => {
+    let live = true;
+    setOverBudget([]);
+    window.wanigan.budgets.breached()
+      .then((all) => {
+        if (!live) return;
+        setOverBudget(all.filter((b) => b.monthlyUsd > 0 && b.spentUsd >= b.monthlyUsd
+          && (b.scopeId === null || b.scopeId === projectId)));
+      })
+      .catch(() => { if (live) setOverBudget('unread'); });
+    return () => { live = false; };
+  }, [projectId]);
 
   const blocker = list.length === 0
     ? 'Wanigan has not loaded any agent profiles yet, so there is nothing to launch.'
@@ -1060,6 +1078,19 @@ export default function NewSessionDialog({
                  value={extraArgs} onChange={(e) => setExtraArgs(e.target.value)} />
         </details>
 
+        {overBudget === 'unread' ? (
+          <Hint>Wanigan could not read this month’s budgets, so it cannot say whether this launch adds to one that is already over.</Hint>
+        ) : overBudget.length > 0 && (
+          <Note tone="warn">
+            <strong>
+              {overBudget.map((b) => b.scopeName).join(' and ')} {overBudget.length === 1 ? 'is' : 'are'} over this month’s budget
+            </strong>
+            {' — '}
+            {overBudget.map((b) => `$${b.spentUsd.toFixed(2)} of $${b.monthlyUsd.toFixed(2)}`).join('; ')}.
+            {' '}This session is not held, because you are starting it. Headless runs, scheduled batches and
+            autopilot goal tasks there wait in the queue until the budget is raised in Insights.
+          </Note>
+        )}
         {configCheck?.state === 'first-use' && (
           <Hint>This repository runs {configCheck.summary} of its own before the agent starts. Launching pins that configuration, and Wanigan asks again if it changes.</Hint>
         )}

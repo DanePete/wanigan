@@ -95,7 +95,9 @@ export async function finishHandover(sessionId: string, toAccountId: string | nu
 
   let note: string | null;
   try {
-    note = lastAssistantTurn(session.projectPath, session.conversationId ?? null);
+    // Filed under the directory the CLI started in, which for an isolated
+    // session is its worktree and never the project.
+    note = lastAssistantTurn(session.worktree ?? session.projectPath, session.conversationId ?? null);
   } catch (error) {
     return {
       kind: 'unreadable',

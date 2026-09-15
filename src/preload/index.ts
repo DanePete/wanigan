@@ -258,6 +258,9 @@ const api = {
     get: (id: string) => call<{ turns: TranscriptTurn[]; note: string | null; bytes: number }>('transcripts:get', id),
     list: () => call<{ sessionId: string; bytes: number; turns: number; archivedAt: number }[]>('transcripts:list'),
     forget: (id: string) => call<boolean>('transcripts:forget', id),
+    /** Project id → whether its sessions may call wanigan_recall_transcripts. */
+    recall: () => call<Record<string, boolean>>('transcripts:recall'),
+    setRecall: (projectId: string, enabled: boolean) => call<boolean>('transcripts:setRecall', projectId, enabled),
     context: (sessionId: string) => call<import('../shared/types').ClaudeContextUsage>('transcripts:context', sessionId),
   },
   // ── phase 9 · worktrees ──────────────────────────────────────────────
@@ -636,6 +639,10 @@ const api = {
     paste: (sessionId: string, data: ArrayBuffer, name: string) => call<any>('attach:paste', sessionId, data, name),
     list: (sessionId: string) => call<any[]>('attach:list', sessionId),
     remove: (id: string) => call<boolean>('attach:remove', id),
+    retention: () => call<{ enabled: boolean; days: number; last: import('../shared/types').AttachmentReclaimSummary | null }>('attach:retention'),
+    reclaimPreview: (days?: number) => call<import('../shared/types').AttachmentReclaimPreview>('attach:reclaimPreview', days),
+    setRetention: (days: number) => call<{ enabled: boolean; days: number }>('attach:setRetention', days),
+    reclaimNow: () => call<import('../shared/types').AttachmentReclaimSummary>('attach:reclaimNow'),
     // onlyUnreferenced: name just the files that are not already in the prompt,
     // so attaching a second file does not repeat the first.
     type: (sessionId: string, onlyUnreferenced?: boolean) =>
@@ -761,6 +768,10 @@ const api = {
     // stay, and the reason is recorded as an operational signal. The reason is
     // required: main rejects an empty one.
     retireItem: (id: string, reason: string) => call<KnowledgeItem>('learning:retireItem', id, reason),
+    markContradiction: (firstId: string, secondId: string, reason: string) =>
+      call<KnowledgeRelation>('learning:markContradiction', firstId, secondId, reason),
+    keepOverContradiction: (keepId: string, retireId: string, reason: string) =>
+      call<{ kept: KnowledgeItem; retired: KnowledgeItem }>('learning:keepOverContradiction', keepId, retireId, reason),
     // Main answers this channel with BriefingPreview: the capsule plus the
     // launch state around it — whether learning was on, the profile's declared
     // harness, how a launch would deliver the text, and what proof that
