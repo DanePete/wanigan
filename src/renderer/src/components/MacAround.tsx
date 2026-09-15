@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import type { MacSettings } from '@shared/mac-presence';
 import type { AutomationLedgerRow, AutomationStatus } from '@shared/automation-protocol';
 import type { McpToolGrant, McpToolInfo } from '@shared/mcp-tool-grants';
-import type { ProviderInfo } from '@shared/types';
+import type { Project, ProviderInfo } from '@shared/types';
+import { previewNames, templateProblems, type NamingTemplates } from '@shared/naming-templates';
 import { Mark, Note, Section, Segmented, ago } from './bits';
 import { useAnnounce } from './announce';
 import { appendToComposerDraft } from './Composer';
@@ -179,6 +180,102 @@ export function AutomationSocketSettings() {
           </table>
         </div>
       )}
+    </Section>
+  );
+}
+
+/* ── naming templates, per project ───────────────────────────────────── */
+
+const SAMPLE_PROMPT = 'JIRA-123 Fix the checkout total rounding on refunds';
+
+export function NamingTemplateSettings({ projects }: { projects: Project[] }) {
+  const [projectId, setProjectId] = useState<string>(projects[0]?.id ?? '');
+  const [title, setTitle] = useState('');
+  const [branch, setBranch] = useState('');
+  const [sample, setSample] = useState(SAMPLE_PROMPT);
+  const [saved, setSaved] = useState<NamingTemplates | null>(null);
+  const [note, setNote] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const project = projects.find((p) => p.id === projectId) ?? null;
+
+  useEffect(() => {
+    if (!projectId) return;
+    let live = true;
+    window.wanigan.naming.get(projectId).then((t) => {
+      if (!live) return;
+      setSaved(t); setTitle(t.title ?? ''); setBranch(t.branch ?? ''); setNote(null);
+    }, (e) => { if (live) setNote({ tone: 'error', text: msg(e) }); });
+    return () => { live = false; };
+  }, [projectId]);
+
+  const draft: NamingTemplates = { title: title.trim() || null, branch: branch.trim() || null };
+  const problems = templateProblems(draft);
+  const preview = project ? previewNames(draft, {
+    prompt: sample, projectName: project.name, projectBranch: project.branch, sessionId: 's_preview_a1b2c3', now: Date.now(),
+  }) : null;
+  const dirty = !saved || saved.title !== draft.title || saved.branch !== draft.branch;
+
+  if (!projects.length) {
+    return (
+      <Section title="Session names and branches" hint="A title format and a worktree branch format, per project.">
+        <p className="p8-fine">Add a project first.</p>
+      </Section>
+    );
+  }
+  return (
+    <Section title="Session names and branches"
+             hint="A format for the title Wanigan derives from a launch prompt and for the branch an isolated worktree is cut on. Stored in Wanigan, never in the repository; no model is asked anything.">
+      <div className="p8-naming">
+        <label className="p8-field">
+          <span className="label">Project</span>
+          <select className="field" aria-label="Project to name sessions for" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </label>
+        <label className="p8-field">
+          <span className="label">Title format</span>
+          <input className="field mono" aria-label="Session title format" value={title} placeholder="{summary}  (the default)"
+                 spellCheck={false} onChange={(e) => setTitle(e.target.value)} />
+        </label>
+        <label className="p8-field">
+          <span className="label">Branch format</span>
+          <input className="field mono" aria-label="Worktree branch format" value={branch} placeholder="wanigan/{project}-{short}  (the default)"
+                 spellCheck={false} onChange={(e) => setBranch(e.target.value)} />
+        </label>
+        <p className="p8-fine">
+          Tokens: <code className="mono">{'{summary}'}</code> the prompt’s first line, <code className="mono">{'{ticket}'}</code> the first
+          key like ABC-123 in the prompt or the checkout’s branch, <code className="mono">{'{project}'}</code>, <code className="mono">{'{date}'}</code>, and
+          in a branch <code className="mono">{'{short}'}</code>, the session’s id fragment — added at the end when a branch format leaves it out, so two
+          sessions never share a branch.
+        </p>
+        <label className="p8-field">
+          <span className="label">Preview with this prompt</span>
+          <input className="field" aria-label="Sample launch prompt for the preview" value={sample} onChange={(e) => setSample(e.target.value)} />
+        </label>
+        {preview && (
+          <dl className="p8-preview" aria-live="polite">
+            <dt>Title</dt><dd>{preview.title ?? <span className="p8-fine">no title — the prompt is empty</span>}</dd>
+            <dt>Branch</dt>
+            <dd>
+              <code className="mono">{preview.branch}</code>{' '}
+              {preview.branchProblem ? <Mark glyph="✕" word={preview.branchProblem} tone="bad" /> : <Mark glyph="✓" word="valid git ref" tone="ok" />}
+            </dd>
+            <dt>Ticket</dt><dd>{preview.ticket ?? <span className="p8-fine">none found — {'{ticket}'} renders empty and its separator is dropped</span>}</dd>
+          </dl>
+        )}
+        {problems.map((p) => <Note key={p.field + p.message} tone="error">{p.field === 'title' ? 'Title' : 'Branch'}: {p.message}</Note>)}
+        {note && <Note tone={note.tone}>{note.text}</Note>}
+        <div className="p8-dialog-foot">
+          <button type="button" className="btn btn-primary" disabled={!dirty || problems.length > 0 || !project}
+                  onClick={() => {
+                    window.wanigan.naming.set(projectId, draft).then((t) => {
+                      setSaved(t);
+                      setNote({ tone: 'ok', text: `Saved for ${project?.name}. New sessions and worktrees use it; running ones keep their names.` });
+                    }, (e) => setNote({ tone: 'error', text: msg(e) }));
+                  }}>
+            Save formats
+          </button>
+        </div>
+      </div>
     </Section>
   );
 }

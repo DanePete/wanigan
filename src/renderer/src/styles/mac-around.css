@@ -23,6 +23,13 @@
 .p8-grant-tools ul { display: grid; gap: var(--s-1); margin: var(--s-2) 0 0; padding: 0; list-style: none; }
 .p8-check { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); font-size: var(--t-small); }
 
+/* Naming templates. */
+.p8-naming { display: grid; gap: var(--s-2); }
+.p8-field { display: grid; gap: var(--s-1); }
+.p8-preview { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--s-1) var(--s-3); margin: 0; padding: var(--s-2) var(--s-3); border: 1px solid var(--line-soft); border-radius: var(--r-sm); background: var(--bg-sunk); font-size: var(--t-small); }
+.p8-preview dt { color: var(--text-faint); }
+.p8-preview dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+
 /* The script launcher. */
 .p8-scripts { display: grid; gap: var(--s-2); width: min(720px, 100%); max-height: min(760px, 100%); overflow: auto; padding: var(--s-4); }
 .p8-target { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }

@@ -7,6 +7,7 @@ import {
 import * as terminalsMod from './operator-terminals';
 import { WANIGAN_TOOL_CATALOGUE, setToolGrant, toolGrantFor } from './mcp/tool-grants';
 import { validProfileId } from '../shared/mcp-tool-grants';
+import { namingTemplates, setNamingTemplates } from './naming';
 
 /**
  * The Mac around the app, local automation and attribution, wired once.
@@ -65,6 +66,10 @@ export function registerP8Ipc(handle: Handle): void {
     return { catalogue: WANIGAN_TOOL_CATALOGUE.map((t) => ({ ...t })), grants: Object.fromEntries(ids.map((id) => [id, toolGrantFor(id)])) };
   });
   handle('mcpTools:set', (profileId: unknown, grant: unknown) => setToolGrant(profileId, grant));
+
+  // Per-project title and branch naming templates.
+  handle('naming:get', (projectId: unknown) => namingTemplates(projectId));
+  handle('naming:set', (projectId: unknown, templates: unknown) => setNamingTemplates(projectId, templates));
 }
 
 export function startP8Services(next: P8Deps): void {

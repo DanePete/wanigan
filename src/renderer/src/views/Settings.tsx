@@ -13,7 +13,7 @@ import { TRUST_COPY, TRUST_LEVELS, trustCopy } from '@shared/types';
 import { DEMO_PROMPTS } from '@shared/demo';
 import { ConfirmNote, Explainer, Icon, Note, PageHead, Reading, Section, SectionHead, Stat, ago, num } from '../components/bits';
 /* helper sweep · P8 mac */
-import { AutomationSocketSettings, DockAndMenuBarSettings, McpToolGrantsSettings } from '../components/MacAround';
+import { AutomationSocketSettings, DockAndMenuBarSettings, McpToolGrantsSettings, NamingTemplateSettings } from '../components/MacAround';
 import type { IconName } from '../components/bits';
 import { useRememberedScroll } from '../components/viewMemory';
 import ThemeControl from '../components/ThemeControl';
@@ -83,6 +83,8 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'agents', tabLabel: 'Agents', section: 'Grok · xAI', hint: 'xAI key for Grok sessions', keywords: 'grok xai x.ai key anthropic-compatible elon' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Projects', hint: 'Add and remove repositories', keywords: 'project repository folder add remove' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Worktrees', hint: 'Isolated worktrees and cleanup', keywords: 'worktree isolated branch cleanup orphan' },
+  /* helper sweep · P8 mac */
+  { tab: 'projects', tabLabel: 'Projects & safety', section: 'Session names and branches', hint: 'Title and worktree branch formats per project', keywords: 'naming title branch format template ticket jira prefix worktree name' },
   { tab: 'projects', tabLabel: 'Projects & safety', section: 'Trust and the policy ledger', hint: 'Trust levels, decisions, export', keywords: 'trust policy ledger permission audit export' },
   { tab: 'automation', tabLabel: 'Automation', section: 'Spending', hint: 'Cap the estimated cost per batch run', keywords: 'spend cap cost limit usd budget' },
   { tab: 'automation', tabLabel: 'Automation', section: 'Dispatcher', hint: 'Concurrency limits and the queue', keywords: 'concurrency limits queue dispatcher interactive headless batch parallel' },
@@ -1031,6 +1033,8 @@ export default function Settings({
           <SettingsTabPanel tab={settingsTabInfo('projects')} active={settingsTab === 'projects'}>
             <Projects projects={projects} onAddProject={onAddProject} onRemoveProject={onRemoveProject} />
             <Worktrees />
+            {/* helper sweep · P8 mac */}
+            <NamingTemplateSettings projects={projects} />
             <Trust projects={projects} onAddProject={onAddProject} />
           </SettingsTabPanel>
 

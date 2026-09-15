@@ -327,6 +327,70 @@ export async function runMcpToolGrantSmoke(check: Check, say: Say, tmp: string):
   }
 }
 
+export async function runNamingTemplateSmoke(check: Check, say: Say, tmp: string): Promise<void> {
+  say('── helper sweep · P8 mac · title and branch naming templates');
+  const { execFileSync, spawnSync } = await import('node:child_process');
+  const naming = await import('./naming');
+  const shared = await import('../shared/naming-templates');
+  const worktrees = await import('./worktrees');
+  const { addProject } = await import('./store');
+
+  // The pure ref check, held to git's own on every clause it implements.
+  const names = ['feature/JIRA-123-fix', 'a..b', 'a b', 'a:b', 'a~b', 'a^b', 'a?b', 'a*b', 'a[b', 'a\\b', '.a', 'a/.b', 'a.lock', 'a/b.lock/c',
+    '/a', 'a/', 'a//b', 'a.', 'a@{b', '-x', 'wanigan/x-1a2b3c', 'a.b', 'a@b', 'x/y/z'];
+  // "@" alone is left out of the comparison on purpose: `--branch` expands it
+  // to the current branch before checking, so git answers for a different
+  // name. The rule itself ("cannot be the single character @") is git's.
+  const disagreements = names.filter((name) => {
+    const gitSays = spawnSync('git', ['check-ref-format', '--branch', name], { stdio: 'pipe' }).status === 0;
+    return gitSays !== (shared.refProblem(name) === null);
+  });
+  check(disagreements.length === 0, 'the branch-name check agrees with `git check-ref-format --branch` on every clause it implements', disagreements);
+
+  const repo = path.join(tmp, 'naming-repo');
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' }).toString();
+  git('init', '-q', '-b', 'feature/OPS-77-login');
+  git('config', 'user.email', 'smoke@wanigan.test');
+  git('config', 'user.name', 'Smoke');
+  fs.writeFileSync(path.join(repo, 'README.md'), '# naming\n');
+  git('add', '-A'); git('commit', '-qm', 'base');
+  const project = await addProject(repo);
+
+  let refused = '';
+  try { naming.setNamingTemplates(project.id, { title: null, branch: 'feature branch/{summary}' }); } catch (e) { refused = String(e); }
+  check(/letters, digits/.test(refused) && naming.namingTemplates(project.id).branch === null,
+    'a branch template with a character git refuses is not saved', refused);
+  refused = '';
+  try { naming.setNamingTemplates(project.id, { title: '{tickte}: {summary}', branch: null }); } catch (e) { refused = String(e); }
+  check(/Unknown token/.test(refused), 'a misspelt token is refused rather than printed literally', refused);
+
+  const plainTitle = naming.launchTitle({ ...project }, 'Fix the refund rounding\nmore', 's_plain_000001');
+  check(plainTitle === 'Fix the refund rounding', 'with no template the title is the plain first line, as before', plainTitle);
+  const saved = naming.setNamingTemplates(project.id, { title: '{ticket}: {summary}', branch: 'feature/{ticket}-{summary}' });
+  check(saved.title === '{ticket}: {summary}', 'valid templates are saved per project', saved);
+  const live = { ...project, branch: 'feature/OPS-77-login' };
+  const title = naming.launchTitle(live, 'Fix the refund rounding', 's_title_000002');
+  check(title === 'OPS-77: Fix the refund rounding', 'the title template takes the ticket from the checkout branch when the prompt names none', title);
+
+  const sessionId = 's_naming_abc123';
+  const branch = naming.launchBranch(live, 'PAY-9 Refund flow edge case', sessionId);
+  check(branch === 'feature/PAY-9-pay-9-refund-flow-edge-case-abc123', 'the branch template renders from the prompt, with the session suffix appended', branch);
+  const wt = await worktrees.createWorktree(repo, project.name, sessionId, branch);
+  try {
+    check(wt.branch === branch && git('show-ref', '--verify', `refs/heads/${branch}`).trim().length > 0,
+      'a real worktree is cut on the templated branch', wt);
+    check(git('config', '--get', `branch.${branch}.waniganbase`).trim() === 'feature/OPS-77-login',
+      'the merge base is still recorded for a templated branch, so merging from Wanigan keeps working');
+    let unsafe = '';
+    try { await worktrees.createWorktree(repo, project.name, 's_unsafe_000003', 'feature/../../escape'); } catch (e) { unsafe = String(e); }
+    check(/git would refuse/.test(unsafe), 'a rendered branch that is not a valid ref is refused before git is asked', unsafe);
+  } finally {
+    await worktrees.removeWorktree(wt.path, true).catch(() => {});
+    naming.setNamingTemplates(project.id, { title: null, branch: null });
+  }
+}
+
 export async function runP8Smoke(check: Check, say: Say): Promise<void> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-p8-'));
   try {
@@ -334,6 +398,7 @@ export async function runP8Smoke(check: Check, say: Say): Promise<void> {
     await runAutomationSocketSmoke(check, say, tmp);
     await runScriptLauncherSmoke(check, say, tmp);
     await runMcpToolGrantSmoke(check, say, tmp);
+    await runNamingTemplateSmoke(check, say, tmp);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
