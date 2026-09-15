@@ -5,6 +5,8 @@ import '../styles/insights.css';
 import { useViewMemory } from '../components/viewMemory';
 /* ── helper sweep · P4 cost ── */
 import SpendYield from '../components/SpendYield';
+import CodexCredits from '../components/CodexCredits';
+import type { CodexCreditsReport } from '@shared/cost-types';
 import type { SpendYieldReport } from '@shared/spend-yield';
 
 /**
@@ -424,6 +426,8 @@ export default function InsightsView({ onOpenRun, onOpenSession, projects: given
   const [burn, setBurn] = useState<BurnWindow[]>([]);
   const [yieldReport, setYieldReport] = useState<SpendYieldReport | null>(null);
   const [yieldError, setYieldError] = useState<string | null>(null);
+  const [credits, setCredits] = useState<CodexCreditsReport | null>(null);
+  const [creditsError, setCreditsError] = useState<string | null>(null);
   const [meterMode, setMeterMode] = useViewMemory<MeterMode>('meter', 'both');
   const [errs, setErrs] = useState<{ batch?: string; spend?: string; budgets?: string }>({});
   const [ready, setReady] = useState(false);
@@ -553,6 +557,15 @@ export default function InsightsView({ onOpenRun, onOpenSession, projects: given
           if (!alive.current || d !== daysRef.current) return;
           setYieldReport(value); setYieldError(null);
         } catch (e) { if (alive.current) setYieldError(msg(e)); }
+      })(),
+      (async () => {
+        if (!due(`credits:${d}`, TTL.codex, force)) return;
+        try {
+          const value = await window.wanigan.cost.codexCredits(d);
+          stamp(`credits:${d}`);
+          if (!alive.current || d !== daysRef.current) return;
+          setCredits(value); setCreditsError(null);
+        } catch (e) { if (alive.current) setCreditsError(msg(e)); }
       })(),
       (async () => {
         if (!due('burn', TTL.burn, force)) return;
@@ -842,6 +855,7 @@ export default function InsightsView({ onOpenRun, onOpenSession, projects: given
 
             <SpendByProject rows={byProject} days={days} />
             <SpendYield report={yieldReport} error={yieldError} onOpenSession={onOpenSession} />
+            <CodexCredits report={credits} error={creditsError} />
             <details className="ins-comparison">
               <summary>Compare with synchronous pricing</summary>
               <SyncComparison rows={rows} days={days} totals={win} onWiden={() => setDays(90)} />

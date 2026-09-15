@@ -5,6 +5,7 @@ import { lintInstructionReferences } from './context/reference-lint';
 import { agentDefinitions } from './context/agent-definitions';
 import { projectionBudgetFor } from './learning-budget';
 import { setSkillModelInvocation, skillListing } from './skill-listing';
+import { codexCredits } from './codex-credits';
 
 /**
  * IPC for the cost, quota and context surfaces, registered from index.ts's
@@ -41,6 +42,7 @@ function project(value: unknown) {
 
 export function registerCostIpc(handle: Handle, deps: CostIpcDeps): void {
   handle('cost:yield', (window: unknown) => spendYield(days(window), deps.liveSessionIds()));
+  handle('cost:codexCredits', (window: unknown) => codexCredits(days(window)));
   handle('cost:codexLoader', (projectId: unknown) => {
     const p = project(projectId);
     return codexLoaderReport(p.id, p.path);

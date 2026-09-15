@@ -7,7 +7,7 @@ import type { HandoverBegun, HandoverFinished } from '../shared/handover';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
 /* ── helper sweep · P4 cost ── */
 import type { SpendYieldReport } from '../shared/spend-yield';
-import type { AgentDefinitionsReport, CodexLoaderReport, ProjectionBudgetView, ReferenceLintReport, SkillListingReport } from '../shared/cost-types';
+import type { AgentDefinitionsReport, CodexCreditsReport, CodexLoaderReport, ProjectionBudgetView, ReferenceLintReport, SkillListingReport } from '../shared/cost-types';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AccountLimits,
@@ -913,6 +913,7 @@ const api = {
   /* ── helper sweep · P4 cost ── */
   cost: {
     yield: (days?: number) => call<SpendYieldReport>('cost:yield', days),
+    codexCredits: (days?: number) => call<CodexCreditsReport>('cost:codexCredits', days),
     codexLoader: (projectId: string) => call<CodexLoaderReport>('cost:codexLoader', projectId),
     referenceLint: (projectId: string) => call<ReferenceLintReport>('cost:referenceLint', projectId),
     agentDefinitions: (projectId: string) => call<AgentDefinitionsReport>('cost:agentDefinitions', projectId),

@@ -319,3 +319,36 @@ export async function runSkillListingSmoke(check: Check, say: Say): Promise<void
     try { (await import('./skills')).refreshSkills(); } catch { /* cache only */ }
   }
 }
+
+export async function runCodexCreditsSmoke(check: Check, say: Say): Promise<void> {
+  say('── cost · Codex plan sessions in credits (estimate)');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-credits-'));
+  const { db } = await import('./db');
+  const id = `credits-smoke-${Date.now()}`;
+  try {
+    const credits = await import('./codex-credits');
+    const rollout = path.join(dir, 'rollout.jsonl');
+    // A rollout big enough to cross the 1 MiB read chunk, with the tier line after the boundary.
+    const filler = `{"type":"event_msg","payload":{"type":"agent_message","message":"${'x'.repeat(1000)}"}}\n`;
+    fs.writeFileSync(rollout, [
+      '{"type":"turn_context","payload":{"cwd":"/r","model":"gpt-5.6-sol"}}\n',
+      filler.repeat(1200),
+      '{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"model":"gpt-5.6-sol","service_tier":"priority"}}}\n',
+    ].join(''));
+    const settings = credits.rolloutSettings(rollout);
+    check(settings.models.join() === 'gpt-5.6-sol' && settings.tiers.join() === 'priority',
+      'the model and the service tier are read from a rollout across read-chunk boundaries', settings);
+
+    db().prepare(`INSERT INTO session_log (id, conversation_id, provider_id, harness_id, project_path, project_name, model, started_at)
+      VALUES (?,?,?,?,?,?,?,?)`).run(id, '01a0952f-0000-7000-8000-000000000000', 'codex', 'codex', dir, 'credits', 'gpt-6-astra', Date.now());
+    const report = credits.codexCredits(7);
+    const row = report.sessions.find((s) => s.sessionId === id);
+    check(!!row && row.estimate.status === 'no-rate' && /No token counts/.test(row.estimate.status === 'no-rate' ? row.estimate.reason : ''),
+      'a Codex session whose thread has no recorded counters gets no estimate, with the reason', row);
+    check(report.rateCard.readOn === '14 Sep 2026' && report.rateCard.fastMultiplier === 2.5,
+      'the report carries the rate card’s source date and Fast multiplier for the label', report.rateCard);
+  } finally {
+    db().prepare('DELETE FROM session_log WHERE id = ?').run(id);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}

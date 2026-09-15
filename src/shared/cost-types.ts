@@ -118,3 +118,24 @@ export type SkillListingReport = {
   codexHome: string;
   note: string;
 };
+
+export type CodexCreditsReport = {
+  days: number;
+  rateCard: { source: string; readOn: string; fastMultiplier: number; models: Record<string, { input: number; cached: number; output: number }> };
+  sessions: {
+    sessionId: string;
+    title: string | null;
+    projectName: string | null;
+    startedAt: number;
+    /** `auth_mode` from the account's auth.json: 'chatgpt' for a plan, 'apikey' for an API key, null when unread. */
+    authMode: string | null;
+    tokens: { input: number; cached: number; output: number } | null;
+    estimate: import('./codex-credits').CreditEstimate;
+  }[];
+  totalCredits: number;
+  /** The same total with every tier-changed session at its all-Fast bound. */
+  upperCredits: number;
+  estimatedSessions: number;
+  tierNotRecorded: number;
+  unestimated: number;
+};
