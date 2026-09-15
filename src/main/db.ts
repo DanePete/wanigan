@@ -608,6 +608,8 @@ function migratePhases(d: Database.Database) {
   /* ── helper sweep · P9 opinions ── */
   migrateSecondOpinions(d);
   /* ── end helper sweep · P9 opinions ── */
+  /* ── helper sweep · P6 ux ── */
+  migrateHelperUx(d);
 }
 
 /**
@@ -1876,3 +1878,53 @@ function migrateSecondOpinions(d: Database.Database) {
   `);
 }
 /* ── end helper sweep · P9 opinions ── */
+
+/* ── helper sweep · P6 ux ── */
+
+/**
+ * The operator's own organisation of their conversations: free-text tags, the
+ * colour each tag wears, and named Recent sections with a persisted order.
+ * Every row is keyed by the conversation key Recent already groups by
+ * (`<harness>:conversation:<id>`), never by a session id, so a resume keeps
+ * what was put on the conversation. All additive, and nothing here is read by
+ * anything that decides what an agent does.
+ */
+function migrateHelperUx(d: Database.Database) {
+  d.exec(`
+    -- One row per tag on a conversation. The display spelling is kept as typed;
+    -- identity is the folded spelling, so "CI" and "ci" are one tag.
+    CREATE TABLE IF NOT EXISTS conversation_tags (
+      key      TEXT NOT NULL,
+      tag      TEXT NOT NULL,
+      tag_norm TEXT NOT NULL,
+      added_at INTEGER NOT NULL,
+      PRIMARY KEY (key, tag_norm)
+    );
+    CREATE INDEX IF NOT EXISTS idx_conversation_tags_norm ON conversation_tags(tag_norm);
+
+    -- A colour the operator chose for a tag, as a palette id (never a hex
+    -- value). Absent means the tag wears its stable default.
+    CREATE TABLE IF NOT EXISTS tag_colors (
+      tag_norm TEXT PRIMARY KEY,
+      color    TEXT NOT NULL
+    );
+
+    -- Named shelves in Recent, in the operator's order.
+    CREATE TABLE IF NOT EXISTS recent_sections (
+      id         TEXT PRIMARY KEY,
+      name       TEXT NOT NULL,
+      position   INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    -- Which section a conversation is filed in, and where in it. One section
+    -- per conversation: a shelf, not a label.
+    CREATE TABLE IF NOT EXISTS recent_section_members (
+      key        TEXT PRIMARY KEY,
+      section_id TEXT NOT NULL,
+      position   INTEGER NOT NULL,
+      moved_at   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_recent_section_members_section ON recent_section_members(section_id, position);
+  `);
+}

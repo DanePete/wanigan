@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Icon } from './bits';
-import { TAB_SHORTCUTS, VIEW_SHORTCUT_ORDER, labelForTab } from '@shared/routes';
-import { BINDINGS, BINDING_GROUPS, type Binding, type BindingGroup } from '../bindings';
+import { BINDING_GROUPS, shortcutRows, type BindingGroup } from '../bindings';
 import { useDialog } from './useDialog';
 
 /**
@@ -23,32 +22,18 @@ const NOTES: Partial<Record<BindingGroup, string>> = {
   'Sessions view': 'Click a session and focus goes to its terminal, which is where you want it — and where none of these work. Click the session list or press Tab to step off the terminal first.',
 };
 
-/** ⌘1 Sessions … ⌘0 Runs, ⌘, Settings, then the named chords. */
-function viewRows(): Row[] {
-  return VIEW_SHORTCUT_ORDER.map((id) => ({ keys: TAB_SHORTCUTS[id].label, does: labelForTab(id) }));
-}
-
-function rowOf(binding: Binding): Row {
-  return { keys: binding.keys, does: binding.does };
-}
-
 /**
  * Anywhere reads: palette, new session, the view routes, then demo and the
  * sheet itself — the order a reader scans, not the order the handlers run.
+ * The rows come from shortcutRows(), which the command palette reads too, so
+ * the sheet and the palette cannot list different chords.
  */
 function buildGroups(): Group[] {
-  return BINDING_GROUPS.map((title) => {
-    const own = BINDINGS.filter((b) => b.group === title);
-    let rows: Row[];
-    if (title === 'Anywhere') {
-      const before = own.filter((b) => b.id === 'palette' || b.id === 'new-session').map(rowOf);
-      const after = own.filter((b) => b.id !== 'palette' && b.id !== 'new-session').map(rowOf);
-      rows = [...before, ...viewRows(), ...after];
-    } else {
-      rows = own.map(rowOf);
-    }
-    return { title, note: NOTES[title], rows };
-  }).filter((group) => group.rows.length > 0);
+  const rows = shortcutRows();
+  return BINDING_GROUPS.map((title) => ({
+    title, note: NOTES[title],
+    rows: rows.filter((row) => row.group === title).map((row) => ({ keys: row.keys, does: row.does })),
+  })).filter((group) => group.rows.length > 0);
 }
 
 const GROUPS: Group[] = buildGroups();

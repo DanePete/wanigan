@@ -128,6 +128,10 @@ import { recordModelRequest } from './model-substitutions';
 /* ── helper sweep · P9 opinions ── */
 import { registerSecondOpinionIpc } from './second-opinions';
 /* ── end helper sweep · P9 opinions ── */
+/* ── helper sweep · P6 ux ── */
+import {
+  codeRailSenderAllowed, closeCodeRailWindows, registerHelperUxIpc, startHelperUxServices, stopHelperUxServices,
+} from './helper-ux';
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -885,6 +889,8 @@ app.on('before-quit', (event) => {
     }
   }
   quitDraining = true;
+  /* ── helper sweep · P6 ux ── */
+  try { closeCodeRailWindows(); } catch { /* a rail window is a view, never a reason to stall a quit */ }
   if (pollTimer) clearInterval(pollTimer);
   // A deliberate quit must not report every PTY Wanigan is about to terminate
   // as a fresh failure on the user's phone.
@@ -1497,6 +1503,8 @@ async function startAttendedServices(): Promise<StartupState> {
       startPoller();
       /* ── helper sweep · P2 attention ── */
       startHelperAttentionServices(liveWindow, smokeMode);
+      /* ── helper sweep · P6 ux ── */
+      startHelperUxServices();
       return publishStartupState({ phase: 'ready', stage: null, message: null });
     } catch (error) {
       return enterStartupRecovery(stage, error);
@@ -1533,6 +1541,8 @@ function stopServices() {
   try { mcpServer.stopMcpServer(); } catch { /* already down */ }
   /* ── helper sweep · P2 attention ── */
   try { stopHelperAttentionServices(); } catch { /* already down */ }
+  /* ── helper sweep · P6 ux ── */
+  try { stopHelperUxServices(); } catch { /* already down */ }
 }
 
 /** Switch storage partitions by replacing only the window. The live sessions
@@ -1601,7 +1611,11 @@ async function copyDemoPrompt(id: unknown): Promise<void> {
 function registerIpc() {
   const handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => {
     ipcMain.handle(channel, async (event, ...args) => {
-      if (!trustedSender(event.sender, event.senderFrame)) {
+      // helper sweep · P6 ux: a code rail window main opened is let through
+      // for its own short channel list, with its arguments bound to the one
+      // session it shows. Every other sender still has to be the main window.
+      if (!trustedSender(event.sender, event.senderFrame)
+        && !codeRailSenderAllowed(event.sender, event.senderFrame, channel, args)) {
         return { ok: false, error: 'Untrusted IPC sender.' };
       }
       const demo = demoWindows.get(event.sender);
@@ -3413,6 +3427,12 @@ function registerIpc() {
     return answer.response === 1;
   });
   /* ── end helper sweep · P9 opinions ── */
+
+  /* ── helper sweep · P6 ux ── */
+  registerHelperUxIpc(handle, {
+    rendererEntryPath, developmentRendererUrl, trustedRendererUrl, openSafeExternal,
+    mainWindow: () => win,
+  });
 }
 
 /** Streams a run's results to disk without materialising them in memory. */

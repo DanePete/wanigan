@@ -1,0 +1,155 @@
+/* ── helper sweep · P6 ux ───────────────────────────────────────────────
+   Tags and sections, terminal link menus, copy and quote actions, side
+   questions, the popped-out code rail, and mermaid source blocks. Every colour
+   is a token from index.css; a tag's colour is one of the --tag-* aliases. */
+
+/* A tag: a word with a dot. The dot takes the colour; the word stays the text
+   colour, so a tag reads the same in greyscale. */
+/* The default sits on the chip only: a dot inside a chip inherits the chip's
+   colour, and a dot on its own always carries data-color. */
+.ux-tag { --ux-tag: var(--tag-grey); }
+.ux-tag[data-color="blue"], .ux-tag-dot[data-color="blue"] { --ux-tag: var(--tag-blue); }
+.ux-tag[data-color="orange"], .ux-tag-dot[data-color="orange"] { --ux-tag: var(--tag-orange); }
+.ux-tag[data-color="green"], .ux-tag-dot[data-color="green"] { --ux-tag: var(--tag-green); }
+.ux-tag[data-color="yellow"], .ux-tag-dot[data-color="yellow"] { --ux-tag: var(--tag-yellow); }
+.ux-tag[data-color="violet"], .ux-tag-dot[data-color="violet"] { --ux-tag: var(--tag-violet); }
+.ux-tag[data-color="teal"], .ux-tag-dot[data-color="teal"] { --ux-tag: var(--tag-teal); }
+.ux-tag[data-color="red"], .ux-tag-dot[data-color="red"] { --ux-tag: var(--tag-red); }
+.ux-tag[data-color="grey"], .ux-tag-dot[data-color="grey"] { --ux-tag: var(--tag-grey); }
+
+.ux-tags { display: flex; flex-wrap: wrap; gap: var(--s-1); margin-top: var(--s-1); min-width: 0; }
+.ux-tag {
+  display: inline-flex; align-items: center; gap: var(--s-1);
+  max-width: 100%; padding: 0 var(--s-2);
+  border: 1px solid color-mix(in srgb, var(--ux-tag) 45%, var(--line));
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--ux-tag) 12%, transparent);
+  color: var(--text); font-size: var(--t-micro); line-height: 1.6; font-weight: 550;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ux-tag-dot {
+  display: inline-block; flex: none; width: var(--s-2); height: var(--s-2);
+  border-radius: var(--r-pill); background: var(--ux-tag); margin-right: var(--s-1);
+}
+.ux-tag .ux-tag-dot { margin-right: 0; }
+
+.ux-tag-filter { display: flex; flex-wrap: wrap; gap: var(--s-1); margin: var(--s-1) 0 var(--s-2); }
+
+/* The inline organise panel under a tab or a Recent row. */
+.ux-organise {
+  flex-basis: 100%; display: flex; flex-direction: column; gap: var(--s-2);
+  margin: var(--s-1) 0 var(--s-2); padding: var(--s-2);
+  border: 1px solid var(--line-soft); border-radius: var(--r-md); background: var(--bg-sunk);
+}
+.ux-organise-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1); min-width: 0; }
+.ux-organise .field { font-size: var(--t-small); }
+/* A tag being edited never clips: the chip keeps its width and the colour
+   select gives way, wrapping under it when the rail is narrow. */
+.ux-tag-edit { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1); width: 100%; }
+.ux-tag-edit .ux-tag { flex: none; max-width: 100%; }
+.ux-organise .ux-color { flex: 1 1 5rem; width: auto; min-width: 5rem; max-width: 8rem; }
+.ux-tag-input { flex: 1; min-width: 8rem; }
+.ux-suggest { display: inline-flex; align-items: center; }
+.ux-inline-label { font-size: var(--t-small); color: var(--text-dim); }
+.ux-cue { margin: 0; font-size: var(--t-micro); color: var(--text-faint); line-height: 1.45; overflow-wrap: anywhere; }
+
+/* Recent sections. */
+.ux-recent-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1); }
+.ux-new-section { margin-left: auto; }
+.ux-section { margin-top: var(--s-2); }
+.ux-section-head { display: flex; align-items: center; gap: var(--s-1); min-width: 0; padding: var(--s-1) var(--s-1) 0; }
+.ux-section-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ux-section-actions { display: inline-flex; gap: var(--s-1); margin-left: auto; flex: none; }
+.ux-section-actions .btn { min-width: calc(var(--s-5) + var(--s-1)); justify-content: center; }
+.ux-section-form { display: flex; flex-wrap: wrap; gap: var(--s-1); align-items: center; margin-top: var(--s-1); }
+.ux-section-form .field { flex: 1; min-width: 8rem; font-size: var(--t-small); }
+.ux-section-empty { padding: 0 var(--s-2); }
+.ux-filter-note { margin: var(--s-1) 0; }
+
+/* A context menu: the terminal's and the transcript reader's. */
+.ux-menu {
+  position: fixed; z-index: var(--z-overlay);
+  min-width: 14rem; max-width: min(24rem, calc(100vw - var(--s-5)));
+  padding: var(--s-1); display: flex; flex-direction: column; gap: 1px;
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--bg-raised); color: var(--text); box-shadow: var(--shadow-popover);
+}
+.ux-menu-head {
+  padding: var(--s-1) var(--s-2); font-size: var(--t-micro); color: var(--text-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ux-menu-item {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s-3);
+  padding: var(--s-1) var(--s-2); border-radius: var(--r-sm);
+  background: transparent; border: 0; color: var(--text); text-align: left;
+  font: inherit; font-size: var(--t-small); cursor: pointer;
+}
+.ux-menu-item:hover:not(:disabled),
+.ux-menu-item:focus-visible { background: var(--bg-selected); outline: none; }
+.ux-menu-item:disabled { color: var(--text-faint); cursor: default; }
+.ux-menu-item kbd { font-size: var(--t-micro); color: var(--text-faint); }
+.ux-menu-why { padding: 0 var(--s-2) var(--s-1); font-size: var(--t-micro); color: var(--text-faint); line-height: 1.4; }
+.ux-menu-sep { height: 1px; margin: var(--s-1) 0; background: var(--line-soft); }
+
+/* A one-line result under the status bar or in a reader head. */
+.ux-flash { font-size: var(--t-micro); color: var(--text-dim); }
+.ux-flash[data-tone="error"] { color: var(--bad); }
+.ux-flash:empty { display: none; }
+
+/* The session's copy actions, in the status bar. */
+.ux-copy-actions { display: inline-flex; align-items: center; gap: var(--s-1); flex-wrap: wrap; }
+.ux-copy-actions .btn[aria-disabled="true"] { opacity: .6; }
+
+/* The side question, beside /compact. */
+.ux-side { display: flex; flex-direction: column; gap: var(--s-2); padding: var(--s-2) var(--s-3); border-top: 1px solid var(--line-soft); }
+.ux-side-row { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; }
+.ux-side-row .field { flex: 1; min-width: 12rem; font-size: var(--t-small); }
+.ux-side-label { margin: 0; font-size: var(--t-small); color: var(--text-dim); line-height: 1.45; }
+
+/* The popped-out code rail window. */
+.ux-rail-window { height: 100vh; display: flex; flex-direction: column; min-height: 0; padding-bottom: 0; }
+.ux-rail-window .code-panel { flex: 1; min-height: 0; border-top: 1px solid var(--line); }
+.ux-rail-body { flex: 1; min-height: 0; display: grid; }
+
+/* The code rail's pop-out button, in the side panel's segmented bar. */
+.ux-popout { margin-left: var(--s-2); }
+
+/* A line the reader jumped to from a terminal link. */
+.code-inspector-line.ux-jump { background: var(--diff-match-bg); }
+
+/* Mermaid, shown honestly as its source. */
+.ux-mermaid { margin: var(--s-2) 0; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--code-bg); overflow: hidden; }
+.ux-mermaid-head {
+  display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap;
+  padding: var(--s-1) var(--s-2); border-bottom: 1px solid var(--line-soft); background: var(--bg-sunk);
+}
+.ux-mermaid-title { font-size: var(--t-small); font-weight: 600; color: var(--text); }
+.ux-mermaid-head .btn { margin-left: auto; }
+.ux-mermaid pre { margin: 0; padding: var(--s-2); max-height: 22rem; overflow: auto; white-space: pre; font-size: var(--t-small); }
+.ux-mermaid-note { margin: 0; padding: 0 var(--s-2) var(--s-2); font-size: var(--t-micro); color: var(--text-faint); }
+.ux-turn-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* The transcript reader's actions. */
+.ux-reader-actions { display: inline-flex; align-items: center; gap: var(--s-1); flex-wrap: wrap; }
+
+/* A Recent row or a tab that opened its organise panel wraps so the panel
+   takes the row's full width, the way P2's triage menu does. */
+.sessions-view .past-row:has(.ux-organise) { flex-wrap: wrap; }
+
+/* The status bar's copy menu trigger, the same weight as its neighbours. */
+.ux-status-copy { font-size: var(--t-small); border-radius: var(--r-sm); }
+.ux-status-copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* The transcript reader's mermaid source keeps its own lines: the reader's
+   pre-wrap is for prose, and a wrapped graph line is a different graph. */
+.set-turn .ux-mermaid .ux-mermaid-source {
+  margin: 0; padding: var(--s-2); max-height: 22rem; overflow: auto; white-space: pre; overflow-wrap: normal;
+}
+.set-reader-head .ux-reader-actions { margin-left: auto; }
+/* With the panel open the row's actions stop floating over it: they return to
+   the first line, beside the conversation they act on, and stay visible while
+   the panel is. Otherwise the hover-revealed strip spans the grown row and
+   covers the panel's own controls. */
+.sessions-view .past-row:has(.ux-organise) .past-actions {
+  position: static; opacity: 1; background: none; padding-left: 0; align-self: flex-start;
+}

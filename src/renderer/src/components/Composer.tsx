@@ -19,6 +19,9 @@ import {
 } from '@shared/composer-drafts';
 /* ── helper sweep · P4 cost ── */
 import ColdCacheNote from './ColdCacheNote';
+/* helper sweep · P6 ux */
+import { sideQuestionSupport } from '@shared/side-question';
+import SideQuestionPanel from './SideQuestion';
 
 /**
  * A composer beside the PTY, not instead of it.
@@ -304,11 +307,19 @@ export function rankSkills(options: SkillOption[], query: string, cap = 6): Skil
 
 /* ── component ───────────────────────────────────────────────────────── */
 
-export default function Composer({ session, onError }: {
+export default function Composer({ session, onError, cliVersion }: {
   session: Session;
   onError: (message: string) => void;
+  /* helper sweep · P6 ux: the installed CLI's reported version, for the side-question gate. */
+  cliVersion?: string | null;
 }) {
   const sessionId = session.id;
+  /* helper sweep · P6 ux: a side question, for the two harnesses with a verified command. */
+  const [sideOpen, setSideOpen] = useState(false);
+  const sideHarness = session.harnessId ?? session.providerProfile?.harness ?? (runsClaudeHarness(session) ? 'claude-code' : session.providerId === 'codex' ? 'codex' : null);
+  const side = sideQuestionSupport(sideHarness, cliVersion ?? null);
+  const sideOffered = sideHarness === 'claude-code' || sideHarness === 'codex';
+  useEffect(() => { setSideOpen(false); }, [sessionId]);
   const [draft, setDraft] = useState(() => readDrafts()[sessionId]?.text ?? '');
   const unsavedDraft = useRef<string | null>(null);
   const [attention, setAttention] = useState<AttentionKind | null>(null);
@@ -607,6 +618,14 @@ export default function Composer({ session, onError }: {
             /compact
             </button>
           )}
+          {/* helper sweep · P6 ux: hidden for a harness with no verified side-question command. */}
+          {sideOffered && (
+            <button type="button" className="btn composer-side" aria-expanded={sideOpen} aria-controls="composer-side-question"
+                    disabled={session.status !== 'running'}
+                    onClick={() => setSideOpen((o) => !o)}>
+              Side question…
+            </button>
+          )}
           <button ref={stashButton} type="button" className="btn composer-stash" aria-label="Saved prompts"
                   aria-expanded={stashOpen} aria-controls={stashOpen ? 'composer-stash-list' : undefined}
                   onClick={() => setStashOpen((o) => !o)}><Icon name="book" />Saved{stash.length ? ` ${stash.length}` : ''}</button>
@@ -617,6 +636,12 @@ export default function Composer({ session, onError }: {
           </button>
         </div>
       </div>
+      {sideOpen && sideOffered && (
+        <SideQuestionPanel id="composer-side-question" support={side} ready={state.mode === 'send'}
+                           notReadyReason={state.reason} onClose={() => setSideOpen(false)}
+                           onSend={(line) => writePayload(sessionId, buildPtyPayload(line))
+                             .catch((e) => onError(e instanceof Error ? e.message : String(e)))} />
+      )}
       {(state.reason || flash || over > -COUNTDOWN_AT) && (
         <div className="composer-note faint">
           {flash ?? state.reason ?? ''}

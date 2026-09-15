@@ -239,7 +239,9 @@ type Parsed = { turns: TranscriptTurn[]; lines: number; skipped: number };
  * over, because counting them would report a healthy file as half-broken. So is
  * a message we understood but had no text to take from it — see DROPPED_BLOCKS.
  */
-function parseTranscript(text: string, fallbackAt: number): Parsed {
+function parseTranscript(text: string, fallbackAt: number, capText = true): Parsed {
+  // helper sweep · P6 ux: an export reads whole turns; search and the reader keep the cap.
+  const fit = (value: string) => (capText ? cap(value) : value.trim());
   const turns: TranscriptTurn[] = [];
   let lines = 0;
   let skipped = 0;
@@ -264,10 +266,10 @@ function parseTranscript(text: string, fallbackAt: number): Parsed {
     // One turn per message for the spoken text, plus a turn per tool step, so a
     // long assistant reply is a single search hit rather than one per block.
     const spoken = parts.filter((p) => !p.tool).map((p) => p.text).join('\n\n');
-    if (spoken.trim()) turns.push({ at, role, text: cap(spoken) });
+    if (spoken.trim()) turns.push({ at, role, text: fit(spoken) });
     for (const p of parts) {
       if (!p.tool) continue;
-      turns.push({ at, role: 'tool', text: cap(p.text), ...(p.toolName ? { toolName: p.toolName } : {}) });
+      turns.push({ at, role: 'tool', text: fit(p.text), ...(p.toolName ? { toolName: p.toolName } : {}) });
     }
   }
   return { turns, lines, skipped };
@@ -1129,3 +1131,26 @@ export function operatorMessages(sessionId: string, cwds: readonly string[], con
   return { messages, source };
 }
 /* ── end helper sweep · P9 opinions ── */
+/* ── helper sweep · P6 ux ── */
+
+/**
+ * An archived conversation's turns with nothing cut, for "Copy as Markdown".
+ *
+ * The reader and search keep the per-turn cap, because shipping a 200 KB tool
+ * result over IPC to draw one row stalls the renderer. An export is the
+ * opposite case: a person copying a conversation expects its words whole, and a
+ * silent "…" in the middle of an answer would be a copy that is quietly not
+ * the conversation. The byte bound on the file read still applies, and says so.
+ */
+export function archivedTurnsForExport(sessionId: string): { turns: TranscriptTurn[]; note: string | null; archived: boolean } {
+  const row = db().prepare('SELECT stored_path, note FROM transcripts WHERE session_id = ?')
+    .get(sessionId) as { stored_path: string; note: string | null } | undefined;
+  if (!row) return { turns: [], note: 'No transcript was archived for this session.', archived: false };
+  if (!isFile(row.stored_path)) return { turns: [], note: 'The archived copy is missing from disk.', archived: false };
+  const { text, truncated } = readForParse(row.stored_path);
+  const parsed = parseTranscript(text, Date.now(), false);
+  const notes = [
+    truncated ? `Only the last ${Math.round(MAX_PARSE_BYTES / 1024 / 1024)}MB of a larger transcript was read.` : null,
+  ].filter(Boolean);
+  return { turns: parsed.turns, note: notes.length ? notes.join(' ') : null, archived: true };
+}

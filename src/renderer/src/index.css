@@ -177,6 +177,19 @@
   --series-3: #52c89b;
   --series-4: #f1c557;
 
+  /* helper sweep · P6 ux — the palette a session tag may wear. Aliases of
+     colours both themes already define, so a tag has a light and a dark
+     rendering without a hex value of its own, and the id a database row
+     stores (shared/session-organize.ts TAG_COLORS) can only name one of these. */
+  --tag-blue: var(--series-1);
+  --tag-orange: var(--series-2);
+  --tag-green: var(--series-3);
+  --tag-yellow: var(--series-4);
+  --tag-violet: var(--glm);
+  --tag-teal: var(--codex);
+  --tag-red: var(--bad);
+  --tag-grey: var(--dead);
+
   --good: #7be3a2;       --good-soft: #123524;
   --warning: #ffd16d;    --warning-soft: #382b12;
   --serious: #ffad7b;    --serious-soft: #432719;

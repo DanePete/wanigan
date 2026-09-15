@@ -8,7 +8,7 @@ import { launchFieldChoices } from '@shared/launch-fields';
 import { providerTint } from '@shared/provider-status';
 import { applyUnreadCounts } from '@shared/unread';
 import SessionHandoff from '../components/SessionHandoff';
-import TerminalPane, { disposePane } from '../components/TerminalPane';
+import TerminalPane, { disposePane, OPEN_IN_RAIL_EVENT, type OpenInRail } from '../components/TerminalPane';
 import Composer, { hasDraft, useQueuedCount } from '../components/Composer';
 import { COMPOSER_MENU_EVENT, readComposerShown, writeComposerShown } from '../components/composerPreference';
 import NewSessionDialog from '../components/NewSessionDialog';
@@ -25,6 +25,10 @@ import { bindingMatches, modalOpen } from '../bindings';
 /* helper sweep · P2 attention */
 import { AwayNote, LimitResumeNote, ResumeWarningDialog, TabTriageMenu } from '../components/SessionTriage';
 import { OPEN_TIMELINE_EVENT } from '../components/attentionActions';
+/* helper sweep · P6 ux */
+import { arrangeRecent, filterByTag, type TagColor } from '@shared/session-organize';
+import { NewSectionForm, OrganisePanel, SectionHeading, TagChips, TagFilter, useOrganisation } from '../components/SessionOrganize';
+import SessionCopyActions from '../components/SessionCopyActions';
 import '../styles/sessions.css';
 /* helper sweep · P5 runtime */
 import SessionRuntimeDetails from '../components/SessionRuntimeDetails';
@@ -268,6 +272,8 @@ export default function Sessions({
   // A "view this turn's diff" jump from the Timeline into the Code pane. The
   // nonce makes repeat jumps to the same turn re-fire the effect.
   const [turnFocus, setTurnFocus] = useState<{ sessionId: string; turn: number; nonce: number } | null>(null);
+  /* helper sweep · P6 ux: a file ⌘-clicked in a terminal, for that session's code rail. */
+  const [fileFocus, setFileFocus] = useState<(OpenInRail & { nonce: number }) | null>(null);
   /*
    * Three agents in one repo were three identical rows. The launch title is
    * assigned once and is "<provider> · <project>" for all three of them, so the
@@ -279,6 +285,12 @@ export default function Sessions({
   const [defaultTrust, setDefaultTrust] = useState<TrustLevel | null>(null);
   const [allPast, setPast] = useState<PastSession[]>([]);
   const past = useMemo(() => selectedProjectId ? allPast.filter((s) => s.projectId === selectedProjectId) : allPast, [allPast, selectedProjectId]);
+  /* helper sweep · P6 ux: tags and Recent sections for every row on screen,
+     read by session id and stored against the conversation. */
+  const organiseIds = useMemo(() => [...sessions.map((s) => s.id), ...allPast.map((p) => p.id)], [sessions, allPast]);
+  const org = useOrganisation(organiseIds);
+  const [organising, setOrganising] = useState<string | null>(null);
+  const [recentTag, setRecentTag] = useState<string | null>(null);
   /**
    * Whether this machine has more than one account at all.
    *
@@ -551,6 +563,35 @@ export default function Sessions({
     return () => window.removeEventListener(OPEN_TIMELINE_EVENT, onOpen);
   }, [openTimelineFor]);
 
+  /* ── helper sweep · P6 ux ─────────────────────────────────────────────── */
+  // A path in a terminal, opened in that session's code rail: the rail opens on
+  // the Code pane, and the panel reads the file and opens its reader at the line.
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const detail = (e as CustomEvent<OpenInRail>).detail;
+      if (!detail || !sessionsRef.current.some((s) => s.id === detail.sessionId)) return;
+      select(detail.sessionId);
+      setRailPane((prev) => {
+        const merged = { ...prev, [detail.sessionId]: 'code' as RailPane };
+        writePanes(merged, sessionsRef.current.map((s) => s.id));
+        return merged;
+      });
+      localStorage.setItem('wanigan.code', '1');
+      setShowRail(true);
+      setCompactDetails(true);
+      setFileFocus({ ...detail, nonce: Date.now() });
+    };
+    window.addEventListener(OPEN_IN_RAIL_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_IN_RAIL_EVENT, onOpen);
+  }, [select]);
+  const [railWindowSaid, setRailWindowSaid] = useState<string | null>(null);
+  const openRailWindow = useCallback((id: string) => {
+    window.wanigan.ux.openCodeRail(id)
+      .then((r) => setRailWindowSaid(r.opened ? 'Opened in its own window.' : 'Its window was already open; brought it forward.'))
+      .catch((e) => onError(msg(e)));
+  }, [onError]);
+  useEffect(() => { setRailWindowSaid(null); }, [activeId]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
@@ -799,6 +840,8 @@ export default function Sessions({
                               {multiAccount && s.accountLabel && ` · ${s.accountLabel}`}
                               {snoozedUntil(s.id) && ' · snoozed'}
                             </span>
+                            {/* helper sweep · P6 ux */}
+                            <TagChips tags={org.tagsOf(s.id)} />
                           </span>
                           {/* One increment is one second in which output
                               arrived while you were elsewhere — not one
@@ -821,11 +864,17 @@ export default function Sessions({
                                   aria-label={`Rename the ${providerLabel} session in ${s.projectName}`}
                                   onClick={() => startRename(s)}>✎</FocusBtn>
                         <FocusBtn className="past-x faint session-tab-triage" aria-expanded={triageFor === s.id}
-                                  aria-label={`Mark unread or snooze the ${providerLabel} session in ${s.projectName}`}
+                                  aria-label={`Mark unread, snooze or tag the ${providerLabel} session in ${s.projectName}`}
                                   onClick={() => setTriageFor((cur) => (cur === s.id ? null : s.id))}>⋯</FocusBtn>
                         {triageFor === s.id && (
                           <TabTriageMenu session={s} snoozedUntil={snoozedUntil(s.id)} onError={onError}
                                          onClose={() => setTriageFor(null)} />
+                        )}
+                        {/* helper sweep · P6 ux: the same menu carries the conversation's tags and section. */}
+                        {triageFor === s.id && (
+                          <OrganisePanel sessionId={s.id} name={name || `${providerLabel} in ${s.projectName}`}
+                                         snapshot={org.snapshot} onChanged={org.reload} onError={onError}
+                                         showSectionOrder={false} />
                         )}
                       </div>
                     );
@@ -844,11 +893,24 @@ export default function Sessions({
               // Pins float (newest pin first), settled sinks into its shelf,
               // and a missing project folder sinks within its own section —
               // stable sorts keep newest-first inside each band.
-              const pinnedPast = [...past.filter((p) => p.pinnedAt != null)]
+              /* helper sweep · P6 ux: a tag filter first, then the operator's
+                 own sections between the pins and everything unfiled. */
+              const tagged = filterByTag(past, recentTag, (p) => org.tagsOf(p.id));
+              const arranged = arrangeRecent(tagged, org.snapshot.sections, (p) => org.snapshot.sessions[p.id]?.placement ?? null);
+              const recentTags = (() => {
+                const by = new Map<string, { tag: string; norm: string; color: TagColor; count: number }>();
+                for (const p of past) for (const t of org.tagsOf(p.id)) {
+                  const entry = by.get(t.norm) ?? { ...t, count: 0 };
+                  entry.count += 1;
+                  by.set(t.norm, entry);
+                }
+                return [...by.values()].sort((a, b) => b.count - a.count || a.norm.localeCompare(b.norm));
+              })();
+              const pinnedPast = [...arranged.pinned]
                 .sort((a, b) => Number(b.live) - Number(a.live) || (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0));
-              const activePast = [...past.filter((p) => p.pinnedAt == null && p.settledAt == null)]
+              const activePast = [...arranged.unfiled]
                 .sort((a, b) => Number(b.live) - Number(a.live));
-              const settledPast = [...past.filter((p) => p.settledAt != null)]
+              const settledPast = [...arranged.settled]
                 .sort((a, b) => (b.settledAt ?? 0) - (a.settledAt ?? 0));
               const setPastFlag = (p: PastSession, flag: 'pin' | 'settle', on: boolean) => {
                 window.wanigan.sessions.setConversationFlag(p.id, flag, on)
@@ -886,6 +948,8 @@ export default function Sessions({
                         </span>
                         <span className="past-when">{ago(p.startedAt)}</span>
                       </span>
+                      {/* helper sweep · P6 ux */}
+                      <TagChips tags={org.tagsOf(p.id)} />
                     </span>
                     <span className="faint" style={{ fontSize: 'var(--t-micro)' }}>
                       {resuming === p.id ? '…' : '↻'}
@@ -906,6 +970,12 @@ export default function Sessions({
                       ⇢ Codex…
                     </FocusBtn>
                   )}
+                  {/* helper sweep · P6 ux: tags and a section for this conversation. */}
+                  <FocusBtn className="past-x faint" aria-expanded={organising === p.id}
+                            aria-label={`Tags and section for ${p.title ?? p.projectName}`}
+                            onClick={() => setOrganising((cur) => (cur === p.id ? null : p.id))}>
+                    #
+                  </FocusBtn>
                   <FocusBtn className="past-x faint"
                             title={p.pinnedAt != null
                               ? 'Unpin — back to its place by recency'
@@ -933,6 +1003,10 @@ export default function Sessions({
                     ×
                   </FocusBtn>
                   </div>
+                  {organising === p.id && (
+                    <OrganisePanel sessionId={p.id} name={p.title ?? p.projectName} snapshot={org.snapshot}
+                                   onChanged={org.reload} onError={onError} showSectionOrder />
+                  )}
                   {forgetting === p.id && (
                     <ConfirmNote
                       tone="error"
@@ -956,7 +1030,27 @@ export default function Sessions({
                     <span className="label">Recent conversations</span>
                     <span className="faint" style={{ fontSize: 'var(--t-micro)', marginLeft: 'auto' }}>exact resume</span>
                   </div>
+                  {/* helper sweep · P6 ux: create a section; filter by tag. */}
+                  <div className="ux-recent-head">
+                    <NewSectionForm onDone={org.reload} onError={onError} />
+                  </div>
+                  <TagFilter tags={recentTags} value={recentTag} onChange={setRecentTag} label="Filter Recent conversations by tag" />
+                  {recentTag && (
+                    <p className="ux-cue ux-filter-note" role="status">
+                      {tagged.length} of {past.length} conversations carry this tag. Sections and pins are filtered the same way.
+                    </p>
+                  )}
                   {pinnedPast.map(renderPast)}
+                  {arranged.sections
+                    .filter(({ rows }) => !recentTag || rows.length > 0)
+                    .map(({ section, rows }) => (
+                      <div key={section.id} className="ux-section-block">
+                        <SectionHeading section={section} index={org.snapshot.sections.findIndex((x) => x.id === section.id)}
+                                        total={org.snapshot.sections.length} count={rows.length}
+                                        onChanged={org.reload} onError={onError} />
+                        {rows.map(renderPast)}
+                      </div>
+                    ))}
                   {activePast.slice(0, activeShown).map(renderPast)}
                   {/* The count is read off the array this render already holds,
                       so it is what is hidden, not an estimate of it. */}
@@ -1178,7 +1272,8 @@ export default function Sessions({
                 {active && (
                   <SessionDock session={active} att={att} open={composerOpen}
                                onToggle={() => showComposer(!composerOpen, false)}>
-                    <Composer key={`composer-${active.id}`} session={active} onError={onError} />
+                    <Composer key={`composer-${active.id}`} session={active} onError={onError}
+                              cliVersion={providers.find((p) => p.id === active.providerId)?.version ?? null} />
                   </SessionDock>
                 )}
               </div>
@@ -1196,6 +1291,14 @@ export default function Sessions({
                          title="Every tool call the agent made, and how long it took">Timeline</Seg>
                     <Seg on={pane === 'learning'} onClick={() => setPane(active.id, 'learning')}
                          title="What this session was told at launch, and what it recorded — stored facts only">Learning</Seg>
+                    {/* helper sweep · P6 ux: the code rail in a window of its own. */}
+                    {pane === 'code' && (
+                      <FocusBtn className="btn btn-sm ux-popout" onClick={() => openRailWindow(active.id)}
+                                aria-label={`Open the code rail for ${nameOf(active) || active.projectName} in a new window`}>
+                        <Icon name="external" /> Open in new window
+                      </FocusBtn>
+                    )}
+                    {railWindowSaid && <span className="ux-flash" role="status">{railWindowSaid}</span>}
                     <span className="faint mono" style={{ marginLeft: 'auto', fontSize: 'var(--t-micro)' }}>⌘B</span>
                   </div>
                   <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'grid',
@@ -1208,6 +1311,8 @@ export default function Sessions({
                                    ? { turn: turnFocus.turn, nonce: turnFocus.nonce }
                                    : null}
                                  onFocusTurnHandled={() => setTurnFocus(null)}
+                                 focusFile={fileFocus?.sessionId === active.id ? fileFocus : null}
+                                 onFocusFileHandled={() => setFileFocus(null)}
                                  onSendToBatch={(paths) => onSendToBatch({
                                    projectId: active.projectId,
                                    root: active.worktree ?? active.projectPath,
@@ -1246,6 +1351,8 @@ export default function Sessions({
                             : `Open ${active.projectPath}`}>
                   open folder
                 </FocusBtn>
+                {/* helper sweep · P6 ux: copy the last response or the conversation id. */}
+                <SessionCopyActions sessionId={active.id} />
                 <FocusBtn className="faint session-status-action" style={{ fontSize: 'var(--t-small)', color: 'var(--accent)', borderRadius: 'var(--r-sm)' }}
                           title="Turn an outcome, correction, preference, or reusable fact from this session into a reviewable Learning Inbox proposal"
                           onClick={() => setTeachSession(active)}>

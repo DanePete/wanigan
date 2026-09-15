@@ -276,6 +276,9 @@ export async function runSmoke(): Promise<void> {
     const { runSecondOpinionSmoke } = await import('./smoke38');
     await runSecondOpinionSmoke(check, say);
     /* ── end helper sweep · P9 opinions ── */
+    /* ── helper sweep · P6 ux ── */
+    const { runHelperUxSmoke } = await import('./smoke35');
+    await runHelperUxSmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

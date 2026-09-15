@@ -1974,10 +1974,17 @@ export function pastSessions(limit = 40): PastSession[] {
   // ones is exactly the one the pin exists to keep. The other sections are
   // capped separately so the settled shelf cannot crowd out active rows.
   const pinned = entries.filter(([key]) => flagsOf(key).pinnedAt != null);
-  const active = entries.filter(([key]) => flagsOf(key).pinnedAt == null && flagsOf(key).settledAt == null).slice(0, limit);
+  /* ── helper sweep · P6 ux ── */
+  // A conversation the operator filed into a Recent section survives the cap
+  // the way a pin does: the section is the operator saying "keep this here",
+  // and one that emptied itself as its rows aged past forty newer ones would
+  // be a shelf that loses what was put on it.
+  const filed = filedConversationKeys();
+  const filedRows = entries.filter(([key]) => filed.has(key) && flagsOf(key).pinnedAt == null && flagsOf(key).settledAt == null);
+  const active = entries.filter(([key]) => !filed.has(key) && flagsOf(key).pinnedAt == null && flagsOf(key).settledAt == null).slice(0, limit);
   const settled = entries.filter(([key]) => flagsOf(key).pinnedAt == null && flagsOf(key).settledAt != null).slice(0, limit);
 
-  const shown = [...pinned, ...active, ...settled];
+  const shown = [...pinned, ...filedRows, ...active, ...settled];
   // Deliberately after the cap: this is the only part of Recent that touches
   // the filesystem per row, and reading a name for all 154 conversations ever
   // recorded to show forty of them would be work nobody sees.
@@ -2163,6 +2170,10 @@ export function forgetPastSession(id: string) {
   // lifecycle flag, which would otherwise sit keyed to nothing forever.
   for (const candidateId of ids) forgetSessionCheckpoints(candidateId);
   try { db().prepare('DELETE FROM conversation_flags WHERE key = ?').run(key); } catch { /* flag rows are advisory */ }
+  /* ── helper sweep · P6 ux ── */
+  // Tags and a section place are the operator's words about this conversation;
+  // forgetting it forgets them, rather than leaving them keyed to nothing.
+  forgetConversationOrganisation(key);
 }
 
 /**
@@ -2498,4 +2509,51 @@ export async function shutdownAll(graceMs = 2000): Promise<void> {
     settled,
     new Promise<void>((resolve) => setTimeout(resolve, 500)),
   ]);
+}
+
+/* ── helper sweep · P6 ux ── */
+
+/**
+ * The conversation a session id belongs to, by exactly the rule Recent groups
+ * by, or null when there is none to name yet.
+ *
+ * Tags and sections hang off this key rather than the session id, because a
+ * session id is one process and a resume is another. The live record is read
+ * first — a Codex thread id is captured after launch and lands on the meta
+ * before the log row is backfilled — and the log row second, so an exited or
+ * closed tab still resolves. A session with no conversation id at all (a
+ * Codex launch whose thread has not been captured yet, a generic terminal)
+ * gets null, and the surfaces say that instead of attaching a tag to nothing.
+ */
+export function conversationKeyForSession(sessionId: string): string | null {
+  if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 200) return null;
+  const live = sessions.get(sessionId)?.meta ?? null;
+  let row: SessionLogRow | undefined;
+  try {
+    row = db().prepare('SELECT id, conversation_id, provider_id, harness_id FROM session_log WHERE id = ?')
+      .get(sessionId) as SessionLogRow | undefined;
+  } catch { /* the database is closing during quit */ }
+  const liveConversation = typeof live?.conversationId === 'string' && live.conversationId.trim() ? live.conversationId : null;
+  const conversationId = liveConversation ?? (row ? savedConversationId(row) : null);
+  if (!conversationId) return null;
+  if (row) return conversationKey(row, conversationId);
+  if (live) return conversationKey({ provider_id: live.providerId, harness_id: live.harnessId ?? null }, conversationId);
+  return null;
+}
+
+/** Keys filed into a Recent section. Advisory: a broken read costs the cap bypass, never the list. */
+function filedConversationKeys(): Set<string> {
+  try {
+    const rows = db().prepare('SELECT key FROM recent_section_members').all() as { key: string }[];
+    return new Set(rows.map((r) => String(r.key)));
+  } catch {
+    return new Set();
+  }
+}
+
+function forgetConversationOrganisation(key: string): void {
+  try {
+    db().prepare('DELETE FROM conversation_tags WHERE key = ?').run(key);
+    db().prepare('DELETE FROM recent_section_members WHERE key = ?').run(key);
+  } catch { /* organisation rows are advisory, like the lifecycle flags */ }
 }

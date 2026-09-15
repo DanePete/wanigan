@@ -241,6 +241,17 @@ const PROBES = {
       return consumed ? null : 'nothing consumed the chord';
     },
   },
+  // helper sweep · P6 ux. With nothing selected the chord announces what to
+  // select; the quote itself lands in a composer draft, covered by
+  // probe-helper-p6-ux.mjs. Here, reaching the handler is what is asserted.
+  'quote-into-message': {
+    weak: true,
+    async run(page) {
+      await stepOffTerminal(page);
+      const consumed = await pressAndAskIfConsumed(page, ariaFor('quote-into-message'));
+      return consumed ? null : 'nothing consumed the chord';
+    },
+  },
   interrupt: {
     weak: true,
     async run(page) {

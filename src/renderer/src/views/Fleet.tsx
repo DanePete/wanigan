@@ -17,6 +17,9 @@ import ApprovalExplainer from '../components/ApprovalExplainer';
 import SessionProcessesPanel, { SurvivorsAcrossSessions } from '../components/SessionProcesses';
 import { ReviewOnlyMark } from '../components/ReviewOnly';
 import ModelSubstitutions from '../components/ModelSubstitutions';
+/* helper sweep · P6 ux */
+import { TagChips, TagFilter, useOrganisation } from '../components/SessionOrganize';
+import type { TagColor } from '@shared/session-organize';
 
 /**
  * The whole crew on one screen — the view you leave open on a second monitor
@@ -170,6 +173,8 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
   const [sort, setSort] = useViewMemory<SortKey>('sort', 'attention');
   const [only, setOnly] = useViewMemory<AttentionKind | 'all'>('only', 'all');
   const [selectedId, setSelectedId] = useViewMemory<string | null>('selected', null);
+  /* helper sweep · P6 ux: a tag filter, remembered with the others. */
+  const [tagOnly, setTagOnly] = useViewMemory<string | null>('tag', null);
   const [ready, setReady] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState(0);
@@ -407,10 +412,27 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
     await load(false);
   }, [load]);
 
+  /* helper sweep · P6 ux */
+  const sessionIds = useMemo(() => sessions.map((s) => s.id), [sessions]);
+  const org = useOrganisation(sessionIds);
+  const fleetTags = useMemo(() => {
+    const by = new Map<string, { tag: string; norm: string; color: TagColor; count: number }>();
+    for (const s of sessions) for (const t of org.tagsOf(s.id)) {
+      const entry = by.get(t.norm) ?? { ...t, count: 0 };
+      entry.count += 1;
+      by.set(t.norm, entry);
+    }
+    return [...by.values()].sort((a, b) => b.count - a.count || a.norm.localeCompare(b.norm));
+  }, [org, sessions]);
+  // A remembered tag no running session carries any more filters to nothing;
+  // it is dropped rather than left pressed on a chip that is no longer drawn.
+  const activeTag = tagOnly && fleetTags.some((t) => t.norm === tagOnly) ? tagOnly : null;
+
   const shown = useMemo(() => {
-    const visible = only === 'all'
+    const byStatus = only === 'all'
       ? sessions.slice()
       : sessions.filter((s) => (attention[s.id]?.kind ?? 'idle') === only);
+    const visible = activeTag ? byStatus.filter((s) => org.tagsOf(s.id).some((t) => t.norm === activeTag)) : byStatus;
 
     return visible.sort((a, b) => {
       if (sort === 'spend') {
@@ -428,7 +450,7 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
       if (bySince) return bySince;
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     });
-  }, [sessions, attention, only, sort, usageOf]);
+  }, [sessions, attention, only, sort, usageOf, activeTag, org]);
 
   // A live sort may move a row, but never changes the session under inspection.
   const selected = shown.find((s) => s.id === selectedId) ?? shown[0];
@@ -611,15 +633,20 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
         <Segmented label="Sort sessions by" value={sort} onChange={setSort}
                    options={SORTS.map((s) => ({ value: s.key, label: s.label, title: s.hint }))} />
       </div>
+      {/* helper sweep · P6 ux */}
+      <TagFilter tags={fleetTags} value={activeTag} onChange={setTagOnly} label="Filter sessions by tag" />
 
       {shown.length === 0 ? (
         <div className="card fleet-blank">
           <h2>No session is {MARK[only as AttentionKind]?.word.toLowerCase() ?? 'matching'} right now</h2>
           <p className="dim">
-            The filter excluded all {num(sessions.length)} sessions — none of them is in that state
-            at the moment. That is usually the good outcome.
+            {/* helper sweep · P6 ux: two filters can combine, so the sentence names both. */}
+            {activeTag
+              ? <>The filters excluded all {num(sessions.length)} sessions — none carries that tag in that state at the moment.</>
+              : <>The filter excluded all {num(sessions.length)} sessions — none of them is in that state
+                at the moment. That is usually the good outcome.</>}
           </p>
-          <button className="btn fleet-retry" onClick={() => setOnly('all')}>
+          <button className="btn fleet-retry" onClick={() => { setOnly('all'); setTagOnly(null); }}>
             Show all {num(sessions.length)} sessions
           </button>
         </div>
@@ -636,6 +663,8 @@ export default function Fleet({ projects = [], onOpenSession, onNewSession }: {
                         onClick={() => setSelectedId(s.id)}>
                   <span className="fleet-entry-top"><strong>{s.projectName}</strong><span>{providerName(s.providerId)}</span></span>
                   <span className="fleet-entry-task">{s.displayTitle || s.title || 'Untitled session'}</span>
+                  {/* helper sweep · P6 ux */}
+                  <TagChips tags={org.tagsOf(s.id)} />
                   <span className="fleet-entry-state">
                     <span>{mark.glyph} {att?.label || mark.word}</span>
                     <span>{dur(Date.now() - (att?.since ?? s.createdAt))}</span>
