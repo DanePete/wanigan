@@ -1,0 +1,18 @@
+{
+  "at": "2026-09-15T04:32:16.498Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; keymap IPC answered by src/shared/keymap.ts in the probe process; no real agent calls",
+  "mode": "after",
+  "checks": [
+    "Keyboard lists 37 bindings in the sheet's five groups: 25 with Change, 12 marked fixed with the reason in words, none clipped",
+    "Change records the next chord and says so; Escape cancels it, writes nothing, and hands focus back to Change",
+    "a chord Command palette already holds is refused under the row with that binding named, the chord stays ⌘T, and recording ⌘K did not open the palette",
+    "⌘N is accepted: the row reads ⌘N, changed, with its ⌘T default and Reset; the header button prints ⌘N and publishes Meta+N Control+N; a note says the Sessions view’s own labels still print ⌘T",
+    "the cheat sheet prints New session on ⌘N and nothing on ⌘T",
+    "pressing ⌘N opens the New session dialog",
+    "pressing the old ⌘T does nothing on Fleet or on Sessions — stopped in the shell before the Sessions view’s own ⌘T handler could see it — while a never-bound chord such as ⌘J still propagates",
+    "Reset puts New session back on ⌘T: the row, the header and the key all follow, and ⌘T opens the dialog again",
+    "a rebound route is published and printed by its destination-list row: Fleet reads ⌘⇧F with Meta+Shift+F Control+Shift+F",
+    "Reset all puts two rebindings back at once and then has nothing left to reset"
+  ],
+  "errors": []
+}

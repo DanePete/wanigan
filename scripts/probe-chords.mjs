@@ -36,11 +36,11 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const VERBOSE = process.argv.includes('--verbose');
 
 /* ── what the table says, read from the table ───────────────────────────
-   Parsed rather than imported: bindings.ts is renderer TypeScript and this is a
+   Parsed rather than imported: shared/bindings.ts is TypeScript and this is a
    plain node script. The shape it reads is one line per row, which is how that
    file is written and how it should stay. */
 function declaredBindings() {
-  const src = fs.readFileSync(path.join(REPO, 'src/renderer/src/bindings.ts'), 'utf8');
+  const src = fs.readFileSync(path.join(REPO, 'src/shared/bindings.ts'), 'utf8');
   const body = src.slice(src.indexOf('export const BINDINGS'), src.indexOf('/** The sheet lists groups'));
   return [...body.matchAll(/\{\s*id:\s*'([a-z-]+)',\s*keys:\s*'([^']*)'[\s\S]*?scope:\s*'([a-z-]+)'/g)]
     .map(([, id, keys, scope]) => ({ id, keys, scope }));
@@ -75,7 +75,7 @@ async function press(page, aria) {
 }
 
 function ariaFor(id) {
-  const src = fs.readFileSync(path.join(REPO, 'src/renderer/src/bindings.ts'), 'utf8');
+  const src = fs.readFileSync(path.join(REPO, 'src/shared/bindings.ts'), 'utf8');
   const row = new RegExp(`\\{\\s*id:\\s*'${id}',[\\s\\S]*?aria:\\s*'([^']*)'`).exec(src);
   if (!row) throw new Error(`no aria for ${id}`);
   return row[1];
