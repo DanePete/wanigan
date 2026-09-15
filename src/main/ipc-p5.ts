@@ -11,6 +11,7 @@ import { codexReaderHealth } from './codex-rollout-health';
 import { detectProviders } from './providers';
 import { recentRefusals } from './headless-guard';
 import { headlessOutcomes } from './headless';
+import { importIntoCodex, planCodexImport } from './codex-import';
 
 type Handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => void;
 
@@ -46,4 +47,11 @@ export function registerP5Ipc(handle: Handle): void {
     return headlessOutcomes(runId);
   });
   handle('headless:refusals', (limit: unknown) => recentRefusals(typeof limit === 'number' ? limit : 20));
+
+  // ── continue a Claude conversation in Codex ─────────────────────────
+  // The plan is what the consent dialog shows; the run re-plans and refuses
+  // unless the transcript it would send is the one that was confirmed.
+  handle('codexImport:plan', (sessionId: unknown, accountId: unknown) => planCodexImport(sessionId, accountId));
+  handle('codexImport:run', (sessionId: unknown, accountId: unknown, confirmedPath: unknown) =>
+    importIntoCodex(sessionId, accountId, confirmedPath));
 }

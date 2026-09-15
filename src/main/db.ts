@@ -1514,5 +1514,20 @@ function migrateHelperSweepP5(d: Database.Database) {
   addColumn(d, 'headless_rows', 'outcome', 'TEXT');
   addColumn(d, 'headless_rows', 'outcome_reason', 'TEXT');
   addColumn(d, 'headless_rows', 'outcome_detail', 'TEXT');
+  d.exec(`
+    -- A Claude conversation imported into Codex through Codex's own importer:
+    -- which transcript, into which account, and the thread Codex named.
+    CREATE TABLE IF NOT EXISTS codex_imports (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      at               INTEGER NOT NULL,
+      session_id       TEXT NOT NULL,
+      account_id       TEXT,
+      source_path      TEXT NOT NULL,
+      codex_version    TEXT,
+      thread_id        TEXT,
+      ledger_confirmed INTEGER,
+      error            TEXT
+    );
+  `);
 }
 /* ── end helper sweep · P5 runtime ── */

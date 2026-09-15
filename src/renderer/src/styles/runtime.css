@@ -38,3 +38,15 @@
 .hr-refusals li { display: grid; gap: var(--s-1); font-size: var(--t-small); }
 .hr-refusal-head code { font-family: var(--mono); }
 .hr-refusal-reason { color: var(--text-faint); line-height: 1.45; }
+.modal.codex-continue { max-width: 640px; display: grid; gap: var(--s-3); }
+.codex-continue-title { font-size: var(--t-lead); font-weight: 600; margin: 0; }
+.codex-continue-lead { margin: 0; color: var(--text-dim); font-size: var(--t-small); line-height: 1.5; }
+.codex-continue-facts { display: grid; grid-template-columns: minmax(8rem, max-content) 1fr; gap: var(--s-2) var(--s-3); margin: 0; font-size: var(--t-small); }
+.codex-continue-facts dt { color: var(--text-faint); }
+.codex-continue-facts dd { margin: 0; display: grid; gap: var(--s-1); min-width: 0; overflow-wrap: anywhere; line-height: 1.45; }
+.codex-continue-facts code, .codex-continue-home code { font-family: var(--mono); font-size: var(--t-micro); }
+.codex-continue-home { color: var(--text-faint); }
+.codex-continue-refusal { display: grid; gap: var(--s-1); font-size: var(--t-small); line-height: 1.5; color: var(--text-dim); }
+.codex-continue-actions { display: flex; gap: var(--s-2); justify-content: flex-end; flex-wrap: wrap; }
+.past-codex { font-size: var(--t-micro); }
+@media (max-width: 460px) { .codex-continue-facts { grid-template-columns: 1fr; } }

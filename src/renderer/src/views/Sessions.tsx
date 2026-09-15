@@ -26,6 +26,7 @@ import '../styles/sessions.css';
 /* helper sweep · P5 runtime */
 import SessionRuntimeDetails from '../components/SessionRuntimeDetails';
 import CodexReaderNote from '../components/CodexReaderNote';
+import ContinueInCodexDialog from '../components/ContinueInCodexDialog';
 
 /* ── phase 21 · what an attachment looks like ─────────────────────────
    The shapes live in the main process (src/main/attachments.ts) and cross the
@@ -296,6 +297,8 @@ export default function Sessions({
   // not, so the ninth-newest resumable conversation was reachable only by
   // settling, pinning or forgetting a newer one.
   const [activeShown, setActiveShown] = useState(8);
+  /** helper sweep · P5 runtime: the Claude conversation being continued in Codex. */
+  const [continueInCodex, setContinueInCodex] = useState<PastSession | null>(null);
   /** The Recent row whose Forget is awaiting confirmation, if any. */
   const [forgetting, setForgetting] = useState<string | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
@@ -829,6 +832,13 @@ export default function Sessions({
                       is no hover to wait for, so they stay exactly as they
                       were; see the coarse-pointer rule in index.css. */}
                   <div className="past-actions">
+                  {/* helper sweep · P5 runtime: explicit, per row, Claude harness only. */}
+                  {providers.find((x) => x.id === p.providerId)?.harnessId === 'claude-code' && p.conversationId && (
+                    <FocusBtn className="past-x faint past-codex" aria-label={`Continue ${p.title ?? p.projectName} in Codex…`}
+                              onClick={() => setContinueInCodex(p)}>
+                      ⇢ Codex…
+                    </FocusBtn>
+                  )}
                   <FocusBtn className="past-x faint"
                             title={p.pinnedAt != null
                               ? 'Unpin — back to its place by recency'
@@ -1189,6 +1199,10 @@ export default function Sessions({
       {exactRecoveryDialog && (
         <ExactCodexRecoveryDialog projects={projects} defaultProjectId={active?.projectId}
                                   onClose={() => setExactRecoveryDialog(false)} onRecover={recoverExactCodex} />
+      )}
+      {continueInCodex && (
+        <ContinueInCodexDialog past={continueInCodex} onClose={() => setContinueInCodex(null)} onError={onError}
+          onResumed={(id) => { void refresh().then(() => select(id)); }} />
       )}
       {teachSession && (
         <SessionTeachModal session={teachSession} onClose={() => setTeachSession(null)} onError={onError} />

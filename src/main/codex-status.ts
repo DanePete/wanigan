@@ -105,7 +105,7 @@ function stop(child: ChildProcessWithoutNullStreams): void {
 const STDERR_CAP = 4_000;
 const REASON_CAP = 200;
 
-function takeStderr(text: string, chunk: Buffer): string {
+export function takeStderr(text: string, chunk: Buffer): string {
   return text.length >= STDERR_CAP ? text : text + chunk.toString('utf8');
 }
 
@@ -115,7 +115,7 @@ function takeStderr(text: string, chunk: Buffer): string {
  * before answering".  `close` fires once the streams are drained, which is why
  * claude-limits.ts and provider-adapter.ts both settle on it too.
  */
-function exitReason(label: string, code: number | null, stderr: string): string {
+export function exitReason(label: string, code: number | null, stderr: string): string {
   const said = stderr.split('\n').map((line) => line.trim()).find((line) => line.length > 0);
   const how = code === null ? 'stopped' : code === 0 ? 'exited' : `exited with code ${code}`;
   return said
@@ -135,7 +135,7 @@ function exitReason(label: string, code: number | null, stderr: string): string 
  * instead of answering. Proxy and CA settings stay because the read is an
  * HTTPS call and a managed network cannot make it without them.
  */
-function probeEnv(PATH: string, accountEnv: Record<string, string> = {}): NodeJS.ProcessEnv {
+export function probeEnv(PATH: string, accountEnv: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { PATH };
   for (const name of [
     'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL', 'SHELL', 'CODEX_HOME',

@@ -10,6 +10,7 @@ import type { SessionProcesses, StopSurvivorResult } from '../shared/process-tre
 import type { CodexReaderHealth } from '../shared/rollout-format';
 import type { HeadlessOutcome } from '../shared/headless-outcome';
 import type { HeadlessRefusal } from '../shared/slash-commands';
+import type { CodexImportOutcome, CodexImportPlan } from '../shared/codex-import';
 /* ── end helper sweep · P5 runtime ── */
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
@@ -853,6 +854,11 @@ const api = {
   headlessTruth: {
     outcomes: (runId: string) => call<Record<string, HeadlessOutcome>>('headless:outcomes', runId),
     refusals: (limit?: number) => call<HeadlessRefusal[]>('headless:refusals', limit ?? 20),
+  },
+  codexImport: {
+    plan: (sessionId: string, accountId?: string | null) => call<CodexImportPlan>('codexImport:plan', sessionId, accountId ?? null),
+    run: (sessionId: string, accountId: string, confirmedPath: string) =>
+      call<CodexImportOutcome>('codexImport:run', sessionId, accountId, confirmedPath),
   },
   /* ── end helper sweep · P5 runtime ── */
   on: {

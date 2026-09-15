@@ -265,3 +265,87 @@ export async function runHeadlessTruthSmoke(check: Check, say: Say): Promise<voi
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
+
+/**
+ * helper sweep · P5 runtime — continue a Claude conversation in Codex.
+ *
+ * Against the installed Codex when there is one, with a synthetic two-turn
+ * Claude transcript and a temporary HOME and CODEX_HOME. The real ~/.codex is
+ * never an input: its import ledger's modification time is compared before and
+ * after. No login exists in the temporary home, so a turn could not spend if
+ * one started — and the importer is stopped if one does.
+ */
+export async function runCodexImportSmoke(check: Check, say: Say): Promise<void> {
+  say('── helper sweep · P5 runtime · continue a Claude conversation in Codex');
+  const os = await import('node:os');
+  const { db } = await import('./db');
+  const importer = await import('./codex-import');
+  const { detectProviders } = await import('./providers');
+  const { ledgerThreadFor } = await import('../shared/codex-import');
+
+  // The plan refuses what it cannot import, by name, before anything runs.
+  const rowId = `s_p5_import_${Date.now()}`;
+  db().prepare(`INSERT INTO session_log (id, conversation_id, provider_id, project_path, project_name, started_at, harness_id)
+                VALUES (?, ?, 'codex', ?, 'p5', ?, 'codex')`).run(rowId, '11111111-2222-4333-8444-555555555555', os.tmpdir(), Date.now());
+  const refused = await importer.planCodexImport(rowId, null);
+  check(refused.refusal === 'Only a Claude Code conversation can be continued in Codex.',
+    'a Codex conversation is refused as a source for the Claude → Codex import', refused.refusal);
+  check(refused.notImported.includes('hooks') && refused.notImported.includes('MCP servers') && refused.notImported.includes('CLAUDE.md, AGENTS.md and memory'),
+    'the plan lists what is never imported, for the consent dialog to show', refused.notImported);
+  db().prepare('DELETE FROM session_log WHERE id=?').run(rowId);
+  const guard = await importer.importIntoCodex('s_missing_row', null, '/tmp/x.jsonl').catch((e: unknown) => ({ ok: false as const, error: String(e) }));
+  check(!guard.ok, 'an import for a conversation Wanigan has no record of does not run', guard);
+
+  const codex = (await detectProviders()).find((p) => p.harnessId === 'codex' && p.path);
+  if (!codex?.path) {
+    say('   (codex is not installed here: the live import checks are skipped, not passed)');
+    return;
+  }
+  const realLedger = path.join(os.homedir(), '.codex', 'external_agent_session_imports.json');
+  const realLedgerBefore = fs.existsSync(realLedger) ? fs.statSync(realLedger).mtimeMs : null;
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-codex-import-')));
+  try {
+    const home = path.join(root, 'home');
+    const codexHome = path.join(root, 'codex');
+    const work = path.join(root, 'work');
+    fs.mkdirSync(codexHome, { recursive: true });
+    fs.mkdirSync(work, { recursive: true });
+    const sid = '11111111-2222-4333-8444-555555555555';
+    const dir = path.join(home, '.claude', 'projects', work.replace(/[^A-Za-z0-9]/g, '-'));
+    fs.mkdirSync(dir, { recursive: true });
+    const transcript = path.join(dir, `${sid}.jsonl`);
+    const at = '2026-09-14T10:00:00.000Z';
+    fs.writeFileSync(transcript, [
+      { type: 'user', uuid: 'u1', parentUuid: null, sessionId: sid, cwd: work, timestamp: at, version: '2.1.271', userType: 'external', isSidechain: false, message: { role: 'user', content: 'Add a README line saying hello.' } },
+      { type: 'assistant', uuid: 'a1', parentUuid: 'u1', sessionId: sid, cwd: work, timestamp: at, version: '2.1.271', userType: 'external', isSidechain: false, message: { id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-opus-5', content: [{ type: 'text', text: 'I added the line.' }], stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5 } } },
+    ].map((line) => JSON.stringify(line)).join('\n') + '\n');
+    const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, CODEX_HOME: codexHome, TMPDIR: os.tmpdir() };
+
+    const run = await importer.runSessionImport({ bin: codex.path, env, transcriptPath: transcript, cwd: work, title: null, timeoutMs: 60_000 });
+    check(run.result.ok, 'Codex imports the synthetic Claude transcript into the temporary CODEX_HOME with no login', run.result);
+    check(!run.observed.some((m) => /^(turn|item)\//.test(m)), 'the import starts no turn', run.observed);
+    if (run.result.ok) {
+      const ledger = fs.readFileSync(path.join(codexHome, 'external_agent_session_imports.json'), 'utf8');
+      check(ledgerThreadFor(ledger, transcript) === run.result.threadId,
+        'Codex’s own import ledger names the same thread the completed notification did', run.result.threadId);
+      const rollouts: string[] = [];
+      const walk = (d: string) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else rollouts.push(f); } };
+      walk(path.join(codexHome, 'sessions'));
+      check(rollouts.some((f) => f.includes(run.result.ok ? run.result.threadId : '-')),
+        'and a resumable rollout for that thread exists in the temporary home', rollouts.length);
+      check(!fs.existsSync(path.join(codexHome, 'hooks.json')) && !fs.existsSync(path.join(codexHome, 'config.toml')),
+        'no hooks or config were written: only the conversation was imported');
+    }
+
+    const elsewhere = path.join(root, 'elsewhere', `${sid}.jsonl`);
+    fs.mkdirSync(path.dirname(elsewhere), { recursive: true });
+    fs.copyFileSync(transcript, elsewhere);
+    const outside = await importer.runSessionImport({ bin: codex.path, env, transcriptPath: elsewhere, cwd: work, title: null, timeoutMs: 60_000 });
+    check(!outside.result.ok && /session_not_detected/.test(outside.result.ok ? '' : outside.result.failures.join(' ')),
+      'a transcript outside $HOME/.claude/projects is not detected by Codex — the case the plan refuses up front', outside.result);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  const realLedgerAfter = fs.existsSync(realLedger) ? fs.statSync(realLedger).mtimeMs : null;
+  check(realLedgerBefore === realLedgerAfter, 'the real ~/.codex import ledger was not touched', { realLedgerBefore, realLedgerAfter });
+}
