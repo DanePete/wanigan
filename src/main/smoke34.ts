@@ -418,3 +418,38 @@ export async function runHealthAndDiagnosticsSmoke(check: Check, say: Say): Prom
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
+
+/**
+ * helper sweep · P5 runtime — where each launch value came from.
+ */
+export async function runLaunchProvenanceSmoke(check: Check, say: Say): Promise<void> {
+  say('── helper sweep · P5 runtime · where each launch value came from');
+  const provenance = await import('./launch-provenance');
+  const now = Date.now();
+  const session = {
+    id: `s_p5_prov_${now}`, providerId: 'claude', projectId: 'p_none', projectPath: '/tmp', projectName: 'prov',
+    title: 'Claude · prov', status: 'running', pid: null, exitCode: null, createdAt: now, endedAt: null, unread: 0,
+    model: 'opus', effort: undefined, permissionMode: 'acceptEdits', accountId: null, accountLabel: null,
+    worktree: '/tmp/wt', harnessId: 'claude-code',
+    providerProfile: {
+      id: 'claude', packId: 'builtin', packVersion: '1', label: 'Claude Code', harness: 'claude-code', backendId: 'anthropic',
+      bin: 'claude', enabled: true, supports: { model: true, effort: true, permissionMode: true, resume: true }, capabilities: {},
+      launchFields: [{ id: 'permissionMode', label: 'Permission mode', kind: 'select', defaultValue: 'acceptEdits' }],
+    },
+  } as unknown as Parameters<typeof provenance.recordLaunchProvenance>[0];
+  provenance.recordLaunchProvenance(session, { providerId: 'claude', projectId: 'p_none', model: 'opus', permissionMode: 'acceptEdits', isolate: true, extraArgs: '--verbose' });
+  const read = provenance.launchProvenanceFor(session.id);
+  const field = (name: string) => read?.values.find((v) => v.field === name);
+  check(read?.origin === 'renderer', 'a renderer launch is recorded with its origin', read?.origin);
+  check(field('model')?.source === 'at-launch' && field('permissionMode')?.source === 'provider-profile' && field('effort')?.source === 'cli-default',
+    'a chosen model is set at launch, a declared default is the profile’s, and an empty effort is the CLI’s own default',
+    read?.values.map((v) => `${v.field}:${v.source}`));
+  check(field('isolation')?.source === 'at-launch' && field('extraArgs')?.value === '--verbose',
+    'isolation and extra flags carry their launch source', [field('isolation'), field('extraArgs')]);
+  check(!!field('env')?.value?.includes('CLAUDE_CONFIG_DIR') && field('env')?.note?.includes('names only') === true,
+    'environment appears as names with their sources, never values', field('env'));
+  check(provenance.launchProvenanceFor('s_never_launched') === null, 'a session with no record and no snapshot has no invented provenance');
+  const index = sourceOf('src/main/index.ts');
+  check(/handle\('sessions:create'[\s\S]{0,200}createSession\(opts\);[\s\S]{0,120}recordLaunchProvenance\(created, opts\)/.test(index),
+    'the renderer’s launch handler records provenance at the call site');
+}

@@ -13,6 +13,7 @@ import type { HeadlessRefusal } from '../shared/slash-commands';
 import type { CodexImportOutcome, CodexImportPlan } from '../shared/codex-import';
 import type { DoctorReport } from '../shared/codex-doctor';
 import type { DiagnosticsPreview } from '../shared/diagnostics';
+import type { LaunchOrigin, LaunchProvenanceInput, LaunchValue } from '../shared/launch-provenance';
 /* ── end helper sweep · P5 runtime ── */
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
@@ -868,6 +869,10 @@ const api = {
   diagnostics: {
     preview: () => call<DiagnosticsPreview>('diagnostics:preview'),
     save: (names: string[]) => call<string | null>('diagnostics:save', names),
+  },
+  launchProvenance: {
+    forSession: (sessionId: string) => call<{ origin: LaunchOrigin; values: LaunchValue[] } | null>('launchProvenance:forSession', sessionId),
+    envNames: (providerId: string) => call<{ env: LaunchProvenanceInput['env']; packSource: 'builtin' | 'local' | null; packLabel: string | null }>('launchProvenance:envNames', providerId),
   },
   /* ── end helper sweep · P5 runtime ── */
   on: {

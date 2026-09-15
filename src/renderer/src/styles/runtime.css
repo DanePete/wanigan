@@ -69,3 +69,13 @@
   .doctor-fix { grid-column: auto; }
   .diag-files li { grid-template-columns: 1fr; gap: var(--s-1); }
 }
+.provenance { display: grid; gap: var(--s-2); }
+.provenance-list { margin: 0; display: grid; gap: var(--s-1); }
+.provenance-list > div { display: grid; grid-template-columns: minmax(7rem, max-content) 1fr; gap: var(--s-3); font-size: var(--t-small); align-items: baseline; }
+.provenance-list dt { color: var(--text-faint); }
+.provenance-list dd { margin: 0; display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); min-width: 0; overflow-wrap: anywhere; }
+.provenance-value { color: var(--text); font-family: var(--mono); font-size: var(--t-micro); }
+.provenance-source { color: var(--text-dim); }
+.launch-provenance { margin-top: var(--s-2); font-size: var(--t-small); }
+.launch-provenance > summary { cursor: pointer; color: var(--text-dim); }
+.launch-provenance .provenance-list > div { grid-template-columns: 1fr; gap: 0; }

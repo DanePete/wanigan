@@ -6,6 +6,8 @@ import { providerTint } from '@shared/provider-status';
 import type { ConfigPinCheck } from '@shared/exec-config';
 import { Hint, Mark, Note, Icon, SectionHead, ago } from './bits';
 import '../styles/launch.css';
+/* helper sweep · P5 runtime */
+import { DialogProvenance } from './LaunchProvenance';
 import { useDialog } from './useDialog';
 
 /** Same filled progression the session header uses: ◇ → ◈ → ◆ reads in greyscale. */
@@ -1122,6 +1124,22 @@ export default function NewSessionDialog({
                       ? (configCheck.lastAccepted?.how === 'reviewed' ? 'Matches what you reviewed' : 'Matches the first-launch pin')
                       : configAccepted ? 'Changed, confirmed' : 'Changed since accepted'}</dd></div>
           </dl>
+          {/* helper sweep · P5 runtime: each value's source, names-only environment. */}
+          {provider && (
+            <DialogProvenance input={{
+              providerId: provider.id, providerLabel: provider.label, harness: provider.harnessId ?? null,
+              fields: {
+                model: { supported: modelField.supported, value: model, profileDefault: modelField.defaultValue || null },
+                effort: { supported: effortField.supported, value: effort, profileDefault: effortField.defaultValue || null },
+                permissionMode: { supported: permissionField.supported, value: permissionMode, profileDefault: permissionField.defaultValue || null },
+              },
+              account: accountRes?.account
+                ? { label: accountRes.account.label, source: accountRes.source === 'none' ? 'none' : accountRes.source }
+                : { label: null, source: 'none', reason: accountRes?.reason ?? null },
+              isolation: { isolated: isolate, reusedWorktree: false },
+              extraArgs,
+            }} />
+          )}
           <nav aria-label="Launch sections">
             {[['launch-space', 'Agent and space'], ['launch-controls', 'Session controls'], ['launch-message', initialPrompt.trim() ? 'First message added' : 'Add a first message']].map(([id, label]) =>
               <button key={id} type="button" onClick={() => { const section = document.getElementById(id); section?.scrollIntoView({ block: 'start', behavior: 'instant' }); section?.querySelector<HTMLElement>('input, select, textarea, button')?.focus({ preventScroll: true }); }}><span>{label}</span><Icon name="chevron-right" /></button>)}

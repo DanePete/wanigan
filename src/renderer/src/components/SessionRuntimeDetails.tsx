@@ -1,5 +1,6 @@
 import type { Session } from '@shared/types';
 import SessionProcessesPanel from './SessionProcesses';
+import { SessionProvenance } from './LaunchProvenance';
 import '../styles/runtime.css';
 
 /**
@@ -10,11 +11,19 @@ import '../styles/runtime.css';
  */
 export default function SessionRuntimeDetails({ session }: { session: Session }) {
   return (
-    <details className="session-runtime">
-      <summary>Processes and ports<span>{session.status === 'exited' ? 'what it left running' : 'what it is running'}</span></summary>
-      <div className="session-runtime-body">
-        <SessionProcessesPanel session={session} compact />
-      </div>
-    </details>
+    <>
+      <details className="session-runtime">
+        <summary>Processes and ports<span>{session.status === 'exited' ? 'what it left running' : 'what it is running'}</span></summary>
+        <div className="session-runtime-body">
+          <SessionProcessesPanel session={session} compact />
+        </div>
+      </details>
+      <details className="session-runtime">
+        <summary>Launch values<span>where each one came from</span></summary>
+        <div className="session-runtime-body">
+          <SessionProvenance sessionId={session.id} />
+        </div>
+      </details>
+    </>
   );
 }

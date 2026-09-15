@@ -1528,6 +1528,14 @@ function migrateHelperSweepP5(d: Database.Database) {
       ledger_confirmed INTEGER,
       error            TEXT
     );
+    -- Where each launch value came from, resolved when the renderer launched it.
+    -- Values are words and environment NAMES only; no environment value is kept.
+    CREATE TABLE IF NOT EXISTS session_launch_provenance (
+      session_id  TEXT PRIMARY KEY,
+      at          INTEGER NOT NULL,
+      origin      TEXT NOT NULL,
+      values_json TEXT NOT NULL
+    );
   `);
 }
 /* ── end helper sweep · P5 runtime ── */

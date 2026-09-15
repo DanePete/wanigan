@@ -8,13 +8,14 @@
  */
 import * as processWatch from './process-watch';
 import { codexReaderHealth } from './codex-rollout-health';
-import { detectProviders } from './providers';
+import { detectProviders, providerById } from './providers';
 import { recentRefusals } from './headless-guard';
 import { headlessOutcomes } from './headless';
 import { importIntoCodex, planCodexImport } from './codex-import';
 import { runCodexDoctor } from './codex-doctor';
 import { previewDiagnostics, saveDiagnostics } from './diagnostics';
 import { BrowserWindow } from 'electron';
+import { envNamesFor, launchProvenanceFor } from './launch-provenance';
 
 type Handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => void;
 
@@ -62,4 +63,12 @@ export function registerP5Ipc(handle: Handle): void {
   handle('codexDoctor:run', (accountId: unknown) => runCodexDoctor(accountId));
   handle('diagnostics:preview', () => previewDiagnostics());
   handle('diagnostics:save', (names: unknown) => saveDiagnostics(BrowserWindow.getFocusedWindow(), names));
+
+  // ── where each launch value came from ───────────────────────────────
+  handle('launchProvenance:forSession', (sessionId: unknown) => launchProvenanceFor(sessionId));
+  // Names only: the dialog shows which variables a profile sets, never a value.
+  handle('launchProvenance:envNames', (providerId: unknown) => {
+    const def = typeof providerId === 'string' ? providerById(providerId) : null;
+    return { env: envNamesFor(providerId), packSource: def?.source ?? null, packLabel: def?.packId ?? null };
+  });
 }

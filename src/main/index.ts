@@ -109,6 +109,7 @@ import * as scout from './improvement-scout';
 /* ── helper sweep · P5 runtime ── */
 import { registerP5Ipc } from './ipc-p5';
 import * as processWatch from './process-watch';
+import { recordLaunchProvenance } from './launch-provenance';
 /* ── end helper sweep · P5 runtime ── */
 
 // The smoke suite deliberately has no window. A rejected startup promise in
@@ -1991,6 +1992,9 @@ function registerIpc() {
   }));
   handle('sessions:create', async (opts: LaunchOptions) => {
     const created = await createSession(opts);
+    /* ── helper sweep · P5 runtime ── */
+    recordLaunchProvenance(created, opts);
+    /* ── end helper sweep · P5 runtime ── */
     // The first live agent is what takes the power-save blocker. Doing it here
     // rather than waiting for the poller means the Mac is already held before
     // the operator has finished closing the lid.
