@@ -9,7 +9,7 @@ import {
 import { projectById } from './store';
 import { db } from './db';
 import { refuseIfHalted } from './halt';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { PastSession } from '../shared/types';
@@ -1058,7 +1058,7 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
   // specific session resumable later rather than just "the most recent one".
   // GLM runs that same CLI, so it gets one too — --session-id is local
   // bookkeeping and never reaches the API.
-  const id0 = `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const id0 = `s_${Date.now().toString(36)}_${randomBytes(2).toString('hex')}`;
   const id = id0;
 
   const savedResume = opts.resumeFrom;
