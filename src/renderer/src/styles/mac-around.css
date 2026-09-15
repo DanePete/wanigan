@@ -37,6 +37,10 @@
 .p8-recap-list ul { display: grid; gap: var(--s-1); margin: var(--s-1) 0 0; padding: 0; list-style: none; }
 .p8-recap-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); font-size: var(--t-small); min-width: 0; }
 
+/* A Recent conversation whose transcript chain is broken. Wraps rather than
+   clips: the sentence is the warning, and a truncated one says nothing. */
+.past-chain { display: block; margin-top: var(--s-1); font-size: var(--t-micro); line-height: 1.4; color: var(--warning); white-space: normal; overflow-wrap: anywhere; }
+
 /* The hook dry-run bench. */
 .p8-bench { display: grid; gap: var(--s-2); margin-top: var(--s-2); padding: var(--s-2) var(--s-3); border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg-sunk); }
 .p8-bench-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }

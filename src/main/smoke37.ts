@@ -541,6 +541,57 @@ export async function runHookBenchSmoke(check: Check, say: Say, tmp: string): Pr
   }
 }
 
+export async function runTranscriptChainSmoke(check: Check, say: Say, tmp: string): Promise<void> {
+  say('── helper sweep · P8 mac · checking a conversation before resuming it');
+  const chainMod = await import('./transcript-chain');
+  const { db } = await import('./db');
+  const configDir = path.join(tmp, 'claude-config');
+  const projectPath = path.join(tmp, 'chain-project');
+  fs.mkdirSync(projectPath, { recursive: true });
+  const slug = path.resolve(projectPath).replace(/[^a-zA-Z0-9]/g, '-');
+  fs.mkdirSync(path.join(configDir, 'projects', slug), { recursive: true });
+  const saved = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = configDir;
+  const row = (uuid: string, parentUuid: string | null, type: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ uuid, parentUuid, type, sessionId: 'x', timestamp: new Date().toISOString(), ...extra });
+  const write = (conversation: string, lines: string[]) => {
+    const file = path.join(configDir, 'projects', slug, `${conversation}.jsonl`);
+    fs.writeFileSync(file, `${lines.join('\n')}\n`);
+    return file;
+  };
+  const insert = db().prepare('INSERT INTO session_log (id, conversation_id, provider_id, harness_id, project_id, project_path, project_name, started_at, ended_at) VALUES (?,?,?,?,?,?,?,?,?)');
+  try {
+    const broken = '11111111-2222-3333-4444-555555555555';
+    const intact = '66666666-7777-8888-9999-000000000000';
+    const brokenFile = write(broken, [
+      row('u0', null, 'user'), row('a0', 'u0', 'assistant'), row('u1', 'a0', 'user'), row('a1', 'u1', 'assistant'),
+      row('p0', 'a1', 'progress'),
+      row('u2', 'p0', 'user'), row('a2', 'u2', 'assistant'),
+    ]);
+    write(intact, [row('u0', null, 'user'), row('att', 'u0', 'attachment'), row('a0', 'att', 'assistant')]);
+    insert.run('s_chain_broken', broken, 'claude', 'claude-code', 'prj_chain', projectPath, 'chain', Date.now() - 5_000, Date.now() - 4_000);
+    insert.run('s_chain_intact', intact, 'claude', 'claude-code', 'prj_chain', projectPath, 'chain', Date.now() - 5_000, Date.now() - 4_000);
+    insert.run('s_chain_codex', 'thread-1', 'codex', 'codex', 'prj_chain', projectPath, 'chain', Date.now() - 5_000, Date.now() - 4_000);
+    const before = fs.readFileSync(brokenFile);
+    const beforeStat = fs.statSync(brokenFile);
+
+    const checks = chainMod.chainChecks(['s_chain_broken', 's_chain_intact', 's_chain_codex', 's_nope']);
+    const b = checks.s_chain_broken;
+    check(b.checked && b.skipped === 4 && b.kinds.join() === 'progress',
+      'a real transcript whose newest messages hang off a progress record reports the four earlier messages as ones a resume may skip', b);
+    check(checks.s_chain_intact.checked && checks.s_chain_intact.skipped === 0, 'an intact chain through an attachment reports nothing', checks.s_chain_intact);
+    check(!checks.s_chain_codex.checked && /Only Claude Code/.test(checks.s_chain_codex.reason), 'a Codex conversation is not checked, and says why', checks.s_chain_codex);
+    check(!checks.s_nope.checked, 'an unknown conversation is not invented');
+    const after = fs.statSync(brokenFile);
+    check(Buffer.compare(before, fs.readFileSync(brokenFile)) === 0 && after.mtimeMs === beforeStat.mtimeMs && fs.readdirSync(path.dirname(brokenFile)).length === 2,
+      'the provider transcript is read, never written: same bytes, same mtime, no backup file beside it');
+    const warning = (await import('../shared/transcript-chain')).chainWarning(b.checked ? b : { skipped: 0 });
+    check(warning === '4 messages may be skipped when this conversation resumes (broken message chain in the transcript)', 'the Recent row and the confirmation carry the exact sentence', warning);
+  } finally {
+    if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = saved;
+  }
+}
+
 export async function runP8Smoke(check: Check, say: Say): Promise<void> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-p8-'));
   try {
@@ -551,6 +602,7 @@ export async function runP8Smoke(check: Check, say: Say): Promise<void> {
     await runNamingTemplateSmoke(check, say, tmp);
     await runWeeklyRecapSmoke(check, say, tmp);
     await runHookBenchSmoke(check, say, tmp);
+    await runTranscriptChainSmoke(check, say, tmp);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

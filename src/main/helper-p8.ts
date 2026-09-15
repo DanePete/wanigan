@@ -10,6 +10,7 @@ import { validProfileId } from '../shared/mcp-tool-grants';
 import { namingTemplates, setNamingTemplates } from './naming';
 import { exportWeeklyRecap, weeklyRecap } from './weekly-recap';
 import { runHookBench, setHookBenchWindow } from './hook-bench';
+import { chainChecks } from './transcript-chain';
 
 /**
  * The Mac around the app, local automation and attribution, wired once.
@@ -79,6 +80,9 @@ export function registerP8Ipc(handle: Handle): void {
 
   // The hook dry-run bench. Main finds the command; a native dialog asks first.
   handle('hookBench:run', (target: unknown) => runHookBench(target));
+
+  // Whether a conversation's transcript chain will carry it whole into a resume. Read-only.
+  handle('chain:check', (ids: unknown) => chainChecks(ids));
 }
 
 export function startP8Services(next: P8Deps): void {

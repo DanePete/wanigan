@@ -55,6 +55,7 @@ import type { McpToolGrant, McpToolInfo } from '../shared/mcp-tool-grants';
 import type { NamingTemplates } from '../shared/naming-templates';
 import type { WeeklyRecap } from '../shared/weekly-recap';
 import type { HookBenchResult } from '../shared/hook-bench';
+import type { ChainCheck } from '../shared/transcript-chain';
 /* ── end helper sweep · P8 mac ── */
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -1014,6 +1015,9 @@ const api = {
       call<OperatorTerminal>('scripts:run', projectId, source, name, target ?? null),
     recentRuns: (projectId: string) =>
       call<{ at: number; cwd: string; source: string; name: string; command: string; exitCode: number | null }[]>('scripts:recentRuns', projectId),
+  },
+  chain: {
+    check: (ids: string[]) => call<Record<string, ChainCheck>>('chain:check', ids),
   },
   hookBench: {
     run: (target: { projectPath: string; source: string; event: string; ordinal: number }) =>
