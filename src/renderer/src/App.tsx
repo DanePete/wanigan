@@ -3,8 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { Attention, AttentionKind, ClaudeContextUsage, HaltState, InAppAlert, MotionSetting, Project, ProviderInfo, Session, ThemeSetting, TranscriptHit } from '@shared/types';
 import { filterPalette, groupPalette, transcriptHitRow, TRANSCRIPT_QUERY_MIN, TRANSCRIPT_RESULT_CAP, type PaletteEntry } from '@shared/palette';
-import { DIGIT_ROUTES, SIDEBAR_GROUPS, TABS, TAB_ICONS, TAB_SHORTCUTS, labelForTab, type Tab } from '@shared/routes';
-import { bindingMatches, inTerminal, modalOpen } from './bindings';
+import { SIDEBAR_GROUPS, TABS, TAB_ICONS, labelForTab, type Tab } from '@shared/routes';
+import { bindingMatches, chordLabels, inTerminal, loadKeymap, modalOpen, retiredChordPressed, useChord, useKeymap } from './bindings';
 import Sessions from './views/Sessions';
 import MissionRoom from './views/MissionRoom';
 import { useContextStory } from './orb/context-story';
@@ -65,10 +65,10 @@ type StartupStatus = {
  *    The companion has a separate, bounded GPU loop in the footer.
  *
  * The route table (TABS, TAB_SHORTCUTS) lives in shared/routes.ts as pure
- * data, and the key table in ./bindings.ts, so the rail, the palette, the
- * cheat sheet and the handlers below read one record. ⌘1–9 still read
- * positionally out of TABS; every other chord is matched against the same
- * aria-keyshortcuts string the control publishes.
+ * data, the key table in shared/bindings.ts, and the operator's rebindings over
+ * both in shared/keymap.ts, so the rail, the palette, the cheat sheet and the
+ * handlers below read one record. Every chord, the digit row included, is
+ * matched against the same aria-keyshortcuts string the control publishes.
  */
 
 // The wide rail follows the digit map: the first nine tabs are ⌘1–9 in
@@ -261,6 +261,10 @@ export default function App() {
   const [retryingStartup, setRetryingStartup] = useState(false);
   const [palette, setPalette] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
+  // The effective keymap. Every chord this shell prints or publishes reads it,
+  // so a rebinding changes the header, the palette and the sidebar on the same
+  // frame it changes what the keys do.
+  const keymap = useKeymap().map;
   // FTS answers for the current palette query — asked only while the palette
   // is open, debounced, and cleared with it. The archive is local; still,
   // nothing is searched until at least three characters ask for it.
@@ -680,52 +684,40 @@ export default function App() {
     }
   }, [spaceId]);
 
-  // ⌘1–9. Capture phase, so the shell wins over any view handler underneath
-  // (Sessions once bound the same digits to its tabs and only one of us could
-  // win); inside a terminal neither of us takes the key.
+  // The stored keymap, read once for this window. Until it answers — and if it
+  // never does — the defaults are what the keys do, and Settings says which.
+  useEffect(() => { void loadKeymap(); }, []);
+
+  // Every shell chord, in one capture-phase handler, so the shell wins over any
+  // view handler underneath (Sessions once bound the digits to its tabs and only
+  // one of us could win). There used to be three handlers, and each filtered on
+  // the shape of its default before asking the table — ⌘ alone for the digit
+  // row, ⌘⇧ for the named routes, ⌥⌘ for the list — and the digit row went
+  // positionally, ⌘n to the nth tab. A rebinding to any other shape would have
+  // been printed and published and never matched. Now every chord is asked of
+  // bindingMatches, which reads the effective keymap and refuses every chord
+  // but ⌘. inside a terminal host.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
-      if (e.key.length !== 1) return;
       if (modalOpen()) return;  // a dialog owns the keyboard
+      const take = (run: () => void) => { e.preventDefault(); e.stopPropagation(); run(); };
       // New work should be available from every surface, not only after a
-      // detour back to Sessions. The terminal still owns this shortcut while
-      // it has focus, just as it owns the number keys below: bindingMatches
-      // refuses every chord but ⌘. inside a terminal host.
-      if (bindingMatches(e, 'new-session')) {
-        e.preventDefault();
-        e.stopPropagation();
-        requestNewSession();
-        return;
-      }
-      // Runs is the tenth surface. It deserves a direct route rather than
-      // being the only tab that disappears once the header overflows.
-      if (bindingMatches(e, 'view:runs')) {
-        e.preventDefault();
-        e.stopPropagation();
-        go('runs');
-        return;
-      }
-      // The key every Mac user already tries for preferences. Settings sits
-      // past the digit row, so without this it had no direct route at all.
-      if (bindingMatches(e, 'view:settings')) {
-        e.preventDefault();
-        e.stopPropagation();
-        go('settings');
-        return;
-      }
-      // Positional: ⌘n is the nth entry of TABS, which is why routes.ts keeps
-      // the surfaces past the digit row at the end of that list.
-      if (inTerminal()) return;                            // the PTY owns its keystrokes
-      const n = Number(e.key);
-      if (!Number.isInteger(n) || n < 1 || n > DIGIT_ROUTES) return;
-      e.preventDefault();
-      e.stopPropagation();
-      go(TABS[n - 1].id);
+      // detour back to Sessions.
+      if (bindingMatches(e, 'new-session')) { take(requestNewSession); return; }
+      // Demo mode still asks first: a mistyped chord used to rewrite every
+      // project name on screen and reload the window with no confirmation.
+      if (bindingMatches(e, 'demo')) { take(() => setDemoPrompt({ next: !demoOn })); return; }
+      if (bindingMatches(e, 'sidebar')) { take(toggleSidebar); return; }
+      const route = TABS.find((item) => bindingMatches(e, `view:${item.id}`));
+      if (route) { take(() => go(route.id)); return; }
+      // A default a rebinding moved away from reaches nothing, including a view
+      // handler that still tests it by hand. Stopped, not prevented: a text
+      // field's own meaning for the key (⌃K deletes to the end of the line) stays.
+      if (retiredChordPressed(e)) e.stopPropagation();
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [go, requestNewSession]);
+  }, [demoOn, go, requestNewSession, toggleSidebar]);
 
   // A tab strip has a finite width; the command palette does not. It is the
   // keyboard route to every surface, not a second hidden navigation system.
@@ -879,34 +871,6 @@ export default function App() {
       });
   }, [reportError]);
 
-  // ⌘⇧ chords. ⌘⇧D still reaches demo mode from anywhere — a toggle you have
-  // to go and find is one you forget until after the screenshot — but it now
-  // asks first: a mistyped chord used to rewrite every project name on screen
-  // and reload the window with no confirmation and no way back but retyping it.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || !e.shiftKey || e.altKey) return;
-      if (modalOpen()) return;  // a dialog owns the keyboard
-      // bindingMatches refuses every one of these inside a terminal host: the
-      // PTY owns its keystrokes.
-      if (bindingMatches(e, 'demo')) {
-        e.preventDefault();
-        e.stopPropagation();
-        setDemoPrompt({ next: !demoOn });
-        return;
-      }
-      // The named chords for the surfaces past the digit row, matched against
-      // the same aria-keyshortcuts strings the rail publishes for them.
-      const chord = TABS.find((item) => bindingMatches(e, `view:${item.id}`));
-      if (!chord) return;
-      e.preventDefault();
-      e.stopPropagation();
-      go(chord.id);
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [demoOn, go]);
-
   // ── terminal output ────────────────────────────────────────────────
   // For the window's lifetime, not the Sessions view's. Views mount and unmount
   // as tabs change; a live agent does not stop printing because you stepped
@@ -986,22 +950,6 @@ export default function App() {
     return () => { off(); };
   }, []);
 
-  // ⌥⌘S: the destination list off and on. Its own handler because the two
-  // above both refuse Option — the digit row takes ⌘ alone and the named
-  // routes take ⌘⇧, and widening either guard would let a chord meant for one
-  // of them fall through to the other.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (modalOpen()) return;
-      if (!bindingMatches(e, 'sidebar')) return;
-      e.preventDefault();
-      e.stopPropagation();
-      toggleSidebar();
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [toggleSidebar]);
-
   // Escape dismisses the shell error, matching every other overlay here. It
   // stays out of the way of a terminal and of anything more modal than itself.
   useEffect(() => {
@@ -1047,7 +995,7 @@ export default function App() {
       key: 'action:new-session',
       title: 'New session',
       hint: 'Start an interactive agent',
-      meta: '⌘T',
+      meta: chordLabels(keymap, 'new-session').glyphs,
       primary: true,
       group: 'Actions',
       haystack: 'new session start agent interactive terminal',
@@ -1087,7 +1035,7 @@ export default function App() {
         key: `view:${item.id}`,
         title: item.label,
         hint: `${item.group} · ${item.hint}`,
-        meta: TAB_SHORTCUTS[item.id].label,
+        meta: chordLabels(keymap, `view:${item.id}`).keys,
         group: 'Views',
         haystack: `${item.label} ${item.group} ${item.keywords}`,
         run: () => go(item.id),
@@ -1152,7 +1100,7 @@ export default function App() {
       });
     });
     return items;
-  }, [attention, choose, go, jumpToSettings, openSession, paletteHits, paletteQuery, projectId, projects,
+  }, [attention, choose, go, jumpToSettings, keymap, openSession, paletteHits, paletteQuery, projectId, projects,
     reportError, requestNewSession, sessions, setTheme, themePreference, themeResolved]);
 
   return (
@@ -1183,7 +1131,7 @@ export default function App() {
             <span>
               Projects, sessions, transcripts and usage figures are examples. Real work stays private; demo actions cannot change it.
             </span>
-            <small>Turn it off here, in Settings › App, or with ⌘⇧D.</small>
+            <small>Turn it off here, in Settings › App, or with {chordLabels(keymap, 'demo').glyphs}.</small>
           </div>
           <button className="btn" type="button" onClick={() => setDemoPrompt({ next: false })}>
             Turn off demo mode
@@ -1197,9 +1145,9 @@ export default function App() {
       <header className="app-header">
           <button className="hdr-toggle" type="button" onClick={toggleSidebar}
                   aria-expanded={sidebarOpen} aria-controls="wanigan-sidebar"
-                  aria-keyshortcuts="Alt+Meta+S"
-                  title={`${sidebarOpen ? 'Hide' : 'Show'} the destination list (⌥⌘S)`}
-                  aria-label={`${sidebarOpen ? 'Hide' : 'Show'} the destination list (Option Command S)`}>
+                  aria-keyshortcuts={chordLabels(keymap, 'sidebar').aria}
+                  title={`${sidebarOpen ? 'Hide' : 'Show'} the destination list (${chordLabels(keymap, 'sidebar').glyphs})`}
+                  aria-label={`${sidebarOpen ? 'Hide' : 'Show'} the destination list (${chordLabels(keymap, 'sidebar').spoken})`}>
             <Icon name="panel" />
           </button>
           <div className="brand-lockup">
@@ -1226,11 +1174,12 @@ export default function App() {
             <HaltControl halt={halt} onChange={setHalt} />
 
             <button className="nav-new-session" type="button" onClick={requestNewSession}
-                    title="Start a new interactive agent session (⌘T)"
-                    aria-label="Start a new interactive agent session (Command T)">
+                    aria-keyshortcuts={chordLabels(keymap, 'new-session').aria}
+                    title={`Start a new interactive agent session (${chordLabels(keymap, 'new-session').glyphs})`}
+                    aria-label={`Start a new interactive agent session (${chordLabels(keymap, 'new-session').spoken})`}>
               <span className="nav-new-session-plus" aria-hidden="true">+</span>
               <span className="nav-new-session-label">New session</span>
-              <span className="nav-shortcut" aria-hidden="true">⌘T</span>
+              <span className="nav-shortcut" aria-hidden="true">{chordLabels(keymap, 'new-session').glyphs}</span>
             </button>
 
             {/* One label, one shortcut, one surface. This button used to open a
@@ -1249,18 +1198,18 @@ export default function App() {
               <button className={`nav-views-button${railHasActiveTab ? '' : ' on'}`} type="button"
                       aria-haspopup="dialog" aria-expanded={palette}
                       aria-current={railHasActiveTab ? undefined : 'page'}
-                      aria-keyshortcuts="Meta+K Control+K"
+                      aria-keyshortcuts={chordLabels(keymap, 'palette').aria}
                       title={railHasActiveTab
-                        ? 'Search views, projects, live sessions, settings and transcripts (⌘K)'
-                        : `${labelForTab(tab)} is the view on screen — search every view, project and live session (⌘K)`}
+                        ? `Search views, projects, live sessions, settings and transcripts (${chordLabels(keymap, 'palette').glyphs})`
+                        : `${labelForTab(tab)} is the view on screen — search every view, project and live session (${chordLabels(keymap, 'palette').glyphs})`}
                       aria-label={railHasActiveTab
-                        ? 'Search views, projects, live sessions, settings and transcripts (Command K)'
-                        : `${labelForTab(tab)} is the view on screen. Search every view, project and live session (Command K)`}
+                        ? `Search views, projects, live sessions, settings and transcripts (${chordLabels(keymap, 'palette').spoken})`
+                        : `${labelForTab(tab)} is the view on screen. Search every view, project and live session (${chordLabels(keymap, 'palette').spoken})`}
                       onClick={() => (palette ? closePalette() : openPalette())}>
                 {railHasActiveTab
                   ? <span>Search</span>
                   : <span><span aria-hidden="true">✓ </span>{labelForTab(tab)}</span>}
-                <span className="nav-views-shortcut" aria-hidden="true">⌘K</span>
+                <span className="nav-views-shortcut" aria-hidden="true">{chordLabels(keymap, 'palette').glyphs}</span>
               </button>
             </div>
 
@@ -2116,7 +2065,9 @@ function NavTab({ id, tab, go, label, badge, progress, marks, onKeyDown, roving 
   roving: Tab;
 }) {
   const on = tab === id;
-  const shortcut = TAB_SHORTCUTS[id];
+  // The route's chord as it stands, so the row prints and publishes a rebinding.
+  const chord = useChord(`view:${id}`);
+  const shortcut = { label: chord.keys, aria: chord.aria };
   return (
     <div className="nav-tab-wrap">
       <button className={`nav-tab${on ? ' on' : ''}`} type="button" data-nav-tab={id}

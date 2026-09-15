@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Attention, AttentionKind, Session } from '@shared/types';
 import { ago } from './bits';
+import { useChord } from '../bindings';
 
 /**
  * Which of nine agents needs a human, and which has needed one longest.
@@ -46,6 +47,7 @@ const BURST_MS = 250;
 const PREF = 'wanigan.attention.all';
 
 export default function AttentionQueue({ onJump }: { onJump: (sessionId: string) => void }) {
+  const newSessionChord = useChord('new-session').glyphs;
   const [items, setItems] = useState<Attention[] | null>(null);
   const [sessions, setSessions] = useState<Record<string, Session>>({});
   const [err, setErr] = useState<string | null>(null);
@@ -131,7 +133,7 @@ export default function AttentionQueue({ onJump }: { onJump: (sessionId: string)
         <span className="atq-none">{err ? 'Attention unavailable.' : items.length === 0 && liveCount > 0 ? 'Waiting for an attention signal.' : 'Nothing waiting.'}</span>
         {!err && items.length === 0 ? (
           <span className="atq-hint">
-            {liveCount > 0 ? `${liveCount} live ${liveCount === 1 ? 'session' : 'sessions'}. No attention state has been reported yet.` : 'No sessions running. Start one with ⌘T and it appears here the moment it blocks.'}
+            {liveCount > 0 ? `${liveCount} live ${liveCount === 1 ? 'session' : 'sessions'}. No attention state has been reported yet.` : `No sessions running. Start one with ${newSessionChord} and it appears here the moment it blocks.`}
           </span>
         ) : !err && (
           // Zero results: the filter excluded everything, so hand back the way in.

@@ -1,0 +1,10 @@
+{
+  "at": "2026-09-15T04:32:41.967Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; keymap IPC answered by src/shared/keymap.ts in the probe process; no real agent calls",
+  "mode": "before",
+  "checks": [
+    "before: Settings › App has Appearance, Motion and Demo mode, and no way to change a shortcut",
+    "before: the cheat sheet prints New session on ⌘T, the only chord it can have"
+  ],
+  "errors": []
+}

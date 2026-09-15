@@ -5,6 +5,7 @@ import type { DiscoveryResult } from '../shared/discovery';
 import type { HandoffPlan, HandoffResult } from '../shared/handoff';
 import type { HandoverBegun, HandoverFinished } from '../shared/handover';
 import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/companion';
+import type { KeymapState, KeymapWrite } from '../shared/keymap';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AccountLimits,
@@ -694,6 +695,15 @@ const api = {
     all: () => call<WaniganSettings>('settings:all'),
     set: (k: string, v: string) => call<WaniganSettings>('settings:set', k, v),
     setTheme: (theme: ThemeSetting) => call<WaniganSettings>('settings:setTheme', theme),
+  },
+  // Keyboard shortcuts. Main validates every write against the binding table
+  // and answers a refused chord with its named reason as data, so the row that
+  // asked can print why; only a failure to answer at all rejects.
+  keymap: {
+    get: () => call<KeymapState>('keymap:get'),
+    set: (id: string, chord: string) => call<KeymapWrite>('keymap:set', id, chord),
+    reset: (id: string) => call<KeymapWrite>('keymap:reset', id),
+    resetAll: () => call<KeymapState>('keymap:resetAll'),
   },
   // ── Wanigan Compound · provider-neutral learning ───────────────────
   learning: {
