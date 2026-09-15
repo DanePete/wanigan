@@ -6,6 +6,50 @@ import { app } from 'electron';
 type Check = (ok: boolean, label: string, detail?: unknown) => void;
 type Say = (s: string) => void;
 
+const appSource = (rel: string) => fs.readFileSync(path.join(app.getAppPath(), rel), 'utf8');
+
+/**
+ * An interactive session is never queued work, and nothing may pretend it is.
+ *
+ * The CLI offered `queue session`, no runner was ever registered for the kind,
+ * and the item it wrote waited on "no runner registered" for ever while the
+ * command promised it would start when a slot was free.
+ */
+export async function runQueueSessionKindSmoke(check: Check, say: Say): Promise<void> {
+  say('── queue · an interactive session is refused, not parked for ever');
+  const { db } = await import('./db');
+  const queue = await import('./queue');
+  const id = `q_smoke_session_kind_${Date.now().toString(36)}`;
+  try {
+    let refused = '';
+    try { queue.enqueue('session', 'a session nobody will start', { projectId: 'prj_none' }); }
+    catch (error) { refused = error instanceof Error ? error.message : String(error); }
+    check(refused === queue.SESSION_NOT_QUEUED,
+      'enqueueing an interactive session is refused with the reason, at the one function every caller goes through', refused);
+
+    // What an older build, or the CLI before this change, left in the table.
+    db().prepare(`
+      INSERT INTO queue (id, kind, state, priority, label, payload_json, blocked_by, attempts,
+                         next_attempt_at, created_at, started_at, ended_at, error, lease_owner, lease_expires_at)
+      VALUES (?, 'session', 'waiting', 1, 'an old queued session', '{}', 'no runner registered', 0, NULL, ?, NULL, NULL, NULL, NULL, NULL)
+    `).run(id, Date.now() - 60_000);
+    await queue.tick();
+    const after = db().prepare('SELECT state, error, blocked_by FROM queue WHERE id = ?').get(id) as
+      { state: string; error: string | null; blocked_by: string | null } | undefined;
+    check(after?.state === 'failed' && after.error === queue.SESSION_NOT_QUEUED && after.blocked_by === null,
+      'a session item an older build queued is ended on the next tick with the same reason, instead of waiting on a runner that will never exist', after);
+
+    const cli = appSource('src/main/cli.ts');
+    const kinds = /const QUEUE_KINDS: QueueKind\[\] = \[([^\]]*)\]/.exec(cli)?.[1] ?? '';
+    check(kinds.length > 0 && !kinds.includes('session') && !/kind is session/.test(cli),
+      'the CLI no longer lists session as a kind it can queue, in its argument check or its help', kinds);
+  } catch (error) {
+    check(false, 'the queue session-kind checks ran without throwing', String(error));
+  } finally {
+    try { db().prepare('DELETE FROM queue WHERE id = ?').run(id); } catch { /* the smoke database is thrown away */ }
+  }
+}
+
 /**
  * Transcripts found where the CLI filed them, and kept when Wanigan never saw
  * the session end.
@@ -120,7 +164,7 @@ export async function runTranscriptPlacementSmoke(check: Check, say: Say): Promi
     check(archivedSource('s_place_codex') === null && swept.archived >= 1,
       'a Codex execution writes no such file and is passed over without spending an attempt', swept);
 
-    const source = fs.readFileSync(path.join(app.getAppPath(), 'src/main/sessions.ts'), 'utf8');
+    const source = appSource('src/main/sessions.ts');
     const init = source.slice(source.indexOf('export function initSessions('), source.indexOf('export function listSessions('));
     check(/reconcileAbandonedSessions\(\);[\s\S]*archiveInterruptedTranscripts\(\)/.test(init),
       'launch closes abandoned executions and then schedules their archive, so the sweep is reachable and not only callable');

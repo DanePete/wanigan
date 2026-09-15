@@ -325,7 +325,7 @@ ANSI, because it is as likely to be piped into `awk` as read by a person.
 | `status <runId>` | one run: progress, its batches with time left on the 24-hour clock, cost, the last ten events |
 | `poll` | one poll cycle against the Batches API, then exit — deliberately not a loop, because a second poller races the app's own |
 | `export <runId> <file>` | results to `.csv` or `.jsonl`; the extension decides which |
-| `queue <kind> <label> [json]` | queue work — kind is `session`, `headless` or `batch`, payload is one quoted JSON argument |
+| `queue <kind> <label> [json]` | queue work — kind is `headless` or `batch`, payload is one quoted JSON argument; an interactive session is never queued |
 | `sessions [limit]` | recent agent sessions from `session_log` |
 | `help` | the same list |
 

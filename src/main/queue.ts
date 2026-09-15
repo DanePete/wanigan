@@ -119,7 +119,19 @@ function mapRow(r: QueueRow): QueueItem {
 
 /* ── enqueue / inspect ───────────────────────────────────────────────── */
 
+/**
+ * Why an interactive session is never queued work.
+ *
+ * A session is a terminal with a person at it. Above its limit it is refused at
+ * launch rather than queued, and nothing starts an unattended terminal, so no
+ * runner has ever been registered for the kind. The CLI offered `queue session`
+ * anyway, and the item it wrote waited on "no runner registered" for ever while
+ * the command said it would start when a slot was free.
+ */
+export const SESSION_NOT_QUEUED = 'Interactive sessions are not queued: a session is a terminal with a person at it, so it starts only when someone starts it in Wanigan. Queue headless work or a batch instead.';
+
 export function enqueue(kind: QueueKind, label: string, payload: unknown, priority = 100): QueueItem {
+  if (kind === 'session') throw new Error(SESSION_NOT_QUEUED);
   const name = label.trim();
   if (!name) throw new Error('A queued item needs a label — it is the only thing the user sees while it waits.');
 
@@ -352,6 +364,14 @@ async function dispatch(): Promise<void> {
     const kind = row.kind as QueueKind;
     const run = runners.get(kind);
 
+    // An interactive session written by an older build never gets a runner, so
+    // waiting is not a state it can leave; it ends here, saying why.
+    if (!run && kind === 'session') {
+      d.prepare("UPDATE queue SET state='failed', ended_at=?, blocked_by=NULL, error=? WHERE id=? AND state='waiting'")
+        .run(now, SESSION_NOT_QUEUED, row.id);
+      moved = true;
+      continue;
+    }
     // A kind nobody has wired yet waits rather than fails: the work is still
     // valid, the app simply has not registered that surface in this build.
     if (!run) {
