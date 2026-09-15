@@ -71,6 +71,13 @@ export async function runHelperAttentionSmoke(check: Check, say: Say): Promise<v
       && !!deniedVerdict.detail?.includes('[Data Exfiltration]'),
     'the verdict names the tool, the input and the classifier reason, and carries a one-line retry draft', deniedVerdict.helper);
 
+    const endedId = 's_p2_denied_ended';
+    const postEnded = poster(endedId);
+    await postEnded({ hook_event_name: 'PermissionDenied', tool_name: 'Bash', tool_input: { command: 'git push' }, reason: '[Irreversible] x' });
+    await postEnded({ hook_event_name: 'Stop' });
+    const endedVerdict = attention.attentionOf(session(endedId));
+    check(endedVerdict.label === 'Denied by auto mode' && endedVerdict.kind === 'finished' && !!endedVerdict.helper?.denial,
+      'a denial the model ended its turn over still stands, as a finished turn, so the composer will send the retry line', endedVerdict);
     const docsId = 's_p2_denied_docs';
     await poster(docsId)({ hook_event_name: 'PermissionDenied', tool_name: 'Write', tool_input: { file_path: '/tmp/x' }, denial_reason: 'no_verdict' });
     check(attention.attentionOf(session(docsId)).helper?.denial?.reason === 'no classifier verdict',
@@ -342,7 +349,7 @@ export async function runHelperAttentionSmoke(check: Check, say: Say): Promise<v
     const cols = (db().prepare('PRAGMA table_info(session_events)').all() as { name: string }[]).map((c) => c.name);
     check(['detail', 'input_digest', 'result_digest'].every((c) => cols.includes(c)), 'the timeline columns were added additively', cols);
 
-    for (const id of [deniedId, docsId, spinId, limitId, askId, failId, quietId, 's_p2_away']) {
+    for (const id of [deniedId, endedId, docsId, spinId, limitId, askId, failId, quietId, 's_p2_away']) {
       attention.forgetSession(id);
       hooks.cleanupHookSettings(id);
     }

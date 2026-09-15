@@ -442,7 +442,16 @@ function classify(session: Session, now: number): Attention {
   const denied = exited ? null : standingDenial(events, now);
   if (denied) {
     const reasonWords = denialReasonWords(denied.detail);
-    return mk(session, 'error', denied.at, `event:${denied.id}`,
+    // The model usually carries on after a refusal and often ends its turn over
+    // it. Once it has, the session is at its prompt: the denial still stands
+    // and still says so, but as a finished turn rather than an error, because
+    // an error kind holds the composer's queue — and the retry line this
+    // verdict drafts would sit unsent behind it for the rest of the window.
+    let ended: SessionEvent | null = null;
+    for (let i = events.length - 1; i >= 0 && events[i] !== denied; i--) {
+      if (events[i].event === 'Stop') { ended = events[i]; break; }
+    }
+    return mk(session, ended ? 'finished' : 'error', ended ? ended.at : denied.at, `event:${(ended ?? denied).id}`,
       `${join(denied.toolName, denied.summary) ?? 'A tool call'} — ${reasonWords ?? 'no reason recorded'}`,
       denied.toolName, now,
       why('auto-mode-denied', denied, `Auto mode in Claude Code refused a tool call in the last ${minutes(DENIAL_WINDOW_MS)}, and neither a new prompt nor the same call succeeding has settled it.`),
