@@ -592,6 +592,103 @@ export async function runTranscriptChainSmoke(check: Check, say: Say, tmp: strin
   }
 }
 
+export async function runLineAttributionSmoke(check: Check, say: Say, tmp: string): Promise<void> {
+  say('── helper sweep · P8 mac · line-level attribution on a real repository');
+  const { execFileSync } = await import('node:child_process');
+  const attribution = await import('./line-attribution');
+  const checkpoints = await import('./checkpoints');
+  const worktrees = await import('./worktrees');
+  const { addProject } = await import('./store');
+  const { db } = await import('./db');
+
+  const repo = path.join(tmp, 'attr-repo');
+  fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' }).toString().trim();
+  git(repo, 'init', '-q', '-b', 'main');
+  git(repo, 'config', 'user.email', 'smoke@wanigan.test');
+  git(repo, 'config', 'user.name', 'Smoke');
+  fs.writeFileSync(path.join(repo, 'src', 'cart.ts'), 'line A\nline B\nline C\n');
+  git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'base');
+  const base = git(repo, 'rev-parse', 'HEAD');
+  const project = await addProject(repo);
+  const sessionId = `s_attr_${Date.now().toString(36)}`;
+  const wt = await worktrees.createWorktree(repo, project.name, sessionId);
+  const cart = path.join(wt.path, 'src', 'cart.ts');
+  db().prepare(`INSERT INTO session_log (id, conversation_id, provider_id, harness_id, project_id, project_path, project_name, started_at, worktree, baseline_head, title, model, initial_prompt)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(sessionId, 'conv-attr-1', 'claude', 'claude-code', project.id, repo, project.name, Date.now() - 60_000, wt.path, base,
+    'Fix the cart', 'claude-opus-5', 'SECRET PROMPT TEXT THAT MUST NOT REACH A NOTE');
+  try {
+    checkpoints.__test.registerSessionCheckpoints({ sessionId, cwd: wt.path, hooksCapable: true, gitHead: base });
+    await checkpoints.__test.awaitIdle(sessionId);
+    checkpoints.__test.enqueueBoundary(sessionId, 'turn-start');
+    await checkpoints.__test.awaitIdle(sessionId);
+    fs.appendFileSync(cart, 'turn one x\nturn one y\n');
+    checkpoints.__test.enqueueBoundary(sessionId, 'turn-end');
+    await checkpoints.__test.awaitIdle(sessionId);
+    git(wt.path, 'add', '-A'); git(wt.path, 'commit', '-qm', 'agent: turn one');
+    const c1 = git(wt.path, 'rev-parse', 'HEAD');
+    checkpoints.__test.enqueueBoundary(sessionId, 'turn-start');
+    await checkpoints.__test.awaitIdle(sessionId);
+    fs.appendFileSync(cart, 'turn two z\n');
+    checkpoints.__test.enqueueBoundary(sessionId, 'turn-end');
+    await checkpoints.__test.awaitIdle(sessionId);
+    // After the agent's turn ended: the operator's own edit, never checkpointed as a turn.
+    fs.appendFileSync(cart, 'operator line\n');
+
+    const summary = await attribution.computeAttribution(sessionId);
+    check(summary.addedByTurns === 3 && summary.addedInCommits === 2 && summary.commits === 1,
+      'computing stores the lines each turn added (3) and the lines the session\'s commit added (2)', summary);
+    const stored = db().prepare('SELECT origin, turn, file, start_line, end_line, commit_hash FROM line_attribution WHERE session_id = ? ORDER BY origin, turn').all(sessionId) as
+      { origin: string; turn: number | null; file: string; start_line: number; end_line: number; commit_hash: string }[];
+    check(stored.some((r) => r.origin === 'commit' && r.commit_hash === c1 && r.turn === 1 && r.file === 'src/cart.ts' && r.start_line === 4 && r.end_line === 5)
+      && stored.some((r) => r.origin === 'checkpoint' && r.turn === 2 && r.start_line === 6 && r.end_line === 6),
+      'ranges are stored per file and commit, with the commit placed in the turn that had started when it was made', JSON.stringify(stored));
+    check(summary.stillPresent?.lines === 2 && summary.stillPresent.merged === false && /at [0-9a-f]{7}/.test(summary.stillPresent.target),
+      'both committed lines are still present on the unmerged branch', summary.stillPresent);
+
+    const who = await attribution.attributionForFile(sessionId, 'src/cart.ts');
+    const at = (line: number) => who.ranges.find((r) => line >= r.start && line <= r.end) ?? null;
+    check(at(4)?.origin === 'commit' && at(4)?.turn === 1 && at(5)?.title === 'Fix the cart',
+      '"who wrote this" traces the committed lines through git blame to the session and turn 1', JSON.stringify(who.ranges));
+    check(at(6)?.origin === 'checkpoint' && at(6)?.turn === 2, 'an uncommitted line is traced through the checkpoint chain to turn 2', JSON.stringify(who.ranges));
+    check(at(1) === null && at(3) === null && at(7) === null && who.unmarked === 4,
+      'the base lines and the operator\'s own uncommitted line after the turn are left unmarked, never guessed', JSON.stringify({ ranges: who.ranges, unmarked: who.unmarked }));
+    let refused = '';
+    try { await attribution.attributionForFile(sessionId, '../../etc/passwd'); } catch (e) { refused = String(e); }
+    check(/inside this session/.test(refused), 'a path outside the session\'s checkout is refused', refused);
+
+    // Merge the branch, then remove one of the agent's lines on main.
+    git(repo, 'merge', '-q', '--no-ff', '-m', 'merge agent work', wt.branch!);
+    const merged = await attribution.attributionSummary(sessionId);
+    check(merged.stillPresent?.merged === true && merged.stillPresent.lines === 2 && /^main at/.test(merged.stillPresent.target),
+      'once merged, survival is measured on the branch it was merged into', merged.stillPresent);
+    fs.writeFileSync(path.join(repo, 'src', 'cart.ts'), 'line A\nline B\nline C\nturn one x\n');
+    git(repo, 'commit', '-qam', 'operator trims a line');
+    const trimmed = await attribution.attributionSummary(sessionId);
+    check(trimmed.stillPresent?.lines === 1, 'a line removed after the merge is no longer counted as present', trimmed.stillPresent);
+
+    attribution.setAttributionConfirm(async () => false);
+    const cancelled = await attribution.exportGitNotes(sessionId);
+    check(cancelled.cancelled === true && !git(repo, 'for-each-ref', 'refs/notes/').length, 'declining the export writes no note');
+    let asked = 0;
+    attribution.setAttributionConfirm(async (input) => { asked = input.commits; return true; });
+    const exported = await attribution.exportGitNotes(sessionId);
+    const noteText = git(repo, 'notes', '--ref=refs/notes/ai', 'show', c1);
+    check(exported.written === 1 && asked === 1 && /^src\/cart\.ts\n {2}s_[0-9a-f]{14}::t_[0-9a-f]{14} 4-5\n---\n/.test(noteText) && /"schema_version": "authorship\/3.0.0"/.test(noteText),
+      'the export writes one Git AI authorship note under refs/notes/ai for the session\'s commit', noteText);
+    check(!noteText.includes('SECRET PROMPT') && !noteText.includes('Fix the cart'), 'the note carries ranges and the agent id, never the prompt or the title');
+    const again = await attribution.exportGitNotes(sessionId);
+    check(again.written === 0 && again.skipped === 1 && git(repo, 'notes', '--ref=refs/notes/ai', 'show', c1) === noteText,
+      'an existing note is left alone on a second export, not overwritten', again);
+    check(git(repo, 'remote').length === 0 && git(repo, 'for-each-ref', '--format=%(refname)', 'refs/notes/').split('\n').join() === 'refs/notes/ai',
+      'the notes ref exists only locally; the export has no push step to take');
+  } finally {
+    attribution.setAttributionConfirm(null);
+    await checkpoints.finalizeSessionCheckpoints(sessionId).catch(() => {});
+    await worktrees.removeWorktree(wt.path, true).catch(() => {});
+  }
+}
+
 export async function runP8Smoke(check: Check, say: Say): Promise<void> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-p8-'));
   try {
@@ -603,6 +700,7 @@ export async function runP8Smoke(check: Check, say: Say): Promise<void> {
     await runWeeklyRecapSmoke(check, say, tmp);
     await runHookBenchSmoke(check, say, tmp);
     await runTranscriptChainSmoke(check, say, tmp);
+    await runLineAttributionSmoke(check, say, tmp);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

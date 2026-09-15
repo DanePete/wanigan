@@ -15,6 +15,8 @@ import {
   ClaimsSection, DependenciesSection, FileRowMarks, FindResults, ImageDiff, ReviewFileBar, ReviewSummaryBar, ReviewToolbar, ReviewViewOptions,
   StageHunksPanel, findInPatch, scopedFiles, useReviewWork, type FindHit, type ReviewScope,
 } from './ReviewWorkbench';
+/* helper sweep · P8 mac */
+import { AttributedFileView, AttributionSummaryBar } from './WhoWroteThis';
 type Editor = { id: string; label: string; path: string };
 type Changed = { path: string; index: string; work: string; staged: boolean; untracked: boolean; preexisting?: boolean; committed?: boolean };
 type Entry = { name: string; rel: string; dir: boolean; size: number };
@@ -965,7 +967,9 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
               ))}
             </div>
             <div className="code-view">
-              {file ? <FileView file={file} /> : <p className="faint code-hint">Select a file to view it.</p>}
+              {/* helper sweep · P8 mac: attribution counts, Export as git notes…, and "Show who wrote this". */}
+              {sessionId && <AttributionSummaryBar sessionId={sessionId} />}
+              {file ? <AttributedFileView file={file} sessionId={sessionId} /> : <p className="faint code-hint">Select a file to view it.</p>}
             </div>
           </>
         )}
@@ -1173,23 +1177,9 @@ function ReviewDiff({ text, fallbackFile, anchor, notes, onAdd, sessionId, onUns
   );
 }
 
-function FileView({ file }: { file: { rel: string; text: string; truncated: boolean; binary: boolean } }) {
-  if (file.binary) return <p className="faint code-hint">Binary file.</p>;
-  const lines = file.text.split('\n');
-  return (
-    <>
-      {file.truncated && <div className="code-err">Truncated for display — open in your editor for the whole file.</div>}
-      <pre className="filepre">
-        {lines.map((l, i) => (
-          <div key={i} className="fl">
-            <span className="ln">{i + 1}</span>
-            <span className="lt">{l || ' '}</span>
-          </div>
-        ))}
-      </pre>
-    </>
-  );
-}
+/* helper sweep · P8 mac: the file view moved to WhoWroteThis.tsx's
+   AttributedFileView, which renders the same lines and adds the
+   "Show who wrote this" gutter for a session's checkout. */
 
 /** A full-height reading surface for a file or review diff. */
 function CodeInspector({ title, text, kind, truncated, onClose, onExternal }: {

@@ -41,6 +41,17 @@
    clips: the sentence is the warning, and a truncated one says nothing. */
 .past-chain { display: block; margin-top: var(--s-1); font-size: var(--t-micro); line-height: 1.4; color: var(--warning); white-space: normal; overflow-wrap: anywhere; }
 
+/* Line attribution in the code reader. */
+.p8-attr { display: grid; gap: var(--s-1); padding: var(--s-1) var(--s-2); border-bottom: 1px solid var(--line-soft); font-size: var(--t-small); }
+.p8-attr-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-3); }
+.p8-attr-title { font-weight: 600; }
+.p8-attr-actions { display: inline-flex; gap: var(--s-1); margin-left: auto; }
+.p8-who-bar { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); padding: var(--s-1) var(--s-2); border-bottom: 1px solid var(--line-soft); }
+.filepre .fl .p8-who { display: inline-block; width: 14rem; flex: none; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding-right: var(--s-2); font-size: var(--t-micro); }
+.filepre .fl[data-attributed='true'] { background: var(--bg-sunk); }
+.p8-who-legend { display: grid; gap: var(--s-1); margin: 0; padding: var(--s-1) var(--s-2); list-style: none; border-bottom: 1px solid var(--line-soft); font-size: var(--t-micro); }
+.p8-who-legend li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); overflow-wrap: anywhere; }
+
 /* The hook dry-run bench. */
 .p8-bench { display: grid; gap: var(--s-2); margin-top: var(--s-2); padding: var(--s-2) var(--s-3); border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg-sunk); }
 .p8-bench-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }

@@ -11,6 +11,7 @@ import { namingTemplates, setNamingTemplates } from './naming';
 import { exportWeeklyRecap, weeklyRecap } from './weekly-recap';
 import { runHookBench, setHookBenchWindow } from './hook-bench';
 import { chainChecks } from './transcript-chain';
+import { attributionForFile, attributionSummary, computeAttribution, exportGitNotes, setAttributionWindow } from './line-attribution';
 
 /**
  * The Mac around the app, local automation and attribution, wired once.
@@ -83,12 +84,19 @@ export function registerP8Ipc(handle: Handle): void {
 
   // Whether a conversation's transcript chain will carry it whole into a resume. Read-only.
   handle('chain:check', (ids: unknown) => chainChecks(ids));
+
+  // Line-level attribution. Every channel names a session; main resolves its checkout.
+  handle('attribution:summary', (sessionId: unknown) => attributionSummary(sessionId));
+  handle('attribution:compute', (sessionId: unknown) => computeAttribution(sessionId));
+  handle('attribution:file', (sessionId: unknown, rel: unknown) => attributionForFile(sessionId, rel));
+  handle('attribution:exportNotes', (sessionId: unknown) => exportGitNotes(sessionId));
 }
 
 export function startP8Services(next: P8Deps): void {
   deps = next;
   terminalsMod.setOperatorTerminalWindow(next.liveWindow);
   setHookBenchWindow(next.liveWindow);
+  setAttributionWindow(next.liveWindow);
   void applySettings(macSettings()).catch((error) => console.warn('[wanigan] P8 services did not start:', error));
 }
 
