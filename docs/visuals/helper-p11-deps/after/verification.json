@@ -1,0 +1,363 @@
+{
+  "probe": "scripts/probe-helper-p11-deps.mjs",
+  "mode": "after",
+  "commit": "6c82a3a5f7708125322ed868179133914d8bfb8a",
+  "uncommittedChanges": 3,
+  "renderer": "out/renderer, served by scripts/renderer-harness.mjs in Chromium with the preload bridge stubbed",
+  "checks": [
+    {
+      "ok": true,
+      "label": "dark · palette applied (body rgb(23, 30, 36))"
+    },
+    {
+      "ok": true,
+      "label": "dark · the Dependencies section rendered in the code rail"
+    },
+    {
+      "ok": true,
+      "label": "dark · turn attribution on dependency rows: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · turn attribution on dependency rows: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · turn attribution on dependency rows: no NaN/undefined/null/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · a package already there at launch says \"before the first checkpoint\""
+    },
+    {
+      "ok": true,
+      "label": "dark · p-retry names turn 2 with its install command"
+    },
+    {
+      "ok": true,
+      "label": "dark · a change after the last snapshot is outside the recorded turns and says where"
+    },
+    {
+      "ok": true,
+      "label": "dark · an upgrade touched twice names both turns"
+    },
+    {
+      "ok": true,
+      "label": "dark · the turn jump is a button with an accessible name"
+    },
+    {
+      "ok": true,
+      "label": "dark · the old \"no lookup was made\" sentence is gone"
+    },
+    {
+      "ok": true,
+      "label": "dark · before a check the section says none was made and offers the button"
+    },
+    {
+      "ok": true,
+      "label": "dark · advisory results: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · advisory results: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · advisory results: no NaN/undefined/null/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · the malware advisory is listed first, then the package with advisories"
+    },
+    {
+      "ok": true,
+      "label": "dark · within the package the MAL- id comes first and is named malware"
+    },
+    {
+      "ok": true,
+      "label": "dark · a version published 30 h ago is flagged new, review, from the publish time read"
+    },
+    {
+      "ok": true,
+      "label": "dark · none listed is not worded as safe"
+    },
+    {
+      "ok": true,
+      "label": "dark · a rate-limited lookup is unknown with its reason"
+    },
+    {
+      "ok": true,
+      "label": "dark · a cached answer shows its age"
+    },
+    {
+      "ok": true,
+      "label": "dark · a Cargo requirement says why it was not looked up"
+    },
+    {
+      "ok": true,
+      "label": "dark · the requests this check sent are counted per host"
+    },
+    {
+      "ok": true,
+      "label": "dark · coverage is shown per ecosystem"
+    },
+    {
+      "ok": true,
+      "label": "dark · nothing on the panel calls a package safe"
+    },
+    {
+      "ok": true,
+      "label": "dark · the jump opens the Turns tab on turn 2"
+    },
+    {
+      "ok": true,
+      "label": "dark · turn 2's diff is on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · advisories while lookups are off: rendered"
+    },
+    {
+      "ok": true,
+      "label": "dark · advisories while lookups are off: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · advisories while lookups are off: no NaN/undefined/null/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "dark · with the switch off there is no button, only where to turn it on"
+    },
+    {
+      "ok": true,
+      "label": "dark · the switch reads off"
+    },
+    {
+      "ok": true,
+      "label": "dark · the switch text names all three hosts"
+    },
+    {
+      "ok": true,
+      "label": "dark · it says exactly what is sent, and that nothing runs on its own"
+    },
+    {
+      "ok": true,
+      "label": "dark · the switch row is not clipped"
+    },
+    {
+      "ok": true,
+      "label": "dark · pressing it turns it on through the bridge"
+    },
+    {
+      "ok": true,
+      "label": "light · palette applied (body rgb(244, 246, 248))"
+    },
+    {
+      "ok": true,
+      "label": "light · the Dependencies section rendered in the code rail"
+    },
+    {
+      "ok": true,
+      "label": "light · turn attribution on dependency rows: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · turn attribution on dependency rows: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · turn attribution on dependency rows: no NaN/undefined/null/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · a package already there at launch says \"before the first checkpoint\""
+    },
+    {
+      "ok": true,
+      "label": "light · p-retry names turn 2 with its install command"
+    },
+    {
+      "ok": true,
+      "label": "light · a change after the last snapshot is outside the recorded turns and says where"
+    },
+    {
+      "ok": true,
+      "label": "light · an upgrade touched twice names both turns"
+    },
+    {
+      "ok": true,
+      "label": "light · the turn jump is a button with an accessible name"
+    },
+    {
+      "ok": true,
+      "label": "light · the old \"no lookup was made\" sentence is gone"
+    },
+    {
+      "ok": true,
+      "label": "light · before a check the section says none was made and offers the button"
+    },
+    {
+      "ok": true,
+      "label": "light · advisory results: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · advisory results: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · advisory results: no NaN/undefined/null/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · the malware advisory is listed first, then the package with advisories"
+    },
+    {
+      "ok": true,
+      "label": "light · within the package the MAL- id comes first and is named malware"
+    },
+    {
+      "ok": true,
+      "label": "light · a version published 30 h ago is flagged new, review, from the publish time read"
+    },
+    {
+      "ok": true,
+      "label": "light · none listed is not worded as safe"
+    },
+    {
+      "ok": true,
+      "label": "light · a rate-limited lookup is unknown with its reason"
+    },
+    {
+      "ok": true,
+      "label": "light · a cached answer shows its age"
+    },
+    {
+      "ok": true,
+      "label": "light · a Cargo requirement says why it was not looked up"
+    },
+    {
+      "ok": true,
+      "label": "light · the requests this check sent are counted per host"
+    },
+    {
+      "ok": true,
+      "label": "light · coverage is shown per ecosystem"
+    },
+    {
+      "ok": true,
+      "label": "light · nothing on the panel calls a package safe"
+    },
+    {
+      "ok": true,
+      "label": "light · the jump opens the Turns tab on turn 2"
+    },
+    {
+      "ok": true,
+      "label": "light · turn 2's diff is on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · advisories while lookups are off: rendered"
+    },
+    {
+      "ok": true,
+      "label": "light · advisories while lookups are off: nothing a reader needs is clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · advisories while lookups are off: no NaN/undefined/null/[object Object] on screen"
+    },
+    {
+      "ok": true,
+      "label": "light · with the switch off there is no button, only where to turn it on"
+    },
+    {
+      "ok": true,
+      "label": "light · the switch reads off"
+    },
+    {
+      "ok": true,
+      "label": "light · the switch text names all three hosts"
+    },
+    {
+      "ok": true,
+      "label": "light · it says exactly what is sent, and that nothing runs on its own"
+    },
+    {
+      "ok": true,
+      "label": "light · the switch row is not clipped"
+    },
+    {
+      "ok": true,
+      "label": "light · pressing it turns it on through the bridge"
+    },
+    {
+      "ok": true,
+      "label": "no page errors while driving the views"
+    }
+  ],
+  "shots": [
+    {
+      "file": "docs/visuals/helper-p11-deps/after/code-rail-dependencies-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p11-deps/after/code-rail-advisories-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p11-deps/after/code-rail-advisory-coverage-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p11-deps/after/turn-jump-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p11-deps/after/advisories-off-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p11-deps/after/settings-observation-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "docs/visuals/helper-p11-deps/after/code-rail-dependencies-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p11-deps/after/code-rail-advisories-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p11-deps/after/code-rail-advisory-coverage-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p11-deps/after/turn-jump-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p11-deps/after/advisories-off-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "docs/visuals/helper-p11-deps/after/settings-observation-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    }
+  ]
+}

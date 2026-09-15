@@ -249,16 +249,11 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   useEffect(() => {
     if (!focusTurn || !sessionId || handledFocusNonce.current === focusTurn.nonce) return;
     handledFocusNonce.current = focusTurn.nonce;
-    setTab('turns');
-    window.wanigan.checkpoints.list(sessionId).then((rows) => {
-      setCps(rows);
-      const row = deriveTurns(rows).find((t) => t.turn === focusTurn.turn);
-      if (row) void openTurnDiff(row);
-    }).catch(() => {});
+    jumpToTurn(focusTurn.turn);
     // The parent clears the request once handled, so remounting this panel
     // (pane switches) cannot replay a stale jump.
     onFocusTurnHandled?.();
-    // openTurnDiff is stable in behaviour but not identity; the nonce guard
+    // jumpToTurn is stable in behaviour but not identity; the nonce guard
     // above is what makes this effect single-fire per jump.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusTurn, sessionId]);
@@ -284,6 +279,17 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
     // Single-fire per nonce, like the turn jump above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusFile, projectPath]);
+
+  /** Open one turn's diff on the Turns tab: a jump from the Timeline, or from a dependency's turn (helper sweep · P11 deps). */
+  function jumpToTurn(turn: number) {
+    if (!sessionId) return;
+    setTab('turns');
+    window.wanigan.checkpoints.list(sessionId).then((rows) => {
+      setCps(rows);
+      const row = deriveTurns(rows).find((t) => t.turn === turn);
+      if (row) void openTurnDiff(row);
+    }).catch(() => {});
+  }
 
   async function openTurnDiff(row: TurnRow) {
     setSelTurn(row.key); setTurnDiff(null); setCpPlan(null); setCpResult(null);
@@ -1097,7 +1103,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
               )}
               {sessionId && reviewing && (
                 <div className="rw-sections">
-                  <DependenciesSection sessionId={sessionId} refreshKey={reviewKey} />
+                  <DependenciesSection sessionId={sessionId} refreshKey={reviewKey} onJumpTurn={jumpToTurn} />
                   <ClaimsSection sessionId={sessionId} refreshKey={reviewKey} />
                   {/* ── helper sweep · P7 depth ── */}
                   <ReviewRulesSection sessionId={sessionId} refreshKey={reviewKey} />

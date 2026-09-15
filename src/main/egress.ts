@@ -11,6 +11,8 @@ import { improvementScoutSettings, listSources } from './improvement-scout';
 import { providerPackRegistry } from './providers';
 /* ── helper sweep · P2 attention ── */
 import { STATUS_PAGES, statusChecksEnabled } from './provider-incidents';
+/* ── helper sweep · P11 deps ── */
+import { advisoryEgressRows, advisoryLookupEnabled } from './dependency-advisories';
 import type { EgressHost, EgressPath, EgressPin, EgressReport } from '../shared/types';
 
 /**
@@ -382,6 +384,18 @@ function hosts(): EgressHost[] {
         activeNow: statusChecksEnabled(),
         overrideEnv: null,
       })),
+    /* ── helper sweep · P11 deps ── */
+    // Hosts and paths read from dependency-advisories.ts's constants, like the
+    // status pages above, so the row cannot describe a URL the code stopped using.
+    ...advisoryEgressRows().map((row): EgressHost => ({
+      host: row.host,
+      paths: row.paths,
+      by: 'wanigan',
+      purpose: row.purpose,
+      when: 'Only when you press Check advisories under a session’s Dependencies while "Dependency advisory lookups" is on in Settings (off by default). Never on a timer, a refresh or a launch. No credential, cookie, project name, path or file is sent, and a redirect is refused rather than followed.',
+      activeNow: advisoryLookupEnabled(),
+      overrideEnv: null,
+    })),
   ];
 
   // Appended last: an installed pack can add destinations to this table, and

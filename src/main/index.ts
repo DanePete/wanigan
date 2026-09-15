@@ -141,6 +141,9 @@ import { recordPhoneAsks, registerDepthIpc, startDepthServices } from './depth';
 /* ── helper sweep · P10 notes ── */
 import { registerChangeNotesIpc } from './change-notes';
 /* ── end helper sweep · P10 notes ── */
+/* ── helper sweep · P11 deps ── */
+import { registerDependencyAdvisoryIpc } from './dependency-advisories';
+/* ── end helper sweep · P11 deps ── */
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -3470,6 +3473,10 @@ function registerIpc() {
   // the operator's own review note. Session and note ids are validated in main.
   registerChangeNotesIpc(handle);
   /* ── end helper sweep · P10 notes ── */
+  /* ── helper sweep · P11 deps ── */
+  // Advisory lookups: opt-in egress, started only by the button, hosts fixed in main.
+  registerDependencyAdvisoryIpc(handle);
+  /* ── end helper sweep · P11 deps ── */
 }
 
 /* ── helper sweep · P8 mac ── */

@@ -30,6 +30,8 @@ import { TranscriptReaderActions, TranscriptTurnText } from '../components/Trans
 import CompactionDivider from '../components/CompactionDivider';
 import { HistoryRewriteAskPanel } from '../components/HistoryRewriteAsk';
 /* ── end helper sweep · P7 depth ── */
+/* ── helper sweep · P11 deps ── */
+import { ADVISORY_EGRESS_TEXT } from '@shared/dependency-advisories';
 
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
 type ProviderKeyStatus = { present: boolean; fingerprint: string | null; fromEnv: boolean; stored: boolean };
@@ -105,7 +107,7 @@ export const SETTINGS_INDEX: SettingsIndexEntry[] = [
   { tab: 'connections', tabLabel: 'Connections', section: 'Wanigan tools per provider', hint: 'All, none or selected Wanigan MCP tools per profile', keywords: 'mcp tools grant provider profile claude codex subset disable wanigan server per-provider' },
   { tab: 'connections', tabLabel: 'Connections', section: 'Automation socket', hint: 'A local, owner-only socket your scripts can drive', keywords: 'automation socket unix script cli draft send ledger token local api' },
   { tab: 'connections', tabLabel: 'Connections', section: 'MCP servers', hint: 'Tool servers agents may use', keywords: 'mcp server tools stdio http' },
-  { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Observation', hint: 'Telemetry, hooks, checkpoints, archive', keywords: 'telemetry hooks checkpoints notifications archive transcripts observation pet retention' },
+  { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Observation', hint: 'Telemetry, hooks, checkpoints, archive', keywords: 'telemetry hooks checkpoints notifications archive transcripts observation pet retention advisories osv dependencies packages' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Search transcripts', hint: 'Full-text search of the archive', keywords: 'transcript search fts archive conversation history full-text' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'What leaves this machine', hint: 'The egress report, host by host', keywords: 'egress network hosts privacy leaves machine report keychain' },
   { tab: 'privacy', tabLabel: 'Privacy & data', section: 'Storage', hint: 'Retention and locally kept data', keywords: 'storage retention delete data disk days' },
@@ -1984,6 +1986,8 @@ function Observation({ prefs, pending, setFlag }: {
 
           {/* helper sweep · P2 attention */}
           <ProviderStatusToggle />
+          {/* helper sweep · P11 deps */}
+          <DependencyAdvisoryToggle />
 
           <Toggle title="Keep a pet" on={prefs.pet} busy={pending === 'pet'}
                   onChange={(v) => void setFlag('pet', v)}>
@@ -5811,6 +5815,36 @@ function ProviderStatusToggle() {
       nothing about your projects or sessions is sent — made at most every three minutes and only while such a session
       is live or has just failed.
       {report.lastCheckedAt ? ` Last read ${new Date(report.lastCheckedAt).toLocaleTimeString()}${report.lastError ? ` — ${report.lastError}` : ''}.` : ' Not read yet this run.'}
+    </Toggle>
+  );
+}
+
+/* ── helper sweep · P11 deps ─────────────────────────────────────────── */
+
+/**
+ * The switch for looking up advisories on a session's added packages. Off on
+ * every install. Its text is the disclosure itself, imported from the module
+ * that also builds the request, so the hosts and fields it names are the ones
+ * the code sends; main refuses a lookup while it is off.
+ */
+function DependencyAdvisoryToggle() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    window.wanigan.deps.advisorySetting().then((r) => { if (live) setEnabled(r.enabled); }).catch((e) => { if (live) setErr(msg(e)); });
+    return () => { live = false; };
+  }, []);
+  if (enabled === null) return err ? <p className="dim">Dependency advisory lookups could not be read: {err}</p> : null;
+  return (
+    <Toggle title="Dependency advisory lookups" on={enabled} busy={busy}
+            onChange={(next) => {
+              setBusy(true);
+              window.wanigan.deps.setAdvisoryLookup(next).then((r) => setEnabled(r.enabled), (e) => setErr(msg(e))).finally(() => setBusy(false));
+            }}>
+      {ADVISORY_EGRESS_TEXT}
+      {err ? ` ${err}` : ''}
     </Toggle>
   );
 }

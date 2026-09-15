@@ -1,0 +1,93 @@
+{
+  "probe": "scripts/probe-helper-p11-deps.mjs",
+  "mode": "before",
+  "commit": "e77cf97972f69df8b37f0c37c9e062992cb3e46a",
+  "uncommittedChanges": 0,
+  "renderer": "out/renderer, served by scripts/renderer-harness.mjs in Chromium with the preload bridge stubbed",
+  "checks": [
+    {
+      "ok": true,
+      "label": "dark · palette applied (body rgb(23, 30, 36))"
+    },
+    {
+      "ok": true,
+      "label": "dark · the Dependencies section rendered in the code rail"
+    },
+    {
+      "ok": true,
+      "label": "dark · turn attribution on dependency rows: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "dark · before: the section ends by saying no lookup was made"
+    },
+    {
+      "ok": true,
+      "label": "dark · before: no dependency row offers a jump to its turn"
+    },
+    {
+      "ok": true,
+      "label": "dark · before: Settings has no advisory switch"
+    },
+    {
+      "ok": true,
+      "label": "light · palette applied (body rgb(244, 246, 248))"
+    },
+    {
+      "ok": true,
+      "label": "light · the Dependencies section rendered in the code rail"
+    },
+    {
+      "ok": true,
+      "label": "light · turn attribution on dependency rows: absent before the change"
+    },
+    {
+      "ok": true,
+      "label": "light · before: the section ends by saying no lookup was made"
+    },
+    {
+      "ok": true,
+      "label": "light · before: no dependency row offers a jump to its turn"
+    },
+    {
+      "ok": true,
+      "label": "light · before: Settings has no advisory switch"
+    },
+    {
+      "ok": true,
+      "label": "no page errors while driving the views"
+    }
+  ],
+  "shots": [
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p11-deps/docs/visuals/helper-p11-deps/before/code-rail-dependencies-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p11-deps/docs/visuals/helper-p11-deps/before/turn-jump-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p11-deps/docs/visuals/helper-p11-deps/before/settings-observation-dark.png",
+      "theme": "dark",
+      "bodyBackground": "rgb(23, 30, 36)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p11-deps/docs/visuals/helper-p11-deps/before/code-rail-dependencies-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p11-deps/docs/visuals/helper-p11-deps/before/turn-jump-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    },
+    {
+      "file": "../../../../../Users/dane/Projects/drupal/wanigan-p11-deps/docs/visuals/helper-p11-deps/before/settings-observation-light.png",
+      "theme": "light",
+      "bodyBackground": "rgb(244, 246, 248)"
+    }
+  ]
+}

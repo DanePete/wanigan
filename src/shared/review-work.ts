@@ -12,6 +12,8 @@ import type { RiskTier } from './risk-tiers.ts';
 import type { DepChange, ManifestKind } from './dependencies.ts';
 import type { GradedClaim } from './claims.ts';
 import type { ProofRun, ProofVerdict } from './regression-proof.ts';
+/* ── helper sweep · P11 deps ── */
+import type { DepTurnAttribution } from './dependency-turns.ts';
 
 export type ReviewWorkFile = ReviewFile & {
   review: FileReview;
@@ -61,6 +63,13 @@ export type ManifestReview = {
   lines: string[];
   note: string | null;
   error: string | null;
+  /* ── helper sweep · P11 deps ── */
+  /**
+   * Which turn made each change, aligned with `changes`. Null when it was not
+   * computed: a manifest that could not be read, or a caller (claims, the PR
+   * body) that does not ask for it.
+   */
+  attributions: DepTurnAttribution[] | null;
 };
 
 export type DependencyReview = {

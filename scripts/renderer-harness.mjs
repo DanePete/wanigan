@@ -314,6 +314,18 @@ export const STUB = `
     // and no notes is a session whose agent wrote none.
     'changeNotes.list': { sessionId: 's1', sessionTitle: 'claude · storefront', base: null, notes: [], withdrawn: 0,
       written: 0, limit: 60, toolGranted: true, unreadable: null },
+    // helper sweep · P11 deps. The advisory panel branches on enabled and on
+    // report.mode, and a Proxy is truthy for both: it would draw the Check
+    // advisories button beside a switch that is off, and list packages nobody
+    // looked up. dependency-advisories.ts returns exactly these on a fresh
+    // install: the switch off, and a cache-only read with nothing stored.
+    'deps.advisorySetting': { enabled: false },
+    // P2's provider-status switch sits one row above the advisory switch, and
+    // anything() drew it as "On" beside an off knob and "Last read 6:00:00 PM —
+    // 0". provider-incidents.ts statusReport() on a fresh start: the switch on
+    // (its default), nothing read yet.
+    'helper.statusReport': { enabled: true, lastCheckedAt: null, lastError: null, nextCheckAt: null, incidents: [] },
+    'deps.advisories': { mode: 'cache-only', assembledAt: now, enabled: false, packages: [], coverage: [], requests: [], notes: [] },
     'policyEvidence.autoMode': { trust: 'project', cliVersion: null, status: 'not-verified', block: null,
       providerLabel: null, note: 'No Claude Code CLI was detected, so no auto-mode block is written.' },
     // The model-assist card renders its consent branch off status.consent and

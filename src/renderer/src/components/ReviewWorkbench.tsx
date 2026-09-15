@@ -5,6 +5,9 @@ import type { ClaimsReview, DependencyReview, ReviewImageSide, ReviewWork, Revie
 import { FILE_KIND_LABEL, orderForReview, type ReviewOrderMode } from '@shared/review-order';
 import { inAgentScope } from '@shared/edit-attribution';
 import { parseUnifiedDiff } from '@shared/review-notes';
+/* ── helper sweep · P11 deps ── */
+import { attributionPhrase, installPhrase, type DepTurnAttribution } from '@shared/dependency-turns';
+import { DependencyAdvisories } from './DependencyAdvisories';
 import { ConfirmNote, Mark, Note, Segmented, type Tone } from './bits';
 import '../styles/review-work.css';
 
@@ -328,7 +331,34 @@ export function ImageDiff({ sessionId, file }: { sessionId: string; file: string
 
 /* ── dependencies and claims, under the diff ────────────────────────── */
 
-export function DependenciesSection({ sessionId, refreshKey }: { sessionId: string; refreshKey: string }) {
+/* ── helper sweep · P11 deps ── */
+/**
+ * Where a change came from: the turn whose snapshots first show it, with a jump
+ * to that turn's diff, and whether an install command ran in that turn. Any
+ * other answer is said as what it is, never rounded to a turn.
+ */
+function DepOrigin({ attribution, onJumpTurn }: { attribution: DepTurnAttribution; onJumpTurn?: (turn: number) => void }) {
+  const also = attribution.alsoTurns.length ? ` Also changed in turn${attribution.alsoTurns.length === 1 ? '' : 's'} ${attribution.alsoTurns.join(', ')}.` : '';
+  if (attribution.state !== 'turn') {
+    return (
+      <span className="faint rw-dep-origin">
+        {attributionPhrase(attribution)}
+        {attribution.state === 'outside-turns' || attribution.state === 'unknown' ? ` · ${attribution.detail}` : ''}{also}
+      </span>
+    );
+  }
+  return (
+    <span className="rw-dep-origin">
+      {onJumpTurn
+        ? <button type="button" className="btn btn-sm rw-dep-turn" onClick={() => onJumpTurn(attribution.turn)}
+                  aria-label={`Open turn ${attribution.turn}'s diff`}>turn {attribution.turn} ↗</button>
+        : <span className="mono">turn {attribution.turn}</span>}
+      <span className="faint"><Ticks text={`${installPhrase(attribution.install)}.${also}`} /></span>
+    </span>
+  );
+}
+
+export function DependenciesSection({ sessionId, refreshKey, onJumpTurn }: { sessionId: string; refreshKey: string; onJumpTurn?: (turn: number) => void }) {
   const [deps, setDeps] = useState<DependencyReview | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
@@ -351,11 +381,12 @@ export function DependenciesSection({ sessionId, refreshKey }: { sessionId: stri
           {m.error && <p className="review-why">{m.error}</p>}
           {!m.error && m.changes.length === 0 && <p className="faint rw-section-empty">Changed, but no dependency entry moved.</p>}
           <ul className="rw-dep-list">
-            {m.changes.map((c) => (
+            {m.changes.map((c, i) => (
               <li key={`${c.section}:${c.name}`}>
                 <Mark glyph={c.change === 'added' ? '+' : c.change === 'removed' ? '−' : '↕'} word={c.change} tone={c.change === 'added' ? 'warn' : c.change === 'removed' ? 'quiet' : 'accent'} />
                 <span className="mono">{c.name}</span>
                 <span className="faint">{c.change === 'added' ? c.after ?? '' : c.change === 'removed' ? c.before ?? '' : `${c.before ?? '?'} → ${c.after ?? '?'}`} · {c.section}</span>
+                {m.attributions?.[i] && <DepOrigin attribution={m.attributions[i]} onJumpTurn={onJumpTurn} />}
               </li>
             ))}
           </ul>
@@ -367,12 +398,14 @@ export function DependenciesSection({ sessionId, refreshKey }: { sessionId: stri
           {deps.installs.length
             ? `Install commands recorded in this session: ${deps.installs.map((i) => `${i.command}${i.ok === false ? ` (failed${i.exitCode !== null ? `, exit ${i.exitCode}` : ''})` : ''}`).join('; ')}.`
             : deps.hooksRecorded ? 'No install command is recorded for this session.' : 'This session has no hook record, so Wanigan cannot say whether an install ran.'}
-          {' '}No registry or advisory lookup was made.
         </p>
       )}
+      {deps && <DependencyAdvisories sessionId={sessionId} refreshKey={refreshKey}
+                                     hasCandidates={deps.manifests.some((m) => !m.error && m.changes.some((c) => c.change === 'added' || c.change === 'upgraded'))} />}
     </details>
   );
 }
+/* ── end helper sweep · P11 deps ── */
 
 /** `code` in a sentence as monospace, the rest as text. */
 function Ticks({ text }: { text: string }) {

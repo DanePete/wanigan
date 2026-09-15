@@ -83,6 +83,9 @@ import type { HookBenchResult } from '../shared/hook-bench';
 import type { ChainCheck } from '../shared/transcript-chain';
 import type { AnnotatedRange, AttributionSummary } from '../shared/line-attribution';
 /* ── end helper sweep · P8 mac ── */
+/* ── helper sweep · P11 deps ── */
+import type { AdvisoryReport } from '../shared/dependency-advisories';
+/* ── end helper sweep · P11 deps ── */
 /* ── helper sweep · P7 depth ── */
 import type { AskMessage } from '../shared/ask-items';
 import type { GoalLoopBudgets } from '../shared/goal-budgets';
@@ -1265,6 +1268,17 @@ const api = {
     quote: (sessionId: string, noteId: string) => call<{ id: string; at: number }>('changeNotes:quote', sessionId, noteId),
   },
   /* ── end helper sweep · P10 notes ── */
+  /* ── helper sweep · P11 deps ── */
+  // Advisory lookups for a session's added and upgraded packages. The renderer
+  // sends a session id and whether to look up; main reads the packages from
+  // that session's diff and owns every host. `lookup: false` reads the cache
+  // and makes no request.
+  deps: {
+    advisorySetting: () => call<{ enabled: boolean }>('deps:advisorySetting'),
+    setAdvisoryLookup: (on: boolean) => call<{ enabled: boolean }>('deps:setAdvisoryLookup', on),
+    advisories: (sessionId: string, opts: { lookup: boolean; refresh?: boolean }) => call<AdvisoryReport>('deps:advisories', sessionId, opts),
+  },
+  /* ── end helper sweep · P11 deps ── */
 };
 
 contextBridge.exposeInMainWorld('wanigan', api);
