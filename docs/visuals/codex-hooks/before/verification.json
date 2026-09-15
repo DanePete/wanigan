@@ -1,0 +1,9 @@
+{
+  "at": "2026-09-15T05:44:46.329Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; no Codex or agent run",
+  "mode": "before",
+  "checks": [
+    "before: the Codex runtime row names its version and path, and nothing says whether Codex hook events reach Wanigan"
+  ],
+  "errors": []
+}

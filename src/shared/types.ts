@@ -43,7 +43,49 @@ export type ProviderCapabilities = {
    */
   headlessBudget: boolean;
   note: string | null;
+  /**
+   * Codex hook events, which observe and never decide (shared/codex-hooks.ts).
+   *
+   * Separate from `hooks` on purpose. `hooks` means Wanigan's hook config is in
+   * the session and can answer a tool call, and the trust gate, briefings,
+   * checkpoints and held approvals all key on it. None of that is true of an
+   * observe-only hook, so this field never sets it. Absent for every other
+   * harness, and for a Codex binary whose trust has not been checked yet.
+   */
+  observeOnlyHooks?: ObserveOnlyHooks | null;
 };
+
+/** Why Wanigan does not inject its observe-only hooks, as a stable code. */
+export type ObserveOnlyHooksReason =
+  | 'harness-unproven' | 'hook-bus-off' | 'listener-down' | 'curl-missing' | 'no-version'
+  | 'timeout' | 'no-answer' | 'parse-failure' | 'hook-missing' | 'trust-not-granted'
+  | 'extra-args' | 'launch-failed';
+
+/**
+ * Whether Codex hook events reach Wanigan from one installed binary. Three
+ * shapes and no fourth: trusted and waiting for a real session, observed from
+ * one, or not available and why.
+ */
+export type ObserveOnlyHooks =
+  /** Codex trusts Wanigan's hooks by hash on this version; no real session has delivered an event yet. */
+  | { state: 'trusted'; version: string }
+  /** A real Codex session on this version delivered a hook event, first at `firstEventAt`. */
+  | { state: 'observed'; version: string; firstEventAt: number }
+  | { state: 'unavailable'; version: string | null; reason: ObserveOnlyHooksReason; detail: string | null };
+
+/**
+ * What one Codex session's launch did about hook events, and when its own hooks
+ * took over from OSC 9. Kept on the session record so a finished session can
+ * still say which of the two its events came from.
+ */
+export type CodexHookDelivery =
+  | {
+    state: 'injected';
+    version: string;
+    /** When this session's first hook event arrived; from then on OSC 9 is not recorded. Null until then. */
+    switchedAt: number | null;
+  }
+  | { state: 'not-injected'; reason: ObserveOnlyHooksReason; detail: string | null };
 
 /** Serializable provider-pack records exposed to the renderer. */
 export type ProviderPackInfo = {
@@ -237,6 +279,8 @@ export type Session = {
   configNote?: string | null;
   /** How the docket goal capsule reached this session, when one was requested. */
   goalCapsule?: GoalCapsuleDelivery | null;
+  /** Codex sessions only: whether observe-only hooks were injected, why not, and when they took over from OSC 9. */
+  codexHooks?: CodexHookDelivery | null;
   /** Repo state at launch — lets the code panel show only this session's work. */
   baseline?: Baseline;
   /**
