@@ -298,6 +298,9 @@ const api = {
       call<HeadlessRowDetail>('headless:rowDetail', runId, projectId),
     runs: (limit?: number) => call<HeadlessRun[]>('headless:runs', limit),
     cancel: (runId: string) => call<number>('headless:cancel', runId),
+    /** Answer a call a row held: approve or decline and resume, or stop the row there. */
+    answerHeld: (runId: string, projectId: string, decision: 'allow' | 'deny' | 'stop', note?: string) =>
+      call<HeadlessRowSummary>('headless:answerHeld', runId, projectId, decision, note),
   },
   // ── phase 11 · dispatcher ────────────────────────────────────────────
   queue: {

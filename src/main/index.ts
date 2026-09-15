@@ -2335,6 +2335,8 @@ function registerIpc() {
   });
   handle('headless:runs', (limit?: number) => headless.headlessRuns(limit));
   handle('headless:cancel', (runId: string) => headless.cancelHeadless(runId));
+  handle('headless:answerHeld', (runId: unknown, projectId: unknown, decision: unknown, note: unknown) =>
+    headless.answerHeld(runId, projectId, decision, note));
 
   // ══ phase 11 · dispatcher ═══════════════════════════════════════════
   handle('queue:list', (limit?: number) => queue.listQueue(limit));

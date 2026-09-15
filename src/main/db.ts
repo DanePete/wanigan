@@ -1066,6 +1066,10 @@ function migrateAccounts(d: Database.Database) {
   // estimated" over the sum of both. Nullable on purpose — a row written
   // before this column existed reads as unknown, never as reported.
   addColumn(d, 'headless_rows', 'cost_reported', 'INTEGER');
+  // The call a row stopped on for a person's answer, and the answer: JSON,
+  // bounded and redacted before it is written (headless.ts). Null for every
+  // row that never held a call, including all rows from before the column.
+  addColumn(d, 'headless_rows', 'held_json', 'TEXT');
 }
 
 /**
