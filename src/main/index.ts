@@ -52,6 +52,7 @@ import * as configPins from './config-pins';
 import * as queue from './queue';
 import * as policy from './policy';
 import * as headless from './headless';
+import * as attempts from './attempts';
 import * as spend from './spend';
 import { budgetHold } from './budget-gate';
 import * as notify from './notify';
@@ -1102,6 +1103,10 @@ async function startServices() {
     const name = projectById(projectId)?.name ?? projectId;
     queue.enqueue('headless', `${name} · ${runId}`, { runId, projectId });
   });
+  // An attempt is recorded and gated when its run ends, in whichever process
+  // ends it. Here rather than in the attended path alone, because the launchd
+  // scheduler dispatches the same queue and closes the same runs.
+  attempts.watchAttemptRuns();
   queue.setSlots(slotsSetting());
   // Schedules feed the dispatcher; the dispatcher decides when there is a slot.
   schedule.startScheduler(queueChanged);
@@ -2394,6 +2399,21 @@ function registerIpc() {
   handle('headless:cancel', (runId: string) => headless.cancelHeadless(runId));
   handle('headless:answerHeld', (runId: unknown, projectId: unknown, decision: unknown, note: unknown) =>
     headless.answerHeld(runId, projectId, decision, note));
+
+  // ══ attempts · best of N and the paired bench ═══════════════════════
+  // Every argument is validated in attempts.ts: a start is re-planned from
+  // scratch, ids must match their shape, and a cleanup takes a set id only —
+  // the worktree paths it removes come from the attempts' own records.
+  handle('attempts:sets', (limit?: unknown) => attempts.attemptSets(typeof limit === 'number' ? limit : 50));
+  handle('attempts:set', (setId: unknown) => attempts.attemptSet(setId));
+  handle('attempts:start', async (input: unknown) => {
+    const started = await attempts.startAttemptSet(input);
+    // As for headless:start: the runs are queued and may already be live.
+    syncAwake();
+    return started;
+  });
+  handle('attempts:keep', (setId: unknown, attemptId: unknown) => attempts.keepAttempt(setId, attemptId));
+  handle('attempts:removeOthers', (setId: unknown) => attempts.removeOtherWorktrees(setId));
 
   // ══ phase 11 · dispatcher ═══════════════════════════════════════════
   handle('queue:list', (limit?: number) => queue.listQueue(limit));

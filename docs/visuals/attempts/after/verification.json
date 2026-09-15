@@ -1,0 +1,17 @@
+{
+  "at": "2026-09-15T05:40:23.780Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic services; report figures computed by src/shared/attempts.ts; no real agent calls",
+  "mode": "after",
+  "checks": [
+    "Runs opens on headless runs as before, with a switch to Attempts beside New run",
+    "best of N compares each attempt by gate, files, cost, duration and oracle flags; the unreported cost reads \"not reported\", no $0.00 appears, and removal waits for a kept attempt",
+    "Keep records one decision; the cleanup lists the other worktrees before removing, and reports the one it kept for uncommitted work beside the one it removed",
+    "the bench reports n, passes, pass@1, pass@k and pass^k with the form named, cost per solved task with n of K reported, and an arm with no passes as measured zeros with no cost figure",
+    "the evidence label and the lead each carry their reason in words: correlation because one gate could not run, and a lead of 2 over 3 named past √3",
+    "the start form states the ceiling in words, names the arm whose CLI takes no budget flag, refuses a zero budget by naming the ceiling, and puts Start behind a confirmation",
+    "confirming sends one start with the planned arms, repeats, budget and timeout, and a refusal from main is shown as an error",
+    "a failed read of the set list renders as a failure with the error and a retry, never as an empty list",
+    "a failed read of one set renders as a failure naming what is untouched, never as a set with no attempts"
+  ],
+  "errors": []
+}

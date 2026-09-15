@@ -28,11 +28,42 @@ import type {
 const exec = promisify(execFile);
 
 type ProviderDef = NonNullable<ReturnType<typeof providerById>>;
+
+/**
+ * A run pinned to one commit, as one attempt in a set.
+ *
+ * Only main-process code can ask for this: it is startHeadlessRun's second
+ * argument, never a field of the config the renderer sends, and the stored
+ * config overwrites any `pinned` key that arrived inside that config. What it
+ * changes is narrow. The row must run in its own worktree, cut at `commit` and
+ * verified to be there before the agent spawns; the worktree is kept when the
+ * agent changed nothing, because the set gates and compares every attempt's
+ * tree; and the run does not announce its own end, because a set of twelve
+ * would otherwise send twelve notifications for one decision. `attemptId`
+ * lets the attempts module find its attempt from the run alone, including a run
+ * that ends before the launcher has written the run id down.
+ */
+export type HeadlessPin = { commit: string; attemptId: string };
+
+/** A full commit id: forty hex digits, or sixty-four in a SHA-256 repository. */
+const FULL_COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+/** The pin a stored config carries, validated, or null when it carries none that can be read. */
+export function pinnedOf(value: unknown): HeadlessPin | null {
+  if (!value || typeof value !== 'object') return null;
+  const { commit, attemptId } = value as Record<string, unknown>;
+  if (typeof commit !== 'string' || !FULL_COMMIT.test(commit)) return null;
+  if (typeof attemptId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(attemptId)) return null;
+  return { commit, attemptId };
+}
+
 type StoredHeadlessConfig = HeadlessConfig & {
   providerProfileFingerprint: string;
   /** Set only for a run a schedule paid for; see startHeadlessRun. */
   scheduleFire?: ScheduleFire;
   allProjects?: boolean;
+  /** Set only by the attempts launcher; see HeadlessPin. */
+  pinned?: HeadlessPin;
 };
 
 /**
@@ -578,7 +609,20 @@ export function registerHeadlessRunner(fn: HeadlessRunner | null) {
 
 /* ── the fan-out ──────────────────────────────────────────────────────── */
 
-export async function startHeadlessRun(cfg: HeadlessStart): Promise<{ runId: string; rows: number }> {
+/** A repository a start named, and the project it resolved to. */
+type Picked = { id: string; project: ReturnType<typeof projectById> };
+
+/**
+ * Every refusal a headless start makes before it writes anything.
+ *
+ * Split out of startHeadlessRun so a caller that launches several runs as one
+ * decision — an attempt set — can learn that every one of them would be
+ * accepted before it starts the first. Otherwise a set whose third arm names a
+ * disabled provider would already have queued, and possibly spawned, the
+ * attempts of the first two. startHeadlessRun still runs these checks itself,
+ * so nothing that skips the preflight can skip the gate.
+ */
+async function vetHeadlessStart(cfg: HeadlessStart): Promise<{ def: ProviderDef; picked: Picked[] }> {
   // Before the run row exists. A halted fleet that still recorded a run would
   // leave a row nobody started and nothing will ever finish.
   refuseIfHalted('start a headless run');
@@ -681,6 +725,27 @@ export async function startHeadlessRun(cfg: HeadlessStart): Promise<{ runId: str
     throw new Error(`${def.label} changed or was disabled before the run could be queued.`);
   }
   def = finalDef;
+  return { def, picked };
+}
+
+/**
+ * The same refusals as a start, with nothing written and nothing dispatched,
+ * and the facts about the profile that a set freezes onto each arm.
+ */
+export async function checkHeadlessStart(cfg: HeadlessStart): Promise<{ label: string; profileFingerprint: string; budgetFlag: boolean }> {
+  const { def } = await vetHeadlessStart(cfg);
+  // headlessArgs passes --max-budget-usd only on Claude's print protocol.
+  return { label: def.label, profileFingerprint: def.profileFingerprint, budgetFlag: def.headless === 'claude-json' };
+}
+
+export async function startHeadlessRun(cfg: HeadlessStart, pin: HeadlessPin | null = null): Promise<{ runId: string; rows: number }> {
+  // A pin is one attempt: one repository, one full commit. Anything else asking
+  // for one is a caller bug, and a pinned fan-out would cut every repository's
+  // worktree from a commit that exists in only one of them.
+  if (pin !== null && (!pinnedOf(pin) || cfg.projectIds.length !== 1)) {
+    throw new Error('A pinned run names exactly one repository and a full commit id.');
+  }
+  const { def, picked } = await vetHeadlessStart(cfg);
 
   /* ── who paid for this ──────────────────────────────────────────────
      A schedule spends a fire, records it as 'queued', and until now that was
@@ -695,7 +760,11 @@ export async function startHeadlessRun(cfg: HeadlessStart): Promise<{ runId: str
      Claimed here — after every refusal above — so a run that never starts
      cannot consume the fire it would have reported on.
      ───────────────────────────────────────────────────────────────── */
-  const scheduleFire = claimFireForRun({ prompt: cfg.prompt, projectIds: cfg.projectIds });
+  // Never for a pinned run. The match is on prompt and repository, and an
+  // attempt whose task happened to equal a schedule's, started while that
+  // schedule was dispatching, would take its fire and file a set's attempt in
+  // the schedule's history.
+  const scheduleFire = pin ? null : claimFireForRun({ prompt: cfg.prompt, projectIds: cfg.projectIds });
 
   const storedConfig: StoredHeadlessConfig = {
     ...cfg,
@@ -705,6 +774,9 @@ export async function startHeadlessRun(cfg: HeadlessStart): Promise<{ runId: str
     // Last on purpose: an IPC caller cannot choose the identity that later rows
     // are authorised to launch.
     providerProfileFingerprint: def.profileFingerprint,
+    // Written even when absent, so a `pinned` key that rode in on the spread
+    // above is replaced by nothing rather than stored as if a launcher set it.
+    pinned: pin ?? undefined,
     ...(scheduleFire ? { scheduleFire } : {}),
   };
 
@@ -931,6 +1003,27 @@ async function runRow(runId: string, projectId: string): Promise<void> {
     return;
   }
 
+  // An attempt is only comparable because it ran in its own tree at the set's
+  // commit. A pin that no longer reads, or a row that would run with no
+  // worktree — a read-only project runs agents in plan mode in the checkout
+  // itself — would be an attempt nobody could compare, so it is not run.
+  const pin = cfg.pinned === undefined ? null : pinnedOf(cfg.pinned);
+  if (cfg.pinned !== undefined && !pin) {
+    failRow(runId, projectId, 'This attempt\'s pinned commit could not be read back from its run, so it was not started.');
+    return;
+  }
+  if (pin && (resume ? !row.worktree : (!cfg.isolate || gate.mode === 'plan'))) {
+    d.prepare("UPDATE headless_rows SET status='blocked', error=?, ended_at=? WHERE run_id=? AND project_id=?")
+      .run(
+        resume
+          ? 'This attempt held a call outside its worktree, so it cannot resume at its pinned commit. Start the set again.'
+          : `An attempt runs in its own worktree at the set's pinned commit, and this project's trust level (${trust}) runs agents without one, so it was not run. Set the project to Project or Trusted and start the set again.`,
+        Date.now(), runId, projectId);
+    logEvent(runId, 'warn', `${row.project_name}: blocked, because an attempt cannot run without its own worktree.`);
+    finalize(runId);
+    return;
+  }
+
   const startedAt = Date.now();
   d.prepare("UPDATE headless_rows SET status='running', started_at=? WHERE run_id=? AND project_id=?")
     .run(startedAt, runId, projectId);
@@ -975,7 +1068,11 @@ async function runRow(runId: string, projectId: string): Promise<void> {
       // The worktree is keyed on the row rather than the run: one branch per
       // repo is what a human can review, and every repo here is a separate git
       // repository anyway.
-      const created = await createWorktree(row.project_path, cfg.name || 'headless', rowKey(runId, projectId));
+      // A pinned row is cut at its commit, never at whatever the branch has
+      // moved to since the set started; createWorktree refuses a checkout
+      // whose HEAD reads back as anything else.
+      const created = await createWorktree(row.project_path, cfg.name || 'headless', rowKey(runId, projectId),
+        pin ? { startPoint: pin.commit } : {});
       worktree = created.path;
       cwd = worktree;
       d.prepare('UPDATE headless_rows SET worktree=? WHERE run_id=? AND project_id=?')
@@ -1022,6 +1119,18 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   // A resumed leg counts against the state the row started from, not the state
   // its first leg left behind, which would hide that leg's work.
   const baseHead = resume ? resume.baseHead : await headOf(cwd);
+  if (!resume) {
+    d.prepare('UPDATE headless_rows SET base_head=? WHERE run_id=? AND project_id=?').run(baseHead, runId, projectId);
+  }
+  // Read again in the directory the agent is about to run in, after the config
+  // gate's awaits: the pin is checked where the spawn happens, not only where
+  // the checkout did.
+  if (pin && baseHead !== pin.commit) {
+    failRow(runId, projectId,
+      `This attempt's worktree reads ${baseHead ? baseHead.slice(0, 12) : 'no HEAD'} instead of the pinned ${pin.commit.slice(0, 12)}, so it was not run.`,
+      startedAt);
+    return;
+  }
   const before = resume ? new Set(resume.baseDirty) : await changedSet(cwd, null);
 
   let launchPath: string;
@@ -1343,8 +1452,11 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   // never touched is litter, and litter is what stops people using isolation.
   // force stays false so that if this count missed something, git refuses and
   // the checkout survives — the wrong answer here destroys work. A held row
-  // keeps its worktree whatever it holds: the conversation resumes there.
-  if (worktree && filesChanged === 0 && !heldNow) {
+  // keeps its worktree whatever it holds: the conversation resumes there. So
+  // does a pinned row: its set gates and compares the tree each attempt left,
+  // an attempt that changed nothing included, and removes worktrees only when
+  // the operator asks it to.
+  if (worktree && filesChanged === 0 && !heldNow && !pin) {
     try {
       const removal = await removeWorktree(worktree, false);
       if (removal.removed) worktree = null;
@@ -1516,6 +1628,25 @@ function finalize(runId: string) {
   reportRunEnded(runId);
 }
 
+/** Told once per run, when its last row closes. */
+export type HeadlessRunEnded = (runId: string) => void;
+
+const runEndedListeners = new Set<HeadlessRunEnded>();
+
+/**
+ * Hear about every headless run that ends in this process.
+ *
+ * A listener rather than a call into the code that needs it: the attempts
+ * module launches through this one, and this one importing it back would be a
+ * runtime cycle. Only this process's closes are heard. A run the launchd
+ * scheduler finished is heard by the scheduler's own listener, which is why
+ * index.ts registers it in service startup, shared by both.
+ */
+export function onHeadlessRunEnded(listener: HeadlessRunEnded): () => void {
+  runEndedListeners.add(listener);
+  return () => { runEndedListeners.delete(listener); };
+}
+
 /** Failures first, so a truncated notification keeps the part worth reading. */
 const ROW_REPORT_ORDER = ['errored', 'timeout', 'blocked', 'canceled', 'succeeded'];
 const ROW_FAILURES = new Set(['errored', 'timeout', 'blocked']);
@@ -1561,7 +1692,22 @@ function reportRunEnded(runId: string): void {
     console.warn('[wanigan] could not record the schedule outcome for', runId, error);
   }
 
-  announceRunEnded(runId);
+  for (const listener of runEndedListeners) {
+    // Same rule as the schedule outcome: a listener that throws is its own
+    // failure, and must neither break the run's close-out nor stop the
+    // listeners after it.
+    try { listener(runId); } catch (error) { console.warn('[wanigan] a run-ended listener failed for', runId, error); }
+  }
+
+  // An attempt's run is one of a set, and the set announces once when its last
+  // attempt is recorded. Twelve banners for one decision is how notifications
+  // get switched off wholesale.
+  let pinned: HeadlessPin | null = null;
+  try {
+    const config = d.prepare('SELECT config_json FROM runs WHERE id=?').get(runId) as { config_json: string } | undefined;
+    pinned = config ? pinnedOf((JSON.parse(config.config_json) as Record<string, unknown>).pinned) : null;
+  } catch { /* an unreadable config is announced like any other run */ }
+  if (!pinned) announceRunEnded(runId);
 }
 
 /**

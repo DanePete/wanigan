@@ -14,6 +14,7 @@ import type { ObservedLimitsReport, SessionStatusLine } from '../shared/status-l
 import type { SessionTraces } from '../shared/trace-spans';
 import type { SpendSourceReport } from '../shared/spend-sources';
 import type { KeymapState, KeymapWrite } from '../shared/keymap';
+import type { AttemptCleanupResult, AttemptSetDetail, AttemptSetSummary, AttemptStartInput } from '../shared/attempts';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AccountLimits,
@@ -328,6 +329,17 @@ const api = {
     /** Answer a call a row held: approve or decline and resume, or stop the row there. */
     answerHeld: (runId: string, projectId: string, decision: 'allow' | 'deny' | 'stop', note?: string) =>
       call<HeadlessRowSummary>('headless:answerHeld', runId, projectId, decision, note),
+  },
+  // ── attempts · one task, several runs, one pinned commit ─────────────
+  attempts: {
+    sets: (limit?: number) => call<AttemptSetSummary[]>('attempts:sets', limit),
+    /** The set with every attempt and the report computed from what they recorded. */
+    set: (setId: string) => call<AttemptSetDetail>('attempts:set', setId),
+    /** Queues one pinned headless run per attempt. Main re-validates every field. */
+    start: (input: AttemptStartInput) => call<AttemptSetDetail>('attempts:start', input),
+    keep: (setId: string, attemptId: string) => call<AttemptSetDetail>('attempts:keep', setId, attemptId),
+    /** Removes the other attempts' worktrees without force; main chooses the paths. */
+    removeOthers: (setId: string) => call<AttemptCleanupResult>('attempts:removeOthers', setId),
   },
   // ── phase 11 · dispatcher ────────────────────────────────────────────
   queue: {

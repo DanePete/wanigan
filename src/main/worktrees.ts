@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { db, dataDir } from './db';
-import { runGit, head as headOf, repoState } from './git';
+import { OBJECT_NAME, runGit, head as headOf, repoState } from './git';
 import { listProjects, projectById } from './store';
 import {
   depsModeFor, latestWorktreeRun, projectForDirectory, runWorktreePhase, worktreeCommands,
@@ -802,7 +802,24 @@ function bootstrapFor(abs: string): WorktreeBootstrap | null {
   return { ...stored, setup: setup ? summarizeRun(setup) : null };
 }
 
-export async function createWorktree(repoRoot: string, label: string, sessionId: string): Promise<WorktreeInfo> {
+/**
+ * `startPoint` cuts the worktree from one commit instead of from wherever the
+ * repository's branch points when this runs. Attempts need that: a set records
+ * its commit when it starts, its runs are cut minutes or hours later as slots
+ * free up, and a branch that moved in between would hand later attempts a
+ * different task than earlier ones while every row still read the same.
+ *
+ * The start point is validated as an object name before it reaches git — it is
+ * an argument to `worktree add`, and a leading dash there is an option — and
+ * must resolve to a commit in this repository. The worktree's HEAD is then read
+ * back rather than assumed: a post-checkout hook can commit or check out during
+ * `worktree add`, and a pinned attempt that silently started somewhere else is
+ * the exact failure the pin exists to prevent. A mismatch is refused, and the
+ * fresh worktree is removed without force.
+ */
+export async function createWorktree(
+  repoRoot: string, label: string, sessionId: string, opts: { startPoint?: string } = {},
+): Promise<WorktreeInfo> {
   const root = await repoRootFor(repoRoot);
   if (!root) {
     throw new Error(`${repoRoot} is not a git repository, so there is nothing to branch from. Add the project's repo root instead, or run this session without isolation.`);
@@ -824,9 +841,22 @@ export async function createWorktree(repoRoot: string, label: string, sessionId:
     throw new Error(`Wanigan could not resolve HEAD in ${path.basename(root)}, so it will not guess what to branch from. The repo is untouched.`);
   }
   const baseBranch = state.kind === 'branch' ? state.branch : null;
+  let pinned: string | null = null;
+  if (opts.startPoint !== undefined) {
+    if (typeof opts.startPoint !== 'string' || !OBJECT_NAME.test(opts.startPoint)) {
+      throw new Error(`"${String(opts.startPoint).slice(0, 80)}" is not a commit id, so no worktree was cut from it. The repo is untouched.`);
+    }
+    const resolved = await git(root, ['rev-parse', '--verify', '--quiet', `${opts.startPoint}^{commit}`], 8000);
+    pinned = resolved.ok ? resolved.stdout.trim() || null : null;
+    if (!pinned) {
+      throw new Error(`${opts.startPoint.slice(0, 12)} does not name a commit in ${path.basename(root)}, so no worktree was cut from it. The repo is untouched.`);
+    }
+  }
   // Detached HEAD is legal; it just means merge later has no branch to aim at,
-  // which mergeWorktree says out loud rather than guessing.
-  const startPoint = baseBranch ?? head;
+  // which mergeWorktree says out loud rather than guessing. A pinned worktree
+  // records its commit as the base for the same reason: it was cut from a
+  // commit, not from a branch, and naming a branch there would be a guess.
+  const startPoint = pinned ?? baseBranch ?? head;
 
   const parent = path.join(dataDir(), 'worktrees');
   fs.mkdirSync(parent, { recursive: true });
@@ -852,6 +882,19 @@ export async function createWorktree(repoRoot: string, label: string, sessionId:
   const add = await git(root, ['worktree', 'add', '-b', branch, dir, startPoint], 10 * 60_000);
   if (!add.ok) {
     throw new Error(`Could not create a worktree for "${label}": ${gitSaid(add)}. The repo is untouched; check that ${parent} is writable and on the same filesystem as the repo.`);
+  }
+
+  if (pinned) {
+    const actual = await headOf(dir);
+    if (actual !== pinned) {
+      const removal = await removeWorktree(dir, false)
+        .catch((error: unknown) => ({ removed: false, detail: error instanceof Error ? error.message : String(error) }));
+      throw new Error(
+        `The worktree for "${label}" was cut from ${pinned.slice(0, 12)}, but its HEAD reads ${actual ? actual.slice(0, 12) : 'nothing git could resolve'}: ` +
+        'something moved it during checkout, and a post-checkout hook is the usual cause. It did not start from the pinned commit, so nothing was run in it. ' +
+        (removal.removed ? 'The worktree was removed.' : `The worktree was left at ${dir}: ${removal.detail}`),
+      );
+    }
   }
 
   // This config value is the only record of the merge target: recordedBase()
@@ -930,7 +973,8 @@ export async function createWorktree(repoRoot: string, label: string, sessionId:
   }
 
   return {
-    path: abs, branch, head, repoRoot: root, sessionId, dirty: 0, ahead: 0, linked,
+    // For a pinned worktree, the HEAD read back above rather than the repo's.
+    path: abs, branch, head: pinned ?? head, repoRoot: root, sessionId, dirty: 0, ahead: 0, linked,
     bootstrap: { ...recorded, setup },
   };
 }
