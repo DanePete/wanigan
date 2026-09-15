@@ -235,6 +235,13 @@ function nodeRow(id: string): NodeRow {
   return row;
 }
 
+/** The project a goal task belongs to, or null when the task no longer exists. */
+export function nodeProjectId(nodeId: string): string | null {
+  const row = db().prepare('SELECT d.project_id FROM work_nodes n JOIN work_dockets d ON d.id = n.docket_id WHERE n.id = ?')
+    .get(nodeId) as { project_id: string } | undefined;
+  return row?.project_id ?? null;
+}
+
 function touch(docketId: string): void {
   db().prepare('UPDATE work_dockets SET updated_at=? WHERE id=?').run(now(), docketId);
 }

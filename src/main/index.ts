@@ -50,6 +50,7 @@ import * as queue from './queue';
 import * as policy from './policy';
 import * as headless from './headless';
 import * as spend from './spend';
+import { budgetHold } from './budget-gate';
 import * as notify from './notify';
 import * as mobile from './mobile';
 import { mobileFleetSnapshot } from './fleet-snapshot';
@@ -1092,6 +1093,9 @@ async function startServices() {
     }
     await control.startQueuedNode(nodeId);
   });
+  // Registered before the dispatcher starts, so no tick can claim paid work in
+  // the moment before the budget is asked. The rules are in budget-gate.ts.
+  queue.registerGate(budgetHold);
   queue.startDispatcher(queueChanged);
   // The sweep only writes queue rows; the dispatcher above still decides when
   // one may start. It runs on its own slower interval because a goal becomes

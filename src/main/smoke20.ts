@@ -183,3 +183,111 @@ export async function runTranscriptPlacementSmoke(check: Check, say: Say): Promi
     for (const dir of [claudeHome, work]) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* temp */ } }
   }
 }
+
+/**
+ * A monthly budget holds the work nobody is watching start.
+ *
+ * budgetBreachesFor was written for exactly this refusal and nothing called
+ * it, so every cap in Insights was a warning. These checks put real metered
+ * spend against real budgets and dispatch real queue rows through the gate.
+ */
+export async function runBudgetGateSmoke(check: Check, say: Say): Promise<void> {
+  say('── budgets · a reached cap holds unattended work, and tells an attended launch');
+  const { db } = await import('./db');
+  const queue = await import('./queue');
+  const spend = await import('./spend');
+  const gate = await import('./budget-gate');
+  const control = await import('./control');
+  const { getSetting, setSetting } = await import('./settings');
+  const { addProject, removeProject } = await import('./store');
+  const nonce = Date.now().toString(36);
+  const overDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-budget-over-'));
+  const underDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-budget-under-'));
+  const over = await addProject(overDir);
+  const under = await addProject(underDir);
+  const sessionId = `s_budget_gate_${nonce}`;
+  const previousSlots = getSetting('slots', '__wanigan_smoke_slots_missing__');
+  const previousGlobal = spend.budgetState(null);
+  const queued: string[] = [];
+  const ran: string[] = [];
+  const stopRunner = queue.registerRunner('headless', async (payload) => {
+    ran.push(String((payload as { runId?: unknown }).runId));
+  });
+  const stopGate = queue.registerGate(gate.budgetHold);
+  try {
+    db().prepare('INSERT INTO session_log (id, provider_id, project_id, project_path, project_name, started_at) VALUES (?,?,?,?,?,?)')
+      .run(sessionId, 'claude', over.id, overDir, 'over', Date.now());
+    db().prepare('INSERT INTO session_api_events (session_id, at, kind, model, cost_usd) VALUES (?,?,?,?,?)')
+      .run(sessionId, Date.now(), 'api_request', 'claude-sonnet-5', 3);
+    spend.setBudget(over.id, 2, 0.8);
+    spend.setBudget(under.id, 50, 0.8);
+    spend.setBudget(null, 0);
+
+    const hold = gate.budgetHold('headless', { runId: 'r_over', projectId: over.id });
+    check(typeof hold === 'string' && hold.includes('$3.00 spent against a $2.00 monthly budget') && /Insights/.test(hold),
+      'a headless run in a project whose month has reached its cap is held, and the reason names the spend, the cap and where to raise it', hold);
+    check(gate.budgetHold('session', { projectId: over.id }) === null && gate.budgetHold('scout', { scout: true, version: 1 }) === null,
+      'an interactive session and a Scout pass are never held by a budget');
+    check(gate.budgetHold('headless', { runId: 'r_under', projectId: under.id }) === null,
+      'a project under its own cap is not held');
+
+    spend.setBudget(over.id, 3.5, 0.8);
+    check(gate.budgetHold('headless', { runId: 'r_over', projectId: over.id }) === null
+      && spend.budgetBreachesFor(over.id).some((breach) => breach.reason === 'warning-threshold'),
+    'spend past the warning line but under the cap is reported, and holds nothing');
+    spend.setBudget(over.id, 2, 0.8);
+
+    spend.setBudget(null, 1, 0.8);
+    check(gate.budgetHold('headless', { runId: 'r_under', projectId: under.id }) !== null,
+      'the global cap holds work in a project that is under its own, because that work would still take the account over');
+    spend.setBudget(null, 0);
+
+    const goal = control.createDocket({ projectId: over.id, title: 'Budgeted goal',
+      objective: 'Stay inside the month.', acceptance: ['Nothing starts past the cap.'], risk: 'low' });
+    const implement = goal.nodes.find((node) => node.kind === 'implement')!;
+    check(gate.queueProjectOf('node', { nodeId: implement.id }) === over.id && gate.budgetHold('node', { nodeId: implement.id }) !== null,
+      'an autopilot goal task is traced to its goal\'s project and held by that project\'s cap');
+
+    setSetting('slots', JSON.stringify({ session: 4, headless: 4, batch: 2, scout: 1, node: 2 }));
+    const held = queue.enqueue('headless', 'held by a budget', { runId: 'r_over', projectId: over.id });
+    const free = queue.enqueue('headless', 'free to run', { runId: 'r_under', projectId: under.id });
+    queued.push(held.id, free.id);
+    await queue.tick();
+    await queue.drain();
+    const stateOf = (id: string) => db().prepare('SELECT state, blocked_by FROM queue WHERE id = ?').get(id) as { state: string; blocked_by: string | null };
+    check(stateOf(held.id).state === 'waiting' && /^Held by a monthly budget/.test(stateOf(held.id).blocked_by ?? '')
+      && !ran.includes('r_over'),
+    'the dispatcher leaves the over-budget row waiting with the breach as its reason, and never runs it', stateOf(held.id));
+    check(stateOf(free.id).state === 'done' && ran.includes('r_under'),
+      'the row beside it, under its budget, runs in the same tick', stateOf(free.id));
+
+    spend.setBudget(over.id, 10, 0.8);
+    await queue.tick();
+    await queue.drain();
+    check(stateOf(held.id).state === 'done' && ran.includes('r_over'),
+      'raising the budget lets the held row start on the next tick, with nothing to re-create', stateOf(held.id));
+
+    const index = appSource('src/main/index.ts');
+    check(/queue\.registerGate\(budgetHold\);\s*queue\.startDispatcher\(/.test(index),
+      'the app registers the budget gate before its dispatcher starts, so the gate is reachable and not only callable');
+    const dialog = appSource('src/renderer/src/components/NewSessionDialog.tsx');
+    check(dialog.includes('window.wanigan.budgets.breached()') && dialog.includes('This session is not held, because you are starting it.'),
+      'the launch dialog tells a person starting a session that the project is over budget, and that their launch is not held');
+  } catch (error) {
+    check(false, 'the budget gate checks ran without throwing', String(error));
+  } finally {
+    stopGate();
+    stopRunner();
+    try {
+      for (const id of queued) db().prepare('DELETE FROM queue WHERE id = ?').run(id);
+      db().prepare('DELETE FROM session_api_events WHERE session_id = ?').run(sessionId);
+      db().prepare('DELETE FROM session_log WHERE id = ?').run(sessionId);
+      db().prepare('DELETE FROM budgets WHERE scope_id IN (?, ?)').run(over.id, under.id);
+      spend.setBudget(null, previousGlobal.monthlyUsd, previousGlobal.warnAt);
+      if (previousSlots === '__wanigan_smoke_slots_missing__') db().prepare("DELETE FROM settings WHERE k = 'slots'").run();
+      else setSetting('slots', previousSlots);
+    } catch { /* the smoke database is thrown away */ }
+    try { removeProject(over.id); removeProject(under.id); } catch { /* already gone */ }
+    for (const dir of [overDir, underDir]) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* temp */ } }
+  }
+}

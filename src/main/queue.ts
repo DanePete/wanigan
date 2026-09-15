@@ -278,8 +278,27 @@ export function setSlots(next: Partial<QueueSlots>): QueueSlots {
  * The surfaces register themselves. Re-registering replaces, so a dev reload
  * does not leave a dead closure holding a kind hostage.
  */
-export function registerRunner(kind: QueueKind, run: QueueRunner): void {
+export function registerRunner(kind: QueueKind, run: QueueRunner): () => void {
   runners.set(kind, run);
+  return () => { if (runners.get(kind) === run) runners.delete(kind); };
+}
+
+/**
+ * A check a row must pass before it is claimed: a reason to wait, or null.
+ *
+ * Registered from outside so the queue does not import what it asks about.
+ * Asked after the slot check, so a full lane never costs the read, and before
+ * the claim, so a held row stays 'waiting' with its reason in blocked_by and
+ * starts on the first tick after the reason lifts — nothing to retry, nothing
+ * to re-create. A gate that throws holds the row rather than letting it
+ * through: "could not check" is not permission.
+ */
+export type QueueGate = (kind: QueueKind, payload: unknown) => string | null;
+let gate: QueueGate | null = null;
+
+export function registerGate(next: QueueGate): () => void {
+  gate = next;
+  return () => { if (gate === next) gate = null; };
 }
 
 /* ── dispatch ────────────────────────────────────────────────────────── */
@@ -396,6 +415,14 @@ async function dispatch(): Promise<void> {
       d.prepare("UPDATE queue SET state='failed', ended_at=?, blocked_by=NULL, error=? WHERE id=? AND state='waiting'")
         .run(now, 'Stored payload is not readable JSON — remove this item and start the work again.', row.id);
       moved = true;
+      continue;
+    }
+
+    let held: string | null = null;
+    try { held = gate ? gate(kind, payload) : null; }
+    catch (error) { held = `Could not check whether this may start, so it is waiting: ${error instanceof Error ? error.message : String(error)}`; }
+    if (held) {
+      moved = setBlocked(row, held) || moved;
       continue;
     }
 
