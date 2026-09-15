@@ -229,7 +229,7 @@ export async function runSmoke(): Promise<void> {
     await runAttentionReasonSmoke(check, say);
     const {
       runTranscriptPlacementSmoke, runQueueSessionKindSmoke, runBudgetGateSmoke, runRecallSwitchSmoke, runAttachmentRetentionSmoke,
-      runContradictionSmoke,
+      runContradictionSmoke, runOutcomeEvidenceSmoke,
     } = await import('./smoke20');
     await runTranscriptPlacementSmoke(check, say);
     await runQueueSessionKindSmoke(check, say);
@@ -237,6 +237,7 @@ export async function runSmoke(): Promise<void> {
     await runRecallSwitchSmoke(check, say);
     await runAttachmentRetentionSmoke(check, say);
     await runContradictionSmoke(check, say);
+    runOutcomeEvidenceSmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

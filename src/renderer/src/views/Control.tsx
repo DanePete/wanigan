@@ -523,6 +523,8 @@ export default function Control({ projects, providers, onOpenSession }: {
             {detail.autopilot.enabled && detail.budgetUsd !== null ? ` · ${usd(detail.budgetUsd)} cap` : ''}</span>
         </summary>
       <div className="control-launch"><label><span className="label">Provider for next task</span><select className="field" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{enabledProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label><label><span className="label">Model override</span><input className="field" value={model} onChange={(event) => setModel(event.target.value)} placeholder="provider default" /></label></div>
+      <OutcomeEvidence outcomes={outcomes} kind={activeNode && activeNode.kind !== 'review' ? activeNode.kind : 'implement'}
+        providerId={providerId} providerLabel={enabledProviders.find((provider) => provider.id === providerId)?.label ?? null} />
       <AutopilotCard docket={detail} busy={busy ?? (loadError ? 'unavailable' : null)} confirming={armAsk === detail.id}
         armWith={enabledProviders.find((provider) => provider.id === providerId)?.label ?? null} armWithModel={model}
         armedWith={providers.find((provider) => provider.id === detail.autopilot.providerId)?.label ?? detail.autopilot.providerId}
@@ -670,6 +672,36 @@ function AutopilotCard({ docket, busy, confirming, armWith, armWithModel, armedW
  * than a chain the status word alone cannot say which, so each prerequisite is
  * listed with its own status.
  */
+/**
+ * The recorded outcomes for this kind of task, where the provider for it is
+ * chosen.
+ *
+ * control.ts stores one outcome per launched phase "so the router can compare
+ * models", and no router ever read them: the evidence sat in a table at the
+ * foot of the page while the choice was made up here. It is shown beside the
+ * choice instead, as counts, and Wanigan picks nothing from it. A handful of
+ * goals is not a benchmark, and the counts say how few there are.
+ */
+function OutcomeEvidence({ outcomes, kind, providerId, providerLabel }: {
+  outcomes: ModelOutcome[]; kind: DocketNodeKind; providerId: string; providerLabel: string | null;
+}) {
+  const rows = outcomes.filter((outcome) => outcome.taskKind === kind);
+  if (!rows.length) {
+    return <Hint>No {kind} task has a recorded outcome yet, so there is nothing to set {providerLabel ?? 'this provider'} against.</Hint>;
+  }
+  const line = (outcome: ModelOutcome) => `${outcome.providerId} · ${outcome.model} accepted ${outcome.accepted} of ${outcome.samples}`;
+  const chosen = rows.filter((outcome) => outcome.providerId === providerId);
+  return (
+    <Hint>
+      Recorded {kind} outcomes across goals: {rows.slice(0, 3).map(line).join('; ')}{rows.length > 3 ? `; and ${rows.length - 3} more in Model evidence` : ''}.{' '}
+      {chosen.length
+        ? `${providerLabel ?? providerId} so far: ${chosen.map(line).join('; ')}.`
+        : `${providerLabel ?? 'The provider chosen above'} has no recorded ${kind} outcome yet.`}{' '}
+      Counts to read, not a recommendation; Wanigan does not choose from them.
+    </Hint>
+  );
+}
+
 function NodeCard({ node, busy, note, claim, prereqs, sendsBack, onPrerequisite, onSession, onNote, onClaim, onStart, onCheckpoint, onClaimAdd, onProof, onComplete, onRetry }: {
   node: DocketNode; busy: string | null; note: string; claim: string;
   /** This review's latest decision asked for changes, so reopening it sends the implementation back. */

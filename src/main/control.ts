@@ -881,8 +881,8 @@ function storeOutcome(node: NodeRow, accepted: boolean, testsPassed: boolean): v
   const model = node.model || usage?.models[0] || 'provider-default';
   // Whether the figure was reported is stored beside it. Writing 0 for an
   // unreported cost and 0 for a genuinely free session made the two
-  // indistinguishable one row later, and the router then read the unmetered
-  // provider as the cheapest one.
+  // indistinguishable one row later, and Model evidence then showed the
+  // unmetered provider as the cheapest one.
   const reported = usage?.costStatus === 'reported';
   const effort = db().prepare('SELECT effort FROM session_log WHERE id=?')
     .get(node.session_id ?? '') as { effort: string | null } | undefined;
@@ -900,7 +900,7 @@ export function completeNode(nodeId: string, input: { detail?: string; decision?
   // A fanned-out goal can hold several verification tasks. Reading only the
   // first would let one green branch speak for a tree whose other branch failed
   // its gate, both in the approval check below and in the evidence stored for
-  // the router — so the whole set decides.
+  // Model evidence — so the whole set decides.
   const verifyNodes = node.kind === 'review' ? mapNodes(rawNodes(parent.id)).filter((value) => value.kind === 'verify') : [];
   const testsPassed = node.kind === 'verify' ? hasPassedProof(parent.id, nodeId)
     : node.kind === 'review' ? verifyNodes.length > 0 && verifyNodes.every((value) => hasPassedProof(parent.id, value.id))
@@ -925,8 +925,10 @@ export function completeNode(nodeId: string, input: { detail?: string; decision?
     .run(proof.id, proof.docketId, proof.nodeId, proof.kind, proof.status, proof.summary,
       JSON.stringify(node.kind === 'review' ? { decision, note: detail } : {}), proof.createdAt);
   // The final decision is evidence about the work-producing agents, not just
-  // about the reviewer. Persist one outcome per launched phase so the router
-  // can compare implementation, verification and review models separately.
+  // about the reviewer. Persist one outcome per launched phase so Model
+  // evidence can compare implementation, verification and review models
+  // separately. Nothing routes on it: Control shows it where a person chooses
+  // the provider for the next task, and the choice stays theirs.
   if (node.kind === 'review') {
     for (const candidate of rawNodes(parent.id)) {
       if (candidate.provider_id) storeOutcome(candidate, decision === 'approve', testsPassed);
@@ -936,7 +938,7 @@ export function completeNode(nodeId: string, input: { detail?: string; decision?
   // review pass above to overwrite it — but a goal that is abandoned before
   // review never reaches that loop, leaving those phases permanently recorded
   // as rejected work. An unreviewed phase has no verdict, and no verdict is
-  // not a rejection; the router is better served by silence than by a guess.
+  // not a rejection; the evidence is better served by silence than by a guess.
   if (node.kind === 'review' && decision === 'reject') db().prepare("UPDATE work_dockets SET status='rejected',updated_at=? WHERE id=?").run(now(), parent.id);
   else setDocketPhase(parent.id);
   return mapNodes(rawNodes(parent.id)).find((value) => value.id === nodeId)!;

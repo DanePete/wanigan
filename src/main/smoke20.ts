@@ -467,3 +467,26 @@ export async function runContradictionSmoke(check: Check, say: Say): Promise<voi
     check(false, 'the contradiction checks ran without throwing', String(error));
   }
 }
+
+/**
+ * The outcome evidence is read where the choice it informs is made.
+ *
+ * control.ts stored outcomes "so the router can compare models", and no router
+ * ever read them. Wanigan does not choose a model on the operator's behalf, so
+ * the reader is a person, at the provider picker.
+ */
+export function runOutcomeEvidenceSmoke(check: Check, say: Say): void {
+  say('── goals · recorded outcomes are shown where a task\'s provider is chosen');
+  try {
+    const control = appSource('src/main/control.ts');
+    const view = appSource('src/renderer/src/views/Control.tsx');
+    check(!/\bthe router\b/.test(control),
+      'control.ts no longer describes a router that nothing implements');
+    const launch = view.indexOf('Provider for next task');
+    const evidence = view.indexOf('<OutcomeEvidence outcomes={outcomes}');
+    check(launch > 0 && evidence > launch && evidence - launch < 800 && view.includes('Wanigan does not choose from them'),
+      'the Control view shows the recorded outcomes for the task kind directly under the provider choice, and says it picks nothing from them');
+  } catch (error) {
+    check(false, 'the outcome evidence checks ran without throwing', String(error));
+  }
+}
