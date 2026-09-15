@@ -598,6 +598,9 @@ function migratePhases(d: Database.Database) {
   migrateClaudeUsage(d);
   /* ── helper sweep · P2 attention ── */
   migrateHelperAttention(d);
+  /* ── helper sweep · P9 opinions ── */
+  migrateSecondOpinions(d);
+  /* ── end helper sweep · P9 opinions ── */
 }
 
 /**
@@ -1625,3 +1628,84 @@ function migrateHelperAttention(d: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_operator_actions_session ON operator_actions(session_id, at DESC);
   `);
 }
+
+/* ── helper sweep · P9 opinions ── */
+/**
+ * Second opinions: a billed review of a session's diff by a profile the
+ * operator chose, and a same-backend search for decisions nobody asked for.
+ * Additive tables only.
+ *
+ * What is kept is what the operator adjudicates and what the ledger counts: the
+ * reviewer, the findings or entries, each verdict, and a pointer to the headless
+ * row that holds the call's recorded cost. The diff that was sent is recorded as
+ * its sha256 and its size, never stored a second time. `raw` holds a reply only
+ * when it could not be read, so it can be shown as it came.
+ */
+function migrateSecondOpinions(d: Database.Database) {
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS second_opinion_runs (
+      id               TEXT PRIMARY KEY,
+      kind             TEXT NOT NULL,
+      session_id       TEXT NOT NULL,
+      provider_id      TEXT NOT NULL,
+      backend_id       TEXT,
+      profile_label    TEXT NOT NULL,
+      vendor           TEXT NOT NULL,
+      fingerprint      TEXT NOT NULL,
+      headless_run_id  TEXT,
+      base_commit      TEXT,
+      diff_sha256      TEXT NOT NULL,
+      diff_bytes       INTEGER NOT NULL,
+      sent_bytes       INTEGER NOT NULL,
+      truncated        INTEGER NOT NULL DEFAULT 0,
+      prompt_sha256    TEXT NOT NULL,
+      max_budget_usd   REAL,
+      timeout_ms       INTEGER NOT NULL,
+      structured_flag  TEXT,
+      status           TEXT NOT NULL,
+      verdict          TEXT,
+      reason           TEXT,
+      raw              TEXT,
+      error            TEXT,
+      findings_omitted INTEGER NOT NULL DEFAULT 0,
+      dropped          INTEGER NOT NULL DEFAULT 0,
+      unreal_touches   INTEGER NOT NULL DEFAULT 0,
+      in_tokens        INTEGER NOT NULL DEFAULT 0,
+      out_tokens       INTEGER NOT NULL DEFAULT 0,
+      created_at       INTEGER NOT NULL,
+      ended_at         INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_second_opinion_runs_session ON second_opinion_runs(session_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_second_opinion_runs_provider ON second_opinion_runs(provider_id, status);
+
+    CREATE TABLE IF NOT EXISTS second_opinion_findings (
+      id             TEXT PRIMARY KEY,
+      run_id         TEXT NOT NULL,
+      position       INTEGER NOT NULL,
+      file           TEXT NOT NULL,
+      line_start     INTEGER,
+      line_end       INTEGER,
+      severity       TEXT NOT NULL,
+      title          TEXT NOT NULL,
+      body           TEXT NOT NULL,
+      confidence     REAL NOT NULL,
+      adjudication   TEXT NOT NULL DEFAULT 'unjudged',
+      adjudicated_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_second_opinion_findings_run ON second_opinion_findings(run_id, position);
+
+    CREATE TABLE IF NOT EXISTS second_opinion_decisions (
+      id             TEXT PRIMARY KEY,
+      run_id         TEXT NOT NULL,
+      position       INTEGER NOT NULL,
+      decision       TEXT NOT NULL,
+      why            TEXT NOT NULL,
+      risk           TEXT NOT NULL,
+      touches_json   TEXT NOT NULL,
+      unreal_touches INTEGER NOT NULL DEFAULT 0,
+      added_at       INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_second_opinion_decisions_run ON second_opinion_decisions(run_id, position);
+  `);
+}
+/* ── end helper sweep · P9 opinions ── */

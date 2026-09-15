@@ -339,11 +339,17 @@ type Reported = {
    * the binary, not measured by Wanigan; empty when the shape carried none.
    */
   modelUsage: { model: string; contextWindow: number }[];
+  /**
+   * `structured_output` from Claude's result schema, present when the call was
+   * given `--json-schema` (read out of the 2.1.271 binary). Untrusted: the
+   * caller validates it exactly as it would the text.
+   */
+  structured: unknown;
 };
 
 const NOTHING_REPORTED: Reported = {
   costUsd: null, inTokens: 0, outTokens: 0, cacheRead: 0, cacheWrite: 0,
-  isError: false, message: null, modelUsage: [],
+  isError: false, message: null, modelUsage: [], structured: null,
 };
 
 /**
@@ -391,6 +397,7 @@ export function parseCliOutput(stdout: string): Reported {
       isError: c.is_error === true,
       message: typeof c.result === 'string' ? c.result : null,
       modelUsage,
+      structured: c.structured_output ?? null,
     };
   }
   return NOTHING_REPORTED;
@@ -499,6 +506,74 @@ function killTree(child: ChildProcess, sig: NodeJS.Signals): boolean {
     // still worth a try before giving up.
     try { return child.kill(sig); } catch { return false; }
   }
+}
+
+type Supervised = {
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  outcome: { code: number | null; spawnError: Error | null };
+};
+
+/**
+ * Collects a spawned agent's output and waits for it to end, stopping it at
+ * `timeoutMs`. Shared by the fan-out row and the read-only second-opinion call
+ * so there is one process supervisor in this module, not two that drift.
+ */
+async function superviseChild(child: ChildProcess, timeoutMs: number): Promise<Supervised> {
+  // Held to PARSE_LIMIT rather than OUTPUT_LIMIT: the cost lives in the result
+  // object, and cutting the buffer at the storage size would throw away the one
+  // number this whole run has to report.
+  let stdout = '';
+  let stderr = '';
+  child.stdout?.on('data', (b: Buffer) => {
+    if (stdout.length < PARSE_LIMIT) stdout += b.toString('utf8');
+  });
+  child.stderr?.on('data', (b: Buffer) => {
+    if (stderr.length < OUTPUT_LIMIT) stderr += b.toString('utf8');
+  });
+
+  let timedOut = false;
+  let killTimer: NodeJS.Timeout | null = null;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    killTree(child, 'SIGTERM');
+    // A fleet with no hard stop is a fleet that hangs forever, so a CLI that
+    // ignores SIGTERM does not get to decide how long it runs.
+    killTimer = setTimeout(() => {
+      killTree(child, 'SIGKILL');
+    }, KILL_GRACE_MS);
+  }, timeoutMs);
+
+  const outcome = await new Promise<{ code: number | null; spawnError: Error | null }>((resolve) => {
+    let settled = false;
+    const done = (v: { code: number | null; spawnError: Error | null }) => {
+      if (settled) return;
+      settled = true;
+      resolve(v);
+    };
+    child.once('error', (err) => done({ code: null, spawnError: err }));
+    child.once('close', (code) => done({ code, spawnError: null }));
+    // 'close' waits for every inherited pipe to close, and a grandchild the agent
+    // left running holds stdout open long after the agent itself is dead — even
+    // after SIGKILL. Waiting only for 'close' is how a timed-out row stays
+    // 'running' forever, keeps its queue slot for the life of the app and hangs
+    // quit on drain(). 'exit' is the truth about the agent; the short grace after
+    // it is only so an ordinary run still gets its last buffered JSON.
+    child.once('exit', (code) => {
+      const flush = setTimeout(() => done({ code, spawnError: null }), EXIT_FLUSH_MS);
+      flush.unref?.();
+    });
+  });
+
+  clearTimeout(timer);
+  if (killTimer) clearTimeout(killTimer);
+  // Dropped explicitly, because the grace path above can return while a
+  // grandchild still holds the write end: a read stream nobody closes keeps this
+  // process's event loop alive, which is the same hang one step further along.
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+  return { stdout, stderr, timedOut, outcome };
 }
 
 let sweptInterrupted = false;
@@ -1157,58 +1232,7 @@ async function runRow(runId: string, projectId: string): Promise<void> {
   // SessionStart hook instead refreshes on the hook path, where it is served.
   refreshDeliveredKnowledgeTtl(learningEntries);
 
-  // Held to PARSE_LIMIT rather than OUTPUT_LIMIT: the cost lives in the result
-  // object, and cutting the buffer at the storage size would throw away the one
-  // number this whole run has to report.
-  let stdout = '';
-  let stderr = '';
-  child.stdout?.on('data', (b: Buffer) => {
-    if (stdout.length < PARSE_LIMIT) stdout += b.toString('utf8');
-  });
-  child.stderr?.on('data', (b: Buffer) => {
-    if (stderr.length < OUTPUT_LIMIT) stderr += b.toString('utf8');
-  });
-
-  let timedOut = false;
-  let killTimer: NodeJS.Timeout | null = null;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    killTree(child, 'SIGTERM');
-    // A fleet with no hard stop is a fleet that hangs forever, so a CLI that
-    // ignores SIGTERM does not get to decide how long it runs.
-    killTimer = setTimeout(() => {
-      killTree(child, 'SIGKILL');
-    }, KILL_GRACE_MS);
-  }, cfg.timeoutMs);
-
-  const outcome = await new Promise<{ code: number | null; spawnError: Error | null }>((resolve) => {
-    let settled = false;
-    const done = (v: { code: number | null; spawnError: Error | null }) => {
-      if (settled) return;
-      settled = true;
-      resolve(v);
-    };
-    child.once('error', (err) => done({ code: null, spawnError: err }));
-    child.once('close', (code) => done({ code, spawnError: null }));
-    // 'close' waits for every inherited pipe to close, and a grandchild the agent
-    // left running holds stdout open long after the agent itself is dead — even
-    // after SIGKILL. Waiting only for 'close' is how a timed-out row stays
-    // 'running' forever, keeps its queue slot for the life of the app and hangs
-    // quit on drain(). 'exit' is the truth about the agent; the short grace after
-    // it is only so an ordinary run still gets its last buffered JSON.
-    child.once('exit', (code) => {
-      const flush = setTimeout(() => done({ code, spawnError: null }), EXIT_FLUSH_MS);
-      flush.unref?.();
-    });
-  });
-
-  clearTimeout(timer);
-  if (killTimer) clearTimeout(killTimer);
-  // Dropped explicitly, because the grace path above can return while a
-  // grandchild still holds the write end: a read stream nobody closes keeps this
-  // process's event loop alive, which is the same hang one step further along.
-  child.stdout?.destroy();
-  child.stderr?.destroy();
+  const { stdout, stderr, timedOut, outcome } = await superviseChild(child, cfg.timeoutMs);
 
   // Here rather than at the end of the function: the settings file carries this
   // app run's hook bearer token, and the git snapshots below take seconds. The
@@ -1749,3 +1773,291 @@ export async function shutdownHeadless(graceMs = KILL_GRACE_MS): Promise<number>
   }
   return stopped;
 }
+
+/* ── helper sweep · P9 opinions ── */
+
+/**
+ * One read-only call on behalf of a second opinion: a single prompt, a scratch
+ * directory with nothing in it but the payload, no hooks, no briefing, no
+ * worktree and no repository.
+ *
+ * It lives here rather than beside its caller because this module owns how an
+ * unattended agent is started, watched, stopped and paid for. The call writes a
+ * `runs` row and one `headless_rows` row like any fan-out, so its cost lands in
+ * the same ledger the Runs and Insights views already read, the Runs view can
+ * cancel it, quit stops it, and a crash mid-call is swept like any other row.
+ * What it does not share with a fan-out is everything that gives an agent
+ * authority over a repository — which is all of runRow's gates, because there
+ * is no repository here to gate.
+ *
+ * The prompt is not written to the run's config: the payload is recorded by its
+ * caller as a hash and a size, never stored a second time.
+ */
+
+/** Every tool Wanigan can name, denied. A deny list rather than an allow list for
+ *  the reason learning-model-assist.ts gives: --allowedTools is a pre-approval,
+ *  not an exclusion. Names this CLI does not have are ignored by it. */
+const READ_ONLY_CALL_DENIED = [
+  'Read', 'Glob', 'Grep', 'LS', 'NotebookRead', 'LSP',
+  'Bash', 'PowerShell', 'REPL', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit',
+  'Task', 'Agent', 'Workflow', 'Skill', 'SlashCommand', 'ToolSearch', 'Monitor',
+  'WebFetch', 'WebSearch', 'Artifact', 'SendMessage', 'SendFile',
+];
+
+/**
+ * Flags a read-only call passes only to a CLI at or past the version they were
+ * read from. `since` is the probed binary itself: no changelog entry was found
+ * for these, so nothing older is assumed to accept them. Claude below the gate
+ * still runs, with the JSON asked for in the prompt alone; Codex below it is
+ * refused, because its sandbox and schema flags are what make the call read-only
+ * and parseable at all.
+ */
+export const READ_ONLY_CALL_GATES = {
+  claude: { since: '2.1.271', probed: '2.1.271', flags: ['--json-schema', '--no-session-persistence', '--disable-slash-commands'] },
+  codex: { since: '0.154.0', probed: '0.154.0', flags: ['--sandbox read-only', '--output-schema', '--output-last-message', '--ephemeral', '--skip-git-repo-check'] },
+} as const;
+
+function versionTriple(line: string | null | undefined): [number, number, number] | null {
+  const m = typeof line === 'string' ? /(\d+)\.(\d+)\.(\d+)/.exec(line) : null;
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+function atLeast(line: string | null | undefined, since: string): boolean {
+  const have = versionTriple(line);
+  const want = versionTriple(since);
+  if (!have || !want) return false;
+  for (let i = 0; i < 3; i++) if (have[i] !== want[i]) return have[i] > want[i];
+  return true;
+}
+
+export type ReadOnlyCallSpec = {
+  /** The runs row's name, as the Runs view and the finish notification print it. */
+  name: string;
+  providerId: string;
+  /** The profile fingerprint the operator consented to. A different one refuses. */
+  fingerprint: string;
+  /** Resolves which login the call bills, exactly as a fan-out in that project would. */
+  projectId: string | null;
+  /** headless_rows.project_id and project_name for this call's one row. */
+  rowId: string;
+  rowLabel: string;
+  /** A directory the caller created and owns, holding only the payload. */
+  cwd: string;
+  prompt: string;
+  schema: object;
+  /** Claude's own spending ceiling; null for a harness that has none. */
+  maxBudgetUsd: number | null;
+  timeoutMs: number;
+  /** Small identifying fields stored on the run's config. Never the prompt. */
+  meta: Record<string, string | number | boolean | null>;
+};
+
+export type ReadOnlyCallResult = {
+  runId: string;
+  status: 'succeeded' | 'errored' | 'timeout' | 'canceled';
+  error: string | null;
+  costUsd: number | null;
+  inTokens: number;
+  outTokens: number;
+  /** What the model answered: the schema output when there was one, else the text. */
+  structured: unknown;
+  text: string | null;
+  /** Which structured-output route the CLI was given, for the record. */
+  structuredFlag: 'json-schema' | 'output-schema' | 'prompt-only';
+  cliVersion: string | null;
+};
+
+/** The argv the call runs, and the one a consent screen shows with the prompt elided. */
+export function readOnlyCallArgs(
+  def: ProviderDef,
+  input: { prompt: string; schema: object; maxBudgetUsd: number | null; cwd: string; cliVersion: string | null },
+): { args: string[]; structuredFlag: ReadOnlyCallResult['structuredFlag']; schemaFile: string | null; replyFile: string | null } {
+  if (def.headless === 'claude-json' && def.harness === 'claude-code') {
+    const gated = atLeast(input.cliVersion, READ_ONLY_CALL_GATES.claude.since);
+    return {
+      args: [
+        '-p', input.prompt,
+        '--output-format', 'json',
+        '--disallowedTools', READ_ONLY_CALL_DENIED.join(','),
+        // No MCP server is loaded: none is named beside it.
+        '--strict-mcp-config',
+        ...(gated ? ['--json-schema', JSON.stringify(input.schema), '--no-session-persistence', '--disable-slash-commands'] : []),
+        ...def.launchArgs([], {}),
+        ...(input.maxBudgetUsd !== null && input.maxBudgetUsd > 0 ? ['--max-budget-usd', String(input.maxBudgetUsd)] : []),
+      ],
+      structuredFlag: gated ? 'json-schema' : 'prompt-only',
+      schemaFile: null,
+      replyFile: null,
+    };
+  }
+  if (def.headless === 'codex-json' && def.harness === 'codex') {
+    if (!atLeast(input.cliVersion, READ_ONLY_CALL_GATES.codex.since)) {
+      throw new Error(
+        `${def.label} ${input.cliVersion ? `reports "${input.cliVersion}"` : 'did not report a version'}; `
+        + `Wanigan has checked its read-only sandbox and schema flags on ${READ_ONLY_CALL_GATES.codex.probed} and later only.`,
+      );
+    }
+    const schemaFile = path.join(input.cwd, 'reply-schema.json');
+    const replyFile = path.join(input.cwd, 'reply.txt');
+    return {
+      args: [
+        'exec', '--json',
+        '--sandbox', 'read-only',
+        '--skip-git-repo-check',
+        '--ephemeral',
+        '--cd', input.cwd,
+        '--output-schema', schemaFile,
+        '--output-last-message', replyFile,
+        ...def.launchArgs([], {}),
+        input.prompt,
+      ],
+      structuredFlag: 'output-schema',
+      schemaFile,
+      replyFile,
+    };
+  }
+  throw new Error(`${def.label} does not provide a trusted headless protocol for a read-only call.`);
+}
+
+/**
+ * The stand-in binary for mock mode. With WANIGAN_MOCK=1 a read-only call runs
+ * this and nothing else, and with none registered it refuses — so a smoke run
+ * that forgot to register one fails loudly instead of reaching a real, paid CLI.
+ */
+let standIn: { bin: string; version: string } | null = null;
+
+export function useReadOnlyCallStandIn(bin: string | null, version = 'mock'): void {
+  if (process.env.WANIGAN_MOCK !== '1') throw new Error('A stand-in CLI can only be registered in mock mode.');
+  standIn = bin ? { bin, version } : null;
+}
+
+/** The version the stand-in reports, so a consent preview in mock mode shows the argv the stand-in will be given. */
+export function readOnlyCallStandInVersion(): string | null {
+  return process.env.WANIGAN_MOCK === '1' ? standIn?.version ?? null : null;
+}
+
+export async function runReadOnlyCall(spec: ReadOnlyCallSpec): Promise<ReadOnlyCallResult> {
+  refuseIfHalted('start a second opinion');
+  refreshProviderPacks();
+  const def = providerById(spec.providerId);
+  if (!def) throw new Error(`${spec.providerId} is not installed or is disabled.`);
+  if (def.profileFingerprint !== spec.fingerprint) {
+    throw new Error(`${def.label} changed after you approved this call. Open the dialog again and review what it will run.`);
+  }
+  if (!(spec.timeoutMs > 0)) throw new Error('A read-only call needs a timeout.');
+
+  let bin: string;
+  let cliVersion: string | null;
+  if (process.env.WANIGAN_MOCK === '1') {
+    if (!standIn) throw new Error('Mock mode is on and no stand-in CLI is registered, so no agent was started.');
+    bin = standIn.bin;
+    cliVersion = standIn.version;
+  } else {
+    bin = await resolveBin(def);
+    cliVersion = await cliVersionOf(def, bin).catch(() => null);
+  }
+
+  const built = readOnlyCallArgs(def, { prompt: spec.prompt, schema: spec.schema, maxBudgetUsd: spec.maxBudgetUsd, cwd: spec.cwd, cliVersion });
+  if (built.schemaFile) fs.writeFileSync(built.schemaFile, JSON.stringify(spec.schema), { mode: 0o600 });
+  const providerEnvValues = def.env?.() ?? {};
+  const account = accounts.resolve({
+    harness: def.harness, projectId: spec.projectId,
+    appliesToAnthropic: accounts.appliesTo(def, redirectsAnthropicApi(providerEnvValues)),
+  }).account;
+  const env = headlessEnv(await shellPath(), providerEnvValues, accounts.launchEnv(account));
+
+  const runId = newRunId();
+  const d = db();
+  const startedAt = Date.now();
+  sweepInterruptedRows();
+  d.prepare(`
+    INSERT INTO runs (id, name, preset, project_id, model, status, config_json, kind, total_requests, created_at, submitted_at)
+    VALUES (?, ?, NULL, NULL, ?, 'in_progress', ?, 'headless', 1, ?, ?)
+  `).run(runId, spec.name, def.id, JSON.stringify({
+    purpose: 'second-opinion', providerId: def.id, providerProfileFingerprint: def.profileFingerprint,
+    structuredFlag: built.structuredFlag, maxBudgetUsd: spec.maxBudgetUsd, timeoutMs: spec.timeoutMs, ...spec.meta,
+  }), startedAt, startedAt);
+  d.prepare(`
+    INSERT INTO headless_rows (run_id, project_id, project_name, project_path, status, started_at)
+    VALUES (?, ?, ?, ?, 'running', ?)
+  `).run(runId, spec.rowId, spec.rowLabel, spec.cwd, startedAt);
+  logEvent(runId, 'info', `Read-only call using ${def.label}, in a scratch directory holding only its payload.`);
+  const key = rowKey(runId, spec.rowId);
+  ownedRows.set(key, { runId, projectId: spec.rowId });
+
+  let child: ChildProcess;
+  try {
+    child = spawn(bin, built.args, { cwd: spec.cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  } catch (error) {
+    ownedRows.delete(key);
+    const message = `Could not start ${def.label}: ${error instanceof Error ? error.message : String(error)}`;
+    failRow(runId, spec.rowId, message, startedAt);
+    return {
+      runId, status: 'errored', error: message, costUsd: null, inTokens: 0, outTokens: 0,
+      structured: null, text: null, structuredFlag: built.structuredFlag, cliVersion,
+    };
+  }
+  liveChildren.set(key, child);
+
+  try {
+    const { stdout, stderr, timedOut, outcome } = await superviseChild(child, spec.timeoutMs);
+    const reported = parseCliOutput(stdout);
+    let text: string | null = reported.message;
+    if (built.replyFile) {
+      try { text = fs.readFileSync(built.replyFile, 'utf8'); } catch { text = null; }
+    }
+    const structured = reported.structured ?? null;
+
+    let status: ReadOnlyCallResult['status'];
+    let error: string | null = null;
+    if (timedOut) {
+      status = 'timeout';
+      error = `${def.label} was still running after ${Math.round(spec.timeoutMs / 1000)}s and was stopped.`;
+    } else if (canceledRuns.has(runId)) {
+      status = 'canceled';
+    } else if (outcome.spawnError) {
+      status = 'errored';
+      error = `Could not run ${def.label}: ${outcome.spawnError.message}`;
+    } else if (outcome.code !== 0 || reported.isError) {
+      status = 'errored';
+      error = stderr.trim().slice(-2000) || reported.message?.slice(-2000)
+        || `${def.label} exited with code ${outcome.code} and said nothing about why.`;
+    } else {
+      status = 'succeeded';
+    }
+
+    // The row keeps what the model answered, never stdout wholesale: a CLI's
+    // event stream can carry the prompt back, and the payload is not stored twice.
+    const answer = structured !== null ? JSON.stringify(structured) : text;
+    d.prepare(`
+      UPDATE headless_rows
+         SET status=?, cost_usd=?, cost_reported=?, duration_ms=?, exit_code=?, output=?, error=?,
+             files_changed=0, ended_at=?, account_id=?
+       WHERE run_id=? AND project_id=?
+    `).run(
+      status, reported.costUsd ?? 0, reported.costUsd === null ? 0 : 1, Date.now() - startedAt, outcome.code,
+      answer === null ? null : answer.slice(0, OUTPUT_LIMIT), error, Date.now(), account?.id ?? null,
+      runId, spec.rowId,
+    );
+    if (reported.costUsd === null && (status === 'succeeded' || status === 'timeout')) {
+      logEvent(runId, 'warn', `${def.label} reported no cost. Recorded as unpriced, not estimated.`);
+    }
+    if (status !== 'succeeded') logEvent(runId, status === 'canceled' ? 'warn' : 'error', `${spec.rowLabel}: ${status}${error ? ` — ${error.split('\n')[0].slice(0, 200)}` : ''}`);
+    liveChildren.delete(key);
+    addUsage(runId, reported);
+    finalize(runId);
+    return {
+      runId, status, error, costUsd: reported.costUsd, inTokens: reported.inTokens, outTokens: reported.outTokens,
+      structured, text, structuredFlag: built.structuredFlag, cliVersion,
+    };
+  } catch (error) {
+    // A failure after the spawn that nothing above anticipated still closes the
+    // row, or it reads as a call in progress until the next restart sweeps it.
+    failRow(runId, spec.rowId, `Wanigan could not finish this call: ${error instanceof Error ? error.message : String(error)}`, startedAt);
+    throw error;
+  } finally {
+    liveChildren.delete(key);
+    ownedRows.delete(key);
+  }
+}
+/* ── end helper sweep · P9 opinions ── */

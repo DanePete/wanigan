@@ -115,6 +115,9 @@ import * as regressionProof from './regression-proof';
 import { prDraft } from './pr-evidence';
 import { DEFAULT_RISK_RULES } from '../shared/risk-tiers';
 /* ── end helper sweep · P3 review ── */
+/* ── helper sweep · P9 opinions ── */
+import { registerSecondOpinionIpc } from './second-opinions';
+/* ── end helper sweep · P9 opinions ── */
 
 // The smoke suite deliberately has no window. A rejected startup promise in
 // that path otherwise leaves an idle Electron main process behind, with
@@ -3351,6 +3354,19 @@ function registerIpc() {
 
   /* ── helper sweep · P2 attention ── */
   registerHelperAttentionIpc(handle);
+  /* ── helper sweep · P9 opinions ── */
+  // A billed call is confirmed a second time here, in a dialog main draws: the
+  // renderer's own consent dialog is untrusted input like everything else it
+  // sends, the same rule proof:saveRegressionCommand and review:saveRecipe follow.
+  registerSecondOpinionIpc(handle, async (question) => {
+    if (!win || win.isDestroyed()) throw new Error('A second opinion needs the Wanigan window open to confirm it.');
+    const answer = await dialog.showMessageBox(win, {
+      type: 'warning', buttons: ['Cancel', question.verb], defaultId: 0, cancelId: 0,
+      title: question.title, message: question.message, detail: question.detail,
+    });
+    return answer.response === 1;
+  });
+  /* ── end helper sweep · P9 opinions ── */
 }
 
 /** Streams a run's results to disk without materialising them in memory. */

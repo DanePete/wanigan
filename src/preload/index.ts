@@ -47,6 +47,9 @@ import type {
   ClaimsReview, DependencyReview, MergeCheck, PrDraft, RegressionProofRecord, ReviewImageSide, ReviewSummary, ReviewWork, StagePlan, TurnStat,
 } from '../shared/review-work';
 /* ── end helper sweep · P3 review ── */
+/* ── helper sweep · P9 opinions ── */
+import type { Adjudication, OpinionKind, OpinionLedger, OpinionPreview, OpinionProfile, OpinionRun } from '../shared/second-opinions';
+/* ── end helper sweep · P9 opinions ── */
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -978,6 +981,21 @@ const api = {
     latestRegression: (nodeId: string) => call<RegressionProofRecord | null>('proof:latestRegression', nodeId),
   },
   /* ── end helper sweep · P3 review ── */
+  /* ── helper sweep · P9 opinions ── */
+  // Billed second opinions. `start` is confirmed again by main in a native
+  // dialog; the digest and fingerprint are the preview the operator read.
+  opinions: {
+    profiles: (sessionId: string, kind: OpinionKind) => call<OpinionProfile[]>('opinions:profiles', sessionId, kind),
+    preview: (input: { sessionId: string; kind: OpinionKind; providerId: string; maxBudgetUsd?: number | null }) =>
+      call<OpinionPreview>('opinions:preview', input),
+    start: (input: { sessionId: string; kind: OpinionKind; providerId: string; maxBudgetUsd?: number | null; digest: string; fingerprint: string }) =>
+      call<{ runId: string }>('opinions:start', input),
+    runs: (sessionId: string) => call<OpinionRun[]>('opinions:runs', sessionId),
+    adjudicate: (findingId: string, verdict: Adjudication) => call<{ id: string; adjudication: Adjudication }>('opinions:adjudicate', findingId, verdict),
+    decisionAdded: (decisionId: string) => call<boolean>('opinions:decisionAdded', decisionId),
+    ledger: (sessionId?: string) => call<OpinionLedger>('opinions:ledger', sessionId),
+  },
+  /* ── end helper sweep · P9 opinions ── */
 };
 
 contextBridge.exposeInMainWorld('wanigan', api);
