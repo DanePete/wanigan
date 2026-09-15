@@ -259,3 +259,27 @@ export async function runFatigueSmoke(check: Check, say: Say): Promise<void> {
     'the report counts seven prompts, six answered and one the turn moved on from', JSON.stringify({ before: before.totals, after: after.totals, row }));
   hooks.cleanupHookSettings(sessionId);
 }
+
+export async function runAutoModeSmoke(check: Check, say: Say): Promise<void> {
+  say('── helper sweep · P1 · trust levels as auto-mode classifier rules');
+  const hooks = await import('./hooks');
+  await hooks.startHookServer();
+  const read = (id: string, opts: { cliVersion?: string | null; trust?: 'readonly' | 'project' | 'trusted' }) => {
+    const file = hooks.writeHookSettings(id, os.tmpdir(), undefined, opts);
+    const parsed = file ? JSON.parse(fs.readFileSync(file, 'utf8')) as { hooks?: unknown; autoMode?: { soft_deny?: string[]; environment?: string[]; classifyAllShell?: boolean } } : null;
+    hooks.cleanupHookSettings(id);
+    return parsed;
+  };
+  const project = read('s_smoke_p1_am_project', { cliVersion: '2.1.271 (Claude Code)', trust: 'project' });
+  check(!!project?.hooks && project.autoMode?.soft_deny?.[0] === '$defaults' && project.autoMode.environment?.[0] === '$defaults'
+    && project.autoMode.soft_deny.some((r) => /Pushing to any git remote/.test(r)),
+  'a Project session’s settings file carries its hooks and an autoMode block that keeps "$defaults" first', project?.autoMode);
+  const readonly = read('s_smoke_p1_am_readonly', { cliVersion: '2.1.271 (Claude Code)', trust: 'readonly' });
+  check(readonly?.autoMode?.classifyAllShell === true, 'a Read only session also routes every shell command through the classifier');
+  const trusted = read('s_smoke_p1_am_trusted', { cliVersion: '2.1.271 (Claude Code)', trust: 'trusted' });
+  const old = read('s_smoke_p1_am_old', { cliVersion: '2.1.117 (Claude Code)', trust: 'project' });
+  const unknown = read('s_smoke_p1_am_unknown', { trust: 'project' });
+  const untrusted = read('s_smoke_p1_am_notrust', { cliVersion: '2.1.271 (Claude Code)' });
+  check(!!trusted?.hooks && trusted.autoMode === undefined && old?.autoMode === undefined && unknown?.autoMode === undefined && untrusted?.autoMode === undefined,
+    'Trusted, a CLI before 2.1.118, an unread version and an unknown trust level each get the hooks and no autoMode key');
+}

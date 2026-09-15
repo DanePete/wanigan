@@ -48,3 +48,7 @@
 .pe-table caption { text-align: left; caption-side: top; padding-bottom: var(--s-1); }
 .pe-table .r { text-align: right; font-variant-numeric: tabular-nums; }
 .pe-id { overflow-wrap: anywhere; font-family: var(--mono); }
+
+/* ── auto-mode classifier rules ────────────────────────────────────────── */
+.pe-automode { display: grid; gap: var(--s-2); margin-top: var(--s-4); min-width: 0; }
+.pe-json { font-family: var(--mono); font-size: var(--t-small); line-height: 1.5; padding: var(--s-3); border-radius: var(--r-sm); background: var(--bg-sunk); overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }

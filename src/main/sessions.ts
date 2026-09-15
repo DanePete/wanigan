@@ -1156,7 +1156,9 @@ export async function createSession(opts: LaunchOptions, internal: CreateSession
         // it the file names only the base events, and SubagentStart/Stop,
         // PostModelSwitch, CwdChanged, InstructionsLoaded and Elicitation are
         // never asked for — every surface reading them sees nothing.
-        const settingsFile = writeHookSettings(id0, cwd, undefined, { cliVersion: detected.version });
+        // The trust level rides along so the same file carries the matching
+        // auto-mode classifier rules, gated on the same probed version.
+        const settingsFile = writeHookSettings(id0, cwd, undefined, { cliVersion: detected.version, trust });
         if (settingsFile) injected.push('--settings', settingsFile);
       }
       if (detected.capabilities.mcp) {

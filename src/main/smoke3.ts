@@ -7904,9 +7904,11 @@ export async function runPhaseSmoke2(check: Check, say: Say): Promise<void> {
   const unversionedWrites = [...hookLaunchSessionsSrc.matchAll(/writeHookSettings\([^;]*?\);/gs),
     ...hookLaunchHeadlessSrc.matchAll(/writeHookSettings\([^;]*?\) : null;/gs)]
     .map((m) => m[0]).filter((call) => !call.includes('cliVersion'));
-  check(hookLaunchSessionsSrc.includes('writeHookSettings(id0, cwd, undefined, { cliVersion: detected.version })')
+  // helper sweep · P1 policy: both calls now also pass the trust level, so the
+  // same version gates the auto-mode classifier block in that file.
+  check(hookLaunchSessionsSrc.includes('writeHookSettings(id0, cwd, undefined, { cliVersion: detected.version, trust })')
     && hookLaunchHeadlessSrc.includes('await cliVersionOf(def, bin)')
-    && hookLaunchHeadlessSrc.includes('}, { cliVersion }) : null;')
+    && hookLaunchHeadlessSrc.includes('}, { cliVersion, trust }) : null;')
     && unversionedWrites.length === 0,
   'both launch paths hand the settings file the probed version of the binary they spawn, so a current CLI is asked for the version-gated events and not the base set alone',
   JSON.stringify({ unversionedWrites }));

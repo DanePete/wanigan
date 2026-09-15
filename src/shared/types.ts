@@ -3521,3 +3521,9 @@ export type FatigueReport = {
   sessions: { sessionId: string; projectName: string | null; asked: number; answered: number; fast: number; unanswered: number }[];
   signals: { at: number; sessionId: string | null; summary: string }[];
 };
+
+/** The auto-mode classifier block Wanigan writes for a project's sessions. See shared/auto-mode.ts. */
+export type AutoModeView = import('./auto-mode').CompiledAutoMode & {
+  /** Which CLI profile the version came from; null when no Claude Code harness was detected. */
+  providerLabel: string | null;
+};

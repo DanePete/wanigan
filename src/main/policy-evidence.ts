@@ -1,6 +1,9 @@
 import { onHookInput } from './hooks';
 import { approvalDetailFor, attachApprovalExplanation } from './approval-explain';
-import { ledgerTrace } from './policy';
+import { ledgerTrace, trustFor } from './policy';
+import { detectProviders } from './providers';
+import { compileAutoMode } from '../shared/auto-mode';
+import type { AutoModeView, ProviderInfo } from '../shared/types';
 import { latestGateSelfTest, runAndRecordGateSelfTest } from './policy-selftest-run';
 import { forgetTaint, observeForTaint } from './tripwire';
 import { fatigueReport, observeFatigue } from './fatigue';
@@ -32,6 +35,21 @@ export function startPolicyEvidence(): void {
 
 type Handle = (channel: string, fn: (...args: never[]) => unknown) => void;
 
+/**
+ * The block a session launched now would carry, for the Context view. The
+ * version comes from the same detection the launch path uses; a machine with
+ * no Claude Code harness gets the "not verified" answer rather than a guess.
+ */
+async function autoModeFor(projectId: string | null): Promise<AutoModeView> {
+  const trust = trustFor(projectId);
+  let provider: ProviderInfo | undefined;
+  try {
+    const all = await detectProviders();
+    provider = all.find((p) => p.id === 'claude' && p.version) ?? all.find((p) => p.harnessId === 'claude-code' && p.version);
+  } catch { provider = undefined; }
+  return { ...compileAutoMode(trust, provider?.version ?? null), providerLabel: provider?.label ?? null };
+}
+
 function sessionIdArg(value: unknown): string {
   if (typeof value !== 'string' || !value || value.length > 200) throw new Error('That is not a session id Wanigan knows.');
   return value;
@@ -45,6 +63,7 @@ export function registerPolicyEvidenceIpc(handle: Handle): void {
   handle('policyEvidence:approval', (sessionId: unknown, sinceAt: unknown) =>
     approvalDetailFor(sessionIdArg(sessionId), timeArg(sinceAt)));
   handle('policyEvidence:fatigue', () => fatigueReport());
+  handle('policyEvidence:autoMode', (projectId: unknown) => autoModeFor(typeof projectId === 'string' && projectId.length <= 200 ? projectId : null));
   handle('policyEvidence:selfTest', () => latestGateSelfTest());
   handle('policyEvidence:runSelfTest', () => runAndRecordGateSelfTest());
   handle('policyEvidence:trace', (id: unknown) =>

@@ -11,6 +11,9 @@ import { answerFor, contextForSession, trustBriefing } from './policy';
 import type {
   HookEventName, HookInput, LoadedInstruction, PolicyDecision, SessionEvent,
 } from '../shared/types';
+/* ── helper sweep · P1 policy ── */
+import type { TrustLevel } from '../shared/types';
+import { compileAutoMode } from '../shared/auto-mode';
 
 /**
  * The hook bus. Metrics say how much a session spent; hooks say what it did,
@@ -266,6 +269,13 @@ export type HookSettingsOptions = {
    * and unknown earns the base event set only.
    */
   cliVersion?: string | null;
+  /* ── helper sweep · P1 policy ── */
+  /**
+   * The trust level the session launches at, compiled into an `autoMode`
+   * block for Claude Code's classifier (shared/auto-mode.ts). Absent means no
+   * block: a caller that does not know the level must not guess one.
+   */
+  trust?: TrustLevel;
 };
 
 /** The leading dotted triple of a `--version` line; null when there is none. */
@@ -340,7 +350,11 @@ export function writeHookSettings(
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { fs.chmodSync(dir, 0o700); } catch { /* best effort on odd filesystems */ }
   const file = path.join(dir, `${safeName(waniganSessionId)}.json`);
-  fs.writeFileSync(file, JSON.stringify({ hooks }, null, 2), { mode: 0o600 });
+  /* ── helper sweep · P1 policy ── */
+  // Version-gated like the event names above: a CLI that predates the keys
+  // gets no block at all, and "$defaults" leads every list that is written.
+  const autoMode = options.trust ? compileAutoMode(options.trust, options.cliVersion ?? null).block : null;
+  fs.writeFileSync(file, JSON.stringify({ hooks, ...(autoMode ? { autoMode } : {}) }, null, 2), { mode: 0o600 });
   // writeFileSync honours mode only when it creates the file; an overwrite keeps
   // whatever the old one had. This file is a bearer credential.
   try { fs.chmodSync(file, 0o600); } catch { /* best effort on odd filesystems */ }
