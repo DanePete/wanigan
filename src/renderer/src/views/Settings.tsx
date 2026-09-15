@@ -17,6 +17,8 @@ import { useRememberedScroll } from '../components/viewMemory';
 import ThemeControl from '../components/ThemeControl';
 import type { ResolvedTheme } from '../theme-boot';
 import '../styles/settings.css';
+/* helper sweep · P6 ux */
+import { TranscriptReaderActions, TranscriptTurnText } from '../components/TranscriptExtras';
 
 type KeyStatus = { present: boolean; fingerprint: string | null; encryptionAvailable: boolean; fromEnv: boolean; workspaceId: string | null };
 type ProviderKeyStatus = { present: boolean; fingerprint: string | null; fromEnv: boolean; stored: boolean };
@@ -5216,14 +5218,18 @@ const READER_TURN_CAP = 200;
 function TranscriptReader({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
   const doc = useLoad(() => window.wanigan.transcripts.get(sessionId), [sessionId]);
   const [all, setAll] = useState(false);
+  /* helper sweep · P6 ux: the reader is where a selection is quoted from. */
+  const readerRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div className="set-reader">
+    <div className="set-reader" ref={readerRef} data-transcript-session={sessionId}>
       <div className="set-reader-head">
         <div>
           <div className="label">Archived conversation</div>
           <div className="set-path set-wrap">{sessionId}</div>
         </div>
+        {/* helper sweep · P6 ux: Copy as Markdown, and quote a selection. */}
+        <TranscriptReaderActions sessionId={sessionId} readerRef={readerRef} />
         <button className="btn" onClick={onClose}>Close</button>
       </div>
       <Frame v={doc.v} what="this transcript" onRetry={doc.reload}>
@@ -5252,7 +5258,8 @@ function TranscriptReader({ sessionId, onClose }: { sessionId: string; onClose: 
                       {t.toolName && <span className="mono faint"> · {t.toolName}</span>}
                       <span className="faint set-sub-line"> {fullDate(t.at)}</span>
                     </header>
-                    <pre>{t.text}</pre>
+                    {/* helper sweep · P6 ux: mermaid blocks labelled as source. */}
+                    <TranscriptTurnText text={t.text} />
                   </article>
                 ))}
               </div>

@@ -1,4 +1,4 @@
-import { TAB_SHORTCUTS, type Tab } from '@shared/routes';
+import { TAB_SHORTCUTS, VIEW_SHORTCUT_ORDER, labelForTab, type Tab } from '@shared/routes';
 
 /**
  * Every key the shell binds, as one table. The cheat sheet renders it, the
@@ -79,6 +79,15 @@ export const BINDINGS: Binding[] = [
     does: 'Next session', scope: 'sessions', skipsTerminal: false },
   { id: 'interrupt',   keys: '⌘.',   aria: 'Meta+. Control+.', group: 'Sessions view',
     does: 'Interrupt the running agent — works even while the terminal has focus', scope: 'sessions', skipsTerminal: true },
+  /* ── helper sweep · P6 ux ── */
+  // ⌘> was free in routes.ts, this table and menu.ts, and > is the character a
+  // Markdown quote starts with. Matched on the character, so it holds on any
+  // layout that types one; it is not ⌘. (the interrupt), which reads a full
+  // stop. Not taken inside a terminal: the PTY owns its keys, so a terminal
+  // selection is quoted from its right-click menu, or with this chord once
+  // focus has left the terminal — xterm keeps the selection.
+  { id: 'quote-into-message', keys: '⌘>', aria: 'Meta+> Control+>', group: 'Sessions view',
+    does: 'Quote the selected terminal or transcript text into that session’s message box, unsent — in a focused terminal, right-click instead', scope: 'not-terminal', skipsTerminal: false },
 
   { id: 'send',        keys: 'Enter',  aria: 'Enter', group: 'Composer',
     does: 'Send — or queue, when the agent is busy', scope: 'composer', skipsTerminal: false },
@@ -185,4 +194,40 @@ export function bindingMatches(e: KeyboardEvent, id: string): boolean {
   const fieldIsTheTarget = scope === 'composer' || scope === 'palette';
   if (bare && !fieldIsTheTarget && inField(el)) return false;
   return true;
+}
+
+/* ── helper sweep · P6 ux ── */
+
+/** One row of the shortcut table as both the cheat sheet and the palette list it. */
+export type ShortcutRow = {
+  /** A BINDINGS id, or `view:<tab>` for a route. */
+  id: string;
+  keys: string;
+  does: string;
+  group: BindingGroup;
+  aria: string;
+  scope: BindingScope;
+  /** Set for a view route, which runs by navigating rather than by a key. */
+  route?: Tab;
+};
+
+/**
+ * Every shortcut, in the order the sheet prints them: each group in
+ * BINDING_GROUPS order, with the view routes placed in Anywhere after the
+ * palette and new-session rows. The sheet and the palette both read this, so
+ * a chord added to the table appears in both or in neither.
+ */
+export function shortcutRows(): ShortcutRow[] {
+  const rowOf = (b: Binding): ShortcutRow => ({ id: b.id, keys: b.keys, does: b.does, group: b.group, aria: b.aria, scope: b.scope });
+  const views: ShortcutRow[] = VIEW_SHORTCUT_ORDER.map((tab) => ({
+    id: `view:${tab}`, keys: TAB_SHORTCUTS[tab].label, does: labelForTab(tab), group: 'Anywhere' as const,
+    aria: TAB_SHORTCUTS[tab].aria, scope: 'not-terminal' as const, route: tab,
+  }));
+  return BINDING_GROUPS.flatMap((group) => {
+    const own = BINDINGS.filter((b) => b.group === group);
+    if (group !== 'Anywhere') return own.map(rowOf);
+    const first = own.filter((b) => b.id === 'palette' || b.id === 'new-session').map(rowOf);
+    const rest = own.filter((b) => b.id !== 'palette' && b.id !== 'new-session').map(rowOf);
+    return [...first, ...views, ...rest];
+  });
 }

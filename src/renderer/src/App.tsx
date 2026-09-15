@@ -35,6 +35,10 @@ import { useDialog, OVERLAY_ROOT_ID } from './components/useDialog';
 import { AnnounceProvider, AnnounceRegion, type AnnounceAction } from './components/announce';
 /* helper sweep · P2 attention */
 import HelperShellKeys from './components/HelperShellKeys';
+/* helper sweep · P6 ux */
+import HelperUxKeys from './components/HelperUxKeys';
+import { shortcutRows, type ShortcutRow } from './bindings';
+import { chordEventInit, shortcutQuery, shortcutRunnability } from '@shared/shortcut-search';
 import { ViewMemoryProvider, ViewMemoryScope } from './components/viewMemory';
 import { COMPOSER_MENU_EVENT, readComposerShown, writeComposerShown } from './components/composerPreference';
 import { useThemePreference } from './theme';
@@ -1049,7 +1053,8 @@ export default function App() {
     if (!palette) return;
     const q = paletteQuery.trim();
     setPaletteHits([]);
-    if (q.length < TRANSCRIPT_QUERY_MIN) { setPaletteRead('idle'); return; }
+    // helper sweep · P6 ux: a shortcut search asks nothing of the archive.
+    if (q.length < TRANSCRIPT_QUERY_MIN || shortcutQuery(q).onlyShortcuts) { setPaletteRead('idle'); return; }
     setPaletteRead('loading');
     let cancelled = false;
     const timer = window.setTimeout(() => {
@@ -1059,6 +1064,31 @@ export default function App() {
     }, 250);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [palette, paletteQuery]);
+
+  /* helper sweep · P6 ux ───────────────────────────────────────────────
+     Running a shortcut from the palette presses its chord where the chord
+     already works, so the palette runs exactly the handler the key runs and
+     the two cannot disagree about what it does. A chord that belongs to a
+     field or a list is not pressed; its row opens the cheat sheet instead. */
+  const runShortcut = useCallback((row: ShortcutRow) => {
+    if (row.route) { go(row.route); return; }
+    const runnable = shortcutRunnability(row);
+    const init = chordEventInit(row.aria);
+    if (!runnable.runnable || !init) { setShortcuts(true); return; }
+    const press = () => {
+      // The palette hands focus back to whatever opened it, which may be a
+      // terminal — where every chord but ⌘. is refused. Running a shortcut
+      // from here is a chrome action, so focus steps off the terminal first.
+      if (inTerminal()) (document.activeElement as HTMLElement | null)?.blur();
+      window.dispatchEvent(new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true }));
+    };
+    if (runnable.needsSessions && tabRef.current !== 'sessions') {
+      go('sessions');
+      window.setTimeout(press, 400);
+    } else {
+      window.setTimeout(press, 80);
+    }
+  }, [go]);
 
   const paletteItems = useMemo<PaletteItem[]>(() => {
     const items: PaletteItem[] = [{
@@ -1157,6 +1187,21 @@ export default function App() {
         run: () => jumpToSettings({ tab: entry.tab, section: entry.section }),
       });
     }
+    /* helper sweep · P6 ux: every shortcut, from the table the sheet reads. */
+    for (const row of shortcutRows()) {
+      const runnable = row.route ? null : shortcutRunnability(row);
+      items.push({
+        key: `shortcut:${row.id}`,
+        title: row.does,
+        hint: `${row.group}${runnable && !runnable.runnable ? ` · ${runnable.why} Opens the shortcut sheet.` : ''}`,
+        meta: row.keys,
+        group: 'Shortcuts',
+        staysPut: !row.route,
+        mark: runnable && !runnable.runnable ? { glyph: '◦', word: 'reference' } : undefined,
+        haystack: `${row.keys} ${row.group} shortcut shortcuts keyboard key chord binding`,
+        run: () => runShortcut(row),
+      });
+    }
     // Already matched by the archive's FTS index; the palette must not
     // re-judge them with a substring rule that tokenises differently.
     paletteHits.forEach((hit, index) => {
@@ -1171,7 +1216,7 @@ export default function App() {
     });
     return items;
   }, [attention, choose, go, jumpToSettings, openSession, paletteHits, paletteQuery, projectId, projects,
-    reportError, requestNewSession, sessions, setTheme, themePreference, themeResolved]);
+    reportError, requestNewSession, runShortcut, sessions, setTheme, themePreference, themeResolved]);
 
   return (
     <>
@@ -1183,6 +1228,8 @@ export default function App() {
     <ViewMemoryProvider>
       {/* helper sweep · P2 attention: ⌘J, ⌘⇧T and notification replies. */}
       <HelperShellKeys activeSessionId={activeSessionId} openSession={openFromTriage} />
+      {/* helper sweep · P6 ux: ⌘> quotes a selection into a message box. */}
+      <HelperUxKeys activeSessionId={activeSessionId} />
       {startup?.phase === 'recovery' && (
         <section className="startup-recovery" role="alert">
           <div>
@@ -1984,7 +2031,16 @@ function CommandPalette({ query, onQuery, items, transcriptRead, onClose, onRun 
     return [...actions, ...rows, ...rest];
   }, [items, normalizedQuery, recent]);
   const [scope, setScope] = useState('All');
-  const matching = useMemo(() => filterPalette(withRecent, query), [withRecent, query]);
+  // helper sweep · P6 ux: `?` or "shortcut…" narrows to the Shortcuts group and
+  // searches what follows; otherwise shortcuts appear only once something is
+  // typed, so an empty palette is not forty key rows long.
+  const matching = useMemo(() => {
+    const sq = shortcutQuery(query);
+    if (sq.onlyShortcuts || scope === 'Shortcuts') {
+      return filterPalette(withRecent.filter((item) => item.group === 'Shortcuts'), sq.onlyShortcuts ? sq.rest : query);
+    }
+    return filterPalette(withRecent.filter((item) => item.group !== 'Shortcuts' || query.trim() !== ''), query);
+  }, [withRecent, query, scope]);
   const shown = useMemo(() => matching.filter(item => scope === 'All' || item.group === scope
     || (scope === 'Settings' && item.key.startsWith('action:appearance:'))), [matching, scope]);
   const groups = useMemo(() => groupPalette(shown), [shown]);
@@ -2052,14 +2108,14 @@ function CommandPalette({ query, onQuery, items, transcriptRead, onClose, onRun 
         <Icon name="search" />
         <input ref={input} className="field" value={query} onChange={(e) => onQuery(e.target.value)}
                placeholder="Where do you want to go?"
-               aria-label="Search views, projects, live sessions, settings and archived transcripts"
+               aria-label="Search views, projects, live sessions, settings, archived transcripts and keyboard shortcuts — type ? for shortcuts"
                role="combobox" aria-expanded={shown.length > 0} aria-autocomplete="list"
                aria-controls="wanigan-command-results"
                aria-activedescendant={active >= 0 ? `wanigan-command-${active}` : undefined} />
         <button className="command-close" type="button" onClick={onClose} aria-label="Close command search"><Icon name="x" /></button>
         </div>
         <div className="command-scopes" role="group" aria-label="Search category">
-          {['All', 'Views', 'Projects', 'Live sessions', 'Settings', 'Transcripts'].map(value =>
+          {['All', 'Views', 'Projects', 'Live sessions', 'Settings', 'Transcripts', 'Shortcuts'].map(value =>
             <button type="button" key={value} aria-pressed={scope === value} onClick={() => { setScope(value); input.current?.focus(); }}>{value === 'Live sessions' ? 'Sessions' : value}</button>)}
         </div>
         <div className="command-layout">

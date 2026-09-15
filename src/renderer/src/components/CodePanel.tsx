@@ -52,7 +52,7 @@ function deriveTurns(rows: SessionCheckpoint[]): TurnRow[] {
  * writers on one file while an agent is mid-edit is a merge conflict waiting
  * to happen, so everything here is read-only.
  */
-export default function CodePanel({ projectPath, projectName, sessionId, checkpointsSupported, focusTurn, onFocusTurnHandled, onSendToBatch }: {
+export default function CodePanel({ projectPath, projectName, sessionId, checkpointsSupported, focusTurn, onFocusTurnHandled, onSendToBatch, focusFile, onFocusFileHandled }: {
   projectPath: string; projectName: string; sessionId?: string;
   /** Whether this session's harness proved turn boundaries at launch. */
   checkpointsSupported?: boolean;
@@ -60,6 +60,9 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   focusTurn?: { turn: number; nonce: number } | null;
   onFocusTurnHandled?: () => void;
   onSendToBatch?: (files: string[]) => void;
+  /* helper sweep · P6 ux: a path ⌘-clicked in the terminal, opened here at its line. Nonce re-fires repeats. */
+  focusFile?: { rel: string; line: number | null; directory: boolean; nonce: number } | null;
+  onFocusFileHandled?: () => void;
 }) {
   const [tab, setTab] = useState<'changes' | 'files' | 'turns'>('changes');
   // Default to this session's work. "All" exists because pre-existing dirt is
@@ -105,6 +108,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkResult, setBulkResult] = useState<{ reverted: number; failed: { file: string; detail: string }[] } | null>(null);
   const [inspector, setInspector] = useState(false);
+  /* helper sweep · P6 ux: the line a terminal link asked the reader to open at. */
+  const [jumpLine, setJumpLine] = useState<number | null>(null);
   /*
    * Review notes: comments on specific diff lines, waiting to be put into this
    * session's message box. They share one anchor — the diff they were made on
@@ -187,6 +192,28 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
     // above is what makes this effect single-fire per jump.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusTurn, sessionId]);
+
+  /* helper sweep · P6 ux */
+  const handledFileNonce = useRef<number | null>(null);
+  useEffect(() => {
+    if (!focusFile || handledFileNonce.current === focusFile.nonce) return;
+    handledFileNonce.current = focusFile.nonce;
+    setTab('files');
+    if (focusFile.directory) {
+      setDir(focusFile.rel === '.' ? '' : focusFile.rel.split(/[\\/]/).join('/'));
+      setInspector(false);
+    } else {
+      const rel = focusFile.rel.split(/[\\/]/).join('/');
+      setDir(rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '');
+      setJumpLine(focusFile.line);
+      void window.wanigan.code.read(projectPath, rel)
+        .then((f) => { setFile({ rel, ...f }); setSel(null); setDiff(''); setErr(null); setInspector(true); })
+        .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
+    }
+    onFocusFileHandled?.();
+    // Single-fire per nonce, like the turn jump above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusFile, projectPath]);
 
   async function openTurnDiff(row: TurnRow) {
     setSelTurn(row.key); setTurnDiff(null); setCpPlan(null); setCpResult(null);
@@ -771,8 +798,9 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
           text={inspectorText}
           kind={sel ? 'diff' : 'file'}
           truncated={file?.truncated === true}
-          onClose={() => setInspector(false)}
-          onExternal={() => void window.wanigan.code.open(editor?.path ?? null, `${projectPath}/${target}`)}
+          onClose={() => { setInspector(false); setJumpLine(null); }}
+          onExternal={() => void window.wanigan.code.open(editor?.path ?? null, `${projectPath}/${target}`, jumpLine ?? undefined)}
+          jumpLine={sel ? null : jumpLine}
         />
       )}
     </div>
@@ -950,9 +978,11 @@ function FileView({ file }: { file: { rel: string; text: string; truncated: bool
 }
 
 /** A full-height reading surface for a file or review diff. */
-function CodeInspector({ title, text, kind, truncated, onClose, onExternal }: {
+function CodeInspector({ title, text, kind, truncated, onClose, onExternal, jumpLine }: {
   title: string; text: string; kind: 'diff' | 'file'; truncated: boolean;
   onClose: () => void; onExternal: () => void;
+  /* helper sweep · P6 ux: open scrolled to, and marking, this 1-based line. */
+  jumpLine?: number | null;
 }) {
   const [query, setQuery] = useState('');
   const [wrap, setWrap] = useState(false);
@@ -970,6 +1000,11 @@ function CodeInspector({ title, text, kind, truncated, onClose, onExternal }: {
   useEffect(() => { body.current?.querySelector<HTMLElement>('[data-active-match="true"]')?.scrollIntoView({ block: 'center' }); }, [activeMatch, needle, matches]);
   const nextMatch = (delta: number) => { if (matches.length) setMatchIndex((Math.max(0, activeMatch) + delta + matches.length) % matches.length); };
   const jump = (where: 'top' | 'bottom') => { const el = body.current; if (el) el.scrollTop = where === 'top' ? 0 : el.scrollHeight; };
+  useEffect(() => {
+    if (!jumpLine) return;
+    const raf = requestAnimationFrame(() => body.current?.querySelector<HTMLElement>(`[data-line="${jumpLine}"]`)?.scrollIntoView({ block: 'center' }));
+    return () => cancelAnimationFrame(raf);
+  }, [jumpLine, text]);
 
   return portal(
     <div {...backdropProps} className="overlay-backdrop code-reader-backdrop">
@@ -999,12 +1034,12 @@ function CodeInspector({ title, text, kind, truncated, onClose, onExternal }: {
               else if (line.startsWith('@@')) cls = ' hunk';
               else if (line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('+++') || line.startsWith('---')) cls = ' meta';
             }
-            return <span className={`code-inspector-line${cls}${match ? ' match' : ''}`} data-match={match || undefined} data-active-match={match && matches[activeMatch] === i || undefined} key={i}>
+            return <span className={`code-inspector-line${cls}${match ? ' match' : ''}${jumpLine === i + 1 ? ' ux-jump' : ''}`} data-line={i + 1} aria-current={jumpLine === i + 1 ? 'location' : undefined} data-match={match || undefined} data-active-match={match && matches[activeMatch] === i || undefined} key={i}>
               <span className="ln">{i + 1}</span><span>{line || ' '}</span>
             </span>;
           })}
         </pre>
-        <div className="code-reader-status"><span>{lines.length.toLocaleString()} lines{truncated ? ' · truncated' : ''}</span><span>Read only <span aria-hidden="true">/</span> <kbd>↵</kbd> next match <kbd>⇧↵</kbd> previous</span></div>
+        <div className="code-reader-status"><span>{lines.length.toLocaleString()} lines{truncated ? ' · truncated' : ''}{jumpLine ? ` · opened at line ${jumpLine}${jumpLine > lines.length ? ', past the end of what is shown' : ''}` : ''}</span><span>Read only <span aria-hidden="true">/</span> <kbd>↵</kbd> next match <kbd>⇧↵</kbd> previous</span></div>
       </section>
     </div>
   );

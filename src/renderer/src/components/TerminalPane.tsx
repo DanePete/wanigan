@@ -1,8 +1,12 @@
-import { useEffect, useRef } from 'react';
-import { Terminal, type ITheme } from '@xterm/xterm';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Terminal, type ILink, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { splitTerminalInput } from '@shared/terminal-input';
+/* helper sweep · P6 ux */
+import { findLinks, linkAt, type LinkCandidate } from '@shared/terminal-links';
+import { ContextMenu, cellRange, indexAtCell, quoteIntoMessage, terminalRow, type MenuItem } from './TerminalMenu';
+import { useAnnounce } from './announce';
 
 /**
  * One xterm instance per session, kept alive across tab switches. Terminals are
@@ -112,6 +116,95 @@ if (typeof window !== 'undefined') {
   else coarsePointer?.addListener?.(refreshTerminalFontSizes);
 }
 
+/* ── helper sweep · P6 ux ─────────────────────────────────────────────── */
+
+/** The text selected in a session's terminal, or '' — read by the quote chord while focus is elsewhere. */
+export function terminalSelection(sessionId: string): string {
+  const entry = pool.get(sessionId);
+  return entry?.term.hasSelection() ? entry.term.getSelection() : '';
+}
+
+/** Where a terminal link asks the Sessions view to open a file in the code rail. */
+export const OPEN_IN_RAIL_EVENT = 'wanigan:open-in-rail';
+export type OpenInRail = { sessionId: string; rel: string; line: number | null; directory: boolean };
+
+type Resolved = Awaited<ReturnType<typeof window.wanigan.ux.resolvePath>>;
+
+/**
+ * Main's answer about a printed path, kept for a few seconds. Hovering a line
+ * asks once per candidate rather than once per mouse move, and a file created
+ * a moment later is picked up when the entry lapses.
+ */
+const resolvedCache = new Map<string, { at: number; value: Promise<Resolved> }>();
+const RESOLVE_TTL_MS = 5_000;
+
+function resolveCached(sessionId: string, text: string): Promise<Resolved> {
+  const key = `${sessionId}\u0000${text}`;
+  const hit = resolvedCache.get(key);
+  if (hit && Date.now() - hit.at < RESOLVE_TTL_MS) return hit.value;
+  const value = window.wanigan.ux.resolvePath(sessionId, text).catch((e: unknown) => ({ ok: false as const, reason: e instanceof Error ? e.message : String(e) }));
+  resolvedCache.set(key, { at: Date.now(), value });
+  if (resolvedCache.size > 400) {
+    for (const [k, v] of resolvedCache) if (Date.now() - v.at >= RESOLVE_TTL_MS) resolvedCache.delete(k);
+  }
+  return value;
+}
+
+/**
+ * File paths an agent printed, underlined only once main has said the file
+ * exists inside a managed root. ⌘-click opens it in this session's code rail;
+ * a plain click stays the terminal's, because a TUI takes clicks of its own.
+ * URLs stay with the web-links addon, which already opens them on click
+ * through the validated openExternal channel.
+ */
+function pathLinkProvider(sessionId: string, term: Terminal) {
+  return {
+    provideLinks(y: number, callback: (links: ILink[] | undefined) => void) {
+      const line = term.buffer.active.getLine(y - 1);
+      if (!line) { callback(undefined); return; }
+      const row = terminalRow(line, term.cols);
+      const candidates = findLinks(row.text).filter((c): c is Extract<LinkCandidate, { kind: 'path' }> => c.kind === 'path');
+      if (!candidates.length) { callback(undefined); return; }
+      void Promise.all(candidates.map((c) => resolveCached(sessionId, c.text))).then((answers) => {
+        const links: ILink[] = [];
+        candidates.forEach((c, i) => {
+          const answer = answers[i];
+          if (!answer.ok) return;
+          links.push({
+            range: cellRange(row, c, y),
+            text: c.text,
+            decorations: { underline: true, pointerCursor: true },
+            activate: (event) => {
+              if (!(event.metaKey || event.ctrlKey) || answer.rel === null) return;
+              window.dispatchEvent(new CustomEvent<OpenInRail>(OPEN_IN_RAIL_EVENT, {
+                detail: { sessionId, rel: answer.rel, line: answer.line, directory: answer.directory },
+              }));
+            },
+          });
+        });
+        callback(links.length ? links : undefined);
+      });
+    },
+  };
+}
+
+type MenuState = { x: number; y: number; link: LinkCandidate | null; selection: string };
+
+/** The link or selection under a right-click, read from the terminal's own buffer. */
+function menuStateAt(entry: Pane, clientX: number, clientY: number): MenuState {
+  const selection = entry.term.hasSelection() ? entry.term.getSelection() : '';
+  const screen = entry.container.querySelector('.xterm-screen');
+  if (!screen || entry.term.cols < 1 || entry.term.rows < 1) return { x: clientX, y: clientY, link: null, selection };
+  const rect = screen.getBoundingClientRect();
+  const col = Math.floor(((clientX - rect.left) / rect.width) * entry.term.cols);
+  const rowIndex = Math.floor(((clientY - rect.top) / rect.height) * entry.term.rows) + entry.term.buffer.active.viewportY;
+  const line = col >= 0 && col < entry.term.cols ? entry.term.buffer.active.getLine(rowIndex) : undefined;
+  if (!line) return { x: clientX, y: clientY, link: null, selection };
+  const row = terminalRow(line, entry.term.cols);
+  const at = indexAtCell(row, col);
+  return { x: clientX, y: clientY, link: at >= 0 ? linkAt(findLinks(row.text), at) : null, selection };
+}
+
 export function disposePane(sessionId: string) {
   const p = pool.get(sessionId);
   // Removing the entry is also what stops a prime that is still in flight: it
@@ -194,6 +287,16 @@ export function startTerminalOutputPump(): () => void {
 
 export default function TerminalPane({ sessionId, visible }: { sessionId: string; visible: boolean }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  /* helper sweep · P6 ux: the right-click menu for links and selections. */
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
+  const { announce } = useAnnounce();
+  const onContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    const entry = pool.get(sessionId);
+    if (!entry || !visible) return;
+    e.preventDefault();
+    setMenu(menuStateAt(entry, e.clientX, e.clientY));
+  };
 
   // A canvas-backed terminal does not give iPad users a conventional text
   // field to tap. Focus its helper textarea as soon as the visible reading
@@ -217,6 +320,9 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
         cursorBlink: true,
         scrollback: 20_000,
         allowProposedApi: true,
+        // helper sweep · P6 ux: right-click opens Wanigan's link and selection
+        // menu, so it must not first replace the selection with a word.
+        rightClickSelectsWord: false,
         // The terminal is the largest surface in the app, so it takes the same
         // semantic palette as chrome. Its pool survives theme changes: only
         // xterm's paint options update, never the session, DOM host, or buffer.
@@ -232,6 +338,8 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
       term.loadAddon(new WebLinksAddon((_event, uri) => {
         void window.wanigan.shell.openExternal(uri);
       }));
+      /* helper sweep · P6 ux */
+      term.registerLinkProvider(pathLinkProvider(sessionId, term));
       // Keep the privileged PTY bridge bounded per IPC message, while making
       // a large pasted prompt behave exactly like ordinary typing. The helper
       // keeps UTF-8 code points whole, so emoji and non-Latin source survive
@@ -348,15 +456,101 @@ export default function TerminalPane({ sessionId, visible }: { sessionId: string
     return () => { cancelAnimationFrame(raf1); cleanup(); };
   }, [visible, sessionId]);
 
+  // The menu is a portal and sits beside the host, never inside it: the host's
+  // only child is the pooled xterm container, which this module moves in and
+  // out by hand and React must never reconcile around.
   return (
-    <div
-      className="terminal-host"
-      ref={hostRef}
-      style={{ display: visible ? 'block' : 'none' }}
-      tabIndex={visible ? 0 : -1}
-      aria-label="Interactive terminal. Tap to focus and type."
-      onPointerDown={focusInput}
-      onFocus={focusInput}
-    />
+    <>
+      <div
+        className="terminal-host"
+        ref={hostRef}
+        style={{ display: visible ? 'block' : 'none' }}
+        tabIndex={visible ? 0 : -1}
+        aria-label="Interactive terminal. Tap to focus and type."
+        onPointerDown={focusInput}
+        onFocus={focusInput}
+        onContextMenu={onContextMenu}
+      />
+      {menu && (
+        <TerminalContextMenu sessionId={sessionId} state={menu} onClose={closeMenu}
+                             say={(tone, text) => announce({ tone, text })} />
+      )}
+    </>
   );
+}
+
+/**
+ * What a right-click on a terminal offers. A path is resolved by main before
+ * anything is enabled, and a disabled item says why beneath it.
+ */
+function TerminalContextMenu({ sessionId, state, onClose, say }: {
+  sessionId: string; state: MenuState; onClose: () => void;
+  say: (tone: 'ok' | 'info' | 'error', text: string) => void;
+}) {
+  const link = state.link;
+  const [resolved, setResolved] = useState<Resolved | null>(null);
+  useEffect(() => {
+    if (link?.kind !== 'path') return;
+    let live = true;
+    void resolveCached(sessionId, link.text).then((r) => { if (live) setResolved(r); });
+    return () => { live = false; };
+  }, [link, sessionId]);
+
+  const copy = (text: string, what: string) => {
+    window.wanigan.ux.copyText(text)
+      .then(() => say('ok', `Copied the ${what}.`))
+      .catch((e: unknown) => say('error', `Could not copy the ${what}: ${e instanceof Error ? e.message : String(e)}`));
+  };
+
+  const items: MenuItem[] = [];
+  let head: string | undefined;
+  if (link?.kind === 'path') {
+    head = link.text;
+    const ok = resolved?.ok === true ? resolved : null;
+    const reason = resolved === null ? 'Checking the file…' : resolved.ok ? null : resolved.reason;
+    const railWhy = reason ?? (ok && ok.rel === null ? 'It is outside this session’s folder, which is all its code rail shows.' : undefined);
+    items.push({
+      kind: 'item',
+      label: ok?.directory ? 'Open the folder in the code rail' : ok?.line ? `Open in the code rail at line ${ok.line}` : 'Open in the code rail',
+      kbd: '⌘-click', disabled: !ok || ok.rel === null, why: railWhy,
+      run: () => {
+        if (!ok || ok.rel === null) return;
+        window.dispatchEvent(new CustomEvent<OpenInRail>(OPEN_IN_RAIL_EVENT, {
+          detail: { sessionId, rel: ok.rel, line: ok.line, directory: ok.directory },
+        }));
+      },
+    });
+    items.push({
+      kind: 'item', label: 'Reveal in Finder', disabled: !ok, why: reason ?? undefined,
+      run: () => {
+        window.wanigan.ux.revealPath(sessionId, link.text)
+          .catch((e: unknown) => say('error', `Could not reveal ${link.text}: ${e instanceof Error ? e.message : String(e)}`));
+      },
+    });
+    items.push({ kind: 'item', label: 'Copy path', run: () => copy(ok?.absolute ?? link.path, 'path') });
+  } else if (link?.kind === 'url') {
+    head = link.url;
+    items.push({
+      kind: 'item', label: 'Open link',
+      run: () => {
+        window.wanigan.shell.openExternal(link.url)
+          .then((opened) => { if (!opened) say('error', 'Only http and https links are opened from the terminal.'); })
+          .catch((e: unknown) => say('error', `Could not open the link: ${e instanceof Error ? e.message : String(e)}`));
+      },
+    });
+    items.push({ kind: 'item', label: 'Copy link', run: () => copy(link.url, 'link') });
+  }
+  if (items.length) items.push({ kind: 'separator' });
+  items.push({
+    kind: 'item', label: 'Copy selection', disabled: !state.selection,
+    run: () => copy(state.selection, 'selection'),
+  });
+  items.push({
+    kind: 'item', label: 'Quote into message', kbd: '⌘>', disabled: !state.selection.trim(), why: 'Select text in the terminal first.',
+    run: () => {
+      const said = quoteIntoMessage(sessionId, state.selection, 'the terminal selection');
+      if (said) say('ok', said);
+    },
+  });
+  return <ContextMenu x={state.x} y={state.y} label="Terminal actions" head={head} items={items} onClose={onClose} />;
 }
