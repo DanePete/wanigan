@@ -2460,6 +2460,10 @@ export type WaniganSettings = {
   theme: ThemeSetting;
   telemetry: boolean;
   hooks: boolean;
+  /** Whether new Claude sessions get the status line relay that records limit and cache readings. */
+  statusLine: boolean;
+  /** Whether new Claude sessions export beta per-prompt trace spans to the loopback collector. */
+  tracesBeta: boolean;
   /** Per-turn workspace snapshots for hook-capable sessions in git repos. */
   checkpoints: boolean;
   archiveTranscripts: boolean;

@@ -3,6 +3,8 @@ import { db } from './db';
 import { halted } from './halt';
 import { pruneEvents } from './hooks';
 import { pruneCheckpoints } from './checkpoints';
+import { pruneSpans } from './otel';
+import { pruneStatusObservations } from './statusline';
 import { eventRetentionDays, getSetting, setSetting } from './settings';
 import {
   DEFAULT_SLOTS,
@@ -667,6 +669,13 @@ function pruneRetention(): void {
     const checkpointSessions = pruneCheckpoints(days * DAY_MS);
     if (checkpointSessions > 0) {
       console.log(`[wanigan] pruned checkpoints for ${checkpointSessions} session(s) older than ${days} days`);
+    }
+    // Trace spans and status line readings are the same kind of evidence, and
+    // Settings names them under the same window.
+    const spans = pruneSpans(days * DAY_MS);
+    const readings = pruneStatusObservations(days * DAY_MS);
+    if (spans + readings > 0) {
+      console.log(`[wanigan] pruned ${spans} trace span(s) and ${readings} status line reading(s) older than ${days} days`);
     }
   } catch (error) {
     // Housekeeping. A busy database here must not take the dispatch loop's

@@ -10,6 +10,7 @@ import { planFromHook, recordGoalPlan } from './goal-plans';
 import type { ClaudeSandboxSettings } from '../shared/sandbox-policy';
 import { getSetting } from './settings';
 import { answerFor, contextForSession, trustBriefing } from './policy';
+import { acceptStatusLine, cleanupStatusLine, statusLineEntry, sweepStatusLineFiles } from './statusline';
 import type {
   HookEventName, HookInput, LoadedInstruction, PolicyDecision, SessionEvent,
 } from '../shared/types';
@@ -359,10 +360,17 @@ export function writeHookSettings(
     hooks[ev] = [TOOL_MATCHED.has(ev) ? { matcher: '*', hooks: [handler] } : { hooks: [handler] }];
   }
 
-  // The sandbox rides in the same --settings file on purpose: the binary
-  // honours its keys from CLI settings and ignores them from a repository.
-  const file = writeCredentialFile(`${safeName(waniganSessionId)}.json`,
-    JSON.stringify(options.sandbox ? { hooks, sandbox: options.sandbox } : { hooks }, null, 2));
+  // The status line relay rides this file and this capability: its readings
+  // are this session's, so the bearer that already proves a request is this
+  // session's is the one its curl config carries. statusline.ts owns the rest.
+  const statusLine = statusLineEntry(waniganSessionId, projectPath, { port: live.port, capability });
+
+  // The sandbox and the status line ride in the same --settings file on
+  // purpose: the binary honours the sandbox keys from CLI settings and ignores
+  // them from a repository, and the status line relay carries this session's
+  // capability.
+  const settings = { hooks, ...(options.sandbox ? { sandbox: options.sandbox } : {}), ...(statusLine ? { statusLine } : {}) };
+  const file = writeCredentialFile(`${safeName(waniganSessionId)}.json`, JSON.stringify(settings, null, 2));
   register(waniganSessionId, { file, projectPath, capability, learningContext, events });
   return file;
 }
@@ -452,6 +460,8 @@ export function cleanupHookSettings(waniganSessionId: string): void {
   const reg = registered.get(waniganSessionId);
   registered.delete(waniganSessionId);
   if (reg) capabilitySessions.delete(reg.capability);
+  // Its curl config holds the capability revoked on the line above.
+  cleanupStatusLine(waniganSessionId);
   const file = reg?.file ?? path.join(hooksDir(), `${safeName(waniganSessionId)}.json`);
   try { fs.rmSync(file, { force: true }); } catch { /* already gone */ }
 }
@@ -484,6 +494,7 @@ function sweepStaleSettings() {
       if (fs.statSync(file).mtimeMs < bornAt) fs.rmSync(file, { force: true });
     } catch { /* raced with another sweep */ }
   }
+  sweepStatusLineFiles(bornAt);
 }
 
 function hooksEnabled(): boolean {
@@ -524,12 +535,20 @@ async function onRequest(req: http.IncomingMessage, res: http.ServerResponse) {
   try { req.socket.setNoDelay(true); } catch { /* socket already closed */ }
 
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-  if (req.method !== 'POST' || url.pathname !== '/hook') return reply(res, 404, {});
+  const statusLine = url.pathname === '/statusline';
+  if (req.method !== 'POST' || (url.pathname !== '/hook' && !statusLine)) return reply(res, 404, {});
   const sessionId = sessionForCapability(req.headers.authorization);
   if (!sessionId) return reply(res, 401, {});
 
   const body = await readBody(req);
   if (!body.ok) return reply(res, body.status, {});
+  if (statusLine) {
+    // Recorded before the answer, not after it like a hook: the relay reads
+    // the chain file this call may write as soon as its POST returns. It is
+    // never a hook event, so it never reaches the timeline or the policy.
+    acceptStatusLine(sessionId, body.text);
+    return reply(res, 200, {});
+  }
   const input = asHookInput(body.text);
   if (!input) return reply(res, 400, {});
 

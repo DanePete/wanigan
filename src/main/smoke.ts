@@ -257,6 +257,8 @@ export async function runSmoke(): Promise<void> {
     await runWorktreeBootstrapSmoke(check, say);
     const { runAccountabilitySmoke } = await import('./smoke17');
     await runAccountabilitySmoke(check, say);
+    const { runObservedTelemetrySmoke } = await import('./smoke18');
+    await runObservedTelemetrySmoke(check, say);
     const { runCodexHookSmoke } = await import('./smoke28');
     await runCodexHookSmoke(check, say);
     const { runKeymapSmoke } = await import('./smoke23');

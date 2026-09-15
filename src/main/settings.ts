@@ -49,6 +49,15 @@ export function flags() {
   return {
     telemetry: bool('telemetry', true),
     hooks: bool('hooks', true),
+    // Rides the hook settings file, so it does nothing with hooks off. On by
+    // default for the same reason telemetry is: it is the only source of the
+    // provider's own limit windows. It has its own switch because it is the one
+    // piece of the injection that runs inside the CLI's own screen: the relay
+    // stands in for whatever status line a person configured, and calls it.
+    statusLine: bool('status_line', true),
+    // Off by default. Beta in the CLI, and a span per model call, tool call
+    // and permission wait is a great deal more data than a counter.
+    tracesBeta: bool('traces_beta', false),
     // Per-turn workspace snapshots; on because they are local, reversible
     // evidence, and only captured where hooks already prove turn boundaries.
     checkpoints: bool('checkpoints', true),
@@ -149,6 +158,8 @@ export function setUserPreference(key: unknown, value: unknown): WaniganSettings
   switch (preferenceKey) {
     case 'telemetry':
     case 'hooks':
+    case 'status_line':
+    case 'traces_beta':
     case 'checkpoints':
     case 'archive_transcripts':
     case 'notifications':
@@ -274,6 +285,8 @@ export function allSettings(): WaniganSettings {
     theme: theme(),
     telemetry: f.telemetry,
     hooks: f.hooks,
+    statusLine: f.statusLine,
+    tracesBeta: f.tracesBeta,
     checkpoints: f.checkpoints,
     archiveTranscripts: f.archiveTranscripts,
     notifications: f.notifications,

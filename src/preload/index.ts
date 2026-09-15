@@ -8,6 +8,9 @@ import type { CompanionAsk, CompanionSnapshot, CompanionTurn } from '../shared/c
 import type { SecretScanReport, SecretScanRequest } from '../shared/secret-scan';
 import type { AssistedByPreview } from '../shared/assisted-by';
 import type { LedgerChainStatus } from '../shared/ledger-chain';
+import type { ObservedLimitsReport, SessionStatusLine } from '../shared/status-line';
+import type { SessionTraces } from '../shared/trace-spans';
+import type { SpendSourceReport } from '../shared/spend-sources';
 import type { KeymapState, KeymapWrite } from '../shared/keymap';
 import type { AttemptCleanupResult, AttemptSetDetail, AttemptSetSummary, AttemptStartInput } from '../shared/attempts';
 import type { FailedLogReport, PrReadinessReport } from '../shared/pr-readiness';
@@ -252,6 +255,12 @@ const api = {
     throughput: (id: string, buckets?: number) => call<number[]>('usage:throughput', id, buckets),
     collector: () => call<{ port: number | null }>('usage:collector'),
     burn: (force?: boolean) => call<unknown>('usage:burn', force),
+    /** Limit windows as sessions' status lines reported them, per account. A local read; never probes. */
+    observed: () => call<ObservedLimitsReport>('usage:observed'),
+    /** One session's newest status line reading — its prompt cache, effort and PR — or null. */
+    statusLine: (id: string) => call<SessionStatusLine | null>('usage:statusLine', id),
+    /** One session's beta per-prompt trace spans, laid out as waterfalls. */
+    traces: (id: string) => call<SessionTraces>('usage:traces', id),
   },
   // ── phases 2/3/8 · events, attention, timeline ───────────────────────
   events: {
@@ -369,6 +378,8 @@ const api = {
     sync: (days?: number) => call<{ day: string; actualUsd: number; syncUsd: number }[]>('spend:sync', days),
     unified: (days?: number) => call<UnifiedSpendDay[]>('spend:unified', days),
     effort: () => call<{ effort: string; requests: number; costUsd: number }[]>('spend:effort'),
+    /** Session spend by the CLI's own attribution: query source, skill, plugin, MCP server, subagent. */
+    sources: (days?: number) => call<SpendSourceReport>('spend:sources', days),
     byDay: (days: number) => call<{ day: string; sessionUsd: number }[]>('spend:byDay', days),
     // Claude Code's own transcripts, which cover the sessions the collector
     // never saw. `unknown` rather than the main-process type: the shape is
