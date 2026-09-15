@@ -238,6 +238,7 @@ export async function runSmoke(): Promise<void> {
     await p1.runRewriteEvidenceSmoke(check, say);
     await p1.runGrantSmoke(check, say);
     await p1.runSkillSurfaceSmoke(check, say);
+    await p1.runExposureSmoke(check, say);
   } catch (e) {
     check(false, `phase smoke threw: ${e instanceof Error ? e.message : String(e)}`);
   }

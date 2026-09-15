@@ -37,7 +37,7 @@ import type {
   DocketRisk, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, WorkDocket, LaunchModelCatalogue, UnifiedSpendDay,} from '../shared/types';
 
 /* ── helper sweep · P1 policy ── */
-import type { ApprovalDetail, AutoModeView, FatigueReport, GateSelfTestRun, GrantSetting, PolicySignal, SkillSurfaceView, StoredTrace } from '../shared/types';
+import type { ApprovalDetail, AutoModeView, ExposureLeadView, FatigueReport, GateSelfTestRun, GrantSetting, PolicySignal, SkillSurfaceView, StoredTrace } from '../shared/types';
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -844,7 +844,8 @@ const api = {
     selfTest: () => call<GateSelfTestRun | null>('policyEvidence:selfTest'),
     fatigue: () => call<FatigueReport>('policyEvidence:fatigue'),
     autoMode: (projectId: string) => call<AutoModeView>('policyEvidence:autoMode', projectId),
-    session: (sessionId: string) => call<{ signals: PolicySignal[] }>('policyEvidence:session', sessionId),
+    session: (sessionId: string) => call<{ signals: PolicySignal[]; leads: ExposureLeadView[] }>('policyEvidence:session', sessionId),
+    exposure: () => call<ExposureLeadView[]>('policyEvidence:exposure'),
     grantSettings: () => call<GrantSetting[]>('policyEvidence:grantSettings'),
     skillSurface: (skillPath: string) => call<SkillSurfaceView>('policyEvidence:skillSurface', skillPath),
     approveSkillSurface: (skillPath: string, digest: string) => call<SkillSurfaceView>('policyEvidence:approveSkillSurface', skillPath, digest),

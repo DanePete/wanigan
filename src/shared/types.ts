@@ -3557,3 +3557,6 @@ export type SkillSurfaceView = {
   approved: { digest: string; at: number; how: 'person' | 'projected' } | null;
   delta: import('./skill-surface').SurfaceDelta;
 };
+
+/** An exposure lead with the project it came from. See shared/exposure.ts; always a lead, never proof. */
+export type ExposureLeadView = import('./exposure').ExposureLead & { projectName: string | null };

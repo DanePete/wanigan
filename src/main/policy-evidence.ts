@@ -12,6 +12,7 @@ import { sessionSignals } from './policy-signals';
 import { grantFor, grantSettings, observeForGrants, setGrantSetting } from './grants';
 import { listProjects } from './store';
 import { approveSkillSurface, skillSurface } from './skill-surface';
+import { recentExposureLeads, sessionExposureLeads } from './exposure';
 
 /**
  * The wiring for the policy evidence built around the gate: what a script alias
@@ -91,7 +92,11 @@ export function registerPolicyEvidenceIpc(handle: Handle): void {
     setGrantSetting(projectId, enabled, days);
     return grantSettings([projectId])[0];
   });
-  handle('policyEvidence:session', (sessionId: unknown) => ({ signals: sessionSignals(sessionIdArg(sessionId)) }));
+  handle('policyEvidence:session', (sessionId: unknown) => {
+    const id = sessionIdArg(sessionId);
+    return { signals: sessionSignals(id), leads: sessionExposureLeads(id) };
+  });
+  handle('policyEvidence:exposure', () => recentExposureLeads());
   handle('policyEvidence:autoMode', (projectId: unknown) => autoModeFor(typeof projectId === 'string' && projectId.length <= 200 ? projectId : null));
   handle('policyEvidence:selfTest', () => latestGateSelfTest());
   handle('policyEvidence:runSelfTest', () => runAndRecordGateSelfTest());
