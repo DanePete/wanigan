@@ -176,6 +176,9 @@ export function noteLocation(note: ReviewNote): string {
   const was = span(note.oldStart, note.oldEnd);
   if (now && was) return `${now} (was ${was})`;
   if (now) return now;
+  // A note about a file rather than its lines — a second review's finding that
+  // named no range. Only a note built outside a line selection has neither side.
+  if (!was && note.quote.length === 0) return 'the file as a whole';
   return `${was ?? 'an unnumbered line'}, removed`;
 }
 
@@ -200,10 +203,15 @@ export function formatReviewNotes(notes: readonly ReviewNote[], anchor: string):
  * whichever button put it into the message box.
  */
 export function formatNoteEntry(note: ReviewNote, n: number): string[] {
-  const lines = [`${n}. \`${note.file}\`, ${noteLocation(note)}:`, '   ```diff'];
-  for (const q of note.quote) lines.push(`   ${q}`);
-  if (note.quoteOmitted > 0) lines.push(`   … ${note.quoteOmitted} more selected line${note.quoteOmitted === 1 ? '' : 's'}`);
-  lines.push('   ```');
+  const lines = [`${n}. \`${note.file}\`, ${noteLocation(note)}:`];
+  // An empty fence says "these lines" about no lines; a note with nothing to
+  // quote (a finding about a whole file) goes straight to its comment.
+  if (note.quote.length || note.quoteOmitted > 0) {
+    lines.push('   ```diff');
+    for (const q of note.quote) lines.push(`   ${q}`);
+    if (note.quoteOmitted > 0) lines.push(`   … ${note.quoteOmitted} more selected line${note.quoteOmitted === 1 ? '' : 's'}`);
+    lines.push('   ```');
+  }
   for (const para of note.body.split('\n')) lines.push(`   ${para}`);
   return lines;
 }
