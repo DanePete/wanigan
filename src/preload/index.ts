@@ -284,6 +284,18 @@ const api = {
       call<{ merged: boolean; detail: string }>('worktrees:merge', p, opts),
     forecast: (projectId: string) =>
       call<import('../shared/collisions').CollisionForecast>('worktrees:forecast', projectId),
+    // What a new worktree of this project is given. Saving commands asks the
+    // person in a native dialog for any line not already stored, and rejects
+    // with main's sentence when they cancel.
+    setup: (projectId: string) =>
+      call<import('../shared/worktree-bootstrap').WorktreeSetupConfig>('worktrees:setup', projectId),
+    setDepsMode: (projectId: string, mode: import('../shared/worktree-bootstrap').DepsMode) =>
+      call<import('../shared/worktree-bootstrap').DepsMode>('worktrees:setDepsMode', projectId, mode),
+    saveCommands: (projectId: string, input: import('../shared/worktree-bootstrap').WorktreeCommandLists) =>
+      call<import('../shared/worktree-bootstrap').WorktreeCommandLists & { projectId: string; updatedAt: number | null }>(
+        'worktrees:saveCommands', projectId, input),
+    commandRuns: (projectId: string, limit?: number) =>
+      call<import('../shared/worktree-bootstrap').WorktreeCommandRun[]>('worktrees:commandRuns', projectId, limit),
   },
   /** The repository's executable config against what was last let launch. */
   configPins: {

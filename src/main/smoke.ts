@@ -249,6 +249,8 @@ export async function runSmoke(): Promise<void> {
     await runVerifiedDoneSmoke(check, say);
     const { runAttemptsSmoke } = await import('./smoke27');
     await runAttemptsSmoke(check, say);
+    const { runWorktreeBootstrapSmoke } = await import('./smoke16');
+    await runWorktreeBootstrapSmoke(check, say);
     const { runAccountabilitySmoke } = await import('./smoke17');
     await runAccountabilitySmoke(check, say);
     const { runCodexHookSmoke } = await import('./smoke28');

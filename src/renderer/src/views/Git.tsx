@@ -4,6 +4,7 @@ import type { CollisionForecast, CollisionOutcome, CollisionPair, CollisionSide 
 import { ConfirmNote, EmptyState, Mark, Note, PageHead, Reading, SectionHead, Segmented, ago, type Tone } from '../components/bits';
 import ReviewGate from '../components/ReviewGate';
 import { CommitBox, pushConfirmation } from '../components/PublishChecks';
+import WorktreeSetup, { WorktreeBootstrapNote } from '../components/WorktreeSetup';
 import { useRememberedScrollRef, useViewMemory } from '../components/viewMemory';
 
 type GFile = { path: string; index: string; work: string; staged: boolean; untracked: boolean; conflicted: boolean };
@@ -827,6 +828,12 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
         <summary>Review gate<span className="faint">Checks & recorded results</span></summary>
         <ReviewGate projectId={projectId} projectName={project?.name} />
       </details>
+      {project && st?.isRepo && (
+        <details className="gt-review-controls">
+          <summary>Worktree setup<span className="faint">Dependencies, setup & teardown for agent worktrees</span></summary>
+          <WorktreeSetup projectId={project.id} projectName={project.name} />
+        </details>
+      )}
 
       <div className="gt" style={{ flex: 1, minHeight: 0 }}>
         <aside className="gt-browser" aria-label="Repository browser">
@@ -1079,6 +1086,7 @@ export default function Git({ projects, projectsRead, selectedProjectId, onPickP
                     <span>{fileList(rowConflict.conflicted)}</span>
                   </p>
                 )}
+                {rowTree?.bootstrap && <WorktreeBootstrapNote bootstrap={rowTree.bootstrap} />}
                 </Fragment>
                 );
               })}
