@@ -1,0 +1,22 @@
+{
+  "at": "2026-09-15T02:39:54.674Z",
+  "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic gh answers, sessions and worktrees; no network and no real agent calls",
+  "mode": "after",
+  "checks": [
+    "opening the Git view and then the Merge readiness section contacts GitHub zero times; the section says a press is what asks",
+    "one press makes one read by project id; the pull request, GitHub’s CONFLICTING/DIRTY as \"✕ conflicts\" with the raw words beside it, and per-bucket counts with glyph and word",
+    "failing, cancelled and pending checks lead with passing and skipped folded; a GitHub App check says it has no log instead of offering a fetch, and only failures are selectable",
+    "three unresolved threads with path:line, author and excerpt, the outdated one marked and placed on its original line, the 100-thread cap said in words, resolved ones counted not listed, and none of it clipped",
+    "exactly one live session in this repository is preselected; exited sessions and other projects’ sessions are not offered, and Add waits for a selection",
+    "a press on one failing check fetches that job’s log by project id and the check’s own link, and shows the excerpt with what it left out either side",
+    "Add puts exactly one anchored message in the chosen session’s draft — header with PR #42 and c0ffee00, the check with its excerpt, the thread quoted with \"Fix it, or reply saying why not.\" — and says where it went",
+    "with two live sessions — one found only through its worktree — neither is preselected, Add waits for a choice, and a new read drops the old read’s log",
+    "with no live session in this repository Add is disabled with \"No session is running in this repository\", and Copy message copies the same formatted text",
+    "a session list that fails to load says so, never \"no session is running\"",
+    "a log gh cannot fetch shows gh’s exit and its words, and a log main refuses says why",
+    "checks and threads that could not be read say so and are never shown as none, while the mergeability that did read stands, and a local head GitHub has not seen is named",
+    "not installed, not signed in, not a GitHub repository, no pull request, gh’s own error and a refused read each render as themselves, with no pull request detail beside them",
+    "closing and reopening the section keeps the answer and asks GitHub nothing"
+  ],
+  "errors": []
+}
