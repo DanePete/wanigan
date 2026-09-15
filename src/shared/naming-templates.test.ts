@@ -30,14 +30,14 @@ test('a ticket comes from the prompt first, then from the checkout branch', () =
 });
 
 test('a title template fills its tokens and tidies what a missing ticket leaves behind', () => {
-  assert.equal(renderTitle('{ticket}: {summary}', input()), 'JIRA-123: JIRA-123 Fix the checkout total rounding');
+  assert.equal(renderTitle('{ticket}: {summary}', input()), 'JIRA-123: Fix the checkout total rounding', 'a prompt that opens with its ticket does not print the key twice');
   assert.equal(renderTitle('{ticket}: {summary}', input({ prompt: 'Fix the rounding', projectBranch: 'main' })), 'Fix the rounding');
   assert.equal(renderTitle('[{project}] {summary} — {date}', input({ prompt: 'Tidy logs' })), '[Store Front] Tidy logs — 2026-09-14');
   assert.equal(renderTitle('{ticket}', input({ prompt: 'no ticket here' })), 'no ticket here', 'a template that renders empty falls back to the plain title');
 });
 
 test('a branch template renders a valid ref, with the session suffix added when the template has none', () => {
-  assert.equal(renderBranch('feature/{ticket}-{summary}', input()), 'feature/JIRA-123-jira-123-fix-the-checkout-total-rounding-abcdef');
+  assert.equal(renderBranch('feature/{ticket}-{summary}', input()), 'feature/JIRA-123-fix-the-checkout-total-rounding-abcdef');
   assert.equal(renderBranch('JIRA-123/{summary}-{short}', input({ prompt: 'Fix login' })), 'JIRA-123/fix-login-abcdef');
   assert.equal(renderBranch('feature/{ticket}-{summary}', input({ prompt: 'Fix login', projectBranch: 'main' })), 'feature/fix-login-abcdef',
     'a missing ticket leaves no leading dash on a path segment');
@@ -87,5 +87,5 @@ test('a stored template that no longer validates is not applied', () => {
   assert.deepEqual(parseStoredTemplates('garbage'), NO_TEMPLATES);
   assert.deepEqual(parseStoredTemplates(null), NO_TEMPLATES);
   const p = previewNames({ title: '{ticket}: {summary}', branch: 'feature/{ticket}-{summary}' }, input({ prompt: 'PAY-7 refund flow' }));
-  assert.deepEqual(p, { title: 'PAY-7: PAY-7 refund flow', branch: 'feature/PAY-7-pay-7-refund-flow-abcdef', branchProblem: null, ticket: 'PAY-7' });
+  assert.deepEqual(p, { title: 'PAY-7: refund flow', branch: 'feature/PAY-7-refund-flow-abcdef', branchProblem: null, ticket: 'PAY-7' });
 });

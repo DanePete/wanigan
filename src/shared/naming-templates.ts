@@ -57,13 +57,16 @@ export function summaryFrom(prompt: string | null): string | null {
 }
 
 export function slug(text: string, max = 40): string {
-  return text
+  const full = text
     .toLowerCase()
     .normalize('NFKD')
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, max)
-    .replace(/-+$/, '');
+    .replace(/^-+|-+$/g, '');
+  if (full.length <= max) return full;
+  // Cut at a word boundary when one is near, so a branch reads "on" rather than "on-refun".
+  const cut = full.slice(0, max);
+  const boundary = full[max] === '-' ? max : cut.lastIndexOf('-');
+  return (boundary > max / 2 ? cut.slice(0, boundary) : cut).replace(/-+$/, '');
 }
 
 export function shortOf(sessionId: string): string {
@@ -165,6 +168,17 @@ function tidyTitle(text: string): string {
 }
 
 /**
+ * A prompt that opens with its ticket ("JIRA-123 fix the rounding") would
+ * print the key twice through "{ticket}: {summary}". When a template carries
+ * both, the summary starts after the key.
+ */
+function withoutLeadingTicket(template: string, summary: string, ticket: string | null): string {
+  if (!ticket || !tokensIn(template).includes('ticket')) return summary;
+  const rest = summary.replace(new RegExp(`^\\s*\\[?${ticket}\\]?[\\s:—–-]*`), '');
+  return rest.trim() ? rest : summary;
+}
+
+/**
  * The title for a session. With no template, or no prompt to summarise, this
  * is exactly what Wanigan already did: the first line, collapsed and bounded.
  */
@@ -173,9 +187,10 @@ export function renderTitle(template: string | null, input: NamingInput): string
   if (!summary) return null;
   const plain = summary.length > 80 ? `${summary.slice(0, 79)}…` : summary;
   if (!template) return plain;
+  const ticket = ticketFrom(input.prompt, input.projectBranch);
   const values: Record<string, string> = {
-    summary,
-    ticket: ticketFrom(input.prompt, input.projectBranch) ?? '',
+    summary: withoutLeadingTicket(template, summary, ticket),
+    ticket: ticket ?? '',
     project: input.projectName,
     date: isoDate(input.now),
     short: '',
@@ -198,7 +213,7 @@ export function renderBranch(template: string | null, input: NamingInput): strin
   if (!template) return `wanigan/${project}-${short}`;
   const ticket = ticketFrom(input.prompt, input.projectBranch);
   const values: Record<string, string> = {
-    summary: slug(summaryFrom(input.prompt) ?? '') || 'work',
+    summary: slug(withoutLeadingTicket(template, summaryFrom(input.prompt) ?? '', ticket)) || 'work',
     ticket: ticket ?? '',
     project,
     date: isoDate(input.now),

@@ -375,7 +375,7 @@ export async function runNamingTemplateSmoke(check: Check, say: Say, tmp: string
 
   const sessionId = 's_naming_abc123';
   const branch = naming.launchBranch(live, 'PAY-9 Refund flow edge case', sessionId);
-  check(branch === 'feature/PAY-9-pay-9-refund-flow-edge-case-abc123', 'the branch template renders from the prompt, with the session suffix appended', branch);
+  check(branch === 'feature/PAY-9-refund-flow-edge-case-abc123', 'the branch template renders from the prompt, with the session suffix appended', branch);
   const wt = await worktrees.createWorktree(repo, project.name, sessionId, branch);
   try {
     check(wt.branch === branch && git('show-ref', '--verify', `refs/heads/${branch}`).trim().length > 0,
