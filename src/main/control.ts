@@ -11,6 +11,10 @@ import * as review from './review';
 import * as otel from './otel';
 import { listGoalTrace, recordGoalTrace } from './goal-trace';
 import { enqueue } from './queue';
+/* ── helper sweep · P7 depth ── */
+import { implementationChangedLines } from './goal-diff';
+import { dispatchVerdict, isHoldReason, parseLoopBudgets, type GoalHold, type GoalLoopBudgets, type HoldReason } from '../shared/goal-budgets';
+/* ── end helper sweep · P7 depth ── */
 import type {
   BoardCard,
   ControlEvent, DocketCheckpoint, DocketClaim, DocketDetail, DocketNode,
@@ -33,6 +37,8 @@ type DocketRow = {
   risk: string; budget_usd: number | null; base_commit: string | null; status: string;
   created_at: number; updated_at: number;
   autopilot: number; autopilot_provider: string | null; autopilot_model: string | null;
+  /* ── helper sweep · P7 depth ── */
+  max_rounds?: number | null; max_changed_lines?: number | null;
 };
 type NodeRow = {
   id: string; docket_id: string; kind: string; title: string; instructions: string; depends_json: string;
@@ -40,6 +46,8 @@ type NodeRow = {
   worktree: string | null; started_at: number | null; ended_at: number | null; detail: string | null;
   claim_path: string | null; dispatch_state: string | null; defer_until: number | null;
   reopened_at: number | null;
+  /* ── helper sweep · P7 depth ── */
+  hold_reason?: string | null; hold_detail?: string | null; held_at?: number | null;
 };
 
 const MAX_OBJECTIVE = 12_000;
@@ -94,6 +102,8 @@ function mapDocket(row: DocketRow): WorkDocket {
     budgetUsd: row.budget_usd, baseCommit: row.base_commit,
     status: row.status as DocketStatus, createdAt: row.created_at, updatedAt: row.updated_at,
     autopilot: autopilotState(row),
+    /* ── helper sweep · P7 depth ── */
+    loopBudgets: loopBudgetsOf(row),
   };
 }
 
@@ -219,6 +229,8 @@ function mapNodes(rows: NodeRow[], at: number = Date.now()): DocketNode[] {
       queued: row.dispatch_state === 'queued',
       deferUntil: row.defer_until,
       reopenedAt: row.reopened_at ?? null,
+      /* ── helper sweep · P7 depth ── */
+      hold: holdOf(row),
     };
   });
 }
@@ -559,6 +571,13 @@ export function goalCapsuleFor(nodeId: string): GoalCapsule {
 }
 
 export async function startNode(nodeId: string, input: { providerId: string; model?: string; effort?: string; permissionMode?: string }): Promise<DocketNode> {
+  readyNode(nodeId);
+  /* ── helper sweep · P7 depth ── */
+  // Before anything is spawned, for a person's Start as much as for autopilot:
+  // a limit the operator set is theirs to raise, not a click to step around.
+  const held = await considerLoopBudgets(nodeId);
+  if (held) throw new Error(`This task is held (${held.reason}). ${held.detail}`);
+  /* ── end helper sweep · P7 depth ── */
   const node = readyNode(nodeId); const parent = docketRow(node.docketId);
   const project = projectById(parent.project_id);
   if (!project) throw new Error('This goal’s project no longer exists.');
@@ -1398,6 +1417,16 @@ export function sweepAutopilot(): number {
     }
     for (const node of mapNodes(rawNodes(row.id))) {
       if (node.status !== 'ready' || node.kind === 'review') continue;
+      /* ── helper sweep · P7 depth ── */
+      // The rounds half needs no git, so it is asked here, before a queue row
+      // exists; the diff half is asked by startQueuedNode, which can await.
+      const rounds = dispatchVerdict(node.kind, { maxRounds: loopBudgetsOf(row).maxRounds, maxChangedLines: null }, { implementRounds: implementRounds(row.id), changedLines: null });
+      if (rounds.hold) {
+        setHold(node.id, rounds.hold, rounds.detail);
+        haltAutopilot(row.id, `${rounds.hold} — ${rounds.detail}`);
+        break;
+      }
+      /* ── end helper sweep · P7 depth ── */
       // The marker is claimed in the same statement that tests it, so two
       // ticks — or two processes on this database — cannot both enqueue it.
       const claimed = db().prepare(`UPDATE work_nodes SET dispatch_state='queued'
@@ -1433,6 +1462,16 @@ export async function startQueuedNode(nodeId: string): Promise<void> {
     clearDispatch(nodeId);
     return;
   }
+  /* ── helper sweep · P7 depth ── */
+  // Held quietly rather than thrown: a throw is retried with backoff against a
+  // task a person now has to look at, and the halt below is the one record.
+  const held = await considerLoopBudgets(nodeId);
+  if (held) {
+    clearDispatch(nodeId);
+    haltAutopilot(parent.id, `${held.reason} — ${held.detail}`);
+    return;
+  }
+  /* ── end helper sweep · P7 depth ── */
   try {
     await startNode(nodeId, { providerId: parent.autopilot_provider, model: parent.autopilot_model ?? undefined });
   } catch (error) {
@@ -1497,3 +1536,81 @@ export function onSessionExit(sessionId: string): string | null {
   try { setDocketPhase(row.docket_id); } catch { /* the goal may have been removed */ }
   return row.docket_id;
 }
+
+/* ── helper sweep · P7 depth ── */
+
+function loopBudgetsOf(row: DocketRow): GoalLoopBudgets {
+  const whole = (v: number | null | undefined) => (typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : null);
+  return { maxRounds: whole(row.max_rounds), maxChangedLines: whole(row.max_changed_lines) };
+}
+
+function holdOf(row: NodeRow): GoalHold | null {
+  if (!isHoldReason(row.hold_reason)) return null;
+  return { reason: row.hold_reason, detail: row.hold_detail ?? '', at: row.held_at ?? 0 };
+}
+
+/**
+ * Implementation dispatches this goal has recorded. `work_node_sessions` is
+ * the count to trust: one row per start, never rewritten by a reopen, which is
+ * the same property autopilotSpend relies on.
+ */
+function implementRounds(docketId: string): number {
+  const row = db().prepare(`SELECT COUNT(*) AS n FROM work_node_sessions s JOIN work_nodes n ON n.id = s.node_id
+    WHERE s.docket_id = ? AND n.kind = 'implement'`).get(docketId) as { n: number };
+  return Number(row.n);
+}
+
+function setHold(nodeId: string, reason: HoldReason, detail: string): void {
+  db().prepare('UPDATE work_nodes SET hold_reason=?,hold_detail=?,held_at=? WHERE id=?').run(reason, detail, now(), nodeId);
+  touch(nodeRow(nodeId).docket_id);
+}
+
+function clearHold(nodeId: string): void {
+  db().prepare('UPDATE work_nodes SET hold_reason=NULL,hold_detail=NULL,held_at=NULL WHERE id=? AND hold_reason IS NOT NULL').run(nodeId);
+}
+
+/**
+ * Measure and decide for one task about to be dispatched: hold it with a
+ * reason code when its goal's budgets say a person should look first, or clear
+ * a hold the current budgets no longer support. Returns the hold, or null.
+ */
+async function considerLoopBudgets(nodeId: string): Promise<GoalHold | null> {
+  const node = nodeRow(nodeId);
+  const parent = docketRow(node.docket_id);
+  const budgets = loopBudgetsOf(parent);
+  if (budgets.maxRounds === null && budgets.maxChangedLines === null) { clearHold(nodeId); return null; }
+  const kind = NODE_KINDS.includes(node.kind as DocketNodeKind) ? node.kind as DocketNodeKind : 'implement';
+  let changed: { lines: number; binary: number } | null = null;
+  if (budgets.maxChangedLines !== null) {
+    const tree = verificationTree(node);
+    changed = tree.kind === 'found' ? await implementationChangedLines(tree.path, parent.base_commit) : null;
+  }
+  const verdict = dispatchVerdict(kind, budgets, { implementRounds: implementRounds(parent.id), changedLines: changed?.lines ?? null, binaryFiles: changed?.binary });
+  if (!verdict.hold) { clearHold(nodeId); return null; }
+  setHold(nodeId, verdict.hold, verdict.detail);
+  return holdOf(nodeRow(nodeId));
+}
+
+/**
+ * Set, change or remove a goal's loop budgets. Every hold on the goal is
+ * cleared, because each was decided against the old numbers; the next dispatch
+ * decides again against these.
+ */
+export function setLoopBudgets(docketId: string, input: unknown): DocketDetail {
+  docketRow(docketId);
+  const budgets = parseLoopBudgets(input);
+  db().prepare('UPDATE work_dockets SET max_rounds=?,max_changed_lines=?,updated_at=? WHERE id=?')
+    .run(budgets.maxRounds, budgets.maxChangedLines, now(), docketId);
+  db().prepare('UPDATE work_nodes SET hold_reason=NULL,hold_detail=NULL,held_at=NULL WHERE docket_id=?').run(docketId);
+  return docket(docketId);
+}
+
+/** For the Control view: what the budgets measure right now, without holding anything. */
+export async function loopBudgetMeasure(docketId: string): Promise<{ implementRounds: number; changedLines: number | null; binaryFiles: number; worktree: string | null }> {
+  const parent = docketRow(docketId);
+  const implement = rawNodes(docketId).find((row) => row.kind === 'implement' && row.worktree) ?? null;
+  const tree = implement ? verificationTree(implement) : { kind: 'none' as const };
+  const changed = tree.kind === 'found' ? await implementationChangedLines(tree.path, parent.base_commit) : null;
+  return { implementRounds: implementRounds(docketId), changedLines: changed?.lines ?? null, binaryFiles: changed?.binary ?? 0, worktree: tree.kind === 'found' ? tree.path : null };
+}
+/* ── end helper sweep · P7 depth ── */

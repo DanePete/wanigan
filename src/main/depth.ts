@@ -1,4 +1,5 @@
 import { asksFor, recordAsks, tickAsk } from './ask-items';
+import { loopBudgetMeasure, setLoopBudgets } from './control';
 
 /**
  * The wiring for the review-depth helpers (helper sweep P7): one start function
@@ -6,6 +7,11 @@ import { asksFor, recordAsks, tickAsk } from './ask-items';
  * feature. Every renderer argument arrives as `unknown` and is validated in the
  * module that owns it.
  */
+
+function idArg(value: unknown, what: string): string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_:.-]{1,200}$/.test(value)) throw new Error(`That is not a ${what} Wanigan knows.`);
+  return value;
+}
 
 type Handle = <T>(channel: string, fn: (...args: never[]) => T | Promise<T>) => void;
 
@@ -20,6 +26,8 @@ export function registerDepthIpc(handle: Handle): void {
   handle('depth:asksRecord', (sessionId: unknown, text: unknown) => recordAsks(sessionId, text, 'composer'));
   handle('depth:asksList', (sessionId: unknown) => asksFor(sessionId));
   handle('depth:asksTick', (itemId: unknown, ticked: unknown) => tickAsk(itemId, ticked));
+  handle('depth:setLoopBudgets', (docketId: unknown, budgets: unknown) => setLoopBudgets(idArg(docketId, 'goal'), budgets));
+  handle('depth:loopMeasure', (docketId: unknown) => loopBudgetMeasure(idArg(docketId, 'goal')));
 }
 
 /** The phone's prompt path: the same record, marked as sent from the phone. */

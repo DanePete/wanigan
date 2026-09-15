@@ -12,7 +12,7 @@ type Say = (s: string) => void;
  * git and the real database; no PTY, no provider, no network, no spend.
  */
 
-export function repoFixture(prefix: string): { dir: string; git: (...args: string[]) => string; write: (rel: string, text: string) => void } {
+function repoFixture(prefix: string): { dir: string; git: (...args: string[]) => string; write: (rel: string, text: string) => void } {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   const git = (...args: string[]) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' }).toString();
   const write = (rel: string, text: string) => { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), text); };
@@ -113,4 +113,92 @@ export async function runAskItemsSmoke(check: Check, say: Say): Promise<void> {
   check(index.indexOf('writeSession(sessionId, `${prompt}\\r`);') > 0 && index.indexOf('recordPhoneAsks(sessionId, prompt);') > index.indexOf('writeSession(sessionId, `${prompt}\\r`);'),
     'asks: the phone prompt path records after it writes');
   check((await source('main/queue.ts')).includes('pruneDepthEvidence(days * DAY_MS)'), 'asks: the retention pass prunes recorded asks on the event window');
+}
+
+/** Item 2: goal loop budgets hold a dispatch with a named reason, halt autopilot, and nothing loops. */
+export async function runGoalBudgetSmoke(check: Check, say: Say): Promise<void> {
+  say('── depth · goal loop budgets hand the work back to a person');
+  const repo = repoFixture('wanigan-p7-budgets-');
+  const { addProject, removeProject } = await import('./store');
+  const control = await import('./control');
+  const queue = await import('./queue');
+  let worktreeDir: string | null = null;
+  try {
+    repo.write('README.md', '# budgets\n');
+    repo.git('add', '-A'); repo.git('commit', '-qm', 'base');
+    const project = await addProject(repo.dir);
+    const plan = [
+      { kind: 'implement' as const, title: 'Build it', instructions: 'Implement.', dependsOn: [], claimPath: null },
+      { kind: 'verify' as const, title: 'Check it', instructions: 'Verify.', dependsOn: [0], claimPath: null },
+      { kind: 'review' as const, title: 'Decide', instructions: 'Review.', dependsOn: [1], claimPath: null },
+    ];
+    const goal = control.createDocket({ projectId: project.id, title: 'Budgeted goal', objective: 'Loop no further than allowed.', acceptance: ['Held.'], budgetUsd: 5, plan });
+    const implement = goal.nodes.find((n) => n.kind === 'implement')!;
+    const verify = goal.nodes.find((n) => n.kind === 'verify')!;
+    check(goal.loopBudgets?.maxRounds === null && goal.loopBudgets.maxChangedLines === null, 'budgets: a new goal has no loop limits until a person sets one');
+
+    let refused = false;
+    try { control.setLoopBudgets(goal.id, { maxRounds: 0 }); } catch { refused = true; }
+    check(refused, 'budgets: a limit that is not a whole number in range is refused, not clamped');
+
+    const limited = control.setLoopBudgets(goal.id, { maxRounds: 2, maxChangedLines: null });
+    check(limited.loopBudgets?.maxRounds === 2, 'budgets: the rounds limit is stored on the goal');
+
+    // Two implementation rounds already ran (seeded: a real dispatch would start a paid session).
+    db().prepare('INSERT INTO work_node_sessions (node_id, docket_id, session_id, at) VALUES (?,?,?,?)').run(implement.id, goal.id, 'p7-round-1', Date.now() - 60_000);
+    db().prepare('INSERT INTO work_node_sessions (node_id, docket_id, session_id, at) VALUES (?,?,?,?)').run(implement.id, goal.id, 'p7-round-2', Date.now() - 30_000);
+    control.setAutopilot(goal.id, { enabled: true, providerId: 'claude' });
+    const queuedBefore = queue.listQueue(500).filter((q) => q.kind === 'node').length;
+    const swept = control.sweepAutopilot();
+    const afterSweep = control.docket(goal.id);
+    const heldImplement = afterSweep.nodes.find((n) => n.id === implement.id)!;
+    check(swept === 0 && queue.listQueue(500).filter((q) => q.kind === 'node').length === queuedBefore,
+      'budgets: the sweep dispatches nothing once the rounds limit is reached', { swept });
+    check(heldImplement.hold?.reason === 'needs-human: attempts' && /2 implementation rounds have run and this goal allows 2/.test(heldImplement.hold.detail),
+      'budgets: the implementation task is held with reason needs-human: attempts and the observed numbers', heldImplement.hold);
+    check(!afterSweep.autopilot.enabled && (afterSweep.autopilot.haltedReason ?? '').startsWith('needs-human: attempts'),
+      'budgets: autopilot halts and records the reason in the goal’s evidence', afterSweep.autopilot);
+    check(control.sweepAutopilot() === 0 && control.docket(goal.id).nodes.find((n) => n.id === implement.id)?.status === 'ready',
+      'budgets: a later sweep does nothing, so nothing loops');
+    let manual: string | null = null;
+    try { await control.startNode(implement.id, { providerId: 'claude' }); } catch (e) { manual = e instanceof Error ? e.message : String(e); }
+    check(!!manual && manual.includes('needs-human: attempts') && control.docket(goal.id).nodes.find((n) => n.id === implement.id)?.sessionId === null,
+      'budgets: a person’s Start is refused too, with the reason, and no session is created', manual);
+    const card = control.boardCards({ projectId: project.id }).find((c) => c.node.id === implement.id);
+    check(card?.node.hold?.reason === 'needs-human: attempts', 'budgets: the Board reads the hold from the same rows');
+
+    // Raising the limit clears the hold; the next dispatch decides again.
+    const raised = control.setLoopBudgets(goal.id, { maxRounds: 3, maxChangedLines: null });
+    check(raised.nodes.every((n) => !n.hold), 'budgets: changing the limits clears every hold on the goal');
+
+    // Diff size: a real worktree with changes against the goal's base.
+    worktreeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wanigan-p7-impl-')));
+    fs.rmSync(worktreeDir, { recursive: true, force: true });
+    repo.git('worktree', 'add', '-q', '-b', 'p7-impl', worktreeDir);
+    fs.writeFileSync(path.join(worktreeDir, 'README.md'), '# budgets\nline two\nline three\n');
+    fs.writeFileSync(path.join(worktreeDir, 'new.ts'), Array.from({ length: 10 }, (_, i) => `export const v${i} = ${i};`).join('\n') + '\n');
+    db().prepare("UPDATE work_nodes SET status='completed', worktree=?, ended_at=? WHERE id=?").run(worktreeDir, Date.now(), implement.id);
+    const measured = await control.loopBudgetMeasure(goal.id);
+    check(measured.changedLines === 12 && measured.implementRounds === 2,
+      'budgets: changed lines are numstat against the goal’s base plus untracked lines, measured in the implementation worktree', measured);
+    control.setLoopBudgets(goal.id, { maxRounds: 3, maxChangedLines: 5 });
+    control.setAutopilot(goal.id, { enabled: true, providerId: 'claude' });
+    db().prepare("UPDATE work_nodes SET dispatch_state='queued' WHERE id=?").run(verify.id);
+    await control.startQueuedNode(verify.id);
+    const afterDiff = control.docket(goal.id);
+    const heldVerify = afterDiff.nodes.find((n) => n.id === verify.id)!;
+    check(heldVerify.hold?.reason === 'needs-human: diff size' && /12 changed lines .* limit of 5/.test(heldVerify.hold.detail) && heldVerify.sessionId === null && !heldVerify.queued,
+      'budgets: a verify dispatch over the changed-lines limit is held with reason needs-human: diff size, unstarted and unqueued', heldVerify);
+    check(!afterDiff.autopilot.enabled && (afterDiff.autopilot.haltedReason ?? '').startsWith('needs-human: diff size'),
+      'budgets: autopilot halts on the diff-size hold and records it', afterDiff.autopilot.haltedReason);
+
+    const src = await source('main/control.ts');
+    check(src.indexOf('const held = await considerLoopBudgets(nodeId);') > src.indexOf('export async function startNode(')
+      && src.indexOf('const held = await considerLoopBudgets(nodeId);') < src.indexOf('session = await createSession('),
+      'budgets: startNode asks the budgets before any session is created');
+  } finally {
+    for (const item of queue.listQueue(500).filter((q) => q.kind === 'node' && q.label.startsWith('Budgeted goal'))) queue.cancelQueued(item.id);
+    if (worktreeDir) { try { repo.git('worktree', 'remove', '--force', worktreeDir); } catch { /* best effort */ } }
+    try { const { listProjects } = await import('./store'); const p = listProjects().find((x) => x.path === repo.dir); if (p) removeProject(p.id); } catch { /* best effort */ }
+  }
 }

@@ -56,6 +56,7 @@ import type {
 import type { ApprovalDetail, AutoModeView, ExposureLeadView, FatigueReport, GateSelfTestRun, GrantSetting, PolicySignal, SkillSurfaceView, StoredTrace } from '../shared/types';
 /* ── helper sweep · P7 depth ── */
 import type { AskMessage } from '../shared/ask-items';
+import type { GoalLoopBudgets } from '../shared/goal-budgets';
 /* ── end helper sweep · P7 depth ── */
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -1030,6 +1031,10 @@ const api = {
       record: (sessionId: string, text: string) => call<number>('depth:asksRecord', sessionId, text),
       list: (sessionId: string) => call<AskMessage[]>('depth:asksList', sessionId),
       tick: (itemId: number, ticked: boolean) => call<{ id: number; tickedAt: number | null }>('depth:asksTick', itemId, ticked),
+    },
+    goals: {
+      setLoopBudgets: (docketId: string, budgets: GoalLoopBudgets) => call<DocketDetail>('depth:setLoopBudgets', docketId, budgets),
+      measure: (docketId: string) => call<{ implementRounds: number; changedLines: number | null; binaryFiles: number; worktree: string | null }>('depth:loopMeasure', docketId),
     },
   },
   /* ── end helper sweep · P7 depth ── */
