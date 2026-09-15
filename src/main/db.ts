@@ -1299,6 +1299,16 @@ function migrateControl(d: Database.Database) {
   // the task a second time — hasPassedProof in control.ts and the phone's gate
   // reading both count only proofs from after this moment.
   addColumn(d, 'work_nodes', 'reopened_at', 'INTEGER');
+  // Verified done, opted into per goal. `gate_on_stop` runs the review gate
+  // each time an implementation or verification agent stops, and holds an
+  // implementation task until a gate has passed. `return_failures` types a
+  // failed gate's error lines back into that session, which starts another
+  // agent turn and so spends tokens: off unless chosen, and never on without
+  // the gate. `gate_returns` counts those per task run so the cap holds across
+  // a restart; starting or reopening the task resets it.
+  addColumn(d, 'work_dockets', 'gate_on_stop', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(d, 'work_dockets', 'return_failures', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(d, 'work_nodes', 'gate_returns', 'INTEGER NOT NULL DEFAULT 0');
   // The interview that produced a goal, kept after it did.
   //
   // Durable rather than in memory because an interview is ten minutes of the

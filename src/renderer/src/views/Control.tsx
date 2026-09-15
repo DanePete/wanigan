@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
-  ControlEvent, DocketAutopilot, DocketDetail, DocketNode, DocketNodeKind, DocketNodeStatus, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
+  ControlEvent, DocketAutopilot, DocketDetail, DocketGate, DocketNode, DocketNodeKind, DocketNodeStatus, DocketProof, GoalResumeReceipt, GoalTraceEvent, McpTaskCancelReceipt, McpTaskRecord, ModelOutcome, Project, ProviderInfo, WorkDocket,
 } from '@shared/types';
-import { Chip, ConfirmNote, EmptyState, Explainer, Hint, Icon, Mark, Note, PageHead, Pill, Reading, SectionHead, ago, markOf, usd } from '../components/bits';
+import { Chip, ConfirmNote, EmptyState, Explainer, Hint, Icon, Mark, Note, PageHead, Pill, Reading, SectionHead, Segmented, ago, markOf, usd } from '../components/bits';
 import type { MarkSpec } from '../components/bits';
 import Interview from './Interview';
 import { useViewMemory } from '../components/viewMemory';
 import ReviewEvidence from '../components/ReviewEvidence';
 import GoalCompanion from '../components/GoalCompanion';
 import { goalLocation } from '@shared/goal-journey';
+import { HANDBACK_LIMIT } from '@shared/gate-feedback';
+import { oracleSentence } from '@shared/test-oracles';
 
 const errText = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -55,6 +57,34 @@ const SPEND_READING: Record<DocketAutopilot['spendStatus'], string> = {
   unreported: 'No session on this goal has reported a cost. Nothing has been counted against the cap — which is not the same as nothing having been spent.',
   none: 'No session has been launched for this goal yet, so there is nothing to count against the cap.',
 };
+/**
+ * What happens when a goal's agent stops, as one choice.
+ *
+ * Two stored flags, but hand-back without the gate means nothing, so the
+ * operator picks one of three states rather than two switches whose fourth
+ * combination the main process would have to refuse.
+ */
+type GateChoice = 'off' | 'gate' | 'hand-back';
+const gateChoiceOf = (gate: DocketGate): GateChoice => !gate.onStop ? 'off' : gate.returnFailures ? 'hand-back' : 'gate';
+const GATE_MARKS: Record<GateChoice, MarkSpec> = {
+  off:         { glyph: '○', word: 'Off',                    tone: 'quiet' },
+  gate:        { glyph: '✓', word: 'Gate on stop',           tone: 'ok' },
+  'hand-back': { glyph: '↺', word: 'Gate on stop, hand-back', tone: 'accent' },
+};
+const GATE_READING: Record<GateChoice, string> = {
+  off: 'Nothing runs when an agent stops. Implementation tasks complete on your word, and a verification task still needs a passed gate.',
+  gate: 'When an implementation or verification agent stops, Wanigan runs this project’s review gate in that task’s tree and records the result. An implementation task completes only after a gate has passed. A failure waits here for you.',
+  'hand-back': 'When an implementation or verification agent stops, Wanigan runs this project’s review gate in that task’s tree and records the result. An implementation task completes only after a gate has passed. A failure is also typed back into the session that stopped.',
+};
+function gateNotice(from: GateChoice, to: GateChoice): string {
+  if (to === 'off') return 'Gate on stop turned off. Nothing runs when an agent stops.';
+  if (to === 'gate') {
+    return from === 'hand-back'
+      ? 'Hand-back turned off. The gate still runs when an agent stops, and a failure waits here for you.'
+      : 'Gate on stop turned on. The review gate runs each time an implementation or verification agent stops.';
+  }
+  return `${from === 'off' ? 'Gate on stop and hand-back turned on' : 'Hand-back turned on'}. A failed gate is typed back into the session that stopped, at most ${HANDBACK_LIMIT} times each time a task starts.`;
+}
 const goalHash = (id: string) => goalLocation(id);
 const goalFromHash = () => new URLSearchParams(window.location.hash.slice(1)).get('goal');
 const taskFromHash = () => new URLSearchParams(window.location.hash.slice(1)).get('task');
@@ -395,6 +425,13 @@ export default function Control({ projects, providers, onOpenSession }: {
     setBudgetDrafts((previous) => ({ ...previous, [docket.id]: '' })); await reloadGoal(docket.id);
   }, 'Spend cap saved. Autopilot stops when reported spend reaches it.');
 
+  // The notice names what changed, which depends on where the choice came from:
+  // stepping down from hand-back to the gate turns hand-back off and leaves the
+  // gate as it was, and saying "gate turned on" there would be untrue.
+  const chooseGate = (docket: DocketDetail, choice: GateChoice) => act(`gate-${docket.id}`, async () => {
+    await window.wanigan.control.setGate(docket.id, { onStop: choice !== 'off', returnFailures: choice === 'hand-back' });
+    await reloadGoal(docket.id);
+  }, gateNotice(gateChoiceOf(docket.gate), choice));
   const complete = (node: DocketNode, decision: 'approve' | 'request_changes' | 'reject' = 'approve') => act(`complete-${node.id}-${decision}`, async () => {
     await window.wanigan.control.complete(node.id, { detail: notes[node.id] || undefined, decision });
     setNotes((previous) => ({ ...previous, [node.id]: '' })); await reloadGoal(detail?.id ?? null);
@@ -502,6 +539,7 @@ export default function Control({ projects, providers, onOpenSession }: {
                     <button className="btn" onClick={() => setInspectAccepted(detail.id)}>Read review record</button></div>
                 </div>
                 : activeNode ? <NodeCard key={activeNode.id} node={activeNode} busy={busy ?? (loadError ? 'unavailable' : null)} note={notes[activeNode.id] ?? ''} claim={claims[activeNode.id] ?? ''}
+                gate={detail.gate} gateProof={latestGateProof(detail, activeNode)}
                 prereqs={activeNode.dependsOn.map(id => detail.nodes.find(other => other.id === id)).filter((other): other is DocketNode => !!other)}
                 sendsBack={activeNode.kind === 'review' && /request changes/.test([...detail.proofs].filter(proof => proof.kind === 'decision' && proof.nodeId === activeNode.id).sort((a, b) => b.createdAt - a.createdAt)[0]?.summary ?? '')}
                 onPrerequisite={id => selectTask(id, true)} onSession={() => activeNode.sessionId && onOpenSession(activeNode.sessionId)}
@@ -517,6 +555,7 @@ export default function Control({ projects, providers, onOpenSession }: {
       <details className="control-execution" key={`execution-${detail.id}`}>
         <summary><span>Execution &amp; spending</span><Mark {...AUTOPILOT_MARKS[detail.autopilot.enabled ? 'armed' : detail.autopilot.haltedReason ? 'halted' : 'off']}
           word={detail.autopilot.enabled ? 'Autopilot armed' : detail.autopilot.haltedReason ? 'Autopilot halted' : 'Autopilot off'} />
+          {detail.gate.onStop && <Mark {...GATE_MARKS[gateChoiceOf(detail.gate)]} />}
           <span className="faint">{detail.autopilot.enabled
             ? providers.find((provider) => provider.id === detail.autopilot.providerId)?.label ?? detail.autopilot.providerId
             : enabledProviders.find((provider) => provider.id === providerId)?.label ?? 'No installed provider'}
@@ -527,6 +566,7 @@ export default function Control({ projects, providers, onOpenSession }: {
         <OutcomeEvidence outcomes={outcomes} kind={activeNode && activeNode.kind !== 'review' ? activeNode.kind : 'implement'}
           providerId={providerId} providerLabel={enabledProviders.find((provider) => provider.id === providerId)?.label ?? null} />
       </div>
+      <GoalGateCard docket={detail} busy={busy ?? (loadError ? 'unavailable' : null)} onChoose={(choice) => void chooseGate(detail, choice)} />
       <AutopilotCard docket={detail} busy={busy ?? (loadError ? 'unavailable' : null)} confirming={armAsk === detail.id}
         armWith={enabledProviders.find((provider) => provider.id === providerId)?.label ?? null} armWithModel={model}
         armedWith={providers.find((provider) => provider.id === detail.autopilot.providerId)?.label ?? detail.autopilot.providerId}
@@ -704,8 +744,96 @@ function OutcomeEvidence({ outcomes, kind, providerId, providerLabel }: {
   );
 }
 
-function NodeCard({ node, busy, note, claim, prereqs, sendsBack, onPrerequisite, onSession, onNote, onClaim, onStart, onCheckpoint, onClaimAdd, onProof, onComplete, onRetry }: {
+/**
+ * The gate result that decides a task, read the way control.ts decides it:
+ * the newest `test` proof for this task since it was last reopened.
+ */
+function latestGateProof(docket: DocketDetail, node: DocketNode): DocketProof | null {
+  const since = node.reopenedAt ?? 0;
+  return docket.proofs
+    .filter((proof) => proof.kind === 'test' && proof.nodeId === node.id && proof.createdAt >= since)
+    .sort((a, b) => b.createdAt - a.createdAt)[0] ?? null;
+}
+
+/**
+ * Whether an agent stopping is taken at its word, checked, or checked and
+ * answered.
+ *
+ * No confirmation, unlike arming autopilot: nothing here runs without an agent
+ * the operator already started, and the one cost, hand-back's extra agent
+ * turns, is capped, stops at the goal's spend cap, and is stated in the text
+ * beside the choice before it is made.
+ */
+function GoalGateCard({ docket, busy, onChoose }: { docket: DocketDetail; busy: string | null; onChoose: (choice: GateChoice) => void }) {
+  const choice = gateChoiceOf(docket.gate);
+  const finished = ['accepted', 'rejected'].includes(docket.status);
+  const noCommands = docket.reviewCommands === 0;
+  return <div className="control-gate">
+    <SectionHead label="Verified done" right={<Mark {...GATE_MARKS[choice]} />} />
+    <p>{GATE_READING[choice]}</p>
+    {finished ? <Hint>This goal is finished, so there is no agent left to gate.</Hint>
+      : noCommands && choice === 'off' ? <Hint>This project has no review gate commands, so there is nothing to run when an agent stops. Add them under Git › Review gate, then choose here.</Hint>
+      : <div className="control-gate-choice" aria-busy={busy !== null}>
+          <Segmented<GateChoice> label="When an agent stops" value={choice} onChange={(next) => { if (busy === null && next !== choice) onChoose(next); }}
+            options={[{ value: 'off', label: 'Take its word' }, { value: 'gate', label: 'Run the gate' }, { value: 'hand-back', label: 'Run the gate, hand failures back' }]} />
+        </div>}
+    {!finished && <Hint>
+      Handing failures back types the failing command and the lines that look like errors into the session that stopped, at
+      most {HANDBACK_LIMIT} times each time a task starts, and only while that session still waits where it stopped. Each one
+      starts another agent turn, which spends tokens; none is sent once this goal’s reported spend reaches its cap. If
+      the agent stopped to ask you something, a hand-back answers it with the failure instead.
+    </Hint>}
+    <Hint>Each gate result also flags tests changed in the same change as the code, and test files that gained lines with no assertion. They are read from the diff for you to review, and never fail a gate.</Hint>
+  </div>;
+}
+
+/**
+ * Claimed done and verified done, kept apart on the task.
+ *
+ * Read from the task's latest gate proof, never from the agent's own report:
+ * a session that stopped has claimed its work is done, and only a recorded
+ * gate run says whether it is.
+ */
+function TaskGate({ node, gate, proof }: { node: DocketNode; gate: DocketGate; proof: DocketProof | null }) {
+  if (node.kind !== 'implement' && node.kind !== 'verify') return null;
+  const running = node.gateRunningSince !== null;
+  if (!gate.onStop && !proof && !running) return null;
+  const detail = proof?.gate;
+  const flags = detail?.oracle?.flags ?? [];
+  const facts = proof ? [
+    ago(proof.createdAt),
+    detail ? (detail.trigger === 'stop' ? 'run when the agent stopped' : 'run by you') : null,
+    detail?.tree ? `tree ${detail.tree.slice(0, 7)}` : null,
+  ].filter(Boolean).join(' · ') : null;
+  return <section className="control-task-gate" aria-label="Review gate for this task">
+    <div className="control-task-gate-head">
+      {running ? <Mark glyph="▸" word="Gate running" tone="quiet" />
+        : proof ? <Mark {...markOf(proof.status)} word={proof.status === 'passed' ? 'Verified · gate passed' : 'Not verified · gate failed'} />
+          : <Mark glyph="○" word="Not verified yet" tone="quiet" />}
+      <span className="faint">{running ? `started ${ago(node.gateRunningSince ?? Date.now())}` : facts}</span>
+    </div>
+    {!proof && !running && <Hint>{node.status === 'running'
+      ? 'Wanigan runs the review gate here when this task’s agent stops.'
+      : 'The review gate runs when this task’s agent stops.'}{node.kind === 'implement' ? ' The task can be completed once a gate has passed.' : ''}</Hint>}
+    {detail?.failure && <details className="control-gate-failure">
+      <summary>What failed · <code>{detail.failure.command}</code> {detail.failure.exitCode === null ? 'was stopped' : `exited ${detail.failure.exitCode}`}</summary>
+      <pre>{detail.failure.excerpt || 'The command printed nothing.'}</pre>
+      {detail.failure.cut && <Hint>Only the lines that looked like errors were kept, and some of those were cut to fit. Git › Review gate has the full output.</Hint>}
+    </details>}
+    {detail?.handBack && <Hint>{detail.handBack.sentence}</Hint>}
+    {flags.length > 0 && <Note tone="warn" role="none">
+      <strong>Read the tests before trusting this {proof?.status === 'passed' ? 'pass' : 'result'}.</strong>
+      <ul className="control-gate-flags">{flags.map((flag) => <li key={flag.kind === 'test-without-assertion' ? flag.path : flag.kind}>{oracleSentence(flag)}</li>)}</ul>
+      <span className="faint">A heuristic read from the diff since this goal’s base commit, not a failure.</span>
+    </Note>}
+    {detail && !detail.oracle && detail.oracleNote && <Hint>{detail.oracleNote}</Hint>}
+  </section>;
+}
+
+function NodeCard({ node, busy, note, claim, gate, gateProof, prereqs, sendsBack, onPrerequisite, onSession, onNote, onClaim, onStart, onCheckpoint, onClaimAdd, onProof, onComplete, onRetry }: {
   node: DocketNode; busy: string | null; note: string; claim: string;
+  /** The goal's verified-done setting, and this task's deciding gate proof. */
+  gate: DocketGate; gateProof: DocketProof | null;
   /** This review's latest decision asked for changes, so reopening it sends the implementation back. */
   sendsBack: boolean;
   prereqs: { id: string; title: string; status: DocketNodeStatus }[];
@@ -717,11 +845,15 @@ function NodeCard({ node, busy, note, claim, prereqs, sendsBack, onPrerequisite,
   const [noteOpen, setNoteOpen] = useState(!!note);
   const actionable = ['ready', 'running'].includes(node.status);
   const reopenable = ['failed', 'canceled'].includes(node.status);
+  const gated = node.kind === 'implement' && gate.onStop;
+  const held = gated && gateProof?.status !== 'passed';
+  const gateRunning = node.gateRunningSince !== null;
   return <article className="control-node">
     <SectionHead label={node.kind === 'review' ? 'Your decision' : node.kind === 'verify' ? 'Verification' : 'Selected task'} right={<Pill status={node.status} />} />
     <h3 id="control-task-title" tabIndex={-1}>{node.title}</h3>
     <p className="control-instructions">{node.instructions}</p>
     {node.detail && <Note tone={reopenable ? 'warn' : 'info'} role="none">{node.detail}</Note>}
+    <TaskGate node={node} gate={gate} proof={gateProof} />
     {prereqs.length > 0 && <div className="control-prereqs"><SectionHead label="Prerequisites" />{prereqs.map(prereq => <button type="button" key={prereq.id} className="control-dependency" onClick={() => onPrerequisite(prereq.id)}><span>{prereq.title}</span><Mark {...markOf(prereq.status)} /><Icon name="chevron-right" /></button>)}</div>}
     {node.sessionId && <div className="control-review-actions"><button className="btn" onClick={onSession}>Open session<Icon name="external" /></button><button className="btn" onClick={onCheckpoint} disabled={busy !== null}>Save checkpoint</button></div>}
     <div className="control-node-actions">
@@ -731,10 +863,13 @@ function NodeCard({ node, busy, note, claim, prereqs, sendsBack, onPrerequisite,
       {reopenable && <><Hint>{sendsBack
         ? 'Reopening sends the implementation and verification back. Your note goes to the next implementation session, and verification needs a new gate run.'
         : 'Reopen this task for another pass. Its dependents stay blocked until it completes.'}</Hint><button className="btn" onClick={onRetry} disabled={busy !== null} title="Reopen this task so it can be started again. Tasks waiting on it stay blocked until it completes.">Reopen task</button></>}
-      {node.kind === 'verify' && actionable && <button className="btn" onClick={onProof} disabled={busy !== null}>Run review gate</button>}
+      {(node.kind === 'verify' || gated) && actionable && <button className="btn" onClick={onProof} disabled={busy !== null || gateRunning}>{gateRunning ? 'Gate running…' : 'Run review gate'}</button>}
       {(actionable || node.sessionId) && (node.kind === 'review' ? <details className="control-note" open={noteOpen} onToggle={event => setNoteOpen(event.currentTarget.open)}><summary>{note.trim() ? 'Decision note added' : 'Add a decision note'}</summary><label><span className="label">Decision note</span><textarea className="field control-textarea" aria-label="Evidence or handoff note" value={note} onChange={event => onNote(event.target.value)} placeholder="What supports your decision?" disabled={busy !== null} /></label></details> : <label><span className="label">Evidence or handoff note</span><textarea className="field control-textarea" aria-label="Evidence or handoff note" value={note} onChange={event => onNote(event.target.value)} placeholder="What should the next person know?" disabled={busy !== null} /></label>)}
       {node.kind === 'implement' && actionable && <div className="control-inline"><input className="field" aria-label="Path to claim" value={claim} onChange={event => onClaim(event.target.value)} placeholder="src/path.ts" /><button className="btn" onClick={onClaimAdd} disabled={busy !== null || !claim.trim()}>Claim</button></div>}
-      {node.kind === 'review' && actionable ? <div className="control-review-actions"><button className="btn btn-primary" onClick={() => onComplete('approve')} disabled={busy !== null}>Approve</button><button className="btn" onClick={() => onComplete('request_changes')} disabled={busy !== null}>Request changes</button><button className="btn btn-danger" onClick={() => onComplete('reject')} disabled={busy !== null}>Reject</button></div> : actionable && <button className="btn" onClick={() => onComplete('approve')} disabled={busy !== null}>Mark complete</button>}
+      {node.kind === 'review' && actionable ? <div className="control-review-actions"><button className="btn btn-primary" onClick={() => onComplete('approve')} disabled={busy !== null}>Approve</button><button className="btn" onClick={() => onComplete('request_changes')} disabled={busy !== null}>Request changes</button><button className="btn btn-danger" onClick={() => onComplete('reject')} disabled={busy !== null}>Reject</button></div> : actionable && <>
+        <button className="btn" onClick={() => onComplete('approve')} disabled={busy !== null || held}>Mark complete</button>
+        {held && <Hint>{gateRunning ? 'Completes once the running gate passes.' : 'This goal completes an implementation task only once a review gate has passed on it.'}</Hint>}
+      </>}
       {node.kind === 'review' && node.status === 'ready' && <button className="btn btn-sm" onClick={onStart} disabled={busy !== null || node.queued}>Start isolated task</button>}
       {node.status === 'blocked' && <Hint>This task waits for its prerequisites to complete.</Hint>}
       {node.status === 'completed' && <Hint>This task is complete. Its recorded evidence stays available alongside it.</Hint>}

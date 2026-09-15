@@ -1,9 +1,21 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import type { DocketDetail, GoalPlan, GoalResumeReceipt, GoalTraceEvent } from '@shared/types';
+import type { DocketDetail, GateProofDetail, GoalPlan, GoalResumeReceipt, GoalTraceEvent } from '@shared/types';
+import { HANDBACK_LIMIT } from '@shared/gate-feedback';
 import { Hint, Mark, Pill, SectionHead, Segmented, ago, markOf, usd } from './bits';
 import { useViewMemory } from './viewMemory';
 
 type Area = 'proof' | 'handoffs' | 'activity';
+
+/** One line of what a gate proof recorded beyond its summary: who ran it, on which tree, and what it flagged or sent. */
+function gateFacts(gate: GateProofDetail): string {
+  const flags = gate.oracle?.flags.length ?? 0;
+  return [
+    gate.trigger === 'stop' ? 'Run when the agent stopped' : 'Run by you',
+    gate.tree ? `tree ${gate.tree.slice(0, 7)}` : 'tree not recorded',
+    flags ? `${flags} test flag${flags === 1 ? '' : 's'} to read` : null,
+    gate.handBack?.sent ? `handed back (${gate.handBack.attempt} of ${HANDBACK_LIMIT})` : null,
+  ].filter(Boolean).join(' · ');
+}
 /** Evidence remains goal-wide: a Review task depends on proof from Verify. */
 export default function ReviewEvidence({ docket, receipts, traces, onTask, children }: {
   docket: DocketDetail; receipts: GoalResumeReceipt[]; traces: GoalTraceEvent[];
@@ -51,7 +63,9 @@ export default function ReviewEvidence({ docket, receipts, traces, onTask, child
         <SectionHead label="Proof bundle" count={docket.proofs.length} />
         {docket.proofs.length === 0 ? <Hint>No evidence yet. A passing review gate is required before verification can complete.</Hint> : docket.proofs.map(proof => <article className="control-record" key={proof.id}>
           <div><Pill status={proof.status} /><span>{proof.kind}</span><time>{ago(proof.createdAt)}</time></div>
-          <p>{proof.summary}</p>{attribution(proof.nodeId)}
+          <p>{proof.summary}</p>
+          {proof.gate && <span className="control-record-gate">{gateFacts(proof.gate)}</span>}
+          {attribution(proof.nodeId)}
         </article>)}
       </>}
       {area === 'handoffs' && <>
