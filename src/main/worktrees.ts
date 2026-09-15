@@ -304,6 +304,51 @@ async function isIgnored(repoRoot: string, rel: string): Promise<boolean> {
   return r.ok;
 }
 
+/** The first line of the block Wanigan keeps in a repository's local exclude file. */
+const EXCLUDE_HEADER = '# Wanigan links these dependency folders into agent worktrees. A symlink does not match a pattern ending in /.';
+
+/**
+ * Make git ignore a dependency link in every worktree of this repository.
+ *
+ * The link is to a folder the main checkout ignores, usually through a rule
+ * like `node_modules/`. A pattern ending in a slash matches directories only,
+ * and git does not treat a symlink as one, so every linked worktree listed the
+ * link as untracked. Wanigan's own merge and removal then counted it as
+ * uncommitted work, and an agent running `git add -A` committed a symlink to
+ * the operator's checkout into its branch.
+ *
+ * The fix is one anchored line per linked path in the repository's local
+ * exclude file, `info/exclude` under the common git directory. That file is
+ * never committed, and every worktree reads it. It changes nothing in the main
+ * checkout, where each path is only linked because git already ignores it
+ * there. Lines are only added, only once, and under a comment naming Wanigan,
+ * so the operator can see where they came from and remove them.
+ *
+ * Returns why the line could not be written, or null when git now ignores the link.
+ */
+async function excludeLink(repoRoot: string, rel: string): Promise<string | null> {
+  const common = await git(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir'], 5000);
+  const dir = common.ok ? common.stdout.trim() : '';
+  if (!dir) return `the repository’s git directory could not be read (${gitSaid(common)})`;
+  const file = path.join(dir, 'info', 'exclude');
+  const line = `/${rel}`;
+  try {
+    let text = '';
+    try { text = fs.readFileSync(file, 'utf8'); } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
+    const lines = text.split(/\r?\n/);
+    if (lines.includes(line)) return null;
+    const lead = text && !text.endsWith('\n') ? '\n' : '';
+    const header = lines.includes(EXCLUDE_HEADER) ? '' : `${text ? '\n' : ''}${EXCLUDE_HEADER}\n`;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.appendFileSync(file, `${lead}${header}${line}\n`);
+    return null;
+  } catch (e) {
+    return `the line could not be added to ${file} (${message(e)})`;
+  }
+}
+
 /**
  * Whether writing `dst` stays inside `root` (already canonical), judged from
  * the nearest ancestor that exists: every directory below it will be made
@@ -445,7 +490,8 @@ async function placeDependencies(repoRoot: string, worktree: string, mode: DepsM
     try {
       fs.symlinkSync(src, dst, 'dir');
       linked.push({ path: rel, kind: 'dir', bytes: null });
-      record('linked', fallback);
+      const unexcluded = await excludeLink(repoRoot, rel);
+      record('linked', [fallback, unexcluded && `git will list the link as untracked because ${unexcluded}`].filter(Boolean).join('; ') || null);
     } catch (e) {
       record('failed', `${fallback ? `${fallback}, and ` : ''}the link could not be made (${message(e)})`);
     }

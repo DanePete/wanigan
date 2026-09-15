@@ -220,6 +220,18 @@ try {
     await details.evaluate((el) => el.scrollIntoView({ block: 'start' }));
     await shoot('setup-panel');
 
+    // Link's caption states the one write it makes to the repository's git
+    // metadata, before anyone picks it.
+    await deps.getByRole('button', { name: 'Link', exact: true }).click();
+    const linkCaption = panel.locator('.wt-setup-caption').first();
+    await linkCaption.filter({ hasText: 'Shared with the main checkout' }).waitFor();
+    assert.match(flat(await linkCaption.innerText()), /Wanigan names each link in the repository’s local git exclude file, so git does not list it as untracked work\./);
+    await details.evaluate((el) => el.scrollIntoView({ block: 'start' }));
+    await shoot('setup-link');
+    await deps.getByRole('button', { name: 'Clone', exact: true }).click();
+    await linkCaption.filter({ hasText: 'A copy-on-write clone per worktree' }).waitFor();
+    record('choosing Link says the worktree shares the main checkout’s folders and that each link is named in the local git exclude file, so it is not listed as untracked work');
+
     await panel.getByRole('textbox', { name: 'Worktree setup commands' }).fill('npm ci\nnpm run migrate\nnpm run seed');
     await panel.getByText('Unsaved changes', { exact: true }).waitFor();
     await panel.getByRole('button', { name: 'Save commands', exact: true }).click();
@@ -237,7 +249,8 @@ try {
 
     await deps.getByRole('button', { name: 'Skip', exact: true }).click();
     await panel.getByText(/Dependency folders will be left out in new worktrees\. Worktrees that already exist keep what they have\./).waitFor();
-    assert.deepEqual(await calls('setDepsMode'), [['setDepsMode', projectId, 'skip']]);
+    // The Link and Clone presses above stored their choices too; this one is the latest.
+    assert.deepEqual((await calls('setDepsMode')).slice(-1), [['setDepsMode', projectId, 'skip']]);
     assert.equal(await deps.getByRole('button', { name: 'Skip', exact: true }).getAttribute('aria-pressed'), 'true');
     assert.match(flat(await panel.innerText()), /Not made available in the worktree\. Install them with a setup command\./);
     record('choosing skip stores it for the project at once and says existing worktrees keep what they have');

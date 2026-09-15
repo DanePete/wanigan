@@ -54,6 +54,18 @@ copied nothing and reported git as the reason. And a setup line that started a
 background process holding its output (`npm run dev &`) would have held the
 launch for the full ten minutes; a command is now finished when its shell exits.
 
+**A linked folder no longer reads as untracked work.** A `node_modules/` rule
+matches directories only, and git does not treat a symlink as one. So every
+linked worktree listed `?? node_modules`: merge and removal counted the link as
+uncommitted work, and `git add -A` in the worktree committed a symlink to the
+operator's checkout. Each linked path now gets one anchored line, such as
+`/node_modules`, in the repository's local exclude file. That file is
+`info/exclude` in the common git directory, which every worktree reads and
+nothing commits. The line sits under a comment naming Wanigan and is written
+once. It changes nothing in the main checkout, because a folder is only linked
+when git already ignores it there. The Link caption says so before the choice is
+made.
+
 ## Screenshots
 
 | | Dark | Light |
@@ -62,12 +74,15 @@ launch for the full ten minutes; a command is now finished when its shell exits.
 | Before · Branches | ![](before/branches-dark.png) | ![](before/branches-light.png) |
 | Before · Launch, isolated | ![](before/launch-dark.png) | ![](before/launch-light.png) |
 | After · Worktree setup | ![](after/setup-panel-dark.png) | ![](after/setup-panel-light.png) |
+| Before · Link's caption | ![](before/setup-link-dark.png) | ![](before/setup-link-light.png) |
+| After · Link's caption | ![](after/setup-link-dark.png) | ![](after/setup-link-light.png) |
 | After · Branches | ![](after/branches-dark.png) | ![](after/branches-light.png) |
 | After · Launch, isolated | ![](after/launch-dark.png) | ![](after/launch-light.png) |
 | After · settings unreadable | ![](after/setup-unreadable-dark.png) | ![](after/setup-unreadable-light.png) |
 
 Rendered by `scripts/probe-worktree-bootstrap.mjs` in isolated Electron with
 synthetic services; before from `dba7528` (`feat/advanced-gaps`) in a detached
-worktree, after from this change, same fixtures. `verification.json` in each
+worktree, except Link's caption, which is from `4c7151e`, the commit before the
+exclude line. After is from this change, with the same fixtures. `verification.json` in each
 directory lists the checks that ran. The main-process behaviour is checked
 against real repositories in `src/main/smoke16.ts`.

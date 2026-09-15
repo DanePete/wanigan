@@ -45,11 +45,11 @@ export function asDepsMode(value: unknown): DepsMode | null {
 export const DEPS_MODE_COPY: Record<DepsMode, { label: string; hint: string }> = {
   link: {
     label: 'Link',
-    // The second sentence is git's behaviour, checked in smoke16: a pattern
-    // with a trailing slash matches directories only, a symlink is not one, and
-    // the untracked link then counts as uncommitted work in merge and removal.
+    // The second sentence is a write Wanigan makes, so it is said before the
+    // choice: a pattern with a trailing slash matches directories only, a
+    // symlink is not one, and the link would otherwise read as untracked work.
     hint: 'Shared with the main checkout: an install inside the worktree changes the main checkout’s copy. '
-      + 'Where .gitignore names the folder with a trailing slash (node_modules/), git lists the link as an untracked file.',
+      + 'Wanigan names each link in the repository’s local git exclude file, so git does not list it as untracked work.',
   },
   clone: {
     label: 'Clone',

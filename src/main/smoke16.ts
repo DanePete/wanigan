@@ -103,9 +103,8 @@ export async function runWorktreeBootstrapSmoke(rawCheck: Check, say: Say): Prom
     let keyMode = -1;
     try { keyMode = fs.statSync(inWt('config/master.key')).mode & 0o777; } catch { /* asserted below */ }
     check(keyMode === 0o600, 'a 0600 key stays 0600 in the worktree', keyMode.toString(8));
-    // Not "status is empty": the linked node_modules symlink itself shows as
-    // untracked under a `node_modules/` rule, which matches directories only.
-    // That is link mode's, and is asserted where clone is tested below.
+    // Only the copies are asserted here. Whether the linked node_modules itself
+    // reads clean is link mode's question, asserted with the dependency folders.
     const incStatus = execFileSync('git', ['-C', iw.path, 'status', '--porcelain', '--untracked-files=all'], { stdio: 'pipe' }).toString();
     check(!/\.env\.test|master\.key|dev\.pem/.test(incStatus),
       'nothing the include file copied shows in git status, because every copy is a gitignored file', incStatus);
@@ -147,6 +146,21 @@ export async function runWorktreeBootstrapSmoke(rawCheck: Check, say: Say): Prom
     'under link, a file changed inside the worktree’s node_modules changes the main checkout’s — the sharing a clone exists to avoid', linkedOutcome);
     fs.writeFileSync(mainMarker, 'main\n');
 
+    // A `node_modules/` rule matches directories only and git does not treat a
+    // symlink as one, so before the exclude line every linked worktree listed
+    // `?? node_modules`: merge and removal counted it as uncommitted work, and
+    // `git add -A` committed a link to the operator's checkout.
+    const linkedAgain = await create(deps.dir, 'link again', 's_wtboot_link2');
+    const excludeText = fs.readFileSync(path.join(deps.dir, '.git', 'info', 'exclude'), 'utf8');
+    const statusOf = (dir: string) => execFileSync('git', ['-C', dir, 'status', '--porcelain', '--untracked-files=all'], { stdio: 'pipe' }).toString();
+    check(statusOf(linked.path) === '' && statusOf(linkedAgain.path) === '' && statusOf(deps.dir) === ''
+      && excludeText.split('\n').filter((line) => line === '/node_modules').length === 1 && excludeText.includes('# Wanigan links these dependency folders'),
+    'a linked node_modules reads clean in every worktree: one anchored line under a Wanigan comment in the local exclude file, written once however many worktrees link it, and the main checkout is unchanged',
+    { linked: statusOf(linked.path), again: statusOf(linkedAgain.path), exclude: excludeText });
+    let linkIgnored = false;
+    try { execFileSync('git', ['-C', linked.path, 'check-ignore', '-q', 'node_modules'], { stdio: 'pipe' }); linkIgnored = true; } catch { /* exit 1: not ignored */ }
+    check(linkIgnored, 'git reports the link itself as ignored in the worktree, so `git add -A` there cannot commit it');
+
     check(wtSetup.setDepsMode(depsProject.id, 'clone') === 'clone' && wtSetup.depsModeFor(depsProject.id) === 'clone'
       && (db().prepare('SELECT mode FROM project_worktree_deps WHERE project_id = ?').get(depsProject.id) as { mode: string } | undefined)?.mode === 'clone',
     'the dependency choice is stored per project in Wanigan’s database');
@@ -159,9 +173,8 @@ export async function runWorktreeBootstrapSmoke(rawCheck: Check, say: Say): Prom
         && fs.readFileSync(mainMarker, 'utf8') === 'main\n',
       'under clone, the worktree gets its own copy-on-write node_modules, and a file changed inside it leaves the main checkout’s untouched', clonedOutcome);
       const cloneStatus = execFileSync('git', ['-C', cloned.path, 'status', '--porcelain'], { stdio: 'pipe' }).toString();
-      const linkStatus = execFileSync('git', ['-C', linked.path, 'status', '--porcelain'], { stdio: 'pipe' }).toString();
-      check(cloneStatus === '' && /^\?\? node_modules$/m.test(linkStatus),
-        'a cloned node_modules is a directory the `node_modules/` rule ignores, so the worktree reads clean; the linked one is a symlink that rule does not match, and reads as an untracked file', { cloneStatus, linkStatus });
+      check(cloneStatus === '',
+        'a cloned node_modules is a directory the `node_modules/` rule ignores, so the worktree reads clean', { cloneStatus });
     } else {
       check(clonedOutcome?.result === 'linked' && /not macOS/.test(clonedOutcome.detail ?? ''),
         'where copy-on-write clones are unavailable, a clone request falls back to a link and the result records why', clonedOutcome);

@@ -1,11 +1,12 @@
 {
-  "at": "2026-09-15T02:46:10.687Z",
+  "at": "2026-09-15T04:36:10.703Z",
   "provenance": "Actual Electron renderer from out/renderer of the checkout this script ran in; synthetic git, worktree and session services; no real agent calls",
   "mode": "after",
   "checks": [
     "opening Worktree setup reads the project’s settings once, by project id alone",
     "the stored choice (clone), the include file’s 3 patterns and both command lists are shown, and saving is off until something changes",
     "recent runs list both phases; a failed setup names the command, its exit code, duration and that the launch went ahead, and opens to each command’s recorded output",
+    "choosing Link says the worktree shares the main checkout’s folders and that each link is named in the local git exclude file, so it is not listed as untracked work",
     "saving sends both lists for the project id and says that nothing ran",
     "a save the person cancels in main’s dialog shows main’s sentence and stays unsaved",
     "choosing skip stores it for the project at once and says existing worktrees keep what they have",
