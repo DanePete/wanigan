@@ -82,3 +82,12 @@
 .dp-dl-del { color: var(--critical); background: var(--critical-soft); }
 .dp-dl-gap { color: var(--text-faint); }
 .dp-check { display: inline-flex; align-items: center; gap: var(--s-2); font-size: var(--t-small); }
+
+/* ── scratch files, collapsed under the review list ────────────────────── */
+.dp-scratch { margin: var(--s-2) 0; border-top: 1px dashed var(--line-soft); padding-top: var(--s-2); font-size: var(--t-small); }
+.dp-scratch > summary { cursor: pointer; color: var(--text-dim); padding: 0 var(--s-2); display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: baseline; }
+.dp-scratch > summary .faint { font-size: var(--t-micro); }
+.dp-scratch-list { list-style: none; margin: var(--s-1) 0 0; padding: 0; display: grid; gap: var(--s-1); }
+.dp-scratch-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 var(--s-2); align-items: center; }
+.dp-scratch-list li > .dp-fine { grid-column: 1; padding: 0 var(--s-2); }
+.dp-scratch-list li > .btn { grid-row: 1 / span 2; grid-column: 2; }

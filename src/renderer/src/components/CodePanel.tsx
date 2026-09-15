@@ -16,7 +16,7 @@ import {
   StageHunksPanel, findInPatch, scopedFiles, useReviewWork, type FindHit, type ReviewScope,
 } from './ReviewWorkbench';
 /* ── helper sweep · P7 depth ── */
-import { MaintainabilitySection } from './DepthReview';
+import { MaintainabilitySection, ScratchFilesSection } from './DepthReview';
 /* ── end helper sweep · P7 depth ── */
 type Editor = { id: string; label: string; path: string };
 type Changed = { path: string; index: string; work: string; staged: boolean; untracked: boolean; preexisting?: boolean; committed?: boolean };
@@ -517,7 +517,10 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
   const needle = filter.trim().toLowerCase();
   const uncommittedRows = useMemo(() => orderForReview(visible.filter((f) => !needle || f.path.toLowerCase().includes(needle)
     || (reviewByPath.get(f.path)?.oldPath ?? '').toLowerCase().includes(needle)), order), [visible, needle, order, reviewByPath]);
-  const reviewRows = useMemo(() => scopedFiles(review, scopeNow === 'agent' ? 'agent' : 'branch', filter, order), [review, scopeNow, filter, order]);
+  /* ── helper sweep · P7 depth ── scratch files are listed apart, collapsed, and counted nowhere. */
+  const scopedRows = useMemo(() => scopedFiles(review, scopeNow === 'agent' ? 'agent' : 'branch', filter, order), [review, scopeNow, filter, order]);
+  const reviewRows = useMemo(() => scopedRows.filter((f) => !f.scratch), [scopedRows]);
+  const scratchRows = useMemo(() => scopedRows.filter((f) => f.scratch), [scopedRows]);
   const selectedReview: ReviewWorkFile | null = sel ? reviewByPath.get(sel) ?? null : null;
   const reviewKey = review ? `${review.base}:${review.files.map((f) => f.contentHash.slice(0, 7)).join('')}` : '';
   const diffAnchor = scopeNow === 'uncommitted' || !review?.anchor ? changesAnchor : review.anchor;
@@ -721,7 +724,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
         <>
           <ReviewToolbar scope={diffScope} onScope={changeScope} order={order} whitespace={whitespace}
                          filter={filter} onFilter={setFilter} find={findQuery} onFind={setFindQuery} onRunFind={() => void runFind()}
-                         counts={{ agent: review.files.filter((f) => f.attribution === 'edit-tool' || f.attribution === 'shell-reported').length, uncommitted: visible.length, branch: review.files.length }} />
+                         counts={{ agent: review.files.filter((f) => !f.scratch && (f.attribution === 'edit-tool' || f.attribution === 'shell-reported')).length, uncommitted: visible.length, branch: review.files.filter((f) => !f.scratch).length }} />
           {scopeNow === 'agent' && (
             <p className="rw-because rw-pad">
               {review.hooksRecorded
@@ -863,6 +866,7 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                   {!reviewRows.length && (
                     <p className="faint code-hint">
                       {filter.trim() ? `No file in this scope matches “${filter.trim()}”.`
+                        : scratchRows.length ? 'Only scratch files changed. They are listed below and counted nowhere.'
                         : scopeNow === 'agent' ? 'No changed file was written by an edit tool or reported by a shell command.'
                           : 'Nothing changed against the commit this session started from.'}
                     </p>
@@ -875,6 +879,8 @@ export default function CodePanel({ projectPath, projectName, sessionId, checkpo
                       <FileRowMarks file={f} />
                     </button>
                   ))}
+                  {/* ── helper sweep · P7 depth ── */}
+                  {sessionId && <ScratchFilesSection sessionId={sessionId} files={scratchRows} selected={sel} onOpen={(p) => void openDiff(p)} onChanged={() => void reloadReview()} />}
                 </>
               )}
               {scopeNow === 'uncommitted' && changes.isRepo && !visible.length && (

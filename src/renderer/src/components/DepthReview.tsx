@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { MaintainabilityView } from '@shared/maintainability';
+import type { ReviewWorkFile } from '@shared/review-work';
+import { SCRATCH_WORDS } from '@shared/scratch-files';
 import { Mark, Note, num } from './bits';
 import '../styles/depth.css';
 
@@ -77,6 +79,47 @@ export function MaintainabilitySection({ sessionId, refreshKey }: { sessionId: s
           )}
         </>
       )}
+    </details>
+  );
+}
+
+/**
+ * Changed files set aside as scratch: listed, collapsed, and out of every count
+ * above them. "Count this file" puts one back into the review and is kept for
+ * the project until taken back.
+ */
+export function ScratchFilesSection({ sessionId, files, selected, onOpen, onChanged }: {
+  sessionId: string; files: readonly ReviewWorkFile[]; selected: string | null;
+  onOpen: (path: string) => void; onChanged: () => void;
+}) {
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  if (!files.length) return null;
+  const count = (path: string) => {
+    setBusy(path); setErr(null);
+    window.wanigan.depth.promoteScratch(sessionId, path, true)
+      .then(() => onChanged())
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(null));
+  };
+  return (
+    <details className="dp-scratch">
+      <summary>Scratch files <span className="faint">{num(files.length)} · not counted in this review</span></summary>
+      <ul className="dp-scratch-list">
+        {files.map((f) => (
+          <li key={f.path}>
+            <button type="button" className={`code-file${selected === f.path ? ' on' : ''}`} onClick={() => onOpen(f.path)}>
+              <span className="stat">{f.status}</span>
+              <span className="trunc faint">{f.path}</span>
+            </button>
+            <span className="faint dp-fine">{f.scratch ? SCRATCH_WORDS[f.scratch] : ''}</span>
+            <button type="button" className="btn btn-sm" disabled={busy !== null} onClick={() => count(f.path)}>
+              {busy === f.path ? 'Counting…' : 'Count this file'}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {err && <Note tone="error">{err}</Note>}
     </details>
   );
 }

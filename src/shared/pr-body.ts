@@ -19,6 +19,9 @@ export type PrEvidence = {
   checks: readonly { command: string; exitCode: number | null; durationMs: number | null; where: string }[];
   review: { approved: number; rejected: number; commented: number; resolved: number; files: number } | null;
   dependencies: readonly string[];
+  /* ── helper sweep · P7 depth ── */
+  /** Changed files set aside as scratch and not listed; see shared/scratch-files.ts. */
+  scratchFiles?: number;
 };
 
 export const PR_BODY_FOOTER = "Written from Wanigan's recorded evidence.";
@@ -57,6 +60,8 @@ export function buildPrBody(evidence: PrEvidence): string {
     out.push(`  - \`${f.path}\` ${f.added === null ? 'binary' : `+${f.added} −${f.removed}`}`);
   }
   if (evidence.files.length > MAX_FILES_LISTED) out.push(`  - and ${plural(evidence.files.length - MAX_FILES_LISTED, 'more file')}`);
+  /* ── helper sweep · P7 depth ── */
+  if (evidence.scratchFiles) out.push(`  - ${plural(evidence.scratchFiles, 'scratch file')} (temporary, ignored, or under scratch/ or tmp/) not listed or counted`);
 
   out.push('', '## Checks run');
   if (!evidence.checks.length) {

@@ -483,3 +483,54 @@ export async function runInstructionPinSmoke(check: Check, say: Say): Promise<vo
     try { const { listProjects } = await import('./store'); const p = listProjects().find((x) => x.path === repo.dir); if (p) removeProject(p.id); } catch { /* best effort */ }
   }
 }
+
+/** Item 8: scratch files stay out of review counts, marks and the PR body, with a persistent promotion. */
+export async function runScratchSmoke(check: Check, say: Say): Promise<void> {
+  say('── depth · scratch files stay out of review counts');
+  const repo = repoFixture('wanigan-p7-scratch-');
+  const { addProject, removeProject } = await import('./store');
+  const work = await import('./review-work');
+  const { setScratchPromotion } = await import('./scratch');
+  const { buildPrBody } = await import('../shared/pr-body');
+  try {
+    repo.write('src/cart.ts', 'export const total = 1;\n');
+    repo.write('.gitignore', 'build/\n');
+    repo.write('build/keep.txt', 'tracked under an ignored pattern\n');
+    repo.git('add', '-A'); repo.git('add', '-f', 'build/keep.txt'); repo.git('commit', '-qm', 'base');
+    const base = repo.git('rev-parse', 'HEAD').trim();
+    const project = await addProject(repo.dir);
+    const sid = `p7-scratch-${Date.now()}`;
+    insertSession(sid, project.id, repo.dir, base);
+    repo.write('src/cart.ts', 'export const total = 2;\n');
+    repo.write('scratch/probe.py', Array.from({ length: 40 }, (_, i) => `print(${i})`).join('\n') + '\n');
+    repo.write('tmp/dump.json', '{"a":1}\n');
+    repo.write('build/keep.txt', 'changed\n');
+    repo.write('.claude/worktrees/agent-a/notes.md', 'x\n');
+    const review = await work.reviewWork(sid);
+    const scratch = Object.fromEntries(review.files.map((f) => [f.path, f.scratch ?? null]));
+    check(scratch['src/cart.ts'] === null && scratch['scratch/probe.py'] === 'scratch-dir' && scratch['tmp/dump.json'] === 'tmp-dir' && scratch['build/keep.txt'] === 'gitignored',
+      'scratch: scratch/, tmp/ and a tracked file under an ignored pattern are classified; the real change is not', JSON.stringify(scratch));
+    check(review.verdict.counts.files === 1 && review.verdict.counts.added === 1 && review.label === 'Needs review · 0 of 1 file',
+      'scratch: needs-review totals and the diff counts leave them out', JSON.stringify(review.verdict.counts));
+    let refused = '';
+    try { await work.setReviewMark(sid, 'tmp/dump.json', 'approved'); } catch (e) { refused = e instanceof Error ? e.message : String(e); }
+    check(/scratch file/.test(refused), 'scratch: a review mark on a scratch file is refused until it is counted', refused);
+
+    setScratchPromotion(project.id, 'scratch/probe.py', true);
+    const promoted = await work.reviewWork(sid);
+    check(promoted.files.find((f) => f.path === 'scratch/probe.py')?.scratch === null && promoted.verdict.counts.files === 2 && promoted.verdict.counts.added === 41,
+      'scratch: "Count this file" puts it back into every count', JSON.stringify(promoted.verdict.counts));
+    const mark = await work.setReviewMark(sid, 'scratch/probe.py', 'approved');
+    check(mark.state === 'approved', 'scratch: a counted file can be marked');
+    const again = await work.reviewWork(sid);
+    check(again.files.find((f) => f.path === 'scratch/probe.py')?.scratch === null, 'scratch: the promotion persists for the project');
+
+    const body = buildPrBody({ goal: null, turns: 1, files: [{ path: 'src/cart.ts', added: 1, removed: 1 }], checks: [], review: null, dependencies: [], scratchFiles: 2 });
+    check(body.includes('1 file changed (+1 −1)') && body.includes('2 scratch files (temporary, ignored, or under scratch/ or tmp/) not listed or counted') && !body.includes('tmp/dump.json'),
+      'scratch: the PR body lists and counts only real files and says how many scratch files it left out');
+    const evidence = await source('main/pr-evidence.ts');
+    check(evidence.includes('files: counted,') && evidence.includes('scratchFiles: classified.length - counted.length'), 'scratch: the PR draft passes only counted files to the body');
+  } finally {
+    try { const { listProjects } = await import('./store'); const p = listProjects().find((x) => x.path === repo.dir); if (p) removeProject(p.id); } catch { /* best effort */ }
+  }
+}

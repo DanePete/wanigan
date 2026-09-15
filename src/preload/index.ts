@@ -1042,6 +1042,8 @@ const api = {
         call<import('../shared/exec-config').ConfigPinCheck>('configPins:acceptInstructions', projectId, digest, worktree ?? null),
       setAsk: (projectId: string, on: boolean) => call<boolean>('configPins:setInstructionAsk', projectId, on),
     },
+    /** "Count this file" on a scratch file, or take it back. Kept per project and path. */
+    promoteScratch: (sessionId: string, path: string, on: boolean) => call<boolean>('depth:promoteScratch', sessionId, path, on),
     compactions: (sessionId: string) => call<{ marks: CompactionMark[]; transcript: 'live' | 'archived' | 'none' }>('depth:compactions', sessionId),
     agentGit: (root: string) => call<AgentGitMarks & { sessions: number; commands: number; reflogRead: boolean }>('depth:agentGit', root),
     sessionFiles: (sessionId: string) => call<SessionFiles & { root: string | null }>('depth:sessionFiles', sessionId),
