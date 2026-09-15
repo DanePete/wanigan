@@ -36,8 +36,10 @@ export default function HelperShellKeys({ activeSessionId, openSession }: {
         return;
       }
       if (bindingMatches(e, 'reopen-tab')) {
+        // Not stopped: nothing beneath binds ⌘⇧T (Sessions matches a bare
+        // lower-case t), and letting it through is what lets probe-chords see
+        // that the chord was taken.
         e.preventDefault();
-        e.stopPropagation();
         window.wanigan.helper.reopenClosed()
           .then((s) => {
             if (s) openSession(s.id);

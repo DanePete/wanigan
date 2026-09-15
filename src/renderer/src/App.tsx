@@ -682,6 +682,10 @@ export default function App() {
       if (spaceId !== null) setSpaceId(project);
     }
   }, [spaceId]);
+  /* helper sweep · P2 attention: opened the way a clicked notification opens a
+     session — focusSession, not openSession — so jumping across projects does
+     not narrow the space to the project jumped to and strand ⌥⌘←/→ inside it. */
+  const openFromTriage = useCallback((id: string) => { focusSession(id); go('sessions'); }, [focusSession, go]);
 
   // ⌘1–9. Capture phase, so the shell wins over any view handler underneath
   // (Sessions once bound the same digits to its tabs and only one of us could
@@ -1178,7 +1182,7 @@ export default function App() {
     <AnnounceProvider onError={announceError}>
     <ViewMemoryProvider>
       {/* helper sweep · P2 attention: ⌘J, ⌘⇧T and notification replies. */}
-      <HelperShellKeys activeSessionId={activeSessionId} openSession={openSession} />
+      <HelperShellKeys activeSessionId={activeSessionId} openSession={openFromTriage} />
       {startup?.phase === 'recovery' && (
         <section className="startup-recovery" role="alert">
           <div>
