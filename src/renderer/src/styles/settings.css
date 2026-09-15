@@ -49,6 +49,8 @@
 .set-field-action { display: flex; gap: 7px; align-items: center; margin-top: 4px; }
 .set-field-action > .field { min-width: 0; flex: 1; }
 .set-field-action > .btn { flex: none; }
+/* A number of minutes needs a few characters, not the width of a key field. */
+.set-field-action.set-intake-interval { max-width: 20rem; }
 .set-key-status { display: flex; gap: 8px 11px; align-items: center; flex-wrap: wrap; margin-bottom: 11px; }
 .set-key-status .btn:first-of-type { margin-left: auto; }
 .set-runtime-row, .set-project-row { display: flex; gap: 11px; align-items: center; padding: 7px 0; border-top: 1px solid var(--line-soft); min-width: 0; }

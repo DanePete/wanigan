@@ -596,6 +596,70 @@ function migratePhases(d: Database.Database) {
   migrateCheckpoints(d);
   migrateConversationFlags(d);
   migrateClaudeUsage(d);
+  migrateIntake(d);
+}
+
+/**
+ * Issue intake: GitHub facts read through gh on a press or an opt-in timer,
+ * recorded as Control events. See intake.ts.
+ *
+ * The external key is what makes a poll safe to repeat. Every poll overlaps the
+ * last one on purpose, so the same issue, comment and failed run arrive again
+ * and again; the unique index refuses the second copy inside SQLite, where two
+ * polls racing each other cannot both get past it. Partial, because every event
+ * written before this column existed, and every one typed in by hand, has no
+ * outside identity to be unique about. Ordered after the ALTER for the reason
+ * the queue lease index gives.
+ */
+function migrateIntake(d: Database.Database) {
+  addColumn(d, 'control_events', 'external_key', 'TEXT');
+  d.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_control_events_external
+      ON control_events(project_id, external_key) WHERE external_key IS NOT NULL;
+
+    -- One row per poll, written when it fires and finished when it ends, so a
+    -- poll that fired and never ran, or ran and never finished, is still a row
+    -- someone can read. The partial unique index is the claim: one unfinished
+    -- poll per project, across the app and anything else sharing this file.
+    CREATE TABLE IF NOT EXISTS intake_polls (
+      id            TEXT PRIMARY KEY,
+      project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      fired_by      TEXT NOT NULL,
+      fired_at      INTEGER NOT NULL,
+      ran_at        INTEGER,
+      finished_at   INTEGER,
+      outcome       TEXT,
+      reason        TEXT,
+      error         TEXT,
+      repo          TEXT,
+      since_at      INTEGER,
+      until_at      INTEGER,
+      lookback      INTEGER NOT NULL DEFAULT 0,
+      interval_ms   INTEGER,
+      gap_ms        INTEGER,
+      facts_read    INTEGER NOT NULL DEFAULT 0,
+      new_opened    INTEGER NOT NULL DEFAULT 0,
+      new_labelled  INTEGER NOT NULL DEFAULT 0,
+      new_commented INTEGER NOT NULL DEFAULT 0,
+      new_ci_failed INTEGER NOT NULL DEFAULT 0,
+      capped        TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_intake_polls_project ON intake_polls(project_id, fired_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_intake_polls_one_running
+      ON intake_polls(project_id) WHERE finished_at IS NULL;
+
+    -- What intake knows about an event that control_events has no column for:
+    -- the kind in GitHub's terms, the link out, GitHub's own time for the fact,
+    -- and the poll that recorded it. Keyed by the event, so dismissing or
+    -- triaging it in Control changes nothing here.
+    CREATE TABLE IF NOT EXISTS intake_events (
+      event_id    TEXT PRIMARY KEY REFERENCES control_events(id) ON DELETE CASCADE,
+      poll_id     TEXT REFERENCES intake_polls(id) ON DELETE SET NULL,
+      kind        TEXT NOT NULL,
+      url         TEXT,
+      happened_at INTEGER
+    );
+  `);
 }
 
 /**
